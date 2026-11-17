@@ -194,10 +194,14 @@ describe('the carve-outs still let through what they were made for, in every spe
         expect(await isIgnored(`${APP}/src/styles/generated/css/${name}`)).toBe(true)
     })
 
-    it.each(['ts', 'mjs'])('a hand-written .%s module in the generated directory is fenced', async (ext) => {
-        const file = `${APP}/src/styles/generated/css/helper.${ext}`
-        expect(fired(await lint(file, readsEnv(file)), PROCESS_ENV)).toBe(1)
-    })
+    // Every other extension ESLint lints, so widening the ignore past Panda's own `.js` turns this red.
+    it.each(EXTENSIONS.filter((ext) => ext !== 'js'))(
+        'a hand-written .%s module in the generated directory is fenced',
+        async (ext) => {
+            const file = `${APP}/src/styles/generated/css/helper.${ext}`
+            expect(fired(await lint(file, readsEnv(file)), PROCESS_ENV)).toBe(1)
+        },
+    )
 })
 
 // What printing the effective config for every zone found besides the two reported holes: blocks that took
