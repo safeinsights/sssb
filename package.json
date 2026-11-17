@@ -34,7 +34,8 @@
         "build:demo-static": "pnpm --filter './apps/*' build:demo-static",
         "check:demo-size": "pnpm --filter './apps/*' check:demo-size",
         "e2e:demo-static": "pnpm --filter './apps/*' e2e:demo-static",
-        "test:contract": "node scripts/check-tmpdir-leak.mjs vitest run --config vitest.contract.config.ts"
+        "test:contract": "node scripts/check-tmpdir-leak.mjs vitest run --config vitest.contract.config.ts",
+        "pack-and-consume": "node scripts/pack-and-consume.mjs"
     },
     "dependencies": {
         "@mantine/core": "^9.7.3",

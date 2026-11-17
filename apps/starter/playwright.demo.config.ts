@@ -5,6 +5,6 @@ export default defineConfig({
     testDir: './tests/demo-static',
     fullyParallel: true,
     expect: { timeout: 10_000 },
-    reporter: process.env.CI ? 'github' : 'list',
+    reporter: process.env['CI'] ? 'github' : 'list',
     projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 })
