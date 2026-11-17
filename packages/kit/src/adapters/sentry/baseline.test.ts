@@ -7,7 +7,7 @@ const { initServerSentry } = await import('./init')
 const { initClientSentry } = await import('./client')
 
 // Written out here rather than imported from ./baseline: the pin is this literal, so editing the module
-// cannot move it. It is what v10 collected with `sendDefaultPii` unset (ADR-0010, addendum 2026-11-17).
+// cannot move it. It is at or below what v10 collected with `sendDefaultPii` unset (ADR-0010, addendum 2026-11-17).
 const denied = ['forwarded', '-ip', 'remote-', 'via', '-user']
 const V10_DATA_COLLECTION = {
     userInfo: false,
@@ -20,6 +20,8 @@ const V10_DATA_COLLECTION = {
     databaseQueryData: false,
     queues: false,
     graphQL: { document: false, variables: false },
+    stackFrameVariables: false,
+    frameContextLines: 5,
 }
 
 describe.each([
@@ -43,5 +45,13 @@ describe.each([
         expect(options.beforeSend).toBeTypeOf('function')
         // The removed v10 switch must not creep back in: 11.x ignores it, so it would only mislead a reader.
         expect(options).not.toHaveProperty('sendDefaultPii')
+    })
+
+    it('drops the default integrations v11 added, and only those', () => {
+        initSentry()
+        const keep = ['Http', 'Console', 'LinkedErrors'].map((name) => ({ name }))
+        const v11Only = ['Aws', 'AwsLambdaWeb', 'NextjsUseCache'].map((name) => ({ name }))
+        const filter = init.mock.calls[0]![0].integrations as (defaults: { name: string }[]) => { name: string }[]
+        expect(filter([...v11Only, ...keep])).toStrictEqual(keep)
     })
 })
