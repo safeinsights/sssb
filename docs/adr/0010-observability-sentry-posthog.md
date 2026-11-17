@@ -58,3 +58,33 @@ project name for any real organization appears in this repo.
   PostHog project.
 - Scrubbing is code this repo owns and must keep current. A new sensitive header is a change here, not a
   vendor setting.
+
+## Addendum (2026-11-17): an explicit data-collection baseline for `@sentry/nextjs` 11
+
+Sentry v11 removed `sendDefaultPii` and replaced it with `dataCollection`, one switch per category, and
+flipped the default: an unset `dataCollection` now collects user info, cookies, HTTP request and response
+bodies, database query data, queue arguments, and GenAI and MCP inputs and outputs. v10 with `sendDefaultPii`
+unset, which is what this repo ran, collected none of those. The framework's two `Sentry.init` calls
+(`packages/kit/src/adapters/sentry/init.ts` and `client.ts`) set neither option, so taking the bump as it came
+would have sent tenant data to Sentry that v10 never sent, from a multi-tenant framework, and `scrubEvent` would
+not have caught most of it: it strips cookies, query strings, three headers and the user's email and IP from
+error events only, and `beforeSend` never sees spans.
+
+Decision: both init calls spread one constant, `SENTRY_V10_BASELINE` in
+`packages/kit/src/adapters/sentry/baseline.ts`, which sets **every** `dataCollection` category to its v10 value
+and `attachStacktrace: false`. It is Sentry's own "keep the v10 default behavior" block from the v11 migration
+guide plus two things that block leaves to a default: `mcp`, which 11.x resolves to `{ inputs: true, outputs:
+true }` when it is left out, and `attachStacktrace`, which v11 turned on and which adds a stack trace with source
+context to `captureMessage` events. `frameContextLines` is left at its v11 default of 5, which is fewer than
+v10's 7. `baseline.test.ts` pins the whole object, through both init functions, against a literal written in the
+test, so removing a category, widening one, or adding one fails.
+
+Consequences:
+
+- Collecting more than v10 did is a privacy decision taken here, with this test and this ADR changed
+  together, never something a dependency bump does by default.
+- `scrubEvent` stays. The baseline works inside the SDK, on spans as well as events; the scrubber is the last
+  pass on error events and is still the place a new sensitive field gets added.
+- The baseline is framework code, so an adopter inherits it. An app that wants more (request bodies on its own
+  routes, say) changes the framework's baseline in its fork and owns that decision; there is no per-app widening
+  seam, on purpose.
