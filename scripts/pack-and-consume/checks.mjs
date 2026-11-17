@@ -35,9 +35,9 @@ export const CONFORMANCE_SUITES = [
 /**
  * The manifest shape P1 chose: the seam is an optional peer declared in `peerDependenciesMeta` ALONE.
  * Listed in `peerDependencies` too, pnpm 11 requested it from the registry when installing THIS repo's
- * workspace (ADR-0014's acceptance addendum); a consumer installing the tarball did not (P2's probe 1b,
- * docs/decision-log.md). A seam that is not optional at all, a consumer does fetch, which the job's dead
- * `@sssb` registry turns into a failed install. Returns the problems; empty means the shape holds.
+ * workspace (ADR-0014's acceptance addendum); a consumer installing the tarball did not (docs/decision-log.md,
+ * "Pack and consume"). A consumer does fetch a seam that is not optional at all, and the job's dead `@sssb`
+ * registry turns that into a failed install. Returns the problems; empty means the shape holds.
  * @param {{ name?: string, peerDependencies?: Record<string, string>, peerDependenciesMeta?: Record<string, { optional?: boolean }> }} manifest
  */
 export function seamPeerProblems(manifest) {
