@@ -1,0 +1,280 @@
+# SSSB's one way onto npm (ADR-0014 part 10, D11). Every package's npm trusted publisher names THIS FILE,
+# `release.yml`, so renaming it stops every publish until each publisher is edited. Modeled on CanopyCMS's
+# publish.yml.
+#
+# A release is two runs of this file:
+#   1. a push to `main` runs `release-commit`: it waits for `checks` to pass on that merge commit, versions the
+#      pending changesets with Changesets, and pushes a release commit and its `vX.Y.Z` tag;
+#   2. that tag's push runs `pack`, which waits for `checks` to pass on the release commit and packs, and then
+#      `publish`, which publishes the packed tarballs with provenance.
+# No job holds both a token that writes to the repository and npm's id-token, and `publish`, the one job that
+# holds the id-token, installs no dependencies and runs none of their code.
+#
+# NOTHING REACHES NPM BEFORE P14. Every package is `"private": true` until then, so Changesets plans no
+# release (`privatePackages.version` is false in .changeset/config.json) and `release-commit` stops before
+# minting a token, and on a tag `pack` finds nothing publishable and `publish` is skipped. As a third lock,
+# `publish` refuses any tarball whose own manifest says private. Do not count on npm for that: `npm publish
+# <tarball> --dry-run` (11.21.2) accepted a private one.
+#
+# What the repository and npm must hold (JP's settings; none of it is in this file):
+#   - environment `release`: deployment branches `main` only; secret RELEASE_BOT_PRIVATE_KEY and variable
+#     RELEASE_BOT_CLIENT_ID for the release app, whose token may push to `main` past its rules;
+#   - environment `npm-publish`: deployment refs `v*` tags only;
+#   - a tag ruleset on `v*` that only the release app may create, and nobody may move or delete;
+#   - on npmjs.com, per package: a trusted publisher naming `safeinsights/sssb`, `release.yml` and the
+#     environment `npm-publish`, with publishing requiring 2FA and disallowing tokens.
+name: release
+
+on:
+    push:
+        branches: [main]
+        tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+# Every job states its own.
+permissions: {}
+
+concurrency:
+    group: release-${{ github.ref }}
+    # Never cancel a publish part-way, which would leave the set at mixed versions on npm. Queued runs for
+    # `main` may still be replaced by a newer one, which carries the same pending changesets.
+    cancel-in-progress: false
+
+jobs:
+    release-commit:
+        name: release commit
+        if: github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        timeout-minutes: 90
+        # Holds the release app's key. Its deployment rule allows `main` only, so a workflow on any other
+        # branch cannot mint the app's token.
+        environment: release
+        permissions:
+            # The release app's token does the writing.
+            contents: read
+            # To list this commit's `checks` runs: workflow runs are the `actions` scope, not `checks`.
+            actions: read
+        env:
+            HUSKY: '0'
+        steps:
+            # Full history and tags: a release never goes behind the latest `vX.Y.Z` tag. No credentials persist,
+            # because dependency code runs below and the app's token is minted only for the push.
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+            # No dependency cache: a release builds from the lockfile alone.
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+
+            # THE CI GATE (scripts/release.mjs): `checks` must pass on this merge commit, which no PR's run tested.
+            # It runs before anything is installed.
+            - name: wait for checks to pass on this commit
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: node scripts/release.mjs wait-for-checks "$GITHUB_SHA"
+
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            # --ignore-scripts: no dependency's install script runs in a job that can reach the app's key.
+            - run: pnpm install --frozen-lockfile --ignore-scripts
+
+            # scripts/release.mjs prepare: the 0.x checks, the plan, and `changeset version` in the working tree.
+            # Until P14 it answers `release: false` on every push, and nothing below runs.
+            - name: prepare the release
+              id: prepare
+              run: |
+                  set -euo pipefail
+                  result=$(node scripts/release.mjs prepare)
+                  echo "$result"
+                  release=$(jq -r '.release' <<<"$result")
+                  echo "release=$release" >> "$GITHUB_OUTPUT"
+                  if [ "$release" = "true" ]; then
+                      version=$(jq -r '.version' <<<"$result")
+                      [[ "$version" =~ ^0\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a 0.x release version: '$version'"; exit 1; }
+                      echo "version=$version" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "Nothing to release: $(jq -r '.reason' <<<"$result")" >> "$GITHUB_STEP_SUMMARY"
+                  fi
+
+            # The prepared tree is the release commit. Anything else changed means a step did more than it should,
+            # so the job stops before minting a token.
+            - name: commit and tag the release
+              if: steps.prepare.outputs.release == 'true'
+              env:
+                  VERSION: ${{ steps.prepare.outputs.version }}
+              run: |
+                  set -euo pipefail
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git add -A -- .changeset 'packages/*/package.json' 'packages/*/CHANGELOG.md'
+                  if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+                      git status --short
+                      echo "::error::the release changed files outside the changesets, manifests and changelogs"
+                      exit 1
+                  fi
+                  # Dependency code ran in this tree, so the manifests are bounded by content too: versions only.
+                  if git diff --cached -U0 -- 'packages/*/package.json' | grep -E '^[+-][^+-]' | grep -vqE '^[+-]\s*"version": '; then
+                      echo "::error::the release changes a manifest beyond its version"
+                      exit 1
+                  fi
+                  git -c core.hooksPath=/dev/null commit --no-verify -m "chore: release v$VERSION"
+                  git tag "v$VERSION"
+
+            # The release app's bypass of `main`'s rules is gated by its key, a secret of this job's `release`
+            # environment; the generic GITHUB_TOKEN cannot be granted a bypass, and a tag it pushes would not
+            # start the publish run.
+            - name: mint the release app's token
+              id: app-token
+              if: steps.prepare.outputs.release == 'true'
+              uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+              with:
+                  client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
+                  private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+            # Dependency code ran in this workspace and could have written its git config or hooks, so the push
+            # goes from a fresh repository, ignoring global and system config, with hooks off and the token only in
+            # this step, in a header and masked. `--atomic` lands the commit and its tag together or not at all: if
+            # main moved, nothing is pushed and the next push to main releases the changesets still pending.
+            - name: push the release
+              if: steps.prepare.outputs.release == 'true'
+              env:
+                  VERSION: ${{ steps.prepare.outputs.version }}
+                  TOKEN: ${{ steps.app-token.outputs.token }}
+                  GIT_CONFIG_GLOBAL: /dev/null
+                  GIT_CONFIG_NOSYSTEM: '1'
+              run: |
+                  set -euo pipefail
+                  sha=$(git rev-parse HEAD)
+                  pusher=$(mktemp -d)
+                  git init -q "$pusher"
+                  git -C "$pusher" -c core.hooksPath=/dev/null fetch -q "$GITHUB_WORKSPACE" \
+                      "+$sha:refs/heads/release" "+refs/tags/v$VERSION:refs/tags/v$VERSION"
+                  auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+                  echo "::add-mask::$auth"
+                  git -C "$pusher" -c core.hooksPath=/dev/null -c http.extraheader="AUTHORIZATION: basic $auth" \
+                      push --no-verify --atomic "https://github.com/$GITHUB_REPOSITORY" release:main "refs/tags/v$VERSION"
+                  echo "Released v$VERSION at $sha" >> "$GITHUB_STEP_SUMMARY"
+
+    # The tag's first half: everything that needs the workspace's dependencies, with no id-token.
+    pack:
+        name: pack
+        if: startsWith(github.ref, 'refs/tags/v')
+        runs-on: ubuntu-latest
+        timeout-minutes: 90
+        permissions:
+            contents: read
+            # The CI gate lists this commit's `checks` runs.
+            actions: read
+        outputs:
+            version: ${{ steps.tag.outputs.version }}
+            count: ${{ steps.list.outputs.count }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            # Only a release commit on main publishes. A `vX.Y.Z` tag anywhere else stops here.
+            - name: check the tag is a release on main
+              id: tag
+              run: |
+                  set -euo pipefail
+                  [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::$GITHUB_REF_NAME is not a release tag"; exit 1; }
+                  git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+                  echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+            # THE CI GATE again, on the release commit itself: what is published is what `checks` passed, both
+            # apps and pack and consume included (ADR-0014 part 10's two-consumer rule).
+            - name: wait for checks to pass on the release commit
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: node scripts/release.mjs wait-for-checks "$GITHUB_SHA"
+
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - run: pnpm install --frozen-lockfile --ignore-scripts
+
+            # Every non-private workspace package, each in the fixed group at the tag's version. Until P14 the list
+            # is empty, and this run ends here with nothing published.
+            - name: list what this tag publishes
+              id: list
+              env:
+                  VERSION: ${{ steps.tag.outputs.version }}
+              run: |
+                  set -euo pipefail
+                  list=$(node scripts/release.mjs publishable "$VERSION")
+                  count=$(jq length <<<"$list")
+                  echo "count=$count" >> "$GITHUB_OUTPUT"
+                  if [ "$count" -eq 0 ]; then
+                      echo "v$VERSION publishes nothing: every package is private (ADR-0014 P14 makes them public)." >> "$GITHUB_STEP_SUMMARY"
+                      exit 0
+                  fi
+                  # The tag must be the commit that set the version, not a later one still carrying it.
+                  for dir in $(jq -r '.[].dir' <<<"$list"); do
+                      before=$(git show "HEAD^:$dir/package.json" 2>/dev/null | jq -r .version || true)
+                      [ "$before" != "$VERSION" ] || { echo "::error::$dir was already at $VERSION before this commit; v$VERSION must tag the release commit"; exit 1; }
+                  done
+                  mkdir -p "$RUNNER_TEMP/tarballs"
+                  for dir in $(jq -r '.[].dir' <<<"$list"); do
+                      (cd "$dir" && pnpm pack --pack-destination "$RUNNER_TEMP/tarballs")
+                  done
+
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              if: steps.list.outputs.count != '0'
+              with:
+                  name: tarballs
+                  path: ${{ runner.temp }}/tarballs/*.tgz
+                  if-no-files-found: error
+                  retention-days: 7
+
+    # The tag's second half, and the only job holding npm's id-token. It checks out two files, installs nothing
+    # and runs no dependency's code: a compromised dependency in `pack` never sees the token. It re-checks each
+    # tarball itself rather than trusting `pack`'s word.
+    publish:
+        name: publish
+        needs: pack
+        if: needs.pack.outputs.count != '0'
+        runs-on: ubuntu-latest
+        # npm's trusted publisher names this environment, and its deployment rule admits `v*` tags only.
+        environment: npm-publish
+        permissions:
+            contents: read
+            id-token: write
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+                  sparse-checkout: |
+                      .nvmrc
+                      .changeset/config.json
+                      scripts/release.mjs
+                  sparse-checkout-cone-mode: false
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+                  registry-url: 'https://registry.npmjs.org'
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+              with:
+                  name: tarballs
+                  path: ${{ runner.temp }}/tarballs
+
+            # Before the first publish: each tarball is a fixed-group package at this version and not private, and
+            # one already on npm from this commit is skipped, so "Re-run failed jobs" resumes a release that stopped
+            # part-way. Anything else fails here, with nothing published.
+            #
+            # npm runs as `npx npm@11.21.2`: OIDC trusted publishing needs npm 11.5.0 or later, the exact version is
+            # pinned rather than floated, and npx checks the fetched npm against the registry's sha512. Keep it at
+            # 11.5.0 or later when bumping.
+            - name: publish
+              env:
+                  VERSION: ${{ needs.pack.outputs.version }}
+              run: |
+                  set -euo pipefail
+                  todo=$(node scripts/release.mjs preflight "$VERSION" "$GITHUB_SHA" "$RUNNER_TEMP"/tarballs/*.tgz)
+                  echo "to publish: $todo"
+                  for file in $(jq -r '.[].file' <<<"$todo"); do
+                      npx --yes npm@11.21.2 publish "$file" --access public --provenance
+                  done
+                  echo "Published v$VERSION: $(jq -r '[.[].name] | join(", ")' <<<"$todo")" >> "$GITHUB_STEP_SUMMARY"

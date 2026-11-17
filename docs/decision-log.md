@@ -2753,3 +2753,43 @@ Decisions P1 made that ADR-0014 did not:
   test GUC `sssb.probe`, temp-dir prefixes, the tour cursor's DOM ids (`sssb-tour-cursor`), the test MIME types
   (`application/x-sssb-test`), the fixture's slug (`sssbfix`) and the Vite plugin name `sssb:prune-mantine-css`.
   None is deployed state.
+
+## Publishing from CI, before anything needs publishing (2026-11-17, `ci/release-workflow`)
+
+ADR-0014's P1b: `.github/workflows/release.yml`, Changesets in one fixed group, and `scripts/release.mjs`, which
+both the workflow and CI's `release-plan` job run. Decisions the ADR left open:
+
+- **The workflow file is `release.yml`.** npm's trusted publisher on every package names it, so a rename stops
+  every publish until each publisher is edited. CanopyCMS's is `publish.yml`; here the file also cuts the release
+  commit, and "release" names both halves.
+- **Dormant through `privatePackages.version: false`, not through a switch in the workflow.** Every package is
+  private until P14, so Changesets plans no release, `release-commit` stops before it mints a token, and on a tag
+  `pack` lists nothing and `publish` is skipped. Taking `private` off in P14 is the whole switch. The cost is that
+  Changesets' own plan is empty today, so a check of that plan could never fail; `pnpm release:check` judges the
+  plan with private packages versioned instead, which is the plan the packages will release once public.
+- **The release waits for `checks` twice**: `release-commit` on the merge commit, as CanopyCMS's does, and `pack`
+  on the release commit, because part 10 asks for both apps and pack and consume to be green on the release commit
+  itself. The wait is one function (`scripts/release.mjs wait-for-checks`), fail-closed: anything but a completed,
+  successful push run on `main` for that exact commit keeps it polling until an hour has passed. For that, `checks`
+  no longer cancels a push run on `main` when the next push arrives: its concurrency group is the commit for a push
+  and the ref for a PR, so PRs still cancel their own older runs.
+- **The tag's work is two jobs, not one.** `pack` installs the workspace (with `--ignore-scripts`), lists and
+  packs; `publish`, the only job with `id-token: write`, sparse-checks out three files, installs nothing, re-reads
+  each tarball's own manifest (fixed group, the tag's version, not private), skips a version npm already holds
+  from this commit (so "Re-run failed jobs" resumes a release stopped part-way), refuses one npm holds from another
+  commit or a `latest` newer than this release, and only then runs `npx npm@11.21.2 publish --provenance`. A
+  compromised dependency therefore runs only where there is no OIDC token. CanopyCMS installs and builds in its
+  publishing job.
+- **`publish` runs in an environment of its own, `npm-publish`**, separate from `release`, which holds the release
+  app's key. npm's trusted publisher can name an environment, and GitHub admits a job to one only on the refs its
+  deployment rule allows, so naming `npm-publish` on npm and limiting it to `v*` tags means a `release.yml` edited
+  on a branch cannot publish. A tag ruleset that only the release app can create `v*` tags under closes the rest.
+- **`create-sssb`'s source stays out of this repository for now.** It is the published mistype guard, it prints
+  one line and exits 1, and nothing about it is due to change. Bringing it in would add a workspace package that is
+  outside the `@sssb/*` group, so it would need either a second release path (a second way to publish, which part 10
+  rules out) or a place in the fixed group (a new guard version with every release, for no change). Its trusted
+  publisher still names `release.yml`, so if it ever must change, its source comes in then and goes out through this
+  file; `scripts/release.mjs` refuses to publish any package outside the fixed group until that is decided.
+- **npm does not refuse a private tarball on a dry run.** `npm publish <tarball> --dry-run` (npm 11.21.2) printed
+  `+ @sssb/kit@0.1.0` for the packed kit, whose manifest says `"private": true`. So the private check is the
+  workflow's own (`preflight`), not npm's.
