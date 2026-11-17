@@ -1,7 +1,9 @@
 /**
  * Sentry event scrubbing (ADR-0010). Pure
  * TypeScript so it unit-tests without the SDK: strips cookies, auth headers, and query strings (the
- * `query_string` field and any query or fragment left on `request.url`) before anything leaves the process.
+ * `query_string` field and any query or fragment left on `request.url`) from error events before they leave the
+ * process. It runs as `beforeSend`, which spans never pass through; what spans may carry is set by the SDK's
+ * `dataCollection` and integrations (`adapters/sentry/baseline.ts`).
  */
 
 interface ScrubbableRequest {

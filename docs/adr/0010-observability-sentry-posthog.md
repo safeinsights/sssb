@@ -62,29 +62,48 @@ project name for any real organization appears in this repo.
 ## Addendum (2026-11-17): an explicit data-collection baseline for `@sentry/nextjs` 11
 
 Sentry v11 removed `sendDefaultPii` and replaced it with `dataCollection`, one switch per category, and
-flipped the default: an unset `dataCollection` now collects user info, cookies, HTTP request and response
-bodies, database query data, queue arguments, and GenAI and MCP inputs and outputs. v10 with `sendDefaultPii`
-unset, which is what this repo ran, collected none of those. The framework's two `Sentry.init` calls
-(`packages/kit/src/adapters/sentry/init.ts` and `client.ts`) set neither option, so taking the bump as it came
-would have sent tenant data to Sentry that v10 never sent, from a multi-tenant framework, and `scrubEvent` would
-not have caught most of it: it strips cookies, query strings, three headers and the user's email and IP from
-error events only, and `beforeSend` never sees spans.
+flipped the default: an unset `dataCollection` resolves every category to "collect"
+(`resolveDataCollectionOptions` in `@sentry/core` 11.12), which means user info and IP, cookies, HTTP request and
+response bodies, database query data, queue arguments, and GenAI and MCP inputs and outputs. v10 with
+`sendDefaultPii` unset, which is what this repo ran, mapped to a narrower set (`defaultPiiToCollectionOptions(false)`
+in `@sentry/core` 10.78): no user info, no bodies, no database query data, no GenAI or MCP content, and cookies,
+headers and query parameters filtered by a short denylist. v11 also installs default integrations that v10 did not
+(on Node: `Aws`, `AwsLambdaWeb`, `Dataloader`, `Knex`, `Neon` and others; on the Next.js server, `NextjsUseCache`),
+and some of them attach metadata, such as Secrets Manager ARNs and cache keys or tags, that no `dataCollection` key
+covers. The framework's two `Sentry.init` calls (`packages/kit/src/adapters/sentry/init.ts` and `client.ts`) set
+none of this, so taking the bump as it came would have sent Sentry more than v10 did, from a multi-tenant
+framework. `scrubEvent` would have caught little of it: it strips cookies, query strings, three headers and the
+user's email and IP from error events only, and `beforeSend` never sees spans.
 
 Decision: both init calls spread one constant, `SENTRY_V10_BASELINE` in
-`packages/kit/src/adapters/sentry/baseline.ts`, which sets **every** `dataCollection` category to its v10 value
-and `attachStacktrace: false`. It is Sentry's own "keep the v10 default behavior" block from the v11 migration
-guide plus two things that block leaves to a default: `mcp`, which 11.x resolves to `{ inputs: true, outputs:
-true }` when it is left out, and `attachStacktrace`, which v11 turned on and which adds a stack trace with source
-context to `captureMessage` events. `frameContextLines` is left at its v11 default of 5, which is fewer than
-v10's 7. `baseline.test.ts` pins the whole object, through both init functions, against a literal written in the
-test, so removing a category, widening one, or adding one fails.
+`packages/kit/src/adapters/sentry/baseline.ts`. It holds collection **at or below** v10:
+
+- **Every `dataCollection` key is set.** The values are Sentry's "keep the v10 default behavior" block from the v11
+  migration guide, plus `mcp` (11.12 resolves an omitted `mcp` to "collect"), `stackFrameVariables: false` and
+  `frameContextLines: 5`. The block is stricter than 10.78's own mapping on `cookies` and `graphQL`, and so is
+  `httpBodies: []` in practice: 10.78's Node HTTP integration attached incoming request bodies to error events
+  whatever `sendDefaultPii` said (`maxRequestBodySize` defaulted to `"medium"`), while 11.12 gates them on
+  `httpBodies`.
+- **`attachStacktrace: false`**, v10's default. v11 turned it on, which adds a stack trace with source context to
+  `captureMessage` events.
+- **`integrations` keeps only the default integrations 10.78 installed**, by name, plus two renamed successors
+  (`EventFilters`, `WorkerThreads`). It is an allowlist, so a default that a later 11.x adds is dropped until
+  someone decides otherwise.
+- **`scrubEvent` also cuts the query and fragment off `request.url`**, because 11.x's edge init builds that URL
+  with its query.
+
+Three tests pin it. `baseline.test.ts` checks, through both init functions, the whole `dataCollection` object
+against a literal written in the test, plus `attachStacktrace` and the integration filter.
+`default-integrations.test.ts` runs the filter over the installed SDK's real default lists for Node, edge and the
+browser, and names exactly what it drops. `scrub.test.ts` covers the URL.
 
 Consequences:
 
-- Collecting more than v10 did is a privacy decision taken here, with this test and this ADR changed
-  together, never something a dependency bump does by default.
-- `scrubEvent` stays. The baseline works inside the SDK, on spans as well as events; the scrubber is the last
-  pass on error events and is still the place a new sensitive field gets added.
-- The baseline is framework code, so an adopter inherits it. An app that wants more (request bodies on its own
-  routes, say) changes the framework's baseline in its fork and owns that decision; there is no per-app widening
-  seam, on purpose.
+- Collecting more than v10 did is a privacy decision taken here, with these tests and this ADR changed together,
+  never something a dependency bump does by default. A Sentry bump that adds or renames a default integration
+  fails `default-integrations.test.ts`.
+- What is left is v10-level span data: request URLs (including query parameters outside the denylist) and headers
+  on spans, as v10 sent them. `scrubEvent` stays the last pass on error events, and it is still the place a new
+  sensitive field gets added.
+- The baseline is framework code, so an adopter inherits it. The kit has no per-app seam for widening it: an app
+  that wants more (request bodies on its own routes, say) changes `baseline.ts` in its fork and owns that decision.

@@ -3,14 +3,14 @@ import type * as Sentry from '@sentry/nextjs'
 type InitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>
 type Integration = { name: string }
 
-/** The header and query-parameter names v10 scrubbed when `sendDefaultPii` was off (Sentry's v11 migration guide). */
+/** 10.78's `PII_HEADER_SNIPPETS` (`@sentry/core`), the denylist its `sendDefaultPii`-off mapping used. */
 const V10_DENIED_KEYS = ['forwarded', '-ip', 'remote-', 'via', '-user']
 
 /**
  * The default integrations 10.78 installed, by `name`, on the three runtimes `@sentry/nextjs` inits: Node
- * (`@sentry/node` `getDefaultIntegrations` with tracing on, plus nextjs's `DistDirRewriteFrames`), edge
- * (`@sentry/vercel-edge`) and the browser (`@sentry/browser` plus `BrowserTracing` and nextjs's
- * `NextjsClientStackFrameNormalization`).
+ * (`@sentry/node` `getDefaultIntegrations` with tracing on), edge (`@sentry/vercel-edge`) and the browser
+ * (`@sentry/browser`), plus what nextjs's own inits pushed: `DistDirRewriteFrames` (server and edge), and
+ * `BrowserTracing` and `NextjsClientStackFrameNormalization` (browser).
  */
 const V10_DEFAULT_INTEGRATIONS = [
     // Node
@@ -41,8 +41,9 @@ const ALLOWED_DEFAULT_INTEGRATIONS = new Set([...V10_DEFAULT_INTEGRATIONS, ...V1
  * An ALLOWLIST, so a default integration that 11.x (or any later 11.x) adds is dropped until someone decides
  * otherwise. 11.12 adds, on Node: `Aws` (a span per AWS SDK command, with S3 bucket names and Secrets Manager
  * ARNs), `AwsLambdaWeb` (Lambda context), `Dataloader` (cache keys verbatim), `Knex`, `Neon`, `Nitro`,
- * `Mastra`, `PiDurable`, `McpServer` and four GenAI clients; and on the Next.js server, `NextjsUseCache`
- * (`'use cache'` tags verbatim). No `dataCollection` key gates the metadata those carry.
+ * `Mastra`, `PiDurable`, `McpServer` and four AI clients (`Groq`, `Mistral`, `TogetherAI`, `TypeSafe`); and on the
+ * Next.js server, `NextjsUseCache` (`'use cache'` tags verbatim). Several of them attach metadata that no
+ * `dataCollection` key gates; the rest are dropped too, because an allowlist does not judge.
  * `default-integrations.test.ts` lists what this drops from the installed SDK's real defaults.
  */
 function withV10DefaultsOnly<T extends Integration>(defaults: T[]): T[] {
@@ -57,8 +58,9 @@ function withV10DefaultsOnly<T extends Integration>(defaults: T[]): T[] {
  * default.
  *
  * Starts from the migration guide's "keep the v10 default behavior" block, which is stricter than 10.78's own
- * unset mapping (`defaultPiiToCollectionOptions(false)` in `@sentry/core` 10.78) on `cookies` and `graphQL`,
- * and adds what that block leaves to a default:
+ * unset mapping (`defaultPiiToCollectionOptions(false)` in `@sentry/core` 10.78) on `cookies` and `graphQL`, and in
+ * practice on `httpBodies` (10.78's Node HTTP integration attached incoming request bodies to error events
+ * regardless), and adds what that block leaves to a default:
  * - `mcp`: 11.x resolves an omitted `mcp` to `{ inputs: true, outputs: true }` (`resolveDataCollectionOptions`).
  * - `stackFrameVariables: false`: capture also needs `includeLocalVariables`, unset here, so this only pins it.
  * - `frameContextLines: 5`: the 11.x default, fewer than v10's 7.

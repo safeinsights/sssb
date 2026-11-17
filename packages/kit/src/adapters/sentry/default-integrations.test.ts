@@ -28,7 +28,7 @@ function dropped(defaults: Integration[]): string[] {
 }
 
 describe('the baseline keeps only the default integrations Sentry 10 installed', () => {
-    it('drops exactly the defaults 11.x added on Node, which no dataCollection key gates', () => {
+    it('drops exactly the defaults 11.x added on Node', () => {
         const node = sdk('@sentry/node').getDefaultIntegrations({ tracesSampleRate: 0.1 })
         expect(dropped(node)).toStrictEqual([
             ...['Aws', 'AwsLambdaWeb', 'Dataloader', 'Groq', 'Knex', 'Mastra', 'McpServer', 'Mistral', 'Neon'],

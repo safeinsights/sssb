@@ -30,7 +30,7 @@ describe.each([
 ])('the %s Sentry init keeps the v10 data-collection baseline', (_runtime, initSentry) => {
     beforeEach(() => init.mockClear())
 
-    it('sets every dataCollection category explicitly, to exactly the v10 baseline', () => {
+    it('sets every dataCollection key explicitly, to exactly the pinned literal', () => {
         initSentry()
         expect(init).toHaveBeenCalledTimes(1)
         // toStrictEqual: a removed key, a widened value, or a new category (which v11 would default to "collect")

@@ -2760,7 +2760,7 @@ Decisions P1 made that ADR-0014 did not:
   bullets in the dependency-advisory entry above: "Not taken: Sentry 11", and "`withSentryConfig` stays
   imported from `@sentry/nextjs`", which deferred the move to this upgrade. 11.x no longer exports
   `withSentryConfig` from the package root, so Dependabot's bump (#2) failed to build on that import alone.
-- **The upgrade does not change what reaches Sentry.** v11's unset `dataCollection` collects more than v10's
-  unset `sendDefaultPii` did, so both framework inits now spread `SENTRY_V10_BASELINE`
-  (`packages/kit/src/adapters/sentry/baseline.ts`), pinned by `baseline.test.ts`. The reasoning is ADR-0010's
-  2026-11-17 addendum.
+- **The upgrade does not widen what reaches Sentry.** v11's unset `dataCollection` and its new default
+  integrations collect more than v10 with `sendDefaultPii` unset did, so both framework inits now spread
+  `SENTRY_V10_BASELINE` (`packages/kit/src/adapters/sentry/baseline.ts`), which holds collection at or below v10.
+  The reasoning is in ADR-0010's 2026-11-17 addendum.
