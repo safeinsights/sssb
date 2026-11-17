@@ -50,6 +50,8 @@ jobs:
     # anything.
     release-plan:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         steps:
             - uses: actions/checkout@v7
             - uses: pnpm/action-setup@v6

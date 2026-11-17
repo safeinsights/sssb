@@ -169,7 +169,7 @@ export async function check(root) {
 
 /** npm's `latest` for a package, or null when the registry has never heard of it. */
 async function npmLatest(name, fetchImpl) {
-    const res = await fetchImpl(`${REGISTRY}/${name.replace('/', '%2F')}`, {
+    const res = await fetchImpl(`${REGISTRY}/${encodeURIComponent(name)}`, {
         headers: { accept: 'application/vnd.npm.install-v1+json' },
     })
     if (res.status === 404) return null
@@ -302,7 +302,7 @@ export async function attestedCommit(name, version, fetchImpl = fetch) {
     const res = await fetchImpl(`${REGISTRY}/-/npm/v1/attestations/${id}`)
     if (res.status === 404) {
         // The attestations endpoint also answers 404 for a version published without provenance.
-        const existing = await fetchImpl(`${REGISTRY}/${name.replace('/', '%2F')}/${encodeURIComponent(version)}`)
+        const existing = await fetchImpl(`${REGISTRY}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`)
         if (existing.status === 404) return null
         if (!existing.ok) throw new Error(`${name}@${version}: registry answered ${existing.status}`)
         throw new Error(`${name}@${version} is on npm without provenance, or not yet attested`)

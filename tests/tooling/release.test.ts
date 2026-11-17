@@ -179,7 +179,7 @@ describe('release prepare (the plan job)', () => {
 
     it('versions a public fixed group with Changesets and leaves the commit to the workflow', async () => {
         const root = workspace([KIT('0.1.0', false), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
-        const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
         const result = await prepare(root, { fetchImpl: npm })
         expect(result).toEqual({ release: true, version: '0.2.0', packages: ['@sssb/kit'] })
         expect(JSON.parse(readFileSync(path.join(root, 'packages/kit/package.json'), 'utf8')).version).toBe('0.2.0')
@@ -195,7 +195,7 @@ describe('release prepare (the plan job)', () => {
             { feature: ['"@sssb/kit": minor'] },
             { git: true, installed: true },
         )
-        const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
         // `pnpm exec vitest` hands its children this very setting, which would hide the bug; CI's job has none.
         const inherited = process.env.pnpm_config_verify_deps_before_run
         delete process.env.pnpm_config_verify_deps_before_run
@@ -209,7 +209,7 @@ describe('release prepare (the plan job)', () => {
 
     it('refuses to go behind what npm already holds', async () => {
         const root = workspace([KIT('0.1.0', false)], { fix: ['"@sssb/kit": patch'] }, { git: true })
-        const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.3.0' } } } })
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.3.0' } } } })
         await expect(prepare(root, { fetchImpl: npm })).rejects.toThrow(/0\.1\.1, which is not newer than npm's latest/)
     })
 
@@ -248,7 +248,7 @@ describe('release verify-release (the job holding the release key)', () => {
     /** A public kit with one minor changeset, prepared as `plan` prepares it and staged as `push` applies it. */
     async function prepared() {
         const root = workspace([KIT('0.1.0', false)], { feature: ['"@sssb/kit": minor'] }, { git: true })
-        const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
         await prepare(root, { fetchImpl: npm })
         const run = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' })
         run('add', '-A')
@@ -334,7 +334,7 @@ describe('release verify-release (the job holding the release key)', () => {
         const run = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' })
         run('add', '-A')
         run('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--no-verify', '-m', 'notes')
-        const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
         await prepare(root, { fetchImpl: npm })
         run('add', '-A')
         const result = spawnSync(process.execPath, [SCRIPT, 'verify-release', '0.2.0'], { cwd: root, encoding: 'utf8' })
@@ -375,7 +375,7 @@ describe('release preflight (the job holding the id-token)', () => {
 
     it('refuses to move latest back', async () => {
         const root = workspace([])
-        const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.3.0' } } } })
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.3.0' } } } })
         await expect(preflight(root, '0.2.0', SHA, [tarball(root, 'kit.tgz', kit)], npm)).rejects.toThrow(
             /latest is 0\.3\.0, newer than 0\.2\.0/,
         )
