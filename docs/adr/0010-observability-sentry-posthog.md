@@ -101,7 +101,8 @@ Consequences:
 
 - Collecting more than v10 did is a privacy decision taken here, with these tests and this ADR changed together,
   never something a dependency bump does by default. A Sentry bump that adds or renames a default integration
-  fails `default-integrations.test.ts`.
+  in the Node, edge or browser SDK fails `default-integrations.test.ts`. One that changes the integrations
+  `@sentry/nextjs` pushes itself does not: those names are written into that test by hand.
 - What is left is v10-level span data: request URLs (including query parameters outside the denylist) and headers
   on spans, as v10 sent them. `scrubEvent` stays the last pass on error events, and it is still the place a new
   sensitive field gets added.
