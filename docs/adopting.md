@@ -327,7 +327,7 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 `packages/kit/package.json`'s `exports` map is the contract: it lists the 132 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 46 modules of the package are internals — private sub-components, the fake-db plumbing, the
+other 47 modules of the package are internals — private sub-components, the fake-db plumbing, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. If you find yourself

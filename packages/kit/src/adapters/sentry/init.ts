@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/nextjs'
 import { scrubEvent } from '../../observability/scrub'
+import { SENTRY_V10_BASELINE } from './baseline'
 
 /**
  * Server/edge Sentry init (ADR-0010). Loaded ONLY when a DSN is configured (cutover row
@@ -10,6 +11,7 @@ export function initServerSentry(): void {
     Sentry.init({
         dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
         tracesSampleRate: 0.1,
+        ...SENTRY_V10_BASELINE,
         beforeSend: (event) => scrubEvent(event),
     })
 }

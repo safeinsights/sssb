@@ -2874,3 +2874,14 @@ both the workflow and CI's `release-plan` job run. Decisions the ADR left open:
 - **npm does not refuse a private tarball on a dry run.** `npm publish <tarball> --dry-run` (npm 11.21.2) printed
   `+ @sssb/kit@0.1.0` for the packed kit, whose manifest says `"private": true`. So the private check is the
   workflow's own (`preflight`), not npm's.
+
+## Sentry 11, with an explicit v10 data-collection baseline (2026-11-17, `deps/sentry-11`)
+
+- **Sentry 11 is taken now, and `withSentryConfig` moves to `@sentry/nextjs/config`.** This supersedes two
+  bullets in the dependency-advisory entry above: "Not taken: Sentry 11", and "`withSentryConfig` stays
+  imported from `@sentry/nextjs`", which deferred the move to this upgrade. 11.x no longer exports
+  `withSentryConfig` from the package root, so Dependabot's bump (#2) failed to build on that import alone.
+- **The upgrade does not widen what reaches Sentry.** v11's unset `dataCollection` and its new default
+  integrations collect more than v10 with `sendDefaultPii` unset did, so both framework inits now spread
+  `SENTRY_V10_BASELINE` (`packages/kit/src/adapters/sentry/baseline.ts`), which holds collection at or below v10.
+  The reasoning is in ADR-0010's 2026-11-17 addendum.

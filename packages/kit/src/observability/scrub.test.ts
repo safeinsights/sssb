@@ -17,6 +17,14 @@ describe('scrubEvent', () => {
         expect(event.user).toEqual({ id: 'fixture-lead' })
     })
 
+    test('cuts the query and fragment off request.url', () => {
+        const event = scrubEvent({ request: { url: 'https://app.test/api/dockets?cursor=abc&tenant=harbor#top' } })
+        expect(event.request?.url).toBe('https://app.test/api/dockets')
+        expect(scrubEvent({ request: { url: 'https://app.test/api/dockets' } }).request?.url).toBe(
+            'https://app.test/api/dockets',
+        )
+    })
+
     test('passes through events without request/user', () => {
         expect(scrubEvent({ message: 'plain' })).toEqual({ message: 'plain' })
     })

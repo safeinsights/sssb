@@ -1,13 +1,16 @@
 /**
  * Sentry event scrubbing (ADR-0010). Pure
- * TypeScript so it unit-tests without the SDK: strips cookies, auth headers, and query strings
- * before anything leaves the process.
+ * TypeScript so it unit-tests without the SDK: strips cookies, auth headers, and query strings (the
+ * `query_string` field and any query or fragment left on `request.url`) from error events before they leave the
+ * process. It runs as `beforeSend`, which spans never pass through; what spans may carry is set by the SDK's
+ * `dataCollection` and integrations (`adapters/sentry/baseline.ts`).
  */
 
 interface ScrubbableRequest {
     cookies?: unknown
     headers?: Record<string, string>
     query_string?: unknown
+    url?: unknown
 }
 
 interface ScrubbableEvent {
@@ -23,6 +26,8 @@ export function scrubEvent<T extends object>(event: T): T {
     if (scrubbable.request) {
         delete scrubbable.request.cookies
         delete scrubbable.request.query_string
+        // Sentry 11's edge init builds `request.url` with its query, so a query string can arrive on the URL itself.
+        if (typeof scrubbable.request.url === 'string') scrubbable.request.url = scrubbable.request.url.split(/[?#]/)[0]
         if (scrubbable.request.headers) {
             for (const header of Object.keys(scrubbable.request.headers)) {
                 if (SENSITIVE_HEADERS.includes(header.toLowerCase())) delete scrubbable.request.headers[header]
