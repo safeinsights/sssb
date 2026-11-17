@@ -26,11 +26,10 @@ None yet.
 
 ## How it started (SSSB's history for the starter)
 
-Raised 2026-11-17, 820000 → 850000, for React 19.3. React's own code grew the starter's demo 29331 bytes, from
-727778 to 757109, and the showcase's by the same amount, to 847534. The number above is room to grow the
-starter to the size of SSSB's showcase, rounded up, and 820000 no longer was, so it moved to the showcase's new
-size rounded up. It leaves 92891 bytes (10.9%), and it still sits below the unpruned starter (908510 bytes,
-which exits 1).
+Raised 2026-11-17, 820000 → 840000, for React 19.3. React's own code grew the starter's demo 29331 bytes, from
+727778 to 757109, and the showcase's by 29332, to 833906. The number above is room to grow the starter to the
+size of SSSB's showcase, rounded up, and 820000 no longer was, so it moved to the showcase's new size rounded
+up. It leaves 82891 bytes (9.8%), and it still sits below the unpruned starter (908510 bytes, which exits 1).
 
 Re-based 2026-11-16, 880000 → 820000. Since the first commit (844820 bytes) the starter's demo had grown
 10061 bytes, and a starter-derived app with one small screen sat at 99.3% of the budget. Per merge: demo
