@@ -901,6 +901,12 @@ async function main(): Promise<void> {
         for (const reserved of ['kit', 'sssb']) {
             if (slug === reserved) fail(`"${reserved}" is reserved for the framework`)
         }
+        // An app's contract database is its slug folded to underscores plus `_contract`, and `sssb_` is the prefix of the
+        // framework's own fixture databases on the same server (tests/support/app-scaffold.ts), so an
+        // `sssb-…` slug would turn the adopter's first `pnpm verify` red.
+        if (slug.startsWith('sssb-')) {
+            fail(`"${slug}" starts with "sssb-": its contract database would start with "sssb_", the framework's own prefix`)
+        }
     }
     if (options.repo !== null) checkRepoName(options.repo)
     if (options.displayName !== null && slug === null) fail('--name goes with a slug: it names the app being renamed')
