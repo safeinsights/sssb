@@ -18,3 +18,6 @@ dist-demo/
 
 # linked git worktrees from agent sessions — not this checkout's content
 .claude/worktrees/
+
+# pack and consume's lockfile seed: written by pnpm, refreshed by `pnpm pack-and-consume --update-lockfile`
+scripts/pack-and-consume/consumer-lock.yaml

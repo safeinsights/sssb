@@ -15,7 +15,11 @@
 export const WORKAROUNDS = {
     'types-pg': {
         removedBy: 'P3',
-        what: "each app declares @types/pg itself: @sssb/kit's source imports pg's types, and the package does not declare them (they are a devDependency of SSSB's workspace root)",
+        what: "each app declares @types/pg itself: @sssb/kit's source imports pg's types, and the package does not declare them (they are a devDependency of SSSB's workspace root). The framework's copy finds them only through pnpm's hidden hoist (node_modules/.pnpm/node_modules), which is also how an adopter's would",
+    },
+    'undeclared-typescript': {
+        removedBy: 'P3',
+        what: "src/authz/route-scan.ts imports `typescript`, which @sssb/kit does not declare; it resolves only through the consumer's own typescript and pnpm's hoist (P3 makes typescript a peer)",
     },
     'demo-presets-seam-skipped': {
         removedBy: 'P3',
@@ -41,9 +45,25 @@ export const WORKAROUNDS = {
         removedBy: 'P4',
         what: "tests/support/tmp-dir.ts and its marker module are copied into the consumer, because the starter's cron route test imports them by a repo-relative path (P4: makeTestTmpDir from @sssb/tools)",
     },
-    'vitest-setup-copied': {
+    'vitest-config-written': {
         removedBy: 'P4',
-        what: "the consumer's Vitest setup file (jest-dom's matchers) is written by hand, as tests/vitest.setup.ts is in this repo (P4: the Vitest preset carries it)",
+        what: "the consumer's root vitest.config.ts (a project per app, each with its own `@` alias) and its setup file (jest-dom's matchers) are written by the script (P4: the Vitest preset carries both)",
+    },
+    'tsconfig-written': {
+        removedBy: 'P4',
+        what: "each app's tsconfig.json is written by the script, at the ES2022 floor with only the app's `@/` path: the starter's extends this repo's root tsconfig and includes packages/kit/src (P4: the app extends @sssb/tools' tsconfig base)",
+    },
+    'vite-aliases-removed': {
+        removedBy: 'P4',
+        what: "the `@sssb/app-config` and `@sssb/kit` aliases are cut out of each app's vite.demo.config.ts, which point into this repo in the starter (P4: the Vite preset)",
+    },
+    'seam-package-written': {
+        removedBy: 'P12',
+        what: "each app's src/app-config/package.json (the seam package and its exports) and its `link:` dependency are written by the script (P12: @sssb/create writes both)",
+    },
+    'root-devdeps-picked': {
+        removedBy: 'P12',
+        what: "the workspace root's devDependencies (typescript, vitest, esbuild, tsx, the @types and the rest) are picked by hand, at this repo's ranges (P12: @sssb/create writes them)",
     },
     'next-intl-request-path': {
         removedBy: 'P4',

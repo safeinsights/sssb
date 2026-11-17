@@ -39,6 +39,7 @@ import {
     writeFileSync,
     appendFileSync,
 } from 'node:fs'
+import { builtinModules } from 'node:module'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -49,6 +50,7 @@ import {
     lockfileProblems,
     seamPeerProblems,
     tscErrors,
+    undeclaredImports,
 } from './pack-and-consume/checks.mjs'
 import { WORKAROUNDS, unusedWorkarounds, applyWorkaround } from './pack-and-consume/workarounds.mjs'
 
@@ -65,19 +67,36 @@ const STRICT_KIT_ERROR_BASELINE = 122
 
 // ---- arguments ------------------------------------------------------------------------------------
 
+const KNOWN_ARGS = new Set(['--dir', '--skip-build-and-e2e', '--update-lockfile'])
 const args = process.argv.slice(2)
+for (const [i, arg] of args.entries()) {
+    if (args[i - 1] !== '--dir' && !KNOWN_ARGS.has(arg)) fail(`unknown argument ${arg}`)
+}
 const dirArg = args.indexOf('--dir')
-// realpath: on macOS os.tmpdir() is under /var, a symlink to /private/var, and a workspace whose module
-// graph resolves under two spellings loads two copies of `next/headers` (the adoption probe's lesson).
-const BASE = path.resolve(dirArg >= 0 ? args[dirArg + 1] : path.join(realpathSync(tmpdir()), 'sssb-pack-and-consume'))
+if (dirArg >= 0 && (!args[dirArg + 1] || args[dirArg + 1].startsWith('--'))) fail('--dir needs a directory')
 const SKIP_BUILD_AND_E2E = args.includes('--skip-build-and-e2e')
+// Resolve afresh and write the result back as the committed seed (scripts/pack-and-consume/consumer-lock.yaml).
+const UPDATE_LOCKFILE = args.includes('--update-lockfile')
+
+/** Marks a directory as this script's, so a re-run wipes only what an earlier run made. */
+const MARKER = '.sssb-pack-and-consume'
+const BASE_ARG = path.resolve(dirArg >= 0 ? args[dirArg + 1] : path.join(tmpdir(), 'sssb-pack-and-consume'))
+if (BASE_ARG === REPO || BASE_ARG.startsWith(REPO + path.sep) || REPO.startsWith(BASE_ARG + path.sep)) {
+    fail(`--dir must be outside this repository (${REPO}): inside it, pnpm would find SSSB's workspace`)
+}
+if (existsSync(BASE_ARG) && readdirSync(BASE_ARG).length > 0 && !existsSync(path.join(BASE_ARG, MARKER))) {
+    fail(`--dir ${BASE_ARG} is not empty and was not made by this script; it wipes its directory, so give it its own`)
+}
+mkdirSync(BASE_ARG, { recursive: true })
+writeFileSync(path.join(BASE_ARG, MARKER), '')
+// realpath: on macOS the temp directories sit under /var and /tmp, symlinks to /private/…, and a workspace
+// whose module graph resolves under two spellings loads two copies of `next/headers` (the adoption
+// probe's lesson).
+const BASE = realpathSync(BASE_ARG)
 const WS = path.join(BASE, 'workspace')
 const TARBALLS = path.join(BASE, 'tarballs')
 const REPORTS = path.join(BASE, 'reports')
-
-if (BASE === REPO || BASE.startsWith(REPO + path.sep)) {
-    fail(`--dir must be outside this repository (${REPO}): inside it, pnpm would find SSSB's workspace`)
-}
+const LOCK_SEED = path.join(REPO, 'scripts/pack-and-consume/consumer-lock.yaml')
 // Node, TypeScript and pnpm all look UP the tree (node_modules, @types, a workspace root), so a parent
 // directory holding any of these would lend the consumer what it did not install.
 for (let dir = path.dirname(BASE); dir !== path.dirname(dir); dir = path.dirname(dir)) {
@@ -114,10 +133,10 @@ function consumerEnv(extra = {}) {
 /**
  * @param {string} command
  * @param {string[]} commandArgs
- * @param {{ cwd: string, env?: Record<string, string>, capture?: boolean, allowFailure?: boolean }} options
+ * @param {{ cwd: string, env?: Record<string, string | undefined>, capture?: boolean, allowFailure?: boolean, quiet?: boolean }} options
  */
-function run(command, commandArgs, { cwd, env, capture = false, allowFailure = false }) {
-    console.log(`\n$ (${path.relative(BASE, cwd) || '.'}) ${command} ${commandArgs.join(' ')}`)
+function run(command, commandArgs, { cwd, env, capture = false, allowFailure = false, quiet = false }) {
+    if (!quiet) console.log(`\n$ (${path.relative(BASE, cwd) || '.'}) ${command} ${commandArgs.join(' ')}`)
     const result = spawnSync(command, commandArgs, {
         cwd,
         env: env ?? consumerEnv(),
@@ -214,17 +233,31 @@ function rangeOf(/** @type {string} */ name) {
     return range
 }
 
-/** Directories of a copied app that are build output or local state, never source. */
-const NOT_SOURCE = new Set([
-    'node_modules',
-    '.next',
-    'dist-demo',
-    'playwright-report',
-    'test-results',
-    '.data',
-    'tsconfig.tsbuildinfo',
-    'next-env.d.ts',
-])
+/**
+ * Copies the files git tracks under a repo directory, and nothing else: a developer's ignored
+ * `.env.local`, build output or local state must not reach the consumer and make a local run differ
+ * from CI's clean checkout. A tracked file deleted in the working tree is skipped; an edited one is
+ * copied as it is on disk, so uncommitted work is what gets tested.
+ * @param {string} from repo-relative directory
+ * @param {string} to
+ */
+function copyTracked(from, to) {
+    const listed = run('git', ['ls-files', '-z', '--', from], {
+        cwd: REPO,
+        env: process.env,
+        capture: true,
+        quiet: true,
+    })
+    const files = listed.stdout.split('\0').filter(Boolean)
+    if (files.length === 0) fail(`git tracks no files under ${from}`)
+    for (const file of files) {
+        const source = path.join(REPO, file)
+        if (!existsSync(source)) continue
+        const target = path.join(to, path.relative(path.join(REPO, from), source))
+        mkdirSync(path.dirname(target), { recursive: true })
+        cpSync(source, target)
+    }
+}
 
 /**
  * One app, copied from apps/starter and turned into what an adopter's app looks like: the framework from
@@ -233,10 +266,7 @@ const NOT_SOURCE = new Set([
  */
 function scaffoldApp({ app, slug, tarball }) {
     const dir = path.join(WS, 'apps', app)
-    cpSync(path.join(REPO, 'apps/starter'), dir, {
-        recursive: true,
-        filter: (source) => !NOT_SOURCE.has(path.basename(source)),
-    })
+    copyTracked('apps/starter', dir)
 
     // The manifest: the framework from the tarball, the seam as a link to the app's own src/app-config.
     const manifest = readJson(path.join(dir, 'package.json'))
@@ -250,6 +280,7 @@ function scaffoldApp({ app, slug, tarball }) {
     // The seam package (ADR-0014 part 1, option C). Its exports cover every seam module the framework
     // imports: the flat `.ts` modules by pattern, the one directory module by name. The app's own module
     // `type` is copied in, because a nested package.json resets it for everything below.
+    applyWorkaround('seam-package-written')
     /** @type {Record<string, unknown>} */
     const seam = {
         name: '@sssb/app-config',
@@ -262,6 +293,7 @@ function scaffoldApp({ app, slug, tarball }) {
     // A tsconfig of the app's own, at part 2's floor (ES2022 target and lib), with no `paths` but the
     // app's `@/` and nothing included from outside the app. The starter's extends this repo's root and
     // includes packages/kit/src, which is exactly what a consumer cannot do.
+    applyWorkaround('tsconfig-written')
     writeJson(path.join(dir, 'tsconfig.json'), {
         compilerOptions: {
             target: 'ES2022',
@@ -305,6 +337,7 @@ function scaffoldApp({ app, slug, tarball }) {
 
     // The static demo resolves the framework and the seam like every other tool: through the package and
     // its link. Only the app's own `@` alias stays.
+    applyWorkaround('vite-aliases-removed')
     const vite = path.join(dir, 'vite.demo.config.ts')
     replaceOnce(vite, "            '@sssb/app-config': path.resolve(__dirname, 'src/app-config'),\n", '')
     replaceOnce(vite, "            '@sssb/kit': path.resolve(__dirname, '../../packages/kit/src'),\n", '')
@@ -518,6 +551,8 @@ function scaffold(/** @type {string} */ tarball) {
     rmSync(WS, { recursive: true, force: true })
     mkdirSync(WS, { recursive: true })
 
+    // The workspace root's own tools, picked by hand from this repo's manifests (P12: @sssb/create writes them).
+    applyWorkaround('root-devdeps-picked')
     writeJson(path.join(WS, 'package.json'), {
         name: 'consumer-workspace',
         private: true,
@@ -557,8 +592,7 @@ ${allowBuilds}
 # Each importer of @sssb/kit gets an instance of its own, with its own seam, or none (ADR-0014 part 5).
 dedupePeerDependents: false
 
-# The house supply-chain guard Pages inherited: only versions published two days ago or more. The
-# consumer resolves afresh on every run (no lockfile), so this also keeps it off a release hours old.
+# The house supply-chain guard Pages inherited: only versions published two days ago or more.
 minimumReleaseAge: 2880
 `,
     )
@@ -566,7 +600,7 @@ minimumReleaseAge: 2880
     // registry for one, the seam above all, fails instead of passing on whatever the registry answered.
     write(path.join(WS, '.npmrc'), '@sssb:registry=http://127.0.0.1:9/\n')
 
-    applyWorkaround('vitest-setup-copied')
+    applyWorkaround('vitest-config-written')
     write(path.join(WS, 'vitest.setup.ts'), "import '@testing-library/jest-dom/vitest'\n")
 
     // The repo-relative helpers the starter still imports, copied to the same relative places.
@@ -580,6 +614,14 @@ minimumReleaseAge: 2880
     applyWorkaround('tmp-dir-helper-copied')
     cpSync(path.join(REPO, 'tests/support/tmp-dir.ts'), path.join(WS, 'tests/support/tmp-dir.ts'))
     cpSync(path.join(REPO, 'tests/support/tmp-dir-marker.mjs'), path.join(WS, 'tests/support/tmp-dir-marker.mjs'))
+
+    // The committed lockfile seed, as an adopter commits theirs: pnpm keeps every resolution in it whose
+    // specifier still matches and resolves only what changed (the tarball, a range this repo moved). So a
+    // third-party release cannot turn this check red on a PR that did not cause it.
+    if (!UPDATE_LOCKFILE) {
+        if (!existsSync(LOCK_SEED)) fail(`no lockfile seed at ${LOCK_SEED}: run with --update-lockfile to make one`)
+        cpSync(LOCK_SEED, path.join(WS, 'pnpm-lock.yaml'))
+    }
 
     shapeConsole(scaffoldApp({ app: 'console', slug: 'console', tarball }))
     shapeLedger(scaffoldApp({ app: 'ledger', slug: 'ledger', tarball }))
@@ -739,13 +781,42 @@ function checkLayout() {
         )
         if (seam !== own)
             fail(`${app}'s @sssb/kit has ${seam ? `the seam ${seam}` : 'no seam'} linked, not the app's own ${own}`)
-        if (kit.includes(`${path.sep}apps${path.sep}`) && !kit.includes(`node_modules${path.sep}.pnpm`)) {
-            fail(`${app}'s @sssb/kit is not an installed package: ${kit}`)
+        // An installed copy in this workspace's virtual store, never a link back to the repo's source.
+        if (!kit.startsWith(path.join(WS, 'node_modules', '.pnpm') + path.sep)) {
+            fail(`${app}'s @sssb/kit is not a copy installed in this workspace's virtual store: ${kit}`)
         }
         kits.set(app, kit)
     }
     if (kits.get('console') === kits.get('ledger'))
         fail("both apps resolve ONE @sssb/kit instance, so one of them runs on the other's seam")
+}
+
+/**
+ * Every package the shipped source imports is declared in the packed manifest. Today's one exception is
+ * a named workaround; any other fails, and so does the exception once the manifest declares it.
+ */
+const UNDECLARED_TODAY = { typescript: 'undeclared-typescript' }
+
+function checkDeclaredImports() {
+    const kit = kitOf(appDir('console')).kit
+    const sources = filesUnder(path.join(kit, 'src'))
+        .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
+        .map((file) => ({ file: path.relative(kit, file), text: readFileSync(file, 'utf8') }))
+    const found = undeclaredImports(sources, KIT_MANIFEST, builtinModules)
+    const unexpected = []
+    for (const [name, files] of found) {
+        const workaround = UNDECLARED_TODAY[/** @type {keyof typeof UNDECLARED_TODAY} */ (name)]
+        if (workaround) applyWorkaround(workaround)
+        else unexpected.push(`${name} (${[...new Set(files)].join(', ')})`)
+    }
+    if (unexpected.length > 0) {
+        fail(
+            `@sssb/kit's source imports packages its manifest does not declare; they resolve here only through pnpm's hoist:\n  ${unexpected.join('\n  ')}`,
+        )
+    }
+    console.log(
+        `the shipped source under src/ imports only what @sssb/kit declares, bar ${[...found.keys()].join(', ') || 'nothing'}`,
+    )
 }
 
 function typecheck() {
@@ -814,7 +885,14 @@ function unitTests() {
     const kitDirs = {}
     for (const app of ['console', 'ledger'])
         kitDirs[app] = [path.join(appDir(app), 'node_modules/@sssb/kit'), kitOf(appDir(app)).kit]
-    const problems = conformanceProblems(readJson(report), kitDirs)
+    // The app tests this job's claims rest on must have run too, not merely the suite as a whole.
+    const required = {
+        console: ['src/seam-identity.test.ts', 'src/adapters/fake/object-store.test.ts'].map((f) =>
+            path.join(appDir('console'), f),
+        ),
+        ledger: ['src/seam-identity.test.ts'].map((f) => path.join(appDir('ledger'), f)),
+    }
+    const problems = conformanceProblems(readJson(report), kitDirs, required)
     if (problems.length > 0)
         fail(`the seam-conformance suites did not all run from the tarball:\n  ${problems.join('\n  ')}`)
     console.log(`seam-conformance: ${CONFORMANCE_SUITES.length} suites ran and passed from each app's own @sssb/kit`)
@@ -909,7 +987,7 @@ console.log(`pack and consume: ${BASE}`)
 
 /** @type {string} */
 let tarball = ''
-/** The PACKED manifest, as the consumer installs it. @type {{ exports: Record<string, string> }} */
+/** The PACKED manifest, as the consumer installs it. @type {{ name?: string, exports: Record<string, string>, dependencies?: Record<string, string>, peerDependencies?: Record<string, string>, peerDependenciesMeta?: Record<string, unknown> }} */
 let KIT_MANIFEST = { exports: {} }
 step('pack @sssb/kit', () => {
     rmSync(TARBALLS, { recursive: true, force: true })
@@ -929,8 +1007,36 @@ step('pack @sssb/kit', () => {
     )
 })
 step('scaffold the consumer workspace', () => scaffold(tarball))
-step('install the tarball', () => run('pnpm', ['install', '--no-frozen-lockfile'], { cwd: WS }))
+step('install the tarball', () => {
+    run('pnpm', ['install', '--no-frozen-lockfile'], { cwd: WS })
+    const lock = path.join(WS, 'pnpm-lock.yaml')
+    if (UPDATE_LOCKFILE) {
+        cpSync(lock, LOCK_SEED)
+        console.log(`wrote the resolution back to ${path.relative(REPO, LOCK_SEED)}: commit it`)
+        return
+    }
+    // Lines that moved for any reason but the tarball itself mean the seed is behind this repo's ranges
+    // or the framework's dependencies. Not a failure (a Dependabot PR cannot refresh the seed), a prompt.
+    const tarballLine = (/** @type {string} */ line) => line.includes('sssb-kit-')
+    const before = new Set(
+        readFileSync(LOCK_SEED, 'utf8')
+            .split('\n')
+            .filter((line) => !tarballLine(line)),
+    )
+    const after = new Set(
+        readFileSync(lock, 'utf8')
+            .split('\n')
+            .filter((line) => !tarballLine(line)),
+    )
+    const added = [...after].filter((line) => !before.has(line)).length
+    const removed = [...before].filter((line) => !after.has(line)).length
+    if (added + removed > 0) {
+        const note = `the consumer's resolution moved from its seed (${added} lines added, ${removed} removed): refresh it with \`pnpm pack-and-consume --update-lockfile\` and commit scripts/pack-and-consume/consumer-lock.yaml`
+        console.log(process.env.GITHUB_ACTIONS ? `::notice title=pack and consume::${note}` : `NOTE: ${note}`)
+    }
+})
 step('layout: lockfile, seam links, one instance per app', checkLayout)
+step('the packed source imports only what it declares', checkDeclaredImports)
 step('typecheck at the ES2022 floor', typecheck)
 step('typecheck with the strict-flag set', typecheckStrict)
 step('unit tests and seam conformance, from the workspace root', unitTests)

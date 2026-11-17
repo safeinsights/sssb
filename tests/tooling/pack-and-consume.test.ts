@@ -5,6 +5,7 @@ import {
     lockfileProblems,
     seamPeerProblems,
     tscErrors,
+    undeclaredImports,
 } from '../../scripts/pack-and-consume/checks.mjs'
 import { applyWorkaround, WORKAROUNDS } from '../../scripts/pack-and-consume/workarounds.mjs'
 
@@ -81,6 +82,16 @@ describe('lockfileProblems', () => {
         const { problems } = lockfileProblems(fetched)
         expect(problems).toHaveLength(2)
         expect(problems.every((p) => p.includes('@sssb/app-config'))).toBe(true)
+    })
+
+    it("fails the framework linked rather than installed from the tarball (a link would be this repo's source)", () => {
+        const linked = GOOD_LOCKFILE.replace(
+            'version: file:../tarballs/sssb-kit-0.1.0.tgz(@sssb/app-config@apps+console+src+app-config)(react@19.2.9)',
+            'version: link:../../packages/kit',
+        )
+        expect(lockfileProblems(linked).problems).toEqual([
+            expect.stringContaining('@sssb/kit resolves to link:../../packages/kit'),
+        ])
     })
 
     it('fails closed on an @sssb line it cannot classify', () => {
@@ -161,6 +172,16 @@ describe('conformanceProblems', () => {
         ).toHaveLength(CONFORMANCE_SUITES.length)
     })
 
+    it("fails an app's own required test that did not run, even when the kit suites all passed", () => {
+        const own = '/ws/apps/console/src/seam-identity.test.ts'
+        const kitRan = ran(kitDirs.console[1], ['passed'])
+        expect(conformanceProblems({ testResults: kitRan }, kitDirs, { console: [own] })).toEqual([
+            'console: seam-identity.test.ts did not run',
+        ])
+        const withOwn = [...kitRan, { name: own, assertionResults: [{ status: 'passed' }] }]
+        expect(conformanceProblems({ testResults: withOwn }, kitDirs, { console: [own] })).toEqual([])
+    })
+
     it('fails an empty report', () => {
         expect(conformanceProblems({}, kitDirs)).toHaveLength(CONFORMANCE_SUITES.length)
     })
@@ -176,5 +197,54 @@ describe('the workaround register', () => {
             expect(workaround.removedBy, id).toMatch(/^P\d+$/)
             expect(workaround.what.length, id).toBeGreaterThan(40)
         }
+    })
+})
+
+describe('undeclaredImports', () => {
+    const manifest = {
+        name: '@sssb/kit',
+        dependencies: { kysely: '^0.29.7' },
+        peerDependencies: { next: '^16.4.6' },
+        peerDependenciesMeta: { '@sssb/app-config': { optional: true } },
+    }
+    const builtins = ['fs', 'path']
+
+    it('names an undeclared package, by its package name, with the files that import it', () => {
+        const sources = [
+            {
+                file: 'src/a.ts',
+                text: "import { sql } from 'kysely'\nimport ts from 'typescript'\nimport { x } from '@scope/pkg/deep/path'",
+            },
+            { file: 'src/b.ts', text: "const m = await import('typescript')" },
+        ]
+        expect(Object.fromEntries(undeclaredImports(sources, manifest, builtins))).toEqual({
+            typescript: ['src/a.ts', 'src/b.ts'],
+            '@scope/pkg': ['src/a.ts'],
+        })
+    })
+
+    it('accepts dependencies, peers, the seam, the package itself, builtins and relative paths', () => {
+        const text = [
+            "import { cookies } from 'next/headers'",
+            "import { Migrator } from 'kysely/migration'",
+            "import { appMigrations } from '@sssb/app-config/db/migrations'",
+            "import { x } from '@sssb/kit/core/jobs'",
+            "import { readFileSync } from 'node:fs'",
+            "import path from 'path'",
+            "import { y } from './local'",
+        ].join('\n')
+        expect(undeclaredImports([{ file: 'src/c.ts', text }], manifest, builtins).size).toBe(0)
+    })
+
+    it('ignores test and story files, and module names in comments', () => {
+        const sources = [
+            { file: 'src/a.test.ts', text: "import { z } from 'vitest'" },
+            { file: 'src/a.stories.tsx', text: "import { Story } from '@ladle/react'" },
+            {
+                file: 'src/d.ts',
+                text: "/** e.g. import { a } from 'left-pad' */\n// from 'right-pad'\nexport const d = 1",
+            },
+        ]
+        expect(undeclaredImports(sources, manifest, builtins).size).toBe(0)
     })
 })
