@@ -35,6 +35,8 @@
         "check:demo-size": "pnpm --filter './apps/*' check:demo-size",
         "e2e:demo-static": "pnpm --filter './apps/*' e2e:demo-static",
         "test:contract": "node scripts/check-tmpdir-leak.mjs vitest run --config vitest.contract.config.ts",
+        "changeset": "changeset",
+        "release:check": "node scripts/release.mjs check",
         "pack-and-consume": "node scripts/pack-and-consume.mjs"
     },
     "dependencies": {
@@ -47,9 +49,14 @@
         "react-dom": "~19.3.1"
     },
     "devDependencies": {
+        "@changesets/assemble-release-plan": "7.0.0",
+        "@changesets/cli": "3.0.3",
+        "@changesets/config": "4.0.1",
+        "@changesets/read": "1.0.1",
         "@commitlint/cli": "^21.2.4",
         "@commitlint/config-conventional": "^21.2.4",
         "@eslint/js": "^10.0.1",
+        "@manypkg/get-packages": "3.1.0",
         "@next/eslint-plugin-next": "^16.4.6",
         "@playwright/test": "^1.64.1",
         "@testing-library/jest-dom": "^7.0.1",
