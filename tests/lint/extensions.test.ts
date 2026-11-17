@@ -190,15 +190,19 @@ describe('the carve-outs still let through what they were made for, in every spe
         expect(fired(await lint(`${APP}/src/components/kv-card.stories.${ext}`, label), A11Y_LITERAL)).toBe(0)
     })
 
-    // Panda's generated styled-system is ignored, and only what Panda writes there: `.mjs` and `.d.ts`.
-    it.each(['css.mjs', 'css.d.ts'])('generated styles (%s) are not linted', async (name) => {
+    // Panda's generated styled-system is ignored, and only what Panda 2 writes there: `.js` and `.d.ts`.
+    it.each(['css.js', 'css.d.ts'])('generated styles (%s) are not linted', async (name) => {
         expect(await isIgnored(`${APP}/src/styles/generated/css/${name}`)).toBe(true)
     })
 
-    it.each(['ts', 'js'])('a hand-written .%s module in the generated directory is fenced', async (ext) => {
-        const file = `${APP}/src/styles/generated/css/helper.${ext}`
-        expect(fired(await lint(file, readsEnv(file)), PROCESS_ENV)).toBe(1)
-    })
+    // Every other extension ESLint lints, so widening the ignore to one of them turns this red.
+    it.each(EXTENSIONS.filter((ext) => ext !== 'js'))(
+        'a hand-written .%s module in the generated directory is fenced',
+        async (ext) => {
+            const file = `${APP}/src/styles/generated/css/helper.${ext}`
+            expect(fired(await lint(file, readsEnv(file)), PROCESS_ENV)).toBe(1)
+        },
+    )
 })
 
 // What printing the effective config for every zone found besides the two reported holes: blocks that took

@@ -11,7 +11,9 @@ on:
     pull_request:
 
 concurrency:
-    group: checks-${{ github.ref }}
+    # A PR's newer push cancels its older run. A push to main never does: release.yml waits for this workflow to
+    # pass on each merge commit and on each release commit, and a cancelled run there would hold a release back.
+    group: checks-${{ github.event_name == 'push' && github.sha || github.ref }}
     cancel-in-progress: true
 
 jobs:
@@ -40,6 +42,25 @@ jobs:
             # with no guard. Both are fast and fully offline.
             - run: pnpm --filter infra synth
             - run: pnpm --filter spike-kysely-pglite test
+
+    # ADR-0014 part 10: on 0.x a breaking change is a `minor`, because Changesets turns a `major` into 1.0.0 and
+    # npm versions cannot be withdrawn. Fails on a `major` changeset and on any release plan reaching 1.0.0,
+    # judged as the plan will be once the packages are public, and on changesets or packages that would stall a
+    # release later (scripts/release.mjs, `check`). release.yml runs the same check again before it versions
+    # anything.
+    release-plan:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v7
+            - uses: pnpm/action-setup@v6
+            - uses: actions/setup-node@v7
+              with:
+                  node-version-file: .nvmrc
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile --ignore-scripts
+            - run: pnpm release:check
 
     # The anti-drift job: the SAME migrations + RLS proof suite that unit tests run on pglite,
     # against real Postgres (locally that's embedded-postgres; here a service container). One server, and a
@@ -274,6 +295,51 @@ jobs:
               with:
                   name: playwright-report-adoption-probe
                   path: ${{ env.PROBE_DIR }}/apps/*/playwright-report/
+                  retention-days: 7
+
+    # ADR-0014 rule 5 (P2): the framework as an adopter gets it. Packs @sssb/kit, installs the TARBALL
+    # into an adopter-shaped workspace built outside this checkout from copies of apps/starter (two apps
+    # with different seams linked by `link:`, a sibling package, and a seamless importer that must fail),
+    # and runs that workspace's verify. Inside this repo workspace links and per-app aliases resolve the
+    # framework and the seam, which hides exactly what an adopter would hit; every step's logic is in
+    # scripts/pack-and-consume.mjs, so `pnpm pack-and-consume` reproduces this job locally.
+    #
+    # No `pnpm install` of this repo: the job needs only `pnpm pack`. The consumer installs from its own
+    # committed lockfile seed (scripts/pack-and-consume/consumer-lock.yaml), so its caches are keyed on
+    # that file, under prefixes of their own: sharing setup-node's pnpm cache key would let this job save
+    # a store holding only the consumer's packages for every other job to restore.
+    pack-and-consume:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: pnpm/action-setup@v6
+            - uses: actions/setup-node@v7
+              with:
+                  node-version-file: .nvmrc
+            - name: locate the pnpm store
+              id: pnpm-store
+              run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+            - uses: actions/cache@v6
+              with:
+                  path: ${{ steps.pnpm-store.outputs.path }}
+                  key: pack-and-consume-pnpm-${{ runner.os }}-${{ hashFiles('scripts/pack-and-consume/consumer-lock.yaml') }}
+                  restore-keys: pack-and-consume-pnpm-${{ runner.os }}-
+            # The consumer's own Playwright, pinned by the same seed, has its own browser revision.
+            - uses: actions/cache@v6
+              with:
+                  path: ~/.cache/ms-playwright
+                  key: pack-and-consume-playwright-${{ runner.os }}-${{ hashFiles('scripts/pack-and-consume/consumer-lock.yaml') }}
+                  restore-keys: pack-and-consume-playwright-${{ runner.os }}-
+            - run: node scripts/pack-and-consume.mjs --dir "$RUNNER_TEMP/pack-and-consume"
+            # On CI the starter's Playwright reporter is `github`, so the evidence on a failure is the
+            # traces under test-results/ (trace: on-first-retry), not an HTML report.
+            - uses: actions/upload-artifact@v7
+              if: failure()
+              with:
+                  name: pack-and-consume-e2e
+                  path: |
+                      ${{ runner.temp }}/pack-and-consume/workspace/apps/*/test-results/
+                      ${{ runner.temp }}/pack-and-consume/workspace/apps/*/playwright-report/
                   retention-days: 7
 
     secret-scan:

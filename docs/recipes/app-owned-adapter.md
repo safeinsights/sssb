@@ -219,7 +219,7 @@ the extensions other than `.ts` and `.tsx`).
   `(process.env as Record<string, string>).APP_MODE`. The getDb ban differs here: it also matches the name as
   a string, so `db['getDb' as const]`, `Reflect.get(db, 'getDb')` and a key held in a variable are caught. A
   name built at runtime (`'get' + 'Db'`) is not.
-- A hand-written `.mjs` file in `apps/<app>/src/styles/generated/` is not linted at all: the `.mjs` and
+- A hand-written `.js` file in `apps/<app>/src/styles/generated/` is not linted at all: the `.js` and
   `.d.ts` files there are Panda's output, and ignored. Anything else in that directory is fenced.
 - To the fence, a vendor SDK is whatever `vendorSdkPattern` lists. A package missing from the list is
   ordinary code to it.

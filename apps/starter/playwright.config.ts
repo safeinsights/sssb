@@ -21,13 +21,13 @@ export default defineConfig({
     // warm-up pass to inherit, so the budget is raised rather than left to flake.
     timeout: 60_000,
     expect: { timeout: 15_000 },
-    forbidOnly: !!process.env.CI,
-    retries: process.env.CI ? 2 : 1,
+    forbidOnly: !!process.env['CI'],
+    retries: process.env['CI'] ? 2 : 1,
     // One worker, on CI too — this app's whole suite is one spec, so parallelism buys nothing here,
     // and the showcase's config explains at length why more workers against one shared world costs
     // reliability rather than saving time.
     workers: 1,
-    reporter: process.env.CI ? 'github' : 'list',
+    reporter: process.env['CI'] ? 'github' : 'list',
     use: {
         baseURL: BASE_URL,
         trace: 'on-first-retry',
@@ -36,7 +36,7 @@ export default defineConfig({
     webServer: {
         command: 'pnpm dev',
         url: BASE_URL,
-        reuseExistingServer: !process.env.CI,
+        reuseExistingServer: !process.env['CI'],
         timeout: 120_000,
     },
 })

@@ -38,11 +38,18 @@ export default async function SignInPage({
         return <SignInScreen body={<RealSignInForm returnTo={target} labels={labels} />} />
     }
 
-    const people = listAllPeople().map((p) => ({
-        id: p.id,
-        name: p.name,
-        role: p.memberships[0].role,
-        tenantName: findTenant(p.tenantSlug)?.name ?? p.tenantSlug,
-    }))
+    // A person with no membership has no role to sign in as, so the picker leaves them out.
+    const people = listAllPeople().flatMap((p) => {
+        const membership = p.memberships[0]
+        if (!membership) return []
+        return [
+            {
+                id: p.id,
+                name: p.name,
+                role: membership.role,
+                tenantName: findTenant(p.tenantSlug)?.name ?? p.tenantSlug,
+            },
+        ]
+    })
     return <SignInScreen body={<PickerGlue people={people} returnTo={target} />} />
 }
