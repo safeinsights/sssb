@@ -2753,3 +2753,124 @@ Decisions P1 made that ADR-0014 did not:
   test GUC `sssb.probe`, temp-dir prefixes, the tour cursor's DOM ids (`sssb-tour-cursor`), the test MIME types
   (`application/x-sssb-test`), the fixture's slug (`sssbfix`) and the Vite plugin name `sssb:prune-mantine-css`.
   None is deployed state.
+
+## Pack and consume (2026-11-17, ADR-0014 P2, `ci/pack-and-consume`)
+
+`scripts/pack-and-consume.mjs` and the `pack-and-consume` job in `checks.yml` pack `@sssb/kit`, build an
+adopter-shaped workspace outside the checkout from copies of `apps/starter`, install the tarball and run that
+workspace's verify. Decisions ADR-0014 did not pin down:
+
+- **Two apps, one full verify.** `apps/console` runs everything part 7 lists for P2. `apps/ledger`, the second
+  app with a different seam (its own slug, and an extra migration imported through `@/`), runs typecheck at the
+  floor and with the strict flags, unit tests with the conformance suites, and its migrator bundle, but not
+  `next build`, e2e or the static demo: a second copy of the same starter adds CI minutes there and no
+  resolution path the console does not already cover.
+- **The seam's isolation is proved four ways**: on disk (each app's `@sssb/kit` in the virtual store has the
+  app's own `src/app-config` linked beside it, and the two apps hold two instances), at run time (each app's
+  `seam-identity.test.ts` reads its own slug through the framework's `WEBHOOK_SIGNATURE_HEADER`), in each
+  migrator bundle (the app's migrations and no other app's), and by the conformance suites running from each
+  app's own copy (Vitest's JSON report is matched against both spellings of that copy's path).
+- **"No install reaches the registry for `@sssb/app-config`" is enforced, not observed.** The consumer's
+  `.npmrc` routes the whole `@sssb` scope to `http://127.0.0.1:9/`, where nothing listens, so any registry
+  request for an SSSB package fails the install; the lockfile check fails any `@sssb/kit` resolution that is not
+  a `file:` tarball and any seam that is not a `link:`; and the lockfile's integrity for the framework must be
+  the sha512 of the tarball this run packed.
+- **P1's `peerDependenciesMeta`-only shape matters inside this repo, not to a consumer.** Probed: with the seam
+  also listed in `peerDependencies` (still optional), the consumer's install did not request it. With the seam
+  not optional at all, the install did, and the dead registry failed it. The packed manifest is still held to
+  P1's shape, because this repo's own install needs it.
+- **The typecheck covers the framework's whole public surface.** A consumer typechecks only the framework modules
+  it reaches, and the starter reaches a fraction of them, so each app re-exports every `exports` key type-only
+  (`src/sssb-surface.ts`). Without it, a new strict-flag error in an unreached module stayed green.
+- **The strict-flag typecheck is a ratchet on the framework and a hard gate on the app.** All nine of part 2's
+  flags are on at once. Errors are split by where they sit: any in the app's own code fails, and the framework's
+  must equal `STRICT_KIT_ERROR_BASELINE` exactly (122 over the whole published surface; part 2 counted 116 over the
+  non-test source at 6d67a7c), so P3 lowers the number as it fixes them and a new framework error cannot hide
+  under it.
+- **The starter's own code now passes the strict-flag set**, through edits to five files: bracket access to
+  `process.env` in both Playwright configs and in the cron route test (and to a request header there), a typed
+  `welcome()` catalog helper, and the sign-in picker leaving out a person with no membership instead of throwing.
+  The starter is `@sssb/create`'s template, so an adopter who turns the flags on starts clean; and with the app's
+  own errors at zero, a framework type change that surfaces as an error in app code shows up.
+- **The packed source may import only what its manifest declares.** pnpm's hidden hoist
+  (`node_modules/.pnpm/node_modules`) lends every package in the graph to every other, so an undeclared import
+  resolves in the consumer and nothing else would notice. The job parses each shipped file with TypeScript's
+  `preProcessFile`. `typescript` itself, imported by `src/authz/route-scan.ts`, is today's one exception, a named
+  workaround until P3 makes it a peer.
+- **The consumer installs from a committed lockfile seed** (`scripts/pack-and-consume/consumer-lock.yaml`), as an
+  adopter commits theirs. pnpm keeps every resolution whose specifier still matches and resolves only what changed:
+  the tarball, and any range this repo moved. With fresh resolution, a third-party typings release could move the
+  framework's strict-error count and turn unrelated PRs red (round 1 of review). When the resolution moves, the job prints a notice
+  (not a failure: a Dependabot PR cannot refresh the seed), and `pnpm pack-and-consume --update-lockfile` refreshes
+  it. Version ranges come from this repo's manifests, with `minimumReleaseAge: 2880`.
+- **The negative fixture runs under tsx**, from `packages/seamless`, which takes the tarball and links no seam.
+  It must exit non-zero AND name `@sssb/app-config` in its error, so a failure for any other reason does not
+  count as the loud failure part 5 asks for.
+- **The app-owned adapter is reached through a route**, `/api/objects`, so `next build` compiles the registry,
+  its `import()` of `real/` and the vendor SDK against the packed framework. A unit test did not load the
+  registry: the framework's adapters import `server-only`, and the app's `vi.mock('server-only')` did not stop it
+  throwing.
+- **The consumer stands only on what it installed.** Its commands run with every `PATH` entry under this repo
+  removed (through `pnpm pack-and-consume`, PATH starts with the repo's `node_modules/.bin`) and without pnpm's
+  `npm_*` variables; the starter is copied from what git sees, so an ignored `.env.local` stays behind; and every
+  parent of `--dir` must hold no `node_modules`, `package.json` or `pnpm-workspace.yaml`.
+
+## Publishing from CI, before anything needs publishing (2026-11-17, `ci/release-workflow`)
+
+ADR-0014's P1b: `.github/workflows/release.yml`, Changesets in one fixed group, and `scripts/release.mjs`, which
+both the workflow and CI's `release-plan` job run. Decisions the ADR left open:
+
+- **The workflow file is `release.yml`.** npm's trusted publisher on every package names it, so a rename stops
+  every publish until each publisher is edited. CanopyCMS's is `publish.yml`; here the file also cuts the release
+  commit, and "release" names both halves.
+- **Dormant through `privatePackages.version: false`, not through a switch in the workflow.** Every package is
+  private until P14, so Changesets plans no release, `plan` reports none and `push` is skipped, and on a tag `pack`
+  lists nothing and `publish` is skipped. Taking `private` off in P14 is the whole switch. The cost is that
+  Changesets' own plan is empty today, so a check of that plan could never fail; `pnpm release:check` judges the
+  plan with private packages versioned instead, which is the plan the packages will release once public.
+- **The part 10 `release-commit` job is two jobs, `plan` and `push`.** `plan` installs the workspace and runs
+  Changesets, which is dependency code; `push` holds the release app's key. In one job, dependency code could have
+  written a `BASH_ENV` into `$GITHUB_ENV` and so run inside the later step that holds the token (the independent
+  review found it). `plan` hands `push` a patch, and `push` installs nothing, copies `scripts/release.mjs` out of
+  the commit, applies the patch and runs `verify-release`, which works out from HEAD alone which changesets must be
+  consumed and what version they imply, and refuses any other change: each released manifest may differ in its
+  version line and nowhere else, and changelogs only beside them. A compromised `plan` can still write changelog
+  text, and nothing else.
+- **`changeset version` runs with `pnpm_config_verify_deps_before_run=false`.** With `format: "prettier"`,
+  Changesets formats the changelogs through `pnpm exec prettier`, and pnpm 11, seeing a workspace version changed
+  since the last install, first re-installs with every script, the root `prepare` included. Run under
+  `pnpm exec vitest`, the setting is already in the environment and hides this, so the test clears it.
+- **Every fixed-group package needs `repository.url` from the first PR.** npm requires it to match the publishing
+  repository (docs.npmjs.com/trusted-publishers), and a publish refused for it would come after the tag exists, so
+  `pnpm release:check` requires it now and `packages/kit/package.json` gains one.
+- **The release waits for `checks` twice**: `plan` on the merge commit, as CanopyCMS's does, and `pack` on the
+  release commit, because part 10 asks for both apps and pack and consume (a `checks` job since P2) to be green
+  on the release commit itself. The wait is one function (`scripts/release.mjs wait-for-checks`), fail-closed: anything
+  but a completed, successful push run on `main` for that exact commit keeps it polling until an hour has passed,
+  and the workflow requires its `passed <sha>` line, not only its exit code. For that, `checks` no longer cancels a
+  push run on `main` when the next push arrives: its concurrency group is the commit for a push and the ref for a
+  PR, so PRs still cancel their own older runs.
+- **The tag's work is two jobs, not one.** `pack` installs the workspace (with `--ignore-scripts`), lists and
+  packs; `publish`, the only job with `id-token: write`, sparse-checks out three files, installs nothing, re-reads
+  each tarball's own manifest (fixed group, the tag's version, not private) and layout (plain files under one
+  `package/`, at normalized paths), skips a version npm already holds from this commit (so "Re-run failed jobs"
+  resumes a release stopped part-way), refuses one npm holds from another commit or a `latest` newer than this
+  release, and only then runs `npx npm@11.21.2 publish --provenance`. A compromised dependency therefore runs only
+  where there is no OIDC token. CanopyCMS installs and builds in its publishing job. npm's documentation puts the
+  floor for trusted publishing at npm 11.5.1, not the 11.5.0 that part 10 and the brief carried over from
+  CanopyCMS's comment; the pin is above both.
+- **`publish` runs in an environment of its own, `npm-publish`**, separate from `release`, which holds the release
+  app's key. npm's trusted publisher binds the repository, the workflow filename and, optionally, an environment,
+  but no ref, so any branch can carry a `release.yml`. GitHub admits a job to an environment only on the refs its
+  deployment rule allows, so naming `npm-publish` on npm and limiting it to `v*` tags stops an edited `release.yml`
+  on a branch; a tag ruleset under which only the release app may create `v*` tags stops one on a tag. Both are
+  repository settings, so neither is in this PR.
+- **`create-sssb`'s source stays out of this repository for now.** It is the published mistype guard, it prints
+  one line and exits 1, and nothing about it is due to change. Bringing it in would add a workspace package that is
+  outside the `@sssb/*` group, so it would need either a second release path (a second way to publish, which part 10
+  rules out) or a place in the fixed group (a new guard version with every release, for no change). Its trusted
+  publisher still names `release.yml`, so if it ever must change, its source comes in then and goes out through this
+  file; `scripts/release.mjs` refuses to publish any package outside the fixed group until that is decided.
+- **npm does not refuse a private tarball on a dry run.** `npm publish <tarball> --dry-run` (npm 11.21.2) printed
+  `+ @sssb/kit@0.1.0` for the packed kit, whose manifest says `"private": true`. So the private check is the
+  workflow's own (`preflight`), not npm's.
