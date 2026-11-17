@@ -58,10 +58,10 @@ const REPO = path.resolve(import.meta.dirname, '..')
  * Errors inside @sssb/kit's own source under the strict-flag set, per app, measured from the tarball.
  * The workaround `strict-flags-kit-baseline` (removed by P3, which makes the framework compile under the
  * set): a count above this fails, and so does a count below it, so the number is lowered as P3's work
- * lands instead of leaving room for new errors. 116 when P2 landed, the same total ADR-0014 part 2
- * measured flag by flag (26 + 24 + 58 + 8; the other five flags give none).
+ * lands instead of leaving room for new errors. 122 when P2 landed, over every published module (each app
+ * re-exports the whole surface); ADR-0014 part 2 counted 116 over the framework's non-test source at 6d67a7c.
  */
-const STRICT_KIT_ERROR_BASELINE = 116
+const STRICT_KIT_ERROR_BASELINE = 122
 
 // ---- arguments ------------------------------------------------------------------------------------
 
@@ -319,6 +319,20 @@ function scaffoldApp({ app, slug, tarball }) {
     // ships yet. It is not part of this job's verify (CI's contract job runs it for both apps in-repo).
     applyWorkaround('contract-test-dropped')
     rmSync(path.join(dir, 'tests/contract'), { recursive: true })
+
+    // The WHOLE public surface, in the app's type program. A consumer typechecks only the framework
+    // modules it reaches, and the starter reaches a fraction of them; an adopter may import any published
+    // subpath, so every `exports` key (the JSON catalogs aside) is re-exported here, type-only, and both
+    // typechecks cover each one against this app's seam. Nothing imports this file, so no bundle sees it.
+    const surface = Object.keys(KIT_MANIFEST.exports)
+        .filter((key) => key !== './package.json' && !key.endsWith('.json'))
+        .map((key, i) => `export type * as m${i} from '@sssb/kit/${key.slice(2)}'`)
+    if (surface.length < 100)
+        fail(`the framework's exports map lists only ${surface.length} modules; expected its whole public surface`)
+    write(
+        path.join(dir, 'src/sssb-surface.ts'),
+        `// Every published @sssb/kit module, so the typecheck covers the whole public surface (scripts/pack-and-consume.mjs).\n${surface.join('\n')}\n`,
+    )
 
     // Each app proves, from its own code, that the framework it reaches reads ITS seam: the slug the
     // framework builds its webhook headers from when the module loads. (Which migrations it composes is
@@ -895,6 +909,8 @@ console.log(`pack and consume: ${BASE}`)
 
 /** @type {string} */
 let tarball = ''
+/** The PACKED manifest, as the consumer installs it. @type {{ exports: Record<string, string> }} */
+let KIT_MANIFEST = { exports: {} }
 step('pack @sssb/kit', () => {
     rmSync(TARBALLS, { recursive: true, force: true })
     mkdirSync(TARBALLS, { recursive: true })
@@ -905,6 +921,7 @@ step('pack @sssb/kit', () => {
     const manifest = JSON.parse(
         run('tar', ['-xzOf', tarball, 'package/package.json'], { cwd: BASE, capture: true }).stdout,
     )
+    KIT_MANIFEST = manifest
     const problems = seamPeerProblems(manifest)
     if (problems.length > 0) fail(`the packed manifest breaks the seam pin:\n  ${problems.join('\n  ')}`)
     console.log(
