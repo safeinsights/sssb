@@ -111,7 +111,8 @@ export async function check(root) {
     const ws = await loadWorkspace(root)
     const versions = new Map(ws.packages.map((p) => [p.packageJson.name, p.packageJson.version]))
     const problems = []
-    for (const p of ws.packages.filter((p) => ws.fixed.has(p.packageJson.name))) {
+    const group = ws.packages.filter((p) => ws.fixed.has(p.packageJson.name))
+    for (const p of group) {
         // npm's provenance check refuses a publish whose `repository.url` does not name the repository that
         // built it, and by then the release's tag exists; so it is required from the first PR.
         if (!REPOSITORY_URL.test(p.packageJson.repository?.url ?? '')) {
@@ -119,7 +120,15 @@ export async function check(root) {
                 `${p.relativeDir}/package.json needs "repository": { "url": "git+https://github.com/<owner>/<repo>.git" }`,
             )
         }
+        // The release job's check (verifyRelease) reads only packages/*, the one place SSSB's packages live.
+        if (!MANIFEST.test(`${p.relativeDir}/package.json`)) {
+            problems.push(`${p.packageJson.name} is in ${p.relativeDir}; a released package lives in packages/<name>`)
+        }
     }
+    // Part private, part public, and Changesets would version some of the group and leave the changesets that
+    // name the rest pending forever, which stops every later release.
+    const privacy = new Set(group.map((p) => isPrivate(p.packageJson, `${p.relativeDir}/package.json`)))
+    if (privacy.size > 1) problems.push('the fixed group must be all private or all public')
     for (const changeset of ws.changesets) {
         for (const release of changeset.releases) {
             // A changeset that names a package outside the group is never consumed while that package is
@@ -388,6 +397,16 @@ const CHANGELOG = /^packages\/[^/]+\/CHANGELOG\.md$/
 
 const BUMPS = ['patch', 'minor', 'major']
 
+/** Whether Changesets (@changesets/read 1.0.1) reads this `.changeset/` file as a changeset. */
+function isChangesetName(name) {
+    return (
+        name.endsWith('.md') &&
+        !name.startsWith('.') &&
+        !/^readme\.md$/i.test(name) &&
+        !['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'].includes(name)
+    )
+}
+
 /**
  * The releases a changeset's frontmatter names, read without a YAML parser (the `push` job installs none): one
  * `"name": type` per line, and anything else fails rather than being guessed at.
@@ -429,7 +448,7 @@ export function verifyRelease(root, version) {
         const manifest = JSON.parse(atHead(file))
         if (inFixedGroup(manifest.name) && !isPrivate(manifest, file)) released.set(file, manifest.version)
     }
-    const pending = tracked.filter((f) => CHANGESET_FILE.test(f) && !/^readme\.md$/i.test(path.basename(f)))
+    const pending = tracked.filter((f) => CHANGESET_FILE.test(f) && isChangesetName(path.basename(f)))
     let bump = -1
     for (const file of pending) {
         for (const r of changesetReleases(atHead(file), file)) {
@@ -571,13 +590,15 @@ async function main(argv) {
     }
     if (command === 'verify-release' && rest.length === 1) {
         verifyRelease(root, rest[0])
-        console.error(`the staged release of ${rest[0]} changes only versions, changelogs and changesets`)
+        // The workflow requires this line, so a run that somehow skipped the check cannot pass for one.
+        console.log(`verified ${rest[0]}`)
         return
     }
     if (command === 'wait-for-checks' && rest.length === 1) {
         const { GITHUB_REPOSITORY: repo, GH_TOKEN: token } = process.env
         await waitForChecks({ repo, sha: rest[0], token })
-        console.error(`checks passed on ${rest[0]}`)
+        // As above: the workflow requires this line.
+        console.log(`passed ${rest[0]}`)
         return
     }
     throw new Error(USAGE)

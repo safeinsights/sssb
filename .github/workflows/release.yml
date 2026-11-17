@@ -68,11 +68,14 @@ jobs:
                   node-version-file: .nvmrc
 
             # THE CI GATE (scripts/release.mjs): `checks` must pass on this merge commit, which no PR's run tested.
-            # It runs before anything is installed.
+            # It runs before anything is installed, and its `passed <sha>` line is required, not just its exit code.
             - name: wait for checks to pass on this commit
               env:
                   GH_TOKEN: ${{ github.token }}
-              run: node scripts/release.mjs wait-for-checks "$GITHUB_SHA"
+              run: |
+                  set -euo pipefail
+                  out=$(node scripts/release.mjs wait-for-checks "$GITHUB_SHA")
+                  [ "$out" = "passed $GITHUB_SHA" ] || { echo "::error::the CI gate did not report a pass"; exit 1; }
 
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
             - run: pnpm install --frozen-lockfile --ignore-scripts
@@ -143,7 +146,8 @@ jobs:
                   [[ "$VERSION" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::not a 0.x release version: '$VERSION'"; exit 1; }
                   cp scripts/release.mjs "$RUNNER_TEMP/release.mjs"
                   git apply --index "$RUNNER_TEMP/release/release.patch"
-                  node "$RUNNER_TEMP/release.mjs" verify-release "$VERSION"
+                  out=$(node "$RUNNER_TEMP/release.mjs" verify-release "$VERSION")
+                  [ "$out" = "verified $VERSION" ] || { echo "::error::verify-release did not report a pass"; exit 1; }
                   git config user.name "github-actions[bot]"
                   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
                   git -c core.hooksPath=/dev/null commit --no-verify -m "chore: release v$VERSION"
@@ -217,7 +221,10 @@ jobs:
             - name: wait for checks to pass on the release commit
               env:
                   GH_TOKEN: ${{ github.token }}
-              run: node scripts/release.mjs wait-for-checks "$GITHUB_SHA"
+              run: |
+                  set -euo pipefail
+                  out=$(node scripts/release.mjs wait-for-checks "$GITHUB_SHA")
+                  [ "$out" = "passed $GITHUB_SHA" ] || { echo "::error::the CI gate did not report a pass"; exit 1; }
 
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
             - run: pnpm install --frozen-lockfile --ignore-scripts

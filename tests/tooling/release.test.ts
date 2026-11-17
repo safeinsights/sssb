@@ -150,6 +150,16 @@ describe('release check (every PR)', () => {
         expect((await check(root)).problems).toEqual([expect.stringMatching(/packages\/kit\/package\.json needs/)])
     })
 
+    it('refuses a fixed group that is part private, or a member outside packages/', async () => {
+        const tools: Pkg = { ...KIT('0.1.0'), dir: 'packages/tools', name: '@sssb/tools' }
+        const mixed = workspace([KIT('0.1.0', false), tools])
+        expect((await check(mixed)).problems).toEqual(['the fixed group must be all private or all public'])
+        const elsewhere = workspace([KIT('0.1.0'), { ...tools, dir: 'apps/tools' }])
+        expect((await check(elsewhere)).problems).toEqual([
+            expect.stringMatching(/@sssb\/tools is in apps\/tools; a released package lives in packages/),
+        ])
+    })
+
     it('fails the CLI with the reason, so the CI job goes red', () => {
         const root = workspace([KIT('0.1.0')], { breaking: ['"@sssb/kit": major'] })
         const result = spawnSync(process.execPath, [SCRIPT, 'check'], { cwd: root, encoding: 'utf8' })
@@ -314,6 +324,21 @@ describe('release verify-release (the job holding the release key)', () => {
         writeFileSync(file, readFileSync(file, 'utf8').replace('"version": "0.1.0"', '"version": "0.37.0"'))
         execFileSync('git', ['add', '-A'], { cwd: root })
         expect(() => verifyRelease(root, '0.37.0')).toThrow(/the pending changesets release 0\.2\.0, not 0\.37\.0/)
+    })
+
+    it('skips the files Changesets skips, and prints the line the workflow requires', async () => {
+        const root = workspace([KIT('0.1.0', false)], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        for (const name of ['CLAUDE.md', 'AGENTS.md', '.notes.md'])
+            writeFileSync(path.join(root, '.changeset', name), 'x')
+        const run = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' })
+        run('add', '-A')
+        run('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--no-verify', '-m', 'notes')
+        const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        await prepare(root, { fetchImpl: npm })
+        run('add', '-A')
+        const result = spawnSync(process.execPath, [SCRIPT, 'verify-release', '0.2.0'], { cwd: root, encoding: 'utf8' })
+        expect(result.stderr).toBe('')
+        expect(result.stdout).toBe('verified 0.2.0\n')
     })
 
     it('runs, and fails, when its CLI is reached through a symlink', () => {
