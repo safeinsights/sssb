@@ -1,7 +1,10 @@
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import {
     conformanceProblems,
     CONFORMANCE_SUITES,
+    kitIntegrities,
+    lockfileMoves,
     lockfileProblems,
     seamPeerProblems,
     tscErrors,
@@ -208,6 +211,8 @@ describe('undeclaredImports', () => {
         peerDependenciesMeta: { '@sssb/app-config': { optional: true } },
     }
     const builtins = ['fs', 'path']
+    // What the job uses: TypeScript's own reading of a file's imports.
+    const specifiersOf = (text: string) => ts.preProcessFile(text, true, true).importedFiles.map((f) => f.fileName)
 
     it('names an undeclared package, by its package name, with the files that import it', () => {
         const sources = [
@@ -217,7 +222,7 @@ describe('undeclaredImports', () => {
             },
             { file: 'src/b.ts', text: "const m = await import('typescript')" },
         ]
-        expect(Object.fromEntries(undeclaredImports(sources, manifest, builtins))).toEqual({
+        expect(Object.fromEntries(undeclaredImports(sources, manifest, builtins, specifiersOf))).toEqual({
             typescript: ['src/a.ts', 'src/b.ts'],
             '@scope/pkg': ['src/a.ts'],
         })
@@ -233,18 +238,50 @@ describe('undeclaredImports', () => {
             "import path from 'path'",
             "import { y } from './local'",
         ].join('\n')
-        expect(undeclaredImports([{ file: 'src/c.ts', text }], manifest, builtins).size).toBe(0)
+        expect(undeclaredImports([{ file: 'src/c.ts', text }], manifest, builtins, specifiersOf).size).toBe(0)
     })
 
-    it('ignores test and story files, and module names in comments', () => {
+    it('ignores test and story files, and module names in comments and strings', () => {
         const sources = [
             { file: 'src/a.test.ts', text: "import { z } from 'vitest'" },
             { file: 'src/a.stories.tsx', text: "import { Story } from '@ladle/react'" },
             {
                 file: 'src/d.ts',
-                text: "/** e.g. import { a } from 'left-pad' */\n// from 'right-pad'\nexport const d = 1",
+                text: "/** e.g. import { a } from 'left-pad' */\n// from 'right-pad'\nconst s = `from '${'x'}'`\nexport const d = s",
             },
         ]
-        expect(undeclaredImports(sources, manifest, builtins).size).toBe(0)
+        expect(undeclaredImports(sources, manifest, builtins, specifiersOf).size).toBe(0)
+    })
+
+    it('still sees an import after a string that looks like a comment opener', () => {
+        // A regex comment-stripper reads '/api/*' as the start of a comment and hides what follows.
+        const text = "const glob = '/api/*'\nconst m = await import('left-pad')\nconst end = '*/'"
+        const found = undeclaredImports([{ file: 'src/e.ts', text }], manifest, builtins, specifiersOf)
+        expect([...found.keys()]).toEqual(['left-pad'])
+    })
+})
+
+describe('kitIntegrities', () => {
+    it("reads the framework tarball's integrity from the packages section only", () => {
+        expect(kitIntegrities(GOOD_LOCKFILE)).toEqual(['sha512-abc'])
+        expect(kitIntegrities(GOOD_LOCKFILE.replace('integrity: sha512-abc, ', ''))).toEqual(['(no integrity)'])
+    })
+})
+
+describe('lockfileMoves', () => {
+    it("ignores the framework's own entries, which change with every build and release", () => {
+        const bumped = GOOD_LOCKFILE.replaceAll('sssb-kit-0.1.0', 'sssb-kit-0.2.0')
+            .replace('sha512-abc', 'sha512-def')
+            .replace('    version: 0.1.0', '    version: 0.2.0')
+        expect(lockfileMoves(GOOD_LOCKFILE, bumped)).toEqual({ added: 0, removed: 0 })
+    })
+
+    it('counts any other line that moved, including one that duplicates a line elsewhere', () => {
+        // `      react: 19.2.9` already appears in the snapshot; a second copy is still a move.
+        const moved = GOOD_LOCKFILE.replace(
+            '        version: link:src/app-config\n',
+            '        version: link:src/app-config\n      react: 19.2.9\n',
+        )
+        expect(lockfileMoves(GOOD_LOCKFILE, moved)).toEqual({ added: 1, removed: 0 })
     })
 })

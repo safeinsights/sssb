@@ -202,12 +202,15 @@ export function conformanceProblems(report, kitDirsByApp, requiredByApp = {}) {
  * import resolves in the consumer and the job stays green; an adopter whose graph lacks the package, or
  * who turns hoisting off, gets "cannot find module" inside node_modules/@sssb/kit. This reads the
  * source instead of trusting resolution. Test and story files are not the shipped surface, and are skipped.
+ * The specifiers come from `specifiersOf`, which the job backs with TypeScript's own `preProcessFile`, so
+ * comments, strings and template literals cannot hide an import or invent one.
  * @param {{ file: string, text: string }[]} sources
  * @param {{ dependencies?: Record<string, string>, peerDependencies?: Record<string, string>, peerDependenciesMeta?: Record<string, unknown>, name?: string }} manifest
  * @param {readonly string[]} builtins Node's builtin module names
+ * @param {(text: string) => string[]} specifiersOf every module specifier a file imports, exports from or requires
  * @returns {Map<string, string[]>} package name -> the files that import it
  */
-export function undeclaredImports(sources, manifest, builtins) {
+export function undeclaredImports(sources, manifest, builtins, specifiersOf) {
     const declared = new Set([
         ...Object.keys(manifest.dependencies ?? {}),
         ...Object.keys(manifest.peerDependencies ?? {}),
@@ -217,15 +220,9 @@ export function undeclaredImports(sources, manifest, builtins) {
     const builtin = new Set(builtins)
     /** @type {Map<string, string[]>} */
     const found = new Map()
-    // A module specifier has no whitespace, quote, brace or `$`: that keeps a word "from" in a JSX string
-    // or a template literal building a specifier from reading as an import.
-    const specifier = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)['"]([^'"\s`${}()]+)['"]/g
     for (const { file, text } of sources) {
         if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file)) continue
-        // Comments mention modules in prose (a doc example's `from '…'`); strip them before scanning.
-        const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
-        for (const match of code.matchAll(specifier)) {
-            const spec = match[1] ?? ''
+        for (const spec of specifiersOf(text)) {
             if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:')) continue
             const parts = spec.split('/')
             const name = spec.startsWith('@') ? parts.slice(0, 2).join('/') : (parts[0] ?? spec)
@@ -234,4 +231,54 @@ export function undeclaredImports(sources, manifest, builtins) {
         }
     }
     return found
+}
+
+/**
+ * The integrities pnpm recorded for `@sssb/kit` tarballs in the lockfile's `packages:` section.
+ * @param {string} lockfile
+ */
+export function kitIntegrities(lockfile) {
+    const lines = lockfile.split('\n')
+    /** @type {string[]} */
+    const found = []
+    let section = ''
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? ''
+        if (/^[A-Za-z]+:/.test(line)) section = line.slice(0, line.indexOf(':'))
+        if (section !== 'packages' || !/^ {2}'@sssb\/kit@file:/.test(line)) continue
+        const integrity = /integrity: (sha512-[A-Za-z0-9+/=]+)/.exec(lines[i + 1] ?? '')?.[1]
+        found.push(integrity ?? '(no integrity)')
+    }
+    return found
+}
+
+/**
+ * How far a lockfile moved from its seed, leaving out the framework's own entries (its tarball's name,
+ * integrity and version change with every build or release, and are this run's to change). Lines are
+ * compared as a multiset, so an edge that moves to a line some other entry already has still counts.
+ * @param {string} seed
+ * @param {string} lockfile
+ */
+export function lockfileMoves(seed, lockfile) {
+    /** @param {string} text */
+    const lines = (text) => {
+        /** @type {Map<string, number>} */
+        const counts = new Map()
+        let inKitBlock = false
+        for (const line of text.split('\n')) {
+            // A `packages:` or `snapshots:` entry for the framework: its key and every line indented under it.
+            if (/^ {2}'@sssb\/kit@/.test(line)) inKitBlock = true
+            else if (/^ {0,2}\S/.test(line)) inKitBlock = false
+            if (inKitBlock || line.includes('sssb-kit-')) continue
+            counts.set(line, (counts.get(line) ?? 0) + 1)
+        }
+        return counts
+    }
+    const before = lines(seed)
+    const after = lines(lockfile)
+    let added = 0
+    let removed = 0
+    for (const [line, n] of after) added += Math.max(0, n - (before.get(line) ?? 0))
+    for (const [line, n] of before) removed += Math.max(0, n - (after.get(line) ?? 0))
+    return { added, removed }
 }

@@ -27,6 +27,7 @@
 // The workspace is left in place after a run, so a failure can be inspected; the next run wipes it.
 
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
     cpSync,
     existsSync,
@@ -39,7 +40,7 @@ import {
     writeFileSync,
     appendFileSync,
 } from 'node:fs'
-import { builtinModules } from 'node:module'
+import { builtinModules, createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -47,6 +48,8 @@ import {
     CONFORMANCE_SUITES,
     STRICT_FLAGS,
     conformanceProblems,
+    kitIntegrities,
+    lockfileMoves,
     lockfileProblems,
     seamPeerProblems,
     tscErrors,
@@ -234,15 +237,16 @@ function rangeOf(/** @type {string} */ name) {
 }
 
 /**
- * Copies the files git tracks under a repo directory, and nothing else: a developer's ignored
- * `.env.local`, build output or local state must not reach the consumer and make a local run differ
- * from CI's clean checkout. A tracked file deleted in the working tree is skipped; an edited one is
- * copied as it is on disk, so uncommitted work is what gets tested.
+ * Copies the files git would see under a repo directory (tracked, plus untracked ones not ignored), and
+ * nothing else: a developer's ignored `.env.local`, build output or local state must not reach the
+ * consumer and make a local run differ from CI's clean checkout. A file deleted in the working tree is
+ * skipped; an edited or new one is copied as it is on disk, so uncommitted work is what gets tested.
  * @param {string} from repo-relative directory
  * @param {string} to
  */
 function copyTracked(from, to) {
-    const listed = run('git', ['ls-files', '-z', '--', from], {
+    // Tracked files, plus new ones not yet added (a moved or added starter file), never the ignored.
+    const listed = run('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', from], {
         cwd: REPO,
         env: process.env,
         capture: true,
@@ -802,7 +806,12 @@ function checkDeclaredImports() {
     const sources = filesUnder(path.join(kit, 'src'))
         .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
         .map((file) => ({ file: path.relative(kit, file), text: readFileSync(file, 'utf8') }))
-    const found = undeclaredImports(sources, KIT_MANIFEST, builtinModules)
+    // The consumer's own TypeScript parses each file, as the compiler would read its imports.
+    const ts = createRequire(path.join(WS, 'package.json'))('typescript')
+    /** @param {string} text */
+    const specifiersOf = (text) =>
+        ts.preProcessFile(text, true, true).importedFiles.map((/** @type {{ fileName: string }} */ f) => f.fileName)
+    const found = undeclaredImports(sources, KIT_MANIFEST, builtinModules, specifiersOf)
     const unexpected = []
     for (const [name, files] of found) {
         const workaround = UNDECLARED_TODAY[/** @type {keyof typeof UNDECLARED_TODAY} */ (name)]
@@ -1015,21 +1024,19 @@ step('install the tarball', () => {
         console.log(`wrote the resolution back to ${path.relative(REPO, LOCK_SEED)}: commit it`)
         return
     }
-    // Lines that moved for any reason but the tarball itself mean the seed is behind this repo's ranges
-    // or the framework's dependencies. Not a failure (a Dependabot PR cannot refresh the seed), a prompt.
-    const tarballLine = (/** @type {string} */ line) => line.includes('sssb-kit-')
-    const before = new Set(
-        readFileSync(LOCK_SEED, 'utf8')
-            .split('\n')
-            .filter((line) => !tarballLine(line)),
-    )
-    const after = new Set(
-        readFileSync(lock, 'utf8')
-            .split('\n')
-            .filter((line) => !tarballLine(line)),
-    )
-    const added = [...after].filter((line) => !before.has(line)).length
-    const removed = [...before].filter((line) => !after.has(line)).length
+    // The installed framework is the tarball this run packed, not one an earlier lockfile or the store
+    // cache remembered: pnpm records the tarball's sha512, and it must be this file's.
+    const lockText = readFileSync(lock, 'utf8')
+    const packed = `sha512-${createHash('sha512').update(readFileSync(tarball)).digest('base64')}`
+    const locked = kitIntegrities(lockText)
+    if (locked.length !== 1 || locked[0] !== packed) {
+        fail(
+            `the lockfile's @sssb/kit integrity (${locked.join(', ') || 'none'}) is not the tarball just packed (${packed})`,
+        )
+    }
+    // Anything else that moved means the seed is behind this repo's ranges or the framework's
+    // dependencies. Not a failure (a Dependabot PR cannot refresh the seed), a prompt.
+    const { added, removed } = lockfileMoves(readFileSync(LOCK_SEED, 'utf8'), lockText)
     if (added + removed > 0) {
         const note = `the consumer's resolution moved from its seed (${added} lines added, ${removed} removed): refresh it with \`pnpm pack-and-consume --update-lockfile\` and commit scripts/pack-and-consume/consumer-lock.yaml`
         console.log(process.env.GITHUB_ACTIONS ? `::notice title=pack and consume::${note}` : `NOTE: ${note}`)
