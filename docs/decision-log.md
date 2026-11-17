@@ -2772,24 +2772,45 @@ workspace's verify. Decisions ADR-0014 did not pin down:
   app's own copy (Vitest's JSON report is matched against both spellings of that copy's path).
 - **"No install reaches the registry for `@sssb/app-config`" is enforced, not observed.** The consumer's
   `.npmrc` routes the whole `@sssb` scope to `http://127.0.0.1:9/`, where nothing listens, so any registry
-  request for an SSSB package fails the install; and the lockfile check fails any `@sssb/*` resolution that is
-  not a `file:` tarball or a `link:` (the seam only ever a link). The packed manifest is also checked: the seam in
-  `peerDependenciesMeta` only, never in `peerDependencies` (P1's pin).
+  request for an SSSB package fails the install; the lockfile check fails any `@sssb/kit` resolution that is not
+  a `file:` tarball and any seam that is not a `link:`; and the lockfile's integrity for the framework must be
+  the sha512 of the tarball this run packed.
+- **P1's `peerDependenciesMeta`-only shape matters inside this repo, not to a consumer.** Probed: with the seam
+  also listed in `peerDependencies` (still optional), the consumer's install did not request it. With the seam
+  not optional at all, the install did, and the dead registry failed it. The packed manifest is still held to
+  P1's shape, because this repo's own install needs it.
+- **The typecheck covers the framework's whole public surface.** A consumer typechecks only the framework modules
+  it reaches, and the starter reaches a fraction of them, so each app re-exports every `exports` key type-only
+  (`src/sssb-surface.ts`). Without it, a new strict-flag error in an unreached module stayed green.
 - **The strict-flag typecheck is a ratchet on the framework and a hard gate on the app.** All nine of part 2's
   flags are on at once. Errors are split by where they sit: any in the app's own code fails, and the framework's
-  must equal `STRICT_KIT_ERROR_BASELINE` exactly (116, part 2's 26 + 24 + 58 + 8), so P3 lowers the number as
-  it fixes them and a new framework error cannot hide under it.
-- **The starter's own code now passes the strict-flag set**, with five small edits (bracket access to
-  `process.env` and a request header, a typed catalog helper, and the sign-in picker leaving out a person with no
-  membership instead of crashing). The starter is `@sssb/create`'s template, so an adopter who turns the flags
-  on starts clean; and with the app's own errors at zero, a framework type change that surfaces as an error in
-  app code shows up.
+  must equal `STRICT_KIT_ERROR_BASELINE` exactly (122 over the whole published surface; part 2 counted 116 over the
+  non-test source at 6d67a7c), so P3 lowers the number as it fixes them and a new framework error cannot hide
+  under it.
+- **The starter's own code now passes the strict-flag set**, through edits to five files: bracket access to
+  `process.env` in both Playwright configs and in the cron route test (and to a request header there), a typed
+  `welcome()` catalog helper, and the sign-in picker leaving out a person with no membership instead of throwing.
+  The starter is `@sssb/create`'s template, so an adopter who turns the flags on starts clean; and with the app's
+  own errors at zero, a framework type change that surfaces as an error in app code shows up.
+- **The packed source may import only what its manifest declares.** pnpm's hidden hoist
+  (`node_modules/.pnpm/node_modules`) lends every package in the graph to every other, so an undeclared import
+  resolves in the consumer and nothing else would notice. The job parses each shipped file with TypeScript's
+  `preProcessFile`. `typescript` itself, imported by `src/authz/route-scan.ts`, is today's one exception, a named
+  workaround until P3 makes it a peer.
+- **The consumer installs from a committed lockfile seed** (`scripts/pack-and-consume/consumer-lock.yaml`), as an
+  adopter commits theirs. pnpm keeps every resolution whose specifier still matches and resolves only what changed:
+  the tarball, and any range this repo moved. With fresh resolution, a third-party typings release could move the
+  framework's strict-error count and turn unrelated PRs red (round 1 of review). When the resolution moves, the job prints a notice
+  (not a failure: a Dependabot PR cannot refresh the seed), and `pnpm pack-and-consume --update-lockfile` refreshes
+  it. Version ranges come from this repo's manifests, with `minimumReleaseAge: 2880`.
 - **The negative fixture runs under tsx**, from `packages/seamless`, which takes the tarball and links no seam.
   It must exit non-zero AND name `@sssb/app-config` in its error, so a failure for any other reason does not
   count as the loud failure part 5 asks for.
-- **The consumer resolves its own dependencies**, with no lockfile and `minimumReleaseAge: 2880`, as an adopter
-  installing today would. Version ranges come from this repo's manifests. A new upstream release can therefore
-  turn the job red without a change here, which is the signal an adopter would get the same day.
 - **The app-owned adapter is reached through a route**, `/api/objects`, so `next build` compiles the registry,
-  its `import()` of `real/` and the vendor SDK against the packed framework. A unit test cannot load the
-  registry, because the framework's adapters import `server-only`.
+  its `import()` of `real/` and the vendor SDK against the packed framework. A unit test did not load the
+  registry: the framework's adapters import `server-only`, and the app's `vi.mock('server-only')` did not stop it
+  throwing.
+- **The consumer stands only on what it installed.** Its commands run with every `PATH` entry under this repo
+  removed (through `pnpm pack-and-consume`, PATH starts with the repo's `node_modules/.bin`) and without pnpm's
+  `npm_*` variables; the starter is copied from what git sees, so an ignored `.env.local` stays behind; and every
+  parent of `--dir` must hold no `node_modules`, `package.json` or `pnpm-workspace.yaml`.

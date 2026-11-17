@@ -33,16 +33,20 @@ export const CONFORMANCE_SUITES = [
 ]
 
 /**
- * The manifest pin P1 left for this job: the seam is an optional peer declared in
- * `peerDependenciesMeta` ALONE. Listed in `peerDependencies` too, pnpm 11 requested it from the registry
- * (ADR-0014's acceptance addendum). Returns the problems; empty means the pin holds.
+ * The manifest shape P1 chose: the seam is an optional peer declared in `peerDependenciesMeta` ALONE.
+ * Listed in `peerDependencies` too, pnpm 11 requested it from the registry when installing THIS repo's
+ * workspace (ADR-0014's acceptance addendum); a consumer installing the tarball did not (P2's probe 1b,
+ * docs/decision-log.md). A seam that is not optional at all, a consumer does fetch, which the job's dead
+ * `@sssb` registry turns into a failed install. Returns the problems; empty means the shape holds.
  * @param {{ name?: string, peerDependencies?: Record<string, string>, peerDependenciesMeta?: Record<string, { optional?: boolean }> }} manifest
  */
 export function seamPeerProblems(manifest) {
     const problems = []
     if (manifest.name !== '@sssb/kit') problems.push(`the packed manifest is named ${manifest.name}, not @sssb/kit`)
     if (manifest.peerDependencies && '@sssb/app-config' in manifest.peerDependencies) {
-        problems.push('@sssb/app-config is in peerDependencies, which makes pnpm fetch it from the registry')
+        problems.push(
+            "@sssb/app-config is in peerDependencies, which makes pnpm fetch it from the registry in this repo's own install",
+        )
     }
     if (manifest.peerDependenciesMeta?.['@sssb/app-config']?.optional !== true) {
         problems.push('@sssb/app-config is not an optional peer in peerDependenciesMeta')
@@ -51,9 +55,8 @@ export function seamPeerProblems(manifest) {
 }
 
 /**
- * Every place pnpm's lockfile says where an `@sssb/*` package came from must be a tarball file
- * (`file:`) or a link (`link:`), never a registry version, so the job can never test an older published
- * SSSB and go green. `@sssb/app-config` must only ever be a link, and every other `@sssb` package a tarball (a
+ * Every place pnpm's lockfile says where an `@sssb/*` package came from must be local, never a registry
+ * version, so the job can never test an older published SSSB and go green. `@sssb/app-config` must only ever be a link, and every other `@sssb` package a tarball (a
  * `link:` to the framework would be this repo's source, not the package). Line-based on purpose: it reads the
  * lockfile pnpm 11 writes (lockfileVersion 9) without a YAML dependency, and fails CLOSED on a shape it
  * does not recognise: an `@sssb/` line it cannot classify is a problem, not a pass.

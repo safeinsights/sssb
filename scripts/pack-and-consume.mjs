@@ -620,8 +620,9 @@ minimumReleaseAge: 2880
     cpSync(path.join(REPO, 'tests/support/tmp-dir-marker.mjs'), path.join(WS, 'tests/support/tmp-dir-marker.mjs'))
 
     // The committed lockfile seed, as an adopter commits theirs: pnpm keeps every resolution in it whose
-    // specifier still matches and resolves only what changed (the tarball, a range this repo moved). So a
-    // third-party release cannot turn this check red on a PR that did not cause it.
+    // specifier still matches and resolves only what changed (the tarball, whose file name changes with a
+    // release's version, or a range this repo moved). So a third-party release cannot turn this check red
+    // on a PR that did not cause it.
     if (!UPDATE_LOCKFILE) {
         if (!existsSync(LOCK_SEED)) fail(`no lockfile seed at ${LOCK_SEED}: run with --update-lockfile to make one`)
         cpSync(LOCK_SEED, path.join(WS, 'pnpm-lock.yaml'))
@@ -945,7 +946,7 @@ function nextBuild() {
 
 /** @param {number} port */
 function e2e(port) {
-    // The consumer's own Playwright, which its fresh resolution may have made newer than this repo's.
+    // The consumer's own Playwright, as its lockfile seed pins it, which need not be this repo's version.
     // On CI the browser's OS libraries come with it; locally they are the developer's.
     const withDeps = process.env.CI ? ['--with-deps'] : []
     run('pnpm', ['exec', 'playwright', 'install', ...withDeps, 'chromium'], { cwd: appDir('console') })

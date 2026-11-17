@@ -88,7 +88,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `@sssb/kit` and runs an adopter-shaped workspace's verify against the tarball, outside this repo; a change
   to what the package ships, its manifest or the starter shows there first. Its gaps are named workarounds in
   `scripts/pack-and-consume/workarounds.mjs`, each removed by a later ADR-0014 step: never patch the consumer
-  silently. **Any migration/db change: run `pnpm test:contract` yourself** (the
+  silently. It installs from a committed lockfile seed; when its notice says the resolution moved, refresh it
+  with `pnpm pack-and-consume --update-lockfile` and commit `scripts/pack-and-consume/consumer-lock.yaml`.
+  **Any migration/db change: run `pnpm test:contract` yourself** (the
   same RLS proofs on real Postgres, for EVERY app AND SSSB's fixture seam, each in its own
   database — SSSB's twice, once through the `pg` driver and once through the RDS Data API driver and its
   emulator, each also as a non-superuser owner, `packages/kit/src/db/owner-pass.ts`); after

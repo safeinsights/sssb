@@ -1965,14 +1965,18 @@ the panel is the element that carries it.
 ## Pack and consume (2026-11-17, ADR-0014 P2)
 
 - **`pnpm <script>` puts this repo's `node_modules/.bin` first on PATH**, and every child inherits it. A consumer
-  workspace driven from such a script would run SSSB's own `tsc` or `vitest` wherever it had forgotten to install
-  one, and pass. `scripts/pack-and-consume.mjs` strips every PATH entry under the repo, and pnpm's `npm_*`
-  variables, from the environment it runs the consumer with.
-- **`vi.mock('server-only')` does not reach a dependency's import of it.** Vitest inlines `@sssb/kit` (it is
-  TypeScript) but resolves `server-only` from the framework's own directory in the virtual store, an id the app
-  cannot name, so the real module loads and throws. Exercise a registry that imports `@sssb/kit/adapters/index`
-  through `next build`, not a unit test.
+  workspace driven from such a script ran SSSB's own `tsx` where it had not installed one, and passed (probe:
+  `tsx` left out of the consumer, PATH strip disabled). `scripts/pack-and-consume.mjs` strips every PATH entry
+  under the repo, and pnpm's `npm_*` variables, from the environment it runs the consumer with.
+- **A consumer typechecks only what it reaches.** A framework module the app never imports is not in its `tsc`
+  program, so a new error there stayed green until each consumer app re-exported every published subpath.
+- **`vi.mock('server-only')` in the app's test did not stop the framework's own import of it from throwing.**
+  Exercise a registry that imports `@sssb/kit/adapters/index` through `next build`, not a unit test.
 - **`next typegen` rewrites the app's `tsconfig.json`** (it adds `incremental: true` when absent). A second
   `tsc` run with other options then shares the build-info file; pass `--incremental false` to each check run.
-- **Measured on a laptop, the whole job takes about 90 seconds**: install 10s (a warm pnpm store), the two
-  typechecks 25s, unit tests and conformance 10s, `next build` 12s, e2e 18s, the static demo 6s.
+- **pnpm's hidden hoist lends a dependency's undeclared imports.** `@types/pg`, declared by the consumer app,
+  reaches the framework's copy only through `node_modules/.pnpm/node_modules`, which is not an ancestor of the app's
+  own `node_modules`. Resolution succeeding proves nothing about what the package declares; read the imports.
+- **Timings.** A full local run with a warm pnpm store took 77–88s. On CI, with a cold cache, the script took
+  163s inside a 3m12s job: install 22s, the two typechecks 33s, unit tests and conformance 26s, `next build`
+  22s, e2e 54s (Playwright's browser and its OS packages included).
