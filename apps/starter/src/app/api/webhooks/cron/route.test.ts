@@ -22,15 +22,15 @@ vi.mock('@sssb/kit/adapters/index', async () => {
 
 const tmp = makeTestTmpDir('app-cron-route-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 function tick(authorization?: string): Promise<Response> {
     const headers: Record<string, string> = {}
-    if (authorization !== undefined) headers.authorization = authorization
+    if (authorization !== undefined) headers['authorization'] = authorization
     return POST(new Request('http://localhost/api/webhooks/cron', { method: 'POST', headers }))
 }
 

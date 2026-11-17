@@ -8,8 +8,8 @@ import path from 'node:path'
  * is the one thing an adopter is guaranteed to change (`pnpm init-app`). A spec that hard-codes it
  * turns the rename into a broken gate.
  */
-export function welcome(locale: string): Record<string, string> {
+export function welcome(locale: string): { readonly title: string; readonly [key: string]: string } {
     const file = path.resolve(__dirname, `../messages/${locale}.json`)
-    const catalog = JSON.parse(readFileSync(file, 'utf8')) as { welcome: Record<string, string> }
+    const catalog = JSON.parse(readFileSync(file, 'utf8')) as { welcome: { title: string; [key: string]: string } }
     return catalog.welcome
 }
