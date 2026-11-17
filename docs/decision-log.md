@@ -2852,8 +2852,9 @@ Dependabot's #1.
   `apps/starter/DEMO-SIZE.md`. Both numbers still sit below the unpruned demos (997,945 and 908,510 bytes),
   so a pruning that stops still fails the gate.
 - **Pack and consume's lockfile seed moved with it.** `pnpm pack-and-consume --update-lockfile` re-resolved the
-  consumer to React 19.3.1, its types and `scheduler` 0.28.0; nothing else in
-  `scripts/pack-and-consume/consumer-lock.yaml` changed but integrity hashes, and the full run passed.
+  consumer to React 19.3.1, its types and `scheduler` 0.28.0. Nothing else in
+  `scripts/pack-and-consume/consumer-lock.yaml` changed except the packed kit's integrity hash, and the full
+  run passed.
 - **`@axe-core/playwright` stays held at `~4.12.1`.** The other half of #1 is not decided:
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
   hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
