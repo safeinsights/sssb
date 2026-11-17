@@ -10,14 +10,14 @@ The vendor ban has two halves:
 
 - The static half is `no-restricted-imports` with `vendorSdkPattern`. It matches with the `ignore` package
   (gitignore semantics, case-insensitive).
-- The declarationless half is `keel/no-dynamic-vendor-import`. It matches with `isVendorSpecifier`, a
+- The declarationless half is `sssb/no-dynamic-vendor-import`. It matches with `isVendorSpecifier`, a
   hand-written reading of the same list.
 
 They disagree at the edges. The static half matches a bare name at any depth, so its `pg` flags a local
 `./pg` and `some/dir/pg`. Its `@clerk/*` ignores case, so it flags `@CLERK/nextjs`. The declarationless half
 flags neither, and `tests/lint/app-owned-adapters.test.ts` pins `./pg` as not a vendor for it.
 
-The framework/app fence and keel/core's fence do not have this problem. Their declarationless rules read
+The framework/app fence and @sssb/kit/core's fence do not have this problem. Their declarationless rules read
 each group through the same matcher as the static half (`matchesPatterns`), and a parity table in
 `tests/lint/framework-fence.test.ts` pins that.
 

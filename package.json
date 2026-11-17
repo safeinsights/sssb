@@ -1,8 +1,8 @@
 {
-    "name": "keel-workspace",
+    "name": "sssb-workspace",
     "version": "0.1.0",
     "private": true,
-    "description": "keel — a multi-tenant web application template: ports/adapters, RLS tenancy, hermetic dev.",
+    "description": "SSSB — a multi-tenant web application template: ports/adapters, RLS tenancy, hermetic dev.",
     "license": "MIT",
     "packageManager": "pnpm@11.14.0",
     "engines": {
@@ -39,7 +39,7 @@
     "dependencies": {
         "@mantine/core": "^9.7.3",
         "@mantine/hooks": "^9.7.3",
-        "keel": "workspace:*",
+        "@sssb/kit": "workspace:*",
         "next": "^16.4.6",
         "next-intl": "^4.14.9",
         "react": "~19.2.8",

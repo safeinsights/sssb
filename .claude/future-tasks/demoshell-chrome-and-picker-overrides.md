@@ -2,7 +2,7 @@
 
 **Priority:** P2 · **Status:** open
 
-`DemoShellProps` (`packages/keel/src/demo-static/shell.tsx`) takes an app's `welcome`, `nav` and
+`DemoShellProps` (`packages/kit/src/demo-static/shell.tsx`) takes an app's `welcome`, `nav` and
 `dashboard`, but the framework's own generic chrome (`AppHeader`) and the default sign-in picker
 (built from every seeded person, with no way to narrow it) are both fixed. Two independent asks:
 
@@ -14,10 +14,10 @@
   through the Simulator panel's People tab regardless, so narrowing the picker loses no capability,
   only the default's breadth).
 
-**Need:** two optional props, both no-ops when omitted so no existing consumer (including keel's own
+**Need:** two optional props, both no-ops when omitted so no existing consumer (including SSSB's own
 reference app) changes behavior — a `chrome` prop wrapping the signed-in content so an app can
 replace `AppHeader`, and a `signInPicker` prop replacing the default `PeoplePicker` with a narrower
 one of the app's own choosing.
 
-Evidence: `packages/keel/src/demo-static/shell.tsx` (today's `DemoShellProps`, fixed chrome and
+Evidence: `packages/kit/src/demo-static/shell.tsx` (today's `DemoShellProps`, fixed chrome and
 picker).

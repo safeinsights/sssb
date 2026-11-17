@@ -1,8 +1,8 @@
 /**
  * The APP's Simulator registrations (the seam side of the panel's tab strip + the Snapshots flag list,
- * ADR-0012). The framework panel (packages/keel/src/components/simulator/simulator-panel.tsx) owns its subsystem
+ * ADR-0012). The framework panel (packages/kit/src/components/simulator/simulator-panel.tsx) owns its subsystem
  * tabs (people, mail, messages, events, jobs, hooks, errors, snapshots) and its two feature flags
- * (demo-banner, jobs-held — KNOWN_FLAGS in packages/keel/src/adapters/fake/analytics.ts); the app registers its OWN
+ * (demo-banner, jobs-held — KNOWN_FLAGS in packages/kit/src/adapters/fake/analytics.ts); the app registers its OWN
  * Simulator tabs + flags HERE (its demo presets are their own seam module, `./presets.ts`). A real adopter
  * replaces this file (its own, or none). PURE TypeScript, no framework imports — shared by the server glue and the
  * static-demo twin.
@@ -41,7 +41,7 @@ export const actorsHeldFlag = 'actors-held'
 
 /**
  * App feature flags for the Snapshots tab, composed into KNOWN_FLAGS
- * (packages/keel/src/adapters/fake/analytics.ts); snapshots-app.tsx resolves a registered flag's `labelKey`
+ * (packages/kit/src/adapters/fake/analytics.ts); snapshots-app.tsx resolves a registered flag's `labelKey`
  * when labelling its toggle.
  *
  * `sla-breach-banner` is the worked example the extension point used to ship without: a desk-specific

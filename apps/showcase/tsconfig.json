@@ -3,8 +3,8 @@
     "compilerOptions": {
         "paths": {
             "@/*": ["./src/*"],
-            "@app-config/*": ["./src/app-config/*"],
-            "keel/*": ["../../packages/keel/src/*"]
+            "@sssb/app-config/*": ["./src/app-config/*"],
+            "@sssb/kit/*": ["../../packages/kit/src/*"]
         }
     },
     "include": [

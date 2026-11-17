@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ fake: false }))
-vi.mock('keel/adapters/index', () => ({
+vi.mock('@sssb/kit/adapters/index', () => ({
     get isSimulated() {
         return state.fake
     },
 }))
-vi.mock('keel/adapters/fake/service-auth', () => ({ devWebhookSecret: () => 'secret-xyz' }))
+vi.mock('@sssb/kit/adapters/fake/service-auth', () => ({ devWebhookSecret: () => 'secret-xyz' }))
 
 const get = () => import('./route').then(({ GET }) => GET())
 

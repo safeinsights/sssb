@@ -2,13 +2,13 @@
 
 The static demo (`pnpm build:demo-static`) is one HTML file you can hand someone, and `pnpm check:demo-size`
 fails if it grows past a byte budget. The number is the argument of `check:demo-size` in this app's
-`package.json`, and it is this app's own: `scripts/check-demo-size.mjs` is keel's, holds no number, and says
+`package.json`, and it is this app's own: `scripts/check-demo-size.mjs` is SSSB's, holds no number, and says
 what to look at first when the gate goes red.
 
 ## What this number is for
 
 The starter ships it roomy on purpose, sized for an app's own screens and not as a pacing gate: room to grow
-the starter to the size of keel's showcase, rounded up, before it asks anything of you. It still fails on gross
+the starter to the size of SSSB's showcase, rounded up, before it asks anything of you. It still fails on gross
 bloat, and on the pruning of Mantine's stylesheet stopping (the number sits below what the starter measured
 before the CSS was pruned, below). Bloat in the framework of any size shows up in the showcase first, which is
 why this one can be roomy. If you want a pacing gate, set the number to what your app measures plus the
@@ -18,20 +18,20 @@ headroom you want.
 
 Re-set the number in `package.json` and add an entry under "Changes" below in the same commit: what grew or
 shrank, by how much, and how much headroom you left on purpose. Newest first. Do not record it in
-`scripts/check-demo-size.mjs`: that file is keel's, and an upstream merge will change it.
+`scripts/check-demo-size.mjs`: that file is SSSB's, and an upstream merge will change it.
 
 ## Changes
 
 None yet.
 
-## How it started (keel's history for the starter)
+## How it started (SSSB's history for the starter)
 
 Re-based 2026-11-16, 880000 → 820000. Since the first commit (844820 bytes) the starter's demo had grown
 10061 bytes, and a starter-derived app with one small screen sat at 99.3% of the budget. Per merge: demo
-presets (#26) +8706, the Simulator's people-and-orgs work (#15) +769, actors that start with the page (#16)
-+388, the mechanical bundle (#19) +198. Two things were removed:
+presets (jpslav/keel#26) +8706, the Simulator's people-and-orgs work (jpslav/keel#15) +769, actors that start with the page (jpslav/keel#16)
++388, the mechanical bundle (jpslav/keel#19) +198. Two things were removed:
 
-- 3248 bytes were incidental. keel's four preset operation definitions were module-level constants, so valibot
+- 3248 bytes were incidental. SSSB's four preset operation definitions were module-level constants, so valibot
   and four schemas rode in every app's bundle although the demo never validates a preset. They are built by
   function now, and `tests/tooling/static-demo-bundle.test.ts` holds it.
 - 130247 bytes were Mantine's stylesheet. The apps import `@mantine/core/styles.css` whole, 273 KB for ~100

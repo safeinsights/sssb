@@ -37,7 +37,7 @@ is a closed thread.
 ## Enforcement
 
 This project has no separate conduct address. Report unacceptable behaviour through
-**[GitHub Security Advisories](https://github.com/jpslav/keel/security/advisories/new)** — a public
+**[GitHub Security Advisories](https://github.com/safeinsights/sssb/security/advisories/new)** — a public
 repo's only private inbound channel, the same one used for security reports, and read only by the
 maintainer. All complaints will be reviewed and investigated promptly and fairly, and the reporter's
 privacy will be respected.

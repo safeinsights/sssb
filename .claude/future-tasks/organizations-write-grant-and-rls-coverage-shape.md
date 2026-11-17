@@ -28,7 +28,7 @@ single-column id reference is possible. A product that wants that referential-in
 "this row's org really does belong to this row's tenant, enforced by Postgres" — needs a composite
 uniqueness constraint on `organizations` to reference.
 
-Evidence: `packages/keel/src/db/rls-coverage.ts` (`RLS_EXEMPT`'s reason-only shape, and the
+Evidence: `packages/kit/src/db/rls-coverage.ts` (`RLS_EXEMPT`'s reason-only shape, and the
 privilege-catalog query/assertion that would need to consult a per-table exception instead of
-flagging any non-`SELECT` grant unconditionally), `packages/keel/src/db/migrations/0003_organizations.ts`
+flagging any non-`SELECT` grant unconditionally), `packages/kit/src/db/migrations/0003_organizations.ts`
 (today's `SELECT`-only grant and the migration a write-grant follow-up would match).

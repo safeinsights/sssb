@@ -1,4 +1,4 @@
-import type { DemoWorld } from 'keel/demo-static/contracts'
+import type { DemoWorld } from '@sssb/kit/demo-static/contracts'
 import type { Dispatch, SetStateAction } from 'react'
 import { type TicketStatus, ticketMachine } from '../domain/tickets'
 

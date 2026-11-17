@@ -1,7 +1,7 @@
-import { abilityActorFromCredential } from 'keel/authz/authorize'
-import { defineAbilitiesFor } from 'keel/core/abilities'
-import { auditActorOf, recordAuditEvent } from 'keel/db/audit'
-import type { InboundContext, InboundHandlerResult } from 'keel/inbound-email/handlers'
+import { abilityActorFromCredential } from '@sssb/kit/authz/authorize'
+import { defineAbilitiesFor } from '@sssb/kit/core/abilities'
+import { auditActorOf, recordAuditEvent } from '@sssb/kit/db/audit'
+import type { InboundContext, InboundHandlerResult } from '@sssb/kit/inbound-email/handlers'
 import { createTicket } from '@/domain/db/tickets'
 import type { TicketStatus } from '@/domain/tickets'
 
@@ -9,7 +9,7 @@ import type { TicketStatus } from '@/domain/tickets'
  * The desk's front door: email that becomes work. `<org>+support@domain` opens a ticket in the queue;
  * `<org>+feedback@domain` files one that is already resolved. This is the canonical real feature of the
  * domain — a support desk that cannot be emailed is not a support desk — and it is the same framework
- * intake (keel/inbound-email/intake.ts) resolving a handler slug in the registry
+ * intake (@sssb/kit/inbound-email/intake.ts) resolving a handler slug in the registry
  * (src/app-config/inbound-email.ts) for both.
  *
  * SENDER MATCHING + POSTURE. The sender's address is matched against the org's active members via the

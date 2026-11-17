@@ -2,20 +2,20 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 
 // One mutable hoisted control surface exercises BOTH the production-containment 404 (simulated mode off)
 // and the simulated-mode answers (sibling test: ../builds/route.test.ts). The stores are mocked so the test
-// needs no data dir; their own persistence is proven where they live (keel's simulator.test.ts).
+// needs no data dir; their own persistence is proven where they live (SSSB's simulator.test.ts).
 const state = vi.hoisted(() => ({
     fake: false,
     flags: {} as Record<string, boolean>,
     holds: {} as Record<string, boolean>,
 }))
 
-vi.mock('keel/adapters/index', () => ({
+vi.mock('@sssb/kit/adapters/index', () => ({
     get isSimulated() {
         return state.fake
     },
 }))
-vi.mock('keel/adapters/fake/analytics', () => ({ readFlags: () => state.flags }))
-vi.mock('keel/adapters/fake/simulator', () => ({ readActorHolds: () => state.holds }))
+vi.mock('@sssb/kit/adapters/fake/analytics', () => ({ readFlags: () => state.flags }))
+vi.mock('@sssb/kit/adapters/fake/simulator', () => ({ readActorHolds: () => state.holds }))
 
 afterEach(() => {
     state.fake = false

@@ -1,14 +1,14 @@
-import { defineAbilitiesFor } from 'keel/core/abilities'
-import type { PresetOperationDefinition, PresetOperationOf } from 'keel/core/presets'
-import { isRestricted, isRole } from 'keel/core/roles'
+import { defineAbilitiesFor } from '@sssb/kit/core/abilities'
+import type { PresetOperationDefinition, PresetOperationOf } from '@sssb/kit/core/presets'
+import { isRestricted, isRole } from '@sssb/kit/core/roles'
 import * as v from 'valibot'
 import { staffOrgSlug } from '../../../abilities'
 
 /**
  * `ticket.assign` — the desk's own demo-preset operation kind: `by` hands a ticket in `org` to `to`, as
  * the ticket card's assignee picker does. This is the DEFINITION third (pure, so the static demo may
- * bundle it, and does: its definition and valibot's schema functions are ~2.8 KB of the demo, accepted — keel's own definitions are built
- * by function to avoid exactly that, see keel/core/presets.ts, which also explains the three parts);
+ * bundle it, and does: its definition and valibot's schema functions are ~2.8 KB of the demo, accepted — SSSB's own definitions are built
+ * by function to avoid exactly that, see @sssb/kit/core/presets.ts, which also explains the three parts);
  * `./server.ts` and `./static.ts` are the halves that do it.
  *
  * `ticket` is not an id: it is the NAME an earlier step bound with `as` (the morning's refund email, in

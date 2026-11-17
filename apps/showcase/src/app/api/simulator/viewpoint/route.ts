@@ -1,7 +1,7 @@
-import { auth, isSimulated } from 'keel/adapters/index'
-import { devSignIn, findInvite } from 'keel/adapters/fake/auth'
-import { readSimulatorState, writeViewpointCookie, type PersonKey } from 'keel/adapters/fake/simulator'
-import { LOCALES } from 'keel/core/locale'
+import { auth, isSimulated } from '@sssb/kit/adapters/index'
+import { devSignIn, findInvite } from '@sssb/kit/adapters/fake/auth'
+import { readSimulatorState, writeViewpointCookie, type PersonKey } from '@sssb/kit/adapters/fake/simulator'
+import { LOCALES } from '@sssb/kit/core/locale'
 import { withPortErrors } from '../../respond'
 
 /** Same simulated-mode-only gate as /api/simulator/summary; no auth required to call this. */

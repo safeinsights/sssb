@@ -9,10 +9,10 @@ import { makeTestTmpDir } from '../support/tmp-dir'
 /**
  * App-owned lint exceptions (eslint.config.mjs, loadAppLintExceptions): an app names the modules a fence
  * should let through in its own `apps/<app>/lint-exceptions.mjs`, by path relative to the app, so an adopter
- * never edits keel's eslint.config.mjs and `pnpm init-app` renaming the app cannot break an exception.
+ * never edits SSSB's eslint.config.mjs and `pnpm init-app` renaming the app cannot break an exception.
  * Everything is checked when the config loads, and anything that could widen an exception quietly fails it.
  */
-const RAW_DB = 'keel/no-raw-db-handle'
+const RAW_DB = 'sssb/no-raw-db-handle'
 
 /** A scratch repo root holding one app, its exceptions file, and the source files it names. */
 function tree(app: string, exceptions: string, files: string[] = []): string {
@@ -90,7 +90,7 @@ describe('anything that could widen an exception fails the config load', () => {
         ['no file', `{ ${JSON.stringify(RAW_DB)}: [{ reason: 'purges every tenant' }] }`, [], /names no file/],
         [
             'a rule that takes no exceptions',
-            `{ 'keel/no-dynamic-app-import': [{ file: 'src/x.ts', reason: 'r' }] }`,
+            `{ 'sssb/no-dynamic-app-import': [{ file: 'src/x.ts', reason: 'r' }] }`,
             ['src/x.ts'],
             /takes no app exceptions/,
         ],
@@ -108,7 +108,7 @@ describe('anything that could widen an exception fails the config load', () => {
     })
 })
 
-// The wiring, end to end: the repo's real config, reading a scratch tree's exceptions (KEEL_LINT_EXCEPTIONS_ROOT),
+// The wiring, end to end: the repo's real config, reading a scratch tree's exceptions (SSSB_LINT_EXCEPTIONS_ROOT),
 // lets the listed file through the tenancy ban and nothing else. A child process, so the config loads fresh.
 describe('a listed module passes the tenancy ban, and an unlisted one still fails it', () => {
     // Two findings in one module: the raw handle, and a process.env read, which no app exception touches. The
@@ -118,7 +118,7 @@ describe('a listed module passes the tenancy ban, and an unlisted one still fail
         const eslintBin = path.join(process.cwd(), 'node_modules/eslint/bin/eslint.js')
         const run = spawnSync(process.execPath, [eslintBin, '--stdin', '--stdin-filename', file, '--format', 'json'], {
             cwd: process.cwd(),
-            env: { ...env, KEEL_LINT_EXCEPTIONS_ROOT: root },
+            env: { ...env, SSSB_LINT_EXCEPTIONS_ROOT: root },
             input: PURGE,
             encoding: 'utf8',
         })

@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'vitest'
-import { type AbilityActor, defineAbilitiesFor } from 'keel/core/abilities'
-import type { Role } from 'keel/core/roles'
+import { type AbilityActor, defineAbilitiesFor } from '@sssb/kit/core/abilities'
+import type { Role } from '@sssb/kit/core/roles'
 
 // The APP's subject rules (Ticket, Attachment, Escalation), exercised through the composed
 // defineAbilitiesFor — proving the framework `default:` delegation to appAbilityRules holds
-// (ADR-0012). Framework base subjects are covered in packages/keel/src/core/abilities.test.ts.
+// (ADR-0012). Framework base subjects are covered in packages/kit/src/core/abilities.test.ts.
 
 // Low-entropy, readable fixture ids only (gitleaks): no hex runs, no UUIDs.
 const ORG_A = 'org-a'

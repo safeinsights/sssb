@@ -1,4 +1,4 @@
-import type { PresetOperation } from 'keel/core/presets'
+import type { PresetOperation } from '@sssb/kit/core/presets'
 
 /** The weekday-morning emails every busy preset opens with, sent to the Frontline Desk's front door.
  *  Simulated content, so one language — like the seed corpus and the tour's typed email (see tours.ts).

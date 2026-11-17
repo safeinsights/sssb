@@ -1,6 +1,6 @@
 # Recipe: formal e-signature (Zoho Sign / DocuSign)
 
-keel ships the **access-gate** class (`packages/keel/src/core/gates.ts`) with **clickwrap agreements**
+SSSB ships the **access-gate** class (`packages/kit/src/core/gates.ts`) with **clickwrap agreements**
 as the worked example: a gate is a condition an actor must satisfy before proceeding, with a scope, a behavior
 (block/advisory), and a **resolution flow**. Clickwrap resolves the gate _in-app_ — the user reads the terms
 and clicks Accept, and an append-only `agreement_acceptances` row clears it.
@@ -33,15 +33,15 @@ pieces wired to a new logo. Building it into the template would demonstrate an e
 Every arrow is an existing seam:
 
 - **Outbound "create envelope"** — a plain authenticated `fetch` to the vendor, the shape
-  `packages/keel/src/server-lib/*` real-mode branches already use (email, sms). Not even the
+  `packages/kit/src/server-lib/*` real-mode branches already use (email, sms). Not even the
   signed-egress machinery is needed for the _request_; that machinery is the model for the
   _inbound_ verification.
 - **Inbound "envelope completed" webhook** — verified exactly like the Mailgun inbound signature
-  (`packages/keel/src/service-auth/mailgun.ts`) or the job webhook
-  (`packages/keel/src/service-auth/webhook.ts`): an HMAC or vendor-signature check at
+  (`packages/kit/src/service-auth/mailgun.ts`) or the job webhook
+  (`packages/kit/src/service-auth/webhook.ts`): an HMAC or vendor-signature check at
   `POST /api/webhooks/esign`, 404/401 fail-closed, first line.
 - **State machine** — the envelope's lifecycle (`created → sent → viewed → signed | declined | voided`)
-  is the `packages/keel/src/core/state-machine.ts` pattern the jobs and escalations lifecycles
+  is the `packages/kit/src/core/state-machine.ts` pattern the jobs and escalations lifecycles
   already use. Illegal hops 409; terminal transitions are idempotent (vendors retry — the
   redelivery lesson).
 - **Signed artifact** — the completed PDF is pulled into storage through the existing `storage` port
@@ -50,11 +50,11 @@ Every arrow is an existing seam:
 
 ## 1. The gate wiring is already there — extend the seam, don't fork it
 
-`packages/keel/src/core/gates.ts` is domain-agnostic on purpose. A signature requirement is a new
+`packages/kit/src/core/gates.ts` is domain-agnostic on purpose. A signature requirement is a new
 **fact** and a new gate, registered the same way `gatesForAgreements` registers agreement gates:
 
 ```ts
-// packages/keel/src/core/gates.ts — GateFacts already an open bag; add the rider's key:
+// packages/kit/src/core/gates.ts — GateFacts already an open bag; add the rider's key:
 export interface GateFacts {
     pendingAgreementIds?: string[]
     pendingSignatureIds?: string[] // NEW: envelope ids awaiting this actor's signature
@@ -62,8 +62,8 @@ export interface GateFacts {
 ```
 
 ```ts
-// packages/keel/src/core/e-sign.ts (NEW, pure) — the rider, shaped exactly like
-// packages/keel/src/core/agreements.ts
+// packages/kit/src/core/e-sign.ts (NEW, pure) — the rider, shaped exactly like
+// packages/kit/src/core/agreements.ts
 export interface SignatureRequirement {
     id: string
     envelopeId: string | null // null until the ceremony is created with the vendor
@@ -94,12 +94,12 @@ in-place acceptance.
 ## 2. Sketch the vendor seam (a port, because it wraps an SDK)
 
 Unlike agreements (port-less, app-owned state), e-sign wraps a vendor, so it earns a port under the CLAUDE.md
-rule (vendor SDKs only inside an adapters directory). The paths below put it in keel's tree, which this
+rule (vendor SDKs only inside an adapters directory). The paths below put it in SSSB's tree, which this
 recipe predates an alternative to: if only your app calls the port, it can live in your app instead, with the
 same shape (`docs/recipes/app-owned-adapter.md`). Sketch only — do not build:
 
 ```ts
-// packages/keel/src/ports/esign.ts (SKETCH)
+// packages/kit/src/ports/esign.ts (SKETCH)
 export interface CreateEnvelopeInput {
     documentPdf: Uint8Array // or a storage key the vendor pulls
     signerEmail: string
@@ -120,14 +120,14 @@ export interface EsignPort {
 }
 ```
 
-- **Fake** (`packages/keel/src/adapters/fake/esign.ts`): a Simulator counterparty, the
+- **Fake** (`packages/kit/src/adapters/fake/esign.ts`): a Simulator counterparty, the
   outbound-webhook/actors precedent. It records the "envelope", exposes a **"sign as counterparty"** button in a
   Simulator tab (or a Snapshots control), and on click calls the SAME inbound webhook intake the real
   vendor would — so the demo drives the real resolution path, never a spoofed state write (the
   inbound-email honesty rule). The fake `fetchSignedDocument` returns a generated placeholder
   PDF so the signed artifact is always real and downloadable (the "no dead download link"
   invariant).
-- **Real** (`packages/keel/src/adapters/real/esign.ts`): the ONLY file allowed to `import
+- **Real** (`packages/kit/src/adapters/real/esign.ts`): the ONLY file allowed to `import
 '@zoho/…'` / the DocuSign SDK. Fail-closed with `CutoverPendingError` until its cutover row is
   filled, like every real adapter.
 
@@ -163,20 +163,20 @@ Cutover-checklist row template (`docs/cutover-checklist.md`), matching that tabl
 (`Status | Item | What it is | What unlocks it | Deferred verification` — copy the `email-outbound`/`twilio-sms`
 row format exactly):
 
-| Status | Item             | What it is                                                                                               | What unlocks it                | Deferred verification                                                                                                                                                                                                                   |
-| ------ | ---------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ⬜     | `esign-provider` | Zoho Sign / DocuSign account + API key + webhook signing secret (names in `apps/<app>/config/params.ts`) | you provision a vendor account | Real envelope creation through `packages/keel/src/adapters/real/esign.ts`; a signing ceremony completed by a real signer; the inbound `POST /api/webhooks/esign` verifies and pulls the signed PDF into an `attachments` row end-to-end |
+| Status | Item             | What it is                                                                                               | What unlocks it                | Deferred verification                                                                                                                                                                                                                  |
+| ------ | ---------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ⬜     | `esign-provider` | Zoho Sign / DocuSign account + API key + webhook signing secret (names in `apps/<app>/config/params.ts`) | you provision a vendor account | Real envelope creation through `packages/kit/src/adapters/real/esign.ts`; a signing ceremony completed by a real signer; the inbound `POST /api/webhooks/esign` verifies and pulls the signed PDF into an `attachments` row end-to-end |
 
 The webhook secret rides the existing verified-inbound seam; no new secret _class_ — it's the
 Mailgun/webhook shared-secret pattern with a different value.
 
 ## 5. What you do NOT build
 
-- No new state-machine engine — reuse `packages/keel/src/core/state-machine.ts`.
-- No new webhook-verification mechanism — reuse `packages/keel/src/service-auth/`'s
+- No new state-machine engine — reuse `packages/kit/src/core/state-machine.ts`.
+- No new webhook-verification mechanism — reuse `packages/kit/src/service-auth/`'s
   HMAC/timestamp check.
 - No new storage path — the signed PDF is an `attachments` row.
-- No change to `packages/keel/src/core/gates.ts`'s evaluator — only a new fact key and a new
+- No change to `packages/kit/src/core/gates.ts`'s evaluator — only a new fact key and a new
   `gatesFor…` bridge.
 
 That is the whole point of the gate class: e-sign is a rider, not a rebuild.

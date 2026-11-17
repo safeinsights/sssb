@@ -4,7 +4,7 @@ import { Anchor, Badge, Button, Card, Container, Group, Stack, Text, TextInput, 
 import { useForm } from '@mantine/form'
 import { useTranslations } from 'next-intl'
 import { useState } from 'react'
-import { normalizeDisplayName } from 'keel/core/greeting'
+import { normalizeDisplayName } from '@sssb/kit/core/greeting'
 
 /** Router-agnostic screen: no Next imports, usable from app routes, Ladle, and the static demo shell. */
 export function WelcomeScreen({ dashboardHref }: { dashboardHref?: string }) {

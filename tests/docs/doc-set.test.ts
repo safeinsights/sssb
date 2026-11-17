@@ -22,7 +22,7 @@ function citationsIn(markdown: string) {
 
 describe('citedPaths', () => {
     it('reads a span that is itself a path', () => {
-        expect(citationsIn('see `packages/keel/src/ports`')).toEqual(['packages/keel/src/ports'])
+        expect(citationsIn('see `packages/kit/src/ports`')).toEqual(['packages/kit/src/ports'])
     })
 
     it('reads a path out of a backticked command', () => {
@@ -38,15 +38,11 @@ describe('citedPaths', () => {
     })
 
     it('truncates a glob or a <metavariable> to its static prefix', () => {
-        expect(citationsIn('`packages/keel/src/adapters/<real|fake>/<name>.ts`')).toEqual([
-            'packages/keel/src/adapters',
-        ])
+        expect(citationsIn('`packages/kit/src/adapters/<real|fake>/<name>.ts`')).toEqual(['packages/kit/src/adapters'])
     })
 
     it('truncates a brace expansion to its static prefix, in a span and in a command', () => {
-        expect(citationsIn('`packages/keel/src/i18n/messages/{en,es}.json`')).toEqual([
-            'packages/keel/src/i18n/messages',
-        ])
+        expect(citationsIn('`packages/kit/src/i18n/messages/{en,es}.json`')).toEqual(['packages/kit/src/i18n/messages'])
         expect(citationsIn('`rm apps/showcase/messages/{en,es}.json`')).toEqual(['apps/showcase/messages'])
     })
 
@@ -123,12 +119,12 @@ describe('generalizeAppCitations', () => {
     })
 
     it('touches nothing when every citation resolves', () => {
-        const text = '`apps/starter/src` and `packages/keel/src`'
+        const text = '`apps/starter/src` and `packages/kit/src`'
         expect(generalizeAppCitations(text, gone)).toBe(text)
     })
 
     it('ignores paths outside apps/, which have no <app> to generalise to', () => {
-        const text = '`rm packages/keel/src/gone.ts`'
+        const text = '`rm packages/kit/src/gone.ts`'
         expect(generalizeAppCitations(text, () => true)).toBe(text)
     })
 
@@ -141,7 +137,7 @@ describe('generalizeAppCitations', () => {
 
 /**
  * `resolves` against real directory trees, because what it decides depends on which apps exist. Three trees,
- * and the point is that the template is strict while an adopted tree is not strict about keel's two apps.
+ * and the point is that the template is strict while an adopted tree is not strict about SSSB's two apps.
  */
 describe('resolves', () => {
     /** A tree under a fresh root. `files` are created with their parents; `dirs` are empty directories. */
@@ -159,23 +155,23 @@ describe('resolves', () => {
     const template = () =>
         tree(
             ['apps/showcase/package.json', 'apps/starter/package.json'],
-            ['apps/showcase/src/only-in-temp', 'apps/starter/src', 'packages/keel/src'],
+            ['apps/showcase/src/only-in-temp', 'apps/starter/src', 'packages/kit/src'],
         )
-    const adopted = () => tree(['apps/console/package.json'], ['apps/console/src', 'packages/keel/src']) // ejected, starter renamed
+    const adopted = () => tree(['apps/console/package.json'], ['apps/console/src', 'packages/kit/src']) // ejected, starter renamed
     const renamedOnly = () =>
-        tree(['apps/showcase/package.json', 'apps/console/package.json'], ['apps/showcase/src', 'packages/keel/src'])
+        tree(['apps/showcase/package.json', 'apps/console/package.json'], ['apps/showcase/src', 'packages/kit/src'])
 
     it('reads the tree it is given, not the working directory', () => {
         expect(resolves('apps/showcase/src/only-in-temp', template())).toBe(true)
-        expect(resolves('apps/showcase/src/only-in-temp', adopted()), "absent app: keel's").toBe(true)
-        expect(resolves('packages/keel/src/only-in-temp', template())).toBe(false)
+        expect(resolves('apps/showcase/src/only-in-temp', adopted()), "absent app: SSSB's").toBe(true)
+        expect(resolves('packages/kit/src/only-in-temp', template())).toBe(false)
         expect(resolves('scripts', template()), 'a directory of the real repo that is not in the temp tree').toBe(false)
     })
 
     it('accepts a file citation on its parent directory existing in the tree it is given, not the working directory', () => {
         expect(resolves('apps/showcase/src/only-in-temp/new.ts', template())).toBe(true)
-        // `packages/keel/src` is in the temp tree; `scripts/` is only in the real repo
-        expect(resolves('packages/keel/src/new.ts', template())).toBe(true)
+        // `packages/kit/src` is in the temp tree; `scripts/` is only in the real repo
+        expect(resolves('packages/kit/src/new.ts', template())).toBe(true)
         expect(resolves('scripts/new.ts', template())).toBe(false)
     })
 
@@ -186,7 +182,7 @@ describe('resolves', () => {
         expect(resolves('apps/showcase', root)).toBe(true)
     })
 
-    it("lets an adopted tree cite keel's reference apps, which are not in it", () => {
+    it("lets an adopted tree cite SSSB's reference apps, which are not in it", () => {
         const root = adopted()
         expect(resolves('apps/starter/src/app/[locale]/signin/page.tsx', root)).toBe(true)
         expect(resolves('apps/showcase/src/domain/db/tickets.ts', root)).toBe(true)
@@ -197,7 +193,7 @@ describe('resolves', () => {
     it('stays strict for everything else in an adopted tree', () => {
         const root = adopted()
         expect(resolves('apps/console/src/no-such-dir', root), "the adopter's own app").toBe(false)
-        expect(resolves('packages/keel/src/no-such-dir', root)).toBe(false)
+        expect(resolves('packages/kit/src/no-such-dir', root)).toBe(false)
         expect(resolves('docs/no-such-dir', root)).toBe(false)
         expect(resolves('apps/showcase-extra/src', root), 'a lookalike prefix is not the showcase').toBe(false)
     })
@@ -209,7 +205,7 @@ describe('resolves', () => {
     })
 
     it('keeps checking an app called starter that the adopter kept', () => {
-        const root = tree(['apps/starter/package.json'], ['apps/starter/src', 'packages/keel/src']) // `init-app starter --eject-showcase`
+        const root = tree(['apps/starter/package.json'], ['apps/starter/src', 'packages/kit/src']) // `init-app starter --eject-showcase`
         expect(resolves('apps/starter/src/no-such-dir', root)).toBe(false)
     })
 
@@ -223,7 +219,7 @@ describe('resolves', () => {
                 'apps/showcase/tests/e2e/new.spec.ts',
                 'apps/showcase/src/new-component.ts', // where a new upstream file most often lands
             ],
-            ['apps/starter/node_modules/left-behind', 'packages/keel/src'],
+            ['apps/starter/node_modules/left-behind', 'packages/kit/src'],
         )
         expect(resolves('apps/showcase/src/domain/db/tickets.ts', root)).toBe(true)
         expect(resolves('apps/showcase/src/app-config', root)).toBe(true)
@@ -232,7 +228,7 @@ describe('resolves', () => {
 
     it('agrees with the rewriter: init-app does not generalize a citation the gate accepts', () => {
         // init-app asks `(cited) => !resolves(cited)`; a citation of a reference app that is not here is
-        // keel's, so it is left as written instead of becoming `apps/<app>/…`.
+        // SSSB's, so it is left as written instead of becoming `apps/<app>/…`.
         const root = adopted()
         const text = 'see `apps/starter/src/app/[locale]/signin/page.tsx` and `apps/console/src/no-such-dir`'
         expect(generalizeAppCitations(text, (cited) => !resolves(cited, root))).toBe(

@@ -1,7 +1,7 @@
-import { db } from 'keel/adapters/index'
-import { orgIdForSlug } from 'keel/db/org-lookup'
-import { tenantIdForSlug } from 'keel/db/tenant-lookup'
-import type { AuthUser } from 'keel/ports/auth'
+import { db } from '@sssb/kit/adapters/index'
+import { orgIdForSlug } from '@sssb/kit/db/org-lookup'
+import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
+import type { AuthUser } from '@sssb/kit/ports/auth'
 
 /**
  * The session's active tenant + org uuids — the resolution every product route used to repeat inline

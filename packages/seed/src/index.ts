@@ -9,12 +9,12 @@
  * demo starts INSIDE a story instead of building one.
  *
  * This package holds data only. The framework-owned SHAPES it fills in are the seed contract
- * (keel/seed/contracts), imported as types so this stays free of runtime imports; the product-row
+ * (@sssb/kit/seed/contracts), imported as types so this stays free of runtime imports; the product-row
  * shapes are the app's own and are declared here. No framework values, no vendor SDKs. The INSERT
  * logic for the product rows lives with the app, in apps/showcase/src/app-config/db/seed-rows.ts.
  */
 
-import type { SeedAgreement, SeedJobSchedule, SeedOrg, SeedPerson, SeedTenant } from 'keel/seed/contracts'
+import type { SeedAgreement, SeedJobSchedule, SeedOrg, SeedPerson, SeedTenant } from '@sssb/kit/seed/contracts'
 
 // Re-exported so consumers keep importing the seed vocabulary from one place (the app's seam module
 // re-exports this package wholesale).
@@ -29,7 +29,7 @@ export type {
     SeedPerson,
     SeedScheduleSpec,
     SeedTenant,
-} from 'keel/seed/contracts'
+} from '@sssb/kit/seed/contracts'
 
 export const tenants: SeedTenant[] = [
     { slug: 'northwind', name: 'Northwind Support', themePrimaryColor: 'indigo', themeRadius: 'sm' },
@@ -195,7 +195,7 @@ export const agreements: SeedAgreement[] = [
 
 /**
  * Seeded recurring job schedules — WHICH org gets WHICH schedule is app/demo content, so it
- * lives here rather than hard-coded in the framework seeder (keel/db/seed.ts), which only takes what
+ * lives here rather than hard-coded in the framework seeder (@sssb/kit/db/seed.ts), which only takes what
  * the data says.
  *
  * ALL THREE ScheduleSpec shapes are seeded, because a desk really does run all three cadences: a
@@ -233,7 +233,7 @@ export const jobSchedules: SeedJobSchedule[] = [
 // ── The product corpus: the situation already in progress ─────────────────────────────────────────
 //
 // These shapes are the APP's, not the framework's — a desk has tickets, escalations and attachments;
-// keel has no idea. apps/showcase/src/app-config/db/seed-rows.ts turns them into rows (and bytes) on
+// SSSB has no idea. apps/showcase/src/app-config/db/seed-rows.ts turns them into rows (and bytes) on
 // first boot, and the whole block is skipped once the world already has a ticket, so a reset restores
 // exactly this and nothing accumulates.
 //
@@ -343,7 +343,7 @@ export const tickets: SeedTicket[] = [
     //
     // Six resolved tickets from earlier in the week, older than everything above. A desk that has been
     // open a while has closed work behind it, and a queue with history is what makes the paged list
-    // (keel/db/keyset) demonstrate something: the card opens on the five live tickets above and offers
+    // (@sssb/kit/db/keyset) demonstrate something: the card opens on the five live tickets above and offers
     // "show older tickets" for these. They are deliberately (a) OLDER than NW-1024, so page one is
     // exactly the five that were there before paging existed — the ticket tour and the SLA banner both
     // read page one; and (b) numbered BELOW NW-1041, so the next reference the desk issues is still

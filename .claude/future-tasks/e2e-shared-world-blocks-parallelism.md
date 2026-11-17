@@ -46,16 +46,16 @@ position 751 in an 821-byte `invites.json`.
 
 ## Fix 1 — atomic writes in the fake adapters: SHIPPED
 
-`packages/keel/src/adapters/fake/atomic-write.ts` is that fix. It writes to a temp file colocated with
+`packages/kit/src/adapters/fake/atomic-write.ts` is that fix. It writes to a temp file colocated with
 the target (same directory ⇒ same filesystem ⇒ `rename()` is genuinely atomic rather than silently
 degrading to copy+delete) and publishes with a rename, so a concurrent reader of the target always sees
 either the whole old file or the whole new file. Four helpers — `writeFileAtomicSync`,
 `writeFileAtomic`, `writeJsonAtomicSync`, `writeJsonAtomic` — cover the sync and async, raw and JSON
-cases; `packages/keel/src/adapters/fake/atomic-write.test.ts` covers it in 8 tests. It is deliberately
-internal: not in `packages/keel/package.json`'s `exports`, reached by relative import like any other
+cases; `packages/kit/src/adapters/fake/atomic-write.test.ts` covers it in 8 tests. It is deliberately
+internal: not in `packages/kit/package.json`'s `exports`, reached by relative import like any other
 module-private file in that directory.
 
-**There are now zero plain `writeFileSync`/`writeFile` calls left in `packages/keel/src/adapters/fake/`
+**There are now zero plain `writeFileSync`/`writeFile` calls left in `packages/kit/src/adapters/fake/`
 production code** — the only survivors are inside `atomic-write.ts` itself, which is the implementation.
 20 call sites across 10 adapters (`analytics`, `auth`, `clock`, `email`, `service-auth`,
 `simulator`, `simulator-admin`, `sms`, `storage`, `webhooks`) go through the helpers. The three sites
@@ -71,7 +71,7 @@ loud failure (invalid JSON) for a silent one (a write that vanished), which is w
 
 ## Fix 2 — a world per worker: STILL OPEN, and this is the one that unpins `workers`
 
-`packages/keel/src/adapters/fake/data-dir.ts` already reads `APP_DATA_DIR`, which is the seam — but it
+`packages/kit/src/adapters/fake/data-dir.ts` already reads `APP_DATA_DIR`, which is the seam — but it
 reads it from `process.env` on every call, so it is a single process-global: one value for the whole
 server, not one per in-flight request. All workers share one dev server, so isolating them means either
 

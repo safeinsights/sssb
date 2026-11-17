@@ -1,8 +1,8 @@
-import { auth } from 'keel/adapters/index'
-import { authorize } from 'keel/authz/authorize'
-import { isAssignableRole } from 'keel/core/roles'
+import { auth } from '@sssb/kit/adapters/index'
+import { authorize } from '@sssb/kit/authz/authorize'
+import { isAssignableRole } from '@sssb/kit/core/roles'
 import { findOrg } from '@app/seed'
-import { sendOrgInvite } from 'keel/server-lib/invite'
+import { sendOrgInvite } from '@sssb/kit/server-lib/invite'
 import { resolveOrgContext } from '../../org-context'
 import { withPortErrors } from '../../respond'
 

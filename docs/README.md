@@ -1,5 +1,10 @@
 # The doc set
 
+SSSB is maintained by SafeInsights, and it is not SafeInsights-specific. The guard is the universality test in
+[development-approach.md](development-approach.md) ("What the template ships"): vendor code ships only if essentially every product built on SSSB will use it or it demonstrates a class of
+integration the template does not yet teach, a component only if it encodes a framework invariant, and
+everything else is a recipe.
+
 Three kinds of document live in this repo, and the difference matters because it tells you what to trust.
 
 - **Doctrine** — maintained and binding. Read it before building. If a doctrine doc contradicts the code,
@@ -11,19 +16,19 @@ Three kinds of document live in this repo, and the difference matters because it
 
 A guard enforces the first distinction: `tests/docs/doc-paths.test.ts` fails the build if a doctrine doc
 cites a repo path that does not exist. Records are exempt — rewriting a dated entry to match today's tree
-would be revisionist — so their paths are corrected opportunistically, never gated. Citations of keel's two
+would be revisionist — so their paths are corrected opportunistically, never gated. Citations of SSSB's two
 reference apps (`apps/showcase`, `apps/starter`) are checked while the app exists and pass in a tree that has
 ejected or renamed it, so a doc merged in from upstream cannot turn an adopter's gate red.
 
 ## Doctrine
 
-- [provenance.md](provenance.md) — where keel came from, why the framework was extracted rather than
+- [provenance.md](provenance.md) — where SSSB came from, why the framework was extracted rather than
   designed, and what deliberately is not in this repository
 - [adopting.md](adopting.md) — using this repo as a template: identity, the framework/app seam, demo
   removal, cutover
 - [development-approach.md](development-approach.md) — the engineering philosophy: thin slices,
   ports/adapters, hermetic dev, demo mode, the template/instance doctrine
-- [adr/](adr/) — the architecture decisions: 0001–0013 Accepted, 0014 Proposed. Each body states the decision as it holds
+- [adr/](adr/) — the architecture decisions: 0001–0014 Accepted. Each body states the decision as it holds
   today; from here an ADR is amended by appending a **dated addendum**, never by editing what it said
 - [auth-ui-playbook.md](auth-ui-playbook.md) — the recipe for adding auth capabilities (Clerk anatomy
   re-expressed in Mantine)

@@ -8,9 +8,9 @@ const { aws_budgets, aws_cloudfront, aws_cloudfront_origins, aws_ec2, aws_lambda
     cdk
 
 /**
- * The tsconfig every bundled Lambda is built with: the APP's. Its `@app-config/*` is what points the
+ * The tsconfig every bundled Lambda is built with: the APP's. Its `@sssb/app-config/*` is what points the
  * framework's migration registry at the app's own migrations. The root tsconfig points that alias at
- * keel's test fixture (packages/keel/test-fixture), which is right for keel's own tests and wrong for a
+ * SSSB's test fixture (packages/kit/test-fixture), which is right for SSSB's own tests and wrong for a
  * deploy: bundled with it, the migrator shipped the fixture's migrations and none of the app's.
  * ./check-shapes.ts reads the bundles a synth produces and fails on that. `pnpm init-app` repoints the
  * path along with the stack's other app imports.
@@ -46,7 +46,7 @@ type Environment = (typeof ENVIRONMENTS)[number]
  * runs it after `cdk synth`.
  */
 export interface AppStackProps extends cdk.StackProps {
-    /** The app's `params.database.transport` (packages/keel/src/adapters/real/database-transport.ts). */
+    /** The app's `params.database.transport` (packages/kit/src/adapters/real/database-transport.ts). */
     databaseTransport: 'pg' | 'data-api'
 }
 
@@ -127,7 +127,7 @@ export class AppStack extends cdk.Stack {
             autoDeleteObjects: !isProd,
         })
 
-        // The database half of each Lambda's environment (packages/keel/src/adapters/real/index.ts reads it).
+        // The database half of each Lambda's environment (packages/kit/src/adapters/real/index.ts reads it).
         // data-api builds no DATABASE_URL at all: the credential stays in Secrets Manager, where the Data
         // API reads it, so the `db-credential-not-in-env` concern does not arise on that path.
         const databaseEnv: Record<string, string> = dataApi
@@ -199,12 +199,12 @@ export class AppStack extends cdk.Stack {
 
         // ---- migrator ----------------------------------------------------------------------
         // Bundles the SAME migration registry the app and tests use
-        // (packages/keel/src/db/migrations, composed with the app's ≥1001 set through the seam).
-        // The entry is one of keel's published subpaths (packages/keel/package.json `exports`) —
+        // (packages/kit/src/db/migrations, composed with the app's ≥1001 set through the seam).
+        // The entry is one of SSSB's published subpaths (packages/kit/package.json `exports`) —
         // spelled as a path here because CDK bundling needs a file, not a specifier.
         const migrator = new aws_lambda_nodejs.NodejsFunction(this, 'Migrator', {
             runtime: aws_lambda.Runtime.NODEJS_22_X,
-            entry: path.join(__dirname, '../packages/keel/src/adapters/real/migrate-handler.ts'),
+            entry: path.join(__dirname, '../packages/kit/src/adapters/real/migrate-handler.ts'),
             handler: 'handler',
             timeout: cdk.Duration.minutes(5),
             ...lambdaNetwork,

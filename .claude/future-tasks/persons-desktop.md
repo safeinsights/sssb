@@ -3,7 +3,7 @@
 **Priority:** P3 · **Status:** deliberately blocked — needs a per-person channel to exist first
 
 Per-person world state today: inbox (mail) + continuity (last path, active team, mail-seen — the state
-is `lastPath` / `activeOrgSlug` / `mailSeenAt` in `packages/keel/src/adapters/fake/simulator.ts`; it is
+is `lastPath` / `activeOrgSlug` / `mailSeenAt` in `packages/kit/src/adapters/fake/simulator.ts`; it is
 the ORG that is remembered per person, not the tenant). Global: events, errors, snapshots.
 
 When a second genuinely per-person channel lands, consider reorganizing: People row → drill into that

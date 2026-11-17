@@ -1,6 +1,6 @@
-import { db } from 'keel/adapters/index'
-import { isJobStatus, type JobStatus } from 'keel/core/jobs'
-import { listServiceJobs } from 'keel/db/jobs'
+import { db } from '@sssb/kit/adapters/index'
+import { isJobStatus, type JobStatus } from '@sssb/kit/core/jobs'
+import { listServiceJobs } from '@sssb/kit/db/jobs'
 import { withServiceCaller } from '../respond'
 
 /**

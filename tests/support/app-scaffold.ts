@@ -25,9 +25,9 @@ export interface AppFacts {
     contractDatabase: string | null
 }
 
-/** The prefix of keel's own contract databases (`keel_contract`, `keel_data_api_contract`, `keel_data_api_lock`), which
+/** The prefix of SSSB's own contract databases (`sssb_contract`, `sssb_data_api_contract`, `sssb_data_api_lock`), which
  *  no app's may start with: the framework's fixture runs on the same server. */
-const FRAMEWORK_DATABASE_PREFIX = 'keel_'
+const FRAMEWORK_DATABASE_PREFIX = 'sssb_'
 
 /** Whether a source CALLS `defineContractSuite(`: a mention in a comment is not a call. */
 export function callsDefineContractSuite(source: string): boolean {
@@ -102,7 +102,7 @@ export function scaffoldProblems(apps: readonly AppFacts[], rows: ReadonlySet<st
             if (app.contractDatabase.startsWith(FRAMEWORK_DATABASE_PREFIX)) {
                 problems.push(
                     `apps/${app.name}: contract database "${app.contractDatabase}" starts with "${FRAMEWORK_DATABASE_PREFIX}", ` +
-                        "which is keel's own fixture databases' prefix on the same server",
+                        "which is SSSB's own fixture databases' prefix on the same server",
                 )
             }
         }

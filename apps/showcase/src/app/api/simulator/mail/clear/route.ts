@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { clearCaughtEmails } from 'keel/adapters/fake/email'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { clearCaughtEmails } from '@sssb/kit/adapters/fake/email'
 import { withPortErrors } from '../../../respond'
 
 /** Empties the fake email catch store (.data/emails) so long dev sessions stay legible without a

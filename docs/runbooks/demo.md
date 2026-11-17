@@ -34,7 +34,7 @@ Say out loud what is on screen, because everything after this is a consequence o
 
 The desk has history behind it too: click **Show older tickets** and six resolved tickets from earlier
 in the week appear beneath the live five, then the button goes away. That is **keyset pagination**
-(`packages/keel/src/db/keyset.ts`), not a hidden "show all" — the queue is read one page at a time
+(`packages/kit/src/db/keyset.ts`), not a hidden "show all" — the queue is read one page at a time
 through an opaque cursor, so the list stays correct on a desk with a year of tickets on it, and stays
 correct while other agents are opening new ones above you. It is also the piece of the "list kit" the
 framework ships: the grid around it is deliberately a recipe (`docs/recipes/list-kit.md`), because a

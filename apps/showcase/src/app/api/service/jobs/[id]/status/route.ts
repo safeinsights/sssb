@@ -1,7 +1,7 @@
-import { db } from 'keel/adapters/index'
-import { authorize } from 'keel/authz/authorize'
-import { exportKeyPrefix, isJobStatus } from 'keel/core/jobs'
-import { jobForOrg, recordJobStatus } from 'keel/db/jobs'
+import { db } from '@sssb/kit/adapters/index'
+import { authorize } from '@sssb/kit/authz/authorize'
+import { exportKeyPrefix, isJobStatus } from '@sssb/kit/core/jobs'
+import { jobForOrg, recordJobStatus } from '@sssb/kit/db/jobs'
 import { withServiceCaller } from '../../../respond'
 
 const isOptionalString = (value: unknown): value is string | undefined =>

@@ -2716,3 +2716,40 @@ keel manager session, which relayed them to the session writing the ADR. The ADR
   every package, `create-sssb` included, move to right after the rename (ADR-0014's P1b), the last passkey round.
   Pages' prereleases are GitHub-release tarballs, which involve no npm publish; iteration happens on an
   integration branch, and npm sees only real releases.
+
+## The move to `safeinsights/sssb`, and the rename (2026-11-17, `chore/move-and-rename-sssb`)
+
+**Earlier entries, and their numbers.** Every entry above this one was written in `jpslav/keel`, under the name
+keel. A bare PR number above (`#54`) is a PR in `jpslav/keel` (jpslav/keel#54); this repository's PRs number from 1
+again. keel above means the project now called SSSB, `packages/keel` is today's `packages/kit`, `keel/…` is
+today's `@sssb/kit/…`, `@app-config/*` is today's `@sssb/app-config/*`, and a `keel/…` lint rule id is today's
+`sssb/…`. Entries from here on say SSSB.
+
+Decisions P1 made that ADR-0014 did not:
+
+- **The seam is an optional peer through `peerDependenciesMeta` alone.** With `@sssb/app-config` in
+  `peerDependencies` and marked optional, `pnpm install` in this workspace asked the registry for it (404): pnpm
+  installs a workspace project's own peers, optional or not. A `peerDependenciesMeta` entry with no
+  `peerDependencies` entry is an optional peer of any version, the install stays offline, and a packed `@sssb/kit`
+  installed beside a `link:` seam still gets the seam linked into its directory in the virtual store.
+- **The Vitest project that runs the packages' suites is `kit`**, in both `vitest.config.ts` and
+  `vitest.contract.config.ts`: it runs the framework package's suite. Nothing selected it by name.
+- **`init-app` refuses the slugs `kit`, `sssb` and any `sssb-…`**, and `keel` is no longer reserved. `init-app`
+  reserved `keel` because it was the framework's workspace and Vitest project name. An app slug cannot spell
+  `@sssb/kit`, but an app named `kit` would collide with the Vitest project, and an app's contract database is its
+  slug folded to underscores plus `_contract` (`tests/support/contract-postgres.ts`), so `sssb` would be the
+  fixture's own `sssb_contract` and any `sssb-…` slug would start with the `sssb_` prefix that
+  `tests/support/app-scaffold.ts` reserves for the framework, turning the adopter's first `pnpm verify` red.
+- **One statement in the ADR index, not an addendum per ADR**, says that the ADR bodies' bare PR numbers refer to
+  `jpslav/keel`. Only ADR-0004 and ADR-0014 cite bare numbers today, but every body says keel, and one paragraph
+  where readers enter the ADRs covers all fourteen and any later addendum that quotes an old one.
+- **The 0015 migration's error text keeps `keel:`.** `RAISE EXCEPTION 'keel: role % cannot switch to app_user …'`
+  is a shipped migration's body. Editing it would change nothing in a database that already ran it and would make
+  a fresh database's error differ from an old one's, so the migration and the contract test that matches its text
+  are left as they are.
+- **Test-only and transient names became `sssb_…`**: the contract databases (`sssb_contract`,
+  `sssb_data_api_contract`, `sssb_data_api_lock`), the owner-pass roles and databases (`sssb_owner_…`,
+  `sssb_creator_…`, `sssb_second_db_…`, `sssb_0015_…`), the Data API driver's `sssb_describe_…` statements, the
+  test GUC `sssb.probe`, temp-dir prefixes, the tour cursor's DOM ids (`sssb-tour-cursor`), the test MIME types
+  (`application/x-sssb-test`), the fixture's slug (`sssbfix`) and the Vite plugin name `sssb:prune-mantine-css`.
+  None is deployed state.

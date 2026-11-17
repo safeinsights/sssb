@@ -6,11 +6,11 @@ Write a Simulator tour for: $ARGUMENTS
 
 A tour is a scripted walkthrough: a ghost cursor drives the REAL screens while a bar narrates, so the
 single-file demo (`apps/showcase/dist-demo/index.html`) can be watched instead of read about. The
-_engine_ is framework (`packages/keel/src/demo-static/tour/` — driver, engine hook, overlay; the tab is
-`packages/keel/src/components/simulator/tours-app.tsx`); each tour is app content.
+_engine_ is framework (`packages/kit/src/demo-static/tour/` — driver, engine hook, overlay; the tab is
+`packages/kit/src/components/simulator/tours-app.tsx`); each tour is app content.
 
 1. **Register** in `apps/showcase/src/app-config/tours.ts`: add a `TourDefinition`
-   (`keel/demo-static/tour/contracts`) with `id`, `titleKey`, `summaryKey`, usually `snapshot: 'reset'`
+   (`@sssb/kit/demo-static/tour/contracts`) with `id`, `titleKey`, `summaryKey`, usually `snapshot: 'reset'`
    or the id of a demo preset (`presets` in `apps/showcase/src/app-config/presets.ts`, written with
    `/new-preset`) when the story should open mid-shift — both work on every host; a saved snapshot's name works only on a server and
    fails the `file://` walkthrough gate. Then its steps. `apps/starter` registers `[]` — with no tours the panel renders no Tours tab at all,

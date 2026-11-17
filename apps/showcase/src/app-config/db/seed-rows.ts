@@ -5,11 +5,11 @@ import {
     mail as seedMail,
     tickets as seedTickets,
 } from '@app/seed'
-import type { AppSeedContext, AppSeedRows } from 'keel/seed/contracts'
+import type { AppSeedContext, AppSeedRows } from '@sssb/kit/seed/contracts'
 
 /**
  * The APP's product-row seeder (the optional half of the seed seam, ADR-0012). The framework seeder
- * (keel/db/seed.ts) creates the tenants, orgs, agreements and schedules its own contract describes, then
+ * (@sssb/kit/db/seed.ts) creates the tenants, orgs, agreements and schedules its own contract describes, then
  * hands control here for the rows only the app knows about. An app with no product corpus simply does
  * not export `appSeedRows` and the framework skips this step — which is what apps/starter does.
  *

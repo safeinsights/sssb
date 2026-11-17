@@ -1,7 +1,7 @@
 import { Kysely } from 'kysely'
 
 /**
- * The index that makes the desk's queue pageable (`keel/db/keyset`).
+ * The index that makes the desk's queue pageable (`@sssb/kit/db/keyset`).
  *
  * A keyset page reads `WHERE tenant_id = … AND org_id = … AND (created_at, id) < ($1, $2)
  * ORDER BY created_at DESC, id DESC LIMIT n`. Without a matching index that is a scan of the org's

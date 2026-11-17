@@ -16,8 +16,8 @@ That middle line renames the app you keep and repoints every file that named it.
 leaves for you — deployment params, seed data, cutover rows, your GitHub owner and repo name — it prints when
 it finishes.
 
-Adding `--eject-showcase` also deletes the demo app, and the gate stays green when you do — keel's own
-tests run against keel's own fixture seam (`packages/keel/test-fixture`), not against the demo's world.
+Adding `--eject-showcase` also deletes the demo app, and the gate stays green when you do — SSSB's own
+tests run against SSSB's own fixture seam (`packages/kit/test-fixture`), not against the demo's world.
 **Still do it last**: the showcase is the worked example you will read most in week one. Build your
 first slices with it present; drop it when you stop reading it.
 
@@ -29,7 +29,7 @@ your product extends the framework, and the discipline that keeps the whole thin
 Three kinds of thing live in this repo (see
 [ADR-0012](adr/0012-framework-app-line-and-registration.md) for the full line):
 
-- **The framework** (**keel**): the workspace package `packages/keel`, imported as `keel/...` —
+- **The framework** (**SSSB**): the workspace package `packages/kit`, imported as `@sssb/kit/...` —
   ports/adapters, RLS tenancy, authz, jobs/schedules, webhooks in and out, notifications,
   agreements/gates, the Simulator dev/demo harness, its screens and its half of the i18n catalog. You
   extend it; you don't edit it. (Its route wrappers necessarily stay in an app's `apps/<app>/src/app` — Next.js
@@ -39,7 +39,7 @@ Three kinds of thing live in this repo (see
   the reference, then eject it. `apps/starter` — one entity, one card, two tenants, and a seam whose
   other eleven modules register nothing — is **the one you keep**. It is also the framework's second
   consumer, which is what makes the framework/app line falsifiable rather than merely asserted:
-  anything keel reaches for that only exists because the showcase supplies it fails to compile there.
+  anything SSSB reaches for that only exists because the showcase supplies it fails to compile there.
 - **The repo scaffold**: the verify gate, lint fences, CI, docs doctrine, infra draft. You keep it.
   One rule in it reaches your own tests: a test that needs a scratch directory calls
   `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `tests/support/tmp-dir.ts`, never `mkdtemp` (lint
@@ -56,7 +56,7 @@ must pick ONE app (`pnpm dev`, `pnpm start`, and the showcase-only `pnpm ladle`,
 ## Fork and first boot
 
 1. Fork/clone. **Take it with `git clone` or GitHub's Fork — not "Use this template" and not a ZIP**,
-   because both of those give you a repository with no commit in common with keel, and
+   because both of those give you a repository with no commit in common with SSSB, and
    `git merge upstream/main` then fails with `fatal: refusing to merge unrelated histories`. Updates
    here arrive by merge rather than by a version bump ([ADR-0013](adr/0013-upstream-updates-fork-and-merge.md)),
    so shared history is the mechanism, not a detail. If you already started from a template copy, you
@@ -122,13 +122,13 @@ files that name the app's directory:
 **The last row runs even on a rename-only adoption, with no `--eject-showcase`.** Those four files
 route YOUR users to the TEMPLATE maintainer — a security report, a code-owner review, a conduct
 complaint — and that is wrong the moment you fork, not only once you delete the showcase. `init-app`
-rewrites `@jpslav` to `PLACEHOLDER_GITHUB_OWNER`, and the `github.com/jpslav/keel` advisory and
+rewrites `@jpslav` to `PLACEHOLDER_GITHUB_OWNER`, and the `github.com/safeinsights/sssb` advisory and
 discussions links to `github.com/PLACEHOLDER_GITHUB_OWNER/<repo>`, and prints a "WHAT NOW NEEDS YOUR DETAILS" section naming
 exactly what to fill in. Left as `PLACEHOLDER_GITHUB_OWNER`, `CODEOWNERS` names an account GitHub cannot
 resolve, and turning on "require review from Code Owners" branch protection makes every PR unmergeable.
 `LICENSE` and the `docs/adr/` approver lines are the two places the maintainer's name correctly
 survives — the first because MIT requires the notice, the second because it is honest provenance for
-keel's own decisions.
+SSSB's own decisions.
 
 `tests/docs/adopter-identity.test.ts` ships with you and keeps guarding this, in a form that fits your
 repo. In the template it runs `init-app` on a scratch copy and checks the result. In yours, where the
@@ -161,7 +161,7 @@ honour.
 The framework catalog holds NO product name at all: one shared catalog cannot name two products, so
 `AppHeader` and `DemoShell` take a **required** `appName` prop and each app passes its own from its
 `welcome.appName` key. That key is what `init-app` writes. It is required rather than optional because
-the optional version shipped a bug: keel's catalog carried a `shell.appName` fallback, the showcase never
+the optional version shipped a bug: SSSB's catalog carried a `shell.appName` fallback, the showcase never
 passed the prop, and every signed-in header in the demo rendered the fallback while the product called
 itself Northwind Support. Nothing failed, because a default that resolves looks exactly like a default
 that is right — and `react/jsx-no-literals`, the one rule that would have caught a raw string, cannot see
@@ -196,11 +196,11 @@ It prints this list when it finishes, because these are the parts that take judg
   a pacing gate (it still fails on gross bloat); re-set it when you want a tighter gate, to what your app
   measures plus the headroom you want, in its own commit. `apps/<app>/DEMO-SIZE.md` beside it says what the
   number was set for and how it got there, and is where you record each change and why; it still calls the
-  app by its template name, and that history is keel's and stays as written.
-  `scripts/check-demo-size.mjs` is keel's and holds no number, so an upstream merge may change it and you
+  app by its template name, and that history is SSSB's and stays as written.
+  `scripts/check-demo-size.mjs` is SSSB's and holds no number, so an upstream merge may change it and you
   never edit it: re-set the number in `package.json`, never in the script. If you renamed the showcase
   instead (`--app showcase`), its number is its own pace-setting one, thin on purpose, and it has no
-  `DEMO-SIZE.md`: keel keeps the showcase's history in `docs/decision-log.md`. When it goes red,
+  `DEMO-SIZE.md`: SSSB keeps the showcase's history in `docs/decision-log.md`. When it goes red,
   that script's header says what to look at first.
 - **The licence** — this template is MIT, which means the product you build on it is yours with no
   copyleft obligation. Your own product's licence is still a decision you make; nothing here makes it
@@ -226,9 +226,9 @@ opened on the starter's tenants and its Items card, four days after adopting. Th
 looking at the product signed in as its own people, and nothing they used showed them the rest.
 
 **Replace it; do not build beside it.** The seed world is one world, and the framework's pickers list
-all of it — `keel/seed/contracts` has no notion of a person who exists but is not offered. A product
+all of it — `@sssb/kit/seed/contracts` has no notion of a person who exists but is not offered. A product
 world added NEXT TO `northwind` and `westgate` therefore puts both on every sign-in screen. Nothing in
-`packages/keel` needs the starter's names: keel's own tests run against `packages/keel/test-fixture`.
+`packages/kit` needs the starter's names: SSSB's own tests run against `packages/kit/test-fixture`.
 What does read them by literal id is yours to change in the same commit:
 
 - `apps/<app>/tests/e2e/items.spec.ts` signs in as `person-owner` and `person-other-tenant` and asserts
@@ -237,8 +237,8 @@ What does read them by literal id is yours to change in the same commit:
 - `staffOrgSlug` in `apps/<app>/src/app-config/abilities.ts` must name a real seed org.
 
 What the seed must keep is its SHAPE, not its content: the exports the framework reads through
-`@app-config/seed` (`tenants`, `organizations`, `people`, `agreements`, `jobSchedules`, `findTenant`,
-`findOrg` — `keel/seed/contracts` types the data), at least one tenant and one person to sign in as,
+`@sssb/app-config/seed` (`tenants`, `organizations`, `people`, `agreements`, `jobSchedules`, `findTenant`,
+`findOrg` — `@sssb/kit/seed/contracts` types the data), at least one tenant and one person to sign in as,
 and — if your deployment serves more than one tenant — two tenants, so that tenant isolation is something
 you can see by using the app and not only in tests. WHERE it lives is yours.
 
@@ -267,7 +267,7 @@ the starter survives.
 ### What ejecting the showcase costs
 
 `apps/starter` already owns the two things that are not the demo and that were once the showcase's alone: the **RLS
-contract suite** (`apps/<app>/tests/contract/`, which runs keel's composed proof suite on real Postgres, in a database
+contract suite** (`apps/<app>/tests/contract/`, which runs SSSB's composed proof suite on real Postgres, in a database
 of the app's own, by a non-superuser owner as Aurora's master user is (twice: on a fresh server, and where `app_user`
 already exists) and by a superuser: the anti-drift gate CI depends on) and **`apps/<app>/config/params.ts`**. So ejecting rescues nothing and deletes no gate:
 `pnpm test:contract` runs your app's suite, and `tests/tooling/app-scaffold.test.ts` fails if an app registers
@@ -277,25 +277,25 @@ from whichever it is pointed at).
 Five root scripts are dropped, because the starter does not ship the capabilities behind them:
 `dev:real`, `llm:record`, `ladle`, `build:demo`, `start:demo`. They come back with the thing they
 drive — a Sentry/params-wired `next.config.ts` and a real-mode preflight for `dev:real`, an
-`@app-config/assistant` registration for `llm:record`, `@ladle/react` plus a `.ladle/` config for the
+`@sssb/app-config/assistant` registration for `llm:record`, `@ladle/react` plus a `.ladle/` config for the
 workshop, Panda codegen for the demo build. Copy each from the showcase **before** you eject if you
 want it.
 
-One gate is relaxed on the way out. keel's knip workspace carries `includeEntryExports: true`, which
-means "every symbol keel PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of keel's 132 published subpaths from its source (37
+One gate is relaxed on the way out. SSSB's knip workspace carries `includeEntryExports: true`, which
+means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
+nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 132 published subpaths from its source (37
 counting its tests), so the same setting would start demanding you delete the other 97 — capabilities you merely have not
 reached yet, not dead code. `--eject-showcase` therefore turns it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration.
 
-**What ejecting does NOT cost you is the gate.** keel's own suite used to be welded to the demo's
+**What ejecting does NOT cost you is the gate.** SSSB's own suite used to be welded to the demo's
 vocabulary — its seed slugs, its `tickets` table, its `export-tickets` job kind, its route tree — so
 deleting the demo took `pnpm test:unit` and `pnpm typecheck` down with it. The framework now carries a
-seam of its own, `packages/keel/test-fixture`: a conforming `@app-config/*` registration with its own
+seam of its own, `packages/kit/test-fixture`: a conforming `@sssb/app-config/*` registration with its own
 two-tenant seed world, one table and its migrations, one job/webhook/notification kind, an inbound handler,
 and a route tree that exists only to be read by the authorization scan. The root TypeScript program
-resolves `@app-config/*` there, and `vitest.config.ts` runs keel's suite in a `keel` project pointed at
+resolves `@sssb/app-config/*` there, and `vitest.config.ts` runs SSSB's suite in a `kit` project pointed at
 it. Nothing in that fixture is deletable by adoption, and its vocabulary is deliberately none of the
 apps' — so a framework test that reacquires a dependency on YOUR world fails loudly instead of passing
 by coincidence. `pnpm verify` is green on a freshly ejected repo, end to end.
@@ -308,53 +308,53 @@ proved against.
 ## Layout
 
 ```
-packages/keel/src/            the framework — never edit for product work
-packages/keel/test-fixture/   the framework's OWN app seam, for its OWN tests — not yours, not shipped
+packages/kit/src/            the framework — never edit for product work
+packages/kit/test-fixture/   the framework's OWN app seam, for its OWN tests — not yours, not shipped
 apps/<app>/config/            APP_SLUG and (optionally) deployment params
 apps/<app>/src/app/           Next route files (thin wrappers; framework routes live here too)
 apps/<app>/src/app-config/    THE SEAM — your registrations
 apps/<app>/src/components/    your screens/cards
 apps/<app>/src/domain/        your domain modules
-apps/<app>/src/ports/         your own ports, for a vendor keel has no port for (docs/recipes/app-owned-adapter.md)
+apps/<app>/src/ports/         your own ports, for a vendor SSSB has no port for (docs/recipes/app-owned-adapter.md)
 apps/<app>/src/adapters/      their registry and fakes; adapters/real/ is the app's only vendor-SDK directory
-apps/<app>/src/demo-static/   your half of the file:// demo twin (the framework half is keel's)
-apps/<app>/src/seed/          your seed world (fills in keel/seed/contracts)
+apps/<app>/src/demo-static/   your half of the file:// demo twin (the framework half is SSSB's)
+apps/<app>/src/seed/          your seed world (fills in @sssb/kit/seed/contracts)
 apps/<app>/messages/          your i18n namespaces (the framework ships its own catalog)
 apps/<app>/tests/             your e2e, static-demo and contract specs
 ```
 
-### What you may import from keel
+### What you may import from SSSB
 
-`packages/keel/package.json`'s `exports` map is the contract: it lists the 132 subpaths your app may
-import as `keel/<subpath>` (`keel/ports/db`, `keel/components/app-header`, `keel/db/with-tenant`). The
+`packages/kit/package.json`'s `exports` map is the contract: it lists the 132 subpaths your app may
+import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 46 modules of the package are internals — private sub-components, the fake-db plumbing, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
-`pnpm lint` with the rule `keel/public-surface`, which reads that map directly. If you find yourself
+`pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. If you find yourself
 reaching for an internal, that is a signal the capability needs a seam, not a wider fence; if a module
-really is part of the contract and merely has no importer yet, that is a keel change: add the line upstream
-(ADR-0013, "Sending a keel fix back upstream") and take it back by merge, because in your fork the map is a
+really is part of the contract and merely has no importer yet, that is an SSSB change: add the line upstream
+(ADR-0013, "Sending an SSSB fix back upstream") and take it back by merge, because in your fork the map is a
 conflict on every later update.
 
-Two call sites reach keel by file path instead of by subpath, because their tools need a file rather
+Two call sites reach SSSB by file path instead of by subpath, because their tools need a file rather
 than a module specifier, and they are the two to remember if you move things: each app's
-`next.config.ts` points next-intl at `packages/keel/src/i18n/request.ts`, and `infra/stack.ts` bundles
-the migrator Lambda from `packages/keel/src/adapters/real/migrate-handler.ts`. Nothing typechecks
+`next.config.ts` points next-intl at `packages/kit/src/i18n/request.ts`, and `infra/stack.ts` bundles
+the migrator Lambda from `packages/kit/src/adapters/real/migrate-handler.ts`. Nothing typechecks
 `infra/`.
 
 ### When a lint fence must let one of your modules through
 
-Some fences take named exceptions. Today one does: `keel/no-raw-db-handle`, which bans `getDb()` in every
+Some fences take named exceptions. Today one does: `sssb/no-raw-db-handle`, which bans `getDb()` in every
 module of your app (tenant-scoped data goes through `db.withTenant()`, ADR-0004). If a module of yours truly
 needs the raw client, say a maintenance job that runs as the system across every tenant, list it in your app's
-own `apps/<app>/lint-exceptions.mjs`. Don't edit keel's `eslint.config.mjs`: every later keel update to it
+own `apps/<app>/lint-exceptions.mjs`. Don't edit SSSB's `eslint.config.mjs`: every later SSSB update to it
 would conflict with your edit, and a path you wrote there names your app's directory, which `pnpm init-app`
 renames without rewriting that file.
 
 ```js
 // apps/<app>/lint-exceptions.mjs
 export default {
-    'keel/no-raw-db-handle': [
+    'sssb/no-raw-db-handle': [
         { file: 'src/domain/maintenance.ts', reason: 'purges every tenant’s expired rows as the system' },
     ],
 }
@@ -369,7 +369,7 @@ file when it loads its config, so restart your editor's ESLint server after you 
 
 ## Building your product — everything registers through `apps/<app>/src/app-config/`
 
-The framework never imports your code directly; it imports the registration seam (`@app-config/*`), and
+The framework never imports your code directly; it imports the registration seam (`@sssb/app-config/*`), and
 a lint fence enforces the direction. Each module there is the app-side half of one capability. The
 "empty" column is what `apps/starter` registers — read it as the off switch for that capability:
 
@@ -399,7 +399,7 @@ therefore declares an empty one and suppresses `@typescript-eslint/no-empty-obje
 
 **To add a feature slice**: run `/new-slice` (and the per-capability scaffolds `/new-entity`,
 `/new-job`, `/new-actor`, `/new-notification-kind`, `/new-webhook-event`, `/new-tour`, `/new-preset`, `/new-preset-operation`). Each walks the house way:
-screen in your app's `apps/<app>/src/components` (yours) or `packages/keel/src/components` (framework-generic),
+screen in your app's `apps/<app>/src/components` (yours) or `packages/kit/src/components` (framework-generic),
 thin route, seam registrations, an RLS migration copied from the reference
 (`apps/starter/src/app-config/db/migrations/1001_items.ts`), colocated tests, e2e, then `pnpm verify` +
 `pnpm test:contract`.
@@ -413,13 +413,13 @@ registration is the off switch.
 
 **Static demo parity**: every slice ships its in-memory twin so the single-file `file://` demo keeps
 walking end-to-end. You only write your DOMAIN half — `apps/<app>/src/demo-static/app.tsx` is a
-composition root that adds your rows and cards to the framework world `keel/demo-static` already
+composition root that adds your rows and cards to the framework world `@sssb/kit/demo-static` already
 simulates (people, mail, jobs, schedules, webhooks, notifications, agreements, audit, snapshots). For one
 table that is 74 lines; the showcase's, with three entities plus actors and the assistant, is 669.
 Budget-gated per app (`pnpm check:demo-size`, each app passing its own byte budget). The starter's is
 the number you inherit, sized for YOUR growth (room to grow to the showcase's size), and it is yours to
 re-set in `apps/<app>/package.json`, with the reason recorded in `apps/<app>/DEMO-SIZE.md` beside it; the
-header of `scripts/check-demo-size.mjs` (keel's, never yours to edit) says what it guards and what to do when
+header of `scripts/check-demo-size.mjs` (SSSB's, never yours to edit) says what it guards and what to do when
 it goes red. The demo's build also drops every Mantine style rule no shipped component can
 match (`scripts/vite-prune-mantine-css.ts`), so a Mantine component you add needs no CSS import. The same file is
 the ONLY door for your shell, too: the `nav`, `welcome` and `dashboard` it passes `DemoShell` are what
@@ -427,16 +427,16 @@ the demo shows, so a navigation you build for the real app is absent from the tw
 there.
 
 **How a second app keeps the seam honest**: `apps/starter/tsconfig.json` includes the whole of
-`packages/keel/src` (minus tests and stories), so `pnpm typecheck` compiles the ENTIRE framework
+`packages/kit/src` (minus tests and stories), so `pnpm typecheck` compiles the ENTIRE framework
 against the starter's registrations — a framework module that assumed the showcase's tables or
-vocabulary fails there and nowhere else. `vitest.config.ts` then runs keel's seam-conformance tests
+vocabulary fails there and nowhere else. `vitest.config.ts` then runs SSSB's seam-conformance tests
 (the i18n partition/parity pair, the composed pglite RLS suite and the demo-presets check) a second
 time under the starter's aliases. Each was watched failing before being trusted.
 
 ### The scheduled tick
 
-keel's recurring work only advances when something ticks it. `job_schedules` (a digest, a reminder) and outbound
-webhook retries are drained by one function, `runScheduledTick` (`keel/server-lib/scheduled-tick`), and the route
+SSSB's recurring work only advances when something ticks it. `job_schedules` (a digest, a reminder) and outbound
+webhook retries are drained by one function, `runScheduledTick` (`@sssb/kit/server-lib/scheduled-tick`), and the route
 that calls it lives in the app you keep: `apps/<app>/src/app/api/webhooks/cron/route.ts`,
 `export const POST = withWebhookSecret(…)`. `init-app` moves it with the rest of the app and nothing deletes it;
 the showcase carries the same route over the same function.
@@ -444,7 +444,7 @@ the showcase carries the same route over the same function.
 - **Who may call it** is a machine, not a person. The route is guarded by the shared webhook secret
   (`Authorization: Bearer …`, compared in constant time; anything else is an opaque 401 before the tick runs). The
   authorization scan (`authorized-mutations.test.ts`) exempts a `webhooks/` route only if its file calls
-  `withWebhookSecret(`, so if you edit the route keep that call, and keep the logic in keel's function.
+  `withWebhookSecret(`, so if you edit the route keep that call, and keep the logic in SSSB's function.
 - **In a deployment** nothing calls it until you set up the scheduler: that is the `scheduled-tick` row of the
   [cutover checklist](cutover-checklist.md).
 - **In `pnpm dev`** nothing ticks it for you. The dev server runs no scheduler, and the starter's server app has no Simulator panel
@@ -479,16 +479,16 @@ domain" is a proof.
 The file opens with a worked row — closed, dated, owned, with a proof column that was thought through
 rather than restated. Read it once for the level of detail each row deserves before you fill in your own.
 
-**keel needs Postgres 16 or later.** Framework migration
-`packages/keel/src/db/migrations/0015_app_user_grant.ts` lets the migrating role switch to `app_user`
+**SSSB needs Postgres 16 or later.** Framework migration
+`packages/kit/src/db/migrations/0015_app_user_grant.ts` lets the migrating role switch to `app_user`
 with `GRANT … WITH SET TRUE`, checked by `pg_has_role(…, 'SET')`. Both arrived in Postgres 16, so on an
-older server that migration cannot run. Everything keel targets already meets it: the Aurora cluster in
+older server that migration cannot run. Everything SSSB targets already meets it: the Aurora cluster in
 `infra/stack.ts` (16.10), CI's contract job (`postgres:16` in `.github/workflows/checks.yml`), pglite
 (18.6) and the embedded Postgres that a local `pnpm test:contract` starts (18.4).
 
-## Staying current with keel
+## Staying current with SSSB
 
-Adopting is a fork, not a dependency: keel ships as a workspace package inside the repo you took, so
+Adopting is a fork, not a dependency: SSSB ships as a workspace package inside the repo you took, so
 upstream improvements reach you through `git merge`, not `pnpm update`.
 [ADR-0013](adr/0013-upstream-updates-fork-and-merge.md) records why, and the exact
 `git remote add upstream` workflow — including which directories reliably conflict and what would make
@@ -496,7 +496,7 @@ publishing to a registry worth the versioning cost.
 
 ### When an update changes what your seam must say
 
-A merge from keel can make your app stop compiling, or fail the authorize scan, until you add a line. These come from the change that
+A merge from SSSB can make your app stop compiling, or fail the authorize scan, until you add a line. These come from the change that
 let non-session callers reach `authorize()` (ADR-0012, 2026-11-16 addendum):
 
 - `apps/<app>/src/app-config/abilities.ts` must export `AppPersonCredentialKind` and
@@ -507,7 +507,7 @@ let non-session callers reach `authorize()` (ADR-0012, 2026-11-16 addendum):
   stated session wields `manageAll`. A literal with `manageAll: false` needs nothing, but without a
   session credential it can no longer take a session-only action (inviting a member, changing the org,
   managing a webhook endpoint, accepting terms).
-- `abilityActorFromCredential` takes an `OrgIdentity`, and only `orgIdentityForSlug` (`keel/db/org-lookup`)
+- `abilityActorFromCredential` takes an `OrgIdentity`, and only `orgIdentityForSlug` (`@sssb/kit/db/org-lookup`)
   makes one: a hand-paired `{ id, slug }` no longer compiles.
 - A mutating route under `api/service/` must call `authorize(...)` with the actor `withServiceCaller`
   passes. The scan's message says how.
@@ -525,8 +525,8 @@ exist), dated records, and future tasks. Three consequences for you:
 - **`.claude/future-tasks/`** carries designed-but-unbuilt work with the design written down. Keep the
   ones you want, delete the rest.
 - **Docs that arrive by `git merge upstream/main`** may cite `apps/showcase` or `apps/starter`, which you
-  no longer have. The gate passes those, since they name keel's reference apps, and still checks every citation
-  of your own app and of keel. (It used to fail on them.)
+  no longer have. The gate passes those, since they name SSSB's reference apps, and still checks every citation
+  of your own app and of SSSB. (It used to fail on them.)
 
 The habits that keep the rest truthful, which you inherit: record unplanned decisions in
 `decision-log.md` and hard-won lessons in `build-notes.md` as they happen; amend an ADR by appending a

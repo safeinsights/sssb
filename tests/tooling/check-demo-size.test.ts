@@ -14,7 +14,7 @@ const SCRIPT = fileURLToPath(new URL('../../scripts/check-demo-size.mjs', import
 
 /** An app directory whose built demo is exactly `bytes` long, checked against `budget` (none: the script is run bare). */
 function run(bytes: number, budget?: string, env: Record<string, string> = {}) {
-    const app = makeTestTmpDir('keel-demo-size-')
+    const app = makeTestTmpDir('sssb-demo-size-')
     mkdirSync(path.join(app, 'dist-demo'))
     writeFileSync(path.join(app, 'dist-demo', 'index.html'), 'x'.repeat(bytes))
     const result = spawnSync(process.execPath, [SCRIPT, ...(budget === undefined ? [] : [budget])], {
@@ -83,7 +83,7 @@ describe('check-demo-size', () => {
         expect(err).toContain('`check:demo-size`')
     })
 
-    it("holds no number and no budget history of its own, because an adopter must never need to edit keel's script", () => {
+    it("holds no number and no budget history of its own, because an adopter must never need to edit SSSB's script", () => {
         // An upstream merge changes this file, so a number or a dated entry written into it is a conflict on
         // every later merge. The number is each app's package.json argument; the history lives with the app (the starter's DEMO-SIZE.md; the showcase's is in docs/decision-log.md).
         const source = readFileSync(SCRIPT, 'utf8')

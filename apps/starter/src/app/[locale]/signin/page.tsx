@@ -1,9 +1,9 @@
 import type { Route } from 'next'
 import { getTranslations, setRequestLocale } from 'next-intl/server'
 import { redirect } from 'next/navigation'
-import { auth, isSimulated } from 'keel/adapters/index'
-import { listAllPeople } from 'keel/adapters/fake/auth'
-import { SignInScreen } from 'keel/components/auth/sign-in-screen'
+import { auth, isSimulated } from '@sssb/kit/adapters/index'
+import { listAllPeople } from '@sssb/kit/adapters/fake/auth'
+import { SignInScreen } from '@sssb/kit/components/auth/sign-in-screen'
 import { findTenant } from '@/seed'
 import { PickerGlue } from './picker-glue'
 
@@ -25,7 +25,7 @@ export default async function SignInPage({
 
     if (!isSimulated) {
         const [{ RealSignInForm }, t] = await Promise.all([
-            import('keel/adapters/real/sign-in-form'),
+            import('@sssb/kit/adapters/real/sign-in-form'),
             getTranslations('auth'),
         ])
         const labels = {

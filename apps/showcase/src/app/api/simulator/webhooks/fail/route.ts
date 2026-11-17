@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { setEndpointFailing } from 'keel/adapters/fake/webhooks'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { setEndpointFailing } from '@sssb/kit/adapters/fake/webhooks'
 import { withPortErrors } from '../../../respond'
 
 /**

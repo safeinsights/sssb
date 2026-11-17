@@ -6,9 +6,9 @@
 > production, and record what each step returned in that row.
 
 ADR-0002's addendum of 2026-11-16 explains the transport and separates what is documented from what is
-proven. The dialect is `packages/keel/src/adapters/real/rds-data-dialect.ts`. It is selected with
+proven. The dialect is `packages/kit/src/adapters/real/rds-data-dialect.ts`. It is selected with
 `DATABASE_TRANSPORT=data-api` plus `DATABASE_CLUSTER_ARN`, `DATABASE_SECRET_ARN` and `DATABASE_NAME`
-(`packages/keel/src/adapters/real/index.ts`), which the deployment sets from the app's
+(`packages/kit/src/adapters/real/index.ts`), which the deployment sets from the app's
 `params.database.transport`.
 
 ## Preconditions
@@ -30,7 +30,7 @@ rds() { aws rds-data "$@" --resource-arn "$CLUSTER" --secret-arn "$SECRET"; }
 ## 1. Tenant context lasts for one transaction, and no longer
 
 This is the question the transport rests on. Run the calls one at a time. The second is the statement
-`withTenant` itself sends (`packages/keel/src/db/with-tenant.ts`):
+`withTenant` itself sends (`packages/kit/src/db/with-tenant.ts`):
 
 ```bash
 TX=$(rds begin-transaction --database "$DB" --query transactionId --output text)
@@ -51,7 +51,7 @@ Pass when:
 - the last call, after the commit, returns the secret's user (not `app_user`) and NULL or an empty
   string, so nothing outlived the transaction;
 - `commit-transaction` answered `"transactionStatus": "Transaction Committed"`, the only answer the dialect
-  takes for a commit (`commitOutcome` in `packages/keel/src/adapters/real/rds-data-codec.ts`). Record it
+  takes for a commit (`commitOutcome` in `packages/kit/src/adapters/real/rds-data-codec.ts`). Record it
   exactly, and do this before any traffic reaches the transport. The dialect reads the answer after the
   commit has happened, so if AWS words it differently, every commit is saved and then reported to the app
   as a failure. Fix `commitOutcome` first.
@@ -72,7 +72,7 @@ rds execute-statement --database "$DB" --transaction-id "$TX" \
 
 Pass when the first and the last call both FAIL, with no row returned. If AWS ran either outside a
 transaction instead, the tail of a `withTenant` that outlived the idle limit would run outside the
-transaction it belonged to, as the secret's user, with no tenant set. Every RLS table in keel and its
+transaction it belonged to, as the secret's user, with no tenant set. Every RLS table in SSSB and its
 apps also forces RLS (ADR-0004), so a non-superuser owner is still bound by it: its reads return nothing
 and its inserts are refused. Only a superuser or a role with `BYPASSRLS` escapes, and the
 `db-role-not-superuser` cutover row forbids those. Either way the statement has left its transaction:
@@ -85,16 +85,16 @@ The dialect PREPAREs each new statement shape and reads `pg_prepared_statements`
 ```bash
 TX=$(rds begin-transaction --database "$DB" --query transactionId --output text)
 rds execute-statement --database "$DB" --transaction-id "$TX" \
-  --sql 'PREPARE keel_probe AS SELECT id FROM tenants WHERE id = $1 AND slug = $2'
+  --sql 'PREPARE sssb_probe AS SELECT id FROM tenants WHERE id = $1 AND slug = $2'
 rds execute-statement --database "$DB" --transaction-id "$TX" \
-  --sql "SELECT parameter_types::text[] FROM pg_prepared_statements WHERE name = 'keel_probe'"
+  --sql "SELECT parameter_types::text[] FROM pg_prepared_statements WHERE name = 'sssb_probe'"
 rds rollback-transaction --transaction-id "$TX"
 ```
 
 Pass when the third call, the `SELECT`, returns the array `uuid`, `text`.
 
 Then check what those casts exist for: an untyped string parameter arrives as `varchar`, as the emulator
-binds it (`packages/keel/src/adapters/real/rds-data-emulator.ts`):
+binds it (`packages/kit/src/adapters/real/rds-data-emulator.ts`):
 
 ```bash
 rds execute-statement --database "$DB" --sql "SELECT pg_typeof(:p)::text AS t" \
@@ -103,7 +103,7 @@ rds execute-statement --database "$DB" --sql "SELECT pg_typeof(:p)::text AS t" \
 
 Pass when it returns `character varying`. If it does not, the emulator is stricter than AWS; correct it.
 
-Then check that a `:` inside a string literal or a comment is not read as a parameter. Keel's own SQL
+Then check that a `:` inside a string literal or a comment is not read as a parameter. SSSB's own SQL
 has none today, but the emulator assumes AWS's parser skips them, and nothing else has checked:
 
 ```bash
@@ -114,7 +114,7 @@ Pass when the call succeeds and returns the literal unchanged.
 
 Two harder shapes of the same rule: an E-string, where `\'` is a quote inside the literal, and nested
 block comments, which Postgres allows. The dialect and the emulator read both the way Postgres does, by one
-scanner (`sqlSegments` in `packages/keel/src/adapters/real/rds-data-codec.ts`):
+scanner (`sqlSegments` in `packages/kit/src/adapters/real/rds-data-codec.ts`):
 
 ```bash
 rds execute-statement --database "$DB" \
@@ -122,7 +122,7 @@ rds execute-statement --database "$DB" \
 ```
 
 Pass when it returns `it's :not_a_parameter`. If AWS reads any of the three as a parameter, its scanner is
-weaker than Postgres's: make the emulator follow it, and keep such text out of keel's SQL.
+weaker than Postgres's: make the emulator follow it, and keep such text out of SSSB's SQL.
 
 And check the other side of that rule, an accepted limit in ADR-0002's addendum: a colon directly before
 a name outside a literal IS read as a parameter, and a space after the colon stops it:
@@ -144,7 +144,7 @@ rds execute-statement --database "$DB" --include-result-metadata \
          '{\"a\":1}'::jsonb AS j, 9007199254740993::int8 AS big, 1.5::numeric AS n, true AS b, '\\x00ff'::bytea AS by"
 ```
 
-The emulator (`packages/keel/src/adapters/real/rds-data-emulator.ts`) assumes the following, and the dialect
+The emulator (`packages/kit/src/adapters/real/rds-data-emulator.ts`) assumes the following, and the dialect
 decodes on those assumptions. Pass when each holds; for any that does not, fix the decoder and the
 emulator together:
 
@@ -181,11 +181,11 @@ rds execute-statement --database "$DB" --sql "INSERT INTO tenants (slug, name) S
 
 This fails with a unique violation. Record the exception's name and its whole message, including whether
 it ends `; SQLState: 23505`. The dialect handles both forms (`normalizeDatabaseError` in
-`packages/keel/src/adapters/real/rds-data-codec.ts`), but the row should say which one AWS sends.
+`packages/kit/src/adapters/real/rds-data-codec.ts`), but the row should say which one AWS sends.
 
 Also roll back a transaction id that has already ended, and record that exception's name and message: the
 dialect treats `TransactionNotFoundException`, or a message saying the transaction is not found, as already
-rolled back (`isTransactionGone` in `packages/keel/src/adapters/real/rds-data-dialect.ts`).
+rolled back (`isTransactionGone` in `packages/kit/src/adapters/real/rds-data-dialect.ts`).
 
 Last, record the exception names for three requests the Data API should refuse before running anything:
 
@@ -215,7 +215,7 @@ model of AWS.)
     ```
 
     must equal the number of migrations the framework and the app register: the entries of
-    `packages/keel/src/db/migrations/index.ts` plus those of the app's own, such as
+    `packages/kit/src/db/migrations/index.ts` plus those of the app's own, such as
     `apps/showcase/src/app-config/db/migrations/index.ts`. That one run proves on AWS what only the emulator has shown: DDL in
     one Data API transaction, the describe step for the migrator's bookkeeping inserts inside it, and
     0001's `DO` block.
@@ -227,9 +227,9 @@ model of AWS.)
     rds execute-statement --database "$DB" --sql 'DO $$ BEGIN PERFORM 1; PERFORM 2; END $$'
     ```
 
-    Pass when it succeeds. If AWS refuses it, keel changes 0001, not the migrator: the migration checks
+    Pass when it succeeds. If AWS refuses it, SSSB changes 0001, not the migrator: the migration checks
     `pg_roles` for `app_user` from its TypeScript and sends `CREATE ROLE app_user NOLOGIN` alone, one
-    statement per call. 0001's is the only dollar-quoted body in keel's migrations and both apps'. An
+    statement per call. 0001's is the only dollar-quoted body in SSSB's migrations and both apps'. An
     adopter's PL/pgSQL function would meet the same refusal, and its migration could run only on the `pg`
     shape: on `data-api` nothing but the Data API reaches the database (the first bullet above).
 

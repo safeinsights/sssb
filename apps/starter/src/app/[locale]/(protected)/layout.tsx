@@ -1,7 +1,7 @@
 import { setRequestLocale } from 'next-intl/server'
 import { redirect } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { auth } from 'keel/adapters/index'
+import { auth } from '@sssb/kit/adapters/index'
 import { findTenant } from '@/seed'
 import { HeaderGlue } from './header-glue'
 

@@ -2,10 +2,14 @@
 
 This repository begins at one commit. That is deliberate, and this file is what it replaces.
 
-keel was built as the foundation for a real application, over seven working days in July 2026, and
+SSSB was built as the foundation for a real application, over seven working days in July 2026, and
 then generalised into a template. The application it was built for is private and stays that way, so
 the construction history was not published with the code. What follows is the part of that history
 worth carrying forward: the order things happened in, and the few choices that order explains.
+
+Until 2026-11-17 the project was called keel and lived in `jpslav/keel`. ADR-0014 renamed it SSSB, and its full
+history moved to `safeinsights/sssb`, where PR numbers start again from 1: the dated records and ADR bodies say
+keel and cite `jpslav/keel`'s PR numbers, and the doctrine docs write those as `jpslav/keel#54`.
 
 ## The decisions came before the code
 
@@ -31,7 +35,7 @@ work, outbound webhooks, notifications, inbound email, access gates. Each slice 
 its own tests, and its twin in the static demo.
 
 The framework/app line (ADR-0012) was drawn on the fifth day, over code that already worked, and the
-extraction followed: the generic half moved to `packages/keel`, the application became
+extraction followed: the generic half moved to `packages/kit`, the application became
 `apps/showcase`, and the simulated world moved into the framework so a second app could inherit it.
 
 This matters more than it sounds. A framework designed up front is a set of guesses about what an
@@ -41,7 +45,7 @@ rather than by a convention. The boundaries had to be discovered before they cou
 
 **`apps/starter` exists to falsify the line.** A second consumer was added specifically so the seam
 could be wrong in a way that fails a build: it typechecks the whole framework against its own
-registrations, so anything keel reaches for that only the showcase supplies breaks there and nowhere
+registrations, so anything SSSB reaches for that only the showcase supplies breaks there and nowhere
 else. A framework with one consumer cannot tell the difference between a boundary and a habit.
 
 ## The names are plain on purpose
@@ -53,12 +57,12 @@ simulated world is the Simulator, and the world it drives is the simulated world
 This was a deliberate pass, made once the concepts had settled rather than while they were moving,
 and it is worth keeping as a rule: **when a concept and its name disagree, change the name.** A clever
 name costs every future reader a translation, and a name that means two things costs them a mistake.
-ADR-0012 records the one-proper-noun-per-half rule that came out of it — `keel` for the framework,
+ADR-0012 records the one-proper-noun-per-half rule that came out of it — the project's name for the framework,
 `Simulator` for the panel, plain words for everything inside both.
 
 ## What is not here
 
-- **The application keel was built for**, by name, and the anatomy of the applications the capability
+- **The application SSSB was built for**, by name, and the anatomy of the applications the capability
   analysis was measured against. `docs/app-coverage-gaps.md` says what KIND of product round 1 measured
   — a regulated-data research application — because that is what makes its gap list legible. What it
   does not carry is whose it was or how it was built, which was not ours to describe.

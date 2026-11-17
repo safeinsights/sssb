@@ -3,7 +3,7 @@
 import { Anchor, Button, Card, Stack, Text, Title } from '@mantine/core'
 import { useTranslations } from 'next-intl'
 import { useState } from 'react'
-import { JobTimeline, type JobTimelineItem } from 'keel/components/job-timeline'
+import { JobTimeline, type JobTimelineItem } from '@sssb/kit/components/job-timeline'
 
 export interface ExportJob {
     id: string

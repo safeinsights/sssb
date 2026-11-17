@@ -1,11 +1,11 @@
-import { isSimulated } from 'keel/adapters/index'
-import { LOCALES } from 'keel/core/locale'
-import { WORLD_START_NAME_PATTERN } from 'keel/core/presets'
-import { applyDemoPreset } from 'keel/server-lib/demo-presets'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { LOCALES } from '@sssb/kit/core/locale'
+import { WORLD_START_NAME_PATTERN } from '@sssb/kit/core/presets'
+import { applyDemoPreset } from '@sssb/kit/server-lib/demo-presets'
 import { withPortErrors } from '../../respond'
 
 /**
- * Loads a registered demo preset (keel/core/presets.ts): resets the world, replays the preset's
+ * Loads a registered demo preset (@sssb/kit/core/presets.ts): resets the world, replays the preset's
  * operations, and signs THIS browser in as the preset's viewpoint. Simulator-mode gate, first line (404
  * in real), no role check — like reset, it must work signed out. Body: `{ name, locale }`; answers the
  * path the glue reloads to: the dashboard when the preset signs someone in, the welcome page otherwise.

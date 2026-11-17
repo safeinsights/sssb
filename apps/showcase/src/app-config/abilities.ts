@@ -1,13 +1,13 @@
-import type { AbilityAction, AbilityActor, AbilitySubject, NonSessionAdministration } from 'keel/core/abilities'
-import { canManageOrg } from 'keel/core/roles'
+import type { AbilityAction, AbilityActor, AbilitySubject, NonSessionAdministration } from '@sssb/kit/core/abilities'
+import { canManageOrg } from '@sssb/kit/core/roles'
 
 /**
- * The APP's authorization extension (the seam side of packages/keel/src/core/abilities.ts, ADR-0012). The framework
+ * The APP's authorization extension (the seam side of packages/kit/src/core/abilities.ts, ADR-0012). The framework
  * owns the base subjects + the deny-by-default switch; the demo app registers its OWN subjects, their
  * rules, and the two-sided escalation fields HERE. A real adopter replaces this file's contents (its own
  * subjects/rules) without editing the framework's base union or switch. PURE TypeScript, same as core.
  *
- * Imported by packages/keel/src/core/abilities.ts through the `@app-config/*` seam alias (deliberately distinct from
+ * Imported by packages/kit/src/core/abilities.ts through the `@sssb/app-config/*` seam alias (deliberately distinct from
  * the fenced `@/app-config/*` path so framework→seam registration is allowed; see ADR-0012).
  */
 
@@ -29,22 +29,22 @@ export interface AppSubjectFields {
 }
 
 /**
- * The credential kinds, beyond keel's own, by which a PERSON or a MACHINE can reach the desk (composed
- * into keel/core/abilities' `PersonCredentialKind` / `MachineCredentialKind`). The desk adds none: its
- * people arrive by session or by inbound email, and its counterparties by keel's service keys.
+ * The credential kinds, beyond SSSB's own, by which a PERSON or a MACHINE can reach the desk (composed
+ * into @sssb/kit/core/abilities' `PersonCredentialKind` / `MachineCredentialKind`). The desk adds none: its
+ * people arrive by session or by inbound email, and its counterparties by SSSB's service keys.
  */
 export type AppPersonCredentialKind = never
 export type AppMachineCredentialKind = never
 
 /**
  * The designated staff/operator org slug. ACTIVE membership in this org — acting AS it —
- * grants the `manageAll` ability-layer superpower (derived in packages/keel/src/authz/authorize.ts). It is one
+ * grants the `manageAll` ability-layer superpower (derived in packages/kit/src/authz/authorize.ts). It is one
  * ordinary org WITHIN a tenant: staff powers stop at the tenant boundary and NEVER cross tenants
- * (ADR-0004). It lives on the seam (not packages/keel/src/core/roles.ts) because WHICH org is the operator org is an
+ * (ADR-0004). It lives on the seam (not packages/kit/src/core/roles.ts) because WHICH org is the operator org is an
  * app/deployment choice — an adopter names their own; the framework only knows "there is a staff org".
  *
  * DISAMBIGUATION (deliberately): this org slug `desk-ops` is NOT the rank-ladder role `'staff'`
- * (packages/keel/src/core/roles.ts). The role `'staff'` is an org-manager RANK (canManageOrg, may invite) held
+ * (packages/kit/src/core/roles.ts). The role `'staff'` is an org-manager RANK (canManageOrg, may invite) held
  * within any org. The org `desk-ops` is the operator org whose ACTIVE membership activates cross-org
  * manage-all. A person can hold role `'admin'` in the `desk-ops` org (Olive does) — orthogonal.
  *
@@ -64,7 +64,7 @@ export function anchorSubjectExtras(anchor: string): AppSubjectFields {
 }
 
 /**
- * The app's per-subject rules, invoked by packages/keel/src/core/abilities.ts's `default:` case (deny by default).
+ * The app's per-subject rules, invoked by packages/kit/src/core/abilities.ts's `default:` case (deny by default).
  * `sameOrg` is injected by core so the "subject is org-scoped AND its org is the acting org" test is
  * defined once.
  * - Ticket:     read = sameOrg;  create|update|delete = !restricted && sameOrg. The desk's working
@@ -118,7 +118,7 @@ export function appAbilityRules(
 }
 
 /**
- * The app's rules for MACHINE actors (keel/core/abilities `MachineActor`). The desk grants machines
+ * The app's rules for MACHINE actors (@sssb/kit/core/abilities `MachineActor`). The desk grants machines
  * nothing of its own: its one machine caller, a counterparty over /api/service/*, only ever touches
  * framework Jobs, which the framework's own machine table governs. So every machine is denied every
  * ticket, escalation and attachment, and this function is the off switch.

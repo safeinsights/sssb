@@ -1,8 +1,8 @@
 import EmbeddedPostgres from 'embedded-postgres'
 import { Kysely, PostgresDialect, sql } from 'kysely'
 import { Pool } from 'pg'
-import type { Login } from 'keel/db/owner-pass'
-import type { DB } from 'keel/db/schema'
+import type { Login } from '@sssb/kit/db/owner-pass'
+import type { DB } from '@sssb/kit/db/schema'
 import { portFor } from '../../scripts/ports.mjs'
 import { makeTestTmpDirAsync } from './tmp-dir'
 
@@ -13,7 +13,7 @@ import { makeTestTmpDirAsync } from './tmp-dir'
  *
  * WHY EVERY SUITE NEEDS A DATABASE OF ITS OWN. Two migration sets share the framework's 0001-0999 and differ from
  * 1001 up, so running the second set's `migrateToLatest` over a database the first has migrated makes Kysely report
- * corrupted migrations. One server, one database per suite (`<slug>_contract`, `keel_contract`), is how every
+ * corrupted migrations. One server, one database per suite (`<slug>_contract`, `sssb_contract`), is how every
  * app's per-app migrations meet real Postgres without meeting each other's.
  *
  * Two modes, picked by the environment and the same for every caller:
@@ -97,7 +97,7 @@ export async function startContractServer(label: string): Promise<ContractServer
         // A server that ends a connection (a CI container's hiccup, an idle-session timeout) is an 'error' EVENT on
         // that client, and an event with no listener is an uncaught exception: it would take the whole run down
         // instead of failing the one test that was using the connection. The client's own listener covers it idle
-        // or checked out, as in the real adapter (keel/adapters/real/db.ts); the pool's re-emit of an idle one is
+        // or checked out, as in the real adapter (@sssb/kit/adapters/real/db.ts); the pool's re-emit of an idle one is
         // already logged by it.
         pool.on('connect', (client) => client.on('error', (error) => console.warn(`contract db: ${error.message}`)))
         pool.on('error', () => undefined)

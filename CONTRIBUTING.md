@@ -1,8 +1,12 @@
 # Contributing
 
-Read `docs/adr/` first — thirteen decisions are Accepted and not relitigated in routine work, and one (0014) is
-Proposed. `CLAUDE.md` is
+Read `docs/adr/` first — fourteen decisions are Accepted and not relitigated in routine work. `CLAUDE.md` is
 the same rulebook in agent-sized form.
+
+SSSB is maintained by SafeInsights, and it is not SafeInsights-specific. The guard is the universality test in
+`docs/development-approach.md` ("What the template ships"): vendor code ships only if essentially every product built on SSSB will use it or it demonstrates a class of
+integration the template does not yet teach, a component only if it encodes a framework invariant, and
+everything else is a recipe.
 
 ## Before you build a capability: it may be a recipe, not a feature
 
@@ -31,31 +35,31 @@ adapter" below are how you implement one that has passed — not a green light o
   does: `pnpm test:contract`, `pnpm jscpd`, `pnpm test:coverage` and the secret scan are CI-only, so run
   `pnpm test:contract` yourself for any migration or database change.
 - **Adopters sending a fix upstream:** branch off `upstream/main`, not your fork's `main`, and send only
-  the `packages/keel` change — see `docs/adr/0013-upstream-updates-fork-and-merge.md`, which explains
-  why a keel change carried locally in a fork is a permanent merge-conflict generator.
+  the `packages/kit` change — see `docs/adr/0013-upstream-updates-fork-and-merge.md`, which explains
+  why an SSSB change carried locally in a fork is a permanent merge-conflict generator.
 
 ## The ports rule (the one rule that matters most)
 
 Vendor SDKs (`@clerk/*`, `@aws-sdk/*`, `@anthropic-ai/*`, `@sentry/*`, `posthog-*`, `mailgun.js`, `pg`)
-may only be imported inside `packages/keel/src/adapters/`, or inside an app's own
-`apps/<app>/src/adapters/real/` for a vendor keel has no port for. Everything else codes against the
-interfaces in `keel/ports/`, or the app's own port. The lint rules that enforce this are load-bearing, and
+may only be imported inside `packages/kit/src/adapters/`, or inside an app's own
+`apps/<app>/src/adapters/real/` for a vendor SSSB has no port for. Everything else codes against the
+interfaces in `@sssb/kit/ports/`, or the app's own port. The lint rules that enforce this are load-bearing, and
 they see `import()` as well as `import`; if you hit one, you're about to couple the app to a vendor — add
-to the port instead. (keel's ports and adapters are framework code: they live in the `keel` workspace
+to the port instead. (SSSB's ports and adapters are framework code: they live in the `@sssb/kit` workspace
 package — ADR-0012. A port only your app calls, for a vendor that fails the first two tests above, lives
 in your app instead: `docs/recipes/app-owned-adapter.md`.)
 
 **Adding an adapter** for an existing port — once it has passed one of the two tests above:
 
-1. Implement the interface from `packages/keel/src/ports/<port>.ts` in
-   `packages/keel/src/adapters/<real|fake>/<name>.ts`.
+1. Implement the interface from `packages/kit/src/ports/<port>.ts` in
+   `packages/kit/src/adapters/<real|fake>/<name>.ts`.
 2. Fakes must be honest: persist under `.data/` (`dataDir()` helper) or in memory, behave like the real
    thing at the port surface, and stay offline.
 3. Real adapters that need credentials get: an env var registered in
-   `packages/keel/src/adapters/real/index.ts`
+   `packages/kit/src/adapters/real/index.ts`
    (`REQUIRED_ENV` — this powers `dev:real`'s fail-fast), a row in `docs/cutover-checklist.md`, and an
    `AUTHORED — CUTOVER` header comment until integration-verified.
-4. Wire it in the registry (`packages/keel/src/adapters/index.ts`), add unit tests for the fake,
+4. Wire it in the registry (`packages/kit/src/adapters/index.ts`), add unit tests for the fake,
    and extend the e2e
    flow if user-visible.
 
@@ -67,21 +71,21 @@ never to a vendor's API. `/new-port` (Claude command) scaffolds the layout.
 - Formatting is `.editorconfig` + Prettier — run `pnpm lint:fix`, never hand-format.
 - Conventional commits, lowercase subject, ≤100 chars (commitlint hook enforces).
 - UI strings go through next-intl; the lint rule catches literals. The catalog is split along the
-  framework/app line — framework copy in `packages/keel/src/i18n/messages/*.json`, app copy in
+  framework/app line — framework copy in `packages/kit/src/i18n/messages/*.json`, app copy in
   `apps/showcase/messages/*.json`, deep-merged at load.
 - Screens are router-agnostic (props in, callbacks out; no Next imports) — framework ones in
-  `packages/keel/src/components`, app ones in `apps/showcase/src/components`; route files under `apps/showcase/src/app` are
+  `packages/kit/src/components`, app ones in `apps/showcase/src/components`; route files under `apps/showcase/src/app` are
   thin wrappers plus fetch-glue.
 - Tenant-scoped data access only through `db.withTenant()` — `getDb` (called, bound, destructured, indexed,
   or named as a string, as in `Reflect.get(db, 'getDb')`) is banned in every module under
-  `apps/*/src`, in keel's screens and in keel's fixture (lint-enforced by `keel/no-raw-db-handle`; only tests
+  `apps/*/src`, in SSSB's screens and in SSSB's fixture (lint-enforced by `sssb/no-raw-db-handle`; only tests
   outside routes, screens and the fixture are exempt), and every tenant table carries the RLS policy pattern from
   `apps/showcase/src/app-config/db/migrations/1001_tickets.ts`. A `'use server'` action is an app module like any
   other, wherever you put it. If one module truly needs the raw client, add a named exception for that module,
   with its reason, in the app's `apps/<app>/lint-exceptions.mjs` (see `docs/adopting.md`); never exempt a
   directory, and never edit `eslint.config.mjs` for it.
 - New migrations: app tables go under `apps/showcase/src/app-config/db/migrations/` (numbered ≥ 1001) and extend
-  `AppTables`; framework tables go under `packages/keel/src/db/migrations/` (0001–0999). Register
+  `AppTables`; framework tables go under `packages/kit/src/db/migrations/` (0001–0999). Register
   in the neighbouring `index.ts` either way. The same migration code must pass `pnpm test:unit`
   (pglite) and `pnpm test:contract` (real Postgres).
 - Before finishing any change: `pnpm verify`.

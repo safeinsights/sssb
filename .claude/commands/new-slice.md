@@ -5,7 +5,7 @@ description: Start a vertical feature slice (screen + route + port usage + tests
 Plan and build a vertical slice for: $ARGUMENTS
 
 A slice is APP code. It registers new entities through the `apps/showcase/src/app-config/` seam (ADR-0012) and
-imports the framework freely; framework code reaches your app only through the `@app-config/*` alias, so
+imports the framework freely; framework code reaches your app only through the `@sssb/app-config/*` alias, so
 you never edit a framework union or switch to add a subject/kind/table — you register it. The tickets
 feature is the end-to-end reference (`apps/showcase/src/components/tickets-card.tsx`, `apps/showcase/src/app/api/tickets/route.ts`,
 `apps/showcase/src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx`, and its seam registrations below).
@@ -18,8 +18,8 @@ House shape for a slice:
    `apps/showcase/messages/es.json` (the two catalogs must stay key- and placeholder-identical, and the framework/app
    namespace partition is test-enforced).
 2. **Route handler(s)** under `apps/showcase/src/app/api/` using ports only; tenant-scoped data through
-   `db.withTenant()` (never `getDb()` anywhere under `apps/*/src`: `keel/no-raw-db-handle` bans it by default); auth via `auth.requireUser()`/`requireRole()`.
-   Every mutating route (POST/PUT/PATCH/DELETE) MUST call `authorize(...)` (`packages/keel/src/authz/authorize.ts`) —
+   `db.withTenant()` (never `getDb()` anywhere under `apps/*/src`: `sssb/no-raw-db-handle` bans it by default); auth via `auth.requireUser()`/`requireRole()`.
+   Every mutating route (POST/PUT/PATCH/DELETE) MUST call `authorize(...)` (`packages/kit/src/authz/authorize.ts`) —
    the build-time mutation scan fails any route that neither calls it nor is justified in its exemption map.
 3. **Authorization**: register your subject types + rules on the seam — add to `AppSubjectType`,
    `appAbilityRules` (and any two-sided fields to `AppSubjectFields`) in `apps/showcase/src/app-config/abilities.ts`,

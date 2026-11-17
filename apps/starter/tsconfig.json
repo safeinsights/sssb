@@ -3,8 +3,8 @@
     "compilerOptions": {
         "paths": {
             "@/*": ["./src/*"],
-            "@app-config/*": ["./src/app-config/*"],
-            "keel/*": ["../../packages/keel/src/*"]
+            "@sssb/app-config/*": ["./src/app-config/*"],
+            "@sssb/kit/*": ["../../packages/kit/src/*"]
         }
     },
     "include": [
@@ -16,13 +16,13 @@
         "*.ts",
         "config/**/*.ts",
         ".next/dev/types/**/*.ts",
-        "../../packages/keel/src/**/*.ts",
-        "../../packages/keel/src/**/*.tsx"
+        "../../packages/kit/src/**/*.ts",
+        "../../packages/kit/src/**/*.tsx"
     ],
     "exclude": [
         "node_modules",
-        "../../packages/keel/src/**/*.test.ts",
-        "../../packages/keel/src/**/*.test.tsx",
-        "../../packages/keel/src/**/*.stories.tsx"
+        "../../packages/kit/src/**/*.test.ts",
+        "../../packages/kit/src/**/*.test.tsx",
+        "../../packages/kit/src/**/*.stories.tsx"
     ]
 }

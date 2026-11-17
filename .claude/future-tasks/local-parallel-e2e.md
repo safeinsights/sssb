@@ -5,7 +5,7 @@
 
 **Status: unblocked, unbuilt.** When this was written, route 2 below depended on a production-build path
 that did not exist. It exists now: `E2E_BUILD` is read by `apps/showcase/playwright.config.ts` and by
-`packages/keel/src/adapters/index.ts`, and `apps/showcase/package.json` carries both `build:e2e` and
+`packages/kit/src/adapters/index.ts`, and `apps/showcase/package.json` carries both `build:e2e` and
 `start:e2e` (`.claude/future-tasks/resolved/e2e-against-production-build.md`). Nothing blocks the
 preferred route any more — only the shard runner itself is missing.
 

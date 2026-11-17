@@ -19,8 +19,8 @@ import {
 
 /**
  * ESLint lints eight extensions in this repo, and the fences in eslint.config.mjs name their zones by
- * directory. They used to name `*.{ts,tsx}` as well, so a `.mjs` file in apps/*\/src, packages/keel/src
- * or keel's test fixture could import a vendor SDK, read process.env or take the raw db handle with a
+ * directory. They used to name `*.{ts,tsx}` as well, so a `.mjs` file in apps/*\/src, packages/kit/src
+ * or SSSB's test fixture could import a vendor SDK, read process.env or take the raw db handle with a
  * green `pnpm lint`. This file runs the fences across every extension in each zone, and pins that the
  * carve-outs still let through what they were made for, and only that.
  */
@@ -28,7 +28,7 @@ const EXTENSIONS = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs']
 
 // A `.cjs` file is CommonJS: Node rejects `import`/`export` in one, though typescript-eslint's parser
 // would accept them. So each act is spelled the way a real `.cjs` file can contain it. Its import is
-// require(), which keel/no-dynamic-vendor-import sees; no-restricted-imports sees declarations only.
+// require(), which sssb/no-dynamic-vendor-import sees; no-restricted-imports sees declarations only.
 const isCjs = (file: string) => file.endsWith('.cjs')
 const importsVendor = (file: string) =>
     isCjs(file) ? "const { S3Client } = require('@aws-sdk/client-s3')\nmodule.exports = S3Client\n" : IMPORTS_VENDOR
@@ -39,7 +39,7 @@ const readsEnv = (file: string) =>
 const takesRawDb = (file: string) =>
     isCjs(file) ? "module.exports = (db) => db['getDb']()\n" : "export const load = (db) => db['getDb']()\n"
 
-/** Zones both the vendor and process.env bans hold in: an app's src/ and config/, keel's src/, keel's fixture. */
+/** Zones both the vendor and process.env bans hold in: an app's src/ and config/, SSSB's src/, SSSB's fixture. */
 const ZONES = [
     `${APP}/src/app/api/kv/route`,
     `${APP}/src/components/kv-card`,
@@ -47,9 +47,9 @@ const ZONES = [
     `${APP}/src/ports/kv`,
     `${APP}/src/adapters/fake/kv`,
     `${APP}/config/mode`,
-    'packages/keel/src/server-lib/kv',
-    'packages/keel/src/components/kv-panel',
-    'packages/keel/test-fixture/domain/kv',
+    'packages/kit/src/server-lib/kv',
+    'packages/kit/src/components/kv-panel',
+    'packages/kit/test-fixture/domain/kv',
 ]
 /** The ones the tenancy ban holds in as well (./tenancy.test.ts has every form of it). */
 const GET_DB_ZONES = [
@@ -59,8 +59,8 @@ const GET_DB_ZONES = [
     `${APP}/src/jobs/publish-kv`,
     `${APP}/src/actions/kv`,
     `${APP}/src/lib/kv`,
-    'packages/keel/src/components/kv-panel',
-    'packages/keel/test-fixture/api/kv/route',
+    'packages/kit/src/components/kv-panel',
+    'packages/kit/test-fixture/api/kv/route',
 ]
 
 describe('every fence holds for every extension ESLint lints', () => {
@@ -128,7 +128,7 @@ describe('the carve-outs still let through what they were made for, in every spe
         expect(fired(findings, VENDOR_STATIC) + fired(findings, VENDOR_DYNAMIC)).toBe(0)
     })
 
-    describe.each([`${APP}/src/adapters/real/kv`, 'packages/keel/src/adapters/real/kv'])('%s', (zone) => {
+    describe.each([`${APP}/src/adapters/real/kv`, 'packages/kit/src/adapters/real/kv'])('%s', (zone) => {
         it.each(EXTENSIONS)('.%s may import a vendor SDK and read its own configuration', async (ext) => {
             const file = `${zone}.${ext}`
             for (const code of [importsVendor(file), loadsVendor(file), readsEnv(file)]) {
@@ -165,11 +165,11 @@ describe('the carve-outs still let through what they were made for, in every spe
     )
 
     // The two secret readers are exempt by exact file, and a sibling with their name stays fenced.
-    it('keel’s two secret readers may read process.env, by exact file', async () => {
-        for (const file of ['packages/keel/src/service-auth/webhook.ts', 'packages/keel/src/service-auth/mailgun.ts']) {
+    it('SSSB’s two secret readers may read process.env, by exact file', async () => {
+        for (const file of ['packages/kit/src/service-auth/webhook.ts', 'packages/kit/src/service-auth/mailgun.ts']) {
             expect(fired(await lint(file, readsEnv(file)), PROCESS_ENV)).toBe(0)
         }
-        const sibling = 'packages/keel/src/service-auth/webhook.mjs'
+        const sibling = 'packages/kit/src/service-auth/webhook.mjs'
         expect(fired(await lint(sibling, readsEnv(sibling)), PROCESS_ENV)).toBe(1)
     })
 
@@ -223,17 +223,17 @@ describe('what the effective-config audit found', () => {
         expect(fired(await lint(`${APP}/src/adapters/${name}`, code), REAL_ADAPTER_DYNAMIC)).toBe(1)
     })
 
-    // keel/core's block replaced the framework fence and listed no font pattern; its own `next/*` group
+    // @sssb/kit/core's block replaced the framework fence and listed no font pattern; its own `next/*` group
     // caught the import under core's message instead.
-    it('keel/core may not import next/font/google, and is told why', async () => {
+    it('@sssb/kit/core may not import next/font/google, and is told why', async () => {
         const code = "import { Inter } from 'next/font/google'\nexport const font = Inter\n"
-        expect(fired(await lint('packages/keel/src/core/kv.ts', code), NEXT_FONT)).toBe(1)
+        expect(fired(await lint('packages/kit/src/core/kv.ts', code), NEXT_FONT)).toBe(1)
     })
 
-    it.each(['mts', 'cts'])('keel’s public surface holds in a .%s file', async (ext) => {
-        const code = "import { x } from 'keel/not-a-published-subpath'\nexport { x }\n"
+    it.each(['mts', 'cts'])('SSSB’s public surface holds in a .%s file', async (ext) => {
+        const code = "import { x } from '@sssb/kit/not-a-published-subpath'\nexport { x }\n"
         const findings = await lint(`scripts/thing.${ext}`, code)
-        expect(findings.filter((f) => f.rule === 'keel/public-surface')).toHaveLength(1)
+        expect(findings.filter((f) => f.rule === 'sssb/public-surface')).toHaveLength(1)
     })
 
     // Playwright's default testMatch picks up `.spec.mjs` and `.test.js`, and a support helper can be either.
@@ -242,7 +242,7 @@ describe('what the effective-config audit found', () => {
         async (file) => {
             const code = "import { mkdtempSync } from 'node:fs'\nexport const dir = mkdtempSync('x')\n"
             const findings = await lint(`${APP}/${file}`, code)
-            expect(findings.filter((f) => f.rule === 'keel/no-direct-mkdtemp')).toHaveLength(1)
+            expect(findings.filter((f) => f.rule === 'sssb/no-direct-mkdtemp')).toHaveLength(1)
         },
     )
 })

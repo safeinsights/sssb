@@ -29,7 +29,7 @@ body:
       attributes:
           label: Where
           description: |
-              Which part — the framework (`packages/keel`), an example app, the adoption command
+              Which part — the framework (`packages/kit`), an example app, the adoption command
               (`pnpm init-app`), the static demo, CI, or the docs.
       validations:
           required: true
@@ -40,7 +40,7 @@ body:
           description: |
               Output of `node -v`, `pnpm -v`, `git rev-parse --short HEAD`, and your OS. The commit
               matters more here than it usually would: this template is not versioned and has no
-              changelog, so it is the only way to say which keel you are running.
+              changelog, so it is the only way to say which SSSB you are running.
           render: shell
       validations:
           required: true

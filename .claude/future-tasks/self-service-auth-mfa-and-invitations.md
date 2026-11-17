@@ -42,10 +42,10 @@ reset-password flow works end to end without an admin; all three invitation-land
 correctly and a new account can complete signup through to being a team member; and every piece has
 a demo-world twin so a tour or a static demo can walk through it with no real identity provider.
 
-Evidence: `packages/keel/src/ports/auth.ts` (today's `AuthPort`, missing second-factor state),
-`packages/keel/src/components/auth/accept-invite-screen.tsx` (today's name-only, valid/invalid-only
-invite-acceptance flow) and `packages/keel/src/adapters/real/accept-invite-form.tsx` (its real-mode
-Clerk-ticket counterpart), `packages/keel/src/components/auth/` more broadly (sign-in-screen,
+Evidence: `packages/kit/src/ports/auth.ts` (today's `AuthPort`, missing second-factor state),
+`packages/kit/src/components/auth/accept-invite-screen.tsx` (today's name-only, valid/invalid-only
+invite-acceptance flow) and `packages/kit/src/adapters/real/accept-invite-form.tsx` (its real-mode
+Clerk-ticket counterpart), `packages/kit/src/components/auth/` more broadly (sign-in-screen,
 user-menu, org-switcher — the components a client auth surface and new screens would sit alongside),
-`packages/keel/src/core/abilities.ts` and `packages/keel/src/db/with-tenant.ts` (the authorization and
+`packages/kit/src/core/abilities.ts` and `packages/kit/src/db/with-tenant.ts` (the authorization and
 tenancy primitives any new invite/account routes would compose with, same as every existing one).

@@ -1,8 +1,8 @@
 import { findOrg } from '@app/seed'
 import { setRequestLocale } from 'next-intl/server'
 import { redirect } from 'next/navigation'
-import { auth } from 'keel/adapters/index'
-import { canManageOrg, ORG_ASSIGNABLE_ROLES } from 'keel/core/roles'
+import { auth } from '@sssb/kit/adapters/index'
+import { canManageOrg, ORG_ASSIGNABLE_ROLES } from '@sssb/kit/core/roles'
 import { OrgGlue } from './org-glue'
 
 export default async function OrgPage({ params }: { params: Promise<{ locale: string }> }) {

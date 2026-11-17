@@ -1,4 +1,4 @@
-import type { DemoPreset } from 'keel/core/presets'
+import type { DemoPreset } from '@sssb/kit/core/presets'
 
 export const fresh: DemoPreset = {
     // The seeded desk, already signed in: "reset" plus the one click every demo starts with.

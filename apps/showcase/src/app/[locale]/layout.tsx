@@ -6,16 +6,16 @@ import { hasLocale, NextIntlClientProvider } from 'next-intl'
 import { setRequestLocale } from 'next-intl/server'
 import { notFound } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { auth, isDemoMode, isSimulated } from 'keel/adapters/index'
-import { DemoBadge } from 'keel/components/demo-badge'
-import { routing } from 'keel/i18n/routing'
-import { DEFAULT_TENANT_SLUG, getTenantTheme } from 'keel/theme'
+import { auth, isDemoMode, isSimulated } from '@sssb/kit/adapters/index'
+import { DemoBadge } from '@sssb/kit/components/demo-badge'
+import { routing } from '@sssb/kit/i18n/routing'
+import { DEFAULT_TENANT_SLUG, getTenantTheme } from '@sssb/kit/theme'
 
 // Real mode mounts ClerkProvider (from the adapter layer — the only place vendor SDKs live);
 // simulated mode ships zero Clerk code.
 async function AuthProviders({ children }: { children: ReactNode }) {
     if (isSimulated) return children
-    const { RealAuthProviders } = await import('keel/adapters/real/providers')
+    const { RealAuthProviders } = await import('@sssb/kit/adapters/real/providers')
     return <RealAuthProviders>{children}</RealAuthProviders>
 }
 

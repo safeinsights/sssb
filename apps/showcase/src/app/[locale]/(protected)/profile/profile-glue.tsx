@@ -1,10 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import type { NotificationChannel, NotificationKind, NotificationPrefRow } from 'keel/core/notifications'
-import { AcceptancesSection, type AcceptanceItem } from 'keel/components/agreements/acceptances-section'
-import { ProfileScreen, type ProfileValues } from 'keel/components/profile-screen'
-import { NotificationPrefsSection } from 'keel/components/notifications/notification-prefs-section'
+import type { NotificationChannel, NotificationKind, NotificationPrefRow } from '@sssb/kit/core/notifications'
+import { AcceptancesSection, type AcceptanceItem } from '@sssb/kit/components/agreements/acceptances-section'
+import { ProfileScreen, type ProfileValues } from '@sssb/kit/components/profile-screen'
+import { NotificationPrefsSection } from '@sssb/kit/components/notifications/notification-prefs-section'
 
 export function ProfileGlue({
     initial,

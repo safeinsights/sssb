@@ -1,7 +1,7 @@
-import type { DigestBodySource } from 'keel/jobs/digest-email'
+import type { DigestBodySource } from '@sssb/kit/jobs/digest-email'
 
 /**
- * The APP's digest source (the seam side of keel/jobs/digest-email.ts, ADR-0012). The framework's
+ * The APP's digest source (the seam side of @sssb/kit/jobs/digest-email.ts, ADR-0012). The framework's
  * scheduled-work example knows there is a digest and how to count and snip it; WHICH rows it is about
  * is app vocabulary, so it arrives here. This is the server twin of the option the static demo has
  * always passed (`digestBodies` in src/demo-static/app.tsx) — the two now read from the same contract.

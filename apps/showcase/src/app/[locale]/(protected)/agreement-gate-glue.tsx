@@ -1,8 +1,8 @@
 'use client'
 
 import { useCallback } from 'react'
-import type { PendingAgreement } from 'keel/core/agreements'
-import { AgreementGate } from 'keel/components/agreements/agreement-gate'
+import type { PendingAgreement } from '@sssb/kit/core/agreements'
+import { AgreementGate } from '@sssb/kit/components/agreements/agreement-gate'
 
 /**
  * Client glue for the blocking agreement interstitial. The protected layout is an RSC and

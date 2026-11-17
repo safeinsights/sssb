@@ -43,7 +43,7 @@ jobs:
 
     # The anti-drift job: the SAME migrations + RLS proof suite that unit tests run on pglite,
     # against real Postgres (locally that's embedded-postgres; here a service container). One server, and a
-    # database of its own for every app under apps/ (discovered, so an ejected app is covered) and for keel's
+    # database of its own for every app under apps/ (discovered, so an ejected app is covered) and for SSSB's
     # fixture: two migration sets cannot share a database (tests/support/contract-postgres.ts).
     contract:
         runs-on: ubuntu-latest
@@ -154,7 +154,7 @@ jobs:
                   # pays a full on-demand compile for every route it touches — measured at ~3x local.
                   # Building once up front removes that: locally the destructive project went 132s → 57s
                   # on the same 14 tests. It also means CI finally exercises `next build`, which nothing
-                  # else here does. `packages/keel/src/adapters/index.ts` fails closed unless this is
+                  # else here does. `packages/kit/src/adapters/index.ts` fails closed unless this is
                   # set explicitly; `production-guard.test.ts` proves it still closes without it.
                   E2E_BUILD: '1'
             - uses: actions/upload-artifact@v7

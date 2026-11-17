@@ -1,4 +1,4 @@
-import type { DemoPreset } from 'keel/core/presets'
+import type { DemoPreset } from '@sssb/kit/core/presets'
 import { MORNING_TICKETS } from './morning-tickets'
 
 export const midDemo: DemoPreset = {

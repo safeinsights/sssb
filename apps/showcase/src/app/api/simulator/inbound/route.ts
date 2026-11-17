@@ -1,9 +1,9 @@
-import { db, isSimulated } from 'keel/adapters/index'
-import { listAllPeople } from 'keel/adapters/fake/auth'
-import { DEMO_INBOUND_DOMAIN } from 'keel/core/inbound-email'
-import { listInboundForWorld } from 'keel/db/inbound-email'
-import { listOrgsForWorld } from 'keel/db/org-lookup'
-import { inboundHandlers } from 'keel/inbound-email/handlers'
+import { db, isSimulated } from '@sssb/kit/adapters/index'
+import { listAllPeople } from '@sssb/kit/adapters/fake/auth'
+import { DEMO_INBOUND_DOMAIN } from '@sssb/kit/core/inbound-email'
+import { listInboundForWorld } from '@sssb/kit/db/inbound-email'
+import { listOrgsForWorld } from '@sssb/kit/db/org-lookup'
+import { inboundHandlers } from '@sssb/kit/inbound-email/handlers'
 import { withPortErrors } from '../../respond'
 
 /**

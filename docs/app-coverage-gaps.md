@@ -79,7 +79,7 @@ Demand = how many of the 19 types need the capability as core. Status is the rep
 
 | Capability                                                           | Demand            | Status today                                                                     |
 | -------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------- |
-| Generic list/table kit (paginate/sort/filter/bulk)                   | 16                | Split — keyset pagination worked in keel; the grid is `docs/recipes/list-kit.md` |
+| Generic list/table kit (paginate/sort/filter/bulk)                   | 16                | Split — keyset pagination worked in SSSB; the grid is `docs/recipes/list-kit.md` |
 | Settings surface (org settings, notification prefs)                  | 15                | Partial — profile only; Security placeholder                                     |
 | Full-text search                                                     | 13                | Missing                                                                          |
 | Billing & subscriptions (plans, entitlements, invoices)              | 12                | Missing                                                                          |
@@ -133,7 +133,7 @@ in-slice recipes.
 
 **Scheduled & recurring work**. The external service is just a tick source;
 everything else is app-owned. Org-scoped `job_schedules` (RLS per `1001_tickets.ts`) with pure next-run
-computation in `packages/keel/src/core/schedules.ts` (interval / daily / weekly; no cron-lib, no RRULE —
+computation in `packages/kit/src/core/schedules.ts` (interval / daily / weekly; no cron-lib, no RRULE —
 that stays a recipe). Real tick = EventBridge rule → `POST /api/webhooks/cron` on the existing webhook-secret
 seam; fake tick = Simulator Jobs tab grows "advance clock / run due now" (extending the run-pending
 precedent), and the actor runtime ticks. `runDueSchedules(now)` scans due rows, spawns through the existing
@@ -155,19 +155,19 @@ Destination construct depends on the not-yet-provisioned `job-runner` secret).
 
 **Outbound webhooks**. The last missing integration class: signed egress.
 Org-scoped `webhook_endpoints` + operational (full-CRUD) `webhook_deliveries`; HMAC-SHA256 + timestamp signing
-— new (today's inbound job webhook, `packages/keel/src/service-auth/webhook.ts`, is a plain shared-secret
+— new (today's inbound job webhook, `packages/kit/src/service-auth/webhook.ts`, is a plain shared-secret
 bearer check with no HMAC or timestamp; the storage-upload target's HMAC-signed fields are the closer
 precedent); real delivery = fetch, fake delivery = a Simulator counterparty that receives and displays (the
-Actors precedent). A small event registry in `packages/keel/src/core`; demo emitters: job status changes,
+Actors precedent). A small event registry in `packages/kit/src/core`; demo emitters: job status changes,
 escalation events. Retry backoff computed in core, `next_attempt_at` drained by the scheduled-work drain. Minimal
 org-admin endpoint card, `authorize()`-gated. **Size: M.**
 
 _Built 2026-07-23, as intended, with these design choices recorded in `docs/decision-log.md`:_ the HMAC-SHA256
-signer landed in `packages/keel/src/core` (pure isomorphic TS, no `node:crypto`/`crypto.subtle`) rather
+signer landed in `packages/kit/src/core` (pure isomorphic TS, no `node:crypto`/`crypto.subtle`) rather
 than server-lib, because the static-demo twin must sign too on `file://` — cross-checked against `node:crypto`
 in test; BOTH halves ship (sign + `verifyWebhookSignature` with a replay window, the e2e verifies real
 egress). Dispatch is an app-owned seam (server-lib `fetch` + `adapters/fake` catch-store,
-`isSimulated`-selected) INJECTED into the drain so `packages/keel/src/db` stays free of `@/adapters`.
+`isSimulated`-selected) INJECTED into the drain so `packages/kit/src/db` stays free of `@/adapters`.
 Delivery is at-least-once via a claim-then-dispatch drain (`runDueDeliveries`, the per-tenant `tenants ×
 withTenant` shape) wired into the same ticks that drain schedules; backoff 1m/5m/30m/2h/6h, 5 attempts →
 `dead`. `webhook_deliveries` is operational (in-place status UPDATE + `ON DELETE CASCADE`), the durable record
@@ -177,7 +177,7 @@ now"); the org card shows the server-generated secret once (plaintext at rest �
 No cutover row — customer URLs/secrets are runtime data, not deploy params, and no vendor is forced.
 
 **Notifications**. A prefs-driven fan-out seam
-(`packages/keel/src/server-lib/notify.ts` — app-owned server machinery, not a vendor port) over channels:
+(`packages/kit/src/server-lib/notify.ts` — app-owned server machinery, not a vendor port) over channels:
 **in-app** (new `notifications` table, header bell + unread via the house polling doctrine), **email** (the
 existing port), and a **fake SMS channel** captured to a Simulator Messages view — the second consumer that
 keeps the channel abstraction honest without shipping vendor code. Twilio and web-push/VAPID channels are
@@ -186,11 +186,11 @@ written as in-slice recipes (the web-push one records the service-worker caveat 
 invite, job completion, escalation received. **Size: M.**
 
 _Built 2026-07-23, as intended, with these design choices recorded in `docs/decision-log.md`:_ the fan-out is
-app-owned server machinery (`packages/keel/src/server-lib/notify.ts` + injected deps), NOT a vendor port
+app-owned server machinery (`packages/kit/src/server-lib/notify.ts` + injected deps), NOT a vendor port
 — the webhook-dispatch settlement, since `in_app` is the db, `email` the existing port, and `sms` an app-owned
-fake-only seam (`packages/keel/src/server-lib/sms.ts`, `.data/sms/` catch-store, NO-OP in real mode; so
-the plan's `packages/keel/src/ports/notify.ts` never materialised). The pure decision
-(`resolveEnabledChannels`, `notificationCopy`) lives in `packages/keel/src/core/notifications.ts`, shared
+fake-only seam (`packages/kit/src/server-lib/sms.ts`, `.data/sms/` catch-store, NO-OP in real mode; so
+the plan's `packages/kit/src/ports/notify.ts` never materialised). The pure decision
+(`resolveEnabledChannels`, `notificationCopy`) lives in `packages/kit/src/core/notifications.ts`, shared
 verbatim by server and the static twin. Prefs are OPT-OUT (every channel on unless a row disables it) and
 org-scoped; the fan-out resolves them by the notification's org. Recipients where the obvious one is absent:
 `org.invited` → the inviting team's other admins (the invitee has no account yet); `job.completed` → the org's
@@ -212,16 +212,16 @@ through the same entry — the near-universal deliverability case. Fake: Simulat
 
 _Built 2026-07-23, as intended, with these design choices recorded in `docs/decision-log.md`:_ the recipient
 scheme is plus/sub-addressing `<org-slug>+<handler>@<domain>` (single domain, single catch-all Route; the
-parser is pure in `packages/keel/src/core/inbound-email.ts`, shared by server and static twin). Org
+parser is pure in `packages/kit/src/core/inbound-email.ts`, shared by server and static twin). Org
 resolution is GLOBAL-by-slug and yields the tenant too; `inbound_emails.org_id` (migration 0012, tenant RLS
 per 1001) is NULLable for the real MULTI-domain path (domain→tenant, org possibly unknown) even though the
 single-domain template never files a null-org row — the RLS proof exercises it directly. Mailgun's inbound
 signature (`HMAC-SHA256(signingKey, timestamp+token)`) reuses
-`packages/keel/src/core/webhook-signing.ts`'s primitive (a new `verifyMailgunSignature`, cross-checked
+`packages/kit/src/core/webhook-signing.ts`'s primitive (a new `verifyMailgunSignature`, cross-checked
 against `node:crypto`); the stateful signing-key lookup + a per-process token replay guard sit in
-`packages/keel/src/service-auth/mailgun.ts` beside the bearer verifier, and the route wraps in a new
+`packages/kit/src/service-auth/mailgun.ts` beside the bearer verifier, and the route wraps in a new
 `withMailgunSignature` (the `webhooks/` authorize-exemption `mustMatch` was widened to accept it). Intake
-(`packages/keel/src/inbound-email/`, the `apps/showcase/src/jobs/` registry shape) files a 'received' row, runs the
+(`packages/kit/src/inbound-email/`, the `apps/showcase/src/jobs/` registry shape) files a 'received' row, runs the
 address's handler in-tenant, and records the final status; the demo `note` handler creates a note ONLY for a
 sender who is a member of the resolved org (an unmatched sender or unknown handler slug files 'unmatched'; a
 handler throw files 'failed' and STILL returns 200 so a poison message never triggers a Mailgun retry storm).
@@ -235,7 +235,7 @@ No new vendor SDK — the HMAC is hand-implemented.
 **Access gates + agreements**. A missing _class_: a condition an actor must satisfy
 before proceeding, with scope (everything vs specific actions), a resolution flow, and a behavior (block vs
 advisory). `authorize()` does per-action deny; nothing in the template teaches block-with-resolution.
-`packages/keel/src/core/gates.ts` evaluates actor + registered gates
+`packages/kit/src/core/gates.ts` evaluates actor + registered gates
 
 - facts → pending gates; one hook in the protected layout glue renders a generic interstitial
   shell for blocking gates; a seam note covers action-scoped gates via abilities. The worked
@@ -250,9 +250,9 @@ advisory). `authorize()` does per-action deny; nothing in the template teaches b
   Zoho/DocuSign port shape sketched only. **Size: M.**
 
     _Built 2026-07-23, as intended, with these design choices recorded in `docs/decision-log.md`:_ the
-    reusable thing is the GATE class (`packages/keel/src/core/gates.ts`) — `evaluateGates(registered,
+    reusable thing is the GATE class (`packages/kit/src/core/gates.ts`) — `evaluateGates(registered,
 facts)` over an open `GateFacts` bag, complementing (not replacing) `authorize()`'s per-action deny;
-    agreements (`packages/keel/src/core/agreements.ts`) are one rider whose block/advisory behavior is
+    agreements (`packages/kit/src/core/agreements.ts`) are one rider whose block/advisory behavior is
     per-row DATA. v1 implements scope `'all'` only; action-scoped gates are TYPED and their `authorize()`-side
     hook documented, not built. Agreements are TENANT-level (a recorded deviation from the org-scoped default
     — a site's ToS applies to everyone), migration `0013` with tenant RLS + an APPEND-ONLY
@@ -286,11 +286,11 @@ settings surface (15/19), CSV import/export UI (10/19), chart/dashboard kit (10/
 (7/19).
 
 **The list/table kit, resolved 2026-07-31 — and the doctrine it forced.** Taking the top row off this
-list did not mean building it. Asking "should keel ship a `<DataTable>`?" exposed that the two tests
-above govern _vendor_ code and nothing governed _components_, even though keel already ships around
+list did not mean building it. Asking "should SSSB ship a `<DataTable>`?" exposed that the two tests
+above govern _vendor_ code and nothing governed _components_, even though SSSB already ships around
 thirty screens. The answer, now recorded in `docs/development-approach.md` as a third test: **does this
-component encode a framework invariant, or is it generic presentation?** Every keel screen is the
-presentation half of a capability keel owns (auth needs a sign-in screen; gates need an interstitial); a
+component encode a framework invariant, or is it generic presentation?** Every SSSB screen is the
+presentation half of a capability SSSB owns (auth needs a sign-in screen; gates need an interstitial); a
 sortable table has no capability behind it, and shipping one would put the framework in competition with
 Mantine, which ADR-0005 chose as the only component library. So the grid is a recipe
 (`docs/recipes/list-kit.md`, over Mantine + TanStack Table).
@@ -298,7 +298,7 @@ Mantine, which ADR-0005 chose as the only component library. So the grid is a re
 But the same test identified the part that IS an invariant and had to be extracted: **a paginated read
 of a tenant-scoped table**. A cursor is client input, so page seven must be scoped exactly like page
 one; the ordering must be total; the page size must be capped server-side. That shipped as
-`packages/keel/src/core/keyset.ts` + `packages/keel/src/db/keyset.ts`, is proven in both halves of the
+`packages/kit/src/core/keyset.ts` + `packages/kit/src/db/keyset.ts`, is proven in both halves of the
 RLS suite on both engines (including against a cursor minted in another tenant, and one hand-crafted to
 name another tenant's row), and is demonstrated on the showcase's ticket queue with a static-demo twin.
 The matrix row above is split accordingly. The rest of this list is untouched — and the same UI test now

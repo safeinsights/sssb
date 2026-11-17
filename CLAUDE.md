@@ -1,9 +1,10 @@
-# keel — agent guide
+# SSSB — agent guide
 
 Multi-tenant web app foundation. Generic scaffold: hermetic local dev, ports and adapters, RLS tenancy.
 Built to be adopted as a template — `docs/adopting.md` is the adopter guide; keep it truthful.
-Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0013) and don't relitigate them;
-0014 is Proposed and changes nothing until it is accepted.
+Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0014) and don't relitigate them;
+0014 is a plan carried out in steps (its implementation plan), so until a step lands, the tree and the docs
+describe what is built, not what 0014 will build.
 The philosophy behind these rules — thin slices, ports/adapters, hermetic dev, demo mode, one-app default —
 is `docs/development-approach.md`; read it to understand the why, not just the what.
 Anything needing real credentials is a row in `docs/cutover-checklist.md`, never a blocker.
@@ -16,58 +17,58 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 ## Hard rules
 
 - **Framework vs app line** (ADR-0012): the generic machinery is the workspace package
-  **`packages/keel`** (imported as `keel/...`) — ports, adapters, core, authz, db, i18n,
+  **`packages/kit`** (imported as `@sssb/kit/...`) — ports, adapters, core, authz, db, i18n,
   email, inbound-email, service-auth, server-lib, observability, theme, the framework screens, the
-  framework's message catalog, and the static demo's simulated world + shell (`keel/demo-static/*`).
+  framework's message catalog, and the static demo's simulated world + shell (`@sssb/kit/demo-static/*`).
   Everything under `apps/*/src/` is an APP: `apps/*/src/app` (Next route files — they stay there
   forever), `apps/*/src/app-config` (the seam), `apps/*/src/domain`, its cards/screens in
   `apps/*/src/components`, `apps/*/src/demo-static`, and `apps/*/messages/*.json`. **There are TWO apps** — `apps/showcase` (the demo, exercising every capability)
   and `apps/starter` (the minimum an adopter keeps, and the framework's falsifier: it typechecks the
-  whole of `packages/keel/src` against its own seam, so a framework module that assumes the showcase's
-  tables or vocabulary fails to build). A change to keel is not done until BOTH apps are green. The
-  app extends the framework through the `@app-config/*` seam — register new subjects, jobs, event kinds, tables, and migrations there, and
-  **never edit a framework base union or registry**. Lint-enforced: inside `packages/keel` the
+  whole of `packages/kit/src` against its own seam, so a framework module that assumes the showcase's
+  tables or vocabulary fails to build). A change to the kit is not done until BOTH apps are green. The
+  app extends the framework through the `@sssb/app-config/*` seam — register new subjects, jobs, event kinds, tables, and migrations there, and
+  **never edit a framework base union or registry**. Lint-enforced: inside `packages/kit` the
   fence bans the app's `@/*` alias, `@app/seed`, a relative or absolute path (or `file:` URL) that lands in `apps/` or
   `packages/seed`, a `..` in any package or alias specifier, and any specifier through `node_modules`, by
-  `import()` and in a type `import('…')` as well as in a declaration; the `@app-config/*` alias is the only
+  `import()` and in a type `import('…')` as well as in a declaration; the `@sssb/app-config/*` alias is the only
   channel back.
-- **keel's OWN tests run against keel's own app seam, never an app's** — `packages/keel/test-fixture`
-  (outside `packages/keel/src` because that tree is what `keel/*` resolves to and what ships; the
+- **The kit's OWN tests run against its own app seam, never an app's** — `packages/kit/test-fixture`
+  (outside `packages/kit/src` because that tree is what `@sssb/kit/*` resolves to and what ships; the
   fixture is neither). Living outside that tree buys NO exemption: every gate names `test-fixture/**`
   explicitly — the ESLint fence and the ports/hermetic bans, `.jscpd.json`, `knip.json`'s `project`,
   and the root `tsconfig.json`. It sat outside the fence once, which made it the one directory in
-  `packages/keel` where importing an app's `@/*` or `@app/seed` was legal; a location is not a
-  boundary. It is a conforming registration of every `@app-config/*` module the framework reads, with its own seed
+  `packages/kit` where importing an app's `@/*` or `@app/seed` was legal; a location is not a
+  boundary. It is a conforming registration of every `@sssb/app-config/*` module the framework reads, with its own seed
   world, table + its migrations, job/webhook/notification kinds, inbound handler, catalog and route tree,
-  and the ROOT `tsconfig.json` resolves `@app-config/*` there. Its vocabulary
+  and the ROOT `tsconfig.json` resolves `@sssb/app-config/*` there. Its vocabulary
   (`harbor`/`lakeside`, `depot`/`annex`/`steward`/`wharf`, `fixture-*`, `dockets`) is deliberately
-  neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/keel` test** —
+  neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   `pnpm init-app --eject-showcase` with a red gate.
-- **keel's public surface is `packages/keel/package.json`'s `exports` map** — 132 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 132 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it);
   the rest of the package is internal and reachable only by relative import inside it. Lint-enforced
-  (`keel/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
+  (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
   publish it; add the `exports` line deliberately, and never widen the map to silence the rule.
 - **Vendor SDKs (`@clerk/*`, `@aws-sdk/*`, `@anthropic-ai/*`, `@sentry/*`, `posthog-*`, `mailgun.js`,
-  `pg`) may only be imported inside an adapters directory**: `packages/keel/src/adapters/` for keel's
-  ports, or `apps/*/src/adapters/real/` for a port the APP owns, meaning a vendor keel has no port for,
+  `pg`) may only be imported inside an adapters directory**: `packages/kit/src/adapters/` for SSSB's
+  ports, or `apps/*/src/adapters/real/` for a port the APP owns, meaning a vendor SSSB has no port for,
   which fails the universality and new-class tests (`docs/recipes/app-owned-adapter.md`). Everything
-  else codes against the port: `keel/ports/*`, or the app's `apps/*/src/ports/*` through its registry
-  `apps/*/src/adapters/index.ts`, which takes the run mode from keel's `isSimulated` and loads `real/`
+  else codes against the port: `@sssb/kit/ports/*`, or the app's `apps/*/src/ports/*` through its registry
+  `apps/*/src/adapters/index.ts`, which takes the run mode from SSSB's `isSimulated` and loads `real/`
   only with `import()`. Lint-enforced (`tests/lint/app-owned-adapters.test.ts`): vendor imports, static
   or `import()`, outside those two directories; `process.env` anywhere else in `apps/*/src`,
-  `apps/*/config` and `packages/keel/src` (bar the per-file exemptions `eslint.config.mjs` names, and
+  `apps/*/config` and `packages/kit/src` (bar the per-file exemptions `eslint.config.mjs` names, and
   tests), so the app's registry and fakes cannot read it; reading the run mode in an app's real adapters;
   a static import of an app's `adapters/real` anywhere in the app outside `real/` itself; and any import of
   `real/` from a fake. That the registry uses `isSimulated` is convention: lint cannot follow a value.
-- **`keel/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
+- **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.
-- **Screens are router-agnostic** — framework screens in `packages/keel/src/components`, app
+- **Screens are router-agnostic** — framework screens in `packages/kit/src/components`, app
   screens in `apps/*/src/components`; files under `apps/*/src/app` are thin wrappers. This keeps the `file://` static
   demo buildable — don't put logic in route files.
 - **No hard-coded UI strings** — all copy goes through next-intl. The catalog is SPLIT: framework
-  namespaces in `packages/keel/src/i18n/messages/{en,es}.json`, app namespaces in
+  namespaces in `packages/kit/src/i18n/messages/{en,es}.json`, app namespaces in
   `apps/*/messages/{en,es}.json`, deep-merged at every load site. Lint-enforced (`react/jsx-no-literals`).
 - **Deployment/service parameters exist only in `apps/<app>/config/params.ts`** — one file per app, the same keys in
   each (`tests/tooling/app-scaffold.test.ts` fails a drift), placeholders tracked in the cutover checklist. Secret
@@ -84,13 +85,13 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `pnpm exec playwright install chromium`.
 - `pnpm verify` does NOT run `test:contract`, jscpd, coverage, or gitleaks — CI runs those
   (`.github/workflows/checks.yml`). **Any migration/db change: run `pnpm test:contract` yourself** (the
-  same RLS proofs on real Postgres, for EVERY app AND keel's fixture seam, each in its own
-  database — keel's twice, once through the `pg` driver and once through the RDS Data API driver and its
-  emulator, each also as a non-superuser owner, `packages/keel/src/db/owner-pass.ts`); after
+  same RLS proofs on real Postgres, for EVERY app AND SSSB's fixture seam, each in its own
+  database — SSSB's twice, once through the `pg` driver and once through the RDS Data API driver and its
+  emulator, each also as a non-superuser owner, `packages/kit/src/db/owner-pass.ts`); after
   renumbering/renaming a migration, wipe local `.data` first.
   **Also wipe `apps/*/.data` after changing `packages/seed`** — the app seeder is guarded by "does this
   world have any rows yet", so new seed rows are invisible on an existing world and only CI sees them.
-- **A list that can grow pages through `keel/db/keyset`** — never a hand-rolled `LIMIT`/`OFFSET`. The
+- **A list that can grow pages through `@sssb/kit/db/keyset`** — never a hand-rolled `LIMIT`/`OFFSET`. The
   primitive opens `withTenant` itself and re-runs your whole scoped query on every page, so page two
   cannot be scoped differently from page one; the cursor is client input, parsed by a total function
   (`parseDbKeysetCursor` → 400 on `invalid`) and the page size is clamped server-side. Its optional
@@ -99,21 +100,21 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   index in `apps/showcase/src/app-config/db/migrations/1004_tickets_keyset_index.ts` and proofs in both
   RLS suites.
 - **Tenant-scoped queries only via `db.withTenant()`** — `getDb()` is lint-banned in every module under
-  `apps/*/src`, in keel's screens and in keel's fixture (`keel/no-raw-db-handle`, deny-by-default: a new
+  `apps/*/src`, in SSSB's screens and in SSSB's fixture (`sssb/no-raw-db-handle`, deny-by-default: a new
   directory is covered before anyone names it; tests outside routes, screens and the fixture are the one
   exception).
   A module that truly needs the raw client is a named, reasoned exception in its app's own
   `apps/<app>/lint-exceptions.mjs` (path relative to the app, one existing file per entry, never a glob or a
   directory); nobody edits `eslint.config.mjs` for it. New tenant tables copy the RLS pattern from `apps/showcase/src/app-config/db/migrations/1001_tickets.ts` (app
   migrations are numbered ≥1001; framework migrations 0001–0999 live in
-  `packages/keel/src/db/migrations` — ADR-0012).
+  `packages/kit/src/db/migrations` — ADR-0012).
 - **Every mutating route handler (POST/PUT/PATCH/DELETE) must call `authorize(...)`**
-  (`keel/authz/authorize.ts`) — a build-time scan
-  (`packages/keel/src/authz/authorized-mutations.test.ts`) walks every `route.{ts,tsx,js,jsx,mjs}` under
+  (`@sssb/kit/authz/authorize.ts`) — a build-time scan
+  (`packages/kit/src/authz/authorized-mutations.test.ts`) walks every `route.{ts,tsx,js,jsx,mjs}` under
   EVERY app's whole `apps/*/src/app` tree, not only `api/` (Next serves a `route.ts` from anywhere
-  there), **plus the framework's own reference tree, `packages/keel/test-fixture/api`**. It judges EACH
-  exported mutating handler, read with the TypeScript parser (`packages/keel/src/authz/route-scan.ts`), never
-  the file's text: the handler must reach the `authorize` imported from `keel/authz/authorize` on its own path,
+  there), **plus the framework's own reference tree, `packages/kit/test-fixture/api`**. It judges EACH
+  exported mutating handler, read with the TypeScript parser (`packages/kit/src/authz/route-scan.ts`), never
+  the file's text: the handler must reach the `authorize` imported from `@sssb/kit/authz/authorize` on its own path,
   or its route must have a justified entry in that test's exemption map and the handler must pass that entry's
   gate. A string, a comment, another verb, a dead branch, an uncalled function or a helper in another module
   does not count, and a handler the scan cannot follow fails. Exemption keys are paths relative to each app's
@@ -132,9 +133,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   additionally runs coverage reporting, jscpd duplication, and gitleaks secret scanning — see
   `.github/workflows/checks.yml`.
 - Unit tests are colocated (`*.test.ts(x)`), run by Vitest — `vitest.config.ts` has ONE PROJECT PER APP
-  because `@app-config/*` is a bare specifier and a single alias can only name one app, PLUS a `keel`
+  because `@sssb/app-config/*` is a bare specifier and a single alias can only name one app, PLUS a `kit`
   project that runs the packages' suites against the framework's own seam
-  (**`packages/keel/test-fixture`** — see below). keel's seam-conformance tests (i18n partition/parity,
+  (**`packages/kit/test-fixture`** — see below). SSSB's seam-conformance tests (i18n partition/parity,
   the pglite RLS suite, the demo-presets check, the migration numbering and upgrade check) run under every app project as well, and that is what proves the seam against
   real apps rather than only against the fixture. E2E
   lives in `apps/*/tests/e2e/` (showcase on :3000, starter on :3100). In a LINKED WORKTREE both ports
@@ -142,7 +143,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   dev server; `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last
   also isolates `pnpm test:contract` between worktrees), and `print-port.mjs` reports it.
 - **A test that needs a scratch directory calls `makeTestTmpDir()` / `makeTestTmpDirAsync()`**
-  (`tests/support/tmp-dir.ts`) — never `mkdtemp`/`mkdtempSync`, which `keel/no-direct-mkdtemp` bans in test
+  (`tests/support/tmp-dir.ts`) — never `mkdtemp`/`mkdtempSync`, which `sssb/no-direct-mkdtemp` bans in test
   files. The helper removes the directory when the file finishes; `test:unit`, `test:coverage` and
   `test:contract` run through `scripts/check-tmpdir-leak.mjs`, which fails the run if one survives. Do not
   call `vitest run` directly in a new script that is meant to gate — route it through that script.
@@ -192,7 +193,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   records (`build-notes.md`, `decision-log.md`, ADR bodies and anything appended to them) are exempt — see
   `docs/README.md` for the split. If you move a directory, the gate is what tells you which docs you
   just falsified. A citation of `apps/showcase` or `apps/starter` is checked strictly while that app
-  exists and passes where it does not (it then names keel's reference app, and a doc merged in from
+  exists and passes where it does not (it then names SSSB's reference app, and a doc merged in from
   upstream must not turn an adopter's gate red); write `apps/<app>/…` when you mean the reader's own app.
 - **The app's identity is a script, not a checklist**: `pnpm init-app <slug> [--repo <name>] [--eject-showcase]`
   (`scripts/init-app.ts`). Anything that names an app directory or the product's display name belongs

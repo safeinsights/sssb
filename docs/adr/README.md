@@ -1,10 +1,10 @@
 # Architecture Decision Records
 
-Thirteen of the decisions below are **Accepted** (approver: JP Slavinsky). They are the one-way doors — the
+All fourteen decisions below are **Accepted** (approver: JP Slavinsky). They are the one-way doors — the
 choices that shaped everything after them and are expensive to reverse — and they are not open for
 relitigation in routine work. If new information genuinely challenges one, raise it with the approver.
-[0014](0014-distribution-as-versioned-packages.md) is **Proposed**: it would supersede 0013, and it changes
-nothing until it is accepted.
+[0014](0014-distribution-as-versioned-packages.md) will supersede 0013 when its generator replaces fork and
+merge; until then 0013 describes how updates arrive.
 
 The operating philosophy these decisions serve (thin slices, ports and adapters, hermetic dev, demo mode,
 the one-app default) is in [../development-approach.md](../development-approach.md); the ADRs are the
@@ -16,6 +16,12 @@ A decision that genuinely reverses gets a superseding ADR rather than a quiet re
 were consolidated at publication: each states the decision as it holds today, and the amendment rule
 runs from that point, so an entry in the dated records citing "ADR-000N's addendum" means material that
 now sits in the ADR body (see [../provenance.md](../provenance.md)).
+
+**Names and numbers in the bodies.** This project was called keel until ADR-0014 renamed it SSSB, and it lived in
+`jpslav/keel` until it moved to `safeinsights/sssb`. The bodies and their addenda up to that move keep saying keel,
+because they were true when written: keel there means the project now called SSSB, `packages/keel` is today's
+`packages/kit`, and `keel/…` is today's `@sssb/kit/…`. A bare PR number in any of them (`#54`) is a PR in
+`jpslav/keel` (jpslav/keel#54), never one in this repository, whose PRs number from 1 again.
 
 ADR bodies are exempt from the doc-path gate (`tests/docs/doc-paths.test.ts`) that holds the rest of the
 doctrine set to citing paths that exist. That exemption is what the append-only rule costs: text written
@@ -38,4 +44,4 @@ authoritative.
 | [0011](0011-email-mailgun.md)                       | Email: Mailgun, react-email, the port as the catch-point         |
 | [0012](0012-framework-app-line-and-registration.md) | The framework/app line: registration through the app-config seam |
 | [0013](0013-upstream-updates-fork-and-merge.md)     | Upstream updates: publishable-shaped, distributed by fork/merge  |
-| [0014](0014-distribution-as-versioned-packages.md)  | Distribution: versioned packages, renamed SSSB (Proposed)        |
+| [0014](0014-distribution-as-versioned-packages.md)  | Distribution: versioned packages, renamed SSSB                   |

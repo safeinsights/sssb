@@ -2,23 +2,23 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 
 // A mutable, hoisted control surface so one file can exercise BOTH the production-containment 404
 // (simulated mode off) and the simulated-mode shape — the fake world view is mocked so the test never has to
-// spin up pglite (that integration is proven in packages/keel/src/adapters/fake/jobs.test.ts).
+// spin up pglite (that integration is proven in packages/kit/src/adapters/fake/jobs.test.ts).
 const state = vi.hoisted(() => ({
     fake: false,
     jobs: [] as unknown[],
     flags: {} as Record<string, boolean>,
 }))
 
-vi.mock('keel/adapters/index', () => ({
+vi.mock('@sssb/kit/adapters/index', () => ({
     get isSimulated() {
         return state.fake
     },
 }))
-vi.mock('keel/adapters/fake/jobs', () => ({
+vi.mock('@sssb/kit/adapters/fake/jobs', () => ({
     JOBS_HELD_FLAG: 'jobs-held',
     listWorldJobs: async () => state.jobs,
 }))
-vi.mock('keel/adapters/fake/analytics', () => ({
+vi.mock('@sssb/kit/adapters/fake/analytics', () => ({
     readFlags: () => state.flags,
 }))
 

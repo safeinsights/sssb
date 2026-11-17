@@ -271,7 +271,7 @@ function readIdentity(dir: string): Identity {
         dir,
         slug: slugMatch[1],
         packageName: pkg.name ?? dir,
-        // `welcome.appName` is the header prop an app passes to keel's AppHeader (the framework
+        // `welcome.appName` is the header prop an app passes to SSSB's AppHeader (the framework
         // catalog's `shell.appName` can only name one product — ADR-0012). Apps that predate the
         // prop only have a title, so fall back to it.
         displayName: welcome.appName ?? welcome.title ?? titleCase(dir),
@@ -338,7 +338,7 @@ function renameApp(current: Identity, slug: string, displayName: string): void {
         // match BOTH, and the root's scripts fan out to every app — so `pnpm --filter acme test:e2e`
         // started two dev servers on the same port. Watched failing with EADDRINUSE before this suffix.
         pkg.name = `${slug}-workspace`
-        pkg.description = `${displayName} — a multi-tenant web application built on the keel template.`
+        pkg.description = `${displayName} — a multi-tenant web application built on the SSSB template.`
         if (!pkg.scripts) return
         const scripts: Record<string, string> = {}
         for (const [name, command] of Object.entries(pkg.scripts)) {
@@ -359,11 +359,11 @@ function renameApp(current: Identity, slug: string, displayName: string): void {
         ],
         'app list / framework-suite app',
     )
-    // tsconfig.json deliberately needs NO rewrite: no path in it names an app. `@app-config/*`
-    // points at packages/keel/test-fixture, and there is no `@/*` entry to repoint.
+    // tsconfig.json deliberately needs NO rewrite: no path in it names an app. `@sssb/app-config/*`
+    // points at packages/kit/test-fixture, and there is no `@/*` entry to repoint.
     // config/params too: infra/app.ts reads `params.database.transport` to pick the network shape. And
     // the app's tsconfig, which the stack bundles its Lambdas with (`APP_TSCONFIG`): it is what points
-    // `@app-config/*` at this app's seam, so the migrator ships this app's migrations.
+    // `@sssb/app-config/*` at this app's seam, so the migrator ships this app's migrations.
     for (const file of ['infra/app.ts', 'infra/stack.ts', 'infra/lib/tags.ts']) {
         rewrite(
             file,
@@ -453,22 +453,22 @@ function ejectShowcase(survivor: string, onDisk: string): void {
 
     editJson<{ workspaces?: Record<string, { includeEntryExports?: boolean }> }>(
         'knip.json',
-        'workspaces (and keel back to entry-point semantics)',
+        'workspaces (and SSSB back to entry-point semantics)',
         (config) => {
             if (!config.workspaces) return
             delete config.workspaces[`apps/${SHOWCASE}`]
             delete config.workspaces['packages/seed']
-            // `includeEntryExports: true` means "every symbol keel PUBLISHES must have a consumer"
+            // `includeEntryExports: true` means "every symbol SSSB PUBLISHES must have a consumer"
             // (ADR-0012). That invariant was true because the showcase used nearly all of it; with a
             // one-entity app it stops being a dead-code signal and starts demanding you delete 47
             // framework capabilities you merely have not reached yet. The declared surface goes back
             // to being entry points, and knip keeps reporting unused FILES.
-            const keel = config.workspaces['packages/keel']
-            if (keel?.includeEntryExports) keel.includeEntryExports = false
+            const kit = config.workspaces['packages/kit']
+            if (kit?.includeEntryExports) kit.includeEntryExports = false
         },
     )
 
-    // Only the app list: keel's own vitest project runs against packages/keel/test-fixture and names no
+    // Only the app list: SSSB's own vitest project runs against packages/kit/test-fixture and names no
     // app, so ejecting the demo leaves the framework's suite entirely alone.
     rewrite(
         'vitest.config.ts',
@@ -478,8 +478,8 @@ function ejectShowcase(survivor: string, onDisk: string): void {
         ],
         'app list collapsed to the surviving app',
     )
-    // tsconfig.json needs no rewrite here either — see the rename path. Its `@app-config/*` pointing
-    // at packages/keel/test-fixture is what keeps `tsc` green through an eject.
+    // tsconfig.json needs no rewrite here either — see the rename path. Its `@sssb/app-config/*` pointing
+    // at packages/kit/test-fixture is what keeps `tsc` green through an eject.
     // config/params is the survivor's own (every app carries one), so the stack's import follows it.
     // So does the tsconfig the stack bundles with: the survivor's seam, and so its migrations.
     for (const file of ['infra/app.ts', 'infra/stack.ts', 'infra/lib/tags.ts']) {
@@ -518,7 +518,7 @@ const CONTACT_LINK_FILES = ['SECURITY.md', '.github/ISSUE_TEMPLATE/config.yml', 
 
 /**
  * Four files route the ADOPTER's users to the TEMPLATE maintainer: a security report, two issue-
- * template links, and the code-of-conduct contact all point at `jpslav`/`jpslav/keel`. Left alone,
+ * template links, and the code-of-conduct contact all point at `safeinsights/sssb`, and CODEOWNERS at `@jpslav`. Left alone,
  * an ejected repo asks its own reporters to file against someone else's inbox — and CODEOWNERS is
  * worse than silent about it: with "require review from Code Owners" branch protection on and
  * `@jpslav` not a collaborator, GitHub reports an unknown owner and every PR becomes unmergeable.
@@ -540,12 +540,12 @@ const CONTACT_LINK_FILES = ['SECURITY.md', '.github/ISSUE_TEMPLATE/config.yml', 
  *
  * NOT touched, and deliberately so:
  *   - `LICENSE` — MIT requires preserving the copyright notice verbatim.
- *   - `docs/adr/**` approver lines — honest provenance for keel's OWN decisions, which an adopter
+ *   - `docs/adr/**` approver lines — honest provenance for SSSB's OWN decisions, which an adopter
  *     inherits as historical record, not as their own project's contact info.
  */
 /**
  * Where the contact links stand, which decides what `--repo` can do and what the output may claim:
- *   - `template`:    they still name `jpslav/keel` — the first adoption, with a repository to write.
+ *   - `template`:    they still name `safeinsights/sssb` — the first adoption, with a repository to write.
  *   - `placeholder`: an earlier run wrote `PLACEHOLDER_GITHUB_REPO` (no `--repo` then). A `--repo` now
  *                    fills it in, which is what makes "I forgot the flag" a re-run and not a hand edit.
  *   - `settled`:     neither — they name a repository already. `--repo` has nothing to replace.
@@ -553,8 +553,8 @@ const CONTACT_LINK_FILES = ['SECURITY.md', '.github/ISSUE_TEMPLATE/config.yml', 
  */
 type ContactLinks = 'template' | 'placeholder' | 'settled'
 
-const TEMPLATE_ADVISORY = 'github.com/jpslav/keel/security/advisories/new'
-const TEMPLATE_DISCUSSIONS = 'github.com/jpslav/keel/discussions'
+const TEMPLATE_ADVISORY = 'github.com/safeinsights/sssb/security/advisories/new'
+const TEMPLATE_DISCUSSIONS = 'github.com/safeinsights/sssb/discussions'
 const PLACEHOLDER_HOME = `github.com/${PLACEHOLDER_OWNER}/${PLACEHOLDER_REPO}`
 /**
  * The repository placeholder as a path SEGMENT, which is all that is ever replaced: an adopter who has
@@ -760,7 +760,7 @@ function readDemoBudget(onDisk: string): DemoBudget {
 /**
  * Why this is in "WHAT THIS DID NOT TOUCH" and not something init-app does: the budget is a number the
  * adopter has to own. And why it says where to record a change: the obvious place is the header of
- * scripts/check-demo-size.mjs, which is keel's, so a note written there is a conflict on every later upstream
+ * scripts/check-demo-size.mjs, which is SSSB's, so a note written there is a conflict on every later upstream
  * merge (ADR-0013). The history lives beside the number, in the app's own DEMO-SIZE.md where it has one.
  */
 function demoBudgetBullet(survivor: string, budget: DemoBudget): string {
@@ -772,7 +772,7 @@ function demoBudgetBullet(survivor: string, budget: DemoBudget): string {
             ? ` apps/${survivor}/DEMO-SIZE.md says what the number was set for, and is where you record each change ` +
               'and why.'
             : '') +
-        " scripts/check-demo-size.mjs is keel's, and an upstream merge will change it: re-set the number in " +
+        " scripts/check-demo-size.mjs is SSSB's, and an upstream merge will change it: re-set the number in " +
         "package.json, never in the script. When it goes red, that script's header says what to look at first."
     return `\n${wrapBullet(paragraph)}`
 }
@@ -894,9 +894,22 @@ async function main(): Promise<void> {
     if (slug !== null) {
         if (!/^[a-z][a-z0-9-]*$/.test(slug)) fail(`"${slug}" is not a valid slug: lowercase letters, digits, dashes`)
         if (slug === SHOWCASE) fail('"showcase" is reserved for the demo app')
-        // `keel` is the framework package's own workspace name (and its vitest project's), so an app
-        // called that would collide in pnpm-workspace before this script's work could even be tested.
-        if (slug === 'keel') fail('"keel" is reserved for the framework package')
+        // `kit` is the framework's own vitest project name, so an app called that would collide with it
+        // in vitest.config.ts before this script's work could even be tested. `sssb` would give the app the
+        // contract database `sssb_contract`, which is the framework fixture's own (and the next check
+        // explains why no `sssb-…` slug is safe either). The framework package is `@sssb/kit`, which the
+        // slug pattern above cannot spell.
+        for (const reserved of ['kit', 'sssb']) {
+            if (slug === reserved) fail(`"${reserved}" is reserved for the framework`)
+        }
+        // An app's contract database is its slug folded to underscores plus `_contract`, and `sssb_` is the prefix of the
+        // framework's own fixture databases on the same server (tests/support/app-scaffold.ts), so an
+        // `sssb-…` slug would turn the adopter's first `pnpm verify` red.
+        if (slug.startsWith('sssb-')) {
+            fail(
+                `"${slug}" starts with "sssb-": its contract database would start with "sssb_", the framework's own prefix`,
+            )
+        }
     }
     if (options.repo !== null) checkRepoName(options.repo)
     if (options.displayName !== null && slug === null) fail('--name goes with a slug: it names the app being renamed')

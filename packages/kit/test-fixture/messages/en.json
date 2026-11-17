@@ -1,0 +1,17 @@
+{
+    "appNotifications": {
+        "titleDocketFlagged": "Docket flagged",
+        "bodyDocketFlagged": "{org} flagged the docket “{label}”.",
+        "smsDocketFlagged": "{org} flagged “{label}”.",
+        "subjectDocketFlagged": "Docket flagged: {label}"
+    },
+    "fixture": {
+        "title": "SSSB test fixture",
+        "docketsHeading": "Dockets",
+        "docketOpenedBy": "Opened by {name}",
+        "presetBusyTitle": "Busy harbor",
+        "presetBusySummary": "A pending invite, a fresh docket and held jobs.",
+        "presetBusyLeadTitle": "Busy harbor, as the lead",
+        "presetBusyLeadSummary": "The busy harbor, signed in as the depot lead."
+    }
+}

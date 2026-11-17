@@ -27,7 +27,7 @@
 2. ⛔ Upload zip to the deploy bucket; sync the app's `.next/static` + `public/` to the assets bucket
    (`/_next/static/*` and `/assets/*` behaviors are served from S3, not the Lambda).
 3. ⛔ Invoke the **Migrator** Lambda and require success before traffic shifts — it runs the same
-   `packages/keel/src/db/migrations` registry unit and contract tests run.
+   `packages/kit/src/db/migrations` registry unit and contract tests run.
 4. ⛔ Point the server Lambda at the new zip (version + alias shift).
 5. Verify: `GET /api/health` returns `{ ok: true, mode: "real" }`; smoke the sign-in page.
 6. Record cold-start p50/p95 after the FIRST staging deploy in `docs/build-notes.md`, and size the

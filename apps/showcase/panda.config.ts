@@ -7,7 +7,7 @@ export default defineConfig({
 
     include: [
         // the framework package's screens ship styled components too (ADR-0012)
-        '../../packages/keel/src/**/*.{ts,tsx}',
+        '../../packages/kit/src/**/*.{ts,tsx}',
         './src/components/**/*.{ts,tsx}',
         './src/app/**/*.{ts,tsx}',
         './src/app-config/**/*.{ts,tsx}',

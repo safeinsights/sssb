@@ -2,15 +2,15 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 
 // Mirror the Jobs-route test shape: one mutable hoisted control surface exercises BOTH the
 // production-containment 404 (simulated mode off) and the simulated-mode body. The adapter is mocked so the
-// test never spins up pglite (that integration is proven in packages/keel/src/adapters/fake/jobs.test.ts).
+// test never spins up pglite (that integration is proven in packages/kit/src/adapters/fake/jobs.test.ts).
 const state = vi.hoisted(() => ({ fake: false, builds: [] as unknown[] }))
 
-vi.mock('keel/adapters/index', () => ({
+vi.mock('@sssb/kit/adapters/index', () => ({
     get isSimulated() {
         return state.fake
     },
 }))
-vi.mock('keel/adapters/fake/jobs', () => ({
+vi.mock('@sssb/kit/adapters/fake/jobs', () => ({
     listPendingBuilds: async () => state.builds,
 }))
 

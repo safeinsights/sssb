@@ -1,7 +1,7 @@
-import type { NotificationCopy } from 'keel/core/notifications'
+import type { NotificationCopy } from '@sssb/kit/core/notifications'
 
 /**
- * The APP's notification kinds (the seam side of keel/core/notifications.ts, ADR-0012). The framework
+ * The APP's notification kinds (the seam side of @sssb/kit/core/notifications.ts, ADR-0012). The framework
  * owns the channels, the resolver, and its own kinds (org.invited, job.completed).
  *
  * EMPTY REGISTRATION: no app kinds. The bell, the prefs screen, email and SMS fan-out all keep working

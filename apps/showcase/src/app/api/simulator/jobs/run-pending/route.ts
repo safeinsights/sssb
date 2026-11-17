@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { runPendingJobs } from 'keel/adapters/fake/jobs'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { runPendingJobs } from '@sssb/kit/adapters/fake/jobs'
 import { withPortErrors } from '../../../respond'
 
 /**

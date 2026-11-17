@@ -1,8 +1,8 @@
-import { isSimulated } from 'keel/adapters/index'
-import { readFlags } from 'keel/adapters/fake/analytics'
-import { readActorHolds } from 'keel/adapters/fake/simulator'
-import { isActorId } from '@app-config/actors'
-import { actorsHeldFlag } from '@app-config/simulator'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { readFlags } from '@sssb/kit/adapters/fake/analytics'
+import { readActorHolds } from '@sssb/kit/adapters/fake/simulator'
+import { isActorId } from '@sssb/app-config/actors'
+import { actorsHeldFlag } from '@sssb/app-config/simulator'
 import { withPortErrors } from '../../../respond'
 
 /**

@@ -4,12 +4,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 // (simulated mode off) and the simulated-mode shape, with the world runner mocked so no pglite spins up.
 const state = vi.hoisted(() => ({ fake: false, ran: 0 }))
 
-vi.mock('keel/adapters/index', () => ({
+vi.mock('@sssb/kit/adapters/index', () => ({
     get isSimulated() {
         return state.fake
     },
 }))
-vi.mock('keel/adapters/fake/jobs', () => ({
+vi.mock('@sssb/kit/adapters/fake/jobs', () => ({
     runPendingJobs: async () => state.ran,
 }))
 

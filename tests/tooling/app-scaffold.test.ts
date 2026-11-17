@@ -113,7 +113,7 @@ describe('scaffoldProblems fails when an app is missing what it must carry', () 
     })
 })
 
-describe('scaffoldProblems fails when two suites would share a database, or take keel’s', () => {
+describe('scaffoldProblems fails when two suites would share a database, or take SSSB’s', () => {
     const rows = new Set<string>()
     const app = (name: string, contractDatabase: string | null): AppFacts => ({
         name,
@@ -135,10 +135,10 @@ describe('scaffoldProblems fails when two suites would share a database, or take
         ])
     })
 
-    it('flags an app whose database would be keel’s own, and lets other names pass', () => {
-        expect(scaffoldProblems([app('keel-data-api', contractDatabaseName('keel-data-api'))], rows)).toEqual([
+    it('flags an app whose database would be SSSB’s own, and lets other names pass', () => {
+        expect(scaffoldProblems([app('sssb-data-api', contractDatabaseName('sssb-data-api'))], rows)).toEqual([
             expect.stringMatching(
-                /apps\/keel-data-api: contract database "keel_data_api_contract" starts with "keel_"/,
+                /apps\/sssb-data-api: contract database "sssb_data_api_contract" starts with "sssb_"/,
             ),
         ])
         expect(scaffoldProblems([app('one', 'one_contract'), app('two', 'two_contract')], rows)).toEqual([])

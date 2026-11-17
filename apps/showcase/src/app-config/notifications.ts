@@ -1,14 +1,14 @@
-import type { NotificationCopy } from 'keel/core/notifications'
+import type { NotificationCopy } from '@sssb/kit/core/notifications'
 
 /**
- * The APP's notification kinds (the seam side of packages/keel/src/core/notifications.ts, ADR-0012). The framework
+ * The APP's notification kinds (the seam side of packages/kit/src/core/notifications.ts, ADR-0012). The framework
  * owns the channels + resolver + its own kinds; the app registers its OWN kinds, payload shapes, and
  * copy mapping here. A real adopter replaces this file. PURE TypeScript, framework-free.
  *
  * The KEYS returned below resolve in the APP catalog's `appNotifications` namespace, not the
  * framework's `notifications` one — the framework renders the bell, the email and the prefs grid, but
- * it resolves an app kind's copy in the app's own catalog (keel/core/notifications.ts,
- * APP_NOTIFICATION_NAMESPACE). Registering a kind therefore never means editing keel's catalog.
+ * it resolves an app kind's copy in the app's own catalog (@sssb/kit/core/notifications.ts,
+ * APP_NOTIFICATION_NAMESPACE). Registering a kind therefore never means editing SSSB's catalog.
  *
  * TWO kinds, because the interesting question about a notification registry is whether a SECOND kind
  * composes — different audience, different trigger, same fan-out:

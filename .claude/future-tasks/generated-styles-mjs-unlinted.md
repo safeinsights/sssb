@@ -11,7 +11,7 @@ codegen writes there, and its output does not lint. The directory is committed, 
 without `--clean`, so a hand-written `.mjs` file in it survives regeneration and is never linted. A route can
 import it, so it can import a vendor SDK, read `process.env` or take the raw db handle with a green `pnpm lint`.
 It is the one tracked place under `apps/*/src` where that holds. A hand-written `.ts` or `.js` file there IS
-linted: #38 narrowed the ignore from the whole directory to the two extensions Panda writes.
+linted: jpslav/keel#38 narrowed the ignore from the whole directory to the two extensions Panda writes.
 
 Nothing in the tree does this today.
 
@@ -19,7 +19,7 @@ Nothing in the tree does this today.
 
 One of these, decided with whoever owns the styling setup:
 
-- Lint Panda's output instead of ignoring it, with only the fence rules on (`keel/no-raw-db-handle`, the
+- Lint Panda's output instead of ignoring it, with only the fence rules on (`sssb/no-raw-db-handle`, the
   vendor bans, the process.env ban) and the style rules off. The output must pass them already; check that
   first.
 - Or narrow the ignore to the exact paths Panda writes (`helpers.mjs`, and `css/`, `jsx/`, `patterns/`,

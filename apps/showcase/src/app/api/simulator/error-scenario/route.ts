@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { scrubEvent } from 'keel/observability/scrub'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { scrubEvent } from '@sssb/kit/observability/scrub'
 import { withPortErrors } from '../../respond'
 
 /**

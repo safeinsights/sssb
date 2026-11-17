@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { listWorldAgreements } from 'keel/adapters/fake/agreements'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { listWorldAgreements } from '@sssb/kit/adapters/fake/agreements'
 import { withPortErrors } from '../../respond'
 
 /** The Snapshots Agreements section's read: every agreement across all tenants with acceptance tallies.

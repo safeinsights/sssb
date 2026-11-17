@@ -8,9 +8,9 @@ import { portForRoot } from '../../scripts/ports.mjs'
  * worktree must get its own so two agent sessions cannot silently drive each other's app
  * (docs/build-notes.md records that failure three times).
  */
-const MAIN = path.join('/repos', 'keel')
-const WORKTREE = path.join('/repos', 'keel', '.claude', 'worktrees', 'feature-abc123')
-const OTHER_WORKTREE = path.join('/repos', 'keel', '.claude', 'worktrees', 'other-def456')
+const MAIN = path.join('/repos', 'sssb')
+const WORKTREE = path.join('/repos', 'sssb', '.claude', 'worktrees', 'feature-abc123')
+const OTHER_WORKTREE = path.join('/repos', 'sssb', '.claude', 'worktrees', 'other-def456')
 
 describe('portForRoot', () => {
     it('keeps the documented defaults on the main checkout, so the runbooks stay true', () => {

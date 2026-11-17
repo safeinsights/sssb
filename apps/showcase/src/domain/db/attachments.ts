@@ -1,5 +1,5 @@
-import { toIso } from 'keel/db/jobs'
-import type { DbPort } from 'keel/ports/db'
+import { toIso } from '@sssb/kit/db/jobs'
+import type { DbPort } from '@sssb/kit/ports/db'
 
 /** An attachment as its owning team sees it in the list (a signed download URL is added by the route). */
 export interface AttachmentView {

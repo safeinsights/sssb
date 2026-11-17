@@ -1,5 +1,5 @@
-import { InvalidTransitionError } from 'keel/core/state-machine'
-import { AuthRequiredError, ForbiddenError, NotFoundError } from 'keel/ports/errors'
+import { InvalidTransitionError } from '@sssb/kit/core/state-machine'
+import { AuthRequiredError, ForbiddenError, NotFoundError } from '@sssb/kit/ports/errors'
 
 /**
  * Maps port errors to HTTP for route handlers. A rejected state-machine hop (InvalidTransitionError)

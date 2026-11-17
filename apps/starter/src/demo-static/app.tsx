@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useTranslations } from 'next-intl'
-import { defineAbilitiesFor } from 'keel/core/abilities'
-import { isRestricted } from 'keel/core/roles'
-import type { Locale } from 'keel/core/locale'
-import { DemoShell } from 'keel/demo-static/shell'
-import { useDemoWorld } from 'keel/demo-static/world'
+import { defineAbilitiesFor } from '@sssb/kit/core/abilities'
+import { isRestricted } from '@sssb/kit/core/roles'
+import type { Locale } from '@sssb/kit/core/locale'
+import { DemoShell } from '@sssb/kit/demo-static/shell'
+import { useDemoWorld } from '@sssb/kit/demo-static/world'
 import type { SeedPerson } from '@/seed'
 import { staffOrgSlug } from '@/app-config/abilities'
 import { DashboardScreen } from '@/components/dashboard-screen'
@@ -13,7 +13,7 @@ import { WelcomeScreen } from '@/components/welcome-screen'
 
 /**
  * The static demo's COMPOSITION ROOT — the `file://` twin of the server-side glue, and the same job:
- * take the framework's simulated world (keel/demo-static/world), add THIS app's own rows, hand the
+ * take the framework's simulated world (@sssb/kit/demo-static/world), add THIS app's own rows, hand the
  * shell its screens, and get out of the way (ADR-0006, ADR-0012).
  *
  * This is what the twin costs an app that owns ONE table: a row type, a piece of state, an ability

@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { KNOWN_FLAGS, readFlags, setFlag } from 'keel/adapters/fake/analytics'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { KNOWN_FLAGS, readFlags, setFlag } from '@sssb/kit/adapters/fake/analytics'
 import { withPortErrors } from '../../respond'
 
 /** The current value of every known flag: the read-out of the world's switches. An actor frame asks

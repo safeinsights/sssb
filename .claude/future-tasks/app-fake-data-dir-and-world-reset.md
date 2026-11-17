@@ -5,12 +5,12 @@
 
 ## What is true
 
-keel's fakes persist under `.data/<dir>/` through `dataDir()` (`packages/keel/src/adapters/fake/data-dir.ts`)
+SSSB's fakes persist under `.data/<dir>/` through `dataDir()` (`packages/kit/src/adapters/fake/data-dir.ts`)
 and the atomic writer, and the Simulator's reset and snapshots cover exactly the directories listed in
-`LIVE_DIRS` (`packages/keel/src/adapters/fake/simulator-admin.ts`). An app-owned fake
+`LIVE_DIRS` (`packages/kit/src/adapters/fake/simulator-admin.ts`). An app-owned fake
 (`apps/<app>/src/adapters/fake/`) can use neither:
 
-- `dataDir()` and the atomic writer are not in keel's `exports` map, so `keel/public-surface` refuses them.
+- `dataDir()` and the atomic writer are not in SSSB's `exports` map, so `sssb/public-surface` refuses them.
 - `LIVE_DIRS` is a closed literal. A directory the app wrote would survive a world reset that the rest of
   the world does not, and would be missing from every snapshot.
 - The fake may not read `process.env` (lint), so it cannot find `APP_DATA_DIR` itself either.
@@ -21,8 +21,8 @@ rebuild. Neither suits a fake that must survive a dev-server restart and also re
 
 ## Sketch, if a real app needs it
 
-Publish `dataDir()` and `writeJsonAtomic` as a small `keel/adapters/fake/persist` subpath, and let the app
+Publish `dataDir()` and `writeJsonAtomic` as a small `@sssb/kit/adapters/fake/persist` subpath, and let the app
 register extra live dirs through the `simulator` seam (`liveDirs: readonly string[]`, empty by default),
-which `simulator-admin.ts` appends to `LIVE_DIRS` after checking for collisions with keel's names. Prove it
+which `simulator-admin.ts` appends to `LIVE_DIRS` after checking for collisions with SSSB's names. Prove it
 in the fixture: one fixture-only fake writing to its own dir, and a reset/snapshot test that sees it cleared
 and restored.

@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 
 // Same production-containment gate as the rest of /api/simulator/*.
-vi.mock('keel/adapters/index', () => ({ isSimulated: false }))
+vi.mock('@sssb/kit/adapters/index', () => ({ isSimulated: false }))
 
 describe('POST /api/simulator/mail/seen', () => {
     test('404s outside simulated mode', async () => {

@@ -138,7 +138,7 @@ function textOf(source: string | Uint8Array): string {
  */
 export function pruneMantineCss(): Plugin {
     return {
-        name: 'keel:prune-mantine-css',
+        name: 'sssb:prune-mantine-css',
         apply: 'build',
         enforce: 'post',
         generateBundle(_options, bundle) {
@@ -146,7 +146,7 @@ export function pruneMantineCss(): Plugin {
             const stylesheets = items.filter((item) => item.type === 'asset' && item.fileName.endsWith('.css'))
             if (stylesheets.length === 0) {
                 this.error(
-                    'keel:prune-mantine-css found no stylesheet in the bundle. It must run after Vite emits it ' +
+                    'sssb:prune-mantine-css found no stylesheet in the bundle. It must run after Vite emits it ' +
                         "(`enforce: 'post'`) and before vite-plugin-singlefile inlines it (earlier in `plugins`).",
                 )
             }

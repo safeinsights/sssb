@@ -2,9 +2,9 @@
  * (Re)records LLM fixtures against the real Anthropic API (ADR-0009).
  *
  * WHY IT LIVES IN THE APP rather than in the repo's `scripts/`: it is app code. It reads the APP's
- * assistant registration through the seam (`@app-config/assistant`) and writes the APP's own
+ * assistant registration through the seam (`@sssb/app-config/assistant`) and writes the APP's own
  * `fixtures/llm/`, so it belongs to whichever app owns those — and the repo's root TypeScript program
- * (whose `@app-config/*` points at keel's test fixture) has no business compiling one app's seam.
+ * (whose `@sssb/app-config/*` points at SSSB's test fixture) has no business compiling one app's seam.
  *
  * Single-turn entries: fills/overwrites `response` (entries with response !== null are skipped
  * unless --all).
@@ -23,14 +23,14 @@
  */
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { assistantConfig } from '@app-config/assistant'
-import { fakeDb } from 'keel/adapters/fake/db'
-import type { LlmFixtureFile } from 'keel/adapters/fake/llm'
-import { createRealLlm } from 'keel/adapters/real/llm'
-import { listOrgsInTenant, orgIdForSlug } from 'keel/db/org-lookup'
-import { tenantIdForSlug } from 'keel/db/tenant-lookup'
-import type { LlmRequest, LlmToolLoopRequest } from 'keel/ports/llm'
-import { assistantExecutor } from 'keel/server-lib/assistant'
+import { assistantConfig } from '@sssb/app-config/assistant'
+import { fakeDb } from '@sssb/kit/adapters/fake/db'
+import type { LlmFixtureFile } from '@sssb/kit/adapters/fake/llm'
+import { createRealLlm } from '@sssb/kit/adapters/real/llm'
+import { listOrgsInTenant, orgIdForSlug } from '@sssb/kit/db/org-lookup'
+import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
+import type { LlmRequest, LlmToolLoopRequest } from '@sssb/kit/ports/llm'
+import { assistantExecutor } from '@sssb/kit/server-lib/assistant'
 
 const apiKey = process.env.ANTHROPIC_API_KEY
 if (!apiKey) {
@@ -69,7 +69,7 @@ const TOOL_LOOP_RECORDERS: Record<string, () => Promise<ToolLoopExecutor>> = {
  * `"type": "module"`, so `tsx` transforms this file as CommonJS and esbuild rejects top-level
  * `await` outright — a transform error, thrown before any of this file's own code runs, which made
  * the friendly `ANTHROPIC_API_KEY is not set` message above unreachable. Renaming to `.mts` clears
- * the transform but breaks `@app-config/seed`'s named-export interop; the wrapper is the fix.
+ * the transform but breaks `@sssb/app-config/seed`'s named-export interop; the wrapper is the fix.
  */
 async function main() {
     for (const file of readdirSync(dir).filter((f) => f.endsWith('.json'))) {

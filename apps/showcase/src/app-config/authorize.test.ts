@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'vitest'
-import { authorize, canInActiveOrg } from 'keel/authz/authorize'
-import type { AuthUser } from 'keel/ports/auth'
-import { ForbiddenError } from 'keel/ports/errors'
+import { authorize, canInActiveOrg } from '@sssb/kit/authz/authorize'
+import type { AuthUser } from '@sssb/kit/ports/auth'
+import { ForbiddenError } from '@sssb/kit/ports/errors'
 
-// The authz choke point (packages/keel/src/authz/authorize.ts) enforcing the APP's registered subjects (Ticket,
+// The authz choke point (packages/kit/src/authz/authorize.ts) enforcing the APP's registered subjects (Ticket,
 // Escalation). The choke point is framework; these cases prove it composes the app rules the seam
 // registers (src/app-config/abilities.ts). Framework-subject enforcement lives in
-// packages/keel/src/authz/authorize.test.ts.
+// packages/kit/src/authz/authorize.test.ts.
 
 function user(overrides: Partial<AuthUser> = {}): AuthUser {
     return {

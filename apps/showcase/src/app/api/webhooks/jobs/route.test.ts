@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { InvalidTransitionError } from 'keel/core/state-machine'
-import { AuthRequiredError, NotFoundError } from 'keel/ports/errors'
+import { InvalidTransitionError } from '@sssb/kit/core/state-machine'
+import { AuthRequiredError, NotFoundError } from '@sssb/kit/ports/errors'
 import { POST } from './route'
 
 const h = vi.hoisted(() => ({ verify: vi.fn(), record: vi.fn(), notifyJobTerminal: vi.fn(), makeNotifyDeps: vi.fn() }))
-vi.mock('keel/adapters/index', () => ({ db: {}, auth: {} }))
-vi.mock('keel/service-auth/webhook', () => ({ verifyWebhookCaller: h.verify }))
-vi.mock('keel/db/jobs', () => ({ recordWebhookCompletion: h.record }))
+vi.mock('@sssb/kit/adapters/index', () => ({ db: {}, auth: {} }))
+vi.mock('@sssb/kit/service-auth/webhook', () => ({ verifyWebhookCaller: h.verify }))
+vi.mock('@sssb/kit/db/jobs', () => ({ recordWebhookCompletion: h.record }))
 // The notification fan-out is mocked away — the route test isolates the completion path, not
 // the notify seam (mirrors how the escalation route test mocks enqueueWebhookEvent).
-vi.mock('keel/server-lib/notify', () => ({ notifyJobTerminal: h.notifyJobTerminal }))
-vi.mock('keel/server-lib/notify-deps', () => ({ makeNotifyDeps: h.makeNotifyDeps }))
+vi.mock('@sssb/kit/server-lib/notify', () => ({ notifyJobTerminal: h.notifyJobTerminal }))
+vi.mock('@sssb/kit/server-lib/notify-deps', () => ({ makeNotifyDeps: h.makeNotifyDeps }))
 
 function post(body: unknown): Promise<Response> {
     const request = new Request('http://localhost/api/webhooks/jobs', {

@@ -1,9 +1,9 @@
-import type { TourDefinition } from 'keel/demo-static/tour/contracts'
+import type { TourDefinition } from '@sssb/kit/demo-static/tour/contracts'
 
 /**
  * The APP's registered TOURS (the seam side of the Simulator Tours tab, ADR-0012). A tour is a scripted
  * walkthrough: a ghost cursor drives the real screens while a bar narrates, so `dist-demo/index.html`
- * (one file you can email to someone) can be watched instead of read about. keel owns the engine and
+ * (one file you can email to someone) can be watched instead of read about. SSSB owns the engine and
  * the tab; what a tour SAYS and what it CLICKS is app vocabulary, and lives here.
  *
  * A real adopter replaces this file with their own tour, or with `[]` (apps/starter does — the tab then
@@ -195,7 +195,7 @@ export const tours: TourDefinition[] = [
         // The second tour exists to start from a PRESET rather than from the seed: `mid-demo` puts two new
         // tickets in the queue and a pending invite in someone's inbox, and signs the viewer in as Dana —
         // so step 1 opens on a shift already in progress, on the server and in the `file://` demo alike
-        // (keel/core/presets.ts). It walks the invite to its end: from a person with no account to a
+        // (@sssb/kit/core/presets.ts). It walks the invite to its end: from a person with no account to a
         // member of the desk.
         id: 'invite-from-preset',
         titleKey: 'tours.inviteTitle',

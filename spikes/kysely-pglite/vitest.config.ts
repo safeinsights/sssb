@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config'
  *
  * Without this file, `pnpm --filter spike-kysely-pglite test` (`vitest run`) finds no config in this
  * directory and Vite's upward search picks up the ROOT config instead — whose four projects
- * (`showcase`, `starter`, `keel`, `repo`) all name an `include` glob that starts under `apps/`,
+ * (`showcase`, `starter`, `kit`, `repo`) all name an `include` glob that starts under `apps/`,
  * `packages/` or `tests/`, none of which matches anything under `spikes/`. The result is a silent
  * "No test files found, exiting with code 1" — the one thing `docs/provenance.md` points a reader at
  * to verify for themselves, broken.

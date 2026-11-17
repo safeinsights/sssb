@@ -1,14 +1,14 @@
 import { sql } from 'kysely'
-import type { RlsProofSuite } from 'keel/db/rls-proofs'
-import { runWithTenant } from 'keel/db/with-tenant'
+import type { RlsProofSuite } from '@sssb/kit/db/rls-proofs'
+import { runWithTenant } from '@sssb/kit/db/with-tenant'
 
 /**
- * The APP's tenant-isolation proofs (the seam side of keel/db/rls-proofs.ts, ADR-0004 + ADR-0012) —
+ * The APP's tenant-isolation proofs (the seam side of @sssb/kit/db/rls-proofs.ts, ADR-0004 + ADR-0012) —
  * one section per app table, asserting exactly what the framework half asserts for its own: read
  * isolation both directions under UNFILTERED selects, WITH CHECK on cross-tenant writes, and the
  * per-table privilege grants.
  *
- * keel/db/rls-proof-runner.ts composes this with the framework half and runs the union, so these
+ * @sssb/kit/db/rls-proof-runner.ts composes this with the framework half and runs the union, so these
  * assertions execute wherever that runner does. An adopter with no tenant tables leaves the body empty
  * (ADR-0012, "unused capability = empty registration"). Kept in lockstep with ./migrations.
  */

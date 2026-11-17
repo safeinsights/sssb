@@ -1,5 +1,5 @@
-import { auth, db } from 'keel/adapters/index'
-import { intakeInboundEmail } from 'keel/inbound-email/intake'
+import { auth, db } from '@sssb/kit/adapters/index'
+import { intakeInboundEmail } from '@sssb/kit/inbound-email/intake'
 import { withMailgunSignature } from '../respond'
 
 /**

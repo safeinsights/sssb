@@ -1,4 +1,4 @@
-import { AuthRequiredError, ForbiddenError, NotFoundError } from 'keel/ports/errors'
+import { AuthRequiredError, ForbiddenError, NotFoundError } from '@sssb/kit/ports/errors'
 
 /** Maps port errors to HTTP for this app's route handlers. */
 export async function withPortErrors(fn: () => Promise<Response>): Promise<Response> {

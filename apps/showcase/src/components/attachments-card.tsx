@@ -180,7 +180,7 @@ export function AttachmentsCard({
                                             variant="light"
                                             loading={analyzing === attachment.id}
                                             data-testid={`attachment-analyze-${attachment.id}`}
-                                            // Role-named drive target for tours (@app-config/tours):
+                                            // Role-named drive target for tours (@sssb/app-config/tours):
                                             // the testid above carries a row id, which is a uuid on the
                                             // server and a seed index in the static twin, so a
                                             // walkthrough cannot name it. "The analyze button" it can.

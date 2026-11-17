@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { updatePersonState, type PersonKey } from 'keel/adapters/fake/simulator'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { updatePersonState, type PersonKey } from '@sssb/kit/adapters/fake/simulator'
 import { withPortErrors } from '../../../respond'
 
 /** Same simulated-mode-only gate as the rest of /api/simulator/*; no auth required to call this. */

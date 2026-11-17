@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report privately through **[GitHub Security Advisories](https://github.com/jpslav/keel/security/advisories/new)**.
+Report privately through **[GitHub Security Advisories](https://github.com/safeinsights/sssb/security/advisories/new)**.
 Please do not open a public issue for a vulnerability.
 
 Include what you did, what happened, and what you expected. A failing test or a `curl` is worth more
@@ -24,11 +24,11 @@ the interesting reports are about that shape being wrong:
   clause. All access runs inside `db.withTenant()`, which first sets the role to `app_user` for the
   transaction (`set_config('role', 'app_user', true)`, the same as `SET LOCAL ROLE`) so the policy
   cannot be bypassed by a superuser connection. **A way to read or write across tenants is the
-  most serious thing you can find here.** The proofs live in `packages/keel/src/db/rls-proofs.ts` and
+  most serious thing you can find here.** The proofs live in `packages/kit/src/db/rls-proofs.ts` and
   run against pglite, against real Postgres, and against real Postgres through the RDS Data API
   transport's emulator.
 
-    **The word "every" above is enforced, not asserted.** `packages/keel/src/db/rls-coverage.ts` reads
+    **The word "every" above is enforced, not asserted.** `packages/kit/src/db/rls-coverage.ts` reads
     the database catalog after the registered migrations have run and fails if **anything `app_user`
     can reach** — in any schema, of any relation kind — lacks RLS, lacks `FORCE`, has no policy, or
     has a policy that never reads the tenant setting. It asks about reachability rather than about a
@@ -56,10 +56,10 @@ the interesting reports are about that shape being wrong:
     **Three framework tables are deliberately exempt**, and a report that they lack RLS is a known
     non-finding. All are INFRA tables read while resolving who is calling — before a tenant context
     exists — so `app_user` holds a cross-tenant `SELECT` on each and none carries a policy:
-    `tenants` (`packages/keel/src/db/migrations/0001_tenants.ts`), the tenant registry itself;
-    `organizations` (`packages/keel/src/db/migrations/0003_organizations.ts`), which holds a team's
+    `tenants` (`packages/kit/src/db/migrations/0001_tenants.ts`), the tenant registry itself;
+    `organizations` (`packages/kit/src/db/migrations/0003_organizations.ts`), which holds a team's
     slug and display name; and `service_keys`
-    (`packages/keel/src/db/migrations/0005_service_keys.ts`), which holds only PUBLIC key material —
+    (`packages/kit/src/db/migrations/0005_service_keys.ts`), which holds only PUBLIC key material —
     its boundary is cryptographic, a caller proving possession of the matching private key. All three
     grants are `SELECT`-only, and the coverage check asserts that from the catalog's ACLs — table
     grants **and column grants**, every privilege other than `SELECT`. It reads the ACLs rather than
@@ -76,7 +76,7 @@ the interesting reports are about that shape being wrong:
   age. Key material is per-org.
 - **Webhook signatures.** Outbound deliveries are signed; inbound webhooks are verified before the
   handler runs, including freshness and single-use tokens. Note the recorded limit on the single-use
-  half: the inbound replay store is an in-process map (`packages/keel/src/service-auth/mailgun.ts`), so
+  half: the inbound replay store is an in-process map (`packages/kit/src/service-auth/mailgun.ts`), so
   it dedupes within one process, not across a multi-instance deployment. Timestamp freshness is the
   primary, stateless guard; making the token guard global is a cutover item, not a finding.
 - **The production fail-closed guard.** A production build refuses to boot with fake adapters. See
@@ -92,7 +92,7 @@ credentials and no network, and it is documented behaviour.
 It is gated by **mode, not by role**, and the mode is fail-closed:
 
 - A production build (`NODE_ENV=production`) that would use fake adapters **throws on boot** rather
-  than serving them (`packages/keel/src/adapters/index.ts`). A deployment must set `APP_MODE=real`.
+  than serving them (`packages/kit/src/adapters/index.ts`). A deployment must set `APP_MODE=real`.
 - The only ways past that guard are `DEMO_MODE=1` and `E2E_BUILD=1`. Both are explicit opt-ins that
   cannot be triggered by forgetting something, and `production-guard.test.ts` additionally asserts that
   no environment in `infra/stack.ts` carries either flag.

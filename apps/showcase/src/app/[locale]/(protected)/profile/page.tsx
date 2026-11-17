@@ -1,9 +1,9 @@
 import { setRequestLocale } from 'next-intl/server'
 import { redirect } from 'next/navigation'
-import { auth, db } from 'keel/adapters/index'
-import { LOCALES } from 'keel/core/locale'
-import { listUserAcceptanceRecords } from 'keel/db/agreements'
-import { tenantIdForSlug } from 'keel/db/tenant-lookup'
+import { auth, db } from '@sssb/kit/adapters/index'
+import { LOCALES } from '@sssb/kit/core/locale'
+import { listUserAcceptanceRecords } from '@sssb/kit/db/agreements'
+import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 import { ProfileGlue } from './profile-glue'
 
 export default async function ProfilePage({ params }: { params: Promise<{ locale: string }> }) {

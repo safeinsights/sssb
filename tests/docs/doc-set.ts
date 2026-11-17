@@ -133,7 +133,7 @@ function citationsIn(text: string): Citation[] {
                 // asserts a file nothing could ever create.
                 const located = token.replace(/:\d+(?::\d+)?$/, '')
                 // A glob, a brace expansion or a `<metavariable>` placeholder only asserts its static
-                // prefix exists — `packages/keel/src/adapters/<real|fake>/<name>.ts` is a template,
+                // prefix exists — `packages/kit/src/adapters/<real|fake>/<name>.ts` is a template,
                 // and `messages/{en,es}.json` names two files, neither of them spelled that way.
                 const stop = ['*', '<', '{'].map((char) => located.indexOf(char)).filter((i) => i >= 0)
                 const stripped = stop.length ? located.slice(0, Math.min(...stop)) : located
@@ -195,7 +195,7 @@ export function generalizeAppCitations(text: string, isMissing: (path: string) =
 /**
  * A directory citation must resolve outright. A FILE citation may also pass on its parent directory
  * existing, because a doc may legitimately name a file you are meant to create — every recipe does
- * (`packages/keel/src/adapters/real/esign.ts` is the recipe's output, not a file in the tree).
+ * (`packages/kit/src/adapters/real/esign.ts` is the recipe's output, not a file in the tree).
  *
  * The asymmetry matters: allowing the parent fallback for directories too would let `src/app-confgi`
  * pass on the strength of `src/` existing, which defeats the point.
@@ -208,7 +208,7 @@ export function resolves(path: string, root = '.'): boolean {
 }
 
 /**
- * keel's two reference apps, which a doc may cite by name: every scaffold command points at
+ * SSSB's two reference apps, which a doc may cite by name: every scaffold command points at
  * `apps/showcase/…` for its worked example, and the adoption guide describes `apps/starter`.
  *
  * In the TEMPLATE both exist, so a citation of either is checked like any other and a broken one fails.
@@ -218,7 +218,7 @@ export function resolves(path: string, root = '.'): boolean {
  * nobody in the adopter's repo wrote, the first time a recipe cited the starter's sign-in page.
  *
  * So a citation under `apps/showcase/` or `apps/starter/` whose app is not in this tree is a reference to
- * keel's own app, which cannot be checked here and is not this repo's to fix. It resolves.
+ * SSSB's own app, which cannot be checked here and is not this repo's to fix. It resolves.
  *
  * "In this tree" means the app's `package.json` exists, NOT that its directory does. A merge adds any new
  * file upstream puts under `apps/showcase/` even after you deleted the app (git reports a conflict for a
@@ -226,7 +226,7 @@ export function resolves(path: string, root = '.'): boolean {
  * single stray file would otherwise switch this rule off and turn the gate red on the next doc. A local
  * `apps/starter/node_modules` left behind by a rename does the same. The package manifest is what makes it an
  * app, and a stray file cannot fake it.
- * Everything else stays strict: the adopter's own app (`apps/console/…`), a path in `packages/keel`, and
+ * Everything else stays strict: the adopter's own app (`apps/console/…`), a path in `packages/kit`, and
  * either reference app for as long as it is present. The reference apps are a closed list on purpose:
  * `init-app` reserves `showcase` as an app slug, and an adopter who keeps the name `starter` has the
  * directory, so their own citations of it are still checked.
