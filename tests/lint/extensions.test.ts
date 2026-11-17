@@ -98,7 +98,8 @@ describe('every fence holds for every extension ESLint lints', () => {
 describe('the carve-outs still let through what they were made for, in every spelling it comes in', () => {
     // Next loads its config from these four names and no other (CONFIG_FILES in next's constants), and
     // the config composes the Sentry build plugin.
-    const composesSentry = "import { withSentryConfig } from '@sentry/nextjs'\nexport default withSentryConfig({})\n"
+    const composesSentry =
+        "import { withSentryConfig } from '@sentry/nextjs/config'\nexport default withSentryConfig({})\n"
 
     it.each(['ts', 'mts', 'js', 'mjs'])('next.config.%s may import the Sentry build plugin', async (ext) => {
         const findings = await lint(`${APP}/next.config.${ext}`, composesSentry)
