@@ -2204,14 +2204,14 @@ What the number is for: the showcase's budget is the framework's pace-setter: ab
 growth is a decision someone makes on purpose. Every framework screen and twin is in the showcase, so a
 framework change that costs bytes costs them here first.
 
-**Raised 2026-11-17, 840000 → 874000, for React 19.3** (`deps/react-19-3`)
+**Raised 2026-11-17, 840000 → 860000, for React 19.3** (`deps/react-19-3`)
 
 JP's call: take React 19.3 and raise the budget to fit it, which lifts the 2026-11-16 hold ("Catching up
 October's minor-and-patch group"). The growth is React's own code, not something to trim: the demo grew 29332
-bytes, 818202 on main (React 19.2.8) to 847534 (19.3.1), with one copy of React in the bundle (every version
-marker in the file reads 19.3.1, as many as main's read 19.2.8). The starter grew by the same 29331, so none
-of it is the showcase's. The new number keeps the rule above, about 3% over what it measures: 874000 leaves
-26466 bytes (3.0%). Both sit below the unpruned demo (997945 bytes with `pruneMantineCss()` taken out of
+bytes, 804574 on main (React 19.2.8, after Panda 2) to 833906 (19.3.1), with one copy of React in the bundle
+(every version marker in the file reads 19.3.1, as many as main's read 19.2.8). The starter grew by 29331, so
+none of it is the showcase's. The new number keeps the rule above, about 3% over what it measures: 860000
+leaves 26094 bytes (3.0%). It sits below the unpruned demo (984317 bytes with `pruneMantineCss()` taken out of
 `vite.demo.config.ts`, which exits 1), so a pruning that stops still turns it red. The full entry is
 "React 19.3, with the demo budgets raised" (2026-11-17), below.
 
@@ -2905,13 +2905,15 @@ Dependabot's #1.
   resolves to one directory each (build-notes' `readlink -f` check, run over the three importers). Seen to
   fail: with the kit's peer put back at `~19.2.8` and `pnpm install` run, the kit got `react` 19.2.9 and its
   own `next`, `next-intl` and `@mantine/core` with it, four of the six forked.
-- **The budgets.** The showcase's demo grew 29,332 bytes on React's own code, 818,202 to 847,534, and its
-  budget goes 840,000 → 874,000 by its rule of about 3% over what it measures (3.0%, 26,466 bytes). The
-  starter's grew 29,331, 727,778 to 757,109; its budget is sized as room to grow to the showcase's size, so it
-  goes 820,000 → 850,000 (10.9% headroom). Each was raised in its own commit, the showcase's recorded in its
-  history section above ("The showcase's demo size budget history") and the starter's in
-  `apps/starter/DEMO-SIZE.md`. Both numbers still sit below the unpruned demos (997,945 and 908,510 bytes),
-  so a pruning that stops still fails the gate.
+- **The budgets.** The showcase's demo grew 29,332 bytes on React's own code, 804,574 on main (after Panda 2)
+  to 833,906, and its budget goes 840,000 → 860,000 by its rule of about 3% over what it measures (3.0%, 26,094
+  bytes). The starter's grew 29,331, 727,778 to 757,109; its budget is sized as room to grow to the showcase's
+  size, rounded up, so it goes 820,000 → 840,000 (9.8% headroom). Each was raised in its own commit, the
+  showcase's recorded in its history section above ("The showcase's demo size budget history") and the
+  starter's in `apps/starter/DEMO-SIZE.md`. Both numbers still sit below the unpruned demos (984,317 and
+  908,510 bytes), so a pruning that stops still fails the gate. The branch first set 874,000 and 850,000
+  against the showcase's pre-Panda-2 size (847,534); merging Panda 2 in shrank it, and the numbers were re-set
+  so the showcase's stays a pacing gate.
 - **Pack and consume's lockfile seed moved with it.** `pnpm pack-and-consume --update-lockfile` re-resolved the
   consumer to React 19.3.1, its types and `scheduler` 0.28.0. The rest of the change to
   `scripts/pack-and-consume/consumer-lock.yaml` is peer suffixes naming the new React and the packed kit's
