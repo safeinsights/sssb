@@ -2814,3 +2814,63 @@ workspace's verify. Decisions ADR-0014 did not pin down:
   removed (through `pnpm pack-and-consume`, PATH starts with the repo's `node_modules/.bin`) and without pnpm's
   `npm_*` variables; the starter is copied from what git sees, so an ignored `.env.local` stays behind; and every
   parent of `--dir` must hold no `node_modules`, `package.json` or `pnpm-workspace.yaml`.
+
+## Publishing from CI, before anything needs publishing (2026-11-17, `ci/release-workflow`)
+
+ADR-0014's P1b: `.github/workflows/release.yml`, Changesets in one fixed group, and `scripts/release.mjs`, which
+both the workflow and CI's `release-plan` job run. Decisions the ADR left open:
+
+- **The workflow file is `release.yml`.** npm's trusted publisher on every package names it, so a rename stops
+  every publish until each publisher is edited. CanopyCMS's is `publish.yml`; here the file also cuts the release
+  commit, and "release" names both halves.
+- **Dormant through `privatePackages.version: false`, not through a switch in the workflow.** Every package is
+  private until P14, so Changesets plans no release, `plan` reports none and `push` is skipped, and on a tag `pack`
+  lists nothing and `publish` is skipped. Taking `private` off in P14 is the whole switch. The cost is that
+  Changesets' own plan is empty today, so a check of that plan could never fail; `pnpm release:check` judges the
+  plan with private packages versioned instead, which is the plan the packages will release once public.
+- **The part 10 `release-commit` job is two jobs, `plan` and `push`.** `plan` installs the workspace and runs
+  Changesets, which is dependency code; `push` holds the release app's key. In one job, dependency code could have
+  written a `BASH_ENV` into `$GITHUB_ENV` and so run inside the later step that holds the token (the independent
+  review found it). `plan` hands `push` a patch, and `push` installs nothing, copies `scripts/release.mjs` out of
+  the commit, applies the patch and runs `verify-release`, which works out from HEAD alone which changesets must be
+  consumed and what version they imply, and refuses any other change: each released manifest may differ in its
+  version line and nowhere else, and changelogs only beside them. A compromised `plan` can still write changelog
+  text, and nothing else.
+- **`changeset version` runs with `pnpm_config_verify_deps_before_run=false`.** With `format: "prettier"`,
+  Changesets formats the changelogs through `pnpm exec prettier`, and pnpm 11, seeing a workspace version changed
+  since the last install, first re-installs with every script, the root `prepare` included. Run under
+  `pnpm exec vitest`, the setting is already in the environment and hides this, so the test clears it.
+- **Every fixed-group package needs `repository.url` from the first PR.** npm requires it to match the publishing
+  repository (docs.npmjs.com/trusted-publishers), and a publish refused for it would come after the tag exists, so
+  `pnpm release:check` requires it now and `packages/kit/package.json` gains one.
+- **The release waits for `checks` twice**: `plan` on the merge commit, as CanopyCMS's does, and `pack` on the
+  release commit, because part 10 asks for both apps and pack and consume (a `checks` job since P2) to be green
+  on the release commit itself. The wait is one function (`scripts/release.mjs wait-for-checks`), fail-closed: anything
+  but a completed, successful push run on `main` for that exact commit keeps it polling until an hour has passed,
+  and the workflow requires its `passed <sha>` line, not only its exit code. For that, `checks` no longer cancels a
+  push run on `main` when the next push arrives: its concurrency group is the commit for a push and the ref for a
+  PR, so PRs still cancel their own older runs.
+- **The tag's work is two jobs, not one.** `pack` installs the workspace (with `--ignore-scripts`), lists and
+  packs; `publish`, the only job with `id-token: write`, sparse-checks out three files, installs nothing, re-reads
+  each tarball's own manifest (fixed group, the tag's version, not private) and layout (plain files under one
+  `package/`, at normalized paths), skips a version npm already holds from this commit (so "Re-run failed jobs"
+  resumes a release stopped part-way), refuses one npm holds from another commit or a `latest` newer than this
+  release, and only then runs `npx npm@11.21.2 publish --provenance`. A compromised dependency therefore runs only
+  where there is no OIDC token. CanopyCMS installs and builds in its publishing job. npm's documentation puts the
+  floor for trusted publishing at npm 11.5.1, not the 11.5.0 that part 10 and the brief carried over from
+  CanopyCMS's comment; the pin is above both.
+- **`publish` runs in an environment of its own, `npm-publish`**, separate from `release`, which holds the release
+  app's key. npm's trusted publisher binds the repository, the workflow filename and, optionally, an environment,
+  but no ref, so any branch can carry a `release.yml`. GitHub admits a job to an environment only on the refs its
+  deployment rule allows, so naming `npm-publish` on npm and limiting it to `v*` tags stops an edited `release.yml`
+  on a branch; a tag ruleset under which only the release app may create `v*` tags stops one on a tag. Both are
+  repository settings, so neither is in this PR.
+- **`create-sssb`'s source stays out of this repository for now.** It is the published mistype guard, it prints
+  one line and exits 1, and nothing about it is due to change. Bringing it in would add a workspace package that is
+  outside the `@sssb/*` group, so it would need either a second release path (a second way to publish, which part 10
+  rules out) or a place in the fixed group (a new guard version with every release, for no change). Its trusted
+  publisher still names `release.yml`, so if it ever must change, its source comes in then and goes out through this
+  file; `scripts/release.mjs` refuses to publish any package outside the fixed group until that is decided.
+- **npm does not refuse a private tarball on a dry run.** `npm publish <tarball> --dry-run` (npm 11.21.2) printed
+  `+ @sssb/kit@0.1.0` for the packed kit, whose manifest says `"private": true`. So the private check is the
+  workflow's own (`preflight`), not npm's.
