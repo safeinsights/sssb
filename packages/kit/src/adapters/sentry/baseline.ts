@@ -7,18 +7,46 @@ type Integration = { name: string }
 const V10_DENIED_KEYS = ['forwarded', '-ip', 'remote-', 'via', '-user']
 
 /**
- * Default integrations that 11.x adds and 10.x did not have, which no `dataCollection` key gates:
- * - `Aws`: a span per AWS SDK command, with the service, command, region and request id, plus S3 bucket names
- *   and Secrets Manager secret ARNs.
- * - `AwsLambdaWeb`: Lambda runtime context on events and segment spans.
- * - `NextjsUseCache`: spans for `'use cache'` with the cache tags verbatim, which an app may build from tenant ids.
- * Names are each integration's `INTEGRATION_NAME` in the 11.12 source (`@sentry/server-utils`, `@sentry/node`,
- * `@sentry/nextjs`).
+ * The default integrations 10.78 installed, by `name`, on the three runtimes `@sentry/nextjs` inits: Node
+ * (`@sentry/node` `getDefaultIntegrations` with tracing on, plus nextjs's `DistDirRewriteFrames`), edge
+ * (`@sentry/vercel-edge`) and the browser (`@sentry/browser` plus `BrowserTracing` and nextjs's
+ * `NextjsClientStackFrameNormalization`).
  */
-const V11_ONLY_DEFAULT_INTEGRATIONS = ['Aws', 'AwsLambdaWeb', 'NextjsUseCache']
+const V10_DEFAULT_INTEGRATIONS = [
+    // Node
+    ...['Amqplib', 'Anthropic_AI', 'ChildProcess', 'Connect', 'Console', 'Context', 'ContextLines'],
+    ...['ConversationId', 'Express', 'Fastify', 'Firebase', 'FunctionToString', 'GenericPool', 'Google_GenAI'],
+    ...['Graphql', 'Hapi', 'Hono', 'Http', 'InboundFilters', 'Kafka', 'Koa', 'LangChain', 'LangGraph'],
+    ...['LinkedErrors', 'LocalVariablesAsync', 'LruMemoizer', 'Modules', 'Mongo', 'Mongoose', 'Mysql', 'Mysql2'],
+    ...['NodeFetch', 'NodeSystemError', 'OnUncaughtException', 'OnUnhandledRejection', 'OpenAI', 'Postgres'],
+    ...['PostgresJs', 'Prisma', 'ProcessSession', 'Redis', 'RequestData', 'Tedious', 'VercelAI'],
+    'DistDirRewriteFrames',
+    // Edge, beyond the Node names
+    ...['Dedupe', 'WinterCGFetch'],
+    // Browser, beyond the names above
+    ...['Breadcrumbs', 'BrowserApiErrors', 'BrowserSession', 'CultureContext', 'GlobalHandlers', 'HttpContext'],
+    ...['BrowserTracing', 'NextjsClientStackFrameNormalization'],
+]
 
-function withoutV11OnlyDefaults<T extends Integration>(defaults: T[]): T[] {
-    return defaults.filter((integration) => !V11_ONLY_DEFAULT_INTEGRATIONS.includes(integration.name))
+/**
+ * 11.x successors to a 10.78 default: `EventFilters` is `InboundFilters` renamed, and `WorkerThreads` is the
+ * worker-thread half of v10's `ChildProcess`. (The browser's new `Console` is the console-breadcrumb half of
+ * `Breadcrumbs` and keeps the name Node already had.)
+ */
+const V11_SUCCESSORS = ['EventFilters', 'WorkerThreads']
+
+const ALLOWED_DEFAULT_INTEGRATIONS = new Set([...V10_DEFAULT_INTEGRATIONS, ...V11_SUCCESSORS])
+
+/**
+ * An ALLOWLIST, so a default integration that 11.x (or any later 11.x) adds is dropped until someone decides
+ * otherwise. 11.12 adds, on Node: `Aws` (a span per AWS SDK command, with S3 bucket names and Secrets Manager
+ * ARNs), `AwsLambdaWeb` (Lambda context), `Dataloader` (cache keys verbatim), `Knex`, `Neon`, `Nitro`,
+ * `Mastra`, `PiDurable`, `McpServer` and four GenAI clients; and on the Next.js server, `NextjsUseCache`
+ * (`'use cache'` tags verbatim). No `dataCollection` key gates the metadata those carry.
+ * `default-integrations.test.ts` lists what this drops from the installed SDK's real defaults.
+ */
+function withV10DefaultsOnly<T extends Integration>(defaults: T[]): T[] {
+    return defaults.filter((integration) => ALLOWED_DEFAULT_INTEGRATIONS.has(integration.name))
 }
 
 /**
@@ -36,13 +64,13 @@ function withoutV11OnlyDefaults<T extends Integration>(defaults: T[]): T[] {
  * - `frameContextLines: 5`: the 11.x default, fewer than v10's 7.
  * - `attachStacktrace: false`: v10's default; v11 turned it on, which adds a synthetic stack trace with source
  *   context to `captureMessage` events.
- * - `integrations`: drops the v11-only default integrations listed above.
+ * - `integrations`: keeps only the default integrations v10 had (or their renamed successors), above.
  *
  * Widening any of this is a privacy decision, not a dependency chore: `baseline.test.ts` pins it.
  */
 export const SENTRY_V10_BASELINE = {
     attachStacktrace: false,
-    integrations: withoutV11OnlyDefaults,
+    integrations: withV10DefaultsOnly,
     dataCollection: {
         userInfo: false,
         cookies: false,

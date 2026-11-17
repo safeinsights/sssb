@@ -47,10 +47,10 @@ describe.each([
         expect(options).not.toHaveProperty('sendDefaultPii')
     })
 
-    it('drops the default integrations v11 added, and only those', () => {
+    it('passes init a filter that keeps v10 defaults and drops ones v11 added', () => {
         initSentry()
-        const keep = ['Http', 'Console', 'LinkedErrors'].map((name) => ({ name }))
-        const v11Only = ['Aws', 'AwsLambdaWeb', 'NextjsUseCache'].map((name) => ({ name }))
+        const keep = ['Http', 'Console', 'LinkedErrors', 'EventFilters'].map((name) => ({ name }))
+        const v11Only = ['Aws', 'Dataloader', 'NextjsUseCache'].map((name) => ({ name }))
         const filter = init.mock.calls[0]![0].integrations as (defaults: { name: string }[]) => { name: string }[]
         expect(filter([...v11Only, ...keep])).toStrictEqual(keep)
     })
