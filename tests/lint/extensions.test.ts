@@ -194,7 +194,7 @@ describe('the carve-outs still let through what they were made for, in every spe
         expect(await isIgnored(`${APP}/src/styles/generated/css/${name}`)).toBe(true)
     })
 
-    // Every other extension ESLint lints, so widening the ignore past Panda's own `.js` turns this red.
+    // Every other extension ESLint lints, so widening the ignore to one of them turns this red.
     it.each(EXTENSIONS.filter((ext) => ext !== 'js'))(
         'a hand-written .%s module in the generated directory is fenced',
         async (ext) => {

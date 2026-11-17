@@ -13,8 +13,9 @@ upgrade to it (2026-11-17) moved the hole from `.mjs` to `.js`. The name is kept
 codegen writes there, and its output does not lint. The directory is committed, and `panda codegen` runs
 without `--clean`, so a hand-written `.js` file in it survives regeneration and is never linted. A route can
 import it, so it can import a vendor SDK, read `process.env` or take the raw db handle with a green `pnpm lint`.
-It is the one tracked place under `apps/*/src` where that holds. A hand-written `.ts` or `.mjs` file there IS
-linted: jpslav/keel#38 narrowed the ignore from the whole directory to the two extensions Panda writes.
+It is the one tracked place under `apps/*/src` where that holds. A hand-written file with any other extension
+ESLint lints (`.ts`, `.mjs`, `.jsx`, …) IS linted, and `tests/lint/extensions.test.ts` pins each one.
+jpslav/keel#38 narrowed the ignore from the whole directory to the two extensions Panda writes.
 
 Nothing in the tree does this today.
 
@@ -32,8 +33,9 @@ One of these, decided with whoever owns the styling setup:
   (the CSS comes through `@pandacss/dev/postcss`), so this costs less than it once looked; any later
   styled-system import would follow the move.
 
-A fourth option arrived with Panda 2: `outExtension: 'ts'` in `panda.config.ts` makes the output TypeScript,
-which moves the same hole to `.ts` rather than closing it, unless the output is linted as in the first option.
+A fourth option arrived with Panda 2, and it does not help on its own: `outExtension: 'ts'` in `panda.config.ts`
+makes the output TypeScript (only `.ts` files, no `.d.ts`), so the ignore would have to name `.ts` instead and a
+hand-written `.ts` would become the unlinted file, unless the output is linted as in the first option.
 
 Whichever it is, add a case to `tests/lint/extensions.test.ts` that a hand-written `.js` in that directory
 is fenced, and see it fail first.
