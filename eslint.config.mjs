@@ -786,7 +786,7 @@ const sssbNoRawDbHandleRule = {
     },
 }
 
-// ONE plugin object, shared by every block that registers `@sssb/kit/*` rules. Flat config checks plugin
+// ONE plugin object, shared by every block that registers `sssb/*` rules. Flat config checks plugin
 // identity across overlapping blocks, so two inline `{ sssb: { rules: … } }` literals matching the
 // same file would be a "Cannot redefine plugin" error the moment a file matched both.
 const sssbPlugin = {

@@ -89,7 +89,7 @@ const ROOTS: ScanRoot[] = [
         }))
         .filter((root) => existsSync(root.dir)),
     {
-        label: '@sssb/kit/test-fixture',
+        label: 'packages/kit/test-fixture',
         dir: FIXTURE_API_DIR,
         exemptDir: FIXTURE_API_DIR,
         tsconfig: path.join(REPO_DIR, 'tsconfig.json'),
@@ -229,7 +229,7 @@ describe('every mutating API route is authorized', () => {
     const routes = scanRoutes(ROOTS)
     const mutating = routes.filter((route) => route.handlers.length > 0)
     /** Mutating routes contributed by the FIXTURE root — what the exemption map is checked against. */
-    const fixture = mutating.filter((route) => route.root === '@sssb/kit/test-fixture')
+    const fixture = mutating.filter((route) => route.root === 'packages/kit/test-fixture')
     const fixtureRels = new Set(fixture.map((route) => route.rel))
 
     it.each(ROOTS.map((root) => root.label))('%s is really walked (guards against a broken walk)', (label) => {

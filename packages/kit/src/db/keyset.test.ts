@@ -3,7 +3,7 @@ import { keysetPage, type KeysetOrderColumn } from './keyset'
 
 // Compile-time only: `tsc` (the root program covers this file) is the assertion, and nothing here
 // touches a database. The SQL behaviour of `orderBy` is proven where a real engine is — the app half
-// of the composed RLS suite (@sssb/kit/test-fixture/app-config/db/rls-proofs.ts), on pglite and Postgres.
+// of the composed RLS suite (packages/kit/test-fixture/app-config/db/rls-proofs.ts), on pglite and Postgres.
 describe('KeysetOrderColumn', () => {
     it('admits a table’s NOT NULL columns, and only those', () => {
         type DocketOrder = KeysetOrderColumn<'dockets'>

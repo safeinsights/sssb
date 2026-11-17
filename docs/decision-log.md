@@ -2734,10 +2734,12 @@ Decisions P1 made that ADR-0014 did not:
   installed beside a `link:` seam still gets the seam linked into its directory in the virtual store.
 - **The Vitest project that runs the packages' suites is `kit`**, in both `vitest.config.ts` and
   `vitest.contract.config.ts`: it runs the framework package's suite. Nothing selected it by name.
-- **The reserved slugs are `kit` and `sssb`**, and `keel` is no longer reserved. `init-app` reserved `keel` because
-  it was the framework's workspace and Vitest project name; an app slug cannot spell `@sssb/kit`, but an app named
-  `kit` would collide with the Vitest project, and one named `sssb` would be ambiguous beside the project and its
-  CLI.
+- **`init-app` refuses the slugs `kit`, `sssb` and any `sssb-…`**, and `keel` is no longer reserved. `init-app`
+  reserved `keel` because it was the framework's workspace and Vitest project name. An app slug cannot spell
+  `@sssb/kit`, but an app named `kit` would collide with the Vitest project, and an app's contract database is its
+  slug folded to underscores plus `_contract` (`tests/support/contract-postgres.ts`), so `sssb` would be the
+  fixture's own `sssb_contract` and any `sssb-…` slug would start with the `sssb_` prefix that
+  `tests/support/app-scaffold.ts` reserves for the framework, turning the adopter's first `pnpm verify` red.
 - **One statement in the ADR index, not an addendum per ADR**, says that the ADR bodies' bare PR numbers refer to
   `jpslav/keel`. Only ADR-0004 and ADR-0014 cite bare numbers today, but every body says keel, and one paragraph
   where readers enter the ADRs covers all fourteen and any later addendum that quotes an old one.

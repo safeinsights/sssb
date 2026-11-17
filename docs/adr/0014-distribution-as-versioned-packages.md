@@ -844,6 +844,6 @@ Two details of P1 that the body did not pin down:
   registry (404): pnpm 11 installs a workspace project's own peers for its development, optional or not. Declared
   only in `peerDependenciesMeta`, it is still an optional peer of any version, and a consumer that links its own
   `@sssb/app-config` gets it linked into the kit's directory in the virtual store (checked with a packed tarball
-  and a `link:` seam outside the workspace). P2's pack and consume is the standing test of that.
+  and a `link:` seam outside the workspace, under pnpm 11.21). P2's pack and consume is the standing test of that.
 - **PR numbers in the dated records and the ADR bodies refer to `jpslav/keel`**, including this ADR's own; the ADR
   index says so once rather than an addendum on every ADR (`docs/decision-log.md`, 2026-11-17, P1).

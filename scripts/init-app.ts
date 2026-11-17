@@ -895,9 +895,10 @@ async function main(): Promise<void> {
         if (!/^[a-z][a-z0-9-]*$/.test(slug)) fail(`"${slug}" is not a valid slug: lowercase letters, digits, dashes`)
         if (slug === SHOWCASE) fail('"showcase" is reserved for the demo app')
         // `kit` is the framework's own vitest project name, so an app called that would collide with it
-        // in vitest.config.ts before this script's work could even be tested; `sssb` is the project's own
-        // name (and its CLI's), so an app called that would be ambiguous in every `--filter` and `exec`.
-        // (The framework package is `@sssb/kit`, which the slug pattern above cannot spell.)
+        // in vitest.config.ts before this script's work could even be tested. `sssb` would give the app the
+        // contract database `sssb_contract`, which is the framework fixture's own (and the next check
+        // explains why no `sssb-…` slug is safe either). The framework package is `@sssb/kit`, which the
+        // slug pattern above cannot spell.
         for (const reserved of ['kit', 'sssb']) {
             if (slug === reserved) fail(`"${reserved}" is reserved for the framework`)
         }
@@ -905,7 +906,9 @@ async function main(): Promise<void> {
         // framework's own fixture databases on the same server (tests/support/app-scaffold.ts), so an
         // `sssb-…` slug would turn the adopter's first `pnpm verify` red.
         if (slug.startsWith('sssb-')) {
-            fail(`"${slug}" starts with "sssb-": its contract database would start with "sssb_", the framework's own prefix`)
+            fail(
+                `"${slug}" starts with "sssb-": its contract database would start with "sssb_", the framework's own prefix`,
+            )
         }
     }
     if (options.repo !== null) checkRepoName(options.repo)

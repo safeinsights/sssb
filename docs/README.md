@@ -1,7 +1,7 @@
 # The doc set
 
 SSSB is maintained by SafeInsights, and it is not SafeInsights-specific. The guard is the universality test in
-[development-approach.md](development-approach.md) ("What the template ships"): vendor code ships only if every product built on SSSB will use it or it demonstrates a class of
+[development-approach.md](development-approach.md) ("What the template ships"): vendor code ships only if essentially every product built on SSSB will use it or it demonstrates a class of
 integration the template does not yet teach, a component only if it encodes a framework invariant, and
 everything else is a recipe.
 
