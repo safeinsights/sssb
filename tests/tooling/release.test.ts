@@ -168,7 +168,7 @@ describe('release check (every PR)', () => {
     })
 })
 
-describe('release prepare (release-commit)', () => {
+describe('release prepare (the plan job)', () => {
     it('releases nothing while every package is private, and consumes no changeset', async () => {
         const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
         const result = await prepare(root, { fetchImpl: registry() })
@@ -327,7 +327,8 @@ describe('release verify-release (the job holding the release key)', () => {
     })
 
     it('skips the files Changesets skips, and prints the line the workflow requires', async () => {
-        const root = workspace([KIT('0.1.0', false)], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        // Single-quoted, as .changeset/README.md's example writes it; the other fixtures double-quote.
+        const root = workspace([KIT('0.1.0', false)], { feature: ["'@sssb/kit': minor"] }, { git: true })
         for (const name of ['CLAUDE.md', 'AGENTS.md', '.notes.md'])
             writeFileSync(path.join(root, '.changeset', name), 'x')
         const run = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' })

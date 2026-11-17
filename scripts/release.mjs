@@ -6,13 +6,16 @@
 //   check                         Every PR. Fails on a `major` changeset for a package on 0.x, and on any plan
 //                                 that reaches 1.0.0, because npm versions cannot be withdrawn. It judges the
 //                                 plan as it will be once `private` comes off (P14): today Changesets plans
-//                                 nothing for a private package, and a check of that plan could never fail.
+//                                 nothing for a private package, and a check of that plan could never fail. It
+//                                 also fails on what would stall a release later: a changeset naming a package
+//                                 outside the fixed group, a group member outside packages/ or without
+//                                 repository.url, a group that is part private.
 //   prepare [--allow-dirty]       The `plan` job. Plans, guards, then runs `changeset version` in the working
 //                                 tree and commits nothing. stdout is one JSON object, `{"release":false,
 //                                 "reason":…}` or `{"release":true,"version":…,"packages":[…]}`.
-//   verify-release <version>      The `push` job, which holds the release app's key: the staged release changes
-//                                 only changesets, changelogs and fixed-group versions. Needs no installed
-//                                 dependencies.
+//   verify-release <version>      The `push` job, which holds the release app's key. From HEAD alone, works out
+//                                 the release the pending changesets imply and fails unless the staged patch is
+//                                 exactly that; prints `verified <version>`. Needs no installed dependencies.
 //   publishable <version>         The tag's pack job. The packages to publish, as JSON, and `[]` while every
 //                                 package is private. Fails if a non-private package is outside the fixed group
 //                                 or at another version.
@@ -23,10 +26,11 @@
 //                                 another commit, or a newer `latest`, fails before anything is published. Needs
 //                                 no installed dependencies.
 //   wait-for-checks <sha>         Both halves of a release. Waits for the `checks` workflow's push run on that
-//                                 commit of `main` to pass, and fails on any other conclusion or after an hour.
-//                                 Reads GITHUB_REPOSITORY and GH_TOKEN. Needs no installed dependencies.
+//                                 commit of `main` to pass, and fails on any other conclusion or after an hour;
+//                                 prints `passed <sha>`. Reads GITHUB_REPOSITORY and GH_TOKEN. Needs no installed
+//                                 dependencies.
 //
-// Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout stays parseable.
+// Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout carries only the result.
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
@@ -68,8 +72,8 @@ function compareVersions(a, b) {
 }
 
 /**
- * The workspace as Changesets reads it. Loaded lazily, so `preflight`, which runs in the one job holding
- * npm's id-token, imports no dependency at all.
+ * The workspace as Changesets reads it. Loaded lazily, so `preflight` and `verify-release`, which run in the
+ * jobs that install nothing, import no dependency at all.
  */
 async function loadWorkspace(root) {
     const [{ getPackages }, { readConfig }, { readChangesets }, { assembleReleasePlan }] = await Promise.all([
@@ -113,8 +117,9 @@ export async function check(root) {
     const problems = []
     const group = ws.packages.filter((p) => ws.fixed.has(p.packageJson.name))
     for (const p of group) {
-        // npm's provenance check refuses a publish whose `repository.url` does not name the repository that
-        // built it, and by then the release's tag exists; so it is required from the first PR.
+        // npm requires `repository.url` to match the GitHub repository that publishes (docs.npmjs.com/
+        // trusted-publishers), and a publish refused for it comes after the release's tag exists; so it is
+        // required from the first PR.
         if (!REPOSITORY_URL.test(p.packageJson.repository?.url ?? '')) {
             problems.push(
                 `${p.relativeDir}/package.json needs "repository": { "url": "git+https://github.com/<owner>/<repo>.git" }`,
@@ -427,7 +432,8 @@ function changesetReleases(text, where) {
 /**
  * The `push` job's check of the staged release, before it mints the release app's token. The release was
  * prepared in another job, by dependency code, so nothing it says is taken on trust. From HEAD alone this
- * works out what the release must be: every pending changeset consumed, every public fixed-group manifest moved
+ * works out what the release must be: every pending changeset consumed, every public fixed-group manifest under
+ * packages/ (where `check` keeps the group) moved
  * to the one version those changesets imply. The index may then differ from HEAD by exactly that: the
  * changesets deleted, each of those manifests changed in its version line and nowhere else, and plain-file
  * changelogs beside them. The version must also be newer than every `vX.Y.Z` tag. Needs no installed dependency.

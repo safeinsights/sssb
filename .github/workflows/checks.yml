@@ -45,8 +45,9 @@ jobs:
 
     # ADR-0014 part 10: on 0.x a breaking change is a `minor`, because Changesets turns a `major` into 1.0.0 and
     # npm versions cannot be withdrawn. Fails on a `major` changeset and on any release plan reaching 1.0.0,
-    # judged as the plan will be once the packages are public (scripts/release.mjs). release.yml runs the same
-    # check again before it versions anything.
+    # judged as the plan will be once the packages are public, and on changesets or packages that would stall a
+    # release later (scripts/release.mjs, `check`). release.yml runs the same check again before it versions
+    # anything.
     release-plan:
         runs-on: ubuntu-latest
         steps:

@@ -2,27 +2,35 @@
 # `release.yml`, so renaming it stops every publish until each publisher is edited. Modeled on CanopyCMS's
 # publish.yml.
 #
-# A release is two runs of this file:
-#   1. a push to `main` runs `release-commit`: it waits for `checks` to pass on that merge commit, versions the
-#      pending changesets with Changesets, and pushes a release commit and its `vX.Y.Z` tag;
+# A release is two runs of this file, each in two jobs:
+#   1. a push to `main` runs `plan`, which waits for `checks` to pass on that merge commit and versions the
+#      pending changesets with Changesets, and then `push`, which checks that result and pushes it as a release
+#      commit and its `vX.Y.Z` tag;
 #   2. that tag's push runs `pack`, which waits for `checks` to pass on the release commit and packs, and then
 #      `publish`, which publishes the packed tarballs with provenance.
-# No job holds both a token that writes to the repository and npm's id-token, and `publish`, the one job that
-# holds the id-token, installs no dependencies and runs none of their code.
+# Each pair splits the same way: the first job installs the workspace's dependencies and holds no secret; the
+# second holds the secret (the release app's key in `push`, npm's id-token in `publish`), installs nothing, and
+# re-checks what the first handed it. No job holds both a token that writes to the repository and the id-token.
 #
 # NOTHING REACHES NPM BEFORE P14. Every package is `"private": true` until then, so Changesets plans no
-# release (`privatePackages.version` is false in .changeset/config.json) and `release-commit` stops before
-# minting a token, and on a tag `pack` finds nothing publishable and `publish` is skipped. As a third lock,
-# `publish` refuses any tarball whose own manifest says private. Do not count on npm for that: `npm publish
-# <tarball> --dry-run` (11.21.2) accepted a private one.
+# release (`privatePackages.version` is false in .changeset/config.json), `plan` reports none and `push` is
+# skipped, and on a tag `pack` finds nothing publishable and `publish` is skipped. As a third lock, `publish`
+# refuses any tarball whose own manifest says private. Do not count on npm for that: `npm publish <tarball>
+# --dry-run` (11.21.2) accepted a private one.
 #
-# What the repository and npm must hold (JP's settings; none of it is in this file):
-#   - environment `release`: deployment branches `main` only; secret RELEASE_BOT_PRIVATE_KEY and variable
-#     RELEASE_BOT_CLIENT_ID for the release app, whose token may push to `main` past its rules;
-#   - environment `npm-publish`: deployment refs `v*` tags only;
-#   - a tag ruleset on `v*` that only the release app may create, and nobody may move or delete;
+# What the repository and npm must hold (JP's settings; none of it is in this file). The workflow names both
+# environments, and GitHub creates a named environment that does not exist with no rules at all, so each is set
+# up before its secret is added or a trusted publisher names it:
+#   - environment `release`: deployment branches `main` only, administrators not exempt; secret
+#     RELEASE_BOT_PRIVATE_KEY and variable RELEASE_BOT_CLIENT_ID for the release app (installed on this
+#     repository only, contents write), whose token may push to `main` past its rules;
+#   - environment `npm-publish`: deployment refs `v*` tags only, administrators not exempt;
+#   - a tag ruleset on `v*` that only the release app may create, that nobody may move or delete, with no other
+#     bypass. Without it anyone who can push a tag can run an edited copy of this file in `npm-publish`;
+#   - `main`'s ruleset: changes through a reviewed PR with `checks` required, only the release app bypassing;
 #   - on npmjs.com, per package: a trusted publisher naming `safeinsights/sssb`, `release.yml` and the
-#     environment `npm-publish`, with publishing requiring 2FA and disallowing tokens.
+#     environment `npm-publish`, with publishing requiring 2FA and disallowing tokens. npm binds the publisher to
+#     those three and to no ref (docs.npmjs.com/trusted-publishers), which is why the two rules above carry it.
 name: release
 
 on:
@@ -116,8 +124,8 @@ jobs:
         needs: plan
         if: needs.plan.outputs.release == 'true'
         runs-on: ubuntu-latest
-        # Holds the release app's key. Its deployment rule allows `main` only, so a workflow on any other
-        # branch cannot mint the app's token.
+        # Holds the release app's key. Its deployment rule (JP's setting, at the top) allows `main` only, so a
+        # workflow on any other branch cannot mint the app's token.
         environment: release
         permissions:
             # The release app's token does the writing.
@@ -136,8 +144,9 @@ jobs:
                   path: ${{ runner.temp }}/release
 
             # The checker is copied out of the commit first, so a patch that rewrote it would not be the code that
-            # judges it. Anything beyond deleted changesets, written changelogs and fixed-group versions fails here,
-            # before a token exists.
+            # judges it. verify-release works out from HEAD alone which changesets must go and what version they
+            # imply, and anything else in the patch fails here, before a token exists. Its `verified <version>` line
+            # is required, not just its exit code.
             - name: apply, check, commit and tag the release
               env:
                   VERSION: ${{ needs.plan.outputs.version }}
@@ -153,9 +162,8 @@ jobs:
                   git -c core.hooksPath=/dev/null commit --no-verify -m "chore: release v$VERSION"
                   git tag "v$VERSION"
 
-            # The release app's bypass of `main`'s rules is gated by its key, a secret of this job's `release`
-            # environment; the generic GITHUB_TOKEN cannot be granted a bypass, and a tag it pushes would not
-            # start the publish run.
+            # The release app's token, from its key in this job's `release` environment. The generic GITHUB_TOKEN
+            # would not do: GitHub starts no workflow run for a push made with it, so its tag would never publish.
             - name: mint the release app's token
               id: app-token
               uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -216,8 +224,8 @@ jobs:
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
-            # THE CI GATE again, on the release commit itself: what is published is what `checks` passed, both
-            # apps and pack and consume included (ADR-0014 part 10's two-consumer rule).
+            # THE CI GATE again, on the release commit itself, so what is published is what `checks` passed
+            # (ADR-0014 part 10 asks for both apps, and pack and consume once P2 adds it, green on that commit).
             - name: wait for checks to pass on the release commit
               env:
                   GH_TOKEN: ${{ github.token }}
@@ -262,15 +270,16 @@ jobs:
                   if-no-files-found: error
                   retention-days: 7
 
-    # The tag's second half, and the only job holding npm's id-token. It checks out two files, installs nothing
-    # and runs no dependency's code: a compromised dependency in `pack` never sees the token. It re-checks each
-    # tarball itself rather than trusting `pack`'s word.
+    # The tag's second half, and the only job holding npm's id-token. It checks out three files, installs nothing
+    # and runs none of the workspace's dependencies (its one fetched program is the pinned npm), so a compromised
+    # dependency in `pack` never sees the token. It re-checks each tarball itself rather than trusting `pack`.
     publish:
         name: publish
         needs: pack
         if: needs.pack.outputs.count != '0'
         runs-on: ubuntu-latest
-        # npm's trusted publisher names this environment, and its deployment rule admits `v*` tags only.
+        # npm's trusted publisher names this environment, and its deployment rule admits `v*` tags only (both JP's
+        # settings, listed at the top).
         environment: npm-publish
         permissions:
             contents: read
@@ -297,9 +306,9 @@ jobs:
             # one already on npm from this commit is skipped, so "Re-run failed jobs" resumes a release that stopped
             # part-way. Anything else fails here, with nothing published.
             #
-            # npm runs as `npx npm@11.21.2`: OIDC trusted publishing needs npm 11.5.0 or later, the exact version is
-            # pinned rather than floated, and npx checks the fetched npm against the registry's sha512. Keep it at
-            # 11.5.0 or later when bumping.
+            # npm runs as `npx npm@11.21.2`: trusted publishing needs npm 11.5.1 or later (docs.npmjs.com/
+            # trusted-publishers), the exact version is pinned rather than floated, and npx checks the fetched npm
+            # against the registry's sha512. Keep it at 11.5.1 or later when bumping.
             - name: publish
               env:
                   VERSION: ${{ needs.pack.outputs.version }}
