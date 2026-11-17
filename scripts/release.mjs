@@ -29,7 +29,7 @@
 // Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout stays parseable.
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -338,10 +338,21 @@ export async function preflight(root, version, sha, files, fetchImpl = fetch) {
     for (const file of files) {
         // npm reads the manifest from whatever the first directory is called, so a tarball laid out any other way
         // than `pnpm pack`'s could show this check one manifest and npm another.
+        // Every entry is a file or a directory at a normalized path under `package/`: no `..`, `.` or empty
+        // segment that an extractor could resolve onto another entry, and no link.
         const entries = tar(['-tzf', file]).split('\n').filter(Boolean)
-        const strays = entries.filter((e) => !e.startsWith('package/') || e.split('/').includes('..'))
-        if (strays.length > 0 || entries.filter((e) => e === 'package/package.json').length !== 1) {
-            problems.push(`${file} is not laid out as one package/ with one package/package.json`)
+        const kinds = tar(['-tvzf', file])
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => line[0])
+        const strays = entries.filter((e) => !e.startsWith('package/') || path.posix.normalize(e) !== e)
+        if (
+            strays.length > 0 ||
+            kinds.length !== entries.length ||
+            kinds.some((k) => k !== '-' && k !== 'd') ||
+            entries.filter((e) => e === 'package/package.json').length !== 1
+        ) {
+            problems.push(`${file} is not laid out as one package/ of plain files with one package/package.json`)
             continue
         }
         const manifest = JSON.parse(tar(['-xzOf', file, 'package/package.json']))
@@ -375,44 +386,112 @@ const CHANGESET_FILE = /^\.changeset\/[^/]+\.md$/
 const MANIFEST = /^packages\/[^/]+\/package\.json$/
 const CHANGELOG = /^packages\/[^/]+\/CHANGELOG\.md$/
 
+const BUMPS = ['patch', 'minor', 'major']
+
+/**
+ * The releases a changeset's frontmatter names, read without a YAML parser (the `push` job installs none): one
+ * `"name": type` per line, and anything else fails rather than being guessed at.
+ */
+function changesetReleases(text, where) {
+    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n?---/.exec(text)
+    if (!frontmatter) throw new Error(`${where}: no frontmatter`)
+    return frontmatter[1]
+        .split(/\r?\n/)
+        .filter((line) => line.trim())
+        .map((line) => {
+            const m = /^\s*(["']?)([^"'\s:][^"']*?)\1\s*:\s*(major|minor|patch|none)\s*$/.exec(line)
+            if (!m) throw new Error(`${where}: cannot read "${line}"`)
+            return { name: m[2], type: m[3] }
+        })
+}
+
 /**
  * The `push` job's check of the staged release, before it mints the release app's token. The release was
- * prepared in another job, by dependency code, so nothing it says is taken on trust: the index may differ from
- * HEAD only by deleted changesets, written changelogs (plain files), and fixed-group manifests whose one change
- * is `version` → `version`; the version must be newer than every `vX.Y.Z` tag. Needs no installed dependency.
+ * prepared in another job, by dependency code, so nothing it says is taken on trust. From HEAD alone this
+ * works out what the release must be: every pending changeset consumed, every public fixed-group manifest moved
+ * to the one version those changesets imply. The index may then differ from HEAD by exactly that: the
+ * changesets deleted, each of those manifests changed in its version line and nowhere else, and plain-file
+ * changelogs beside them. The version must also be newer than every `vX.Y.Z` tag. Needs no installed dependency.
  */
 export function verifyRelease(root, version) {
-    if (!PLAIN_VERSION.test(version) || major(version) !== 0) throw new Error(`not a 0.x release version: '${version}'`)
     const problems = []
+    if (!PLAIN_VERSION.test(version) || major(version) !== 0) problems.push(`not a 0.x release version: '${version}'`)
     if (git(root, ['diff', '--name-only']).trim() || git(root, ['ls-files', '--others', '--exclude-standard']).trim()) {
         problems.push('the tree holds changes that are not staged')
     }
     const inFixedGroup = fixedGroupMatcher(root, 'HEAD')
-    const show = (spec) => JSON.parse(git(root, ['show', spec]))
-    let bumped = 0
-    // `--raw`: old mode, new mode, status and path, so a symlink or an executable cannot pass as a plain file.
+    const atHead = (file) => git(root, ['show', `HEAD:${file}`])
+    const tracked = git(root, ['ls-tree', '-r', '--name-only', '-z', 'HEAD']).split('\0').filter(Boolean)
+
+    // What HEAD says the release is.
+    const released = new Map()
+    for (const file of tracked.filter((f) => MANIFEST.test(f))) {
+        const manifest = JSON.parse(atHead(file))
+        if (inFixedGroup(manifest.name) && !isPrivate(manifest, file)) released.set(file, manifest.version)
+    }
+    const pending = tracked.filter((f) => CHANGESET_FILE.test(f) && !/^readme\.md$/i.test(path.basename(f)))
+    let bump = -1
+    for (const file of pending) {
+        for (const r of changesetReleases(atHead(file), file)) {
+            if (!inFixedGroup(r.name)) problems.push(`${file} names ${r.name}, which is not in the fixed group`)
+            else bump = Math.max(bump, BUMPS.indexOf(r.type))
+        }
+    }
+    const current = [...new Set(released.values())]
+    if (released.size === 0) problems.push('no fixed-group package is public, so there is nothing to release')
+    else if (current.length !== 1) problems.push(`the fixed group is at several versions: ${current.join(', ')}`)
+    else if (bump < 0) problems.push('the pending changesets release nothing')
+    else {
+        const [ma, mi, pa] = current[0].split('.').map(Number)
+        const expected = [`${ma}.${mi}.${pa + 1}`, `${ma}.${mi + 1}.0`, `${ma + 1}.0.0`][bump]
+        if (expected !== version) problems.push(`the pending changesets release ${expected}, not ${version}`)
+    }
+
+    // What the index holds. `--raw` gives old mode, new mode, status and path, so a symlink, an executable or a
+    // gitlink cannot pass as a plain file.
+    const deleted = new Set()
+    const bumped = new Set()
+    const plain = (mode) => mode === '100644'
     const raw = git(root, ['diff', '--cached', '--raw', '--no-renames', '-z', 'HEAD']).split('\0').filter(Boolean)
     for (let i = 0; i < raw.length; i += 2) {
         const [oldMode, newMode, , , status] = raw[i].slice(1).split(' ')
         const file = raw[i + 1]
-        const plain = (mode) => mode === '100644'
-        if (status === 'D' && CHANGESET_FILE.test(file) && !/^readme\.md$/i.test(path.basename(file))) continue
-        if (CHANGELOG.test(file) && plain(newMode) && (status === 'A' || (status === 'M' && plain(oldMode)))) continue
-        if (status === 'M' && MANIFEST.test(file) && plain(oldMode) && plain(newMode)) {
-            const before = show(`HEAD:${file}`)
-            const after = show(`:${file}`)
-            const same =
-                JSON.stringify({ ...before, version: null }) === JSON.stringify({ ...after, version: null }) &&
-                Object.keys(before).join() === Object.keys(after).join()
-            if (!same) problems.push(`${file} changes more than its version`)
-            else if (after.version !== version) problems.push(`${file} is set to ${after.version}, not ${version}`)
-            else if (!inFixedGroup(after.name) || isPrivate(after, file)) problems.push(`${file} is not released`)
-            else bumped++
+        const dir = path.posix.dirname(file)
+        if (status === 'D' && pending.includes(file)) {
+            deleted.add(file)
+            continue
+        }
+        if (
+            CHANGELOG.test(file) &&
+            released.has(`${dir}/package.json`) &&
+            plain(newMode) &&
+            (status === 'A' || (status === 'M' && plain(oldMode)))
+        ) {
+            continue
+        }
+        if (status === 'M' && released.has(file) && plain(oldMode) && plain(newMode)) {
+            // Byte for byte but the version line, so a duplicate key or a reordering cannot hide in "equal JSON".
+            const before = atHead(file).split('\n')
+            const staged = git(root, ['show', `:${file}`])
+            const after = staged.split('\n')
+            const changed = before.map((line, n) => n).filter((n) => before[n] !== after[n])
+            const from = `"version": "${released.get(file)}"`
+            const line = changed[0]
+            if (
+                before.length !== after.length ||
+                changed.length !== 1 ||
+                !before[line].includes(from) ||
+                before[line].replace(from, `"version": "${version}"`) !== after[line] ||
+                JSON.parse(staged).version !== version
+            ) {
+                problems.push(`${file} must change only its version, to ${version}`)
+            } else bumped.add(file)
             continue
         }
         problems.push(`the release may not change ${file} (${status} ${oldMode} → ${newMode})`)
     }
-    if (bumped === 0) problems.push(`no manifest is set to ${version}`)
+    for (const file of pending) if (!deleted.has(file)) problems.push(`${file} is not consumed`)
+    for (const file of released.keys()) if (!bumped.has(file)) problems.push(`${file} is not moved to ${version}`)
     const tag = latestStableTag(root)
     if (tag !== null && compareVersions(version, tag) <= 0) problems.push(`${version} is not newer than v${tag}`)
     if (problems.length > 0) throw new Error(problems.join('\n'))
@@ -504,7 +583,16 @@ async function main(argv) {
     throw new Error(USAGE)
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+/** Whether Node ran this file, by real path: run through a symlink, a plain comparison would skip `main`, exit 0. */
+function isMain() {
+    try {
+        return realpathSync(process.argv[1] ?? '') === realpathSync(fileURLToPath(import.meta.url))
+    } catch {
+        return false
+    }
+}
+
+if (isMain()) {
     main(process.argv.slice(2)).catch((err) => {
         console.error(err instanceof Error ? err.message : String(err))
         process.exit(1)

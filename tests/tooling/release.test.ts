@@ -248,17 +248,42 @@ describe('release verify-release (the job holding the release key)', () => {
     it('accepts what prepare wrote: a deleted changeset, a changelog and a version', async () => {
         const { root } = await prepared()
         expect(() => verifyRelease(root, '0.2.0')).not.toThrow()
-        expect(() => verifyRelease(root, '0.3.0')).toThrow(/set to 0\.2\.0, not 0\.3\.0/)
+        expect(() => verifyRelease(root, '0.3.0')).toThrow(/the pending changesets release 0\.2\.0, not 0\.3\.0/)
     })
 
     it('refuses anything else the patch could carry', async () => {
+        const kitManifest = (root: string) => path.join(root, 'packages/kit/package.json')
         const cases: [(root: string, run: (...a: string[]) => void) => void, RegExp][] = [
             [
                 (root) => {
-                    const file = path.join(root, 'packages/kit/package.json')
+                    const file = kitManifest(root)
                     writeJson(file, { ...JSON.parse(readFileSync(file, 'utf8')), scripts: { postinstall: 'x' } })
                 },
-                /packages\/kit\/package\.json changes more than its version/,
+                /packages\/kit\/package\.json must change only its version/,
+            ],
+            [
+                // JSON-equal, byte-different: a duplicate key the last of which wins.
+                (root) => {
+                    const file = kitManifest(root)
+                    writeFileSync(file, readFileSync(file, 'utf8').replace('{\n', '{\n    "name": "other",\n'))
+                },
+                /packages\/kit\/package\.json must change only its version/,
+            ],
+            [
+                // A release that consumes nothing: the changeset is put back.
+                (_root, run) => run('checkout', 'HEAD', '--', '.changeset/feature.md'),
+                /\.changeset\/feature\.md is not consumed/,
+            ],
+            [
+                (root) => writeFileSync(path.join(root, 'packages/zz-CHANGELOG.md'), 'x'),
+                /may not change packages\/zz-CHANGELOG\.md/,
+            ],
+            [
+                (root) => {
+                    mkdirSync(path.join(root, 'packages/zz'))
+                    writeFileSync(path.join(root, 'packages/zz/CHANGELOG.md'), 'x')
+                },
+                /may not change packages\/zz\/CHANGELOG\.md/,
             ],
             [
                 (root) => writeFileSync(path.join(root, '.changeset', 'config.json'), '{}'),
@@ -280,6 +305,24 @@ describe('release verify-release (the job holding the release key)', () => {
             run('add', '-A')
             expect(() => verifyRelease(root, '0.2.0')).toThrow(reason)
         }
+    })
+
+    it('refuses a version the changesets do not imply, even with every file in order', async () => {
+        const root = workspace([KIT('0.1.0', false)], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        rmSync(path.join(root, '.changeset', 'feature.md'))
+        const file = path.join(root, 'packages/kit/package.json')
+        writeFileSync(file, readFileSync(file, 'utf8').replace('"version": "0.1.0"', '"version": "0.37.0"'))
+        execFileSync('git', ['add', '-A'], { cwd: root })
+        expect(() => verifyRelease(root, '0.37.0')).toThrow(/the pending changesets release 0\.2\.0, not 0\.37\.0/)
+    })
+
+    it('runs, and fails, when its CLI is reached through a symlink', () => {
+        const root = workspace([KIT('0.1.0', false)], {}, { git: true })
+        const link = path.join(root, 'release-link.mjs')
+        symlinkSync(SCRIPT, link)
+        const result = spawnSync(process.execPath, [link, 'verify-release', '0.2.0'], { cwd: root, encoding: 'utf8' })
+        expect(result.status).toBe(1)
+        expect(result.stderr).toMatch(/the pending changesets release nothing/)
     })
 })
 
@@ -318,9 +361,22 @@ describe('release preflight (the job holding the id-token)', () => {
         writeJson(path.join(staging, 'package', 'package.json'), kit)
         writeJson(path.join(staging, 'other', 'package.json'), { name: '@sssb/kit', version: '9.9.9' })
         execFileSync('tar', ['-czf', path.join(root, 'odd.tgz'), '-C', staging, 'other', 'package'])
-        await expect(preflight(root, '0.2.0', SHA, [path.join(root, 'odd.tgz')], registry())).rejects.toThrow(
-            /not laid out as one package\//,
-        )
+        // A second manifest at an unnormalized path that names the same file, and a link.
+        execFileSync('tar', [
+            '-czf',
+            path.join(root, 'dot.tgz'),
+            '-C',
+            staging,
+            'package/package.json',
+            'package/./package.json',
+        ])
+        symlinkSync('package.json', path.join(staging, 'package', 'link.json'))
+        execFileSync('tar', ['-czf', path.join(root, 'link.tgz'), '-C', staging, 'package'])
+        for (const file of ['odd.tgz', 'dot.tgz', 'link.tgz']) {
+            await expect(preflight(root, '0.2.0', SHA, [path.join(root, file)], registry())).rejects.toThrow(
+                /not laid out as one package\//,
+            )
+        }
     })
 
     it("judges each tarball's own manifest, not pack's word", async () => {
