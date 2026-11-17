@@ -2753,3 +2753,14 @@ Decisions P1 made that ADR-0014 did not:
   test GUC `sssb.probe`, temp-dir prefixes, the tour cursor's DOM ids (`sssb-tour-cursor`), the test MIME types
   (`application/x-sssb-test`), the fixture's slug (`sssbfix`) and the Vite plugin name `sssb:prune-mantine-css`.
   None is deployed state.
+
+## Sentry 11, with an explicit v10 data-collection baseline (2026-11-17, `deps/sentry-11`)
+
+- **Sentry 11 is taken now, and `withSentryConfig` moves to `@sentry/nextjs/config`.** This supersedes two
+  bullets in the dependency-advisory entry above: "Not taken: Sentry 11", and "`withSentryConfig` stays
+  imported from `@sentry/nextjs`", which deferred the move to this upgrade. 11.x no longer exports
+  `withSentryConfig` from the package root, so Dependabot's bump (#2) failed to build on that import alone.
+- **The upgrade does not change what reaches Sentry.** v11's unset `dataCollection` collects more than v10's
+  unset `sendDefaultPii` did, so both framework inits now spread `SENTRY_V10_BASELINE`
+  (`packages/kit/src/adapters/sentry/baseline.ts`), pinned by `baseline.test.ts`. The reasoning is ADR-0010's
+  2026-11-17 addendum.
