@@ -39,10 +39,19 @@ function writeJson(file: string, value: unknown) {
     writeFileSync(file, JSON.stringify(value, null, 4) + '\n')
 }
 
-/** A workspace with these packages and changesets (`{ id: frontmatter lines }`), committed when `git` is set. */
-function workspace(pkgs: Pkg[], changesets: Record<string, string[]> = {}, { git = false } = {}) {
+/**
+ * A workspace with these packages and changesets (`{ id: frontmatter lines }`), committed when `git` is set.
+ * `installed` runs `pnpm install --ignore-scripts` first, as the `plan` job does, under a root `prepare` script
+ * that leaves a `prepare-ran` file wherever a later step runs scripts after all.
+ */
+function workspace(pkgs: Pkg[], changesets: Record<string, string[]> = {}, { git = false, installed = false } = {}) {
     const root = makeTestTmpDir('sssb-release-')
-    writeJson(path.join(root, 'package.json'), { name: 'fixture', private: true, version: '0.0.0' })
+    writeJson(path.join(root, 'package.json'), {
+        name: 'fixture',
+        private: true,
+        version: '0.0.0',
+        ...(installed ? { scripts: { prepare: `node -e "require('fs').writeFileSync('prepare-ran', '')"` } } : {}),
+    })
     writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n    - apps/*\n    - packages/*\n')
     for (const p of pkgs) {
         writeJson(path.join(root, p.dir, 'package.json'), {
@@ -57,6 +66,10 @@ function workspace(pkgs: Pkg[], changesets: Record<string, string[]> = {}, { git
     copyFileSync(CONFIG, path.join(root, '.changeset', 'config.json'))
     for (const [id, lines] of Object.entries(changesets)) {
         writeFileSync(path.join(root, '.changeset', `${id}.md`), `---\n${lines.join('\n')}\n---\n\n${id}\n`)
+    }
+    if (installed) {
+        writeFileSync(path.join(root, '.gitignore'), 'node_modules\n')
+        execFileSync('pnpm', ['install', '--ignore-scripts', '--no-frozen-lockfile'], { cwd: root, stdio: 'ignore' })
     }
     if (git) {
         const run = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' })
@@ -162,9 +175,26 @@ describe('release prepare (release-commit)', () => {
         expect(JSON.parse(readFileSync(path.join(root, 'packages/kit/package.json'), 'utf8')).version).toBe('0.2.0')
         expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(false)
         expect(readFileSync(path.join(root, 'packages/kit/CHANGELOG.md'), 'utf8')).toMatch(/## 0\.2\.0/)
-        // Changesets' formatter runs `pnpm exec`, which would re-install with scripts after the bump; it must not.
-        expect(existsSync(path.join(root, 'node_modules'))).toBe(false)
-        expect(existsSync(path.join(root, 'pnpm-lock.yaml'))).toBe(false)
+    })
+
+    it('runs no install script, though Changesets formats through `pnpm exec` after bumping a version', async () => {
+        // pnpm 11 re-installs, scripts and all, before an `exec` in a workspace whose versions changed since the
+        // last install, unless verify-deps-before-run is off.
+        const root = workspace(
+            [KIT('0.1.0', false)],
+            { feature: ['"@sssb/kit": minor'] },
+            { git: true, installed: true },
+        )
+        const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        // `pnpm exec vitest` hands its children this very setting, which would hide the bug; CI's job has none.
+        const inherited = process.env.pnpm_config_verify_deps_before_run
+        delete process.env.pnpm_config_verify_deps_before_run
+        try {
+            expect(await prepare(root, { fetchImpl: npm })).toMatchObject({ release: true, version: '0.2.0' })
+        } finally {
+            if (inherited !== undefined) process.env.pnpm_config_verify_deps_before_run = inherited
+        }
+        expect(existsSync(path.join(root, 'prepare-ran'))).toBe(false)
     })
 
     it('refuses to go behind what npm already holds', async () => {
