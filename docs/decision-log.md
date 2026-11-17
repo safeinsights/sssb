@@ -2825,3 +2825,35 @@ workspace's verify. Decisions ADR-0014 did not pin down:
   removed (through `pnpm pack-and-consume`, PATH starts with the repo's `node_modules/.bin`) and without pnpm's
   `npm_*` variables; the starter is copied from what git sees, so an ignored `.env.local` stays behind; and every
   parent of `--dir` must hold no `node_modules`, `package.json` or `pnpm-workspace.yaml`.
+
+## React 19.3, with the demo budgets raised (2026-11-17, `deps/react-19-3`)
+
+JP's call on 2026-11-17, made to the manager session: take React 19.3 and raise the showcase's static demo budget
+to fit it. That lifts the React hold in "Catching up October's minor-and-patch group" (2026-11-16), which left
+the call to JP because the budget's own rule reserves a raise for a feature. This replaces the React half of
+Dependabot's #1.
+
+- **Every declaration moved in one commit.** `react` and `react-dom` go to `~19.3.1` in the root and both apps,
+  `@types/react` and `@types/react-dom` to `~19.3.0` in the root, and `@sssb/kit`'s `react` peer to `~19.3.1`.
+  The kit declares no `@types/react` peer yet (ADR-0014 part 2 moves it there). #1 moved the apps and not the
+  kit's peer, and the kit kept its own React: unit tests failed with "mismatching versions of React and the
+  renderer", the starter's e2e lost next-intl's provider, and the static demo bundled two Reacts (1,012,958
+  bytes).
+- **One copy of each singleton, checked by realpath.** From `packages/kit` and from each app, the nearest
+  `node_modules/<pkg>` of `react`, `react-dom`, `next`, `next-intl`, `@mantine/core` and `@types/react`
+  resolves to one directory each (build-notes' `readlink -f` check, run over the three importers). Seen to
+  fail: with the kit's peer put back at `~19.2.8` and `pnpm install` run, the kit got `react` 19.2.9 and its
+  own `next`, `next-intl` and `@mantine/core` with it, four of the six forked.
+- **The budgets.** The showcase's demo grew 29,332 bytes on React's own code, 818,202 to 847,534, and its
+  budget goes 840,000 → 874,000 by its rule of about 3% over what it measures (3.0%, 26,466 bytes). The
+  starter's grew 29,331, 727,778 to 757,109; its budget is sized as room to grow to the showcase's size, so it
+  goes 820,000 → 850,000 (10.9% headroom). Each was raised in its own commit, the showcase's recorded in its
+  history section above ("The showcase's demo size budget history") and the starter's in
+  `apps/starter/DEMO-SIZE.md`. Both numbers still sit below the unpruned demos (997,945 and 908,510 bytes),
+  so a pruning that stops still fails the gate.
+- **Pack and consume's lockfile seed moved with it.** `pnpm pack-and-consume --update-lockfile` re-resolved the
+  consumer to React 19.3.1, its types and `scheduler` 0.28.0; nothing else in
+  `scripts/pack-and-consume/consumer-lock.yaml` changed but integrity hashes, and the full run passed.
+- **`@axe-core/playwright` stays held at `~4.12.1`.** The other half of #1 is not decided:
+  4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
+  hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
