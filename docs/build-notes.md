@@ -1957,3 +1957,7 @@ the panel is the element that carries it.
   install from fetching the peer, but in the workspace that declares it, pnpm 11 still requested
   `@sssb/app-config` from the registry. Declaring the peer in `peerDependenciesMeta` alone keeps it optional and
   the install offline; a packed copy installed beside a `link:` seam still links it.
+- **A probe has to fail for the reason it names.** The first lint probes for this rename ran
+  `eslint --format unix`, a formatter ESLint no longer ships, so every lint probe exited non-zero before linting
+  anything, the controls that should have stayed green included: a column of reds, none of them evidence. Read which rule fired (`--format json`, then each message's
+  `ruleId`), and run a control that must stay green beside each probe that must go red.

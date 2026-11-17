@@ -1,4 +1,8 @@
 # Extends the built-in default ruleset. Add allowlist entries only with justification.
+#
+# The paths below name `packages/(keel|kit)`: the framework package was `packages/keel` until the SSSB rename,
+# and CI scans every commit, so a literal committed before the rename is a finding at the OLD path. Dropping
+# `keel` from these patterns un-allowlists every historical finding.
 [extend]
 useDefault = true
 
@@ -11,7 +15,7 @@ useDefault = true
 [[allowlists]]
 description = "webhook.test.ts real-mode WEBHOOK_SECRET fixture"
 condition = "AND"
-paths = ['''packages/kit/src/service-auth/webhook\.test\.ts''']
+paths = ['''packages/(keel|kit)/src/service-auth/webhook\.test\.ts''']
 regexes = ['''env-secret-abcdef0123456789''']
 regexTarget = "line"
 
@@ -24,7 +28,7 @@ regexTarget = "line"
 [[allowlists]]
 description = "audit.test.ts detail-refusal fixtures, in history only"
 condition = "AND"
-paths = ['''packages/kit/src/db/audit\.test\.ts''']
+paths = ['''packages/(keel|kit)/src/db/audit\.test\.ts''']
 regexes = ['''sk_live_51HxYz''']
 regexTarget = "line"
 
