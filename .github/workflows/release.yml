@@ -40,24 +40,24 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
-    release-commit:
-        name: release commit
+    # The push's first half: everything that needs the workspace's dependencies, with no secret and no write
+    # access. Its output is a patch that the `push` job checks before it believes any of it.
+    plan:
+        name: plan
         if: github.ref == 'refs/heads/main'
         runs-on: ubuntu-latest
         timeout-minutes: 90
-        # Holds the release app's key. Its deployment rule allows `main` only, so a workflow on any other
-        # branch cannot mint the app's token.
-        environment: release
         permissions:
-            # The release app's token does the writing.
             contents: read
             # To list this commit's `checks` runs: workflow runs are the `actions` scope, not `checks`.
             actions: read
+        outputs:
+            release: ${{ steps.prepare.outputs.release }}
+            version: ${{ steps.prepare.outputs.version }}
         env:
             HUSKY: '0'
         steps:
-            # Full history and tags: a release never goes behind the latest `vX.Y.Z` tag. No credentials persist,
-            # because dependency code runs below and the app's token is minted only for the push.
+            # Full history and tags: a release never goes behind the latest `vX.Y.Z` tag.
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   fetch-depth: 0
@@ -75,11 +75,10 @@ jobs:
               run: node scripts/release.mjs wait-for-checks "$GITHUB_SHA"
 
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-            # --ignore-scripts: no dependency's install script runs in a job that can reach the app's key.
             - run: pnpm install --frozen-lockfile --ignore-scripts
 
             # scripts/release.mjs prepare: the 0.x checks, the plan, and `changeset version` in the working tree.
-            # Until P14 it answers `release: false` on every push, and nothing below runs.
+            # Until P14 it answers `release: false` on every push, and the run ends here.
             - name: prepare the release
               id: prepare
               run: |
@@ -90,33 +89,63 @@ jobs:
                   echo "release=$release" >> "$GITHUB_OUTPUT"
                   if [ "$release" = "true" ]; then
                       version=$(jq -r '.version' <<<"$result")
-                      [[ "$version" =~ ^0\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a 0.x release version: '$version'"; exit 1; }
+                      [[ "$version" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::not a 0.x release version: '$version'"; exit 1; }
                       echo "version=$version" >> "$GITHUB_OUTPUT"
+                      git add -A
+                      git diff --cached --binary HEAD > "$RUNNER_TEMP/release.patch"
                   else
                       echo "Nothing to release: $(jq -r '.reason' <<<"$result")" >> "$GITHUB_STEP_SUMMARY"
                   fi
 
-            # The prepared tree is the release commit. Anything else changed means a step did more than it should,
-            # so the job stops before minting a token.
-            - name: commit and tag the release
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               if: steps.prepare.outputs.release == 'true'
+              with:
+                  name: release-patch
+                  path: ${{ runner.temp }}/release.patch
+                  if-no-files-found: error
+                  retention-days: 7
+
+    # The push's second half, and the only job that can reach the release app's key. It installs nothing and runs
+    # no dependency's code, so nothing `plan` ran can reach this job's environment, steps or token; and it
+    # believes nothing `plan` says until scripts/release.mjs verify-release has checked the staged result.
+    push:
+        name: push
+        needs: plan
+        if: needs.plan.outputs.release == 'true'
+        runs-on: ubuntu-latest
+        # Holds the release app's key. Its deployment rule allows `main` only, so a workflow on any other
+        # branch cannot mint the app's token.
+        environment: release
+        permissions:
+            # The release app's token does the writing.
+            contents: read
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+              with:
+                  name: release-patch
+                  path: ${{ runner.temp }}/release
+
+            # The checker is copied out of the commit first, so a patch that rewrote it would not be the code that
+            # judges it. Anything beyond deleted changesets, written changelogs and fixed-group versions fails here,
+            # before a token exists.
+            - name: apply, check, commit and tag the release
               env:
-                  VERSION: ${{ steps.prepare.outputs.version }}
+                  VERSION: ${{ needs.plan.outputs.version }}
               run: |
                   set -euo pipefail
+                  [[ "$VERSION" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::not a 0.x release version: '$VERSION'"; exit 1; }
+                  cp scripts/release.mjs "$RUNNER_TEMP/release.mjs"
+                  git apply --index "$RUNNER_TEMP/release/release.patch"
+                  node "$RUNNER_TEMP/release.mjs" verify-release "$VERSION"
                   git config user.name "github-actions[bot]"
                   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-                  git add -A -- .changeset 'packages/*/package.json' 'packages/*/CHANGELOG.md'
-                  if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
-                      git status --short
-                      echo "::error::the release changed files outside the changesets, manifests and changelogs"
-                      exit 1
-                  fi
-                  # Dependency code ran in this tree, so the manifests are bounded by content too: versions only.
-                  if git diff --cached -U0 -- 'packages/*/package.json' | grep -E '^[+-][^+-]' | grep -vqE '^[+-]\s*"version": '; then
-                      echo "::error::the release changes a manifest beyond its version"
-                      exit 1
-                  fi
                   git -c core.hooksPath=/dev/null commit --no-verify -m "chore: release v$VERSION"
                   git tag "v$VERSION"
 
@@ -125,20 +154,17 @@ jobs:
             # start the publish run.
             - name: mint the release app's token
               id: app-token
-              if: steps.prepare.outputs.release == 'true'
               uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
               with:
                   client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
                   private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-            # Dependency code ran in this workspace and could have written its git config or hooks, so the push
-            # goes from a fresh repository, ignoring global and system config, with hooks off and the token only in
-            # this step, in a header and masked. `--atomic` lands the commit and its tag together or not at all: if
-            # main moved, nothing is pushed and the next push to main releases the changesets still pending.
+            # The push goes from a fresh repository, ignoring global and system config, with hooks off and the token
+            # only in this step, in a header and masked. `--atomic` lands the commit and its tag together or not at
+            # all: if main moved, nothing is pushed and the next push to main releases the changesets still pending.
             - name: push the release
-              if: steps.prepare.outputs.release == 'true'
               env:
-                  VERSION: ${{ steps.prepare.outputs.version }}
+                  VERSION: ${{ needs.plan.outputs.version }}
                   TOKEN: ${{ steps.app-token.outputs.token }}
                   GIT_CONFIG_GLOBAL: /dev/null
                   GIT_CONFIG_NOSYSTEM: '1'

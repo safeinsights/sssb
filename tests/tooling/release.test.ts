@@ -1,10 +1,10 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../support/tmp-dir'
-import { check, prepare, preflight, publishable, waitForChecks } from '../../scripts/release.mjs'
+import { check, prepare, preflight, publishable, verifyRelease, waitForChecks } from '../../scripts/release.mjs'
 
 /**
  * scripts/release.mjs is what release.yml and CI's `release-plan` job run (ADR-0014 part 10). Each fixture is a
@@ -16,13 +16,21 @@ const CONFIG = fileURLToPath(new URL('../../.changeset/config.json', import.meta
 const SHA = 'a'.repeat(40)
 const OTHER_SHA = 'b'.repeat(40)
 
-type Pkg = { dir: string; name: string; version: string; private?: boolean; deps?: Record<string, string> }
+type Pkg = {
+    dir: string
+    name: string
+    version: string
+    private?: boolean
+    deps?: Record<string, string>
+    repository?: { url: string }
+}
 
 const KIT = (version: string, isPrivate = true): Pkg => ({
     dir: 'packages/kit',
     name: '@sssb/kit',
     version,
     private: isPrivate,
+    repository: { url: 'git+https://github.com/safeinsights/sssb.git' },
 })
 const APP: Pkg = { dir: 'apps/app', name: 'app', version: '0.1.0', private: true, deps: { '@sssb/kit': 'workspace:*' } }
 
@@ -41,6 +49,7 @@ function workspace(pkgs: Pkg[], changesets: Record<string, string[]> = {}, { git
             name: p.name,
             version: p.version,
             ...(p.private ? { private: true } : {}),
+            ...(p.repository ? { repository: p.repository } : {}),
             ...(p.deps ? { dependencies: p.deps } : {}),
         })
     }
@@ -114,6 +123,20 @@ describe('release check (every PR)', () => {
         expect(problems).toEqual([expect.stringMatching(/takes @sssb\/kit from 1\.0\.0 to 1\.0\.1/)])
     })
 
+    it('refuses a changeset naming a package outside the fixed group, which would stop every release', async () => {
+        const only = workspace([KIT('0.1.0'), APP], { app: ['"app": patch'] })
+        expect((await check(only)).problems).toEqual([
+            expect.stringMatching(/app\.md names app, which is not released/),
+        ])
+        const mixed = workspace([KIT('0.1.0'), APP], { both: ['"@sssb/kit": minor', '"app": patch'] })
+        expect((await check(mixed)).problems).toEqual([expect.stringMatching(/both\.md names app/)])
+    })
+
+    it("requires a repository.url on every fixed-group package, which npm's provenance checks", async () => {
+        const root = workspace([{ ...KIT('0.1.0'), repository: undefined }])
+        expect((await check(root)).problems).toEqual([expect.stringMatching(/packages\/kit\/package\.json needs/)])
+    })
+
     it('fails the CLI with the reason, so the CI job goes red', () => {
         const root = workspace([KIT('0.1.0')], { breaking: ['"@sssb/kit": major'] })
         const result = spawnSync(process.execPath, [SCRIPT, 'check'], { cwd: root, encoding: 'utf8' })
@@ -139,6 +162,9 @@ describe('release prepare (release-commit)', () => {
         expect(JSON.parse(readFileSync(path.join(root, 'packages/kit/package.json'), 'utf8')).version).toBe('0.2.0')
         expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(false)
         expect(readFileSync(path.join(root, 'packages/kit/CHANGELOG.md'), 'utf8')).toMatch(/## 0\.2\.0/)
+        // Changesets' formatter runs `pnpm exec`, which would re-install with scripts after the bump; it must not.
+        expect(existsSync(path.join(root, 'node_modules'))).toBe(false)
+        expect(existsSync(path.join(root, 'pnpm-lock.yaml'))).toBe(false)
     })
 
     it('refuses to go behind what npm already holds', async () => {
@@ -169,6 +195,62 @@ describe('release publishable (the tag)', () => {
         const stray = { dir: 'packages/guard', name: 'create-sssb', version: '0.2.0' }
         await expect(publishable(workspace([KIT('0.2.0', false), stray]), '0.2.0')).rejects.toThrow(/create-sssb/)
     })
+
+    it('refuses a "private" that is not a boolean rather than guess', async () => {
+        const root = workspace([KIT('0.2.0', false)])
+        const file = path.join(root, 'packages/kit/package.json')
+        writeJson(file, { ...JSON.parse(readFileSync(file, 'utf8')), private: 'true' })
+        await expect(publishable(root, '0.2.0')).rejects.toThrow(/"private" must be true or false/)
+    })
+})
+
+describe('release verify-release (the job holding the release key)', () => {
+    /** A public kit with one minor changeset, prepared as `plan` prepares it and staged as `push` applies it. */
+    async function prepared() {
+        const root = workspace([KIT('0.1.0', false)], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        await prepare(root, { fetchImpl: npm })
+        const run = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' })
+        run('add', '-A')
+        return { root, run }
+    }
+
+    it('accepts what prepare wrote: a deleted changeset, a changelog and a version', async () => {
+        const { root } = await prepared()
+        expect(() => verifyRelease(root, '0.2.0')).not.toThrow()
+        expect(() => verifyRelease(root, '0.3.0')).toThrow(/set to 0\.2\.0, not 0\.3\.0/)
+    })
+
+    it('refuses anything else the patch could carry', async () => {
+        const cases: [(root: string, run: (...a: string[]) => void) => void, RegExp][] = [
+            [
+                (root) => {
+                    const file = path.join(root, 'packages/kit/package.json')
+                    writeJson(file, { ...JSON.parse(readFileSync(file, 'utf8')), scripts: { postinstall: 'x' } })
+                },
+                /packages\/kit\/package\.json changes more than its version/,
+            ],
+            [
+                (root) => writeFileSync(path.join(root, '.changeset', 'config.json'), '{}'),
+                /may not change \.changeset\/config\.json/,
+            ],
+            [(root) => writeFileSync(path.join(root, 'scripts.mjs'), 'x'), /may not change scripts\.mjs/],
+            [
+                (root) => {
+                    rmSync(path.join(root, 'packages/kit/CHANGELOG.md'))
+                    symlinkSync('/etc/passwd', path.join(root, 'packages/kit/CHANGELOG.md'))
+                },
+                /may not change packages\/kit\/CHANGELOG\.md \(A 000000 → 120000\)/,
+            ],
+            [(_root, run) => run('tag', 'v0.2.0'), /0\.2\.0 is not newer than v0\.2\.0/],
+        ]
+        for (const [tamper, reason] of cases) {
+            const { root, run } = await prepared()
+            tamper(root, run)
+            run('add', '-A')
+            expect(() => verifyRelease(root, '0.2.0')).toThrow(reason)
+        }
+    })
 })
 
 describe('release preflight (the job holding the id-token)', () => {
@@ -197,6 +279,17 @@ describe('release preflight (the job holding the id-token)', () => {
         const npm = registry({ '/@sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.3.0' } } } })
         await expect(preflight(root, '0.2.0', SHA, [tarball(root, 'kit.tgz', kit)], npm)).rejects.toThrow(
             /latest is 0\.3\.0, newer than 0\.2\.0/,
+        )
+    })
+
+    it('refuses a tarball laid out other than as one package/, which npm could read differently', async () => {
+        const root = workspace([])
+        const staging = path.join(root, 'odd')
+        writeJson(path.join(staging, 'package', 'package.json'), kit)
+        writeJson(path.join(staging, 'other', 'package.json'), { name: '@sssb/kit', version: '9.9.9' })
+        execFileSync('tar', ['-czf', path.join(root, 'odd.tgz'), '-C', staging, 'other', 'package'])
+        await expect(preflight(root, '0.2.0', SHA, [path.join(root, 'odd.tgz')], registry())).rejects.toThrow(
+            /not laid out as one package\//,
         )
     })
 

@@ -7,9 +7,12 @@
 //                                 that reaches 1.0.0, because npm versions cannot be withdrawn. It judges the
 //                                 plan as it will be once `private` comes off (P14): today Changesets plans
 //                                 nothing for a private package, and a check of that plan could never fail.
-//   prepare [--allow-dirty]       release-commit. Plans, guards, then runs `changeset version` in the working
+//   prepare [--allow-dirty]       The `plan` job. Plans, guards, then runs `changeset version` in the working
 //                                 tree and commits nothing. stdout is one JSON object, `{"release":false,
 //                                 "reason":…}` or `{"release":true,"version":…,"packages":[…]}`.
+//   verify-release <version>      The `push` job, which holds the release app's key: the staged release changes
+//                                 only changesets, changelogs and fixed-group versions. Needs no installed
+//                                 dependencies.
 //   publishable <version>         The tag's pack job. The packages to publish, as JSON, and `[]` while every
 //                                 package is private. Fails if a non-private package is outside the fixed group
 //                                 or at another version.
@@ -36,16 +39,25 @@ const { fetch } = globalThis
 
 const PLAIN_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const SHA = /^[0-9a-f]{40}$/
+const REPOSITORY_URL = /^git\+https:\/\/github\.com\/[\w.-]+\/[\w.-]+\.git$/
 const REGISTRY = 'https://registry.npmjs.org'
 const USAGE = [
     'usage: release.mjs check',
     '       release.mjs prepare [--allow-dirty]',
     '       release.mjs publishable <version>',
     '       release.mjs preflight <version> <sha> <tarball>...',
+    '       release.mjs verify-release <version>',
     '       release.mjs wait-for-checks <sha>',
 ].join('\n')
 
 const major = (version) => Number(version.split('.')[0])
+
+/** A manifest's `private`, which must be absent or a boolean: `"private": "true"` is neither, and fails. */
+function isPrivate(manifest, where) {
+    if (manifest.private === undefined) return false
+    if (typeof manifest.private !== 'boolean') throw new Error(`${where}: "private" must be true or false`)
+    return manifest.private
+}
 
 /** > 0 when plain version a is newer than b. */
 function compareVersions(a, b) {
@@ -99,8 +111,24 @@ export async function check(root) {
     const ws = await loadWorkspace(root)
     const versions = new Map(ws.packages.map((p) => [p.packageJson.name, p.packageJson.version]))
     const problems = []
+    for (const p of ws.packages.filter((p) => ws.fixed.has(p.packageJson.name))) {
+        // npm's provenance check refuses a publish whose `repository.url` does not name the repository that
+        // built it, and by then the release's tag exists; so it is required from the first PR.
+        if (!REPOSITORY_URL.test(p.packageJson.repository?.url ?? '')) {
+            problems.push(
+                `${p.relativeDir}/package.json needs "repository": { "url": "git+https://github.com/<owner>/<repo>.git" }`,
+            )
+        }
+    }
     for (const changeset of ws.changesets) {
         for (const release of changeset.releases) {
+            // A changeset that names a package outside the group is never consumed while that package is
+            // private, and a mixed one makes Changesets refuse the whole plan: either would stop every release.
+            if (!ws.fixed.has(release.name)) {
+                problems.push(
+                    `.changeset/${changeset.id}.md names ${release.name}, which is not released; name only ${[...ws.fixed].join(', ')}`,
+                )
+            }
             const current = versions.get(release.name)
             if (release.type === 'major' && current !== undefined && major(current) === 0) {
                 problems.push(
@@ -151,8 +179,8 @@ function latestStableTag(root) {
 }
 
 /**
- * release-commit's preparation. Commits nothing: the workflow commits and tags what this leaves, and refuses
- * a tree that changed anything else.
+ * The `plan` job's preparation. Commits nothing: the `push` job applies what this leaves, after
+ * `verifyRelease` has checked it.
  */
 export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = {}) {
     if (!allowDirty) {
@@ -184,6 +212,17 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
             `the plan must release one 0.x version, got ${releases.map((r) => `${r.name}@${r.newVersion}`).join(', ')}`,
         )
     }
+    const repo = process.env.GITHUB_REPOSITORY
+    if (repo) {
+        const expected = `git+https://github.com/${repo}.git`
+        const wrongRepo = ws.packages
+            .filter((p) => releases.some((r) => r.name === p.packageJson.name))
+            .filter((p) => p.packageJson.repository?.url !== expected)
+            .map((p) => p.packageJson.name)
+        if (wrongRepo.length > 0) {
+            throw new Error(`npm's provenance needs repository.url ${expected} in ${wrongRepo.join(', ')}`)
+        }
+    }
     const floors = [['the latest stable tag', latestStableTag(root)]]
     for (const r of releases) floors.push([`npm's latest ${r.name}`, await npmLatest(r.name, fetchImpl)])
     for (const [what, floor] of floors) {
@@ -196,8 +235,18 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
 
     // This repository's own CLI, resolved here rather than at load (the publish job has no node_modules), so a
     // fixture workspace without node_modules can be versioned too.
+    // `format` makes Changesets run `pnpm exec prettier`, and pnpm 11 first re-installs, scripts and all, when a
+    // workspace version has changed (`verify-deps-before-run`), which the bump has just done. Turned off here.
     const changeset = fileURLToPath(import.meta.resolve('@changesets/cli/bin.js'))
-    execFileSync(process.execPath, [changeset, 'version'], { cwd: root, stdio: ['ignore', 2, 2] })
+    execFileSync(process.execPath, [changeset, 'version'], {
+        cwd: root,
+        stdio: ['ignore', 2, 2],
+        env: {
+            ...process.env,
+            pnpm_config_verify_deps_before_run: 'false',
+            npm_config_verify_deps_before_run: 'false',
+        },
+    })
 
     const after = await loadWorkspace(root)
     const wrong = after.packages
@@ -215,7 +264,7 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
 export async function publishable(root, version) {
     if (!PLAIN_VERSION.test(version)) throw new Error(`not a release version: '${version}'`)
     const ws = await loadWorkspace(root)
-    const open = ws.packages.filter((p) => p.packageJson.private !== true)
+    const open = ws.packages.filter((p) => !isPrivate(p.packageJson, `${p.relativeDir}/package.json`))
     const wrong = open
         .filter((p) => !ws.fixed.has(p.packageJson.name) || p.packageJson.version !== version)
         .map((p) => `${p.packageJson.name}@${p.packageJson.version} (${p.relativeDir})`)
@@ -257,8 +306,12 @@ export async function attestedCommit(name, version, fetchImpl = fetch) {
  * The fixed group's patterns, read from the config's JSON with no dependency (the publish job installs none)
  * and matched as Changesets matches them for a scope glob: `*` is any run of characters but `/`.
  */
-function fixedGroupMatcher(root) {
-    const config = JSON.parse(readFileSync(path.join(root, '.changeset', 'config.json'), 'utf8'))
+function fixedGroupMatcher(root, rev) {
+    const config = JSON.parse(
+        rev
+            ? git(root, ['show', `${rev}:.changeset/config.json`])
+            : readFileSync(path.join(root, '.changeset', 'config.json'), 'utf8'),
+    )
     if (!Array.isArray(config.fixed) || config.fixed.length !== 1) {
         throw new Error('.changeset/config.json must have exactly one fixed group')
     }
@@ -281,13 +334,17 @@ export async function preflight(root, version, sha, files, fetchImpl = fetch) {
     const todo = []
     const problems = []
     const seen = new Set()
+    const tar = (args) => execFileSync('tar', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 2] })
     for (const file of files) {
-        const manifest = JSON.parse(
-            execFileSync('tar', ['-xzOf', file, 'package/package.json'], {
-                encoding: 'utf8',
-                stdio: ['ignore', 'pipe', 2],
-            }),
-        )
+        // npm reads the manifest from whatever the first directory is called, so a tarball laid out any other way
+        // than `pnpm pack`'s could show this check one manifest and npm another.
+        const entries = tar(['-tzf', file]).split('\n').filter(Boolean)
+        const strays = entries.filter((e) => !e.startsWith('package/') || e.split('/').includes('..'))
+        if (strays.length > 0 || entries.filter((e) => e === 'package/package.json').length !== 1) {
+            problems.push(`${file} is not laid out as one package/ with one package/package.json`)
+            continue
+        }
+        const manifest = JSON.parse(tar(['-xzOf', file, 'package/package.json']))
         const { name } = manifest
         if (typeof name !== 'string' || !inFixedGroup(name)) {
             problems.push(`${file} holds ${name}, which is not in the fixed group`)
@@ -296,7 +353,7 @@ export async function preflight(root, version, sha, files, fetchImpl = fetch) {
         if (seen.has(name)) problems.push(`${name} is packed twice`)
         seen.add(name)
         if (manifest.version !== version) problems.push(`${file} holds ${name}@${manifest.version}, not ${version}`)
-        if (manifest.private === true) problems.push(`${file} holds ${name}, which is private`)
+        if (isPrivate(manifest, file)) problems.push(`${file} holds ${name}, which is private`)
         const attested = await attestedCommit(name, version, fetchImpl)
         if (attested === sha) continue
         if (attested !== null) {
@@ -312,6 +369,53 @@ export async function preflight(root, version, sha, files, fetchImpl = fetch) {
     }
     if (problems.length > 0) throw new Error(problems.join('\n'))
     return todo
+}
+
+const CHANGESET_FILE = /^\.changeset\/[^/]+\.md$/
+const MANIFEST = /^packages\/[^/]+\/package\.json$/
+const CHANGELOG = /^packages\/[^/]+\/CHANGELOG\.md$/
+
+/**
+ * The `push` job's check of the staged release, before it mints the release app's token. The release was
+ * prepared in another job, by dependency code, so nothing it says is taken on trust: the index may differ from
+ * HEAD only by deleted changesets, written changelogs (plain files), and fixed-group manifests whose one change
+ * is `version` → `version`; the version must be newer than every `vX.Y.Z` tag. Needs no installed dependency.
+ */
+export function verifyRelease(root, version) {
+    if (!PLAIN_VERSION.test(version) || major(version) !== 0) throw new Error(`not a 0.x release version: '${version}'`)
+    const problems = []
+    if (git(root, ['diff', '--name-only']).trim() || git(root, ['ls-files', '--others', '--exclude-standard']).trim()) {
+        problems.push('the tree holds changes that are not staged')
+    }
+    const inFixedGroup = fixedGroupMatcher(root, 'HEAD')
+    const show = (spec) => JSON.parse(git(root, ['show', spec]))
+    let bumped = 0
+    // `--raw`: old mode, new mode, status and path, so a symlink or an executable cannot pass as a plain file.
+    const raw = git(root, ['diff', '--cached', '--raw', '--no-renames', '-z', 'HEAD']).split('\0').filter(Boolean)
+    for (let i = 0; i < raw.length; i += 2) {
+        const [oldMode, newMode, , , status] = raw[i].slice(1).split(' ')
+        const file = raw[i + 1]
+        const plain = (mode) => mode === '100644'
+        if (status === 'D' && CHANGESET_FILE.test(file) && !/^readme\.md$/i.test(path.basename(file))) continue
+        if (CHANGELOG.test(file) && plain(newMode) && (status === 'A' || (status === 'M' && plain(oldMode)))) continue
+        if (status === 'M' && MANIFEST.test(file) && plain(oldMode) && plain(newMode)) {
+            const before = show(`HEAD:${file}`)
+            const after = show(`:${file}`)
+            const same =
+                JSON.stringify({ ...before, version: null }) === JSON.stringify({ ...after, version: null }) &&
+                Object.keys(before).join() === Object.keys(after).join()
+            if (!same) problems.push(`${file} changes more than its version`)
+            else if (after.version !== version) problems.push(`${file} is set to ${after.version}, not ${version}`)
+            else if (!inFixedGroup(after.name) || isPrivate(after, file)) problems.push(`${file} is not released`)
+            else bumped++
+            continue
+        }
+        problems.push(`the release may not change ${file} (${status} ${oldMode} → ${newMode})`)
+    }
+    if (bumped === 0) problems.push(`no manifest is set to ${version}`)
+    const tag = latestStableTag(root)
+    if (tag !== null && compareVersions(version, tag) <= 0) problems.push(`${version} is not newer than v${tag}`)
+    if (problems.length > 0) throw new Error(problems.join('\n'))
 }
 
 /**
@@ -384,6 +488,11 @@ async function main(argv) {
     if (command === 'preflight' && rest.length >= 3) {
         const [version, sha, ...files] = rest
         console.log(JSON.stringify(await preflight(root, version, sha, files)))
+        return
+    }
+    if (command === 'verify-release' && rest.length === 1) {
+        verifyRelease(root, rest[0])
+        console.error(`the staged release of ${rest[0]} changes only versions, changelogs and changesets`)
         return
     }
     if (command === 'wait-for-checks' && rest.length === 1) {
