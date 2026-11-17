@@ -36,7 +36,8 @@
         "e2e:demo-static": "pnpm --filter './apps/*' e2e:demo-static",
         "test:contract": "node scripts/check-tmpdir-leak.mjs vitest run --config vitest.contract.config.ts",
         "changeset": "changeset",
-        "release:check": "node scripts/release.mjs check"
+        "release:check": "node scripts/release.mjs check",
+        "pack-and-consume": "node scripts/pack-and-consume.mjs"
     },
     "dependencies": {
         "@mantine/core": "^9.7.3",
