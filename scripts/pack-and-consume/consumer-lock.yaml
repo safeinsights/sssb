@@ -1600,7 +1600,7 @@ packages:
     engines: {node: '>=18.0.0'}
 
   '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz':
-    resolution: {integrity: sha512-LHjycC/1J+EL0h77vWFzJCU5ItzuH25w8EAIAOcxrppfWb0M5jB9/jpif+mcKuSI6MN8Ioy9N4hchdUr36SNCg==, tarball: file:../tarballs/sssb-kit-0.1.0.tgz}
+    resolution: {integrity: sha512-Zb86sTh3QmZLQaRPGxmAa7YDOj36PfOskw7Mi1PVtVhIR6zhXpcOWPem3rCQFDW9kpuhACseZzmMSXmGk3MJpA==, tarball: file:../tarballs/sssb-kit-0.1.0.tgz}
     version: 0.1.0
     peerDependencies:
       '@mantine/core': ^9.7.3
