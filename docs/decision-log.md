@@ -2204,6 +2204,17 @@ What the number is for: the showcase's budget is the framework's pace-setter: ab
 growth is a decision someone makes on purpose. Every framework screen and twin is in the showcase, so a
 framework change that costs bytes costs them here first.
 
+**Raised 2026-11-17, 840000 → 874000, for React 19.3** (`deps/react-19-3`)
+
+JP's call: take React 19.3 and raise the budget to fit it, which lifts the 2026-11-16 hold ("Catching up
+October's minor-and-patch group"). The growth is React's own code, not something to trim: the demo grew 29332
+bytes, 818202 on main (React 19.2.8) to 847534 (19.3.1), with one copy of React in the bundle (every version
+marker in the file reads 19.3.1, as many as main's read 19.2.8). The starter grew by the same 29331, so none
+of it is the showcase's. The new number keeps the rule above, about 3% over what it measures: 874000 leaves
+26466 bytes (3.0%). Both sit below the unpruned demo (997945 bytes with `pruneMantineCss()` taken out of
+`vite.demo.config.ts`, which exits 1), so a pruning that stops still turns it red. The full entry is
+"React 19.3, with the demo budgets raised" (2026-11-17), below.
+
 **Re-based 2026-11-16, 950000 → 840000**
 
 Since the first commit (925623 bytes) the demo had grown 18787 bytes, to 99.4% of its budget. Per merge: demo
