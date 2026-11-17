@@ -1,8 +1,8 @@
-import { auth, db, jobs, storage } from 'keel/adapters/index'
-import { authorize } from 'keel/authz/authorize'
-import { isJobKind } from 'keel/core/jobs'
-import { recordAuditEvent } from 'keel/db/audit'
-import { listJobs, submitJob } from 'keel/db/jobs'
+import { auth, db, jobs, storage } from '@sssb/kit/adapters/index'
+import { authorize } from '@sssb/kit/authz/authorize'
+import { isJobKind } from '@sssb/kit/core/jobs'
+import { recordAuditEvent } from '@sssb/kit/db/audit'
+import { listJobs, submitJob } from '@sssb/kit/db/jobs'
 import { resolveOrgContext } from '../org-context'
 import { withPortErrors } from '../respond'
 

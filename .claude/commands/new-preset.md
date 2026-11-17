@@ -5,14 +5,14 @@ description: Add a demo preset (a named starting world every host can load) regi
 Add a demo preset for: $ARGUMENTS
 
 A demo preset is a named starting world: the seed plus a script of operations. Every host replays it its
-own way — the server through the same code the product runs (`packages/keel/src/server-lib/demo-presets.ts`),
-the single-file `file://` demo through its in-memory twin (`packages/keel/src/demo-static/world.ts`) — so it
+own way — the server through the same code the product runs (`packages/kit/src/server-lib/demo-presets.ts`),
+the single-file `file://` demo through its in-memory twin (`packages/kit/src/demo-static/world.ts`) — so it
 loads from **Simulator → Snapshots → Start from a preset** on `pnpm dev` and in `dist-demo/index.html`, and a
 tour can start from it. The contract and every operation kind's rules are in
-`packages/keel/src/core/presets.ts`; the worked examples are `apps/showcase/src/app-config/presets/`.
+`packages/kit/src/core/presets.ts`; the worked examples are `apps/showcase/src/app-config/presets/`.
 
 1. **Register.** One file per preset, `apps/showcase/src/app-config/presets/<id>.ts`, exporting a `DemoPreset`
-   (`keel/core/presets`); import it into `presets` in `apps/showcase/src/app-config/presets.ts`. The array's
+   (`@sssb/kit/core/presets`); import it into `presets` in `apps/showcase/src/app-config/presets.ts`. The array's
    order is the order the Snapshots tab lists them, and a base may sit anywhere in it. The registration is PURE
    TypeScript — the static demo bundles it — so it imports nothing server-only. A script fragment you want to
    reuse by hand rather than through `extends` is a plain `PresetOperation[]` constant (the showcase's
@@ -38,7 +38,7 @@ tour can start from it. The contract and every operation kind's rules are in
    someone or in a team names them explicitly — never "whoever is signed in", because nobody is yet (`flag`
    and `actor.hold` are world-wide and name no one) — and the gate holds it to
    what the product itself would allow, so a preset can only describe a world someone could have clicked
-   together. keel's kinds:
+   together. SSSB's kinds:
     - `{ op: 'invite', by: 'person-admin', org: 'frontline', email: 'jordan.ellis@example.test', role: 'member' }`
       — `by` (a seed person who manages `org`) invites `email` as `role`: the invite, its email unread in the
       invitee's inbox, the audit row and the admins' notification. The role must be one an invite may grant
@@ -48,7 +48,7 @@ tour can start from it. The contract and every operation kind's rules are in
       — an email to `<org>+<handler>@…` through the real intake and the app's registered handler. `from` must
       be a seed person; whether that person may author into the team stays the handler's call, so an email the
       handler refuses (a restricted member's, filed `unmatched`) is a legitimate thing to show.
-    - `{ op: 'flag', flag: 'sla-breach-banner', enabled: true }` — a Snapshots feature flag: keel's
+    - `{ op: 'flag', flag: 'sla-breach-banner', enabled: true }` — a Snapshots feature flag: SSSB's
       (`demo-banner`, `jobs-held`) or one the app registers in `apps/showcase/src/app-config/simulator.ts`.
     - `{ op: 'actor.hold', actor: 'partner-desk', held: true }` — see step 7.
     - An app's own kind (the showcase's `ticket.assign`) is used the same way. A kind that does not exist yet
@@ -66,15 +66,15 @@ tour can start from it. The contract and every operation kind's rules are in
    the viewpoint where the host's reset leaves it; the server then answers the welcome page rather than the
    dashboard.
 7. **Hold an actor.** `actor.hold` holds (or, with `held: false`, releases) ONE registered Simulator actor
-   (`@app-config/actors`): it keeps its schedule and does nothing on its own, a manual Step still works, and
+   (`@sssb/app-config/actors`): it keeps its schedule and does nothing on its own, a manual Step still works, and
    the others keep running — which is how `multi-tenant` makes the outsourced desk go quiet while the bundle
    analyzer works. The world-wide hold is a different switch: the app's `actors-held` flag
    (`{ op: 'flag', flag: 'actors-held', enabled: true }`) holds EVERY actor, and an actor is held if either
    applies. Every load resets the world first, so a hold is exactly the expanded script's last word per actor
    and never survives into the next preset; a child can release what its base held.
 8. **What the build enforces, and how to read it.** Three layers, none of which you edit for a new preset:
-    - `presetProblems` (`packages/keel/src/core/presets.ts`), run by
-      `packages/keel/src/server-lib/demo-presets-seam.test.ts` under EVERY app's vitest project against a world
+    - `presetProblems` (`packages/kit/src/core/presets.ts`), run by
+      `packages/kit/src/server-lib/demo-presets-seam.test.ts` under EVERY app's vitest project against a world
       derived from the seed and the registries, never hand-listed. A problem reads
       `preset "<id>" operation <n> (<kind>): <sentence>`: the number is in the expanded script, base first, so
       a base's own problem repeats under every preset that extends it. It fails an unknown kind, a bad argument
@@ -97,7 +97,7 @@ tour can start from it. The contract and every operation kind's rules are in
    where a saved snapshot's name does not (`apps/showcase/src/app-config/tours.test.ts` rejects one). The
    tour's first step should say what the preset already set up. The rest is `/new-tour`.
 10. **Verify.**
-    - Fast loop: `pnpm exec vitest run packages/keel/src/server-lib/demo-presets-seam.test.ts` (it runs under
+    - Fast loop: `pnpm exec vitest run packages/kit/src/server-lib/demo-presets-seam.test.ts` (it runs under
       every app's project); `pnpm test:unit` adds `tours.test.ts` and the i18n parity pair.
     - Assert what the preset VISIBLY did, on both hosts: the server in the `presets:` test of
       `apps/showcase/tests/e2e/destructive/simulator-snapshots.spec.ts` (destructive: it resets the world),

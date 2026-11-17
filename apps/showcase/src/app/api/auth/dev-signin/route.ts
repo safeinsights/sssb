@@ -1,5 +1,5 @@
-import { devSignIn } from 'keel/adapters/fake/auth'
-import { isSimulated } from 'keel/adapters/index'
+import { devSignIn } from '@sssb/kit/adapters/fake/auth'
+import { isSimulated } from '@sssb/kit/adapters/index'
 import { withPortErrors } from '../../respond'
 
 export async function POST(request: Request): Promise<Response> {

@@ -1,14 +1,14 @@
 'use client'
 
 import { useTranslations } from 'next-intl'
-import { AppHeader } from 'keel/components/app-header'
-import { OrgSwitcher, type SwitcherOrg } from 'keel/components/auth/org-switcher'
-import { UserMenu, type MenuUser } from 'keel/components/auth/user-menu'
+import { AppHeader } from '@sssb/kit/components/app-header'
+import { OrgSwitcher, type SwitcherOrg } from '@sssb/kit/components/auth/org-switcher'
+import { UserMenu, type MenuUser } from '@sssb/kit/components/auth/user-menu'
 
 /**
  * The framework header, wired to this app. Deliberately barer than the showcase's: no notification
  * bell (nothing here produces notifications) and no nav (there is one screen). `appName` is passed
- * because the prop is required: one shared framework catalog cannot name two products, so keel's
+ * because the prop is required: one shared framework catalog cannot name two products, so SSSB's
  * catalog carries no product name and every app supplies its own (see AppHeader).
  */
 export function HeaderGlue({

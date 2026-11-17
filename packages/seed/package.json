@@ -9,6 +9,6 @@
         ".": "./src/index.ts"
     },
     "dependencies": {
-        "keel": "workspace:*"
+        "@sssb/kit": "workspace:*"
     }
 }

@@ -1,5 +1,5 @@
 /**
- * The APP's outbound-webhook event kinds (the seam side of keel/core/webhook-events.ts, ADR-0012). The
+ * The APP's outbound-webhook event kinds (the seam side of @sssb/kit/core/webhook-events.ts, ADR-0012). The
  * framework owns the backoff policy, the signed envelope, and its own kind (job.status_changed).
  *
  * EMPTY REGISTRATION: no app events. Endpoints can still be registered and still receive the

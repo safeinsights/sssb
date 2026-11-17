@@ -5,12 +5,12 @@ description: Add a simulated counterparty (Simulator actor) registered through t
 Add a Simulator actor for: $ARGUMENTS
 
 Actors are simulated external counterparties for dev/demo — the actor _runtime_ (shell, iframe
-hosting, `packages/keel/src/components/simulator/actor-runtime.ts`) is framework; each actor is app content:
+hosting, `packages/kit/src/components/simulator/actor-runtime.ts`) is framework; each actor is app content:
 
 1. **Register** in `apps/showcase/src/app-config/actors.ts`: add `{ id, titleKey, descriptionKey }` to `actors`.
    The keys resolve in the APP catalog's `actors` namespace (`apps/showcase/messages/{en,es}.json`) —
    the host glue translates them and hands the panel finished strings, so a counterparty you invent
-   never needs a key in keel's catalog. `ActorId` and `isActorId` derive automatically.
+   never needs a key in SSSB's catalog. `ActorId` and `isActorId` derive automatically.
 2. **Driver**: add the actor's behavior in
    `apps/showcase/src/app/[locale]/simulator/actors/[actor]/drivers.ts` (what it polls, what buttons it exposes,
    which service/API calls it makes) — `bundle-analyzer` (service-token job runner) and
@@ -28,10 +28,10 @@ hosting, `packages/keel/src/components/simulator/actor-runtime.ts`) is framework
    `ctx.actor`): a mutating service route calls `authorize(actor, …)`, and the only framework grant is
    Job read/update in its own org. Anything else it needs is a line in `appMachineAbilityRules`.
 4. **Static twin**: the in-memory driver shapes are framework code
-   (`packages/keel/src/demo-static/actor-drivers.ts`) — an actor over the jobs subsystem needs no new
+   (`packages/kit/src/demo-static/actor-drivers.ts`) — an actor over the jobs subsystem needs no new
    twin, just a scoped factory call and a tick wired into `actorSlots` in `apps/showcase/src/demo-static/app.tsx`,
    so the `file://` demo can step the same story (static-demo parity is doctrine). A driver over a
-   surface keel doesn't own is a new twin beside it.
+   surface SSSB doesn't own is a new twin beside it.
 5. **Holds**: nothing to wire — both hosts already ask the world whether THIS actor is held before every
    autonomous tick (the `actors-held` flag for all of them, a demo preset's `{ op: 'actor.hold', actor: '<id>',
 held: true }` for one). The preset gate checks `actor` against the `actors` list you registered in step 1.

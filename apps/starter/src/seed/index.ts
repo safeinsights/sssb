@@ -1,13 +1,13 @@
-import type { SeedAgreement, SeedJobSchedule, SeedOrg, SeedPerson, SeedTenant } from 'keel/seed/contracts'
+import type { SeedAgreement, SeedJobSchedule, SeedOrg, SeedPerson, SeedTenant } from '@sssb/kit/seed/contracts'
 
 /**
  * The starter's seed world — two tenants, two teams, three people.
  *
  * WHY IT LIVES INSIDE THE APP (and not in a `packages/*-seed` workspace like the showcase's
  * `@app/seed`): the seed IS app content. The framework never imports it directly — it reads
- * `@app-config/seed`, which re-exports this file — so its location is entirely the app's choice, and
+ * `@sssb/app-config/seed`, which re-exports this file — so its location is entirely the app's choice, and
  * an app-local module is one fewer workspace for an adopter to find, rename and repoint. It also
- * proves `keel/seed/contracts` is a real published surface rather than a private arrangement with one
+ * proves `@sssb/kit/seed/contracts` is a real published surface rather than a private arrangement with one
  * package: this world fills the same contracts with no `@app/seed` anywhere in sight.
  *
  * Deliberately smaller than the showcase's: two tenants (the minimum that makes tenant isolation
@@ -31,7 +31,7 @@ export type {
     SeedPerson,
     SeedScheduleSpec,
     SeedTenant,
-} from 'keel/seed/contracts'
+} from '@sssb/kit/seed/contracts'
 
 export const tenants: SeedTenant[] = [
     { slug: 'northwind', name: 'Northwind', themePrimaryColor: 'teal', themeRadius: 'sm' },

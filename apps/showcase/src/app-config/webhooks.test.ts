@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isWebhookEventKind } from 'keel/core/webhook-events'
+import { isWebhookEventKind } from '@sssb/kit/core/webhook-events'
 import { appWebhookEventKinds } from './webhooks'
 
 // The APP's webhook event kinds, and proof they compose into the framework's isWebhookEventKind.

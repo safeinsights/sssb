@@ -1,7 +1,7 @@
 import { setRequestLocale } from 'next-intl/server'
 import { redirect } from 'next/navigation'
-import { analytics, auth } from 'keel/adapters/index'
-import { canInActiveOrg } from 'keel/authz/authorize'
+import { analytics, auth } from '@sssb/kit/adapters/index'
+import { canInActiveOrg } from '@sssb/kit/authz/authorize'
 import { DashboardGlue } from './dashboard-glue'
 
 export default async function DashboardPage({ params }: { params: Promise<{ locale: string }> }) {

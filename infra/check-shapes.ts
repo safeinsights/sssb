@@ -4,9 +4,9 @@ import path from 'node:path'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 // The runtime's own list of what each transport requires — the contract this stack must satisfy. Read
-// from the module that enforces it at boot, by path (infra resolves nothing through the `keel` alias),
+// from the module that enforces it at boot, by path (infra resolves nothing through the `@sssb/kit` alias),
 // so renaming a variable on either side fails here instead of at the first deploy.
-import { DATABASE_ENV } from '../packages/keel/src/adapters/real/database-transport'
+import { DATABASE_ENV } from '../packages/kit/src/adapters/real/database-transport'
 import { APP_TSCONFIG, AppStack } from './stack'
 
 /**
@@ -29,7 +29,7 @@ const check = (ok: boolean, message: string) => {
  * this check's own, never `CDK_OUTDIR`, so removing it afterwards cannot touch a real `cdk.out`.
  */
 function synthesize(transport: Transport): { all: Record<string, Resource>; assembly: string } {
-    const outdir = mkdtempSync(path.join(tmpdir(), 'keel-shape-check-'))
+    const outdir = mkdtempSync(path.join(tmpdir(), 'sssb-shape-check-'))
     const app = new cdk.App({ outdir, context: { environment: 'Staging' } })
     const stack = new AppStack(app, `ShapeCheck-${transport}`, { databaseTransport: transport })
     const all = Template.fromStack(stack).toJSON().Resources as Record<string, Resource>
@@ -73,10 +73,7 @@ const APP_MIGRATIONS = [
  * registry and the app's. Requiring them makes the checks fail CLOSED: a minified bundle carries no such
  * comments, and so fails here instead of passing every check that reads them.
  */
-const MIGRATOR_SOURCES = [
-    'packages/keel/src/db/migrations/index.ts',
-    `${APP_DIR}/src/app-config/db/migrations/index.ts`,
-]
+const MIGRATOR_SOURCES = ['packages/kit/src/db/migrations/index.ts', `${APP_DIR}/src/app-config/db/migrations/index.ts`]
 
 function lambda(all: Record<string, Resource>, name: 'Server' | 'Migrator') {
     const found = Object.entries(all).find(
@@ -223,10 +220,10 @@ for (const transport of ['pg', 'data-api'] as const) {
     )
 
     // What each bundled Lambda really contains. The tsconfig it is built with decides where
-    // `@app-config/*` resolves: to the app's seam, never to keel's test fixture.
+    // `@sssb/app-config/*` resolves: to the app's seam, never to SSSB's test fixture.
     const built = bundles(all, assembly)
     for (const [id, code] of built) {
-        check(!code.includes('test-fixture'), label(`${id}'s bundle holds no code from packages/keel/test-fixture`))
+        check(!code.includes('test-fixture'), label(`${id}'s bundle holds no code from packages/kit/test-fixture`))
     }
     const migratorCode = [...built].find(([id]) => id.startsWith('Migrator'))?.[1]
     check(migratorCode !== undefined, label('the migrator is bundled by this synth'))

@@ -1,7 +1,7 @@
-import { auth, db } from 'keel/adapters/index'
-import { authorize } from 'keel/authz/authorize'
-import { orgIdForSlug } from 'keel/db/org-lookup'
-import { tenantIdForSlug } from 'keel/db/tenant-lookup'
+import { auth, db } from '@sssb/kit/adapters/index'
+import { authorize } from '@sssb/kit/authz/authorize'
+import { orgIdForSlug } from '@sssb/kit/db/org-lookup'
+import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 import { withPortErrors } from '../respond'
 
 /**

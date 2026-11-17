@@ -423,7 +423,7 @@ test('static shell: the inline analyzer actor steps a held export to completed (
 })
 
 /**
- * The paged queue's `file://` twin (keel/core/keyset). The twin is not a "load more" that just slices:
+ * The paged queue's `file://` twin (@sssb/kit/core/keyset). The twin is not a "load more" that just slices:
  * it mints and re-parses a REAL opaque cursor on every hop through the same pure primitive the server
  * uses, so this walk exercises the cursor grammar with no server anywhere in the picture.
  *
@@ -534,11 +534,11 @@ test('static shell: a demo preset loads from the Snapshots tab — no server, sa
 
 /**
  * Every registered preset replays to the end in THIS world. The static demo replays a preset through the
- * static half of each operation kind — keel's own, or the one the composition root supplies for an app
+ * static half of each operation kind — SSSB's own, or the one the composition root supplies for an app
  * kind (src/demo-static/app.tsx `presetOperations`) — and no unit test can see that map, since it is built
  * at runtime. A kind without a static half settles the replay false, and the "Preset loaded" notice never
  * appears, so this is the gate that a new kind shipped its static half. Asserted on the WHOLE load notice
- * (keel's copy with the preset's title in it) and on the ABSENCE of the failure notice — the failure notice
+ * (SSSB's copy with the preset's title in it) and on the ABSENCE of the failure notice — the failure notice
  * names the preset too, so matching the title alone would pass on a replay that broke.
  */
 for (const preset of presets) {

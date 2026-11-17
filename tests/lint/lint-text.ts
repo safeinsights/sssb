@@ -37,17 +37,17 @@ export async function lint(relativePath: string, code: string): Promise<Finding[
 export const isIgnored = (relativePath: string) => linter().isPathIgnored(path.join(repoRoot, relativePath))
 
 // Each fence is told apart by its rule id AND its message, because several patterns report as
-// `no-restricted-imports` (vendor, app content, keel/core's frameworks, two real-adapter forms, keel's
+// `no-restricted-imports` (vendor, app content, @sssb/kit/core's frameworks, two real-adapter forms, SSSB's
 // real adapters, next/font/google), several selectors as `no-restricted-syntax` (process.env, run mode,
-// dynamic real/, a11y), and getDb's three forms as `keel/no-raw-db-handle`.
+// dynamic real/, a11y), and getDb's three forms as `sssb/no-raw-db-handle`.
 export interface Fence {
     rule: string
     fragment: string
 }
 export const VENDOR_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'Vendor SDKs may only be imported' }
-export const VENDOR_DYNAMIC: Fence = { rule: 'keel/no-dynamic-vendor-import', fragment: 'is a vendor SDK' }
+export const VENDOR_DYNAMIC: Fence = { rule: 'sssb/no-dynamic-vendor-import', fragment: 'is a vendor SDK' }
 export const PROCESS_ENV: Fence = { rule: 'no-restricted-syntax', fragment: 'process.env is read ONLY' }
-export const RUN_MODE: Fence = { rule: 'no-restricted-syntax', fragment: "Run mode is keel's" }
+export const RUN_MODE: Fence = { rule: 'no-restricted-syntax', fragment: "Run mode is SSSB's" }
 export const REAL_ADAPTER: Fence = {
     rule: 'no-restricted-imports',
     fragment: "Reach the app's real adapters through its registry",
@@ -57,46 +57,46 @@ export const REAL_ADAPTER_INSIDE: Fence = {
     fragment: 'real/ is loaded only with import()',
 }
 export const REAL_ADAPTER_DYNAMIC: Fence = { rule: 'no-restricted-syntax', fragment: "Only the app's registry" }
-export const KEEL_REAL_ADAPTER: Fence = { rule: 'no-restricted-imports', fragment: "never import keel's real adapters" }
+export const KIT_REAL_ADAPTER: Fence = { rule: 'no-restricted-imports', fragment: "never import SSSB's real adapters" }
 export const NEXT_FONT: Fence = { rule: 'no-restricted-imports', fragment: 'next/font/google phones home' }
 export const JSX_LITERAL: Fence = { rule: 'react/jsx-no-literals', fragment: '' }
 export const A11Y_LITERAL: Fence = {
     rule: 'no-restricted-syntax',
     fragment: 'aria-label/placeholder/title/alt carry user-visible copy',
 }
-export const GET_DB: Fence = { rule: 'keel/no-raw-db-handle', fragment: 'must not use the raw db handle' }
+export const GET_DB: Fence = { rule: 'sssb/no-raw-db-handle', fragment: 'must not use the raw db handle' }
 export const GET_DB_COMPUTED: Fence = {
-    rule: 'keel/no-raw-db-handle',
+    rule: 'sssb/no-raw-db-handle',
     fragment: "Reaching the raw db handle as db['getDb']",
 }
 export const GET_DB_DESTRUCTURE: Fence = {
-    rule: 'keel/no-raw-db-handle',
+    rule: 'sssb/no-raw-db-handle',
     fragment: 'Destructuring getDb out of the db port',
 }
-export const GET_DB_STRING: Fence = { rule: 'keel/no-raw-db-handle', fragment: 'Naming getDb as a string' }
+export const GET_DB_STRING: Fence = { rule: 'sssb/no-raw-db-handle', fragment: 'Naming getDb as a string' }
 // A path into app code is one rule, for every form; a `..` in a package or alias specifier is a pattern, so it
 // reports through the same two rules as the app's aliases.
-export const APP_CODE_PATH: Fence = { rule: 'keel/no-path-to-app-code', fragment: 'app content under another name' }
+export const APP_CODE_PATH: Fence = { rule: 'sssb/no-path-to-app-code', fragment: 'app content under another name' }
 export const BARE_TRAVERSAL_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'a `..` in a package or alias' }
 export const BARE_TRAVERSAL_DYNAMIC: Fence = {
-    rule: 'keel/no-dynamic-app-import',
+    rule: 'sssb/no-dynamic-app-import',
     fragment: 'a `..` in a package or alias',
 }
 export const NODE_MODULES_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'never through node_modules' }
 export const NODE_MODULES_DYNAMIC: Fence = {
-    rule: 'keel/no-dynamic-app-import',
+    rule: 'sssb/no-dynamic-app-import',
     fragment: 'never through node_modules',
 }
 export const JSX_IN_CORE: Fence = {
-    rule: 'keel/no-jsx-in-core',
+    rule: 'sssb/no-jsx-in-core',
     fragment: 'JSX compiles to an import of react/jsx-runtime',
 }
-// The framework/app fence and keel/core's fence, outside declarations; the declaration halves report as
+// The framework/app fence and @sssb/kit/core's fence, outside declarations; the declaration halves report as
 // no-restricted-imports with the pattern's own message.
 export const APP_CODE_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'must reach app content only through' }
-export const APP_CODE_DYNAMIC: Fence = { rule: 'keel/no-dynamic-app-import', fragment: 'is app content' }
-export const CORE_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'keel/core is pure TypeScript' }
-export const CORE_DYNAMIC: Fence = { rule: 'keel/no-dynamic-framework-import-in-core', fragment: 'is a framework' }
+export const APP_CODE_DYNAMIC: Fence = { rule: 'sssb/no-dynamic-app-import', fragment: 'is app content' }
+export const CORE_STATIC: Fence = { rule: 'no-restricted-imports', fragment: '@sssb/kit/core is pure TypeScript' }
+export const CORE_DYNAMIC: Fence = { rule: 'sssb/no-dynamic-framework-import-in-core', fragment: 'is a framework' }
 
 // The vendor import every gate here uses, statically and with import().
 export const IMPORTS_VENDOR = "import { S3Client } from '@aws-sdk/client-s3'\nexport const client = S3Client\n"

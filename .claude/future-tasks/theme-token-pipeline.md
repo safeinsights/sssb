@@ -2,7 +2,7 @@
 
 **Priority:** P2 · **Status:** open
 
-`packages/keel/src/theme.ts` is a single hand-written file producing a Mantine theme. An app that
+`packages/kit/src/theme.ts` is a single hand-written file producing a Mantine theme. An app that
 also styles with a CSS-in-JS/atomic system (Panda or similar) alongside Mantine has to hand-maintain a
 second, parallel set of the same color/spacing/radius values, with no mechanism keeping the two in
 sync.
@@ -23,5 +23,5 @@ just top-level — CSS shorthand strings like `padding: '4px 8px'` hide literals
 screens/kit/shell and NOT to simulator/test/story files, keeps new code honest once the token scale
 exists to lint against.
 
-Evidence: `packages/keel/src/theme.ts` (today's single hand-written theme), the colour/spacing props
-already used throughout `packages/keel/src/components/**` (the literals a token scale would replace).
+Evidence: `packages/kit/src/theme.ts` (today's single hand-written theme), the colour/spacing props
+already used throughout `packages/kit/src/components/**` (the literals a token scale would replace).

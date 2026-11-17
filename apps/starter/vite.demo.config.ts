@@ -9,7 +9,7 @@ import { pruneMantineCss } from '../../scripts/vite-prune-mantine-css'
  * ALWAYS single-file: Chrome blocks external type="module" scripts on the file:// origin (CORS),
  * but inline module scripts run fine — so everything is inlined into one index.html.
  *
- * The aliases are the app's own: `@app-config` points at THIS app's seam, which is what makes the
+ * The aliases are the app's own: `@sssb/app-config` points at THIS app's seam, which is what makes the
  * framework bundle resolve against the starter's registrations rather than any other app's.
  */
 export default defineConfig({
@@ -18,8 +18,8 @@ export default defineConfig({
     plugins: [react(), pruneMantineCss(), viteSingleFile()],
     resolve: {
         alias: {
-            '@app-config': path.resolve(__dirname, 'src/app-config'),
-            keel: path.resolve(__dirname, '../../packages/keel/src'),
+            '@sssb/app-config': path.resolve(__dirname, 'src/app-config'),
+            '@sssb/kit': path.resolve(__dirname, '../../packages/kit/src'),
             '@': path.resolve(__dirname, 'src'),
         },
     },

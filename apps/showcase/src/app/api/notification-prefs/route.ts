@@ -1,7 +1,7 @@
-import { auth, db } from 'keel/adapters/index'
-import { authorize } from 'keel/authz/authorize'
-import { isNotificationChannel, isNotificationKind } from 'keel/core/notifications'
-import { readPrefRows, setPref } from 'keel/db/notifications'
+import { auth, db } from '@sssb/kit/adapters/index'
+import { authorize } from '@sssb/kit/authz/authorize'
+import { isNotificationChannel, isNotificationKind } from '@sssb/kit/core/notifications'
+import { readPrefRows, setPref } from '@sssb/kit/db/notifications'
 import { resolveOrgContext } from '../org-context'
 import { withPortErrors } from '../respond'
 

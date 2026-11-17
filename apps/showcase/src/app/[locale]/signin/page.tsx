@@ -1,10 +1,10 @@
 import type { Route } from 'next'
 import { getTranslations, setRequestLocale } from 'next-intl/server'
 import { redirect } from 'next/navigation'
-import { auth, isSimulated } from 'keel/adapters/index'
-import { listAllPeople } from 'keel/adapters/fake/auth'
+import { auth, isSimulated } from '@sssb/kit/adapters/index'
+import { listAllPeople } from '@sssb/kit/adapters/fake/auth'
 import { findTenant } from '@app/seed'
-import { SignInScreen } from 'keel/components/auth/sign-in-screen'
+import { SignInScreen } from '@sssb/kit/components/auth/sign-in-screen'
 import { PickerGlue } from './picker-glue'
 
 export default async function SignInPage({
@@ -39,7 +39,7 @@ export default async function SignInPage({
         )
     } else {
         const [{ RealSignInForm }, t] = await Promise.all([
-            import('keel/adapters/real/sign-in-form'),
+            import('@sssb/kit/adapters/real/sign-in-form'),
             getTranslations('auth'),
         ])
         body = (

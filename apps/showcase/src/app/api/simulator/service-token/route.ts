@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { mintServiceToken } from 'keel/adapters/fake/service-auth'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { mintServiceToken } from '@sssb/kit/adapters/fake/service-auth'
 import { withPortErrors } from '../../respond'
 
 /**

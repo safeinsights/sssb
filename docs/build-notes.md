@@ -1946,3 +1946,14 @@ the panel is the element that carries it.
 - **See the singleton check fail against the mistake it guards.** An unmet peer range did not produce two copies:
   pnpm linked keel to the app's `react` and printed a warning. Moving `react` into keel's `dependencies` did
   produce two, and the install was silent.
+
+## The move to `safeinsights/sssb`, and the rename (2026-11-17, `chore/move-and-rename-sssb`)
+
+- **Earlier entries, and their numbers.** Every entry above this one was written in `jpslav/keel`, under the name
+  keel. A bare PR number above (`#54`) is a PR in `jpslav/keel` (jpslav/keel#54); this repository's PRs number
+  from 1 again. keel above means SSSB, `packages/keel` is `packages/kit`, `keel/…` is `@sssb/kit/…`,
+  `@app-config/*` is `@sssb/app-config/*`, and a `keel/…` rule id is `sssb/…`.
+- **pnpm installs a workspace project's own optional peers.** `peerDependenciesMeta.optional` keeps a consumer's
+  install from fetching the peer, but in the workspace that declares it, pnpm 11 still requested
+  `@sssb/app-config` from the registry. Declaring the peer in `peerDependenciesMeta` alone keeps it optional and
+  the install offline; a packed copy installed beside a `link:` seam still links it.

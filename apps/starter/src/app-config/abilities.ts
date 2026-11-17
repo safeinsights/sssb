@@ -1,7 +1,7 @@
-import type { AbilityAction, AbilityActor, AbilitySubject, NonSessionAdministration } from 'keel/core/abilities'
+import type { AbilityAction, AbilityActor, AbilitySubject, NonSessionAdministration } from '@sssb/kit/core/abilities'
 
 /**
- * The APP's authorization extension (the seam side of keel/core/abilities.ts, ADR-0012). The framework
+ * The APP's authorization extension (the seam side of @sssb/kit/core/abilities.ts, ADR-0012). The framework
  * owns the base subjects and the deny-by-default switch; this app registers ONE subject and its rules.
  * PURE TypeScript, same as core.
  */
@@ -24,8 +24,8 @@ export type AppSubjectType = 'Item'
 export interface AppSubjectFields {}
 
 /**
- * The credential kinds, beyond keel's own, by which a PERSON or a MACHINE can reach this app (composed
- * into keel/core/abilities' `PersonCredentialKind` / `MachineCredentialKind`; keel's are `session`,
+ * The credential kinds, beyond SSSB's own, by which a PERSON or a MACHINE can reach this app (composed
+ * into @sssb/kit/core/abilities' `PersonCredentialKind` / `MachineCredentialKind`; SSSB's are `session`,
  * `inbound-email` and `service-key`). This app adds none. An app with personal API tokens registers its
  * token kind as a person credential; one with a CI identity, that as a machine credential.
  */
@@ -34,7 +34,7 @@ export type AppMachineCredentialKind = never
 
 /**
  * The designated staff/operator org slug. ACTIVE membership in this org grants the `manageAll`
- * ability-layer superpower (derived in keel/authz/authorize.ts). It is one ordinary org WITHIN a
+ * ability-layer superpower (derived in @sssb/kit/authz/authorize.ts). It is one ordinary org WITHIN a
  * tenant: staff powers stop at the tenant boundary and NEVER cross tenants (ADR-0004). WHICH org is
  * the operator org is an app choice, so it lives here; it must name a real seed org (`src/seed`).
  */
@@ -51,7 +51,7 @@ export function anchorSubjectExtras(anchor: string): AppSubjectFields {
 }
 
 /**
- * The app's per-subject rules, invoked by keel/core/abilities.ts's `default:` case (deny by default).
+ * The app's per-subject rules, invoked by @sssb/kit/core/abilities.ts's `default:` case (deny by default).
  * `sameOrg` is injected by core so "the subject is org-scoped AND its org is the acting org" is
  * defined once.
  * - Item: read = sameOrg; create|update|delete = !restricted && sameOrg.
@@ -76,7 +76,7 @@ export function appAbilityRules(
 }
 
 /**
- * The app's rules for MACHINE actors (keel/core/abilities `MachineActor` — a caller that is not a
+ * The app's rules for MACHINE actors (@sssb/kit/core/abilities `MachineActor` — a caller that is not a
  * person: a CI identity, an integration). This app grants machines nothing, so every machine is denied
  * every app subject; this function is the off switch. To let one in, switch on `subject.type` and the
  * machine's `actor.credential.kind` here, the way `appAbilityRules` does for people.

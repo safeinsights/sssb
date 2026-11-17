@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { InvalidTransitionError } from 'keel/core/state-machine'
+import { InvalidTransitionError } from '@sssb/kit/core/state-machine'
 import { isEscalationStatus, ESCALATION_STATUSES, escalationMachine } from './escalations'
 
 describe('escalation status machine', () => {

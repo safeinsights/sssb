@@ -1,4 +1,4 @@
-import type { StaticPresetOperationHandler } from 'keel/demo-static/contracts'
+import type { StaticPresetOperationHandler } from '@sssb/kit/demo-static/contracts'
 import { applyDemoTicketChanges, type DemoTicket, type DemoTicketEffects } from '@/demo-static/ticket-changes'
 import { findOrg } from '@app/seed'
 import type { TicketAssignArgs } from './definition'

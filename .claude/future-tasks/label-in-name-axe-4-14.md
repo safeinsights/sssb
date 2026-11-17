@@ -7,14 +7,14 @@ axe-core 4.14.0 (2026-10-05) turned `label-content-name-mismatch` on by default.
 control user can say what they see. Four framework controls fail it. In each, an `aria-label` replaces
 the visible text instead of containing it:
 
-| Control (test id)    | Component                                                    | Visible text                                                     | Accessible name (en / es)                                                      |
-| -------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `org-switcher`       | `packages/keel/src/components/auth/org-switcher.tsx`         | the active team's name                                           | `switchLabel`: "Switch team" / "Cambiar equipo"                                |
-| `user-menu`          | `packages/keel/src/components/auth/user-menu.tsx`            | the avatar's initials                                            | `userMenuLabel`: "Account menu" / "Menú de la cuenta"                          |
-| `simulator-pill`     | `packages/keel/src/components/simulator/simulator-panel.tsx` | `pillLabel` "Simulator", plus the unread badge when there is one | `pillAriaLabel`: "Open the Simulator panel" / "Abrir el panel Simulador"       |
-| `simulator-collapse` | `packages/keel/src/components/simulator/simulator-panel.tsx` | `collapseButton` "Hide" / "Ocultar"                              | `collapseAriaLabel`: "Close the Simulator panel" / "Cerrar el panel Simulador" |
+| Control (test id)    | Component                                                   | Visible text                                                     | Accessible name (en / es)                                                      |
+| -------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `org-switcher`       | `packages/kit/src/components/auth/org-switcher.tsx`         | the active team's name                                           | `switchLabel`: "Switch team" / "Cambiar equipo"                                |
+| `user-menu`          | `packages/kit/src/components/auth/user-menu.tsx`            | the avatar's initials                                            | `userMenuLabel`: "Account menu" / "Menú de la cuenta"                          |
+| `simulator-pill`     | `packages/kit/src/components/simulator/simulator-panel.tsx` | `pillLabel` "Simulator", plus the unread badge when there is one | `pillAriaLabel`: "Open the Simulator panel" / "Abrir el panel Simulador"       |
+| `simulator-collapse` | `packages/kit/src/components/simulator/simulator-panel.tsx` | `collapseButton` "Hide" / "Ocultar"                              | `collapseAriaLabel`: "Close the Simulator panel" / "Cerrar el panel Simulador" |
 
-The strings live in keel's framework catalog, `packages/keel/src/i18n/messages/{en,es}.json`.
+The strings live in SSSB's framework catalog, `packages/kit/src/i18n/messages/{en,es}.json`.
 
 **Where it showed up.** The catch-up of October's Dependabot group (`deps/catch-up-2026-11`) took
 `@axe-core/playwright` 4.14.0. 12 showcase e2e tests then failed on this one rule and no other: ten in

@@ -2,8 +2,8 @@
  * Fail-fast preflight for `pnpm dev:real`: prints exactly which cutover items are missing
  * instead of letting the server crash on first request.
  */
-import { assertRealEnv } from 'keel/adapters/real/index'
-import { CutoverPendingError } from 'keel/ports/errors'
+import { assertRealEnv } from '@sssb/kit/adapters/real/index'
+import { CutoverPendingError } from '@sssb/kit/ports/errors'
 
 try {
     assertRealEnv()

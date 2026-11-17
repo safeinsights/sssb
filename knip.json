@@ -15,7 +15,7 @@
             "project": ["src/**"]
         },
         "packages/seed": {},
-        "packages/keel": {
+        "packages/kit": {
             "ladle": {
                 "entry": ["src/**/*.stories.tsx"]
             },

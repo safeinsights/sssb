@@ -1,14 +1,14 @@
-import { db, isSimulated } from 'keel/adapters/index'
-import { acceptInvite } from 'keel/adapters/fake/auth'
-import { listAgreementsForTenant, recordAcceptance } from 'keel/db/agreements'
-import { tenantIdForSlug } from 'keel/db/tenant-lookup'
+import { db, isSimulated } from '@sssb/kit/adapters/index'
+import { acceptInvite } from '@sssb/kit/adapters/fake/auth'
+import { listAgreementsForTenant, recordAcceptance } from '@sssb/kit/db/agreements'
+import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 import { withPortErrors } from '../../respond'
 
 /**
  * The accept-invitation product surface's simulated-mode entrypoint (Bob's lifecycle). Same 404 gate
  * as /api/auth/dev-signin, first line — this is a real product feature, but only meaningful
  * against the fake auth adapter; real mode ships Clerk's own ticket-strategy sign-up instead
- * (packages/keel/src/adapters/real/accept-invite-form.tsx).
+ * (packages/kit/src/adapters/real/accept-invite-form.tsx).
  */
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
@@ -26,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
         // Clickwrap-on-join: accepting the invitation records acceptance of the tenant's
         // current agreements, so a freshly joined user isn't immediately blocked by an access gate they
         // just implicitly agreed to. A later version bump re-arms the gate for them like everyone else.
-        // NOT audited — invite acceptance is deliberately outside the audit trail (see packages/keel/src/db/audit.ts).
+        // NOT audited — invite acceptance is deliberately outside the audit trail (see packages/kit/src/db/audit.ts).
         // In real mode this route doesn't run: a Clerk-based join lands the new user on the interstitial
         // instead, resolved through the very same gate seam.
         const tenantId = await tenantIdForSlug(db, joined.tenantSlug)

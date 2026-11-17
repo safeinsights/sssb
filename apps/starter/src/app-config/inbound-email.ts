@@ -1,4 +1,4 @@
-import type { InboundHandler } from 'keel/inbound-email/handlers'
+import type { InboundHandler } from '@sssb/kit/inbound-email/handlers'
 
 /**
  * The app's inbound-email handler registrations (ADR-0012 seam). The recipient address

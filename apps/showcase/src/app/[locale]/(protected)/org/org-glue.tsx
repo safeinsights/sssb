@@ -3,9 +3,9 @@
 import { useTranslations } from 'next-intl'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { OrgScreen, type OrgMember } from 'keel/components/org-screen'
-import { WebhookEndpointsCard, type WebhookEndpointItem } from 'keel/components/webhook-endpoints-card'
-import { WEBHOOK_EVENT_KINDS } from 'keel/core/webhook-events'
+import { OrgScreen, type OrgMember } from '@sssb/kit/components/org-screen'
+import { WebhookEndpointsCard, type WebhookEndpointItem } from '@sssb/kit/components/webhook-endpoints-card'
+import { WEBHOOK_EVENT_KINDS } from '@sssb/kit/core/webhook-events'
 
 export function OrgGlue({
     orgName,

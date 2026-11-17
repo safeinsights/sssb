@@ -185,7 +185,7 @@ export function TicketsCard({
                     </Stack>
                 )}
 
-                {/* The queue is paged (keel/db/keyset): this appends the next page rather than
+                {/* The queue is paged (@sssb/kit/db/keyset): this appends the next page rather than
                     replacing the list, so what the reader has already scrolled past stays put. */}
                 {hasMore && onLoadMore ? (
                     <Button

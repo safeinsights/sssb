@@ -37,14 +37,14 @@ Must preserve the DOM exactly: every `data-testid` (`escalation-sent-*`, `escala
 
 ## 3. `job-timeline.tsx` — status switch instead of the house lookup-map pattern
 
-`packages/keel/src/components/job-timeline.tsx` `statusLabel()` is a 4-case switch routing status →
+`packages/kit/src/components/job-timeline.tsx` `statusLabel()` is a 4-case switch routing status →
 translation key; `escalations-card.tsx`'s `STATUS_KEY` record is the house pattern for the same
 shape. Replace with `const STATUS_KEYS: Record<string, string>` + `t(STATUS_KEYS[status] ?? …)`,
 keeping the default-returns-raw-status behavior.
 
 ## 4. Fake analytics `readFlags()` — one disk read per flag check
 
-`packages/keel/src/adapters/fake/analytics.ts` `isFlagEnabled` does `existsSync` + `readFileSync` +
+`packages/kit/src/adapters/fake/analytics.ts` `isFlagEnabled` does `existsSync` + `readFileSync` +
 `JSON.parse` of `flags.json` per call; a protected page render checks two flags (the layout's
 `demo-banner` and the dashboard's `sla-breach-banner`) = two synchronous reads per render. Simulated mode
 only, tiny file — but it is sync work on the event loop.

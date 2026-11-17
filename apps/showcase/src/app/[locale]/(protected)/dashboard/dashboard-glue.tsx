@@ -7,7 +7,7 @@ import { EscalationsCard, type EscalationItem, type EscalationTarget } from '@/c
 import { ExportCard, type ExportJob } from '@/components/export-card'
 import { TicketsCard, type TicketAssignee, type TicketItem } from '@/components/tickets-card'
 import type { AttachmentKind } from '@/domain/attachments'
-import { type JobStatus, jobStatusMachine } from 'keel/core/jobs'
+import { type JobStatus, jobStatusMachine } from '@sssb/kit/core/jobs'
 
 interface EscalationLists {
     sent: EscalationItem[]

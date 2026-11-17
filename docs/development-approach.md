@@ -104,18 +104,18 @@ loop fast enough for this to pay off — for agents most of all.
 through a thin interface _the app owns_ — a port — with two implementations, real and fake. **Wrap, don't
 stub:** the port is sized to what the app actually needs (a handful of functions), not to the vendor's
 hundreds of calls. Exactly one module imports each vendor SDK, and lint rules (`no-restricted-imports`
-for `import`, `keel/no-dynamic-vendor-import` for `import()`) plus a CI check make the boundary
+for `import`, `sssb/no-dynamic-vendor-import` for `import()`) plus a CI check make the boundary
 permanent.
 
-**Whose port it is decides where it lives ✅.** keel's ports and adapters are framework code in
-`packages/keel/src/`. A port for a vendor keel has no port for, which only one app calls and which fails
+**Whose port it is decides where it lives ✅.** SSSB's ports and adapters are framework code in
+`packages/kit/src/`. A port for a vendor SSSB has no port for, which only one app calls and which fails
 the tests in the next section, belongs to that app: `apps/<app>/src/ports/` for the interface, and
 `apps/<app>/src/adapters/` for its registry, fake and real adapter, with the vendor SDK confined to
 `adapters/real/`. The fence is the same one, drawn twice: the app's registry and fake are as vendor-free
-and `process.env`-free as the rest of the app, the registry takes the run mode from keel's `isSimulated`,
+and `process.env`-free as the rest of the app, the registry takes the run mode from SSSB's `isSimulated`,
 and nothing else in the app imports a real adapter statically. `docs/recipes/app-owned-adapter.md` is the
-how-to. The reason it is not "add it to keel" is ADR-0013: an adopter does not edit `packages/keel`, and
-a port keel would never accept upstream would otherwise be a merge conflict in their fork forever.
+how-to. The reason it is not "add it to SSSB" is ADR-0013: an adopter does not edit `packages/kit`, and
+a port SSSB would never accept upstream would otherwise be a merge conflict in their fork forever.
 
 **Why.** A small owned interface makes the fake trivial to write, keeps dev/demo/test hermetic and
 deterministic, and turns a vendor swap into a local change. Stubbing the vendor's surface instead couples
@@ -141,7 +141,7 @@ patterns don't get built early. Instances ship domain features plus
 additional members of already-demonstrated classes — more job kinds, more webhook events, more vendor
 adapters written by following the worked example. When only the instance's app calls a vendor that
 fails both tests below, its adapter is written in that app, behind a port the app owns
-(`docs/recipes/app-owned-adapter.md`), not in `packages/keel`. A vendor that plugs into a seam keel
+(`docs/recipes/app-owned-adapter.md`), not in `packages/kit`. A vendor that plugs into a seam SSSB
 already owns, such as the SMS channel, follows that seam's own recipe.
 
 **The two tests for shipping vendor code.** _Universality_ — will every instance use it? — and
@@ -154,20 +154,20 @@ template — authz, audit, and cross-org requests all shipped port-less because 
 **The third test, for shipping UI: does this component encode a framework invariant, or is it generic
 presentation? ✅** The two tests above govern _vendor_ code, and nothing governed components — which
 mattered the moment the highest-demand gap on the whole round-2 list turned out to be one
-(`docs/app-coverage-gaps.md`: a generic list/table kit, needed as core by 16 of 19 app types). keel ships
+(`docs/app-coverage-gaps.md`: a generic list/table kit, needed as core by 16 of 19 app types). SSSB ships
 a lot of UI, so "the framework doesn't do screens" was never the rule; the rule is what those screens
-have in common. Every one of them is **the presentation half of a capability keel owns**: there is no
+have in common. Every one of them is **the presentation half of a capability SSSB owns**: there is no
 auth without a sign-in screen, no invitations without an accept flow, no access gates without the
 interstitial that resolves them, no simulated world without Simulator. The screen is where the
 framework's invariant becomes visible to a person, and it cannot be separated from the capability
 without breaking it. A sortable table has no such capability behind it — there is no "table subsystem"
-in keel whose rules it enforces — so shipping one would make the framework a second source of generic
+in SSSB whose rules it enforces — so shipping one would make the framework a second source of generic
 components, in direct competition with the one **[ADR-0005](adr/0005-ui-mantine-panda.md) chose as "the
 only component library"**. Fails the test → recipe: `docs/recipes/list-kit.md` is the written plan, over
 Mantine + TanStack Table, and it is honest that the rest is an instance's choice.
 
 The test is worth trusting because it was derived to decide a NEW case and then found to agree with
-every case already decided: applied retroactively, it validates every screen keel already ships and
+every case already decided: applied retroactively, it validates every screen SSSB already ships and
 excludes nothing. A rule invented to justify a decision usually has to make an exception for something;
 this one doesn't, which is the difference between a correct rule and a convenient one.
 
@@ -176,7 +176,7 @@ KEEP: one part of a list does encode an invariant — **a paginated read of a te
 cursor is client input, so a page-seven read must be scoped exactly like page one; the ordering must be
 total or the walk repeats and drops rows; the page size must be capped by the server, not by the query
 string. That is a correctness property in the same family as `withTenant`, so it shipped as framework
-code (`packages/keel/src/db/keyset.ts` and the pure half `packages/keel/src/core/keyset.ts`), proven in
+code (`packages/kit/src/db/keyset.ts` and the pure half `packages/kit/src/core/keyset.ts`), proven in
 BOTH halves of the RLS suite on both engines — including against a cursor minted in the other tenant —
 and demonstrated on the showcase's ticket queue. Extracting the invariant and leaving the chrome is the
 outcome this test is designed to produce.
@@ -202,7 +202,7 @@ every developer and every agent. Determinism also makes tests trustworthy.
 
 **Tradeoff.** Fakes can drift from real behavior — mitigated by running the _same_ suite against the real
 engine. Here, `pnpm test:contract` runs the identical row-level-security proofs on real Postgres, for every app, each in a database of its own (embedded
-binaries locally, a service container in CI); if the fake ever drifts, one of the two runs breaks. keel's
+binaries locally, a service container in CI); if the fake ever drifts, one of the two runs breaks. SSSB's
 own fixture runs there too, in a database of its own, which is how a driver-level difference between the
 engines (a `date` column read back as a different value on each) is caught the same way.
 
@@ -333,10 +333,10 @@ it can act on its own.
 **tour** is its temporal sibling — a scripted walkthrough that drives the running app for a watcher, with
 narration, starting from a world it declares (`'reset'`, a demo preset, or — on a server only — a saved
 snapshot). The engine is the framework's
-(`packages/keel/src/demo-static/tour/`): a ghost cursor that glides to real elements, fires real clicks,
+(`packages/kit/src/demo-static/tour/`): a ghost cursor that glides to real elements, fires real clicks,
 types character by character, and drives Simulator itself through the panel's own controls; the Tours tab
 sits beside Snapshots and disappears entirely for an app that registers none. Each tour is APP content on the
-seam (`@app-config/tours`), narration included, because what a walkthrough SAYS is product vocabulary.
+seam (`@sssb/app-config/tours`), narration included, because what a walkthrough SAYS is product vocabulary.
 
 The reason to build this rather than record a video is the same reason demo mode is the product with
 fakes swapped in: **a recording is stale the moment a screen changes, and a tour is not.** Two rules make
@@ -350,21 +350,21 @@ someone and let them press Start.
 
 **Presets: starting points every host can load ✅.** A saved snapshot is a binary copy of `.data/`, so it
 restores only where there is a server to copy it into. A **demo preset** is the other representation —
-the seed plus a script of world operations (`keel/core/presets.ts`: invite, inbound email, feature flag, holding one
+the seed plus a script of world operations (`@sssb/kit/core/presets.ts`: invite, inbound email, feature flag, holding one
 Simulator actor, and whatever kinds the app adds; each one that acts as someone or in a team names them) and an optional viewpoint — which each host replays its own way: the
-server through the same code the product runs (`keel/server-lib/demo-presets.ts`, sharing
+server through the same code the product runs (`@sssb/kit/server-lib/demo-presets.ts`, sharing
 `sendOrgInvite` with the org route and the intake with the inbound webhook), the `file://` twin through
 its in-memory world, one step per commit so each step sees the world its predecessor left. So a preset
 works in `dist-demo/index.html`, and a tour may start from one on every host; `'reset'` → preset →
 saved snapshot is the one resolution order (`resolveWorldStart`), and saving a snapshot under a reserved
 name is refused so it can never mean two worlds. Preset content is app vocabulary, registered on its
-own seam module, `@app-config/presets` (one file per preset; a preset may `extends` one other, single
+own seam module, `@sssb/app-config/presets` (one file per preset; a preset may `extends` one other, single
 inheritance), and every registered preset is held at build time to what the product itself would allow
 (`presetProblems`, run as seam conformance under every app) — a preset is a
 shortcut to a world someone could have clicked together, never a back door into one they could not.
-The operation kinds are a registry keel and the app both extend: each kind is a pure definition plus a
-server half and a static half that never share a module, and an app entry with keel's kind name replaces
-keel's. An app kind calls the same named core function its route calls — the showcase's `ticket.assign`
+The operation kinds are a registry SSSB and the app both extend: each kind is a pure definition plus a
+server half and a static half that never share a module, and an app entry with SSSB's kind name replaces
+SSSB's. An app kind calls the same named core function its route calls — the showcase's `ticket.assign`
 step and its ticket PATCH route both call `applyTicketChanges` — so a script step and a click cannot
 drift apart. The
 viewpoint rides along as **who the restorer sits down as**, not as captured state: it is a per-browser
@@ -378,7 +378,7 @@ Simulator client code** — the layout dynamic-imports the glue only in simulate
 `/api/simulator/*` handlers still compile into the server artifact; their first-line 404 gate is the
 containment there). **The components stay router-agnostic and vendor-free** — which is exactly what made the
 extraction cheap when it came: the panel now lives in the framework package
-(`packages/keel/src/components/simulator/`, ADR-0012), so a second app inherits the whole simulated
+(`packages/kit/src/components/simulator/`, ADR-0012), so a second app inherits the whole simulated
 world for free rather than re-deriving it. A shape worth knowing for future surfaces: per-person world state today is
 mail + continuity (last path, active tenant, mail-seen), while Events/Errors/Snapshots are global — a
 genuinely per-person surface would sketch a "person's desktop" the People could one day drill into (see
@@ -406,7 +406,7 @@ second tenant from the proof runner, not from an app's seed, so an app deployed 
 seed one and keep the guarantee for its own tables (ADR [0004](adr/0004-tenancy-rls.md), addendum of
 2026-11-16); what it gives up is seeing isolation by using the app. Multi-tenant shaped, single-tenant
 operated. See ADR [0004](adr/0004-tenancy-rls.md); the one enforced path is `db.withTenant()`
-(raw `getDb()` is lint-banned across `apps/*/src`, keel's screens and keel's fixture, deny-by-default).
+(raw `getDb()` is lint-banned across `apps/*/src`, SSSB's screens and SSSB's fixture, deny-by-default).
 
 **Teams — the in-tenant layer, one door in.** A tenant stays the ambient, separately-branded site — never
 user-switchable in product UI. Inside it, an org (product copy: "team") is the collaboration grouping a
@@ -417,10 +417,10 @@ Crossing tenants has no product UI at all; in simulated mode it's a Simulator-on
 whose home tenant differs), never a second door into the app. See ADR-0003 and ADR-0004.
 
 **Within a team: `authorize()`, not just role rank ✅.** `withTenant` enforces the hostile tenant boundary at
-the database; `authorize()` (`packages/keel/src/authz/authorize.ts`) is the analogous single choke point
+the database; `authorize()` (`packages/kit/src/authz/authorize.ts`) is the analogous single choke point
 for the friendlier boundary inside it. Every mutation resolves a subject (`{type, orgId, ownerId}`) and calls
 one function that either allows the action or throws `ForbiddenError` → 403. The rule table
-(`packages/keel/src/core/abilities.ts`, pure `packages/keel/src/core`, shared verbatim by the server
+(`packages/kit/src/core/abilities.ts`, pure `packages/kit/src/core`, shared verbatim by the server
 and the static demo twin) is deny-by-default and org-scoped: role alone (`canManageOrg`) still gates coarse,
 whole-route decisions via `requireRole`, but resource-level decisions — can THIS user create THIS ticket in THIS
 org — go through the ability layer instead of a rank check. A build-time scan (`authorized-mutations.test.ts`)
@@ -434,7 +434,7 @@ data isn't always single-sided either: a subject can name both a `requesterOrgId
 instead of one `orgId`, so the same row is visible to — and actionable by — two different teams with different
 powers (`escalations`, migration 1002, is the reference; see ADR [0004](adr/0004-tenancy-rls.md)).
 And denial isn't the only shape of "no": `authorize()` denies one action, while an **access gate**
-(`packages/keel/src/core/gates.ts`) blocks or advises across a scope _with a resolution flow_ —
+(`packages/kit/src/core/gates.ts`) blocks or advises across a scope _with a resolution flow_ —
 accept the new ToS version, verify your email, enroll MFA — the interstitial-and-resolve class that agreements
 demonstrate and future riders (ADR 0003's deferrals, billing entitlements) plug into.
 
@@ -542,7 +542,7 @@ here:
    mode forever; the collab service is an enhancement the app degrades _from_, never a dependency it
    breaks without.
 2. **The service is another counterparty, not another app.** Shared code lives in
-   `packages/keel/src/core`/shared packages; the service verifies the app's session tokens on
+   `packages/kit/src/core`/shared packages; the service verifies the app's session tokens on
    connect (the service-auth seam is the worked precedent for a second verifier of app-issued
    credentials); its persistence is its own table(s), migrated by the same migrator.
 3. **The seam is a port.** The app reaches collab state through a `collab` port sized to the app; real

@@ -51,7 +51,7 @@ function runChild(env) {
 }
 
 async function main() {
-    const runDir = mkdtempSync(path.join(tmpdir(), 'keel-test-run-'))
+    const runDir = mkdtempSync(path.join(tmpdir(), 'sssb-test-run-'))
     try {
         const status = await runChild({ ...process.env, TMPDIR: runDir, TEMP: runDir, TMP: runDir })
         if (status !== 0) return status

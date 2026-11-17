@@ -1,5 +1,5 @@
-import { isSimulated, storage } from 'keel/adapters/index'
-import { verifyUploadFields } from 'keel/adapters/fake/storage'
+import { isSimulated, storage } from '@sssb/kit/adapters/index'
+import { verifyUploadFields } from '@sssb/kit/adapters/fake/storage'
 import { ATTACHMENT_MAX_BYTES } from '@/domain/attachments'
 
 /**

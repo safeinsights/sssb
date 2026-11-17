@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { makeTestTmpDir } from '../../../../../tests/support/tmp-dir'
-import { InvalidTransitionError } from 'keel/core/state-machine'
-import type { DbPort } from 'keel/ports/db'
+import { InvalidTransitionError } from '@sssb/kit/core/state-machine'
+import type { DbPort } from '@sssb/kit/ports/db'
 
 const MISSING_ID = '00000000-0000-0000-0000-000000000000'
 
@@ -16,7 +16,7 @@ afterAll(() => {
 
 /** Resolve a tenant id and one of its org ids from the seed. */
 async function ids(slug: string, orgSlug: string): Promise<{ tenantId: string; orgId: string }> {
-    const { fakeDb } = await import('keel/adapters/fake/db')
+    const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
     await fakeDb.ready()
     const tenant = await fakeDb
         .getDb()
@@ -36,7 +36,7 @@ async function ids(slug: string, orgSlug: string): Promise<{ tenantId: string; o
 
 /** A fresh org to stand in for another team, as the privileged migration user. */
 async function makeOrg(tenantId: string, slug: string, name: string): Promise<string> {
-    const { fakeDb } = await import('keel/adapters/fake/db')
+    const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
     const org = await fakeDb
         .getDb()
         .insertInto('organizations')
@@ -47,14 +47,14 @@ async function makeOrg(tenantId: string, slug: string, name: string): Promise<st
 }
 
 async function open(orgId: string, tenantId: string, subject: string) {
-    const { fakeDb } = await import('keel/adapters/fake/db')
+    const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
     const { createTicket } = await import('./tickets')
     return createTicket(fakeDb, { tenantId, fallbackSlug: 'northwind', orgId, subject, body: `${subject} body` })
 }
 
 describe('createTicket + listTickets', () => {
     test('a ticket is visible to its own team and invisible to another team in the same tenant', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { listTickets } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
         const otherOrgId = await makeOrg(frontline.tenantId, `bystander-tickets-${Date.now()}`, 'Bystander Team')
@@ -89,7 +89,7 @@ describe('createTicket + listTickets', () => {
     })
 
     test('newest first', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { listTickets } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
 
@@ -186,7 +186,7 @@ describe('createTicket + listTickets', () => {
 
 describe('ticketForOrg', () => {
     test("another team's ticket is indistinguishable from a missing one", async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { ticketForOrg } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
         const otherOrgId = await makeOrg(frontline.tenantId, `probe-tickets-${Date.now()}`, 'Probe Team')
@@ -202,7 +202,7 @@ describe('ticketForOrg', () => {
 
 describe('updateTicket', () => {
     test('advances the status through a legal hop', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { updateTicket } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
         const ticket = await open(frontline.orgId, frontline.tenantId, 'Legal hop')
@@ -215,7 +215,7 @@ describe('updateTicket', () => {
     })
 
     test('an illegal hop throws and writes nothing', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { ticketForOrg, updateTicket } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
         const ticket = await open(frontline.orgId, frontline.tenantId, 'Illegal hop')
@@ -229,7 +229,7 @@ describe('updateTicket', () => {
     })
 
     test('assignee is three-state: absent leaves it, a string assigns, null unassigns', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { updateTicket } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
         const ticket = await open(frontline.orgId, frontline.tenantId, 'Three-state assignee')
@@ -252,7 +252,7 @@ describe('updateTicket', () => {
     })
 
     test("returns null for another team's ticket rather than updating it", async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { ticketForOrg, updateTicket } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
         const otherOrgId = await makeOrg(frontline.tenantId, `foreign-update-${Date.now()}`, 'Foreign Team')
@@ -265,7 +265,7 @@ describe('updateTicket', () => {
     })
 
     test('bumps updated_at', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { updateTicket } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
         const ticket = await open(frontline.orgId, frontline.tenantId, 'Touch me')
@@ -280,7 +280,7 @@ describe('updateTicket', () => {
 
 describe('deleteTicket', () => {
     test('removes the row and reports one deleted', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { deleteTicket, ticketForOrg } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
         const ticket = await open(frontline.orgId, frontline.tenantId, 'Delete me')
@@ -290,7 +290,7 @@ describe('deleteTicket', () => {
     })
 
     test("reports zero for another team's ticket, and leaves it alone", async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { deleteTicket, ticketForOrg } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
         const otherOrgId = await makeOrg(frontline.tenantId, `foreign-delete-${Date.now()}`, 'Foreign Team')
@@ -301,7 +301,7 @@ describe('deleteTicket', () => {
     })
 
     test('reports zero for an id that never existed', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { deleteTicket } = await import('./tickets')
         const frontline = await ids('northwind', 'frontline')
 

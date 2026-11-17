@@ -4,12 +4,12 @@ description: Add a background job kind + handler, registered through the app-con
 
 Add a background job kind for: $ARGUMENTS
 
-Jobs are the framework's async-execution seam (port `packages/keel/src/ports/jobs.ts`; state machine + statuses are
+Jobs are the framework's async-execution seam (port `packages/kit/src/ports/jobs.ts`; state machine + statuses are
 framework-owned). You register the app side — never edit a framework union:
 
-1. **Handler** in `apps/showcase/src/jobs/<kind>.ts`: a `JobHandler` (`packages/keel/src/ports/jobs.ts`) — `(payload, ctx)` where
+1. **Handler** in `apps/showcase/src/jobs/<kind>.ts`: a `JobHandler` (`packages/kit/src/ports/jobs.ts`) — `(payload, ctx)` where
    ctx carries `db`/`storage`/`email` ports + tenant/org/job ids. Follow `apps/showcase/src/jobs/export-tickets.ts`.
-   Result keys must live under `exportKeyPrefix(...)` (`packages/keel/src/core/jobs.ts`) — the storage-isolation
+   Result keys must live under `exportKeyPrefix(...)` (`packages/kit/src/core/jobs.ts`) — the storage-isolation
    contract; validate payloads defensively (they arrive as `unknown`).
 2. **Register** in `apps/showcase/src/app-config/jobs.ts`: add the kind to `appJobKinds` and the handler to
    `appJobHandlers`. The framework composes `framework ∪ app` for `isJobKind` and the handler map.

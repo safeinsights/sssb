@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { InvalidTransitionError } from 'keel/core/state-machine'
-import type { AuthUser } from 'keel/ports/auth'
+import { InvalidTransitionError } from '@sssb/kit/core/state-machine'
+import type { AuthUser } from '@sssb/kit/ports/auth'
 import { POST } from './route'
 
 // Real authorize runs; only adapters + data modules are faked. Marisol acts in frontline (requester).
@@ -13,15 +13,15 @@ const h = vi.hoisted(() => ({
     recordAuditEvent: vi.fn(),
     enqueueWebhookEvent: vi.fn(),
 }))
-vi.mock('keel/adapters/index', () => ({ auth: { requireUser: h.requireUser }, db: {} }))
-vi.mock('keel/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
-vi.mock('keel/db/org-lookup', () => ({ orgIdForSlug: h.orgIdForSlug }))
-vi.mock('keel/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
+vi.mock('@sssb/kit/adapters/index', () => ({ auth: { requireUser: h.requireUser }, db: {} }))
+vi.mock('@sssb/kit/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
+vi.mock('@sssb/kit/db/org-lookup', () => ({ orgIdForSlug: h.orgIdForSlug }))
+vi.mock('@sssb/kit/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
 vi.mock('@/domain/db/escalations', () => ({
     escalationForActiveOrg: h.escalationForActiveOrg,
     transitionEscalation: h.transitionEscalation,
 }))
-vi.mock('keel/db/webhooks', () => ({ enqueueWebhookEvent: h.enqueueWebhookEvent }))
+vi.mock('@sssb/kit/db/webhooks', () => ({ enqueueWebhookEvent: h.enqueueWebhookEvent }))
 
 function user(overrides: Partial<AuthUser> = {}): AuthUser {
     return {

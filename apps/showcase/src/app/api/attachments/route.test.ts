@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AuthUser } from 'keel/ports/auth'
+import type { AuthUser } from '@sssb/kit/ports/auth'
 import { GET, POST } from './route'
 
 // Real authorize (pure abilities) runs — only the adapters and data modules are faked. Low-entropy
@@ -14,14 +14,14 @@ const h = vi.hoisted(() => ({
     getSignedDownloadUrl: vi.fn(),
     recordAuditEvent: vi.fn(),
 }))
-vi.mock('keel/adapters/index', () => ({
+vi.mock('@sssb/kit/adapters/index', () => ({
     auth: { requireUser: h.requireUser },
     db: {},
     storage: { createUploadTarget: h.createUploadTarget, getSignedDownloadUrl: h.getSignedDownloadUrl },
 }))
-vi.mock('keel/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
-vi.mock('keel/db/org-lookup', () => ({ orgIdForSlug: h.orgIdForSlug }))
-vi.mock('keel/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
+vi.mock('@sssb/kit/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
+vi.mock('@sssb/kit/db/org-lookup', () => ({ orgIdForSlug: h.orgIdForSlug }))
+vi.mock('@sssb/kit/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
 vi.mock('@/domain/db/attachments', () => ({ createAttachment: h.createAttachment, listAttachments: h.listAttachments }))
 
 function user(overrides: Partial<AuthUser> = {}): AuthUser {
@@ -156,7 +156,7 @@ describe('GET /api/attachments (list)', () => {
     })
 
     test('401 when no one is signed in', async () => {
-        const { AuthRequiredError } = await import('keel/ports/errors')
+        const { AuthRequiredError } = await import('@sssb/kit/ports/errors')
         h.requireUser.mockRejectedValue(new AuthRequiredError())
         expect((await GET()).status).toBe(401)
     })

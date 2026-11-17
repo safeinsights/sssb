@@ -1,0 +1,288 @@
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { mkdir, open, readdir, readFile, rm } from 'node:fs/promises'
+import path from 'node:path'
+import { NotFoundError, PreconditionFailedError } from '../../ports/errors'
+import type {
+    CopyOptions,
+    StoragePort,
+    StoredObject,
+    StoredObjectInfo,
+    UploadConstraints,
+    UploadTarget,
+} from '../../ports/storage'
+import { stageCopy, writeFileAtomic, writeFileAtomicSync, type StagedCopy } from './atomic-write'
+import { dataDir } from './data-dir'
+
+const META_SUFFIX = '.meta.json'
+const UPLOAD_SECRET_FILE = 'upload-secret'
+/** In-flight temp file from writeFileAtomic (`<target>.<pid>.<uuid>.tmp`). */
+const TEMP_FILE = /\.\d+\.[0-9a-f-]{36}\.tmp$/
+
+/** Resolve a storage key inside the base dir, refusing path escapes. */
+function resolveKey(key: string): string {
+    const base = dataDir('storage')
+    const resolved = path.resolve(base, key)
+    if (!resolved.startsWith(base + path.sep)) throw new Error(`invalid storage key: ${key}`)
+    return resolved
+}
+
+/**
+ * The store shares one directory with the fake's own bookkeeping (a `<key>.meta.json` sidecar per
+ * object, plus the upload secret at the root), and `list` hides those by name. So a key that could BE
+ * one is never an object: `put` refuses it rather than silently overwriting the bookkeeping, `get`
+ * finds nothing, and `delete` leaves it alone. Real S3 would accept such a key; keep keys off these names.
+ */
+function isReserved(key: string): boolean {
+    return key.endsWith(META_SUFFIX) || resolveKey(key) === path.join(dataDir('storage'), UPLOAD_SECRET_FILE)
+}
+
+/** True for a regular file. A directory is not an object, though `existsSync` says yes to it. */
+function isFile(file: string): boolean {
+    return statSync(file, { throwIfNoEntry: false })?.isFile() === true
+}
+
+/**
+ * Size, modification time and ETag of ONE version of a file. All three come from a single open handle, so a
+ * writer that renames a new file over this one (every write here does) leaves the handle on the old inode:
+ * the size and the hash are of the same bytes. The ETag is a double-quoted SHA-256 of the bytes, shaped like
+ * S3's (quotes included) so a caller that mishandles the quotes fails here too; it is opaque by contract.
+ */
+async function inspect(file: string): Promise<{ size: number; mtime: Date; etag: string }> {
+    const handle = await open(file, 'r')
+    try {
+        const { size, mtime } = await handle.stat()
+        const hash = createHash('sha256')
+        for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk as Buffer)
+        return { size, mtime, etag: `"${hash.digest('hex')}"` }
+    } finally {
+        await handle.close()
+    }
+}
+
+/** Every file under `dir`, as `/`-separated paths relative to `root`. A missing `dir` is empty. */
+async function walk(root: string, dir: string): Promise<string[]> {
+    let entries
+    try {
+        entries = await readdir(dir, { withFileTypes: true })
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+        throw error
+    }
+    const nested = await Promise.all(
+        entries.map(async (entry) => {
+            const full = path.join(dir, entry.name)
+            if (entry.isDirectory()) return walk(root, full)
+            return [path.relative(root, full).split(path.sep).join('/')]
+        }),
+    )
+    return nested.flat()
+}
+
+/**
+ * Stable per-checkout HMAC secret for signing fake upload targets, mirroring fake auth's dev-secret
+ * (packages/kit/src/adapters/fake/auth.ts): a random 32-byte hex written once, 0600, and reused across restarts.
+ * Never used in real mode (AWS signs presigned POSTs there). It exists so the fake upload endpoint can
+ * prove a target it receives was minted by THIS server and not tampered with — the same trust model as
+ * the shared webhook secret, applied to a browser-facing form.
+ */
+function uploadSecret(): Buffer {
+    const file = path.join(dataDir('storage'), 'upload-secret')
+    // NOTE: existsSync-then-write is still a TOCTOU (two concurrent first-callers can both see
+    // "missing" and both mint a secret) — the atomic rename below only guarantees whichever write
+    // lands last is never a torn/spliced file, not that it's the only writer. Out of scope here;
+    // this mirrors the same accepted gap in auth.ts's dev-secret and service-auth.ts's key/webhook
+    // secrets, none of which are security-sensitive in simulated mode.
+    if (!existsSync(file)) writeFileAtomicSync(file, randomBytes(32).toString('hex'), { mode: 0o600 })
+    return Buffer.from(readFileSync(file, 'utf8'), 'utf8')
+}
+
+/** Upload targets die after 15 minutes — the same window createRealStorage gives an S3 presigned
+ *  POST, so fake and real agree that a minted target is short-lived, not a forever-capability to
+ *  silently swap an artifact's bytes after confirm. */
+const UPLOAD_TARGET_TTL_SECONDS = 900
+
+/** Canonical string the signature covers — order-fixed so signer and verifier never disagree. The
+ *  expiry is INSIDE the signature, so a caller can't extend a target's life by editing the field. */
+function canonical(key: string, contentType: string, maxBytes: number, expires: number): string {
+    return `${key}\n${contentType}\n${maxBytes}\n${expires}`
+}
+
+/** HMAC-SHA256 (hex) over the upload target's constraints — module-internal (mint signs, verify checks). */
+function signUploadFields(key: string, contentType: string, maxBytes: number, expires: number): string {
+    return createHmac('sha256', uploadSecret())
+        .update(canonical(key, contentType, maxBytes, expires))
+        .digest('hex')
+}
+
+/** The verified constraints carried by a fake upload target's signed fields. */
+export interface VerifiedUploadFields {
+    key: string
+    contentType: string
+    maxBytes: number
+}
+
+/**
+ * Verify the signed fields of a fake upload POST and return the constraints they attest to, or null
+ * when anything is missing/malformed or the signature doesn't match (a timing-safe compare). The fake
+ * upload endpoint calls this FIRST — a null result is the local twin of S3 rejecting a POST whose
+ * policy signature is wrong. Simulated-mode-only (NOT part of StoragePort).
+ */
+export function verifyUploadFields(fields: Record<string, string | undefined>): VerifiedUploadFields | null {
+    const key = fields.key
+    const contentType = fields['content-type']
+    const maxBytesRaw = fields['max-bytes']
+    const expiresRaw = fields.expires
+    const signature = fields.signature
+    if (!key || !contentType || !maxBytesRaw || !expiresRaw || !signature) return null
+    const maxBytes = Number(maxBytesRaw)
+    if (!Number.isInteger(maxBytes) || maxBytes < 0) return null
+    const expires = Number(expiresRaw)
+    if (!Number.isInteger(expires) || expires < 0) return null
+    const expected = signUploadFields(key, contentType, maxBytes, expires)
+    const got = Buffer.from(signature, 'utf8')
+    const want = Buffer.from(expected, 'utf8')
+    if (got.length !== want.length || !timingSafeEqual(got, want)) return null
+    // Expiry check AFTER the signature check, so the timestamp we trust is the one that was signed.
+    if (expires * 1000 < Date.now()) return null
+    return { key, contentType, maxBytes }
+}
+
+export const fakeStorage: StoragePort = {
+    async put(key, body, contentType) {
+        if (isReserved(key)) throw new Error(`invalid storage key: ${key} (reserved by the fake store)`)
+        const file = resolveKey(key)
+        await mkdir(path.dirname(file), { recursive: true })
+        await writeFileAtomic(file, body)
+        // Not JSON.stringify(..., null, 2) — this sidecar has never been pretty-printed and nothing
+        // reads it by hand, so writeFileAtomic (not writeJsonAtomic) keeps the byte-for-byte format.
+        await writeFileAtomic(`${file}.meta.json`, JSON.stringify({ contentType }))
+    },
+
+    async get(key): Promise<StoredObject | null> {
+        if (isReserved(key)) return null
+        const file = resolveKey(key)
+        if (!existsSync(file)) return null
+        const [body, meta] = await Promise.all([readFile(file), readFile(`${file}.meta.json`, 'utf8')])
+        return { body: new Uint8Array(body), contentType: (JSON.parse(meta) as { contentType: string }).contentType }
+    },
+
+    async list(prefix): Promise<string[]> {
+        // dataDir creates the store, so a fresh checkout lists as empty; the ENOENT guard in walk
+        // covers the store being wiped (world reset) between that call and the read.
+        const base = dataDir('storage')
+        const files = await walk(base, base)
+        return files
+            .filter((file) => !file.endsWith(META_SUFFIX) && file !== UPLOAD_SECRET_FILE && !TEMP_FILE.test(file))
+            .filter((key) => key.startsWith(prefix))
+            .sort()
+    },
+
+    async delete(keys) {
+        for (const key of keys) {
+            if (isReserved(key)) continue
+            const file = resolveKey(key)
+            await rm(file, { force: true })
+            await rm(`${file}${META_SUFFIX}`, { force: true })
+        }
+    },
+
+    async copy(from, to, options?: CopyOptions) {
+        // Refused first, as the real adapter refuses it (see there: S3 could read an empty or `*` as no condition).
+        if (options?.ifMatch !== undefined && (options.ifMatch.trim() === '' || options.ifMatch.trim() === '*')) {
+            throw new Error('storage copy: ifMatch must be the etag head returned, not empty and not "*"')
+        }
+        // `to` is checked as `put` checks a key it writes; `from` as `get` checks one it reads (a reserved
+        // name is never an object, so it is a missing source, not an invalid one). Either can still be an
+        // escape, which resolveKey refuses with the same error as everywhere else.
+        if (isReserved(to)) throw new Error(`invalid storage key: ${to} (reserved by the fake store)`)
+        const source = resolveKey(from)
+        const target = resolveKey(to)
+        // Compared as resolved paths: `a/../a` and `a` are one file here (S3 would see two keys, which is a
+        // quirk of every method of this fake, not of copy). Before the existence check, because the real
+        // adapter refuses it before any request and so cannot know whether the key exists.
+        if (source === target) throw new Error(`storage copy: source and destination are the same key: ${from}`)
+        if (isReserved(from) || !isFile(source)) throw new NotFoundError(`storage object not found: ${from}`)
+        await mkdir(path.dirname(target), { recursive: true })
+        // STAGE both files first, then publish. Nothing is visible at the destination until both copies exist
+        // whole, so a failure while staging (a full disk, a source deleted mid-copy) leaves no orphan sidecar.
+        const staged: StagedCopy[] = []
+        try {
+            staged.push(await stageCopy(`${source}${META_SUFFIX}`, `${target}${META_SUFFIX}`))
+            staged.push(await stageCopy(source, target))
+        } catch (error) {
+            await Promise.all(staged.map((copy) => copy.discard()))
+            // The source went away while it was being copied: it is a missing source, as it was a moment ago.
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !isFile(source)) {
+                throw new NotFoundError(`storage object not found: ${from}`)
+            }
+            throw error
+        }
+        const [sidecar, body] = staged as [StagedCopy, StagedCopy]
+        try {
+            // The precondition is checked on the staged copy of the body, which is the very bytes about to be
+            // published: what lands is exactly the version the etag names, even if a writer replaces the source
+            // meanwhile. (S3 evaluates `CopySourceIfMatch` with the copy; this is the fake's equivalent.)
+            if (options?.ifMatch !== undefined && (await inspect(body.file)).etag !== options.ifMatch) {
+                throw new PreconditionFailedError(
+                    `storage copy: ${from} is no longer the version ${options.ifMatch}; nothing was copied`,
+                )
+            }
+            // The sidecar first and the body LAST. The body is what makes a key exist (`get` and `list` both look
+            // for it), so `to` appears only once it is complete, with its content type already in place. The
+            // other order would leave a window where a new `to` has a body and no sidecar, and `get` would throw
+            // on the missing sidecar. Over an EXISTING `to` the content type changes a moment before the bytes
+            // do, and a source rewritten while it is being copied can pair one version's bytes with another's
+            // content type (S3 snapshots an object; `put` has the same gap between its own two files). A
+            // destination that is an existing DIRECTORY fails at the body, after the sidecar: the stray sidecar
+            // is invisible to `get` and `list`, and `put` fails on such a key the same way. It is a fake.
+            await sidecar.publish()
+            await body.publish()
+        } catch (error) {
+            await Promise.all(staged.map((copy) => copy.discard()))
+            throw error
+        }
+    },
+
+    async head(key): Promise<StoredObjectInfo | null> {
+        if (isReserved(key)) return null
+        const file = resolveKey(key)
+        if (!isFile(file)) return null
+        try {
+            const [{ size, mtime, etag }, meta] = await Promise.all([
+                inspect(file),
+                readFile(`${file}${META_SUFFIX}`, 'utf8'),
+            ])
+            const { contentType } = JSON.parse(meta) as { contentType: string }
+            return { size, contentType, etag, lastModified: mtime }
+        } catch (error) {
+            // Deleted between the check and the read: it is gone, as `get` finding no file would say.
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !isFile(file)) return null
+            throw error
+        }
+    },
+
+    async getSignedDownloadUrl(key): Promise<string> {
+        // Served by the simulated-mode-only /api/storage route; "signing" is meaningless locally.
+        return `/api/storage/${key.split('/').map(encodeURIComponent).join('/')}`
+    },
+
+    async createUploadTarget(key, { contentType, maxBytes }: UploadConstraints): Promise<UploadTarget> {
+        // Point the browser at the local fake upload endpoint and hand it signed constraints. The
+        // signature ties the target to THIS key/type/size ceiling AND a 15-minute expiry, so the
+        // endpoint can trust them without a session — the local stand-in for an S3 presigned POST
+        // policy (validated there by AWS, here by verifyUploadFields). resolveKey rejects escapes
+        // when the bytes finally land.
+        const expires = Math.floor(Date.now() / 1000) + UPLOAD_TARGET_TTL_SECONDS
+        return {
+            url: '/api/storage-upload',
+            fields: {
+                key,
+                'content-type': contentType,
+                'max-bytes': String(maxBytes),
+                expires: String(expires),
+                signature: signUploadFields(key, contentType, maxBytes, expires),
+            },
+        }
+    },
+}

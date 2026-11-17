@@ -26,5 +26,5 @@ half of this.
 None of these carry their own authorization — the capability finds and deletes; the caller (an admin
 route) decides whether this request is allowed.
 
-Evidence: `packages/keel/src/ports/auth.ts` (today's `AuthPort`, missing all three methods above),
-`packages/keel/src/ports/storage.ts` (`delete` now exists; erasure still has to call it).
+Evidence: `packages/kit/src/ports/auth.ts` (today's `AuthPort`, missing all three methods above),
+`packages/kit/src/ports/storage.ts` (`delete` now exists; erasure still has to call it).

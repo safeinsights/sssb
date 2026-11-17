@@ -2,7 +2,7 @@
 
 **Priority:** P2 · **Status:** open
 
-`AuthPort` (`packages/keel/src/ports/auth.ts`) can list members, create an invite, and read the
+`AuthPort` (`packages/kit/src/ports/auth.ts`) can list members, create an invite, and read the
 caller's own orgs — but nothing on the port lets an admin actually manage a team day to day: change
 someone's role, remove them, revoke a pending invite before it's accepted, or rename the org itself.
 An app wanting basic team administration has to build all of it outside the port.
@@ -22,6 +22,6 @@ membership relationship to that org at all — distinct from the caller's own `l
 only returns orgs the caller belongs to). A cross-org or cross-tenant caller (a paired external
 system naming another org by slug) has no way to read its name today.
 
-Evidence: `packages/keel/src/ports/auth.ts` (today's `AuthPort`, missing all of the above),
-`packages/keel/src/core/abilities.ts` (the `Membership` CASL rule a role-change/remove/revoke UI
+Evidence: `packages/kit/src/ports/auth.ts` (today's `AuthPort`, missing all of the above),
+`packages/kit/src/core/abilities.ts` (the `Membership` CASL rule a role-change/remove/revoke UI
 would authorize against).

@@ -1,4 +1,4 @@
-import { isSimulated, storage } from 'keel/adapters/index'
+import { isSimulated, storage } from '@sssb/kit/adapters/index'
 
 /** Serves fake-adapter storage objects locally (real mode uses S3 signed URLs instead). */
 export async function GET(_request: Request, context: { params: Promise<{ key: string[] }> }): Promise<Response> {

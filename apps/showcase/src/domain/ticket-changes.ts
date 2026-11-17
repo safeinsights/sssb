@@ -1,8 +1,8 @@
-import { auth } from 'keel/adapters/index'
-import { recordAuditEvent } from 'keel/db/audit'
-import type { DbPort } from 'keel/ports/db'
-import { notifyMember } from 'keel/server-lib/notify'
-import { makeNotifyDeps } from 'keel/server-lib/notify-deps'
+import { auth } from '@sssb/kit/adapters/index'
+import { recordAuditEvent } from '@sssb/kit/db/audit'
+import type { DbPort } from '@sssb/kit/ports/db'
+import { notifyMember } from '@sssb/kit/server-lib/notify'
+import { makeNotifyDeps } from '@sssb/kit/server-lib/notify-deps'
 import { type TicketView, updateTicket } from '@/domain/db/tickets'
 import type { TicketStatus } from '@/domain/tickets'
 

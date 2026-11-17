@@ -1,5 +1,5 @@
-import { exportKeyPrefix } from 'keel/core/jobs'
-import type { JobHandler } from 'keel/ports/jobs'
+import { exportKeyPrefix } from '@sssb/kit/core/jobs'
+import type { JobHandler } from '@sssb/kit/ports/jobs'
 import { ANALYZABLE_KIND } from '@/domain/attachments'
 
 /** How much of a bundle is shown to the model. A ceiling, not a guess: a log bundle can be megabytes,
@@ -22,7 +22,7 @@ const ANALYSIS_SYSTEM =
  * replays a committed fixture, and because the prompt carries LIVE bundle bytes it will not hash-match
  * a recorded entry, so replay falls through to the purpose's DEFAULT entry — which is authored to read
  * like a real analysis. That fall-through is the fixture mechanism working as designed (see
- * keel/adapters/fake/llm.ts): a canned utterance over a live effect.
+ * @sssb/kit/adapters/fake/llm.ts): a canned utterance over a live effect.
  *
  * The payload names WHICH attachment to analyze: `{ attachmentId }`. An absent or foreign id is a
  * handler ERROR (the job fails and says why) rather than a silent empty analysis — a job that reports
@@ -56,7 +56,7 @@ export const analyzeBundleHandler: JobHandler = async (payload, ctx) => {
 
     // TRUST: the bundle is customer-supplied content flowing into the model's context, so its output is
     // UNTRUSTED — the handler only STORES it (it never branches on it, and no privileged action reads
-    // it). See the trust model in keel/ports/llm.ts.
+    // it). See the trust model in @sssb/kit/ports/llm.ts.
     const { text: analysis } = await llm.complete({
         purpose: 'bundle-analysis',
         system: ANALYSIS_SYSTEM,

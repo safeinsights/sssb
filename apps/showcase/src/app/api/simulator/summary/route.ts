@@ -1,7 +1,7 @@
-import { auth, isSimulated } from 'keel/adapters/index'
-import { listAllPeople, readInvites } from 'keel/adapters/fake/auth'
-import { readSimulatorState, readViewpointCookie, type PersonKey } from 'keel/adapters/fake/simulator'
-import { listCaughtEmails } from 'keel/adapters/fake/email'
+import { auth, isSimulated } from '@sssb/kit/adapters/index'
+import { listAllPeople, readInvites } from '@sssb/kit/adapters/fake/auth'
+import { readSimulatorState, readViewpointCookie, type PersonKey } from '@sssb/kit/adapters/fake/simulator'
+import { listCaughtEmails } from '@sssb/kit/adapters/fake/email'
 import { findOrg } from '@app/seed'
 import { withPortErrors } from '../../respond'
 

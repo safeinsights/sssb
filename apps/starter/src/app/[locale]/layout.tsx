@@ -6,10 +6,10 @@ import { hasLocale, NextIntlClientProvider } from 'next-intl'
 import { setRequestLocale } from 'next-intl/server'
 import { notFound } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { auth, isDemoMode } from 'keel/adapters/index'
-import { DemoBadge } from 'keel/components/demo-badge'
-import { routing } from 'keel/i18n/routing'
-import { getTenantTheme } from 'keel/theme'
+import { auth, isDemoMode } from '@sssb/kit/adapters/index'
+import { DemoBadge } from '@sssb/kit/components/demo-badge'
+import { routing } from '@sssb/kit/i18n/routing'
+import { getTenantTheme } from '@sssb/kit/theme'
 import { tenants } from '@/seed'
 
 export const metadata = {
@@ -32,7 +32,7 @@ export default async function LocaleLayout({
     setRequestLocale(locale)
 
     // The theming seam (ADR-0005): the ACTIVE tenant drives the theme. Signed-out pages fall back to
-    // this app's FIRST seeded tenant rather than keel's DEFAULT_TENANT_SLUG, which names the
+    // this app's FIRST seeded tenant rather than SSSB's DEFAULT_TENANT_SLUG, which names the
     // showcase's world — see the seam notes in docs/adopting.md.
     const user = await auth.getCurrentUser()
     const theme = getTenantTheme(user?.tenantSlug ?? tenants[0]!.slug)

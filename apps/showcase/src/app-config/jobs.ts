@@ -1,11 +1,11 @@
-import type { JobHandler } from 'keel/ports/jobs'
-import { digestEmailHandler } from 'keel/jobs/digest-email'
+import type { JobHandler } from '@sssb/kit/ports/jobs'
+import { digestEmailHandler } from '@sssb/kit/jobs/digest-email'
 import { analyzeBundleHandler } from '@/jobs/analyze-bundle'
 import { exportTicketsHandler } from '@/jobs/export-tickets'
 import { analyzerOrgSlug } from './actors'
 
 /**
- * The APP's job registrations (the seam side of packages/keel/src/core/jobs.ts, ADR-0012). Kinds compose like
+ * The APP's job registrations (the seam side of packages/kit/src/core/jobs.ts, ADR-0012). Kinds compose like
  * migrations do: the framework owns statuses/machine/exportKeyPrefix + FRAMEWORK_JOB_KINDS; the app
  * registers its OWN kinds + handlers here. A real adopter replaces this file (its own kinds/handlers).
  *

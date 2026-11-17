@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { NotFoundError } from 'keel/ports/errors'
+import { NotFoundError } from '@sssb/kit/ports/errors'
 
 const state = vi.hoisted(() => ({ fake: false, produce: vi.fn() }))
 
-vi.mock('keel/adapters/index', () => ({
+vi.mock('@sssb/kit/adapters/index', () => ({
     get isSimulated() {
         return state.fake
     },
 }))
-vi.mock('keel/adapters/fake/jobs', () => ({ produceJobArtifact: state.produce }))
+vi.mock('@sssb/kit/adapters/fake/jobs', () => ({ produceJobArtifact: state.produce }))
 
 function post(body: unknown): Promise<Response> {
     const request = new Request('http://localhost/api/simulator/actors/artifact', {

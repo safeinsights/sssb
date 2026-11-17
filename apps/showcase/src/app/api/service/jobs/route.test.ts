@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { AuthRequiredError } from 'keel/ports/errors'
-import type { ServiceIdentity } from 'keel/service-auth/verify'
+import { AuthRequiredError } from '@sssb/kit/ports/errors'
+import type { ServiceIdentity } from '@sssb/kit/service-auth/verify'
 import { GET } from './route'
 
 // Unit-level: the real verify + db are mocked so the route's own logic (auth gate, status guard,
 // response shape) is exercised without crypto or pglite. Mocking '@/adapters' also dodges server-only.
 const h = vi.hoisted(() => ({ verify: vi.fn(), list: vi.fn() }))
-vi.mock('keel/adapters/index', () => ({ db: {} }))
-vi.mock('keel/service-auth/verify', () => ({ verifyServiceCaller: h.verify }))
-vi.mock('keel/db/jobs', () => ({ listServiceJobs: h.list }))
+vi.mock('@sssb/kit/adapters/index', () => ({ db: {} }))
+vi.mock('@sssb/kit/service-auth/verify', () => ({ verifyServiceCaller: h.verify }))
+vi.mock('@sssb/kit/db/jobs', () => ({ listServiceJobs: h.list }))
 
 const identity: ServiceIdentity = {
     kind: 'org-service',

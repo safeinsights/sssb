@@ -1,6 +1,6 @@
 # ADR-0014 — keel ships as versioned packages, renamed SSSB: the framework, its fences and its scaffold
 
-- Status: Proposed
+- Status: Accepted
 - Approver: JP Slavinsky
 - Date: 2026-11-17
 - Supersedes, if accepted: [ADR-0013](0013-upstream-updates-fork-and-merge.md)
@@ -828,3 +828,22 @@ and merged by `jpslav`.
 **Pages' critical path is P0, the new repository, P1, P2, P3, P4, then P5 and P6, P7, P8**, with the copyright
 assignment before P7. It is a single line: P1 and P3 both edit most of the framework's files, and P4, P5 and P6
 all touch the root `package.json`, the lockfile and `knip.json`. P1b, P9 and P10 run beside it. P11 has landed (#62).
+
+## Addendum — 2026-11-17: accepted, and carried out from P1
+
+JP accepted every decision in this ADR, D1–D11, and had it merged into `jpslav/keel` as jpslav/keel#56 on
+2026-11-17. `jpslav/keel`'s history was then copied to `safeinsights/sssb`, and P1, the move and rename, is the
+first PR there. The Status line above now says Accepted; nothing else in the body changed. "Supersedes, if
+accepted" still holds as written: ADR-0013 describes how updates arrive today, and it becomes Superseded at P15,
+when the generator replaces fork and merge.
+
+Two details of P1 that the body did not pin down:
+
+- **The seam is an optional peer declared in `peerDependenciesMeta` alone.** Listing `@sssb/app-config` in
+  `peerDependencies` as well, with `optional: true`, made `pnpm install` in this workspace request it from the
+  registry (404): pnpm 11 installs a workspace project's own peers for its development, optional or not. Declared
+  only in `peerDependenciesMeta`, it is still an optional peer of any version, and a consumer that links its own
+  `@sssb/app-config` gets it linked into the kit's directory in the virtual store (checked with a packed tarball
+  and a `link:` seam outside the workspace). P2's pack and consume is the standing test of that.
+- **PR numbers in the dated records and the ADR bodies refer to `jpslav/keel`**, including this ADR's own; the ADR
+  index says so once rather than an addendum on every ADR (`docs/decision-log.md`, 2026-11-17, P1).

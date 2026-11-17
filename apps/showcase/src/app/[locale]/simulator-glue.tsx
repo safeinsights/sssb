@@ -4,22 +4,26 @@ import { useTranslations } from 'next-intl'
 import { usePathname } from 'next/navigation'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ActorsApp, type ActorSlot } from 'keel/components/simulator/actors-app'
-import { SimulatorPanel, type SimulatorExtraTab, type SimulatorNotice } from 'keel/components/simulator/simulator-panel'
-import type { Person } from 'keel/components/simulator/people-app'
-import type { ScrubResult } from 'keel/components/simulator/errors-app'
-import type { AnalyticsEvent, AuditEntry } from 'keel/components/simulator/events-app'
-import type { HookDeliveryRow, HookEndpointRow } from 'keel/components/simulator/hooks-app'
-import type { InboundComposeInput, InboundEmailRow } from 'keel/components/simulator/inbound-app'
-import type { ScheduleRowLike, WorldJobLike } from 'keel/components/simulator/jobs-app'
-import type { MailItem } from 'keel/components/simulator/mail-app'
-import type { SmsMessageRow } from 'keel/components/simulator/messages-app'
-import type { FeatureFlag, Snapshot, SnapshotAgreement } from 'keel/components/simulator/snapshots-app'
-import { resolveWorldStart } from 'keel/core/presets'
-import { useTours } from 'keel/demo-static/tour/use-tours'
-import { actors } from '@app-config/actors'
-import { presets } from '@app-config/presets'
-import { tabs as appSimulatorTabs } from '@app-config/simulator'
+import { ActorsApp, type ActorSlot } from '@sssb/kit/components/simulator/actors-app'
+import {
+    SimulatorPanel,
+    type SimulatorExtraTab,
+    type SimulatorNotice,
+} from '@sssb/kit/components/simulator/simulator-panel'
+import type { Person } from '@sssb/kit/components/simulator/people-app'
+import type { ScrubResult } from '@sssb/kit/components/simulator/errors-app'
+import type { AnalyticsEvent, AuditEntry } from '@sssb/kit/components/simulator/events-app'
+import type { HookDeliveryRow, HookEndpointRow } from '@sssb/kit/components/simulator/hooks-app'
+import type { InboundComposeInput, InboundEmailRow } from '@sssb/kit/components/simulator/inbound-app'
+import type { ScheduleRowLike, WorldJobLike } from '@sssb/kit/components/simulator/jobs-app'
+import type { MailItem } from '@sssb/kit/components/simulator/mail-app'
+import type { SmsMessageRow } from '@sssb/kit/components/simulator/messages-app'
+import type { FeatureFlag, Snapshot, SnapshotAgreement } from '@sssb/kit/components/simulator/snapshots-app'
+import { resolveWorldStart } from '@sssb/kit/core/presets'
+import { useTours } from '@sssb/kit/demo-static/tour/use-tours'
+import { actors } from '@sssb/app-config/actors'
+import { presets } from '@sssb/app-config/presets'
+import { tabs as appSimulatorTabs } from '@sssb/app-config/simulator'
 
 interface Summary {
     viewpoint: string | null
@@ -154,8 +158,8 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     const [notices, setNotices] = useState<SimulatorNotice[]>([])
     const noticeSeq = useRef(0)
     const prevUnread = useRef<Map<string, number> | null>(null)
-    // Scripted walkthroughs (@app-config/tours, read by the engine itself). A tour's starting world
-    // resolves the same way on every host (keel/core/presets.ts): reset, then a registered demo preset,
+    // Scripted walkthroughs (@sssb/app-config/tours, read by the engine itself). A tour's starting world
+    // resolves the same way on every host (@sssb/kit/core/presets.ts): reset, then a registered demo preset,
     // then — this host only — a saved snapshot. Each of those reloads the page, so the engine's resume
     // marker is what carries the tour across it.
     const tours = useTours({
@@ -605,7 +609,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     // Load a demo preset: the server resets the world, replays the preset and signs THIS browser in as
-    // its viewpoint (keel/server-lib/demo-presets.ts), then answers where to land — a full reload, like
+    // its viewpoint (@sssb/kit/server-lib/demo-presets.ts), then answers where to land — a full reload, like
     // a restore, because the world underneath every RSC just changed.
     function handleLoadPreset(id: string): Promise<boolean> {
         setBusyPreset(id)
@@ -695,7 +699,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
         [jobsData.jobs],
     )
 
-    // The app's Simulator tabs (Actors today) — registered on the seam (@app-config/simulator) so the
+    // The app's Simulator tabs (Actors today) — registered on the seam (@sssb/app-config/simulator) so the
     // panel stays app-blind; composed here with the cross-tenant job data this glue already polls, and
     // slotted by the panel between Hooks and Errors. Content is app-owned and host-built (ADR-0006);
     // Actors is the only app tab today, so a second would branch on tab.id below.

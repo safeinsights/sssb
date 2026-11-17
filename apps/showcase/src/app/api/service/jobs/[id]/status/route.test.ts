@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { InvalidTransitionError } from 'keel/core/state-machine'
-import { AuthRequiredError, ForbiddenError } from 'keel/ports/errors'
-import type { ServiceIdentity } from 'keel/service-auth/verify'
+import { InvalidTransitionError } from '@sssb/kit/core/state-machine'
+import { AuthRequiredError, ForbiddenError } from '@sssb/kit/ports/errors'
+import type { ServiceIdentity } from '@sssb/kit/service-auth/verify'
 import { POST } from './route'
 
 const h = vi.hoisted(() => ({
@@ -11,13 +11,13 @@ const h = vi.hoisted(() => ({
     authorize: vi.fn(),
     realAuthorize: { fn: undefined as undefined | ((...args: unknown[]) => void) },
 }))
-vi.mock('keel/adapters/index', () => ({ db: {} }))
-vi.mock('keel/service-auth/verify', () => ({ verifyServiceCaller: h.verify }))
-vi.mock('keel/db/jobs', () => ({ jobForOrg: h.jobForOrg, recordJobStatus: h.record }))
+vi.mock('@sssb/kit/adapters/index', () => ({ db: {} }))
+vi.mock('@sssb/kit/service-auth/verify', () => ({ verifyServiceCaller: h.verify }))
+vi.mock('@sssb/kit/db/jobs', () => ({ jobForOrg: h.jobForOrg, recordJobStatus: h.record }))
 // A spy over the REAL authorize: every case below runs the framework's machine rules for real, and
 // one case swaps in a denial to prove the route stops before it writes.
-vi.mock('keel/authz/authorize', async (importOriginal) => {
-    const real = await importOriginal<typeof import('keel/authz/authorize')>()
+vi.mock('@sssb/kit/authz/authorize', async (importOriginal) => {
+    const real = await importOriginal<typeof import('@sssb/kit/authz/authorize')>()
     h.realAuthorize.fn = real.authorize as (...args: unknown[]) => void
     return { ...real, authorize: h.authorize }
 })

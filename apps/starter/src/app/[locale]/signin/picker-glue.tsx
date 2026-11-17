@@ -1,6 +1,6 @@
 'use client'
 
-import { PeoplePicker, type PickerPerson } from 'keel/components/auth/people-picker'
+import { PeoplePicker, type PickerPerson } from '@sssb/kit/components/auth/people-picker'
 
 /** Client half of the simulated-mode sign-in: pick a person, POST it, land wherever we came from. */
 export function PickerGlue({ people, returnTo }: { people: PickerPerson[]; returnTo: string }) {

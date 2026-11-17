@@ -1,8 +1,8 @@
 import { findOrg } from '@app/seed'
 import { getTranslations, setRequestLocale } from 'next-intl/server'
-import { isSimulated } from 'keel/adapters/index'
-import { findInvite } from 'keel/adapters/fake/auth'
-import { AcceptInviteShell, type AcceptInviteState } from 'keel/components/auth/accept-invite-screen'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { findInvite } from '@sssb/kit/adapters/fake/auth'
+import { AcceptInviteShell, type AcceptInviteState } from '@sssb/kit/components/auth/accept-invite-screen'
 import { AcceptInviteGlue } from './accept-glue'
 
 // Public route (outside the (protected) group), mirroring signin/page.tsx's structure: simulated mode
@@ -22,7 +22,7 @@ export default async function AcceptInvitePage({
 
     if (!isSimulated) {
         const [{ RealAcceptInviteForm }, t] = await Promise.all([
-            import('keel/adapters/real/accept-invite-form'),
+            import('@sssb/kit/adapters/real/accept-invite-form'),
             getTranslations('acceptInvite'),
         ])
         return (

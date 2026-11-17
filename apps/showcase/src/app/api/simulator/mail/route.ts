@@ -1,8 +1,8 @@
-import { isSimulated } from 'keel/adapters/index'
-import { findInvite, listAllPeople } from 'keel/adapters/fake/auth'
-import { readSimulatorState, type PersonKey } from 'keel/adapters/fake/simulator'
-import { type CaughtEmail, listCaughtEmails } from 'keel/adapters/fake/email'
-import type { MailItem } from 'keel/components/simulator/mail-app'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { findInvite, listAllPeople } from '@sssb/kit/adapters/fake/auth'
+import { readSimulatorState, type PersonKey } from '@sssb/kit/adapters/fake/simulator'
+import { type CaughtEmail, listCaughtEmails } from '@sssb/kit/adapters/fake/email'
+import type { MailItem } from '@sssb/kit/components/simulator/mail-app'
 import { withPortErrors } from '../../respond'
 
 function toMailItems(emails: CaughtEmail[]): MailItem[] {

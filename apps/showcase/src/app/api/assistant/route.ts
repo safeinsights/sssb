@@ -1,6 +1,6 @@
-import { ASSISTANT_COMPOSE_SYSTEM, assistantComposePurpose, assistantConfig } from '@app-config/assistant'
-import { analytics, auth, db, llm } from 'keel/adapters/index'
-import { assistantExecutor } from 'keel/server-lib/assistant'
+import { ASSISTANT_COMPOSE_SYSTEM, assistantComposePurpose, assistantConfig } from '@sssb/app-config/assistant'
+import { analytics, auth, db, llm } from '@sssb/kit/adapters/index'
+import { assistantExecutor } from '@sssb/kit/server-lib/assistant'
 import { resolveOrgContext } from '../org-context'
 import { withPortErrors } from '../respond'
 

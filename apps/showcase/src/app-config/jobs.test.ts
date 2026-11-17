@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { isJobKind } from 'keel/core/jobs'
+import { isJobKind } from '@sssb/kit/core/jobs'
 import { appJobHandlers, appJobKinds, jobHandlers, serviceManagedOrgSlugs } from './jobs'
 
 // The APP's job registrations, and proof they compose into the framework's isJobKind + dispatch map.

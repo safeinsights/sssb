@@ -35,7 +35,7 @@ export async function up(db: Kysely<any>): Promise<void> {
         .execute()
 
     // org_id is the list filter (WHERE org_id = active org), so it is indexed like the other tables'.
-    // The queue is also PAGED (keel/db/keyset), which wants a composite (tenant, org, created_at desc,
+    // The queue is also PAGED (@sssb/kit/db/keyset), which wants a composite (tenant, org, created_at desc,
     // id desc) on top of this one — added in 1004 because the paging came later. A new table you
     // intend to page should carry that index here, in its own create migration, rather than trailing
     // one behind it.

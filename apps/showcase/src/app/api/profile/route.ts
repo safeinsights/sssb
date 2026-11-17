@@ -1,5 +1,5 @@
-import { auth } from 'keel/adapters/index'
-import { LOCALES, type Locale } from 'keel/core/locale'
+import { auth } from '@sssb/kit/adapters/index'
+import { LOCALES, type Locale } from '@sssb/kit/core/locale'
 import { withPortErrors } from '../respond'
 
 export async function POST(request: Request): Promise<Response> {

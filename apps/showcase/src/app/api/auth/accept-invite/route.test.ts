@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 
 // Production containment (design invariant): 404s outside simulated mode, first line, same pattern as
 // /api/auth/dev-signin and every /api/simulator/* route.
-vi.mock('keel/adapters/index', () => ({ isSimulated: false }))
+vi.mock('@sssb/kit/adapters/index', () => ({ isSimulated: false }))
 
 describe('POST /api/auth/accept-invite', () => {
     test('404s outside simulated mode', async () => {

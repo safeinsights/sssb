@@ -24,23 +24,19 @@ import {
 } from './lint-text'
 
 /**
- * Two of ADR-0012's fences are no-restricted-imports groups: the framework/app fence (keel and its fixture
- * reach app content only through `@app-config/*`) and keel/core's framework ban (ADR-0006). That rule sees
- * import and export DECLARATIONS only, so until `keel/no-dynamic-app-import` and
- * `keel/no-dynamic-framework-import-in-core` existed, `import('@app/seed')` in keel's server-lib and
- * `export type T = import('@/domain/tickets').Ticket` in keel's fixture linted clean. The second is the
+ * Two of ADR-0012's fences are no-restricted-imports groups: the framework/app fence (SSSB and its fixture
+ * reach app content only through `@sssb/app-config/*`) and @sssb/kit/core's framework ban (ADR-0006). That rule sees
+ * import and export DECLARATIONS only, so until `sssb/no-dynamic-app-import` and
+ * `sssb/no-dynamic-framework-import-in-core` existed, `import('@app/seed')` in SSSB's server-lib and
+ * `export type T = import('@/domain/tickets').Ticket` in SSSB's fixture linted clean. The second is the
  * type-only escape the fixture's fence exists to stop: erased at runtime, resolved by the root tsc, and
  * broken only at `pnpm init-app --eject-showcase`.
  *
  * The new rules read the same patterns through the same matchers as no-restricted-imports (eslint.config.mjs,
  * `patternMatcher`), and the parity table below holds them to it, specifier by specifier.
  */
-const KEEL = [
-    'packages/keel/src/server-lib/kv.ts',
-    'packages/keel/src/adapters/real/kv.ts',
-    'packages/keel/src/core/kv.ts',
-]
-const FIXTURE = 'packages/keel/test-fixture/domain/kv.ts'
+const KIT = ['packages/kit/src/server-lib/kv.ts', 'packages/kit/src/adapters/real/kv.ts', 'packages/kit/src/core/kv.ts']
+const FIXTURE = 'packages/kit/test-fixture/domain/kv.ts'
 
 describe('the framework/app fence holds outside declarations', () => {
     const forms: [string, string][] = [
@@ -51,7 +47,7 @@ describe('the framework/app fence holds outside declarations', () => {
         ['typeof import()', "export type Seed = typeof import('@app/seed')\n"],
     ]
 
-    describe.each([...KEEL, FIXTURE, 'packages/keel/src/components/kv-panel.mjs'])('%s', (file) => {
+    describe.each([...KIT, FIXTURE, 'packages/kit/src/components/kv-panel.mjs'])('%s', (file) => {
         // A `.mjs` file has no type positions, so it gets the runtime forms only.
         const applicable = file.endsWith('.mjs') ? forms.filter(([form]) => !form.includes('type')) : forms
         it.each(applicable)('may not reach app content by %s', async (_form, code) => {
@@ -59,25 +55,25 @@ describe('the framework/app fence holds outside declarations', () => {
         })
     })
 
-    it('a keel test may not load app content with vi.importActual either', async () => {
+    it('an SSSB test may not load app content with vi.importActual either', async () => {
         const code = "import { vi } from 'vitest'\nexport const load = () => vi.importActual('@app/seed')\n"
-        expect(fired(await lint('packages/keel/src/server-lib/kv.test.ts', code), APP_CODE_DYNAMIC)).toBe(1)
+        expect(fired(await lint('packages/kit/src/server-lib/kv.test.ts', code), APP_CODE_DYNAMIC)).toBe(1)
     })
 
     // TypeScript's `import m = require()` is a declaration to no-restricted-imports (TSImportEqualsDeclaration), so
     // the pattern's own half bans it, and the declarationless rule leaves it alone: one finding, not two.
-    it.each([...KEEL, FIXTURE])('%s may not reach app content by import = require() either', async (file) => {
+    it.each([...KIT, FIXTURE])('%s may not reach app content by import = require() either', async (file) => {
         const findings = await lint(file, "import seed = require('@app/seed')\nexport { seed }\n")
         expect(fired(findings, APP_CODE_STATIC)).toBe(1)
         expect(fired(findings, APP_CODE_DYNAMIC)).toBe(0)
     })
 
-    it('the seam stays open: @app-config/* by import() or in a type', async () => {
+    it('the seam stays open: @sssb/app-config/* by import() or in a type', async () => {
         const code = [
-            "export const load = () => import('@app-config/jobs')",
+            "export const load = () => import('@sssb/app-config/jobs')",
             // a seam module whose path happens to contain an apps/ segment is still the seam
-            "export const registry = () => import('@app-config/apps/registry')",
-            "export type Jobs = import('@app-config/jobs').AppJobs",
+            "export const registry = () => import('@sssb/app-config/apps/registry')",
+            "export type Jobs = import('@sssb/app-config/jobs').AppJobs",
             "export const local = () => import('./local')",
         ].join('\n')
         expect(fired(await lint(FIXTURE, code), APP_CODE_DYNAMIC)).toBe(0)
@@ -107,8 +103,8 @@ describe('the framework/app fence holds outside declarations', () => {
     })
 })
 
-describe('keel/core stays framework-free outside declarations', () => {
-    const CORE = 'packages/keel/src/core/kv.ts'
+describe('@sssb/kit/core stays framework-free outside declarations', () => {
+    const CORE = 'packages/kit/src/core/kv.ts'
 
     it.each([
         ['import()', "export const load = () => import('next/headers')\n"],
@@ -133,7 +129,7 @@ describe('keel/core stays framework-free outside declarations', () => {
 
     it('outside core the framework ban does not apply', async () => {
         const code = "export const load = () => import('react-dom/client')\n"
-        expect(fired(await lint('packages/keel/src/server-lib/kv.ts', code), CORE_DYNAMIC)).toBe(0)
+        expect(fired(await lint('packages/kit/src/server-lib/kv.ts', code), CORE_DYNAMIC)).toBe(0)
     })
 })
 
@@ -164,12 +160,12 @@ describe('the two halves of each fence read the group the same way', () => {
         '@app/seed',
         '@app/seed/world',
         '@app/seedling',
-        '@app-config/jobs',
+        '@sssb/app-config/jobs',
         // a `..` in a package or alias specifier climbs out of it (bareTraversalPattern, a regex: compiled `iu`
         // by no-restricted-imports, so by the declarationless half too)
-        '@app-config/../seed',
-        '@app-config/..\\proxy',
-        '@app-config/x/../y',
+        '@sssb/app-config/../seed',
+        '@sssb/app-config/..\\proxy',
+        '@sssb/app-config/x/../y',
         '@scope/../../apps/showcase/src/domain/tickets',
         '@SCOPE/../../apps/showcase/src/domain/tickets',
         'lodash/../../packages/seed/src/index',
@@ -178,8 +174,8 @@ describe('the two halves of each fence read the group the same way', () => {
         '@\\..\\..\\apps\\showcase\\src\\domain\\tickets',
         '@//../../apps/showcase/src/domain/tickets',
         // ...but not one that does not climb
-        '@app-config/apps/registry',
-        '@app-config/x..y',
+        '@sssb/app-config/apps/registry',
+        '@sssb/app-config/x..y',
         // a specifier two patterns match is two findings, in BOTH halves: each reports every pattern it matches
         '@/../domain/tickets',
         '@app/seed/../world',
@@ -193,8 +189,8 @@ describe('the two halves of each fence read the group the same way', () => {
         './node_modules-cache/x',
     ]
     const halves: [string, string, Fence, Fence][] = [
-        ['keel/core', 'packages/keel/src/core/kv.ts', CORE_STATIC, CORE_DYNAMIC],
-        ['the framework/app fence', 'packages/keel/src/server-lib/kv.ts', APP_CODE_STATIC, APP_CODE_DYNAMIC],
+        ['@sssb/kit/core', 'packages/kit/src/core/kv.ts', CORE_STATIC, CORE_DYNAMIC],
+        ['the framework/app fence', 'packages/kit/src/server-lib/kv.ts', APP_CODE_STATIC, APP_CODE_DYNAMIC],
         ['the fixture', FIXTURE, APP_CODE_STATIC, APP_CODE_DYNAMIC],
     ]
 
@@ -209,7 +205,7 @@ describe('the two halves of each fence read the group the same way', () => {
     })
 
     it('the table is not vacuous: some specifiers are banned in each zone, and some are not', async () => {
-        const core = 'packages/keel/src/core/kv.ts'
+        const core = 'packages/kit/src/core/kv.ts'
         expect(fired(await lint(core, "export const l = () => import('@x/react')\n"), CORE_DYNAMIC)).toBe(1)
         expect(fired(await lint(core, "export const l = () => import('nextra')\n"), CORE_DYNAMIC)).toBe(0)
         expect(fired(await lint(FIXTURE, "export const l = () => import('@app/seed/world')\n"), APP_CODE_DYNAMIC)).toBe(
@@ -219,8 +215,8 @@ describe('the two halves of each fence read the group the same way', () => {
     })
 })
 
-// The same app code by PATH: `../../../../apps/showcase/src/domain/tickets` from keel's server-lib is the file
-// the app's `@/*` alias names, and `../../../seed/src/index` is `@app/seed`. keel/no-path-to-app-code resolves a
+// The same app code by PATH: `../../../../apps/showcase/src/domain/tickets` from SSSB's server-lib is the file
+// the app's `@/*` alias names, and `../../../seed/src/index` is `@app/seed`. sssb/no-path-to-app-code resolves a
 // relative or absolute path against the importing file and reports it if it lands in apps/ or packages/seed/,
 // in a declaration and everywhere else alike.
 describe('a path into app code crosses the framework/app fence too', () => {
@@ -242,7 +238,7 @@ describe('a path into app code crosses the framework/app fence too', () => {
         ['import = require()', `import m = require(${at})\nexport { m }\n`],
     ]
 
-    describe.each([...KEEL, FIXTURE, 'packages/keel/src/server-lib/kv.test.ts'])('%s', (file) => {
+    describe.each([...KIT, FIXTURE, 'packages/kit/src/server-lib/kv.test.ts'])('%s', (file) => {
         describe.each([
             ['an app', 'apps/showcase/src/domain/tickets'],
             ['the seed package', 'packages/seed/src/index'],
@@ -277,8 +273,8 @@ describe('a path into app code crosses the framework/app fence too', () => {
     // written out): the path rule judges where it lands, and the traversal ban, which is for package specifiers,
     // stays out of it.
     it.each([
-        ['into apps/', 'packages/keel/../../apps/showcase/src/domain/tickets.ts', 1],
-        ['anywhere else', 'packages/keel/../../tests/support/tmp-dir.ts', 0],
+        ['into apps/', 'packages/kit/../../apps/showcase/src/domain/tickets.ts', 1],
+        ['anywhere else', 'packages/kit/../../tests/support/tmp-dir.ts', 0],
     ])('a file: URL with a `..` %s', async (_where, rest, expected) => {
         const url = `${pathToFileURL(process.cwd()).href}/${rest}`
         const declared = await lint(FIXTURE, `import { x } from ${JSON.stringify(url)}\nexport { x }\n`)
@@ -289,8 +285,8 @@ describe('a path into app code crosses the framework/app fence too', () => {
         expect(fired(loaded, APP_CODE_DYNAMIC)).toBe(0)
     })
 
-    it('every other path out of keel stays open: its own modules, and the repo’s test helpers', async () => {
-        const file = 'packages/keel/src/server-lib/kv.test.ts'
+    it('every other path out of SSSB stays open: its own modules, and the repo’s test helpers', async () => {
+        const file = 'packages/kit/src/server-lib/kv.test.ts'
         const code = [
             "import { a } from '../core/x'",
             `import { b } from ${JSON.stringify(pathFrom(file, 'tests/support/tmp-dir'))}`,
@@ -303,8 +299,8 @@ describe('a path into app code crosses the framework/app fence too', () => {
     })
 
     it('a `..` that is part of a name, not a segment, climbs nowhere', async () => {
-        const code = "import { a } from '@app-config/x..y'\nimport { b } from 'pkg/a..b/c'\nexport { a, b }\n"
-        expect(fired(await lint('packages/keel/src/server-lib/kv.ts', code), BARE_TRAVERSAL_STATIC)).toBe(0)
+        const code = "import { a } from '@sssb/app-config/x..y'\nimport { b } from 'pkg/a..b/c'\nexport { a, b }\n"
+        expect(fired(await lint('packages/kit/src/server-lib/kv.ts', code), BARE_TRAVERSAL_STATIC)).toBe(0)
     })
 
     it('an app reaching another app by path is not this fence’s business', async () => {
@@ -313,15 +309,15 @@ describe('a path into app code crosses the framework/app fence too', () => {
         expect(fired(await lint(file, code), APP_CODE_PATH)).toBe(0)
     })
 
-    // `@scope/../../apps/…` and `@app-config/../seed` are package and alias specifiers, not paths: TypeScript
+    // `@scope/../../apps/…` and `@sssb/app-config/../seed` are package and alias specifiers, not paths: TypeScript
     // resolves them out of node_modules or the seam into app code. bareTraversalPattern bans the `..`, in both
     // halves (the parity table holds them together). A specifier that is also the app's alias is that pattern's
     // finding too: two, not one, since no pattern exempts what another bans.
-    describe.each([...KEEL, FIXTURE])('%s', (file) => {
+    describe.each([...KIT, FIXTURE])('%s', (file) => {
         it.each([
-            ['@app-config/../seed', 1],
-            ['@app-config/../domain/tickets', 1],
-            ['@app-config/x/../../seed', 1],
+            ['@sssb/app-config/../seed', 1],
+            ['@sssb/app-config/../domain/tickets', 1],
+            ['@sssb/app-config/x/../../seed', 1],
             ['@scope/../../apps/showcase/src/domain/tickets', 1],
             ['lodash/../../packages/seed/src/index', 1],
             // a name that starts with a dot is a package name, not a path: only `./` and `../` are relative
@@ -347,7 +343,7 @@ describe('a path into app code crosses the framework/app fence too', () => {
     // so a specifier through node_modules reaches app code by where pnpm put it rather than by its name, whether
     // it is spelled as a package or as a path. nodeModulesPathPattern bans it in both halves; the path rule
     // leaves it to that pattern, so it is one finding, not two.
-    describe.each([...KEEL, FIXTURE])('%s', (file) => {
+    describe.each([...KIT, FIXTURE])('%s', (file) => {
         it.each([
             '.pnpm/node_modules/showcase/src/domain/tickets',
             'node_modules/@app/seed/src/index',
@@ -367,7 +363,7 @@ describe('a path into app code crosses the framework/app fence too', () => {
     it('a name that merely contains node_modules is not one', async () => {
         const code =
             "import { a } from './node_modules-cache/x'\nimport { b } from '@scope/my_node_modules'\nexport { a, b }\n"
-        const findings = await lint('packages/keel/src/server-lib/kv.ts', code)
+        const findings = await lint('packages/kit/src/server-lib/kv.ts', code)
         expect(fired(findings, NODE_MODULES_STATIC)).toBe(0)
     })
 
@@ -379,7 +375,7 @@ describe('a path into app code crosses the framework/app fence too', () => {
         symlinkSync(process.cwd(), link, 'dir')
         try {
             const eslint = new ESLint({ cwd: link })
-            const file = 'packages/keel/src/server-lib/kv.ts'
+            const file = 'packages/kit/src/server-lib/kv.ts'
             const lintThrough = async (code: string) => {
                 const [result] = await eslint.lintText(code, { filePath: path.join(link, file) })
                 expect(
@@ -399,9 +395,9 @@ describe('a path into app code crosses the framework/app fence too', () => {
     })
 })
 
-// JSX in keel/core imports react/jsx-runtime without naming it ("jsx": "react-jsx" in tsconfig.json), so
+// JSX in @sssb/kit/core imports react/jsx-runtime without naming it ("jsx": "react-jsx" in tsconfig.json), so
 // neither half of core's import ban can see it. The JSX itself is the finding: each outermost element or fragment.
-describe('keel/core holds no JSX', () => {
+describe('@sssb/kit/core holds no JSX', () => {
     it.each([
         ['an element', 'export const C = () => <div>{1}</div>\n'],
         [
@@ -410,27 +406,27 @@ describe('keel/core holds no JSX', () => {
         ],
         ['a fragment', 'export const C = () => <>{1}</>\n'],
     ])('%s', async (_form, code) => {
-        expect(fired(await lint('packages/keel/src/core/view.tsx', code), JSX_IN_CORE)).toBe(1)
+        expect(fired(await lint('packages/kit/src/core/view.tsx', code), JSX_IN_CORE)).toBe(1)
     })
 
     // Each outermost element is a finding, so a disable comment on one does not hide the next.
     it('two elements are two findings, and disabling one leaves the other', async () => {
         const two = 'export const A = () => <div>{1}</div>\nexport const B = () => <span>{2}</span>\n'
-        expect(fired(await lint('packages/keel/src/core/view.tsx', two), JSX_IN_CORE)).toBe(2)
+        expect(fired(await lint('packages/kit/src/core/view.tsx', two), JSX_IN_CORE)).toBe(2)
         const disabled =
-            '// eslint-disable-next-line keel/no-jsx-in-core\nexport const A = () => <div>{1}</div>\n' +
+            '// eslint-disable-next-line sssb/no-jsx-in-core\nexport const A = () => <div>{1}</div>\n' +
             'export const B = () => <span>{2}</span>\n'
-        expect(fired(await lint('packages/keel/src/core/view.tsx', disabled), JSX_IN_CORE)).toBe(1)
+        expect(fired(await lint('packages/kit/src/core/view.tsx', disabled), JSX_IN_CORE)).toBe(1)
     })
 
     it('a .jsx file in core too', async () => {
         const code = 'export const C = () => <p>{1}</p>\n'
-        expect(fired(await lint('packages/keel/src/core/view.jsx', code), JSX_IN_CORE)).toBe(1)
+        expect(fired(await lint('packages/kit/src/core/view.jsx', code), JSX_IN_CORE)).toBe(1)
     })
 
     it('outside core, JSX is just JSX', async () => {
         const code = 'export const C = () => <div>{1}</div>\n'
-        expect(fired(await lint('packages/keel/src/components/kv-panel.tsx', code), JSX_IN_CORE)).toBe(0)
+        expect(fired(await lint('packages/kit/src/components/kv-panel.tsx', code), JSX_IN_CORE)).toBe(0)
     })
 })
 
@@ -439,11 +435,11 @@ describe('keel/core holds no JSX', () => {
 describe('a vendor SDK named in a type import() is still a vendor import', () => {
     const code = "export type Client = import('@aws-sdk/client-s3').S3Client\n"
 
-    it.each([`${APP}/src/domain/kv.ts`, 'packages/keel/src/server-lib/kv.ts', FIXTURE])('%s may not', async (file) => {
+    it.each([`${APP}/src/domain/kv.ts`, 'packages/kit/src/server-lib/kv.ts', FIXTURE])('%s may not', async (file) => {
         expect(fired(await lint(file, code), VENDOR_DYNAMIC)).toBe(1)
     })
 
-    it.each([`${APP}/src/adapters/real/kv.ts`, 'packages/keel/src/adapters/real/kv.ts'])('%s may', async (file) => {
+    it.each([`${APP}/src/adapters/real/kv.ts`, 'packages/kit/src/adapters/real/kv.ts'])('%s may', async (file) => {
         expect(fired(await lint(file, code), VENDOR_DYNAMIC)).toBe(0)
     })
 })
@@ -453,13 +449,13 @@ describe('a vendor SDK named in a type import() is still a vendor import', () =>
 describe('a vendor SDK reached by import = require() is one finding, from the declaration half', () => {
     const code = "import s3 = require('@aws-sdk/client-s3')\nexport { s3 }\n"
 
-    it.each([`${APP}/src/domain/kv.ts`, 'packages/keel/src/server-lib/kv.ts', FIXTURE])('%s may not', async (file) => {
+    it.each([`${APP}/src/domain/kv.ts`, 'packages/kit/src/server-lib/kv.ts', FIXTURE])('%s may not', async (file) => {
         const findings = await lint(file, code)
         expect(fired(findings, VENDOR_STATIC)).toBe(1)
         expect(fired(findings, VENDOR_DYNAMIC)).toBe(0)
     })
 
-    it.each([`${APP}/src/adapters/real/kv.ts`, 'packages/keel/src/adapters/real/kv.ts'])('%s may', async (file) => {
+    it.each([`${APP}/src/adapters/real/kv.ts`, 'packages/kit/src/adapters/real/kv.ts'])('%s may', async (file) => {
         const findings = await lint(file, code)
         expect(fired(findings, VENDOR_STATIC) + fired(findings, VENDOR_DYNAMIC)).toBe(0)
     })

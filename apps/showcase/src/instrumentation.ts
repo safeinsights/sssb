@@ -5,7 +5,7 @@
 export async function register(): Promise<void> {
     if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return
     if (process.env.NEXT_RUNTIME === 'nodejs' || process.env.NEXT_RUNTIME === 'edge') {
-        const { initServerSentry } = await import('keel/adapters/sentry/init')
+        const { initServerSentry } = await import('@sssb/kit/adapters/sentry/init')
         initServerSentry()
     }
 }

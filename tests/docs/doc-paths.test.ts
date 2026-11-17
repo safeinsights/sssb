@@ -4,7 +4,7 @@ import { citedPaths, doctrineDocs, resolves } from './doc-set'
 /**
  * The docs must not send you somewhere that no longer exists.
  *
- * When the framework moved to `packages/keel` (ADR-0012), four doctrine documents and all three
+ * When the framework moved to `packages/kit` (ADR-0012), four doctrine documents and all three
  * recipes kept teaching `src/ports`, `src/adapters`, `src/core` — paths the lint fence now rejects. The
  * docs said one thing and the tree said another, and nothing caught it. This is the catch: the same
  * discipline `authorized-mutations.test.ts` applies to routes, applied to prose.

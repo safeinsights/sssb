@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { resetWorld } from 'keel/adapters/fake/simulator-admin'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { resetWorld } from '@sssb/kit/adapters/fake/simulator-admin'
 import { withPortErrors } from '../../respond'
 
 /**

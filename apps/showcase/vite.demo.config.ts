@@ -19,8 +19,8 @@ export default defineConfig({
     },
     resolve: {
         alias: {
-            '@app-config': path.resolve(__dirname, 'src/app-config'),
-            keel: path.resolve(__dirname, '../../packages/keel/src'),
+            '@sssb/app-config': path.resolve(__dirname, 'src/app-config'),
+            '@sssb/kit': path.resolve(__dirname, '../../packages/kit/src'),
             '@': path.resolve(__dirname, 'src'),
             '@app/seed': path.resolve(__dirname, '../../packages/seed/src/index.ts'),
         },

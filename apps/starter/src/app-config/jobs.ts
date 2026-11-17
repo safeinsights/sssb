@@ -1,8 +1,8 @@
-import type { JobHandler } from 'keel/ports/jobs'
-import { digestEmailHandler } from 'keel/jobs/digest-email'
+import type { JobHandler } from '@sssb/kit/ports/jobs'
+import { digestEmailHandler } from '@sssb/kit/jobs/digest-email'
 
 /**
- * The APP's job registrations (the seam side of keel/core/jobs.ts, ADR-0012).
+ * The APP's job registrations (the seam side of @sssb/kit/core/jobs.ts, ADR-0012).
  *
  * EMPTY REGISTRATION: no app job kinds, so `AppJobKind` is `never` and `JobKind` collapses to the
  * framework's own. `jobHandlers` is still the composition root the fake jobs adapter consumes, and it

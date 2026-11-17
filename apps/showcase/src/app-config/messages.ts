@@ -1,11 +1,11 @@
-import type { MessageTree } from 'keel/i18n/messages'
+import type { MessageTree } from '@sssb/kit/i18n/messages'
 
 /**
- * The APP's i18n registration (the seam side of keel/i18n/namespaces.ts, ADR-0012). The catalogs are
+ * The APP's i18n registration (the seam side of @sssb/kit/i18n/namespaces.ts, ADR-0012). The catalogs are
  * PHYSICALLY split along the namespace partition: the framework owns FRAMEWORK_NAMESPACES in
- * `packages/keel/src/i18n/messages/*.json`; this app owns APP_NAMESPACES in `apps/showcase/messages/*.json`.
+ * `packages/kit/src/i18n/messages/*.json`; this app owns APP_NAMESPACES in `apps/showcase/messages/*.json`.
  * Together they partition the merged catalog (DISJOINT + exhaustive), enforced by
- * keel/i18n/namespaces.test.ts.
+ * @sssb/kit/i18n/namespaces.test.ts.
  *
  * `actors`, `appNotifications`, `tours` and `presets` are here because the copy for an app-registered
  * Simulator actor, notification kind, walkthrough and demo preset belongs to the app that

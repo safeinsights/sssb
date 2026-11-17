@@ -54,7 +54,7 @@ lint fail the gate otherwise — and the "items route" comment in `apps/starter/
 
 ## Three things that make this more than a deletion script
 
-1. **Zero tables and zero subjects is unproven.** The starter and `packages/keel/test-fixture` each
+1. **Zero tables and zero subjects is unproven.** The starter and `packages/kit/test-fixture` each
    register one of both, and the "empty" column in the adopting guide's seam table says "(starter
    registers one)" for exactly those two rows. `AppSubjectType = never` and an empty `AppTables` may
    well compile — and an empty interface will trip `@typescript-eslint/no-empty-object-type` the way
@@ -70,14 +70,14 @@ lint fail the gate otherwise — and the "items route" comment in `apps/starter/
    `CLAUDE.md` cite the showcase's `1001_tickets.ts`, which an eject has already deleted. A blank app
    has nothing to copy from. Either the reference moves into a recipe
    under `docs/recipes/`, or `--blank` leaves the migration behind as an unregistered template, or the
-   scaffolds learn to cite `packages/keel/test-fixture`. Decide this first; it changes the other two.
+   scaffolds learn to cite `packages/kit/test-fixture`. Decide this first; it changes the other two.
 
 ## How to write the edits
 
 Scripted surgery on TypeScript source is the fragile part. Two ways to avoid regex-editing code:
 
 - **Whole-file replacement from a checked-in blank variant.** Robust at run time, but the variants are
-  a third app in disguise: they must typecheck and lint against keel or they rot.
+  a third app in disguise: they must typecheck and lint against SSSB or they rot.
 - **A `/strip-starter` agent command** in `.claude/commands/` that walks the list above and ends on
   `pnpm verify`. Cheap, and consistent with how the scaffolds already work, but an agent recipe is not
   a gate and CI cannot run it.

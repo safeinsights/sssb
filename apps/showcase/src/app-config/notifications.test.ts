@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { APP_NOTIFICATION_NAMESPACE, isNotificationKind, notificationCopy } from 'keel/core/notifications'
-import { resolveEnabledChannels } from 'keel/core/notifications'
+import { APP_NOTIFICATION_NAMESPACE, isNotificationKind, notificationCopy } from '@sssb/kit/core/notifications'
+import { resolveEnabledChannels } from '@sssb/kit/core/notifications'
 import { appNotificationKinds } from './notifications'
 
 // The APP's notification kinds, and proof they compose into the framework registry + copy mapping
@@ -40,7 +40,7 @@ describe('app notification kinds', () => {
     })
 
     it('resolves APP copy in the APP catalog namespace, not the framework one', () => {
-        // The contract that keeps app vocabulary out of keel's catalog: notificationCopy stamps the
+        // The contract that keeps app vocabulary out of SSSB's catalog: notificationCopy stamps the
         // namespace, so the bell/email/SMS look the app's keys up in the app's own messages.
         for (const kind of appNotificationKinds) {
             const copy = notificationCopy(kind, {

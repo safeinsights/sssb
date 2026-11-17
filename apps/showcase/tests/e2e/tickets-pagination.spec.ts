@@ -4,7 +4,7 @@ import { pickOrg } from './support/org-switcher'
 import { signInAs } from './support/people'
 
 /**
- * The paged queue (keel/db/keyset), end to end through the real stack: UI → GET /api/tickets → the
+ * The paged queue (@sssb/kit/db/keyset), end to end through the real stack: UI → GET /api/tickets → the
  * keyset pager → RLS on pglite.
  *
  * The assertions are deliberately about PROPERTIES rather than exact contents, because this spec runs

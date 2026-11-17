@@ -1,7 +1,7 @@
 # Recipe: per-person cloud dev workspaces (Coder)
 
 A product that hands each person their own hosted development environment — a browser-reachable IDE on a
-sandboxed container or VM — needs a seam to provision, resume, stop and reach it. keel ships none. This
+sandboxed container or VM — needs a seam to provision, resume, stop and reach it. SSSB ships none. This
 is the written-down plan for building that seam against [Coder](https://coder.com)'s REST API; per the
 recipe doctrine (`docs/development-approach.md`), the plan is the deliverable and nothing here is built.
 
@@ -19,27 +19,27 @@ template ships"):
 Fails both → recipe. There is a second reason to write it down instead of lifting an existing
 implementation: the one that exists chose its adapter from the backend's own env vars rather than from
 `APP_MODE`, and let product vocabulary into the adapter registry. Both break doctrine here — adapter
-selection is `APP_MODE`-driven in `packages/keel/src/adapters/index.ts`, and the framework tree names
+selection is `APP_MODE`-driven in `packages/kit/src/adapters/index.ts`, and the framework tree names
 no app's domain. §5 says how to get the one legitimate use of that first choice without the damage.
 
 ## 2. The port
 
 Scaffold with `/new-port workspace` (`.claude/commands/new-port.md`), which first asks whose port it is.
-This recipe predates app-owned ports and assumes keel's: if only your app will call it, the same three
+This recipe predates app-owned ports and assumes SSSB's: if only your app will call it, the same three
 files can live in your app instead (`docs/recipes/app-owned-adapter.md`), and a fork is better off that
-way (ADR-0013). Be clear about where keel's answer lands:
-the command writes under `packages/keel/src/ports/`, `packages/keel/src/adapters/fake/` and
-`packages/keel/src/adapters/real/` and wires the registry in `packages/keel/src/adapters/index.ts` — in
+way (ADR-0013). Be clear about where SSSB's answer lands:
+the command writes under `packages/kit/src/ports/`, `packages/kit/src/adapters/fake/` and
+`packages/kit/src/adapters/real/` and wires the registry in `packages/kit/src/adapters/index.ts` — in
 your repo that tree is yours to extend, but it is also the published surface. Nothing becomes importable
-as `keel/ports/workspace` until you add the line to `packages/keel/package.json`'s `exports` map
-deliberately (the `keel/public-surface` lint rule reads that map). The port itself stays generic — it
+as `@sssb/kit/ports/workspace` until you add the line to `packages/kit/package.json`'s `exports` map
+deliberately (the `sssb/public-surface` lint rule reads that map). The port itself stays generic — it
 names no backend and no product, the way `llm` names no model vendor — so it belongs there; anything
 about _what your workspaces are for_ stays in `apps/<app>/src/domain`.
 
 Size it to what the app needs, not to Coder's API. Ask `/new-port` for these four operations and no more:
 
 ```ts
-// packages/keel/src/ports/workspace.ts (SKETCH)
+// packages/kit/src/ports/workspace.ts (SKETCH)
 export interface WorkspaceOwner {
     username: string // the backend's identifier; URLs are built from it, not from email or display name
     email: string // the join key with your identity system
@@ -85,10 +85,10 @@ owner and everything they own; §6 is the part of that which bites.
 
 ## 3. The fake
 
-`packages/keel/src/adapters/fake/workspace.ts`, fully offline. keel's convention is to persist fakes
-under `dataDir()` (`packages/keel/src/adapters/fake/data-dir.ts`) with the atomic writer, so the world
+`packages/kit/src/adapters/fake/workspace.ts`, fully offline. SSSB's convention is to persist fakes
+under `dataDir()` (`packages/kit/src/adapters/fake/data-dir.ts`) with the atomic writer, so the world
 survives a dev-server restart; if you do, add the directory to `LIVE_DIRS` in
-`packages/keel/src/adapters/fake/simulator-admin.ts` or Snapshots reset and restore will silently skip
+`packages/kit/src/adapters/fake/simulator-admin.ts` or Snapshots reset and restore will silently skip
 it. In-memory is also defensible — a workspace is a live resource, not a record — as long as you say so
 in the file header. Whichever you pick, the fake must be _honest about the rules that bite_:
 
@@ -105,7 +105,7 @@ in the file header. Whichever you pick, the fake must be _honest about the rules
 
 ## 4. The real adapter (outline)
 
-`packages/keel/src/adapters/real/workspace.ts`. Coder's API is plain HTTPS, so no vendor SDK is involved
+`packages/kit/src/adapters/real/workspace.ts`. Coder's API is plain HTTPS, so no vendor SDK is involved
 and nothing is added to `vendorSdkPattern` — it is `fetch` plus a per-request timeout (15 s is a sane
 default; a hung request otherwise pins a poller forever) and a `Coder-Session-Token` header. Wrap
 non-2xx responses in a small error class carrying `status`, so callers special-case codes instead of
@@ -136,9 +136,9 @@ owner login type are non-secret parameters: they go in `apps/<app>/config/params
 same keys: `tests/tooling/app-scaffold.test.ts`), per CLAUDE.md, each carrying a `// cutover: workspace-backend` comment. The admin token is a
 secret: params holds only its _name_ (`adminTokenName: 'PLACEHOLDER_CODER_TOKEN_NAME'`), the value comes
 from your secret store into the environment, and the adapter is the only module that reads it. Register
-the env vars in `packages/keel/src/adapters/real/index.ts`'s `REQUIRED_ENV` only if every deployment of
+the env vars in `packages/kit/src/adapters/real/index.ts`'s `REQUIRED_ENV` only if every deployment of
 your app provisions workspaces; otherwise build the adapter lazily and throw `CutoverPendingError`
-(`packages/keel/src/ports/errors.ts`) on first use, so a deployment that never touches workspaces is not
+(`packages/kit/src/ports/errors.ts`) on first use, so a deployment that never touches workspaces is not
 forced to configure Coder.
 
 Also: Coder will refuse to create an `oidc` owner until OIDC is configured, so a deployment without it
@@ -148,20 +148,20 @@ and discarded unread. The owner never needs to sign in to Coder — access arriv
 ## 5. Selection
 
 Like every other port: `APP_MODE` decides. Add `workspace` to the `RealPorts` shape in
-`packages/keel/src/adapters/real/index.ts` and the registry line follows the pattern already there:
+`packages/kit/src/adapters/real/index.ts` and the registry line follows the pattern already there:
 
 ```ts
 export const workspace: WorkspacePort = real?.workspace ?? fakeWorkspace
 ```
 
 Simulated mode serves the fake, always; that is what keeps `pnpm dev`, the e2e suite and the static demo
-hermetic. `process.env` is read only inside an adapters directory (here `packages/keel/src/adapters`), so config reaches the adapter
+hermetic. `process.env` is read only inside an adapters directory (here `packages/kit/src/adapters`), so config reaches the adapter
 there and nowhere else.
 
 The temptation is a demo that is _simulated everywhere except workspaces_ — a real backend proving
 itself inside an otherwise canned app. Doctrine allows it only as an **explicit, named override**, not
 as the real adapter turning itself on whenever its env vars happen to be present: a single
-`WORKSPACE_BACKEND=real` switch, read in `packages/keel/src/adapters/index.ts`, composing
+`WORKSPACE_BACKEND=real` switch, read in `packages/kit/src/adapters/index.ts`, composing
 `createRealWorkspace(...)` into the registry in place of the fake. Be honest about what that costs:
 you now have a second run-mode axis, so "simulated" no longer means "no network"; the override must
 fail closed (set but unconfigured → `CutoverPendingError`, never a quiet fall back to the fake);
@@ -212,13 +212,13 @@ backend's source rather than observed, it says so — your first cutover run is 
 ## 7. Testing
 
 Write the contract as one shared function over a `WorkspacePort`, the way
-`packages/keel/src/db/rls-proofs.ts` is one proof set run by both the pglite suite and
-`pnpm test:contract`. Put it at `packages/keel/src/ports/workspace-contract.ts` (cited by both suites),
+`packages/kit/src/db/rls-proofs.ts` is one proof set run by both the pglite suite and
+`pnpm test:contract`. Put it at `packages/kit/src/ports/workspace-contract.ts` (cited by both suites),
 and cover: create then `status` (phase advances to `running`); `ensure` twice is idempotent and leaves
 parameters alone; `stop` then `ensure` resumes; a missing workspace is `gone`; an email-bound-to-another-
 username throws the typed conflict; `mintAccess` returns a token whose `expiresAt` honours the lifetime.
 
-- **Fake half** — a colocated unit test in `packages/keel/src/adapters/fake/`, in the `keel` vitest
+- **Fake half** — a colocated unit test in `packages/kit/src/adapters/fake/`, in the `kit` vitest
   project (`vitest.config.ts`), no credentials, runs in `pnpm verify`.
 - **Real half** — a test beside your app's contract suite in `apps/<app>/tests/contract/`, run by
   `pnpm test:contract`, which `pnpm verify` does not run. Skip it unless the config is present

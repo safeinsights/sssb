@@ -5,8 +5,8 @@ import * as m1003 from './1003_attachments'
 import * as m1004 from './1004_tickets_keyset_index'
 
 /**
- * The APP's migrations (the seam side of packages/keel/src/db/migrations, ADR-0012). Numbering convention: framework
- * 0001–0999, app ≥1001. Composed into the framework registry (packages/keel/src/db/migrations/index.ts), which Kysely
+ * The APP's migrations (the seam side of packages/kit/src/db/migrations, ADR-0012). Numbering convention: framework
+ * 0001–0999, app ≥1001. Composed into the framework registry (packages/kit/src/db/migrations/index.ts), which Kysely
  * runs NAME-SORTED — so these run AFTER every framework table exists. Safe because app tables only
  * reference framework tables (organizations), never the reverse. A real adopter replaces these with its
  * own ≥1001 migrations. Add new app migrations here in order.

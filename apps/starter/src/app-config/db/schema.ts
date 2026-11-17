@@ -1,7 +1,7 @@
 import type { Generated } from 'kysely'
 
 /**
- * The APP's tenant-scoped tables (the seam side of keel/db/schema.ts, ADR-0012). The framework owns its
+ * The APP's tenant-scoped tables (the seam side of @sssb/kit/db/schema.ts, ADR-0012). The framework owns its
  * tables + the `DB` interface, which `extends AppTables` (a type-only seam import). Kept in lockstep
  * with the migrations in ./migrations (numbered ≥1001).
  */
@@ -17,7 +17,7 @@ interface ItemsTable {
     created_at: Generated<string>
 }
 
-/** The app's tables, merged into the framework `DB` interface (keel/db/schema.ts `extends AppTables`). */
+/** The app's tables, merged into the framework `DB` interface (@sssb/kit/db/schema.ts `extends AppTables`). */
 export interface AppTables {
     items: ItemsTable
 }

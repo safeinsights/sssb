@@ -7,7 +7,7 @@
 // this file: the script is repo-scoped but the artifact is app-scoped (apps/<app>/dist-demo), so each app runs
 // it from its own directory (`pnpm --filter <app> check:demo-size`).
 //
-// THIS FILE IS KEEL'S, and an upstream merge (ADR-0013) may change it, so nothing in it is ever yours to edit.
+// THIS FILE IS SSSB'S, and an upstream merge (ADR-0013) may change it, so nothing in it is ever yours to edit.
 // To change an app's number, re-set it in that app's package.json and record what changed and why in
 // apps/<app>/DEMO-SIZE.md beside it, in its own commit: what grew, by how much, and how much headroom you left
 // on purpose. (The starter ships one, saying what its number is for and how it got there.)

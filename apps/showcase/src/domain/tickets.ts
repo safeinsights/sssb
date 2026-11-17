@@ -1,4 +1,4 @@
-import { defineStateMachine } from 'keel/core/state-machine'
+import { defineStateMachine } from '@sssb/kit/core/state-machine'
 
 /**
  * The ticket — the desk's unit of work. PURE TypeScript, no framework imports beyond core (ADR-0006,

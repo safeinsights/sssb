@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { makeTestTmpDir } from '../../../../../../tests/support/tmp-dir'
-import { fakeStorage } from 'keel/adapters/fake/storage'
+import { fakeStorage } from '@sssb/kit/adapters/fake/storage'
 import { POST } from './route'
 
 // Point fake-adapter state at a throwaway dir BEFORE any storage call (the HMAC secret + the bytes
@@ -10,8 +10,8 @@ import { POST } from './route'
 // route from @/adapters/fake/storage) stays real.
 const tmp = makeTestTmpDir('app-upload-')
 const adaptersState = vi.hoisted(() => ({ fake: true }))
-vi.mock('keel/adapters/index', async () => {
-    const actual = await import('keel/adapters/fake/storage')
+vi.mock('@sssb/kit/adapters/index', async () => {
+    const actual = await import('@sssb/kit/adapters/fake/storage')
     return {
         get isSimulated() {
             return adaptersState.fake

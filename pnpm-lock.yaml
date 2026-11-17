@@ -14,9 +14,9 @@ importers:
       '@mantine/hooks':
         specifier: ^9.7.3
         version: 9.8.0(react@19.2.8)
-      keel:
+      '@sssb/kit':
         specifier: workspace:*
-        version: link:packages/keel
+        version: link:packages/kit
       next:
         specifier: ^16.4.6
         version: 16.4.6(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -147,9 +147,9 @@ importers:
       '@sentry/nextjs':
         specifier: ^10.75.2
         version: 10.78.0(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(next@16.4.6(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(webpack@5.108.4(esbuild@0.28.2)(lightningcss@1.33.0)(postcss@8.5.33))
-      keel:
+      '@sssb/kit':
         specifier: workspace:*
-        version: link:../../packages/keel
+        version: link:../../packages/kit
       kysely:
         specifier: ^0.29.7
         version: 0.29.9
@@ -202,9 +202,9 @@ importers:
       '@mantine/core':
         specifier: ^9.7.3
         version: 9.8.0(@mantine/hooks@9.8.0(react@19.2.8))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      keel:
+      '@sssb/kit':
         specifier: workspace:*
-        version: link:../../packages/keel
+        version: link:../../packages/kit
       kysely:
         specifier: ^0.29.7
         version: 0.29.9
@@ -247,7 +247,7 @@ importers:
         specifier: ^2.1146.0
         version: 2.1148.1
 
-  packages/keel:
+  packages/kit:
     dependencies:
       '@anthropic-ai/sdk':
         specifier: ^0.115.0
@@ -331,9 +331,9 @@ importers:
 
   packages/seed:
     dependencies:
-      keel:
+      '@sssb/kit':
         specifier: workspace:*
-        version: link:../keel
+        version: link:../kit
 
   spikes/kysely-pglite:
     devDependencies:
@@ -4802,9 +4802,6 @@ packages:
   jose@6.2.17:
     resolution: {integrity: sha512-wOuK9V1yujQFH5S0ZWmLcDZN7+IKh9bUCC2ZPCf2HDlol3WWHy+PPyNjEI75FXRLMp3vDKQcupP59xhVU95hcg==}
 
-  jose@6.2.4:
-    resolution: {integrity: sha512-N8acGzVsQy6M/fjFcxtysNc4Q379TcM5dM/qKkNtsHFji88yANnXTr7BLeP75iPnFwBfQzM/jg2BZ9+HZrHCZA==}
-
   js-cookie@3.0.8:
     resolution: {integrity: sha512-yeJd4aNAdYZQjaon2bpD/Gb0B/omw7HQOsynXXcOiWVCacbBcPlgn8S/d1X6blFSaHao7ozqtW7NZW19xpCtIw==}
 
@@ -5862,11 +5859,6 @@ packages:
 
   prettier@3.2.5:
     resolution: {integrity: sha512-3/GWa9aOC0YeD7LUfvOG2NiDyhOWRvt1k+rcKhOuYnMY24iiCphgneUfJDyFXd6rZCAnuLBv6UeAULtrhT/F4A==}
-    engines: {node: '>=14'}
-    hasBin: true
-
-  prettier@3.9.6:
-    resolution: {integrity: sha512-OpN0zzVdiaiAhxpuuj5efpIS4sY9j7bY6uR5mnj5yPzGkdkjNKSJeUThPb60Jw29QuAZgA4o+/iB49kFiaBX6g==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -8230,7 +8222,7 @@ snapshots:
       express: 5.2.1
       express-rate-limit: 8.6.1(express@5.2.1)
       hono: 4.12.32
-      jose: 6.2.4
+      jose: 6.2.17
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
@@ -8844,7 +8836,7 @@ snapshots:
   '@react-email/render@2.0.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       html-to-text: 9.0.5
-      prettier: 3.9.6
+      prettier: 3.10.1
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
 
@@ -8853,7 +8845,7 @@ snapshots:
       entities: 4.5.0
       html-to-text: 10.0.1
       html5parser: 3.0.0
-      prettier: 3.9.6
+      prettier: 3.10.1
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
 
@@ -11641,8 +11633,6 @@ snapshots:
 
   jose@6.2.17: {}
 
-  jose@6.2.4: {}
-
   js-cookie@3.0.8: {}
 
   js-tokens@10.0.0: {}
@@ -12913,8 +12903,6 @@ snapshots:
   prettier@3.10.1: {}
 
   prettier@3.2.5: {}
-
-  prettier@3.9.6: {}
 
   pretty-format@27.5.1:
     dependencies:

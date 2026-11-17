@@ -1,13 +1,13 @@
 # Recipe: SMS via Twilio
 
-keel ships the `sms` notification channel with a fake catch-store and a deliberate no-op in real
+SSSB ships the `sms` notification channel with a fake catch-store and a deliberate no-op in real
 mode. This is the written-down plan for the instance-side swap — follow it when a real deployment needs
 to actually send text messages. Nothing here is built; this page is the deliverable (see
 `docs/development-approach.md`'s realtime-collab recipe for the precedent this one copies).
 
 ## 1. The seam is already there — implement against it
 
-`packages/keel/src/server-lib/sms.ts` defines the whole interface:
+`packages/kit/src/server-lib/sms.ts` defines the whole interface:
 
 ```ts
 export interface SmsMessage {
@@ -21,17 +21,17 @@ export type SmsChannel = (message: SmsMessage) => Promise<void>
 
 `sendSms` picks the fake in simulated mode and falls through to a no-op comment in real mode. Wiring Twilio means
 replacing that real-mode branch — either inline or by dispatching to a small adapter behind it, the same shape
-`dispatchWebhook` uses for `fakeDispatchWebhook`. `packages/keel/src/server-lib/notify.ts` (the fan-out)
+`dispatchWebhook` uses for `fakeDispatchWebhook`. `packages/kit/src/server-lib/notify.ts` (the fan-out)
 depends only on the `SmsChannel` type, so it needs no change at all.
 
 ## 2. Where the vendor SDK goes
 
-A new `packages/keel/src/adapters/real/sms.ts` is the only file allowed to `import 'twilio'` —
-CLAUDE.md's hard rule (vendor SDKs only inside an adapters directory, here `packages/keel/src/adapters/`,
-because the channel is keel's seam) and the ports-boundary lint
-rule both apply here exactly as they do to `packages/keel/src/adapters/real/email.ts`. It exports
-something Twilio-shaped (`send(message)` or similar) that `packages/keel/src/server-lib/sms.ts`'s real
-branch calls. The fake, `packages/keel/src/adapters/fake/sms.ts`, does not move or change — it stays the
+A new `packages/kit/src/adapters/real/sms.ts` is the only file allowed to `import 'twilio'` —
+CLAUDE.md's hard rule (vendor SDKs only inside an adapters directory, here `packages/kit/src/adapters/`,
+because the channel is SSSB's seam) and the ports-boundary lint
+rule both apply here exactly as they do to `packages/kit/src/adapters/real/email.ts`. It exports
+something Twilio-shaped (`send(message)` or similar) that `packages/kit/src/server-lib/sms.ts`'s real
+branch calls. The fake, `packages/kit/src/adapters/fake/sms.ts`, does not move or change — it stays the
 channel that `pnpm dev`, demo mode, and static demo run forever, exactly like every other port's
 two-implementations split. Adding Twilio doesn't touch the fake side of this seam at all.
 
@@ -54,9 +54,9 @@ twilio: {
 
 And a row in `docs/cutover-checklist.md`, copying the `email-outbound` row's format exactly:
 
-| Status | Item         | What it is                                                                                                      | What unlocks it                           | Deferred verification                                                                                                                                           |
-| ------ | ------------ | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ⬜     | `twilio-sms` | Twilio account SID/auth token + a from-number or Messaging Service SID (names in `apps/<app>/config/params.ts`) | you provision a Twilio account and number | Real send through `packages/keel/src/adapters/real/sms.ts`; a live message received on a real phone; delivery-status callback handling if the instance needs it |
+| Status | Item         | What it is                                                                                                      | What unlocks it                           | Deferred verification                                                                                                                                          |
+| ------ | ------------ | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ⬜     | `twilio-sms` | Twilio account SID/auth token + a from-number or Messaging Service SID (names in `apps/<app>/config/params.ts`) | you provision a Twilio account and number | Real send through `packages/kit/src/adapters/real/sms.ts`; a live message received on a real phone; delivery-status callback handling if the instance needs it |
 
 Secret values (auth token) never enter the repo — only the Secrets Manager entry name does, same as
 `mailgun.apiKeyName` and `anthropic.apiKeyName` today.
@@ -88,7 +88,7 @@ nobody in the template exercises.
 
 ## 6. Hermetic / static-demo note
 
-The fake channel (`packages/keel/src/adapters/fake/sms.ts`, catching to `.data/sms/`, rendered in
+The fake channel (`packages/kit/src/adapters/fake/sms.ts`, catching to `.data/sms/`, rendered in
 Simulator's Messages tab) is what `pnpm dev`, demo mode, and the `file://` static demo run always — none of
 them ever reach the real branch. The Twilio adapter only runs where `APP_MODE=real` selects it: `pnpm
 dev:real` against a dev Twilio account, and deployed environments after the `twilio-sms` cutover row is done.

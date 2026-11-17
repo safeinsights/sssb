@@ -929,3 +929,13 @@ own (ADR-0014, proposed). `options.authorizeModules` names the module whose `aut
   awaits it. Not awaited, the helper's `ForbiddenError` becomes an unhandled rejection and the handler goes on. The
   lint config does not include `@typescript-eslint/no-floating-promises`, which would catch it.
 - A gate still proves the kind of route, never the reason's whole claim.
+
+## Addendum (2026-11-17): the seam is `@sssb/app-config/*`
+
+ADR-0014 was accepted, and its P1 renamed the seam. The framework reads app registrations as
+`@sssb/app-config/*`, not `@app-config/*`: one package with subpaths, because `@app-config/db/migrations` parses as
+a package named `@app-config/db`. The framework itself is `@sssb/kit`, in `packages/kit`, imported as `@sssb/kit/…`.
+Nothing else in this ADR changed. The seam is still plain modules, imported directly and checked by the compiler,
+one module per capability, and inside this repository it still resolves through each app's own alias (now keyed
+`@sssb/app-config`), with the root tsconfig pointing it at the framework's test fixture. `@sssb/kit` declares the
+seam as an optional peer, the form an adopter's linked seam will take (ADR-0014, part 1).

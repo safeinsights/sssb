@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { fakeLlm } from 'keel/adapters/fake/llm'
-import type { LlmContentBlock } from 'keel/ports/llm'
+import { fakeLlm } from '@sssb/kit/adapters/fake/llm'
+import type { LlmContentBlock } from '@sssb/kit/ports/llm'
 import { ASSISTANT_COMPOSE_SYSTEM, assistantComposePurpose, assistantConfig } from './assistant'
 
 /**

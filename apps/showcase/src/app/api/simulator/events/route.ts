@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { KNOWN_FLAGS, listCapturedEvents, readFlags } from 'keel/adapters/fake/analytics'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { KNOWN_FLAGS, listCapturedEvents, readFlags } from '@sssb/kit/adapters/fake/analytics'
 import { withPortErrors } from '../../respond'
 
 /**

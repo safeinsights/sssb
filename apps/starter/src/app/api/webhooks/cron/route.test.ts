@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 import { makeTestTmpDir } from '../../../../../../../tests/support/tmp-dir'
-import { devWebhookSecret } from 'keel/adapters/fake/service-auth'
+import { devWebhookSecret } from '@sssb/kit/adapters/fake/service-auth'
 import { POST } from './route'
 
-// The registry is the one thing the tick takes from keel/adapters/index (a real import trips server-only in a
+// The registry is the one thing the tick takes from @sssb/kit/adapters/index (a real import trips server-only in a
 // test env): hand it the fake database and a jobs port that spawns nothing. Everything else is the real route,
 // the real guard and the real tick.
 const spawned = vi.hoisted(() => ({ calls: 0 }))
-vi.mock('keel/adapters/index', async () => {
-    const { fakeDb } = await import('keel/adapters/fake/db')
+vi.mock('@sssb/kit/adapters/index', async () => {
+    const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
     return {
         db: fakeDb,
         jobs: {
@@ -45,7 +45,7 @@ describe('POST /api/webhooks/cron', () => {
         expect(spawned.calls).toBe(0)
     })
 
-    test("with the shared secret it runs keel's tick and says what it did", async () => {
+    test("with the shared secret it runs SSSB's tick and says what it did", async () => {
         const response = await tick(`Bearer ${devWebhookSecret()}`)
 
         expect(response.status).toBe(200)

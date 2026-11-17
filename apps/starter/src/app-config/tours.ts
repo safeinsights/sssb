@@ -1,8 +1,8 @@
-import type { TourDefinition } from 'keel/demo-static/tour/contracts'
+import type { TourDefinition } from '@sssb/kit/demo-static/tour/contracts'
 
 /**
  * The APP's registered TOURS — scripted walkthroughs the Simulator Tours tab lists and runs
- * (keel/demo-static/tour/contracts, ADR-0012).
+ * (@sssb/kit/demo-static/tour/contracts, ADR-0012).
  *
  * EMPTY REGISTRATION, and it is a real off-switch rather than an empty list: with no tours registered
  * the panel does not render the Tours tab at all and the engine never mounts a ghost cursor. It is not

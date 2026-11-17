@@ -1,5 +1,5 @@
-import type { LlmToolDef } from 'keel/ports/llm'
-import type { AssistantConfig } from 'keel/server-lib/assistant'
+import type { LlmToolDef } from '@sssb/kit/ports/llm'
+import type { AssistantConfig } from '@sssb/kit/server-lib/assistant'
 
 /**
  * The APP's assistant registration (the seam side of the assistant route, ADR-0012). The `system` and
@@ -128,7 +128,7 @@ export const assistantConfig: AssistantConfig = {
  * time instead of after a silent pause. It is a separate fixture PURPOSE because its prompt necessarily
  * carries live ticket data: a request built from real rows can never hash-match a recorded entry, so it
  * resolves to this purpose's DEFAULT entry — deterministic, and authored to read like a real answer,
- * without polluting the tool-loop purpose's own fallback (keel/adapters/fake/llm.ts).
+ * without polluting the tool-loop purpose's own fallback (@sssb/kit/adapters/fake/llm.ts).
  *
  * Live data still reaches the screen: the route returns the tickets the TOOLS actually read as the
  * answer's sources, so the prose is replayed and the evidence beside it is real.

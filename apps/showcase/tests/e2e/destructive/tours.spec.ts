@@ -58,7 +58,7 @@ for (const tour of tours.slice(0, 1)) {
     })
 }
 
-// The tour that starts from a demo PRESET rather than from the seed (keel/core/presets.ts). On this host
+// The tour that starts from a demo PRESET rather than from the seed (@sssb/kit/core/presets.ts). On this host
 // loading the preset is a server replay and a reload, landing on the preset's viewpoint — so this
 // proves both halves at once: the world is the preset's, and the tour survived the trip.
 for (const tour of tours

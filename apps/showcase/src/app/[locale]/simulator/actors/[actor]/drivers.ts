@@ -1,4 +1,4 @@
-import { analyzerOrgSlug } from '@app-config/actors'
+import { analyzerOrgSlug } from '@sssb/app-config/actors'
 import type {
     ActorLog,
     ActorNoteT,
@@ -7,7 +7,7 @@ import type {
     HopOutcome,
     PendingBuildLike,
     ServiceJobLike,
-} from 'keel/components/simulator/actor-runtime'
+} from '@sssb/kit/components/simulator/actor-runtime'
 
 /**
  * The REAL actor drivers: client-side fetch against the exact same surfaces a real counterparty

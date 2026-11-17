@@ -1,5 +1,5 @@
 /**
- * The APP's outbound-webhook event kinds (the seam side of packages/keel/src/core/webhook-events.ts, ADR-0012). The
+ * The APP's outbound-webhook event kinds (the seam side of packages/kit/src/core/webhook-events.ts, ADR-0012). The
  * framework owns the backoff policy + envelope + its own kind (job.status_changed); the app registers
  * its OWN kinds + payload shapes here. A real adopter replaces this file. PURE TypeScript.
  *

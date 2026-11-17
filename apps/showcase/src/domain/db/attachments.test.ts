@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { makeTestTmpDir } from '../../../../../tests/support/tmp-dir'
-import { orgIdForSlug } from 'keel/db/org-lookup'
-import { tenantIdForSlug } from 'keel/db/tenant-lookup'
+import { orgIdForSlug } from '@sssb/kit/db/org-lookup'
+import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 
 // Point all fake-adapter state at a throwaway dir BEFORE importing anything that touches pglite.
 const tmp = makeTestTmpDir('app-attachments-db-')
@@ -15,7 +15,7 @@ afterAll(() => {
 /** Resolve a tenant id and one of its org ids from the seed (uploader ids are auth-port strings,
  *  not a DB table — any stable literal works). */
 async function ids(slug: string, orgSlug: string): Promise<{ tenantId: string; orgId: string }> {
-    const { fakeDb } = await import('keel/adapters/fake/db')
+    const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
     await fakeDb.ready()
     const tenantId = await tenantIdForSlug(fakeDb, slug)
     if (!tenantId) throw new Error(`no tenant: ${slug}`)
@@ -26,7 +26,7 @@ async function ids(slug: string, orgSlug: string): Promise<{ tenantId: string; o
 
 describe('confirmAttachment', () => {
     test('flips pending to ready once — a re-confirm can never rewrite the recorded size', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { attachmentForOrg, confirmAttachment, createAttachment } = await import('./attachments')
         const { tenantId, orgId } = await ids('northwind', 'frontline')
 

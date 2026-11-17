@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { makeTestTmpDir } from '../../../../../tests/support/tmp-dir'
-import { orgIdForSlug } from 'keel/db/org-lookup'
-import { tenantIdForSlug } from 'keel/db/tenant-lookup'
-import { InvalidTransitionError } from 'keel/core/state-machine'
+import { orgIdForSlug } from '@sssb/kit/db/org-lookup'
+import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
+import { InvalidTransitionError } from '@sssb/kit/core/state-machine'
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -17,7 +17,7 @@ afterAll(() => {
 
 /** Resolve a tenant id and one of its org ids from the seed. */
 async function ids(slug: string, orgSlug: string): Promise<{ tenantId: string; orgId: string }> {
-    const { fakeDb } = await import('keel/adapters/fake/db')
+    const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
     await fakeDb.ready()
     const tenantId = await tenantIdForSlug(fakeDb, slug)
     if (!tenantId) throw new Error(`no tenant: ${slug}`)
@@ -28,7 +28,7 @@ async function ids(slug: string, orgSlug: string): Promise<{ tenantId: string; o
 
 /** Create a fresh alpha org (bystander for the two-sided proofs), as the privileged migration user. */
 async function makeOrg(tenantId: string, slug: string, name: string): Promise<string> {
-    const { fakeDb } = await import('keel/adapters/fake/db')
+    const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
     const org = await fakeDb
         .getDb()
         .insertInto('organizations')
@@ -40,7 +40,7 @@ async function makeOrg(tenantId: string, slug: string, name: string): Promise<st
 
 describe('createEscalation + listEscalations', () => {
     test('a request is SENT from the requester and RECEIVED by the responder, invisible to a bystander', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { createEscalation, listEscalations } = await import('./escalations')
         const research = await ids('northwind', 'frontline')
         const outreach = await ids('northwind', 'platform')
@@ -78,7 +78,7 @@ describe('createEscalation + listEscalations', () => {
 
 describe('escalationForActiveOrg', () => {
     test('resolves for either party, returns null for a bystander or an absent id', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { createEscalation, escalationForActiveOrg } = await import('./escalations')
         const research = await ids('northwind', 'frontline')
         const outreach = await ids('northwind', 'platform')
@@ -111,7 +111,7 @@ describe('escalationForActiveOrg', () => {
 
 describe('transitionEscalation', () => {
     test('allows a legal decision and records who acted, then refuses a second decision', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { createEscalation, transitionEscalation, escalationForActiveOrg } = await import('./escalations')
         const research = await ids('northwind', 'frontline')
         const outreach = await ids('northwind', 'platform')
@@ -136,7 +136,7 @@ describe('transitionEscalation', () => {
     })
 
     test('withdrawal is a soft transition open -> cancelled', async () => {
-        const { fakeDb } = await import('keel/adapters/fake/db')
+        const { fakeDb } = await import('@sssb/kit/adapters/fake/db')
         const { createEscalation, transitionEscalation, escalationForActiveOrg } = await import('./escalations')
         const research = await ids('northwind', 'frontline')
         const outreach = await ids('northwind', 'platform')

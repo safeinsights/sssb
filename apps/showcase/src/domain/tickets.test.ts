@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { InvalidTransitionError } from 'keel/core/state-machine'
+import { InvalidTransitionError } from '@sssb/kit/core/state-machine'
 import { isSlaBreached, isTicketStatus, nextTicketRef, TICKET_SLA_HOURS, ticketMachine } from './tickets'
 
 /**

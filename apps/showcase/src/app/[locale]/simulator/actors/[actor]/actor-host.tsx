@@ -2,9 +2,14 @@
 
 import { useTranslations } from 'next-intl'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { type ActorLog, builderTick, type ServiceMemory, serviceTick } from 'keel/components/simulator/actor-runtime'
-import { ActorShell } from 'keel/components/simulator/actor-shell'
-import type { ActorId } from '@app-config/actors'
+import {
+    type ActorLog,
+    builderTick,
+    type ServiceMemory,
+    serviceTick,
+} from '@sssb/kit/components/simulator/actor-runtime'
+import { ActorShell } from '@sssb/kit/components/simulator/actor-shell'
+import type { ActorId } from '@sssb/app-config/actors'
 import { createBuilderDriver, createServiceDriver } from './drivers'
 
 /**

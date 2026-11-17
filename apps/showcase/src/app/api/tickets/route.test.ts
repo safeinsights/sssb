@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TICKET_PAGE_SIZE } from '@/domain/tickets'
-import type { AuthUser } from 'keel/ports/auth'
+import type { AuthUser } from '@sssb/kit/ports/auth'
 import { GET, POST } from './route'
 
 // Real authorize (pure abilities) runs — only the adapters and data modules are faked. Low-entropy
@@ -13,10 +13,10 @@ const h = vi.hoisted(() => ({
     listTickets: vi.fn(),
     recordAuditEvent: vi.fn(),
 }))
-vi.mock('keel/adapters/index', () => ({ auth: { requireUser: h.requireUser }, db: {} }))
-vi.mock('keel/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
-vi.mock('keel/db/org-lookup', () => ({ orgIdForSlug: h.orgIdForSlug }))
-vi.mock('keel/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
+vi.mock('@sssb/kit/adapters/index', () => ({ auth: { requireUser: h.requireUser }, db: {} }))
+vi.mock('@sssb/kit/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
+vi.mock('@sssb/kit/db/org-lookup', () => ({ orgIdForSlug: h.orgIdForSlug }))
+vi.mock('@sssb/kit/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
 vi.mock('@/domain/db/tickets', () => ({ createTicket: h.createTicket, listTickets: h.listTickets }))
 
 function user(overrides: Partial<AuthUser> = {}): AuthUser {

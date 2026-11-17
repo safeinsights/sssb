@@ -4,7 +4,7 @@ import { expect, type Locator, type Page, test } from '@playwright/test'
 // The signing module is pure isomorphic TS (no node builtins, no @/adapters), so a relative import
 // transpiles fine under Playwright — the e2e VERIFIES the egress signature the app produced, proving
 // the template teaches both halves of the scheme end to end.
-import { verifyWebhookSignature, WEBHOOK_REPLAY_TOLERANCE_MS } from 'keel/core/webhook-signing'
+import { verifyWebhookSignature, WEBHOOK_REPLAY_TOLERANCE_MS } from '@sssb/kit/core/webhook-signing'
 import { openSimulatorPanel } from '../support/simulator'
 
 /**

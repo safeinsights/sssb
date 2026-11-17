@@ -12,19 +12,24 @@ import { useCallback, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import assistantFixture from '../../fixtures/llm/assistant-desk.json'
 import composeFixture from '../../fixtures/llm/assistant-desk-compose.json'
-import { ActorsApp, type ActorSlot } from 'keel/components/simulator/actors-app'
-import { type ActorLog, builderTick, type ServiceMemory, serviceTick } from 'keel/components/simulator/actor-runtime'
-import { ActorShell } from 'keel/components/simulator/actor-shell'
-import type { SimulatorExtraTab } from 'keel/components/simulator/simulator-panel'
-import { type AssistantFixture, replayAssistant } from 'keel/demo-static/assistant-replay'
-import type { DemoInboundHandler } from 'keel/demo-static/contracts'
-import { go } from 'keel/demo-static/hash-route'
-import { DemoShell } from 'keel/demo-static/shell'
-import { useDemoWorld } from 'keel/demo-static/world'
-import { defineAbilitiesFor } from 'keel/core/abilities'
-import { isRestricted } from 'keel/core/roles'
-import { keysetPageInMemory, parseKeysetCursor } from 'keel/core/keyset'
-import type { Locale } from 'keel/core/locale'
+import { ActorsApp, type ActorSlot } from '@sssb/kit/components/simulator/actors-app'
+import {
+    type ActorLog,
+    builderTick,
+    type ServiceMemory,
+    serviceTick,
+} from '@sssb/kit/components/simulator/actor-runtime'
+import { ActorShell } from '@sssb/kit/components/simulator/actor-shell'
+import type { SimulatorExtraTab } from '@sssb/kit/components/simulator/simulator-panel'
+import { type AssistantFixture, replayAssistant } from '@sssb/kit/demo-static/assistant-replay'
+import type { DemoInboundHandler } from '@sssb/kit/demo-static/contracts'
+import { go } from '@sssb/kit/demo-static/hash-route'
+import { DemoShell } from '@sssb/kit/demo-static/shell'
+import { useDemoWorld } from '@sssb/kit/demo-static/world'
+import { defineAbilitiesFor } from '@sssb/kit/core/abilities'
+import { isRestricted } from '@sssb/kit/core/roles'
+import { keysetPageInMemory, parseKeysetCursor } from '@sssb/kit/core/keyset'
+import type { Locale } from '@sssb/kit/core/locale'
 import { AttachmentsCard, type AttachmentItem } from '../components/attachments-card'
 import { AppNav } from '../components/app-nav'
 import { DashboardScreen } from '../components/dashboard-screen'
@@ -42,7 +47,7 @@ import { applyDemoTicketChanges, type DemoTicket } from './ticket-changes'
 
 /**
  * The static demo's COMPOSITION ROOT — the `file://` twin of the server-side glue, and the same job:
- * take the framework's simulated world (keel/demo-static/world), add THIS app's own rows, hand the
+ * take the framework's simulated world (@sssb/kit/demo-static/world), add THIS app's own rows, hand the
  * shell its screens, and get out of the way (ADR-0006, ADR-0012). Everything generic — routing, the
  * people, mail, jobs, schedules, webhooks, notifications, agreements, audit, the whole Simulator panel —
  * lives in the package; what is left here is the desk: tickets, escalations and attachments.
@@ -132,7 +137,7 @@ function initialAttachments(): DemoAttachment[] {
 
 /**
  * The queue's paging twin. NOT a degrade and NOT a slice: it walks the SAME keyset cursor chain the
- * server walks, through the same pure primitive (`keel/core/keyset`), minting and re-parsing a real
+ * server walks, through the same pure primitive (`@sssb/kit/core/keyset`), minting and re-parsing a real
  * opaque cursor on each hop — so the `file://` build proves the cursor grammar as well as the button.
  *
  * Where it differs from the server glue is honest and in the twin's favour: the server ACCUMULATES
@@ -240,7 +245,7 @@ export function StaticDemoApp({ locale, onLocaleChange }: { locale: Locale; onLo
     const world = useDemoWorld({
         inboundHandlers: { support: ticketFromEmail('open'), feedback: ticketFromEmail('resolved') },
         // Static halves of the app's demo-preset operation kinds — the twins of the server halves on
-        // @app-config/preset-operations. Built from THIS render's rows, like the inbound twins above.
+        // @sssb/app-config/preset-operations. Built from THIS render's rows, like the inbound twins above.
         presetOperations: {
             'ticket.assign': ticketAssignStatic({ tickets: demoTickets, setTickets: setDemoTickets }),
         },
@@ -252,7 +257,7 @@ export function StaticDemoApp({ locale, onLocaleChange }: { locale: Locale; onLo
             html: `<p>${message.text}</p>`,
         })),
         // The framework's scheduled digest summarizes the OPEN queue, which only this root can see —
-        // the same projection the server-side seam makes (@app-config/digest).
+        // the same projection the server-side seam makes (@sssb/app-config/digest).
         digestBodies: ({ tenantSlug, orgSlug }) =>
             demoTickets
                 .filter((t) => t.tenantSlug === tenantSlug && t.orgSlug === orgSlug && t.status !== 'resolved')
@@ -309,7 +314,7 @@ export function StaticDemoApp({ locale, onLocaleChange }: { locale: Locale; onLo
         ),
     }))
 
-    // App Simulator tabs (Actors) — same seam registration the real glue reads (@app-config/simulator),
+    // App Simulator tabs (Actors) — same seam registration the real glue reads (@sssb/app-config/simulator),
     // composed here with the twin's inline ActorShell nodes. Proves the extraTabs API works file://-side;
     // the panel slots them between Hooks and Errors just as in the server host.
     const extraTabs: SimulatorExtraTab[] = appSimulatorTabs.map((tab) => ({

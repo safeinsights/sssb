@@ -1,7 +1,7 @@
-import { auth, db } from 'keel/adapters/index'
-import { authorize } from 'keel/authz/authorize'
-import { recordAuditEvent } from 'keel/db/audit'
-import { readAgreement, recordAcceptance } from 'keel/db/agreements'
+import { auth, db } from '@sssb/kit/adapters/index'
+import { authorize } from '@sssb/kit/authz/authorize'
+import { recordAuditEvent } from '@sssb/kit/db/audit'
+import { readAgreement, recordAcceptance } from '@sssb/kit/db/agreements'
 import { resolveOrgContext } from '../../org-context'
 import { withPortErrors } from '../../respond'
 

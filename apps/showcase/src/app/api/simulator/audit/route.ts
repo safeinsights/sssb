@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { listWorldAuditEvents } from 'keel/adapters/fake/audit'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { listWorldAuditEvents } from '@sssb/kit/adapters/fake/audit'
 import { withPortErrors } from '../../respond'
 
 /**

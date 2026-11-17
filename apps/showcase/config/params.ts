@@ -6,9 +6,9 @@
  * VALUES never live in the repo.
  *
  * WHAT IS LINT-ENFORCED (eslint.config.mjs `processEnvSelector`): `process.env` is read ONLY
- * inside packages/keel/src/adapters and an app's own real adapters (apps/<app>/src/adapters/real, which
+ * inside packages/kit/src/adapters and an app's own real adapters (apps/<app>/src/adapters/real, which
  * may not read the run mode) — every other module imports the resolved value (this file for
- * deployment/service params; `isSimulated`/`isDemoMode` from keel/adapters for run mode). Exemptions:
+ * deployment/service params; `isSimulated`/`isDemoMode` from @sssb/kit/adapters for run mode). Exemptions:
  * instrumentation files (NEXT_PUBLIC needs literal inlining) and the two secret readers
  * (service-auth/{webhook,mailgun}.ts). This file may not read process.env itself (the ban covers config/).
  * An app-owned adapter's non-secret parameters and secret NAMES are recorded here too, with their cutover

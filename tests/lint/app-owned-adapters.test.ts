@@ -5,7 +5,7 @@ import {
     fired,
     IMPORTS_VENDOR,
     JSX_LITERAL,
-    KEEL_REAL_ADAPTER,
+    KIT_REAL_ADAPTER,
     lint,
     LOADS_VENDOR,
     NEXT_FONT,
@@ -32,7 +32,7 @@ const VENDOR_ZONES = [
     `${APP}/src/adapters/real/kv.ts`,
     `${APP}/src/adapters/real/signing/sigv4a.ts`,
     `${APP}/src/adapters/real/kv.test.ts`,
-    'packages/keel/src/adapters/real/kv.ts',
+    'packages/kit/src/adapters/real/kv.ts',
 ]
 
 /** Everywhere else it is banned — the app's own registry and fakes included. */
@@ -53,13 +53,13 @@ const OUTSIDE_VENDOR_ZONES = [
     `${APP}/config/params.ts`,
     // a lookalike: an `adapters/real` that is not the app's adapters directory
     `${APP}/src/domain/adapters/real/kv.ts`,
-    // keel outside its own adapters, and keel's fixture even at an adapters-shaped path
-    'packages/keel/src/server-lib/kv.ts',
-    'packages/keel/test-fixture/domain/kv.ts',
-    'packages/keel/test-fixture/adapters/real/kv.ts',
+    // SSSB outside its own adapters, and SSSB's fixture even at an adapters-shaped path
+    'packages/kit/src/server-lib/kv.ts',
+    'packages/kit/test-fixture/domain/kv.ts',
+    'packages/kit/test-fixture/adapters/real/kv.ts',
 ]
 
-describe('vendor SDKs: only keel adapters and an app’s real adapters may import one', () => {
+describe('vendor SDKs: only SSSB adapters and an app’s real adapters may import one', () => {
     it.each(VENDOR_ZONES)('%s may import a vendor SDK, statically or dynamically', async (file) => {
         for (const code of [IMPORTS_VENDOR, IMPORTS_VENDOR_SUBPATH, LOADS_VENDOR, LOADS_VENDOR_TEMPLATE]) {
             const findings = await lint(file, code)
@@ -194,7 +194,7 @@ describe('an app’s real adapters are reached through its registry', () => {
 
     it('the registry loads real/ with import(), behind isSimulated', async () => {
         const code = [
-            "import { isSimulated } from 'keel/adapters/index'",
+            "import { isSimulated } from '@sssb/kit/adapters/index'",
             "import { fakeKv } from './fake/kv'",
             "const real = isSimulated ? null : (await import('./real/index')).createRealAppPorts()",
             'export const kv = real?.kv ?? fakeKv',
@@ -231,10 +231,11 @@ describe('an app’s real adapters are reached through its registry', () => {
     })
 
     it.each([`${APP}/src/adapters/fake/kv.ts`, `${APP}/src/adapters/index.ts`])(
-        '%s may not statically import one of keel’s published real adapters',
+        '%s may not statically import one of SSSB’s published real adapters',
         async (file) => {
-            const code = "import { createRealLlm } from 'keel/adapters/real/llm'\nexport const make = createRealLlm\n"
-            expect(fired(await lint(file, code), KEEL_REAL_ADAPTER)).toBe(1)
+            const code =
+                "import { createRealLlm } from '@sssb/kit/adapters/real/llm'\nexport const make = createRealLlm\n"
+            expect(fired(await lint(file, code), KIT_REAL_ADAPTER)).toBe(1)
         },
     )
 
@@ -245,10 +246,10 @@ describe('an app’s real adapters are reached through its registry', () => {
         expect(fired(findings, REAL_ADAPTER) + fired(findings, REAL_ADAPTER_INSIDE)).toBe(0)
     })
 
-    it('a page may reach a real-mode-only component by dynamic import, as it reaches keel’s', async () => {
+    it('a page may reach a real-mode-only component by dynamic import, as it reaches SSSB’s', async () => {
         const code = [
-            "import { isSimulated } from 'keel/adapters/index'",
-            "import { RealSignInForm } from 'keel/adapters/real/sign-in-form'",
+            "import { isSimulated } from '@sssb/kit/adapters/index'",
+            "import { RealSignInForm } from '@sssb/kit/adapters/real/sign-in-form'",
             "import { kv } from '@/adapters'",
             "import { live } from '@/adapters/realtime'",
             "export const widget = () => (isSimulated ? null : import('@/adapters/real/kv-widget'))",
@@ -272,12 +273,12 @@ describe('the hermetic-dev font ban survives in every app-owned adapter block', 
 })
 
 // A real-mode-only component (a vendor's widget) lives in real/ and renders copy, so the i18n rules that
-// govern every other screen follow it there — and into keel's adapters, where the real sign-in form lives.
+// govern every other screen follow it there — and into SSSB's adapters, where the real sign-in form lives.
 describe('copy in an adapter’s component goes through next-intl', () => {
     it.each([
         `${APP}/src/adapters/real/kv-widget.tsx`,
         `${APP}/src/adapters/fake/kv-widget.tsx`,
-        'packages/keel/src/adapters/real/kv-widget.tsx',
+        'packages/kit/src/adapters/real/kv-widget.tsx',
     ])('%s may not hard-code copy', async (file) => {
         const text = 'export const Widget = () => <p>Saved to the edge</p>\n'
         expect(fired(await lint(file, text), JSX_LITERAL)).toBe(1)

@@ -1,14 +1,14 @@
-import type { DbPort } from 'keel/ports/db'
-import type { StoragePort } from 'keel/ports/storage'
+import type { DbPort } from '@sssb/kit/ports/db'
+import type { StoragePort } from '@sssb/kit/ports/storage'
 import { describe, expect, test } from 'vitest'
 import { exportTicketsHandler } from './export-tickets'
 
 /**
  * CSV ESCAPING IS APP CODE, so it is tested app-side.
  *
- * These assertions used to live in keel/adapters/fake/jobs.test.ts, where they rode along with the
+ * These assertions used to live in @sssb/kit/adapters/fake/jobs.test.ts, where they rode along with the
  * framework's "did the jobs adapter dispatch, record a timeline and store an artifact" case. That
- * suite now runs against keel's own fixture app, whose export handler writes a deliberately plain
+ * suite now runs against SSSB's own fixture app, whose export handler writes a deliberately plain
  * two-column file — so the RFC-4180 quoting and the CSV-formula neutralization moved here, to the
  * handler that actually implements them.
  *

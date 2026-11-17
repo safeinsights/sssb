@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AuthUser } from 'keel/ports/auth'
+import type { AuthUser } from '@sssb/kit/ports/auth'
 import { GET, POST } from './route'
 
 // Real authorize (pure abilities) runs — only the adapters and data modules are faked. Low-entropy
@@ -18,26 +18,26 @@ const h = vi.hoisted(() => ({
     notifyAdmins: vi.fn(),
     makeNotifyDeps: vi.fn(),
 }))
-vi.mock('keel/adapters/index', () => ({
+vi.mock('@sssb/kit/adapters/index', () => ({
     auth: { requireUser: h.requireUser, listMembers: h.listMembers },
     db: {},
 }))
-vi.mock('keel/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
-vi.mock('keel/db/org-lookup', () => ({
+vi.mock('@sssb/kit/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
+vi.mock('@sssb/kit/db/org-lookup', () => ({
     orgIdForSlug: h.orgIdForSlug,
     orgForId: h.orgForId,
     listOrgsInTenant: h.listOrgsInTenant,
 }))
-vi.mock('keel/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
+vi.mock('@sssb/kit/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
 vi.mock('@/domain/db/escalations', () => ({
     createEscalation: h.createEscalation,
     listEscalations: h.listEscalations,
 }))
-vi.mock('keel/db/webhooks', () => ({ enqueueWebhookEvent: h.enqueueWebhookEvent }))
+vi.mock('@sssb/kit/db/webhooks', () => ({ enqueueWebhookEvent: h.enqueueWebhookEvent }))
 // The notification fan-out is mocked away — the route test isolates the create path, not the
 // notify seam (mirrors the mocked enqueueWebhookEvent beside it).
-vi.mock('keel/server-lib/notify', () => ({ notifyAdmins: h.notifyAdmins }))
-vi.mock('keel/server-lib/notify-deps', () => ({ makeNotifyDeps: h.makeNotifyDeps }))
+vi.mock('@sssb/kit/server-lib/notify', () => ({ notifyAdmins: h.notifyAdmins }))
+vi.mock('@sssb/kit/server-lib/notify-deps', () => ({ makeNotifyDeps: h.makeNotifyDeps }))
 
 function user(overrides: Partial<AuthUser> = {}): AuthUser {
     return {

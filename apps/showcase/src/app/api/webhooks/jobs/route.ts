@@ -1,7 +1,7 @@
-import { auth, db } from 'keel/adapters/index'
-import { recordWebhookCompletion } from 'keel/db/jobs'
-import { notifyJobTerminal } from 'keel/server-lib/notify'
-import { makeNotifyDeps } from 'keel/server-lib/notify-deps'
+import { auth, db } from '@sssb/kit/adapters/index'
+import { recordWebhookCompletion } from '@sssb/kit/db/jobs'
+import { notifyJobTerminal } from '@sssb/kit/server-lib/notify'
+import { makeNotifyDeps } from '@sssb/kit/server-lib/notify-deps'
 import { withWebhookSecret } from '../respond'
 
 /**

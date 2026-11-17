@@ -11,7 +11,7 @@ useDefault = true
 [[allowlists]]
 description = "webhook.test.ts real-mode WEBHOOK_SECRET fixture"
 condition = "AND"
-paths = ['''packages/keel/src/service-auth/webhook\.test\.ts''']
+paths = ['''packages/kit/src/service-auth/webhook\.test\.ts''']
 regexes = ['''env-secret-abcdef0123456789''']
 regexTarget = "line"
 
@@ -24,7 +24,7 @@ regexTarget = "line"
 [[allowlists]]
 description = "audit.test.ts detail-refusal fixtures, in history only"
 condition = "AND"
-paths = ['''packages/keel/src/db/audit\.test\.ts''']
+paths = ['''packages/kit/src/db/audit\.test\.ts''']
 regexes = ['''sk_live_51HxYz''']
 regexTarget = "line"
 

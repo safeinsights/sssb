@@ -1,7 +1,7 @@
 import { setRequestLocale } from 'next-intl/server'
 import { notFound } from 'next/navigation'
-import { isSimulated } from 'keel/adapters/index'
-import { isActorId } from '@app-config/actors'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { isActorId } from '@sssb/app-config/actors'
 
 /**
  * The actor frame's page — OUTSIDE (protected), so it renders signed-out (the actor drives the

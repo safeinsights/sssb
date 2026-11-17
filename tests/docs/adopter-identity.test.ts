@@ -19,7 +19,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
  * THIS FILE SHIPS TO EVERY ADOPTER and comes back with every upstream merge (ADR-0013), so it has to be
  * right in two different trees, and it works out which one it is in before it asserts anything:
  *
- *   TEMPLATE  `apps/showcase` exists and the root package is still `keel-workspace`. The identity files
+ *   TEMPLATE  `apps/showcase` exists and the root package is still `sssb-workspace`. The identity files
  *             must ALL name the maintainer (that is `init-app`'s input), and the suite below runs the
  *             SAME command the `adoption-probe` CI job runs (`.github/workflows/checks.yml`) against
  *             throwaway copies of the tree and inspects what comes out. `init-app.ts` resolves its own
@@ -82,7 +82,7 @@ function copyTree(from: string, to: string): void {
 
 const MAINTAINER_HANDLE = '@jpslav'
 /** The template's own repo, which every link in the contact files pointed at before the rewrite. */
-const MAINTAINER_REPO = 'github.com/jpslav/keel'
+const MAINTAINER_REPO = 'github.com/safeinsights/sssb'
 
 /**
  * ANY address, rather than the maintainer's own literal.
@@ -107,8 +107,8 @@ const ANY_EMAIL_ADDRESS = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
 /** The four files the bug was about — none of them may name the maintainer after an adoption. */
 const IDENTITY_FILES = ['CODEOWNERS', 'SECURITY.md', '.github/ISSUE_TEMPLATE/config.yml', 'CODE_OF_CONDUCT.md']
 
-/** What `init-app` renames the root package away from. `keel` itself is a reserved slug, so no adoption keeps it. */
-const TEMPLATE_ROOT_PACKAGE = 'keel-workspace'
+/** What `init-app` renames the root package away from. Every adoption renames it to the app's slug, so no adoption keeps it. */
+const TEMPLATE_ROOT_PACKAGE = 'sssb-workspace'
 
 function rootPackageName(root: string): unknown {
     try {
@@ -213,18 +213,18 @@ function readProbe(relative: string, probe: Probe = ejected): string {
 
 describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer identity', () => {
     beforeAll(() => {
-        ejected = runInitApp('keel-adopter-identity-', [SLUG, '--eject-showcase', '--yes'])
-        named = runInitApp('keel-adopter-identity-named-', [SLUG, '--repo', REPO, '--yes'])
-        fixedUp = runInitApp('keel-adopter-identity-fixup-', [SLUG, '--yes'])
+        ejected = runInitApp('sssb-adopter-identity-', [SLUG, '--eject-showcase', '--yes'])
+        named = runInitApp('sssb-adopter-identity-named-', [SLUG, '--repo', REPO, '--yes'])
+        fixedUp = runInitApp('sssb-adopter-identity-fixup-', [SLUG, '--yes'])
         fixUpRun = spawnInitApp(fixedUp.dir, ['--repo', REPO, '--yes'])
-        ejectOnly = runInitApp('keel-adopter-identity-eject-', ['--eject-showcase', '--yes'])
-        ownerFirst = runInitApp('keel-adopter-identity-owner-', [SLUG, '--yes'])
+        ejectOnly = runInitApp('sssb-adopter-identity-eject-', ['--eject-showcase', '--yes'])
+        ownerFirst = runInitApp('sssb-adopter-identity-owner-', [SLUG, '--yes'])
         for (const relative of IDENTITY_FILES) {
             const file = path.join(ownerFirst.dir, relative)
             writeFileSync(file, readFileSync(file, 'utf8').split(OWNER).join('myorg'))
         }
         ownerFirstRun = spawnInitApp(ownerFirst.dir, ['--repo', REPO, '--yes'])
-        pristineDir = makeTestTmpDir('keel-adopter-identity-pristine-')
+        pristineDir = makeTestTmpDir('sssb-adopter-identity-pristine-')
         copyTree(ROOT, pristineDir)
     }, 120_000)
 
@@ -258,10 +258,10 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
         it('CODEOWNERS keeps the curated path list — only the owner was wrong', () => {
             const text = readProbe('CODEOWNERS')
             for (const owned of [
-                '/packages/keel/src/db/',
-                '/packages/keel/src/authz/',
-                '/packages/keel/src/adapters/',
-                '/packages/keel/test-fixture/',
+                '/packages/kit/src/db/',
+                '/packages/kit/src/authz/',
+                '/packages/kit/src/adapters/',
+                '/packages/kit/test-fixture/',
                 '/scripts/init-app.ts',
                 '/tests/docs/',
                 '/.github/workflows/',
@@ -294,7 +294,7 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
             expect(readProbe('LICENSE')).toContain('JP Slavinsky')
         })
 
-        it("docs/adr approver lines keep the maintainer's name — honest provenance for keel's own decisions", () => {
+        it("docs/adr approver lines keep the maintainer's name — honest provenance for SSSB's own decisions", () => {
             expect(readProbe('docs/adr/0012-framework-app-line-and-registration.md')).toContain(
                 'Approver: JP Slavinsky',
             )
@@ -420,7 +420,7 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
     })
 
     /**
-     * An ejected app used to have no cron route, so nothing ticked keel's scheduler in a deployment. The route is
+     * An ejected app used to have no cron route, so nothing ticked SSSB's scheduler in a deployment. The route is
      * the starter's now, and adoption must carry it along with its guard: a copy without `withWebhookSecret(` would
      * be an open route that the authorization scan rejects, and one that is missing is the original bug.
      */
@@ -429,11 +429,11 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
             ['renamed and ejected', () => ejected, SLUG],
             ['renamed only', () => named, SLUG],
             ['ejected with no slug', () => ejectOnly, 'starter'],
-        ])("is in the app of a tree %s, guarded by the shared secret and calling keel's tick", (_label, probe, app) => {
+        ])("is in the app of a tree %s, guarded by the shared secret and calling SSSB's tick", (_label, probe, app) => {
             const text = readFileSync(path.join(probe().dir, `apps/${app}/src/app/api/webhooks/cron/route.ts`), 'utf8')
             expect(text).toContain('withWebhookSecret(')
-            expect(text).toContain("from 'keel/server-lib/scheduled-tick'")
-            expect(text).toContain("from 'keel/service-auth/webhook'")
+            expect(text).toContain("from '@sssb/kit/server-lib/scheduled-tick'")
+            expect(text).toContain("from '@sssb/kit/service-auth/webhook'")
         })
 
         it('has its own test alongside it', () => {
@@ -444,7 +444,7 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
     })
 
     /**
-     * Adoption is not the last time keel's docs reach the adopter: `git merge upstream/main` (ADR-0013) brings
+     * Adoption is not the last time SSSB's docs reach the adopter: `git merge upstream/main` (ADR-0013) brings
      * NEW text, and `init-app` only repointed what it found on the day it ran. The first recipe to cite
      * `apps/starter/…` turned the path gate red in an ejected adopter's tree, on a citation nobody there wrote.
      * This lays such a doc into the real adopted probe trees and asks the gate's own functions about it.
@@ -452,7 +452,7 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
     describe('a doc that arrives from upstream after adoption still passes the path gate', () => {
         const upstreamDoc = [
             '# A recipe added upstream',
-            "The way the sign-in page loads keel's real form (`apps/starter/src/app/[locale]/signin/page.tsx`)",
+            "The way the sign-in page loads SSSB's real form (`apps/starter/src/app/[locale]/signin/page.tsx`)",
             'and the worked example (`apps/showcase/src/domain/db/tickets.ts`), copied with',
             '`cp apps/showcase/src/domain/db/tickets.ts apps/starter/src/domain/db/mine.ts`.',
             '',
@@ -506,13 +506,13 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
             )
         })
 
-        it("points at the app's own DEMO-SIZE.md, and says the script is keel's, in every kind of adoption", () => {
+        it("points at the app's own DEMO-SIZE.md, and says the script is SSSB's, in every kind of adoption", () => {
             for (const probe of [ejected, named]) {
                 expect(flat(probe.output)).toContain(
                     `apps/${SLUG}/DEMO-SIZE.md says what the number was set for, and is where you record each change and why.`,
                 )
                 expect(flat(probe.output)).toContain(
-                    "scripts/check-demo-size.mjs is keel's, and an upstream merge will change it: re-set the number in package.json, never in the script.",
+                    "scripts/check-demo-size.mjs is SSSB's, and an upstream merge will change it: re-set the number in package.json, never in the script.",
                 )
             }
         })
@@ -520,12 +520,12 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
         it('ships the history beside the number, in a file the adopter owns, with room for their own entries', () => {
             const note = readProbe('apps/' + SLUG + '/DEMO-SIZE.md')
             expect(note).toContain('## Changes')
-            expect(note).toContain("keel's history for the starter")
+            expect(note).toContain("SSSB's history for the starter")
             expect(note).toContain('scripts/check-demo-size.mjs')
         })
 
         it('leaves scripts/check-demo-size.mjs exactly as the template has it, whichever way it is called', () => {
-            // keel's file: an upstream merge changes it, so adoption must not.
+            // SSSB's file: an upstream merge changes it, so adoption must not.
             const template = readFileSync(path.join(ROOT, 'scripts/check-demo-size.mjs'), 'utf8')
             expect(readProbe('scripts/check-demo-size.mjs', ejected)).toBe(template)
             expect(readProbe('scripts/check-demo-size.mjs', named)).toBe(template)
@@ -561,7 +561,7 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
                 ['no number', 'node ../../scripts/check-demo-size.mjs'],
                 ['no script', undefined],
             ] as const) {
-                const dir = makeTestTmpDir('keel-adopter-identity-budget-')
+                const dir = makeTestTmpDir('sssb-adopter-identity-budget-')
                 copyTree(ROOT, dir)
                 const file = path.join(dir, 'apps/showcase/package.json')
                 const pkg = JSON.parse(readFileSync(file, 'utf8')) as { scripts: Record<string, string> }
@@ -575,7 +575,7 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
         })
 
         it('does not point at a DEMO-SIZE.md the app does not have', () => {
-            const dir = makeTestTmpDir('keel-adopter-identity-budget-')
+            const dir = makeTestTmpDir('sssb-adopter-identity-budget-')
             copyTree(ROOT, dir)
             rmSync(path.join(dir, 'apps/starter/DEMO-SIZE.md'))
             const result = spawnInitApp(dir, [SLUG, '--dry-run'])

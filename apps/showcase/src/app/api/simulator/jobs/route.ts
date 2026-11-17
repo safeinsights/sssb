@@ -1,6 +1,6 @@
-import { isSimulated } from 'keel/adapters/index'
-import { readFlags } from 'keel/adapters/fake/analytics'
-import { JOBS_HELD_FLAG, listWorldJobs } from 'keel/adapters/fake/jobs'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { readFlags } from '@sssb/kit/adapters/fake/analytics'
+import { JOBS_HELD_FLAG, listWorldJobs } from '@sssb/kit/adapters/fake/jobs'
 import { withPortErrors } from '../../respond'
 
 /**

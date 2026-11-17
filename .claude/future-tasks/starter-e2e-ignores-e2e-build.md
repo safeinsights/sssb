@@ -25,7 +25,7 @@ the config never consults it.
 
 ## Why it is worth doing rather than deleting the flag
 
-The starter is the framework's falsifier — it exists so that a keel change which assumes the showcase
+The starter is the framework's falsifier — it exists so that an SSSB change which assumes the showcase
 fails to build. A production build is a stronger falsifier than `next dev`: `next build` typechecks
 routes, runs static generation, and enforces the server/client boundary in ways dev does not. An app
 whose whole job is to catch framework assumptions should be the app CI builds.

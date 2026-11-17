@@ -1,6 +1,6 @@
 # Recipe: web-push browser notifications
 
-keel's notification registry (`packages/keel/src/core/notifications.ts`) ships three channels:
+SSSB's notification registry (`packages/kit/src/core/notifications.ts`) ships three channels:
 `in_app`, `email`, `sms` (fake only). This is the written-down plan for adding a fourth — VAPID web-push to
 the browser — for an instance that needs it. Nothing here is built; per `docs/development-approach.md`'s
 recipe doctrine, the plan is the deliverable until a real app forces it.
@@ -13,14 +13,14 @@ Add `'web_push'` to the registry:
 export const NOTIFICATION_CHANNELS = ['in_app', 'email', 'sms', 'web_push'] as const
 ```
 
-Nothing downstream in `packages/keel/src/core/notifications.ts` needs touching: `resolveEnabledChannels`
+Nothing downstream in `packages/kit/src/core/notifications.ts` needs touching: `resolveEnabledChannels`
 and `isChannelEnabled` iterate this array generically, so the opt-out resolver and the profile prefs grid both
 pick up the new channel automatically. `notificationCopy` does need a case added if the copy differs per
 channel (today it already splits `smsKey` from `bodyKey`/`titleKey`; a `pushKey` would follow the same
 pattern) — a small, mechanical addition, not a new mechanism.
 
-The channel seam itself mirrors `packages/keel/src/server-lib/sms.ts` exactly — a new
-`packages/keel/src/server-lib/web-push.ts`:
+The channel seam itself mirrors `packages/kit/src/server-lib/sms.ts` exactly — a new
+`packages/kit/src/server-lib/web-push.ts`:
 
 ```ts
 export interface WebPushMessage {
@@ -34,9 +34,9 @@ export type WebPushChannel = (message: WebPushMessage) => Promise<void>
 ```
 
 `sendWebPush` selects fake vs. real behind `isSimulated`, same shape as `sendSms`: fake dynamically imports a
-new `packages/keel/src/adapters/fake/web-push.ts` catch-store (`.data/web-push/`, same pattern as
+new `packages/kit/src/adapters/fake/web-push.ts` catch-store (`.data/web-push/`, same pattern as
 `.data/sms/`, rendered as another Simulator Messages-tab row type); real mode is a no-op stub with a comment
-pointing here until the adapter is wired. `packages/keel/src/server-lib/notify.ts`'s fan-out calls it
+pointing here until the adapter is wired. `packages/kit/src/server-lib/notify.ts`'s fan-out calls it
 exactly like `sendSms`, keyed off `recipientUserId` rather than a single address — see §2, a recipient can
 have more than one subscribed browser.
 
@@ -83,17 +83,17 @@ webPush: {
 },
 ```
 
-| Status | Item             | What it is                                                                                         | What unlocks it                                             | Deferred verification                                                                                                                                              |
-| ------ | ---------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ⬜     | `web-push-vapid` | VAPID keypair (public/private) + subject for browser push (names in `apps/<app>/config/params.ts`) | you generate a keypair (`npx web-push generate-vapid-keys`) | Real push through `packages/keel/src/adapters/real/web-push.ts`; a subscription registered by a real Service Worker; a push received and clicked in a real browser |
+| Status | Item             | What it is                                                                                         | What unlocks it                                             | Deferred verification                                                                                                                                             |
+| ------ | ---------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ⬜     | `web-push-vapid` | VAPID keypair (public/private) + subject for browser push (names in `apps/<app>/config/params.ts`) | you generate a keypair (`npx web-push generate-vapid-keys`) | Real push through `packages/kit/src/adapters/real/web-push.ts`; a subscription registered by a real Service Worker; a push received and clicked in a real browser |
 
 ## 3. Where the vendor SDK goes
 
-`packages/keel/src/adapters/real/web-push.ts` is the only file allowed to `import 'web-push'` (the npm
+`packages/kit/src/adapters/real/web-push.ts` is the only file allowed to `import 'web-push'` (the npm
 package) — the same ports-boundary rule as every other vendor SDK, lint-enforced. It wraps
 `webpush.sendNotification` behind the `WebPushChannel` signature;
-`packages/keel/src/server-lib/web-push.ts`'s real branch calls it. The fake in
-`packages/keel/src/adapters/fake/web-push.ts` needs no vendor code at all — it just writes the
+`packages/kit/src/server-lib/web-push.ts`'s real branch calls it. The fake in
+`packages/kit/src/adapters/fake/web-push.ts` needs no vendor code at all — it just writes the
 catch-store entry.
 
 ## 4. The static-demo caveat — a real physics degrade
@@ -123,7 +123,7 @@ Same two tests as every other candidate for template vendor code (`docs/app-cove
   (`SMS/push channels` sits at 4/19 in the capability × demand matrix).
 - **New-class** — new mechanics beyond what the template already teaches? Push aside, no: it is the same
   "app-owned seam, fake selected behind `isSimulated`, vendor fenced into
-  `packages/keel/src/adapters/`" shape the SMS
+  `packages/kit/src/adapters/`" shape the SMS
   fake and `webhook-dispatch.ts` already demonstrate end to end. The one genuinely new piece — the
   subscription lifecycle (Service Worker + `PushSubscription` + a stored table) — is real complexity, but
   it is complexity in service of a channel most instances won't ship, not a new integration class the

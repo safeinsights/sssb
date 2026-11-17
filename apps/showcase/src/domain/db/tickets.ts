@@ -1,8 +1,8 @@
 import { sql } from 'kysely'
-import type { KeysetPosition } from 'keel/core/keyset'
-import { toIso } from 'keel/db/jobs'
-import { keysetPage } from 'keel/db/keyset'
-import type { DbPort } from 'keel/ports/db'
+import type { KeysetPosition } from '@sssb/kit/core/keyset'
+import { toIso } from '@sssb/kit/db/jobs'
+import { keysetPage } from '@sssb/kit/db/keyset'
+import type { DbPort } from '@sssb/kit/ports/db'
 import { TICKET_PAGE_SIZE, nextTicketRef, type TicketStatus, ticketMachine } from '@/domain/tickets'
 
 /** A ticket as its owning team sees it in the queue. */
@@ -53,7 +53,7 @@ export interface TicketPage {
  * boundaries as every other list in the app (ADR-0004).
  *
  * The queue is the app's most obviously unbounded list — a desk that has been open a year has a year
- * of tickets — so it is the one that pages, through the framework primitive (`keel/db/keyset`) rather
+ * of tickets — so it is the one that pages, through the framework primitive (`@sssb/kit/db/keyset`) rather
  * than a hand-rolled LIMIT/OFFSET. Note what this function does NOT do: it never re-applies the tenant
  * or the org itself on a later page, because there is no "later page" code path. The callback below is
  * THE query, run once per page, with the cursor added as one more conjunct — so page 7 is scoped by

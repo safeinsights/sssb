@@ -3,7 +3,7 @@
  * ADR-0012). The framework panel owns its subsystem tabs and its own feature flags.
  *
  * EMPTY REGISTRATION on every count: no extra tabs, no app feature flags. The panel still ships every
- * framework tab; `flags` is composed into KNOWN_FLAGS (keel/adapters/fake/analytics.ts) and an empty
+ * framework tab; `flags` is composed into KNOWN_FLAGS (@sssb/kit/adapters/fake/analytics.ts) and an empty
  * list simply adds nothing. `tabs` is not exported at all — nothing would read it, and an export with
  * no consumer is dead code the gate would (rightly) flag.
  */

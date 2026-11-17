@@ -44,7 +44,7 @@ static-demo entry `main.tsx`, and the locale layout.
 The other 14 pairs are NOT per-app glue and are not what this task is about — six are the showcase's
 attachments migration matching framework migrations that share the tenant/org column preamble, two are
 within the showcase (`api/attachments/[id]/confirm` ↔ `api/tickets/[id]`, and the snapshots
-delete ↔ restore routes), and six are internal to keel: one fake ↔ real auth pair, two simulator
+delete ↔ restore routes), and six are internal to SSSB: one fake ↔ real auth pair, two simulator
 prop-interface pairs, one migration pair, and two email-template pairs. Promoting route glue would not
 move any of them.
 
@@ -53,13 +53,13 @@ stay in `apps/*/src/app` forever because Next.js requires it, so every app re-st
 
 ## The trap to avoid
 
-When the gate goes red, the tempting fix is raising the threshold. Don't. Promote the glue into keel as
+When the gate goes red, the tempting fix is raising the threshold. Don't. Promote the glue into SSSB as
 re-exportable handlers and layouts, so an app's route file becomes a one-line re-export
-(`export { GET, POST } from 'keel/routes/auth/org'`). That shrinks each new app _and_ removes the
+(`export { GET, POST } from '@sssb/kit/routes/auth/org'`). That shrinks each new app _and_ removes the
 duplication, where raising the threshold hides both.
 
-Note that each promoted module also needs its `exports` line in `packages/keel/package.json` — adding a
-file does not publish it, and `keel/public-surface` enforces that.
+Note that each promoted module also needs its `exports` line in `packages/kit/package.json` — adding a
+file does not publish it, and `sssb/public-surface` enforces that.
 
 **Trigger:** a third app, or jscpd crossing 2% for any other reason. A third app adds roughly another
 11 pairs of the same shapes, which is what makes this a when, not an if — but the current 1.01% means

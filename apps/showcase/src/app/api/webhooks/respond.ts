@@ -1,6 +1,6 @@
-import { AuthRequiredError } from 'keel/ports/errors'
-import { verifyMailgunWebhook } from 'keel/service-auth/mailgun'
-import { verifyWebhookCaller } from 'keel/service-auth/webhook'
+import { AuthRequiredError } from '@sssb/kit/ports/errors'
+import { verifyMailgunWebhook } from '@sssb/kit/service-auth/mailgun'
+import { verifyWebhookCaller } from '@sssb/kit/service-auth/webhook'
 import { withPortErrors } from '../respond'
 
 /**

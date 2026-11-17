@@ -1,8 +1,8 @@
-import { db } from 'keel/adapters/index'
-import { abilityActorFromService } from 'keel/authz/authorize'
-import type { MachineActor } from 'keel/core/abilities'
-import { AuthRequiredError } from 'keel/ports/errors'
-import { type ServiceIdentity, verifyServiceCaller } from 'keel/service-auth/verify'
+import { db } from '@sssb/kit/adapters/index'
+import { abilityActorFromService } from '@sssb/kit/authz/authorize'
+import type { MachineActor } from '@sssb/kit/core/abilities'
+import { AuthRequiredError } from '@sssb/kit/ports/errors'
+import { type ServiceIdentity, verifyServiceCaller } from '@sssb/kit/service-auth/verify'
 import { withPortErrors } from '../respond'
 
 /**
@@ -11,7 +11,7 @@ import { withPortErrors } from '../respond'
  * inside withPortErrors, whose mappings include the one these callers care about: a rejected
  * state-machine hop (InvalidTransitionError) becomes 409 `{ error: 'invalid-transition', from, to }`
  * so the caller learns the job already moved on. The verified identity is threaded into the handler
- * as ctx.identity, and the machine actor built from it (keel's `abilityActorFromService`) as ctx.actor:
+ * as ctx.identity, and the machine actor built from it (SSSB's `abilityActorFromService`) as ctx.actor:
  * a mutating service handler passes that actor to `authorize(...)` like any other route, which is why
  * these routes have no exemption from the authorization scan.
  *

@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { restoreSnapshot } from 'keel/adapters/fake/simulator-admin'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { restoreSnapshot } from '@sssb/kit/adapters/fake/simulator-admin'
 import { withPortErrors } from '../../../respond'
 
 /** Same simulated-mode-only gate as the rest of /api/simulator/*; no auth required to call this. Body:

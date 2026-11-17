@@ -2,7 +2,7 @@
 
 **Priority:** P2 · **Status:** open
 
-`LOCALES`/`DEFAULT_LOCALE` are a hard-coded `['en', 'es']` / `'en'` in `packages/keel/src/core/locale.ts`.
+`LOCALES`/`DEFAULT_LOCALE` are a hard-coded `['en', 'es']` / `'en'` in `packages/kit/src/core/locale.ts`.
 Any app that wants a different active locale set — fewer locales, more, or a different default — has
 to edit framework source rather than configure it.
 
@@ -12,11 +12,11 @@ framework source. Keep the invariants a generic `LOCALES` must satisfy regardles
 contains `DEFAULT_LOCALE`, no duplicates) as framework-level tests against the seam's contract shape,
 not against one concrete locale list.
 
-**Paired UI need:** `packages/keel/src/components/profile-screen.tsx`'s language switch (a `Select`)
+**Paired UI need:** `packages/kit/src/components/profile-screen.tsx`'s language switch (a `Select`)
 renders unconditionally today. Once locales are configurable, an app with exactly one active locale
 has a single-option switch doing nothing useful — it should render only when more than one locale is
 configured. The Simulator panel's own locale control should get the same treatment for consistency.
 
-Evidence: `packages/keel/src/core/locale.ts` (current hard-coded set), `packages/keel/src/components/profile-screen.tsx`
-(the language switch), `packages/keel/src/components/simulator/simulator-panel.tsx` (the Simulator's own
+Evidence: `packages/kit/src/core/locale.ts` (current hard-coded set), `packages/kit/src/components/profile-screen.tsx`
+(the language switch), `packages/kit/src/components/simulator/simulator-panel.tsx` (the Simulator's own
 locale control).

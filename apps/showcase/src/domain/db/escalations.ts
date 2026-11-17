@@ -1,7 +1,7 @@
 import { sql } from 'kysely'
-import { toIso } from 'keel/db/jobs'
+import { toIso } from '@sssb/kit/db/jobs'
 import { type EscalationStatus, escalationMachine } from '@/domain/escalations'
-import type { DbPort } from 'keel/ports/db'
+import type { DbPort } from '@sssb/kit/ports/db'
 
 /** An escalation as either party sees it in their list. The caller derives direction. */
 interface EscalationView {

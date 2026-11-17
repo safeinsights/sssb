@@ -14,10 +14,10 @@ with very different costs, and conflating them is how this ends up looking bigge
 ## Presets: put an observer on the dispatchers
 
 **What is known.** Both hosts already funnel every replay step through one function — `performPresetOperation`
-in `packages/keel/src/server-lib/demo-presets.ts` (the server) and its twin inside
-`packages/keel/src/demo-static/world.ts` (the static world). A recording mode is an observer on those two
+in `packages/kit/src/server-lib/demo-presets.ts` (the server) and its twin inside
+`packages/kit/src/demo-static/world.ts` (the static world). A recording mode is an observer on those two
 dispatchers: each operation performed while recording is appended as `{ op, as?, ...args }`, which is already
-the shape `DemoPreset.operations` holds (`packages/keel/src/core/presets.ts`). The output is a draft for
+the shape `DemoPreset.operations` holds (`packages/kit/src/core/presets.ts`). The output is a draft for
 `apps/<app>/src/app-config/presets/<id>.ts`, and the same gate (`presetProblems`, the server replay and the
 static-shell loop) judges it exactly as it judges a hand-written one: a recording is a draft, never an
 exemption.
@@ -30,7 +30,7 @@ exemption.
    flag toggle is `flag`, and routing them through the dispatcher is a small change. Product-screen
    mutations are recordable only once they go through a named core function that a kind's half also calls,
    and that call site must then report to the recorder, because a route calling the function directly never
-   touches the dispatcher. `sendOrgInvite` (`packages/keel/src/server-lib/invite.ts`) already is such a
+   touches the dispatcher. `sendOrgInvite` (`packages/kit/src/server-lib/invite.ts`) already is such a
    function, so the org screen's invite is the nearest candidate. `applyTicketChanges`
    (`apps/showcase/src/domain/ticket-changes.ts`) is the worked example of extracting one — the PATCH ticket
    route and the `ticket.assign` half both call it.
@@ -56,7 +56,7 @@ becomes the draft's `viewpoint`, which matches its meaning: who the person loadi
 ## Tours: a different thing
 
 A tour records the VIEWER's path, not the world's: DOM interactions mapped to `TourAction` tuples
-(`packages/keel/src/demo-static/tour/contracts.ts`), a click or a typed value per step. The cursor script is
+(`packages/kit/src/demo-static/tour/contracts.ts`), a click or a typed value per step. The cursor script is
 the easy half. The hard half is **stable selectors**: a tour holds to role-named hooks (`data-testid`, and
 `data-tour` only where nothing stable exists — see the comment at the top of
 `apps/showcase/src/app-config/tours.ts`), and an inferred CSS path or nth-child selector would rot at the

@@ -3,7 +3,7 @@
 **Priority:** P2 · **Status:** open
 
 The tour driver's own element lookup is `document.querySelector<HTMLElement>(selector)`
-(`packages/keel/src/demo-static/tour/driver.ts:79`), scoped to the TOP-LEVEL document only. An
+(`packages/kit/src/demo-static/tour/driver.ts:79`), scoped to the TOP-LEVEL document only. An
 iframe — same-origin or not — has its own, separate `document`; the driver's `query()` cannot see
 into one at all, so neither a `click` nor a `type` script action can ever reach an element that lives
 inside an iframe the host page has embedded.
@@ -18,6 +18,6 @@ form that names the frame (e.g. `{ frame: string; selector: string }`, resolved 
 This is a real, hit limitation, not a hypothetical: it is why a derived app with an iframe-hosted
 editor left that surface out of its own tours rather than working around it in the driver.
 
-Evidence: `packages/keel/src/demo-static/tour/driver.ts:79` (`query`, `document.querySelector` only),
-`packages/keel/src/demo-static/tour/contracts.ts` (the `TourAction` shapes a frame-aware selector
+Evidence: `packages/kit/src/demo-static/tour/driver.ts:79` (`query`, `document.querySelector` only),
+`packages/kit/src/demo-static/tour/contracts.ts` (the `TourAction` shapes a frame-aware selector
 would extend).

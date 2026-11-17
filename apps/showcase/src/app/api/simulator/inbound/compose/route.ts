@@ -1,6 +1,6 @@
-import { auth, db, isSimulated } from 'keel/adapters/index'
-import { DEMO_INBOUND_DOMAIN, formatInboundRecipient } from 'keel/core/inbound-email'
-import { intakeInboundEmail } from 'keel/inbound-email/intake'
+import { auth, db, isSimulated } from '@sssb/kit/adapters/index'
+import { DEMO_INBOUND_DOMAIN, formatInboundRecipient } from '@sssb/kit/core/inbound-email'
+import { intakeInboundEmail } from '@sssb/kit/inbound-email/intake'
 import { withPortErrors } from '../../../respond'
 
 /**
@@ -9,7 +9,7 @@ import { withPortErrors } from '../../../respond'
  * builds the intake address from the picked org + handler and calls the SAME intakeInboundEmail seam the
  * real signed webhook route uses. The ticket-creation authorization is identical in both modes (the intake
  * handler matches the sender email to an org member), so no per-actor session ability applies — this
- * sits under the `keel/` authorize()-exemption. See the decision log.
+ * sits under the `@sssb/kit/` authorize()-exemption. See the decision log.
  */
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })

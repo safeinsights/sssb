@@ -1,6 +1,6 @@
-import { auth, db } from 'keel/adapters/index'
-import { authorize } from 'keel/authz/authorize'
-import { markNotificationsRead } from 'keel/db/notifications'
+import { auth, db } from '@sssb/kit/adapters/index'
+import { authorize } from '@sssb/kit/authz/authorize'
+import { markNotificationsRead } from '@sssb/kit/db/notifications'
 import { resolveTenantId } from '../../org-context'
 import { withPortErrors } from '../../respond'
 

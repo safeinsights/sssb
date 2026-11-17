@@ -3,11 +3,11 @@
 import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import { useCallback, useEffect, useState } from 'react'
-import { AppHeader } from 'keel/components/app-header'
+import { AppHeader } from '@sssb/kit/components/app-header'
 import { AppNav } from '@/components/app-nav'
-import { OrgSwitcher, type SwitcherOrg } from 'keel/components/auth/org-switcher'
-import { UserMenu, type MenuUser } from 'keel/components/auth/user-menu'
-import { NotificationBell, type NotificationItem } from 'keel/components/notifications/notification-bell'
+import { OrgSwitcher, type SwitcherOrg } from '@sssb/kit/components/auth/org-switcher'
+import { UserMenu, type MenuUser } from '@sssb/kit/components/auth/user-menu'
+import { NotificationBell, type NotificationItem } from '@sssb/kit/components/notifications/notification-bell'
 
 /** Product-side poll cadence for the notification bell (the house polling doctrine; simulator uses a
  *  faster panel cadence — 30s is plenty for a product bell, plus a refetch on navigation). */

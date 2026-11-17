@@ -1,4 +1,4 @@
-# keel — a multi-tenant application template
+# SSSB — a multi-tenant application template
 
 A production-shaped Next.js foundation you fork and build a product on: ports-and-adapters architecture,
 Postgres row-level-security tenancy, and a local development loop that runs the whole world on your laptop
@@ -55,8 +55,8 @@ that erodes on the first busy Friday:
 
 | Rule                                      | What stops you                                                                     |
 | ----------------------------------------- | ---------------------------------------------------------------------------------- |
-| Vendor SDKs only inside adapters          | lint (`no-restricted-imports`, and `keel/no-dynamic-vendor-import` for `import()`) |
-| No untenanted database access in app code | lint bans raw `getDb()` (`keel/no-raw-db-handle`, deny-by-default)                 |
+| Vendor SDKs only inside adapters          | lint (`no-restricted-imports`, and `sssb/no-dynamic-vendor-import` for `import()`) |
+| No untenanted database access in app code | lint bans raw `getDb()` (`sssb/no-raw-db-handle`, deny-by-default)                 |
 | Every mutating route authorizes           | a build-time scan walks the routes and fails any that don't                        |
 | Tenant isolation actually isolates        | one RLS proof suite, run against both the in-process engine and real Postgres      |
 | The framework never reaches into your app | a package fence — one registration seam is the only door                           |
@@ -66,15 +66,6 @@ that erodes on the first busy Friday:
 
 One command runs all of it: `pnpm verify`.
 
-## Why "keel"
-
-A keel is the structural member laid down first, that the whole hull is built onto and nobody ever sees
-again. That is the job of `packages/keel`: tenancy, authorization, the ports, the migrations, the screens
-you would otherwise write twice. You import it; you don't edit it.
-
-It is deliberately **not** named after the simulated world. Simulator is that world's panel, and keeping
-the two words apart is the point — the framework is much broader than the world it simulates.
-
 ## Modes and scripts
 
 | Command                  | What it is                                                                                                   |
@@ -83,7 +74,7 @@ the two words apart is the point — the framework is much broader than the worl
 | `pnpm dev`               | Hermetic dev: all fake adapters, seeded, offline                                                             |
 | `pnpm dev:real`          | Real adapters against cloud resources — fails fast, listing missing cutover items                            |
 | `pnpm verify`            | The gate: typecheck + lint + unit + e2e + static-demo build + `file://` walkthrough                          |
-| `pnpm test:contract`     | The same RLS proofs on **real Postgres**, for each app (in a database of its own) and for keel's own fixture |
+| `pnpm test:contract`     | The same RLS proofs on **real Postgres**, for each app (in a database of its own) and for SSSB's own fixture |
 | `pnpm build:demo`        | Demo build (fake adapters, demo badge); `pnpm start:demo` serves it                                          |
 | `pnpm build:demo-static` | Single-file demo (`dist-demo/index.html`) that runs from `file://`                                           |
 | `pnpm ladle`             | Component workshop (screens + email templates)                                                               |
@@ -101,19 +92,19 @@ which may itself begin from a preset. [docs/runbooks/demo.md](docs/runbooks/demo
 
 ## Architecture in one paragraph
 
-Vendor SDKs live only in [packages/keel/src/adapters/](packages/keel/src/adapters/), or, for a vendor
-keel has no port for, in an app's own `apps/<app>/src/adapters/real/`
+Vendor SDKs live only in [packages/kit/src/adapters/](packages/kit/src/adapters/), or, for a vendor
+SSSB has no port for, in an app's own `apps/<app>/src/adapters/real/`
 ([recipe](docs/recipes/app-owned-adapter.md)), and both are lint-enforced. Everything else codes against
-the narrow interfaces in [packages/keel/src/ports/](packages/keel/src/ports/)
+the narrow interfaces in [packages/kit/src/ports/](packages/kit/src/ports/)
 (`auth`, `db`, `storage`, `llm`, `email`, `analytics`, `jobs`) or an app's own port. Domain logic is pure TypeScript in
-[packages/keel/src/core/](packages/keel/src/core/). Screens are router-agnostic — which is what makes the
+[packages/kit/src/core/](packages/kit/src/core/). Screens are router-agnostic — which is what makes the
 `file://` demo possible — and route files are thin wrappers. Tenancy is enforced _in the database_ by
 row-level security: every tenant-scoped query runs inside `withTenant()`. Inside a tenant, `authorize()` is
 the single choke point for resource-level decisions. All UI copy flows through next-intl (`en` + `es`).
 
 ## Using it as a template
 
-Read **[docs/adopting.md](docs/adopting.md)**. The short version: the framework is `packages/keel`, your
+Read **[docs/adopting.md](docs/adopting.md)**. The short version: the framework is `packages/kit`, your
 app extends it only through the `apps/<app>/src/app-config/` registration seam, and a capability you don't
 want is turned off by registering nothing for it.
 
@@ -148,13 +139,19 @@ service. Those carry an `AUTHORED — CUTOVER` header and a row in
 [docs/cutover-checklist.md](docs/cutover-checklist.md) naming the exact proof each one owes. The template
 is honest about this rather than quietly hoping; the fakes are what you actually develop against.
 
-**Support posture.** Maintained in spare time. Issues and PRs are welcome — especially improvements to
+**Who maintains it.** SSSB is maintained by SafeInsights, and it is not SafeInsights-specific. The guard is the
+universality test in [docs/development-approach.md](docs/development-approach.md) ("What the template ships"):
+vendor code ships only if every product built on SSSB will use it or it demonstrates a class of
+integration the template does not yet teach, a component only if it encodes a framework invariant, and
+everything else is a recipe.
+
+**Support posture.** Issues and PRs are welcome — especially improvements to
 the framework half from someone who has adopted it, since that is the only way a second consumer ever
 checks the seam. Expect a straight answer, not a fast one.
 
 ## Where things are
 
-- `packages/keel/` — **the framework**: ports, adapters, core, db/RLS, authz, i18n, the Simulator harness
+- `packages/kit/` — **the framework**: ports, adapters, core, db/RLS, authz, i18n, the Simulator harness
   and the generic screens (ADR-0012)
 - `apps/` — one directory per app, each self-contained (its own `package.json`, configs, e2e and contract
   tests); single-app root commands delegate to `apps/showcase` until you eject it (ADR-0007)
@@ -163,8 +160,7 @@ checks the seam. Expect a straight answer, not a fast one.
 - [docs/README.md](docs/README.md) — the map of the doc set: binding doctrine (path-gated), dated records,
   and `.claude/future-tasks/`
 - [docs/development-approach.md](docs/development-approach.md) — the engineering philosophy, and why
-- `docs/adr/` — the architecture decisions: 0001–0013 Accepted (the design is decided, not aspirational), 0014
-  Proposed
+- `docs/adr/` — the architecture decisions: 0001–0014 Accepted (the design is decided, not aspirational)
 - `docs/cutover-checklist.md` — every deferred item that needs real credentials, and the proof each owes
 - [CONTRIBUTING.md](CONTRIBUTING.md) — conventions, how to add an adapter, commit format
 

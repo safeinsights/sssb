@@ -1,4 +1,4 @@
-import { appMode } from 'keel/adapters/index'
+import { appMode } from '@sssb/kit/adapters/index'
 
 /** Liveness probe for the load balancer / CloudFront origin checks and the deploy runbook. */
 export async function GET(): Promise<Response> {

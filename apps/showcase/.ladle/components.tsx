@@ -4,9 +4,9 @@ import '../src/styles/index.css'
 import type { GlobalProvider } from '@ladle/react'
 import { MantineProvider } from '@mantine/core'
 import { NextIntlClientProvider } from 'next-intl'
-import { mergeMessages } from 'keel/i18n/messages'
-import enFramework from 'keel/i18n/messages/en.json'
-import { DEFAULT_TENANT_SLUG, getTenantTheme } from 'keel/theme'
+import { mergeMessages } from '@sssb/kit/i18n/messages'
+import enFramework from '@sssb/kit/i18n/messages/en.json'
+import { DEFAULT_TENANT_SLUG, getTenantTheme } from '@sssb/kit/theme'
 import enApp from '../messages/en.json'
 
 // Stories come from both halves of the repo, so the workshop gets the MERGED catalog (framework +

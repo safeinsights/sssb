@@ -1,7 +1,7 @@
 import type { Generated } from 'kysely'
 
 /**
- * The APP's tenant-scoped tables (the seam side of packages/keel/src/db/schema.ts, ADR-0012). The framework owns its
+ * The APP's tenant-scoped tables (the seam side of packages/kit/src/db/schema.ts, ADR-0012). The framework owns its
  * tables + the `DB` interface, which `extends AppTables` (a type-only seam import) so every existing
  * `import type { DB }` keeps working. A real adopter replaces this file's tables — and the matching
  * migrations (src/app-config/db/migrations, numbered ≥1001) — with its own. Kept in lockstep with
@@ -67,7 +67,7 @@ interface AttachmentsTable {
     created_at: Generated<string>
 }
 
-/** The app's tables, merged into the framework `DB` interface (packages/keel/src/db/schema.ts `extends AppTables`). */
+/** The app's tables, merged into the framework `DB` interface (packages/kit/src/db/schema.ts `extends AppTables`). */
 export interface AppTables {
     tickets: TicketsTable
     escalations: EscalationsTable

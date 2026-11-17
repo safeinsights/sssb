@@ -1,20 +1,20 @@
 import { setRequestLocale } from 'next-intl/server'
 import { redirect } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { analytics, auth, db } from 'keel/adapters/index'
+import { analytics, auth, db } from '@sssb/kit/adapters/index'
 import {
     agreementFacts,
     computePendingAgreements,
     gatesForAgreements,
     type PendingAgreement,
     pendingAgreementForGateId,
-} from 'keel/core/agreements'
-import { advisoryGates, evaluateGates, firstBlockingGate } from 'keel/core/gates'
-import { listAgreementsForTenant, readAcceptancesForUser } from 'keel/db/agreements'
-import { tenantIdForSlug } from 'keel/db/tenant-lookup'
+} from '@sssb/kit/core/agreements'
+import { advisoryGates, evaluateGates, firstBlockingGate } from '@sssb/kit/core/gates'
+import { listAgreementsForTenant, readAcceptancesForUser } from '@sssb/kit/db/agreements'
+import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 import { findTenant } from '@app/seed'
-import { AgreementAdvisoryBanner } from 'keel/components/agreements/agreement-advisory-banner'
-import { DemoBanner } from 'keel/components/demo-banner'
+import { AgreementAdvisoryBanner } from '@sssb/kit/components/agreements/agreement-advisory-banner'
+import { DemoBanner } from '@sssb/kit/components/demo-banner'
 import { AgreementGateGlue } from './agreement-gate-glue'
 import { HeaderGlue } from './header-glue'
 import { PageViewTracker } from './page-view-tracker'

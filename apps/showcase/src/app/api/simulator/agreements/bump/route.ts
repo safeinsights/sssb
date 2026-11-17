@@ -1,11 +1,11 @@
-import { isSimulated } from 'keel/adapters/index'
-import { bumpWorldAgreement } from 'keel/adapters/fake/agreements'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { bumpWorldAgreement } from '@sssb/kit/adapters/fake/agreements'
 import { withPortErrors } from '../../../respond'
 
 /**
  * Bump one agreement's version (the demo story: re-arms the gate for everyone with a stale acceptance).
  * Simulated-mode-only Simulator god op (404 first line in real mode). No authorize(): the authorized-mutations
- * scanner exempts `keel/` on the `!isSimulated` first-line gate — this is a simulated-world control,
+ * scanner exempts `@sssb/kit/` on the `!isSimulated` first-line gate — this is a simulated-world control,
  * never a product mutation path.
  */
 export async function POST(request: Request): Promise<Response> {

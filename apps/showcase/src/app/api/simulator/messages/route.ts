@@ -1,5 +1,5 @@
-import { isSimulated } from 'keel/adapters/index'
-import { listCaughtSms } from 'keel/adapters/fake/sms'
+import { isSimulated } from '@sssb/kit/adapters/index'
+import { listCaughtSms } from '@sssb/kit/adapters/fake/sms'
 import { withPortErrors } from '../../respond'
 
 /**

@@ -1,4 +1,4 @@
-import { analytics, auth } from 'keel/adapters/index'
+import { analytics, auth } from '@sssb/kit/adapters/index'
 import { withPortErrors } from '../../respond'
 
 export async function POST(request: Request): Promise<Response> {

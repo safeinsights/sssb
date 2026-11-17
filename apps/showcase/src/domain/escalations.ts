@@ -1,4 +1,4 @@
-import { defineStateMachine } from 'keel/core/state-machine'
+import { defineStateMachine } from '@sssb/kit/core/state-machine'
 
 export const ESCALATION_STATUSES = ['open', 'accepted', 'rejected', 'cancelled'] as const
 export type EscalationStatus = (typeof ESCALATION_STATUSES)[number]

@@ -1,4 +1,4 @@
-import type { DemoPreset } from 'keel/core/presets'
+import type { DemoPreset } from '@sssb/kit/core/presets'
 
 export const multiTenant: DemoPreset = {
     // Both sites at once, on top of mid-demo (the Frontline morning tickets and Jordan's invite come

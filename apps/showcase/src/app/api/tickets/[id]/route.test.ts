@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { InvalidTransitionError } from 'keel/core/state-machine'
-import type { AuthUser } from 'keel/ports/auth'
+import { InvalidTransitionError } from '@sssb/kit/core/state-machine'
+import type { AuthUser } from '@sssb/kit/ports/auth'
 import { DELETE, PATCH } from './route'
 
 // Real authorize (pure abilities) and the real ticket machine's status vocabulary run — only the
@@ -17,21 +17,21 @@ const h = vi.hoisted(() => ({
     notifyMember: vi.fn(),
     makeNotifyDeps: vi.fn(),
 }))
-vi.mock('keel/adapters/index', () => ({
+vi.mock('@sssb/kit/adapters/index', () => ({
     auth: { requireUser: h.requireUser, listMembers: h.listMembers },
     db: {},
 }))
-vi.mock('keel/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
-vi.mock('keel/db/org-lookup', () => ({ orgIdForSlug: h.orgIdForSlug }))
-vi.mock('keel/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
+vi.mock('@sssb/kit/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
+vi.mock('@sssb/kit/db/org-lookup', () => ({ orgIdForSlug: h.orgIdForSlug }))
+vi.mock('@sssb/kit/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
 vi.mock('@/domain/db/tickets', () => ({
     ticketForOrg: h.ticketForOrg,
     updateTicket: h.updateTicket,
     deleteTicket: h.deleteTicket,
 }))
 // The notification fan-out is mocked away — this test isolates the edit path, not the notify seam.
-vi.mock('keel/server-lib/notify', () => ({ notifyMember: h.notifyMember }))
-vi.mock('keel/server-lib/notify-deps', () => ({ makeNotifyDeps: h.makeNotifyDeps }))
+vi.mock('@sssb/kit/server-lib/notify', () => ({ notifyMember: h.notifyMember }))
+vi.mock('@sssb/kit/server-lib/notify-deps', () => ({ makeNotifyDeps: h.makeNotifyDeps }))
 
 function user(overrides: Partial<AuthUser> = {}): AuthUser {
     return {

@@ -1,19 +1,19 @@
 import { sql } from 'kysely'
-import { encodeKeysetCursor, parseKeysetCursor } from 'keel/core/keyset'
-import { parseDbKeysetCursor } from 'keel/db/keyset'
-import type { RlsProofSuite } from 'keel/db/rls-proofs'
-import { runWithTenant } from 'keel/db/with-tenant'
+import { encodeKeysetCursor, parseKeysetCursor } from '@sssb/kit/core/keyset'
+import { parseDbKeysetCursor } from '@sssb/kit/db/keyset'
+import type { RlsProofSuite } from '@sssb/kit/db/rls-proofs'
+import { runWithTenant } from '@sssb/kit/db/with-tenant'
 import { listTickets } from '@/domain/db/tickets'
 
 /**
- * The APP's tenant-isolation proofs (the seam side of packages/keel/src/db/rls-proofs.ts, ADR-0004 +
+ * The APP's tenant-isolation proofs (the seam side of packages/kit/src/db/rls-proofs.ts, ADR-0004 +
  * ADR-0012) — one section per app table (`tickets`, `escalations`, `attachments`, migrations ≥1001),
  * asserting exactly what the framework half asserts for its own: read isolation both directions under
  * UNFILTERED selects, WITH CHECK on cross-tenant writes, and the per-table privilege grants.
  *
- * Why it lives HERE and not with the framework suite: proofs that name app tables would make keel's own
+ * Why it lives HERE and not with the framework suite: proofs that name app tables would make SSSB's own
  * tenancy proof un-runnable the moment an adopter deletes the demo app. The framework composes the two
- * halves in packages/keel/src/db/rls-proof-runner.ts and runs the union on BOTH engines (pglite unit +
+ * halves in packages/kit/src/db/rls-proof-runner.ts and runs the union on BOTH engines (pglite unit +
  * real-Postgres contract), so the anti-drift guarantee is unchanged: the identical assertions run twice.
  *
  * A real adopter replaces this file's sections with proofs for its OWN ≥1001 tables; an adopter with no

@@ -2,7 +2,7 @@
 
 import { useTranslations } from 'next-intl'
 import { useState } from 'react'
-import { AcceptInviteScreen, type AcceptInviteState } from 'keel/components/auth/accept-invite-screen'
+import { AcceptInviteScreen, type AcceptInviteState } from '@sssb/kit/components/auth/accept-invite-screen'
 
 export function AcceptInviteGlue({ locale, state }: { locale: string; state: AcceptInviteState }) {
     const t = useTranslations('acceptInvite')

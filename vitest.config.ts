@@ -9,45 +9,45 @@ const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url
  * `scripts/init-app.ts` rewrites exactly this literal when an adopter renames an app or ejects the
  * showcase, which is why it is spelled out here rather than discovered from `apps/`.
  *
- * There used to be a second constant here, FRAMEWORK_SUITE_APP, naming the app keel's own suite ran
+ * There used to be a second constant here, FRAMEWORK_SUITE_APP, naming the app SSSB's own suite ran
  * under. There is no such app any more: the framework's tests run against the framework's OWN seam
- * (packages/keel/test-fixture — see the `keel` project below), so ejecting the demo cannot take
- * keel's suite down with it.
+ * (packages/kit/test-fixture — see the `kit` project below), so ejecting the demo cannot take
+ * SSSB's suite down with it.
  */
 const APPS = ['showcase', 'starter'] as const
 
 /**
  * ONE ALIAS SET PER APP — the reason this file has projects at all.
  *
- * `@app-config/*` is the seam the framework resolves app vocabulary through (ADR-0012), and it is a
+ * `@sssb/app-config/*` is the seam the framework resolves app vocabulary through (ADR-0012), and it is a
  * BARE SPECIFIER: a single global alias can only ever point at one app. With two apps a shared alias
  * would silently bind the framework's tests to whichever app happened to be listed first, and the
  * other app's registrations would never execute. So each app gets its own vitest project with its own
  * aliases, and the framework's seam-conformance tests are included in BOTH.
  */
 const aliasesFor = (app: string) => ({
-    '@app-config': at(`./apps/${app}/src/app-config`),
+    '@sssb/app-config': at(`./apps/${app}/src/app-config`),
     // the framework package (ADR-0012) — aliased rather than resolved through its exports map so
     // vitest loads the SAME source files the app's tsconfig paths resolve to
-    keel: at('./packages/keel/src'),
+    '@sssb/kit': at('./packages/kit/src'),
     '@': at(`./apps/${app}/src`),
 })
 
 /**
  * The framework tests that must hold for EVERY app, re-run against each app's seam:
  * - the i18n pair proves the namespace partition and en/es parity over that app's MERGED catalog;
- * - the pglite RLS suite proves that app's own tables through keel's composed proof runner;
+ * - the pglite RLS suite proves that app's own tables through SSSB's composed proof runner;
  * - the demo-presets check holds that app's registered presets to its own seed, registries and catalogs.
  *
  * These are the SEAM-CONFORMANCE tests, and running them per app is the point: they are what proves
- * the seam is honest against real apps rather than only against the fixture. The REST of keel's suite
- * runs once, in the `keel` project below, against the framework's own fixture seam.
+ * the seam is honest against real apps rather than only against the fixture. The REST of SSSB's suite
+ * runs once, in the `kit` project below, against the framework's own fixture seam.
  */
 const SEAM_CONFORMANCE_TESTS = [
-    'packages/keel/src/i18n/*.test.ts',
-    'packages/keel/src/db/rls-pglite.test.ts',
-    'packages/keel/src/db/migrate.test.ts',
-    'packages/keel/src/server-lib/demo-presets-seam.test.ts',
+    'packages/kit/src/i18n/*.test.ts',
+    'packages/kit/src/db/rls-pglite.test.ts',
+    'packages/kit/src/db/migrate.test.ts',
+    'packages/kit/src/server-lib/demo-presets-seam.test.ts',
 ]
 
 // The first test to touch the fake DB cold-migrates + seeds pglite in-process; under full-suite
@@ -73,8 +73,8 @@ const projectFor = (app: string) => ({
 })
 
 /**
- * THE FRAMEWORK'S OWN PROJECT — keel's suite (and any other package's), run against keel's own
- * conforming seam in `packages/keel/test-fixture` rather than against a host app's.
+ * THE FRAMEWORK'S OWN PROJECT — SSSB's suite (and any other package's), run against SSSB's own
+ * conforming seam in `packages/kit/test-fixture` rather than against a host app's.
  *
  * That fixture is why this project exists and why it names no app: the framework's tests need a seed
  * world, an app table, an app job/webhook/notification kind and a route tree to assert against, and
@@ -85,16 +85,16 @@ const projectFor = (app: string) => ({
  * It carries the cross-app scans too: authorized-mutations.test.ts walks EVERY app's route tree from
  * the repo root plus the fixture's, so no app can opt out by existing.
  */
-const keelProject = {
+const kitProject = {
     plugins: [react()],
     resolve: {
         alias: {
-            '@app-config': at('./packages/keel/test-fixture/app-config'),
-            keel: at('./packages/keel/src'),
+            '@sssb/app-config': at('./packages/kit/test-fixture/app-config'),
+            '@sssb/kit': at('./packages/kit/src'),
         },
     },
     test: {
-        name: 'keel',
+        name: 'kit',
         environment: 'happy-dom',
         include: ['packages/*/src/**/*.test.{ts,tsx}'],
         // Real-Postgres proofs belong to `pnpm test:contract` (vitest.contract.config.ts), not the unit run.
@@ -103,7 +103,7 @@ const keelProject = {
         // The fake LLM adapter resolves fixtures from the working directory, which for `next dev` is
         // the app — but this suite runs from the REPO ROOT, so it points the adapter at the fixture's
         // own fixtures (same override shape as APP_DATA_DIR).
-        env: { APP_FIXTURES_DIR: at('./packages/keel/test-fixture/fixtures') },
+        env: { APP_FIXTURES_DIR: at('./packages/kit/test-fixture/fixtures') },
         testTimeout: TEST_TIMEOUT_MS,
     },
 }
@@ -112,7 +112,7 @@ export default defineConfig({
     test: {
         projects: [
             ...APPS.map(projectFor),
-            keelProject,
+            kitProject,
             {
                 // Repo hygiene, not app scope — and deliberately alias-free, so nothing here can
                 // quietly come to depend on one app being "the" app. Everything under `tests/` is
