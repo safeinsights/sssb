@@ -2753,3 +2753,43 @@ Decisions P1 made that ADR-0014 did not:
   test GUC `sssb.probe`, temp-dir prefixes, the tour cursor's DOM ids (`sssb-tour-cursor`), the test MIME types
   (`application/x-sssb-test`), the fixture's slug (`sssbfix`) and the Vite plugin name `sssb:prune-mantine-css`.
   None is deployed state.
+
+## Pack and consume (2026-11-17, ADR-0014 P2, `ci/pack-and-consume`)
+
+`scripts/pack-and-consume.mjs` and the `pack-and-consume` job in `checks.yml` pack `@sssb/kit`, build an
+adopter-shaped workspace outside the checkout from copies of `apps/starter`, install the tarball and run that
+workspace's verify. Decisions ADR-0014 did not pin down:
+
+- **Two apps, one full verify.** `apps/console` runs everything part 7 lists for P2. `apps/ledger`, the second
+  app with a different seam (its own slug, and an extra migration imported through `@/`), runs typecheck at the
+  floor and with the strict flags, unit tests with the conformance suites, and its migrator bundle, but not
+  `next build`, e2e or the static demo: a second copy of the same starter adds CI minutes there and no
+  resolution path the console does not already cover.
+- **The seam's isolation is proved four ways**: on disk (each app's `@sssb/kit` in the virtual store has the
+  app's own `src/app-config` linked beside it, and the two apps hold two instances), at run time (each app's
+  `seam-identity.test.ts` reads its own slug through the framework's `WEBHOOK_SIGNATURE_HEADER`), in each
+  migrator bundle (the app's migrations and no other app's), and by the conformance suites running from each
+  app's own copy (Vitest's JSON report is matched against both spellings of that copy's path).
+- **"No install reaches the registry for `@sssb/app-config`" is enforced, not observed.** The consumer's
+  `.npmrc` routes the whole `@sssb` scope to `http://127.0.0.1:9/`, where nothing listens, so any registry
+  request for an SSSB package fails the install; and the lockfile check fails any `@sssb/*` resolution that is
+  not a `file:` tarball or a `link:` (the seam only ever a link). The packed manifest is also checked: the seam in
+  `peerDependenciesMeta` only, never in `peerDependencies` (P1's pin).
+- **The strict-flag typecheck is a ratchet on the framework and a hard gate on the app.** All nine of part 2's
+  flags are on at once. Errors are split by where they sit: any in the app's own code fails, and the framework's
+  must equal `STRICT_KIT_ERROR_BASELINE` exactly (116, part 2's 26 + 24 + 58 + 8), so P3 lowers the number as
+  it fixes them and a new framework error cannot hide under it.
+- **The starter's own code now passes the strict-flag set**, with five small edits (bracket access to
+  `process.env` and a request header, a typed catalog helper, and the sign-in picker leaving out a person with no
+  membership instead of crashing). The starter is `@sssb/create`'s template, so an adopter who turns the flags
+  on starts clean; and with the app's own errors at zero, a framework type change that surfaces as an error in
+  app code shows up.
+- **The negative fixture runs under tsx**, from `packages/seamless`, which takes the tarball and links no seam.
+  It must exit non-zero AND name `@sssb/app-config` in its error, so a failure for any other reason does not
+  count as the loud failure part 5 asks for.
+- **The consumer resolves its own dependencies**, with no lockfile and `minimumReleaseAge: 2880`, as an adopter
+  installing today would. Version ranges come from this repo's manifests. A new upstream release can therefore
+  turn the job red without a change here, which is the signal an adopter would get the same day.
+- **The app-owned adapter is reached through a route**, `/api/objects`, so `next build` compiles the registry,
+  its `import()` of `real/` and the vendor SDK against the packed framework. A unit test cannot load the
+  registry, because the framework's adapters import `server-only`.

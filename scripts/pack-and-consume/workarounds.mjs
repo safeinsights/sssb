@@ -23,7 +23,7 @@ export const WORKAROUNDS = {
     },
     'strict-flags-kit-baseline': {
         removedBy: 'P3',
-        what: "the strict-flag typecheck tolerates errors inside @sssb/kit's own source, up to a counted baseline per flag; the apps' own code must be clean",
+        what: "the strict-flag typecheck tolerates exactly STRICT_KIT_ERROR_BASELINE errors inside @sssb/kit's own source (scripts/pack-and-consume.mjs); the apps' own code must be clean",
     },
     'prune-plugin-copied': {
         removedBy: 'P4',

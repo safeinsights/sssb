@@ -58,7 +58,8 @@ const REPO = path.resolve(import.meta.dirname, '..')
  * Errors inside @sssb/kit's own source under the strict-flag set, per app, measured from the tarball.
  * The workaround `strict-flags-kit-baseline` (removed by P3, which makes the framework compile under the
  * set): a count above this fails, and so does a count below it, so the number is lowered as P3's work
- * lands instead of leaving room for new errors.
+ * lands instead of leaving room for new errors. 116 when P2 landed, the same total ADR-0014 part 2
+ * measured flag by flag (26 + 24 + 58 + 8; the other five flags give none).
  */
 const STRICT_KIT_ERROR_BASELINE = 116
 
@@ -76,6 +77,14 @@ const REPORTS = path.join(BASE, 'reports')
 
 if (BASE === REPO || BASE.startsWith(REPO + path.sep)) {
     fail(`--dir must be outside this repository (${REPO}): inside it, pnpm would find SSSB's workspace`)
+}
+// Node, TypeScript and pnpm all look UP the tree (node_modules, @types, a workspace root), so a parent
+// directory holding any of these would lend the consumer what it did not install.
+for (let dir = path.dirname(BASE); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    for (const name of ['node_modules', 'package.json', 'pnpm-workspace.yaml']) {
+        if (existsSync(path.join(dir, name)))
+            fail(`--dir ${BASE} sits under ${path.join(dir, name)}, which the consumer would resolve through`)
+    }
 }
 
 // ---- running things -------------------------------------------------------------------------------
@@ -533,6 +542,10 @@ function scaffold(/** @type {string} */ tarball) {
 ${allowBuilds}
 # Each importer of @sssb/kit gets an instance of its own, with its own seam, or none (ADR-0014 part 5).
 dedupePeerDependents: false
+
+# The house supply-chain guard Pages inherited: only versions published two days ago or more. The
+# consumer resolves afresh on every run (no lockfile), so this also keeps it off a release hours old.
+minimumReleaseAge: 2880
 `,
     )
     // Every @sssb package is routed to an address nothing listens on, so an install that asked the
@@ -831,7 +844,11 @@ function nextBuild() {
 
 /** @param {number} port */
 function e2e(port) {
-    run('pnpm', ['exec', 'playwright', 'install', 'chromium'], { cwd: appDir('console') })
+    // The consumer's own Playwright, which its fresh resolution may have made newer than this repo's.
+    // On CI the browser's OS libraries come with it; locally they are the developer's.
+    const withDeps = process.env.CI ? ['--with-deps'] : []
+    run('pnpm', ['exec', 'playwright', 'install', ...withDeps, 'chromium'], { cwd: appDir('console') })
+    // CI=1 locally too: Playwright then never reuses a server some other checkout left on the port.
     run('pnpm', ['run', 'test:e2e'], {
         cwd: appDir('console'),
         env: consumerEnv({ STARTER_PORT: String(port), CI: process.env.CI ?? '1' }),
