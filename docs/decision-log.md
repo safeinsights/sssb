@@ -2835,10 +2835,11 @@ Dependabot's #1.
 
 - **Every declaration moved in one commit.** `react` and `react-dom` go to `~19.3.1` in the root and both apps,
   `@types/react` and `@types/react-dom` to `~19.3.0` in the root, and `@sssb/kit`'s `react` peer to `~19.3.1`.
-  The kit declares no `@types/react` peer yet (ADR-0014 part 2 moves it there). #1 moved the apps and not the
+  The kit declares no `@types/react` peer yet (ADR-0014 part 2 moves it there,
+  `docs/adr/0014-distribution-as-versioned-packages.md:424`). #1 moved the apps and not the
   kit's peer, and the kit kept its own React: unit tests failed with "mismatching versions of React and the
   renderer", the starter's e2e lost next-intl's provider, and the static demo bundled two Reacts (1,012,958
-  bytes).
+  bytes; #1's checks run 44171028375).
 - **One copy of each singleton, checked by realpath.** From `packages/kit` and from each app, the nearest
   `node_modules/<pkg>` of `react`, `react-dom`, `next`, `next-intl`, `@mantine/core` and `@types/react`
   resolves to one directory each (build-notes' `readlink -f` check, run over the three importers). Seen to
@@ -2852,9 +2853,9 @@ Dependabot's #1.
   `apps/starter/DEMO-SIZE.md`. Both numbers still sit below the unpruned demos (997,945 and 908,510 bytes),
   so a pruning that stops still fails the gate.
 - **Pack and consume's lockfile seed moved with it.** `pnpm pack-and-consume --update-lockfile` re-resolved the
-  consumer to React 19.3.1, its types and `scheduler` 0.28.0. Nothing else in
-  `scripts/pack-and-consume/consumer-lock.yaml` changed except the packed kit's integrity hash, and the full
-  run passed.
+  consumer to React 19.3.1, its types and `scheduler` 0.28.0. The rest of the change to
+  `scripts/pack-and-consume/consumer-lock.yaml` is peer suffixes naming the new React and the packed kit's
+  integrity hash; no other package's version moved, and the full run passed.
 - **`@axe-core/playwright` stays held at `~4.12.1`.** The other half of #1 is not decided:
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
   hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
