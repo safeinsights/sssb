@@ -817,10 +817,11 @@ const eslintConfig = [
             '!.ladle',
             '!.ladle/**',
             '**/.ladle/dist/**',
-            // What Panda's codegen writes there (`.mjs` and `.d.ts`): a hand-written `.ts` or `.js` in that
-            // directory is fenced like any other module. A hand-written `.mjs` is not, since it has the
-            // extension of Panda's own output.
-            'apps/*/src/styles/generated/**/*.{mjs,d.ts}',
+            // What Panda 2's codegen writes there (`.js` and `.d.ts`, its default `outExtension`): a
+            // hand-written `.ts` or `.mjs` in that directory is fenced like any other module. A hand-written
+            // `.js` is not, since it has the extension of Panda's own output; nothing fences it
+            // (`.claude/future-tasks/generated-styles-mjs-unlinted.md`).
+            'apps/*/src/styles/generated/**/*.{js,d.ts}',
             '**/test-results/**',
             '**/playwright-report/**',
             '**/coverage/**',
