@@ -38,7 +38,8 @@ an agreement version and re-arms a **blocking** interstitial for the whole tenan
 ## What CI changed under this file
 
 **1. The "shared `.data` between the two passes" lead is DEAD ON CI.**
-`.github/workflows/checks.yml` no longer runs the two passes in one job. The `e2e` job is a matrix of
+CI no longer runs the two passes in one job. The `e2e` job (`.github/workflows/app-checks.yml`, which
+`checks.yml` calls) is a matrix of
 three shards — `showcase` (chromium), `showcase-destructive`, `starter` — each `runs-on: ubuntu-latest`,
 i.e. **a separate runner with a separate filesystem**. The destructive shard cannot inherit anything the
 chromium shard wrote, because it never sees that disk. Whatever remains on CI is not this.
