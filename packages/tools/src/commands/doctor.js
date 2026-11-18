@@ -4,7 +4,9 @@
 // WORKSPACE: it walks pnpm-workspace.yaml for every importer of @sssb/kit and every APP (in-repo, the apps the
 // workspace's commands fan out over, `sssb.apps` or apps/*; otherwise every importer with a seam of its own,
 // `src/app-config`), and gives each app the per-app checks, the one it runs for (`--app`, or the working directory)
-// among them. It fails, naming every problem, on:
+// among them. WHERE IT STARTS does not change what it finds: `--app <dir>`, or the working directory when it resolves
+// @sssb/kit (an app, or an in-repo root), or, at the root of a workspace whose root takes no @sssb/kit (a generated
+// workspace's), the workspace's first app. It fails, naming every problem, on:
 //
 //   - a workspace walk that cannot read pnpm-workspace.yaml, or that does not reach the app doctor runs for;
 //   - two copies of a singleton: a peer of @sssb/kit found from the kit's directory and from an app's must be ONE
@@ -35,7 +37,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { readJson, takeAppDir, UsageError, workspaceRootOf } from '../app.js'
+import { readJson, takeAppDir, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '../kit.js'
 import {
     aliasProblems,
@@ -89,15 +91,50 @@ const RUNNERS = /** @type {const} */ (['unit', 'contract'])
  * @property {string[]} nested the workspace packages inside the app, whose files are not the app's
  */
 
+/**
+ * The app doctor runs for, and whether it was chosen for the person. Doctor checks the whole workspace from any of its
+ * apps, so the short form has to work where people type it, the root: with no `--app`, a working directory that
+ * resolves `@sssb/kit` is the app (as before), and a workspace root that does not (a generated workspace's root takes
+ * no framework) starts from the workspace's first app.
+ * @param {string[]} args
+ * @param {string} [cwd]
+ * @returns {{ dir: string, defaulted: boolean }}
+ */
+export function doctorApp(args, cwd = process.cwd()) {
+    if (args.includes('--app')) return { dir: takeAppDir(args, cwd), defaulted: false }
+    const here = path.resolve(cwd)
+    if (existsSync(path.join(here, 'package.json')) && packageDirFrom(here, '@sssb/kit') !== null) {
+        return { dir: here, defaulted: false }
+    }
+    if (existsSync(path.join(here, 'pnpm-workspace.yaml')) && existsSync(path.join(here, 'package.json'))) {
+        const apps = workspaceApps(here)
+        if (apps.length === 0) {
+            throw new UsageError(
+                `sssb doctor: ${here} is a workspace root that takes no @sssb/kit and has no apps (\`sssb.apps\` in its ` +
+                    'package.json, or apps/<name>): pass --app <dir>',
+            )
+        }
+        return { dir: path.resolve(here, apps[0]), defaulted: true }
+    }
+    // Neither: the usual refusal, which says to run from an app or pass --app.
+    return { dir: takeAppDir(args, cwd), defaulted: false }
+}
+
 /** @param {string[]} args */
 export async function run(args) {
-    const appDir = realpathSync(takeAppDir(args))
+    const chosen = doctorApp(args)
+    const appDir = realpathSync(chosen.dir)
     if (args.length > 0) throw new UsageError(`sssb doctor: unknown argument ${args[0]} (usage: doctor [--app <dir>])`)
     const root = realpathSync(workspaceRootOf(appDir))
     const kitDir = kitDirOf(appDir)
     const version = kitVersionOf(appDir)
     const rel = relativeTo(root)
     const heading = `sssb doctor: ${rel(appDir)}, @sssb/kit ${version} at ${rel(kitDir)}`
+    if (chosen.defaulted) {
+        console.log(
+            `sssb doctor: no --app, and the working directory (${root}) takes no @sssb/kit: starting from ${rel(appDir)}. One run checks every app of the workspace.`,
+        )
+    }
 
     /** @type {Workspace} */
     let workspace
