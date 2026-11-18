@@ -3,7 +3,8 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTestTmpDir } from '../../../../../../../tests/support/tmp-dir'
 import { createTicker } from '../../../../../../../scripts/ticker.mjs'
-import { createDevTickerControl, DEFAULT_INTERVAL_SECONDS, type DevTickerControl } from './dev-ticker'
+import { liveTickerMarker, tickerMarkerPath } from '../../../../../../../scripts/ticker-marker.mjs'
+import { createDevTickerControl, DEFAULT_INTERVAL_SECONDS, type DevTickerControl, devTickerControl } from './dev-ticker'
 
 const stops: DevTickerControl[] = []
 afterEach(async () => {
@@ -94,5 +95,27 @@ describe('the dev ticker control', () => {
         expect(control.status().elsewhere).toBeNull()
         // A second start while running is the ticker's no-op, not a refusal: the interval stays what it was.
         expect(control.start(9)).toMatchObject({ ok: true, status: { running: true, seconds: 5 } })
+    })
+})
+
+describe("the dev server's control (devTickerControl)", () => {
+    it('is one control per process, whose ticker leaves the marker the playwright guard reads', async () => {
+        const dir = makeTestTmpDir('dev-ticker-server-')
+        vi.stubEnv('APP_DATA_DIR', dir)
+        try {
+            const first = devTickerControl()
+            stops.push(first)
+            // One per process: a second call (a hot reload re-evaluating the route) reaches the same ticker, so Stop can.
+            expect(devTickerControl()).toBe(first)
+            // A day's interval: started, but nothing ticks during the test.
+            expect(first.start(86_400).ok).toBe(true)
+            expect(liveTickerMarker(tickerMarkerPath())).toMatchObject({ pid: process.pid, seconds: 86_400 })
+            expect(tickerMarkerPath()).toBe(path.join(dir, 'dev-ticker.json'))
+            await first.stop()
+            expect(existsSync(tickerMarkerPath())).toBe(false)
+        } finally {
+            vi.unstubAllEnvs()
+            delete (globalThis as Record<symbol, unknown>)[Symbol.for('sssb.showcase.devTickerControl')]
+        }
     })
 })

@@ -22,7 +22,7 @@ import {
     MAX_INTERVAL_SECONDS,
     MIN_INTERVAL_SECONDS,
 } from '../../../../../../../scripts/ticker.mjs'
-import { liveTickerMarker, tickerMarkerPath } from '../../../../../../../scripts/ticker-marker.mjs'
+import { liveTickerMarker, removeTickerMarker, tickerMarkerPath } from '../../../../../../../scripts/ticker-marker.mjs'
 
 /** What the Start field offers first: often enough to see a digest fire in a demo, rare enough to stay quiet. */
 export const DEFAULT_INTERVAL_SECONDS = 30
@@ -120,6 +120,9 @@ export function devTickerControl(): DevTickerControl {
             markerFile,
             pid: process.pid,
         })
+        // A dev server stopped while its ticker runs (Ctrl-C) would otherwise leave the marker behind: ignored while its
+        // pid is dead, but a reused pid would make `pnpm test:e2e` refuse to run. Removes only this process's marker.
+        process.once('exit', () => removeTickerMarker(markerFile))
     }
     return holder[GLOBAL_KEY]
 }

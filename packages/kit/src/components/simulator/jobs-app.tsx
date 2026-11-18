@@ -212,7 +212,9 @@ function DevTicker({ ticker }: { ticker: DevTickerLike }) {
 
     let status: string
     if (ticker.running && ticker.seconds !== null) status = t('tickerRunning', { seconds: ticker.seconds })
-    else if (ticker.elsewhere) status = t('tickerElsewhere', ticker.elsewhere)
+    // The pid as a string: ICU would group a number's digits ("pid 12,345"), which is not the pid you would kill.
+    else if (ticker.elsewhere)
+        status = t('tickerElsewhere', { seconds: ticker.elsewhere.seconds, pid: String(ticker.elsewhere.pid) })
     else status = t('tickerStopped')
 
     return (
