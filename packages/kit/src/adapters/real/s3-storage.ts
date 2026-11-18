@@ -36,19 +36,19 @@ export interface S3StorageOptions {
     /** The bucket every key lives in. A key never names another bucket. */
     bucket: string
     /** The bucket's region. */
-    region?: string
+    region?: string | undefined
     /** An S3-compatible endpoint other than AWS's (a local stand-in, another provider), as a URL. */
-    endpoint?: string
+    endpoint?: string | undefined
     /** Credentials, or a provider of them, in place of the SDK's own lookup. */
-    credentials?: S3ClientConfig['credentials']
+    credentials?: S3ClientConfig['credentials'] | undefined
     /** Address the bucket in the path (`https://host/bucket/key`), as most S3-compatible endpoints need. */
-    forcePathStyle?: boolean
+    forcePathStyle?: boolean | undefined
     /**
      * A client the caller built, used as it is: for a client shared with other code, or one a test controls.
      * Given with any of `region`, `endpoint`, `credentials` or `forcePathStyle`, it is refused, since those would be
      * silently ignored.
      */
-    client?: S3Client
+    client?: S3Client | undefined
 }
 
 /**

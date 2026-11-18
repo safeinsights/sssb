@@ -19,12 +19,12 @@ describe('createS3Storage', () => {
         const storage = createS3Storage({
             bucket: 'sandbox-edge',
             region: 'us-west-2',
-            endpoint: 'http://127.0.0.1:9000',
+            endpoint: 'http://minio.example.test:9000',
             credentials,
             forcePathStyle: true,
         })
         const url = new URL(await storage.getSignedDownloadUrl('pages/a b.html', 60))
-        expect(url.origin).toBe('http://127.0.0.1:9000')
+        expect(url.origin).toBe('http://minio.example.test:9000')
         expect(url.pathname).toBe('/sandbox-edge/pages/a%20b.html')
         expect(url.searchParams.get('X-Amz-Credential')).toMatch(
             /^AKIAEXAMPLEDEVEDGE\/\d{8}\/us-west-2\/s3\/aws4_request$/,
@@ -38,6 +38,17 @@ describe('createS3Storage', () => {
         const url = new URL(await storage.getSignedDownloadUrl('k'))
         expect(url.hostname).toBe('sandbox-edge.s3.us-west-2.amazonaws.com')
         expect(url.pathname).toBe('/k')
+
+        // A named endpoint too: without `forcePathStyle` the bucket stays in the host (an IP endpoint is always by path).
+        const named = createS3Storage({
+            bucket: 'sandbox-edge',
+            region: 'us-west-2',
+            endpoint: 'http://minio.example.test:9000',
+            credentials,
+        })
+        const byHost = new URL(await named.getSignedDownloadUrl('k'))
+        expect(byHost.hostname).toBe('sandbox-edge.minio.example.test')
+        expect(byHost.pathname).toBe('/k')
     })
 
     test('a credentials provider is called for the credentials, as the SDK calls one', async () => {
