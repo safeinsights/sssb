@@ -3613,7 +3613,7 @@ init-app my-app` in a copy of the repository followed by its real `cdk synth` (`
 
 ## Release notes are assembled from the changesets by a script, and committed with the release (2026-11-18, `feat/release-notes`)
 
-The Canopy survey deferred this until `@sssb/tools` existed; this ends that deferral, but in `scripts/` rather than in `@sssb/tools` (below). #21 made every PR
+The entry on requiring changesets (`ci/changeset-required`) deferred this until `@sssb/tools` existed; this ends that deferral, but in `scripts/` rather than in `@sssb/tools` (below). #21 made every PR
 that changes what ships carry a changeset with a Kind and an Action; ADR-0014 part 10 wants notes with "Seam changes",
 "Framework migrations", "Operator actions" and "Scaffold changes to apply by hand", and the stock Changesets changelog
 ignores Kind and Action and deletes the files. `scripts/release-notes.mjs` reads the files first and writes those

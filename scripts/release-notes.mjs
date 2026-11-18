@@ -84,7 +84,7 @@ function split(text) {
 
 /**
  * Which lines of a body are inside a fenced code block (the fence lines included), and whether one is left open. A
- * fence closes only on a fence of the same character at least as long.
+ * fence closes only on a bare fence line (nothing after it) of the same character at least as long.
  * @param {string[]} lines
  */
 function fenceMask(lines) {

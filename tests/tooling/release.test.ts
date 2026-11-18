@@ -302,8 +302,8 @@ describe('release prepare (the plan job)', () => {
 
 describe('release.mjs run alone, as the push and publish jobs run it', () => {
     it('loads and judges a release with no sibling module and no node_modules: nothing is imported statically', () => {
-        // release.yml's `push` job copies scripts/release.mjs out of the commit, and `publish` checks out only that
-        // file. A static import of scripts/release-notes.mjs would fail both with ERR_MODULE_NOT_FOUND.
+        // release.yml's `push` job copies scripts/release.mjs out of the commit, and `publish` checks out three files,
+        // release.mjs among them and release-notes.mjs not. A static import of scripts/release-notes.mjs would fail both with ERR_MODULE_NOT_FOUND.
         const root = workspace([KIT('0.2.0', false)], {}, { git: true })
         const alone = path.join(makeTestTmpDir('sssb-release-alone-'), 'release.mjs')
         copyFileSync(SCRIPT, alone)
@@ -418,6 +418,29 @@ describe('release verify-release (the job holding the release key)', () => {
                     symlinkSync('/etc/passwd', path.join(root, 'docs/releases/v0.2.0.md'))
                 },
                 /may not change docs\/releases\/v0\.2\.0\.md \(A 000000 → 120000\)/,
+            ],
+            [
+                // The notes file already in HEAD with other content: the release would modify it, not add it.
+                (root, run) => {
+                    const notes = path.join(root, 'docs/releases/v0.2.0.md')
+                    writeFileSync(notes, '# Release notes: v0.0.1\n')
+                    run('add', 'docs/releases/v0.2.0.md')
+                    run(
+                        '-c',
+                        'user.name=t',
+                        '-c',
+                        'user.email=t@example.invalid',
+                        'commit',
+                        '-q',
+                        '--no-verify',
+                        '-m',
+                        'x',
+                        '--',
+                        'docs/releases/v0.2.0.md',
+                    )
+                    writeFileSync(notes, '# Release notes: v0.2.0\n\nmore\n')
+                },
+                /may not change docs\/releases\/v0\.2\.0\.md \(M 100644 → 100644\)/,
             ],
             [
                 // The notes missing altogether: a release that landed without them.
