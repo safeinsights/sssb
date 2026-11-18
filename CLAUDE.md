@@ -79,9 +79,18 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   matches (the merge trap). Both apps get exactly what an adopter's app gets, `configs.app({ root })` (the root
   `eslint.config.mjs` passes `apps/*`); that file adds only the framework's blocks. A rule that needs this repo's
   files takes `{ root }` and reads it when it runs, never when the plugin loads. A new app-side fence goes in the
-  preset AND in `packages/eslint-plugin/src/probes.js`, which `checkFences` (`@sssb/eslint-plugin/check-fences`)
-  lints through an app's composed config, with an effective-config comparison against the preset for every
-  source file; `tests/lint/check-fences.test.ts` runs it on both apps and on scratch apps that weaken a fence.
+  preset AND in `packages/eslint-plugin/src/probes.js`, which `sssb check-fences` lints through an app's composed
+  config, with an effective-config comparison against the preset for every source file;
+  `tests/lint/check-fences.test.ts` runs it on both apps and on scratch apps that weaken a fence.
+- **`@sssb/tools` (`packages/tools`) is SSSB's tooling: the `sssb` CLI, the Next, Vite and Vitest presets, the
+  tsconfig base the apps extend, and helpers** (ADR-0014 P4). It is plain JavaScript that Node loads directly
+  (`// @ts-check`, a hand-written `.d.ts` beside each export, checked by the root `tsc`), and it has **no dependency on
+  `@sssb/kit`** (rule 4): it reaches the framework only through `packages/tools/src/kit.js`, which resolves
+  `@sssb/kit` from the APP's directory and checks the real path of what it got. `sssb/no-bare-kit-import` bans a bare
+  `@sssb/kit` specifier in every package under `packages/` but the framework and the showcase's seed. A preset loads
+  the tools it configures (Vite's React plugin, next-intl's plugin, jest-dom) from the app, never its own copies. A
+  new CLI command is a module in `packages/tools/src/commands/` plus one line in `bin/sssb.js`; a new published
+  helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.
 - **Screens are router-agnostic** — framework screens in `packages/kit/src/components`, app
@@ -166,25 +175,27 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   the pglite RLS suite, the demo-presets check, the migration numbering and upgrade check) run under every app project as well, and that is what proves the seam against
   real apps rather than only against the fixture. E2E
   lives in `apps/*/tests/e2e/` (showcase on :3000, starter on :3100). In a LINKED WORKTREE both ports
-  are derived per checkout by `scripts/ports.mjs`, so parallel agent sessions don't adopt each other's
+  are derived per checkout by `@sssb/tools/ports`, so parallel agent sessions don't adopt each other's
   dev server; `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last
-  also isolates `pnpm test:contract` between worktrees), and `print-port.mjs` reports it.
+  also isolates `pnpm test:contract` between worktrees), and `pnpm exec sssb port <service>` reports it. Each app
+  declares its slot in its package.json (`"sssb": { "port": "starter" }`), which `sssb port` reads.
 - **A test that needs a scratch directory calls `makeTestTmpDir()` / `makeTestTmpDirAsync()`**
-  (`packages/kit/src/testing/tmp-dir.ts`; `tests/support/tmp-dir.ts` re-exports it) — never `mkdtemp`/`mkdtempSync`, which `sssb/no-direct-mkdtemp` bans in test
-  files. The helper removes the directory when the file finishes; `test:unit`, `test:coverage` and
-  `test:contract` run through `scripts/check-tmpdir-leak.mjs`, which fails the run if one survives. Do not
-  call `vitest run` directly in a new script that is meant to gate — route it through that script.
+  (`@sssb/tools/testing/tmp-dir`; `tests/support/tmp-dir.ts` re-exports it; the framework's own tests use its
+  copy, `packages/kit/src/testing/tmp-dir.ts`) — never `mkdtemp`/`mkdtempSync`, which `sssb/no-direct-mkdtemp`
+  bans in test files. The helper removes the directory when the file finishes; `test:unit`, `test:coverage` and
+  `test:contract` run through `sssb check-tmpdir-leak`, which fails the run if one survives. Do not
+  call `vitest run` directly in a new script that is meant to gate — route it through that command.
 - **E2E `workers` stays 1.** Every worker shares one `.data` behind one dev server, so parallelism buys
   flakes, not speed (measured; the old "10GB VM / OOM" reason was wrong). Parallelism belongs where the
   worlds are separate: across apps locally, across CI shards. Read
   `.claude/future-tasks/e2e-shared-world-blocks-parallelism.md` before raising it.
 - Component workshop: `pnpm ladle` (screens AND react-email templates).
 - **Scheduled work in dev only runs when something ticks it.** `pnpm tick` (`pnpm tick:starter`) calls the running
-  dev server's `/api/webhooks/cron` once with the dev secret (`scripts/tick.mjs`); `DEV_TICK_SECONDS=<n> pnpm dev`
-  does it every n seconds (`scripts/dev-tick.mjs`, which `pnpm dev` runs `next dev` through). The ticker is **off by
+  dev server's `/api/webhooks/cron` once with the dev secret (`sssb tick`); `DEV_TICK_SECONDS=<n> pnpm dev`
+  does it every n seconds (`sssb dev-tick`, which `pnpm dev` runs `next dev` through). The ticker is **off by
   default** and stays off under e2e (the playwright configs blank the variable, and refuse to load while a ticking
-  dev server's marker is live) and the demo. The ticking is `scripts/ticker.mjs` (start, stop, status), policy-free. Never add a bypass to the
-  route for either: it stays `withWebhookSecret`.
+  dev server's marker is live) and the demo. The ticking is `@sssb/tools/ticker` (start, stop, status), policy-free;
+  all of it lives in `packages/tools/src/tick`. Never add a bypass to the route for either: it stays `withWebhookSecret`.
 - Before opening a PR, run `/pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.
   **Never squash a PR another PR is stacked on**: squashing rewrites the commits, the stacked branch then

@@ -137,7 +137,7 @@ export function createRealAppPorts(): { edgeKv: EdgeKvPort } {
   refuses them in `real/` (§6 says why).
 - Mark the file `AUTHORED — CUTOVER (<row>)` until someone has watched it talk to the real service, and
   add the row to `docs/cutover-checklist.md`, naming the proof rather than the task.
-- `pnpm dev:real`'s preflight (`scripts/check-real-env.ts`) checks SSSB's variables only. Yours fail at
+- `pnpm dev:real`'s preflight (`sssb check-real-env`) checks SSSB's variables only. Yours fail at
   the registry's first load, with the same error type and your rows named.
 
 ## 6. The registry

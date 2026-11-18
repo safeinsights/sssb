@@ -81,12 +81,11 @@ const eslintConfig = [
         },
     },
     {
-        files: ['scripts/**/*.{mjs,ts}', 'packages/eslint-plugin/src/**/*.js'],
+        files: ['scripts/**/*.{mjs,ts}'],
         languageOptions: {
             globals: {
                 process: 'readonly',
                 console: 'readonly',
-                // tick.mjs and dev-tick.mjs: an HTTP client with a timeout, and a stoppable timer
                 URL: 'readonly',
                 fetch: 'readonly',
                 AbortController: 'readonly',
@@ -95,6 +94,36 @@ const eslintConfig = [
                 clearTimeout: 'readonly',
             },
         },
+    },
+    // @sssb/tools and @sssb/eslint-plugin are plain JavaScript that Node loads directly (ADR-0014 part 2), with Node's
+    // globals.
+    {
+        files: ['packages/tools/**/*.{js,mjs}', 'packages/eslint-plugin/**/*.{js,mjs}'],
+        languageOptions: {
+            globals: {
+                process: 'readonly',
+                console: 'readonly',
+                URL: 'readonly',
+                fetch: 'readonly',
+                AbortController: 'readonly',
+                AbortSignal: 'readonly',
+                setTimeout: 'readonly',
+                clearTimeout: 'readonly',
+                setInterval: 'readonly',
+                clearInterval: 'readonly',
+                NodeJS: 'readonly',
+                TextDecoder: 'readonly',
+            },
+        },
+    },
+    // NO BARE @sssb/kit IN ANY OTHER SSSB PACKAGE (ADR-0014, rule 4; sssb/no-bare-kit-import). Every SSSB package but
+    // the framework (and the showcase's seed, which is app content) is held to it: the glob names packages/* and
+    // carves out the two, so the next SSSB package is covered before anyone names it.
+    {
+        files: [`packages/*/**/*.${SRC_EXT}`, 'packages/*/**/*.d.ts'],
+        ignores: ['packages/kit/**', 'packages/seed/**'],
+        plugins: { sssb },
+        rules: { 'sssb/no-bare-kit-import': 'error' },
     },
     // Kysely migrations are conventionally typed Kysely<any> (schema evolves under them), and spikes are proof
     // harnesses — relax the any ban there only.
@@ -212,7 +241,7 @@ const eslintConfig = [
     },
     // THE PACKAGE'S EDGE: no framework file, fixture included, reaches outside packages/kit by path. Two named
     // exemptions, both P5's: the real-Postgres contract tests start their server through the repo's
-    // tests/support/contract-postgres.ts, which reads scripts/ports.mjs and embedded-postgres. P5 moves the contract
+    // tests/support/contract-postgres.ts, which reads @sssb/tools/ports and embedded-postgres. P5 moves the contract
     // runner into @sssb/kit/testing; neither file ships (the `files` allowlist keeps tests out).
     {
         files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
@@ -243,12 +272,12 @@ const eslintConfig = [
         plugins: { sssb },
         rules: { 'sssb/public-surface': ['error', REPO] },
     },
-    // No raw mkdtemp in tests, anywhere in the repo (the preset covers the apps' tests/ too).
-    // packages/kit/src/testing/tmp-dir.ts is the one place the raw call is meant to live, ignored explicitly so that
-    // stays true if the glob is ever widened.
+    // No raw mkdtemp in tests, anywhere in the repo (the preset covers the apps' tests/ too). The two helpers
+    // (packages/kit/src/testing/tmp-dir.ts and packages/tools/src/testing/tmp-dir.js) are the places the raw call is
+    // meant to live, ignored explicitly so that stays true if the glob is ever widened.
     {
         files: [TEST_FILES, FIXTURE_FILES_GLOB],
-        ignores: ['packages/kit/src/testing/tmp-dir.ts'],
+        ignores: ['packages/kit/src/testing/tmp-dir.ts', 'packages/tools/src/testing/tmp-dir.js'],
         plugins: { sssb },
         rules: { 'sssb/no-direct-mkdtemp': 'error' },
     },

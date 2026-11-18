@@ -187,9 +187,10 @@ const rawDbHandle = {
 
 // NO RAW mkdtemp IN TESTS. A test that calls `mkdtemp`/`mkdtempSync` itself leaves the directory behind on every
 // run, and enough runs filled a dev machine's temp filesystem past 100GB. Tests make scratch directories through
-// makeTestTmpDir(), which queues the removal. Deliberately narrow: it matches the call by the NAME it is made under
+// makeTestTmpDir() from @sssb/tools/testing/tmp-dir (the framework's own tests through its copy in
+// packages/kit/src/testing/tmp-dir.ts), which queues the removal. Deliberately narrow: it matches the call by the NAME it is made under
 // — bare `mkdtempSync(…)`, `fs.mkdtempSync(…)`, `fsp.mkdtemp(…)`, `await mkdtemp(…)` — and not a renamed import
-// (`import { mkdtemp as m }`) or a computed key. The leak wrapper's per-run TMPDIR sweep is what bounds the damage
+// (`import { mkdtemp as m }`) or a computed key. `sssb check-tmpdir-leak`'s per-run TMPDIR sweep is what bounds the damage
 // if one slips by.
 /** @type {import('eslint').Rule.RuleModule} */
 const directMkdtemp = {
@@ -200,8 +201,9 @@ const directMkdtemp = {
         messages: {
             direct:
                 '`{{name}}()` leaves its directory behind on every test run. Use makeTestTmpDir() / ' +
-                'makeTestTmpDirAsync() from packages/kit/src/testing/tmp-dir.ts, which removes the directory when the ' +
-                'test file finishes — or, in a Playwright spec, testInfo.outputPath(), which Playwright ' +
+                'makeTestTmpDirAsync() from @sssb/tools/testing/tmp-dir (in the framework, makeTestTmpDir() from ' +
+                'packages/kit/src/testing/tmp-dir.ts), which removes the directory when the test file finishes — ' +
+                'or, in a Playwright spec, testInfo.outputPath(), which Playwright ' +
                 'clears at the start of every run.',
         },
     },
@@ -291,6 +293,45 @@ const readJson = (file) => {
     return value
 }
 const realRootOf = (root) => realpathSync(root).toLowerCase()
+
+// NO BARE @sssb/kit IN ANY OTHER SSSB PACKAGE (ADR-0014, rule 4; P4). @sssb/tools (and every SSSB package after it
+// but the framework) has no dependency on @sssb/kit, so a bare `@sssb/kit/…` resolved from the package's own location
+// finds whichever copy pnpm hoisted into `.pnpm/node_modules`: in a workspace with two apps, the other app's
+// instance on the other app's seam. ADR-0014's independent review reproduced exactly that. Those packages reach the
+// framework only through the shared resolver (packages/tools/src/kit.js), which resolves from the APP's directory
+// and checks the real path, and whose specifiers are built at run time, never written as a literal. It sees a
+// declaration, `export … from`, import(), a type import('…'), require(), `import x = require(…)`, any `.resolve('…')`
+// call (require.resolve, createRequire(…).resolve, import.meta.resolve), and vitest's loaders: every way the slip can
+// be written with a literal.
+const isBareKitSpecifier = (specifier) => typeof specifier === 'string' && /^@sssb\/kit(\/|$)/.test(specifier.trim())
+/** @type {import('eslint').Rule.RuleModule} */
+const bareKitImport = {
+    meta: {
+        type: 'problem',
+        docs: { description: 'SSSB packages other than the framework never name @sssb/kit by a bare specifier.' },
+        schema: [],
+        messages: {
+            bare:
+                '`{{specifier}}` names the framework by a bare specifier, which resolves from this package, not from ' +
+                "the app, and can load another app's @sssb/kit (ADR-0014, rule 4). Reach it through the shared resolver " +
+                '(packages/tools/src/kit.js: resolveAppsKit(appDir, subpath)).',
+        },
+    },
+    create(context) {
+        const check = (node) => {
+            const specifier = literalSpecifier(node)
+            if (isBareKitSpecifier(specifier)) context.report({ node, messageId: 'bare', data: { specifier } })
+        }
+        return {
+            ...declarationlessVisitors(check),
+            ...declarationVisitors((_node, source) => check(source)),
+            'CallExpression[callee.type="MemberExpression"][callee.property.name="resolve"]': (node) =>
+                check(node.arguments[0]),
+            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
+                check(node.arguments[0]),
+        }
+    },
+}
 
 // SSSB's PUBLIC SURFACE (ADR-0012). packages/kit/package.json's `exports` map names the subpaths an app may import;
 // the rest of the package is internal, reachable only by relative import inside packages/kit. SSSB's repository
@@ -556,5 +597,6 @@ export const rules = {
     'no-framework-import-in-core': coreFrameworkImport,
     'no-dynamic-framework-import-in-core': coreFrameworkImportDynamic,
     'no-jsx-in-core': jsxInCore,
+    'no-bare-kit-import': bareKitImport,
     'public-surface': publicSurface,
 }

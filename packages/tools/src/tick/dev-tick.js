@@ -1,3 +1,4 @@
+// @ts-check
 // What `pnpm dev` runs: the app's `next dev`, plus, only when asked, `pnpm tick` on a timer.
 //
 //     DEV_TICK_SECONDS=30 pnpm dev        # also tick the scheduler every 30 seconds
@@ -11,24 +12,23 @@
 //   * Playwright starts the server with `pnpm dev` and blanks `DEV_TICK_SECONDS` for it (both apps' playwright
 //     configs), so a value in your shell never reaches a server Playwright starts;
 //   * Playwright ADOPTS a dev server already on its port when it is not on CI, so a ticking server you left running
-//     would be adopted: while a ticker runs it leaves a marker (scripts/ticker-marker.mjs) and both playwright configs
+//     would be adopted: while a ticker runs it leaves a marker (ticker-marker.js) and both playwright configs
 //     refuse to load while one is live;
 //   * `E2E_BUILD` and `DEMO_MODE` are the build-time switches of the e2e build and the demo build. Those servers
-//     start from `serve-standalone.mjs`, not from here, but a ticker asked for with either set is refused and
+//     start from `sssb serve-standalone`, not from here, but a ticker asked for with either set is refused and
 //     said so, rather than trusted to be unreachable;
 //   * the file:// static demo has no server at all, so there is nothing to tick.
 //
 // This wraps `next dev`, it does not live inside the app: the app's source stays free of any reading of
-// `process.env`, and nothing in the server changes. The ticking itself is scripts/ticker.mjs, which owns start, stop,
+// `process.env`, and nothing in the server changes. The ticking itself is ticker.js, which owns start, stop,
 // the interval and its status and knows nothing of the environment: this file is the policy for `pnpm dev`.
 import { spawn } from 'node:child_process'
-import path from 'node:path'
-import { portFor } from './ports.mjs'
-import { TICK_APPS } from './tick.mjs'
-import { createTicker, intervalProblem } from './ticker.mjs'
-import { tickerMarkerPath } from './ticker-marker.mjs'
+import { portFor } from '../ports.js'
+import { TICK_APPS } from './tick.js'
+import { createTicker, intervalProblem } from './ticker.js'
+import { tickerMarkerPath } from './ticker-marker.js'
 
-export const DEV_TICK_VARIABLE = 'DEV_TICK_SECONDS'
+const DEV_TICK_VARIABLE = 'DEV_TICK_SECONDS'
 
 /**
  * What the environment asks of the ticker.
@@ -58,7 +58,7 @@ export function resolveDevTick(env) {
 }
 
 /**
- * `dev-tick.mjs <app> -- <command...>`
+ * `sssb dev-tick <app> -- <command...>`
  *
  * @param {string[]} argv
  * @returns {{ app: string, command: string[] } | { error: string }}
@@ -67,13 +67,13 @@ export function parseDevArgs(argv) {
     const dash = argv.indexOf('--')
     const app = argv[0]
     if (dash !== 1 || argv.length < 3 || !TICK_APPS.includes(app)) {
-        return { error: `usage: node scripts/dev-tick.mjs <${TICK_APPS.join('|')}> -- <the dev server's command...>` }
+        return { error: `usage: sssb dev-tick <${TICK_APPS.join('|')}> -- <the dev server's command...>` }
     }
     return { app, command: argv.slice(dash + 1) }
 }
 
 /** @param {string[]} argv */
-async function main(argv) {
+export async function main(argv) {
     const parsed = parseDevArgs(argv)
     if ('error' in parsed) {
         console.error(parsed.error)
@@ -117,8 +117,4 @@ async function main(argv) {
             void ticker.stop().then(() => resolve(status))
         })
     })
-}
-
-if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
-    process.exitCode = await main(process.argv.slice(2))
 }

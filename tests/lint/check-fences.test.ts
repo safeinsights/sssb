@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -174,5 +175,29 @@ describe('configs.app({ root, vendors })', () => {
         await expect(sssb.configs.app({ root: makeTestTmpDir('vendors-'), vendors: 'stripe' })).rejects.toThrow(
             /list of package patterns/,
         )
+    })
+})
+
+// The command itself (@sssb/tools), which resolves the plugin and ESLint from the app's own directory.
+describe('sssb check-fences', () => {
+    const sssbCli = (...args: string[]) =>
+        spawnSync(process.execPath, [path.join(repoRoot, 'packages/tools/bin/sssb.js'), 'check-fences', ...args], {
+            cwd: repoRoot,
+            encoding: 'utf8',
+        })
+
+    it('passes the starter through the repo config', () => {
+        const run = sssbCli('--app', 'apps/starter')
+        expect(run.stderr).toBe('')
+        expect(run.status).toBe(0)
+        expect(run.stdout).toMatch(/every fence holds/)
+    }, 120_000)
+
+    it('says so when the app does not resolve the plugin', () => {
+        const appDir = makeTestTmpDir('check-fences-cli-')
+        writeFileSync(path.join(appDir, 'package.json'), '{ "name": "elsewhere", "private": true }\n')
+        const run = sssbCli('--app', appDir)
+        expect(run.status).toBe(1)
+        expect(run.stderr).toMatch(/does not resolve @sssb\/eslint-plugin/)
     })
 })

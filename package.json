@@ -19,12 +19,12 @@
         "llm:record": "pnpm --filter showcase llm:record",
         "build": "pnpm --filter './apps/*' --workspace-concurrency=1 build",
         "start": "pnpm --filter showcase start",
-        "prepare": "husky && node scripts/write-launch-json.mjs && pnpm --filter './apps/*' --if-present panda:codegen",
+        "prepare": "husky && sssb launch-json && pnpm --filter './apps/*' --if-present panda:codegen",
         "typecheck": "pnpm --filter './apps/*' typecheck && tsc --noEmit && tsc --noEmit -p packages/kit/tsconfig.strict.json",
         "lint": "eslint . && prettier --check --log-level warn .",
         "lint:fix": "eslint --fix . && prettier --write --log-level warn .",
-        "test:unit": "node scripts/check-tmpdir-leak.mjs vitest run",
-        "test:coverage": "node scripts/check-tmpdir-leak.mjs vitest run --coverage",
+        "test:unit": "sssb check-tmpdir-leak vitest run",
+        "test:coverage": "sssb check-tmpdir-leak vitest run --coverage",
         "test:e2e": "pnpm --filter './apps/*' --workspace-concurrency=1 test:e2e",
         "knip": "knip",
         "jscpd": "jscpd",
@@ -36,7 +36,7 @@
         "build:demo-static": "pnpm --filter './apps/*' build:demo-static",
         "check:demo-size": "pnpm --filter './apps/*' check:demo-size",
         "e2e:demo-static": "pnpm --filter './apps/*' e2e:demo-static",
-        "test:contract": "node scripts/check-tmpdir-leak.mjs vitest run --config vitest.contract.config.ts",
+        "test:contract": "sssb check-tmpdir-leak vitest run --config vitest.contract.config.ts",
         "changeset": "changeset",
         "release:check": "node scripts/release.mjs check",
         "release-app": "tsx scripts/release-app.ts",
@@ -64,6 +64,7 @@
         "@next/eslint-plugin-next": "^16.4.6",
         "@playwright/test": "^1.64.1",
         "@sssb/eslint-plugin": "workspace:*",
+        "@sssb/tools": "workspace:*",
         "@testing-library/jest-dom": "^7.0.1",
         "@types/node": "^26.6.5",
         "@types/pg": "^8.23.1",
@@ -94,5 +95,44 @@
         "vite": "^8.3.5",
         "vitest": "^4.1.12",
         "yaml": "2.9.1"
+    },
+    "sssb": {
+        "docPaths": {
+            "roots": [
+                "apps/",
+                "src/",
+                "packages/",
+                "docs/",
+                "tests/",
+                "scripts/",
+                "config/",
+                "infra/",
+                "fixtures/",
+                "messages/",
+                ".claude/",
+                ".github/",
+                "spikes/"
+            ],
+            "include": [
+                "docs",
+                ".claude",
+                "README.md",
+                "CLAUDE.md",
+                "CONTRIBUTING.md",
+                "SECURITY.md",
+                "CODE_OF_CONDUCT.md"
+            ],
+            "exempt": [
+                "docs/adr/",
+                "docs/build-notes.md",
+                "docs/decision-log.md",
+                ".claude/future-tasks/resolved/",
+                ".claude/worktrees/"
+            ],
+            "referenceApps": [
+                "showcase",
+                "starter"
+            ]
+        }
     }
 }

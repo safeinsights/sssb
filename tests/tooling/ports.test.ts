@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { portForRoot } from '../../scripts/ports.mjs'
+import { portForRoot } from '@sssb/tools/ports'
 
 /**
  * Every dev server and every e2e run in this repo now gets its port from this function, so its two

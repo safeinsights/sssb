@@ -17,7 +17,7 @@
 //
 // What it cannot see: flags on the app's lint command (`--rule`, `--config`, `--no-config-lookup`), and a parse-time
 // failure that only typed linting hits (a probe file outside the app's TypeScript project) is reported as one.
-import { readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -38,9 +38,18 @@ const optionsOf = (entry) => (Array.isArray(entry) ? entry.slice(1) : [])
 // Rules whose options can only ADD to what they fence (the app's own vendors): any options are a tightening.
 const ADDITIVE_OPTIONS = new Set(['sssb/no-vendor-import', 'sssb/no-dynamic-vendor-import'])
 
-/** ESLint, resolved from the app's own directory: the copy the app's lint script runs. */
+/**
+ * ESLint as the app's directory finds it: the copy the app's lint script runs. WALKED up the app's `node_modules`
+ * chain rather than `require.resolve`d, because Node's resolver falls back to NODE_PATH, which `pnpm exec` sets to the
+ * workspace's hoisted `.pnpm/node_modules`.
+ */
 async function eslintOf(appDir) {
-    const resolved = createRequire(join(appDir, 'package.json')).resolve('eslint')
+    let found
+    for (let dir = appDir; !found; dir = dirname(dir)) {
+        if (existsSync(join(dir, 'node_modules', 'eslint', 'package.json'))) found = join(dir, 'node_modules', 'eslint')
+        else if (dirname(dir) === dir) throw new Error(`@sssb/eslint-plugin: ${appDir} does not install eslint`)
+    }
+    const resolved = createRequire(join(found, 'package.json')).resolve('eslint')
     return /** @type {typeof import('eslint').ESLint} */ ((await import(pathToFileURL(resolved).href)).ESLint)
 }
 

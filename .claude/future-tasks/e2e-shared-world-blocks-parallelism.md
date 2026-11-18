@@ -88,7 +88,7 @@ See also `per-visitor-demo-worlds.md`, which wants the same primitive for a diff
 ## Until then
 
 Parallelism is bought where the worlds are genuinely separate: across apps locally (different ports
-via `scripts/ports.mjs`, different cwd-relative `.data`) and across shards on CI (different machines —
+via `@sssb/tools/ports`, different cwd-relative `.data`) and across shards on CI (different machines —
 `.github/workflows/checks.yml` splits the suite across three runners). Never inside one server.
 
 Note also that raising `workers` surfaced a second, independent problem that IS fixed: the chromium
@@ -99,7 +99,7 @@ starter's. That one was a genuine budget bug, not a race.
 
 ```bash
 cd apps/showcase && rm -rf .data
-node ../../scripts/e2e-profile.mjs --project=chromium --workers=5
+pnpm exec sssb e2e-profile --project=chromium --workers=5
 ```
 
 The corruption half of what this used to show is now closed by construction — an atomic rename cannot

@@ -1,0 +1,33 @@
+{
+    // THE TSCONFIG BASE an SSSB app extends (ADR-0014 part 2): `"extends": "@sssb/tools/tsconfig.base.json"`, then the
+    // app's own `paths` (its `@/*`) and `include`. It carries THE FRAMEWORK'S COMPILER CONTRACT. @sssb/kit ships
+    // TypeScript source, so the framework's files are compiled under the app's options, and `skipLibCheck` does not
+    // cover a `.ts` file. Off any of these, the framework's own files fail to compile, measured over the framework
+    // with the strict set off and each option overridden in turn (2026-11-17, SSSB's packages/kit/tsconfig.strict.json
+    // records the numbers): `strict: true` (105 errors with it off), `moduleResolution: "bundler"` (`nodenext` 1479),
+    // `jsx: "react-jsx"` (`react` 675, unset 749), `dom` in `lib` for the components (94 without it), and `skipLibCheck:
+    // true` (22 errors without it, all in dependencies' declarations).
+    //
+    // `lib` and `target` sit at the floor the framework promises to compile at, ES2022: its source uses
+    // `Object.hasOwn`, `.at()` and Error's `cause`. An app may raise them; lowering them breaks the framework.
+    //
+    // Beyond this base the framework also compiles with every flag of the strict set on (noUncheckedIndexedAccess,
+    // exactOptionalPropertyTypes, noPropertyAccessFromIndexSignature, erasableSyntaxOnly, noUnusedLocals,
+    // noUnusedParameters, noImplicitReturns, noImplicitOverride, noFallthroughCasesInSwitch), so an app may turn any
+    // of them on. They are not set here: that is the app's choice.
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": ["dom", "dom.iterable", "es2022"],
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "jsx": "react-jsx",
+        "strict": true,
+        "skipLibCheck": true,
+        "allowJs": true,
+        "noEmit": true,
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "plugins": [{ "name": "next" }]
+    }
+}

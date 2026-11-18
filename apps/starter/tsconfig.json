@@ -1,6 +1,7 @@
 {
-    "extends": "../../tsconfig.json",
+    "extends": "@sssb/tools/tsconfig.base.json",
     "compilerOptions": {
+        "incremental": true,
         "paths": {
             "@/*": ["./src/*"],
             "@sssb/app-config/*": ["./src/app-config/*"],
