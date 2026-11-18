@@ -4082,6 +4082,7 @@ Resolves `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
 - **`removeTestTmpDir` removes only what the helper made.** The kit's removes any path it is given, recursively.
 - **A new `exports` subpath, so the changeset is a `seam` entry,** optional: an app on the preset gets the setup module,
   and another project with `isolate: false` adds it to `setupFiles`.
+
 ## The first release candidate, cut by a merge to main (2026-11-18, ADR-0014 P7, `feat/release-candidate`)
 
 JP, 2026-11-18: "I don't want publishing a release to be my call separately from merges to main." Each decision below
