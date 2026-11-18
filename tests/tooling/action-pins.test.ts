@@ -89,6 +89,11 @@ describe('unpinnedActionRefs (mutations: each unpinned form is caught)', () => {
         expect(unpinnedActionRefs(text)).toEqual([])
     })
 
+    it('a line INSIDE a run block that starts with `uses:` is not a reference (a line-grep would flag it)', () => {
+        const text = `jobs:\n    x:\n        steps:\n            - run: |\n                  echo hi\n                  uses: x@v1\n                  - uses: y@v1\n`
+        expect(unpinnedActionRefs(text)).toEqual([])
+    })
+
     it('reports every unpinned reference, in order, across jobs', () => {
         const text = `jobs:\n    a:\n        steps:\n            - uses: one/a@v1\n    b:\n        steps:\n            - uses: two/b@${SHA}\n            - uses: three/c@v2\n`
         expect(unpinnedActionRefs(text)).toEqual(['one/a@v1', 'three/c@v2'])
