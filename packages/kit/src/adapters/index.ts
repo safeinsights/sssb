@@ -30,7 +30,7 @@ import { fakeStorage } from './fake/storage'
  * and no deployed config breaks.
  */
 export type AppMode = 'simulated' | 'real'
-export const appMode: AppMode = process.env.APP_MODE === 'real' ? 'real' : 'simulated'
+export const appMode: AppMode = process.env['APP_MODE'] === 'real' ? 'real' : 'simulated'
 export const isSimulated = appMode === 'simulated'
 
 /**
@@ -41,7 +41,7 @@ export const isSimulated = appMode === 'simulated'
  * but never these run-mode variables (lint-enforced). The app's registry may not read process.env at all, and
  * takes `isSimulated` from here by convention, which also runs the guard below for it.
  */
-export const isDemoMode = process.env.DEMO_MODE === '1'
+export const isDemoMode = process.env['DEMO_MODE'] === '1'
 
 /**
  * E2E build flag. Lets the e2e suite run against a PRODUCTION build instead of `next dev`, which is
@@ -53,7 +53,7 @@ export const isDemoMode = process.env.DEMO_MODE === '1'
  * suite would be testing a different product than the one that ships. Measured, not assumed: see
  * `.claude/future-tasks/resolved/e2e-against-production-build.md`.
  */
-const isE2eBuild = process.env.E2E_BUILD === '1'
+const isE2eBuild = process.env['E2E_BUILD'] === '1'
 
 // Fail CLOSED: a production build must never silently serve fake auth
 // because APP_MODE was forgotten. The guard is about ACCIDENTS, so every way past it is an explicit,

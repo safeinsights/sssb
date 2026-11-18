@@ -13,7 +13,7 @@
         "signInButton": "Sign in",
         "signInError": "Sign-in failed. Check your email and password.",
         "mfaNotImplemented": "This account requires MFA, which arrives with a later slice.",
-        "userMenuLabel": "Account menu",
+        "userMenuLabel": "{name}, account menu",
         "profileLink": "Profile",
         "signOut": "Sign out"
     },
@@ -30,6 +30,7 @@
     },
     "org": {
         "switchLabel": "Switch team",
+        "switchTriggerSuffix": ", switch team",
         "title": "{org}",
         "membersHeading": "Members",
         "pendingHeading": "Pending invitations",
@@ -76,7 +77,8 @@
     },
     "simulator": {
         "pillLabel": "Simulator",
-        "pillAriaLabel": "Open the Simulator panel",
+        "pillSuffix": ", open the panel",
+        "pillUnreadSuffix": ", {count, plural, one {# unread email} other {# unread emails}}, open the panel",
         "panelTitle": "Simulator",
         "peopleTab": "People",
         "mailTab": "Mail",
@@ -86,7 +88,7 @@
         "actorsTab": "Actors",
         "errorsTab": "Errors",
         "collapseButton": "Hide",
-        "collapseAriaLabel": "Close the Simulator panel",
+        "collapseAriaLabel": "Hide the Simulator panel",
         "widthLabel": "Panel width",
         "localeLabel": "Language",
         "personChipLabel": "Current person",

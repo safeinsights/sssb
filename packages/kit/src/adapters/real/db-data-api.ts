@@ -33,7 +33,9 @@ export interface DataApiDbConfig {
  * retry (a paused Serverless v2 resuming) is retried by the dialect itself.
  */
 export function createRealDataApiDb(config: DataApiDbConfig): DbPort {
-    const client = config.client ?? new RDSDataClient({ region: config.region, maxAttempts: 1 })
+    const client =
+        config.client ??
+        new RDSDataClient({ ...(config.region === undefined ? {} : { region: config.region }), maxAttempts: 1 })
     const dialect = new RdsDataDialect({
         client,
         resourceArn: config.resourceArn,

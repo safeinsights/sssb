@@ -5,6 +5,7 @@ import { ESLint } from 'eslint'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../support/tmp-dir'
 import {
+    ABSOLUTE_IN_PACKAGE,
     APP,
     APP_CODE_DYNAMIC,
     APP_CODE_PATH,
@@ -19,6 +20,8 @@ import {
     lint,
     NODE_MODULES_DYNAMIC,
     NODE_MODULES_STATIC,
+    OUT_OF_PACKAGE_PATH,
+    UNSHIPPED_PATH,
     VENDOR_DYNAMIC,
     VENDOR_STATIC,
 } from './lint-text'
@@ -257,15 +260,20 @@ describe('a path into app code crosses the framework/app fence too', () => {
     })
 
     // Node loads a `file:` URL as the absolute path it names, so it is a path too, in any case of the scheme.
+    // Anywhere else out of packages/kit is the package-edge rule's finding, never both; and a `file:` URL into the
+    // package names this checkout, which an adopter's machine has not, so it is that rule's finding too.
     it.each([
-        ['into apps/', 'apps/showcase/src/domain/tickets.ts', 1],
-        ['into the seed package', 'packages/seed/src/index.ts', 1],
-        ['anywhere else', 'tests/support/tmp-dir.ts', 0],
-    ])('a file: URL %s', async (_where, target, expected) => {
+        ['into apps/', 'apps/showcase/src/domain/tickets.ts', 1, 0, 0],
+        ['into the seed package', 'packages/seed/src/index.ts', 1, 0, 0],
+        ['anywhere else', 'tests/support/tmp-dir.ts', 0, 1, 0],
+        ['within the package', 'packages/kit/src/testing/tmp-dir.ts', 0, 0, 1],
+    ])('a file: URL %s', async (_where, target, intoApp, outOfPackage, absolute) => {
         const url = pathToFileURL(path.join(process.cwd(), target)).href
         for (const spelled of [url, url.replace('file:', 'FILE:')]) {
-            const code = `export const load = () => import(${JSON.stringify(spelled)})\n`
-            expect(fired(await lint(FIXTURE, code), APP_CODE_PATH), spelled).toBe(expected)
+            const findings = await lint(FIXTURE, `export const load = () => import(${JSON.stringify(spelled)})\n`)
+            expect(fired(findings, APP_CODE_PATH), spelled).toBe(intoApp)
+            expect(fired(findings, OUT_OF_PACKAGE_PATH), spelled).toBe(outOfPackage)
+            expect(fired(findings, ABSOLUTE_IN_PACKAGE), spelled).toBe(absolute)
         }
     })
 
@@ -273,29 +281,116 @@ describe('a path into app code crosses the framework/app fence too', () => {
     // written out): the path rule judges where it lands, and the traversal ban, which is for package specifiers,
     // stays out of it.
     it.each([
-        ['into apps/', 'packages/kit/../../apps/showcase/src/domain/tickets.ts', 1],
-        ['anywhere else', 'packages/kit/../../tests/support/tmp-dir.ts', 0],
-    ])('a file: URL with a `..` %s', async (_where, rest, expected) => {
+        ['into apps/', 'packages/kit/../../apps/showcase/src/domain/tickets.ts', 1, 0],
+        ['anywhere else', 'packages/kit/../../tests/support/tmp-dir.ts', 0, 1],
+    ])('a file: URL with a `..` %s', async (_where, rest, expected, outOfPackage) => {
         const url = `${pathToFileURL(process.cwd()).href}/${rest}`
         const declared = await lint(FIXTURE, `import { x } from ${JSON.stringify(url)}\nexport { x }\n`)
         expect(fired(declared, APP_CODE_PATH)).toBe(expected)
+        expect(fired(declared, OUT_OF_PACKAGE_PATH)).toBe(outOfPackage)
         expect(fired(declared, APP_CODE_STATIC)).toBe(0)
         const loaded = await lint(FIXTURE, `export const load = () => import(${JSON.stringify(url)})\n`)
         expect(fired(loaded, APP_CODE_PATH)).toBe(expected)
         expect(fired(loaded, APP_CODE_DYNAMIC)).toBe(0)
     })
 
-    it('every other path out of SSSB stays open: its own modules, and the repo’s test helpers', async () => {
+    it('a path inside the package stays open; one out of it is the package-edge rule’s, not the app fence’s', async () => {
         const file = 'packages/kit/src/server-lib/kv.test.ts'
-        const code = [
-            "import { a } from '../core/x'",
+        const inside = ["import { a } from '../core/x'", "import { b } from '../testing/tmp-dir'", 'export { a, b }']
+        const within = await lint(file, inside.join('\n'))
+        expect(fired(within, APP_CODE_PATH) + fired(within, OUT_OF_PACKAGE_PATH)).toBe(0)
+        const out = [
             `import { b } from ${JSON.stringify(pathFrom(file, 'tests/support/tmp-dir'))}`,
             "import { c } from '../../../apps-config/x'",
-            'export { a, b, c }',
-        ].join('\n')
-        const findings = await lint(file, code)
-        // ...and a relative path's `..` is not the bare-specifier traversal ban's business either
+            `export const load = () => import(${JSON.stringify(pathFrom(file, 'scripts/ports.mjs'))})`,
+            `export type T = import(${JSON.stringify(pathFrom(file, 'tests/support/contract-postgres'))}).ContractServer`,
+            'export { b, c }',
+        ]
+        const findings = await lint(file, out.join('\n'))
+        expect(fired(findings, OUT_OF_PACKAGE_PATH)).toBe(4)
+        // ...and a relative path's `..` is not the bare-specifier traversal ban's business, nor the app fence's
         expect(fired(findings, APP_CODE_PATH) + fired(findings, BARE_TRAVERSAL_STATIC)).toBe(0)
+    })
+
+    it('an absolute path out of the repo is out of the package too', async () => {
+        const to = JSON.stringify(path.join(process.cwd(), '..', 'elsewhere', 'helper'))
+        expect(
+            fired(await lint(KIT[0] as string, `export const load = () => import(${to})\n`), OUT_OF_PACKAGE_PATH),
+        ).toBe(1)
+    })
+
+    it('an absolute path into the package names this checkout, and is reported', async () => {
+        const to = JSON.stringify(path.join(process.cwd(), 'packages/kit/src/core/roles'))
+        const findings = await lint(KIT[0] as string, `import { r } from ${to}\nexport { r }\n`)
+        expect(fired(findings, ABSOLUTE_IN_PACKAGE)).toBe(1)
+        expect(fired(findings, OUT_OF_PACKAGE_PATH) + fired(findings, UNSHIPPED_PATH)).toBe(0)
+    })
+
+    // What ships is packages/kit/package.json's `files`, not the whole directory: a shipped file that reaches a test, a
+    // story or the fixture resolves here and fails once installed. A file that does not ship may reach them.
+    describe('a shipped file reaches only what ships', () => {
+        const shipped = 'packages/kit/src/db/kv.ts'
+        const reaches = [
+            ['the test fixture', '../../test-fixture/app-config/seed', 1],
+            ['a test', '../core/state-machine.test', 1],
+            ['a story', '../components/app-header.stories', 1],
+            ['a config beside src', '../../tsconfig.strict.json', 1],
+            ['a test the allowlist names back', '../i18n/namespaces.test', 0],
+            ['shipped source', '../core/state-machine', 0],
+            ['a shipped catalog', '../i18n/messages/en.json', 0],
+            ['a test, with a query', '../core/state-machine.test.ts?raw', 1],
+            ['a test, with a hash', '../core/state-machine.test#a', 1],
+            ['a sibling of a suite named back, by its own extension', '../i18n/namespaces.test.tsx', 1],
+            ['a suite named back, by its extension', '../i18n/namespaces.test.ts', 0],
+            ["the package's own manifest, which always ships", '../../package.json', 0],
+            ['its LICENSE, which always ships', '../../LICENSE', 0],
+            ['another file beside src', '../../README.md', 1],
+        ] as const
+        it.each(reaches)('from shipped source, %s', async (_what, to, expected) => {
+            expect(fired(await lint(shipped, `import x from '${to}'\nexport { x }\n`), UNSHIPPED_PATH)).toBe(expected)
+            expect(fired(await lint(shipped, `export const load = () => import('${to}')\n`), UNSHIPPED_PATH)).toBe(
+                expected,
+            )
+        })
+        it('from a conformance suite, which ships too', async () => {
+            const code = "import x from '../core/state-machine.test'\nexport { x }\n"
+            expect(fired(await lint('packages/kit/src/i18n/namespaces.test.ts', code), UNSHIPPED_PATH)).toBe(1)
+        })
+        it.each(['packages/kit/src/db/kv.test.ts', FIXTURE])('not from %s, which does not ship', async (file) => {
+            const code = `import x from ${JSON.stringify(pathFrom(file, 'packages/kit/test-fixture/app-config/seed'))}\nexport { x }\n`
+            expect(fired(await lint(file, code), UNSHIPPED_PATH)).toBe(0)
+        })
+        it('through a triple-slash reference path as well', async () => {
+            const code = '/// <reference path="../../test-fixture/app-config/seed.ts" />\nexport const x = 1\n'
+            expect(fired(await lint(shipped, code), UNSHIPPED_PATH)).toBe(1)
+            const out = '/// <reference path="../../../../tests/support/zz.d.ts" />\nexport const x = 1\n'
+            expect(fired(await lint(shipped, out), OUT_OF_PACKAGE_PATH)).toBe(1)
+            expect(
+                fired(await lint(shipped, '/// <reference types="node" />\nexport const x = 1\n'), UNSHIPPED_PATH),
+            ).toBe(0)
+        })
+        it.each([
+            ['a relative types=', '/// <reference types="../../test-fixture/app-config/seed" />'],
+            [
+                'path= after another attribute',
+                '/// <reference preserve="true" path="../../test-fixture/app-config/seed.ts" />',
+            ],
+            ['in capitals', '/// <REFERENCE PATH="../../test-fixture/app-config/seed.ts" />'],
+        ])('through %s', async (_form, reference) => {
+            expect(fired(await lint(shipped, `${reference}\nexport const x = 1\n`), UNSHIPPED_PATH)).toBe(1)
+        })
+    })
+
+    it('the contract tests are its only exemptions, and only by name', async () => {
+        const code = `import { s } from '../../../../../tests/support/contract-postgres'\nexport { s }\n`
+        for (const file of [
+            'packages/kit/src/adapters/real/db.contract.test.ts',
+            'packages/kit/src/adapters/real/rds-data.contract.test.ts',
+        ])
+            expect(fired(await lint(file, code), OUT_OF_PACKAGE_PATH), file).toBe(0)
+        expect(
+            fired(await lint('packages/kit/src/adapters/real/other.contract.test.ts', code), OUT_OF_PACKAGE_PATH),
+        ).toBe(1)
     })
 
     it('a `..` that is part of a name, not a segment, climbs nowhere', async () => {
@@ -387,7 +482,9 @@ describe('a path into app code crosses the framework/app fence too', () => {
             const into = JSON.stringify(pathFrom(file, 'apps/showcase/src/domain/tickets'))
             expect(fired(await lintThrough(`export const load = () => import(${into})\n`), APP_CODE_PATH)).toBe(1)
             const out = JSON.stringify(pathFrom(file, 'tests/support/tmp-dir'))
-            expect(fired(await lintThrough(`export const load = () => import(${out})\n`), APP_CODE_PATH)).toBe(0)
+            const outFindings = await lintThrough(`export const load = () => import(${out})\n`)
+            expect(fired(outFindings, APP_CODE_PATH)).toBe(0)
+            expect(fired(outFindings, OUT_OF_PACKAGE_PATH)).toBe(1)
         } finally {
             // the link, never what it points at: the scratch directory's own removal must find nothing to follow
             unlinkSync(link)

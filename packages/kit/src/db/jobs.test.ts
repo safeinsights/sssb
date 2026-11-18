@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { orgIdForSlug } from './org-lookup'
 import { tenantIdForSlug } from './tenant-lookup'
 import { InvalidTransitionError } from '../core/state-machine'
@@ -11,10 +11,10 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000'
 // Point all fake-adapter state at a throwaway dir BEFORE importing anything that touches pglite.
 const tmp = makeTestTmpDir('app-jobs-db-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 /** A JobsPort that records every start() call and never advances the job — keeps it 'queued'. */

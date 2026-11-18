@@ -10,6 +10,16 @@
     },
     "type": "module",
     "description": "SSSB — the framework half of this template: ports/adapters, RLS tenancy, authz, jobs, service auth, i18n and the Simulator harness. Apps extend it through the @sssb/app-config/* seam (ADR-0012).",
+    "files": [
+        "src",
+        "!src/**/*.test.*",
+        "!src/**/*.stories.*",
+        "src/i18n/namespaces.test.ts",
+        "src/i18n/messages-parity.test.ts",
+        "src/db/rls-pglite.test.ts",
+        "src/db/migrate.test.ts",
+        "src/server-lib/demo-presets-seam.test.ts"
+    ],
     "exports": {
         "./package.json": "./package.json",
         "./i18n/messages/en.json": "./src/i18n/messages/en.json",
@@ -159,8 +169,8 @@
         "@react-email/components": "^1.0.12",
         "@react-email/render": "^2.1.1",
         "@sentry/nextjs": "^11.12.0",
+        "@types/pg": "^8.23.1",
         "jose": "^6.2.13",
-        "kysely": "^0.29.7",
         "mailgun.js": "^14.1.1",
         "pg": "^8.23.1",
         "posthog-node": "^5.56.4",
@@ -169,12 +179,20 @@
     },
     "peerDependencies": {
         "@mantine/core": "^9.7.3",
+        "@types/node": "^26.6.5",
+        "@types/react": "~19.3.0",
+        "kysely": "^0.29.7",
         "next": "^16.4.6",
         "next-intl": "^4.14.9",
-        "react": "~19.3.1"
+        "react": "~19.3.1",
+        "typescript": "~6.0.3",
+        "vitest": "^4.1.12"
     },
     "peerDependenciesMeta": {
         "@sssb/app-config": {
+            "optional": true
+        },
+        "vitest": {
             "optional": true
         }
     },

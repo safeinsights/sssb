@@ -13,7 +13,7 @@
         "signInButton": "Iniciar sesión",
         "signInError": "No se pudo iniciar sesión. Revisa tu correo y contraseña.",
         "mfaNotImplemented": "Esta cuenta requiere MFA, que llegará en una fase posterior.",
-        "userMenuLabel": "Menú de la cuenta",
+        "userMenuLabel": "{name}, menú de la cuenta",
         "profileLink": "Perfil",
         "signOut": "Cerrar sesión"
     },
@@ -30,6 +30,7 @@
     },
     "org": {
         "switchLabel": "Cambiar equipo",
+        "switchTriggerSuffix": ", cambiar equipo",
         "title": "{org}",
         "membersHeading": "Miembros",
         "pendingHeading": "Invitaciones pendientes",
@@ -76,7 +77,8 @@
     },
     "simulator": {
         "pillLabel": "Simulador",
-        "pillAriaLabel": "Abrir el panel Simulador",
+        "pillSuffix": ", abrir el panel",
+        "pillUnreadSuffix": ", {count, plural, one {# correo sin leer} other {# correos sin leer}}, abrir el panel",
         "panelTitle": "Simulador",
         "peopleTab": "Personas",
         "mailTab": "Correo",
@@ -86,7 +88,7 @@
         "actorsTab": "Actores",
         "errorsTab": "Errores",
         "collapseButton": "Ocultar",
-        "collapseAriaLabel": "Cerrar el panel Simulador",
+        "collapseAriaLabel": "Ocultar el panel Simulador",
         "widthLabel": "Ancho del panel",
         "localeLabel": "Idioma",
         "personChipLabel": "Persona actual",

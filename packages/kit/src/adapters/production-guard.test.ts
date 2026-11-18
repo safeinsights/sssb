@@ -50,10 +50,10 @@ describe('the production fail-closed guard', () => {
     })
 
     it('reads each opt-in from its own explicit env var, never from a default', () => {
-        expect(adaptersIndex).toContain("export const isDemoMode = process.env.DEMO_MODE === '1'")
+        expect(adaptersIndex).toContain("export const isDemoMode = process.env['DEMO_MODE'] === '1'")
         // Not exported: unlike isDemoMode (which the layout reads to render the badge), nothing
         // outside this module needs to know, and knip fails an export with no consumer.
-        expect(adaptersIndex).toContain("const isE2eBuild = process.env.E2E_BUILD === '1'")
+        expect(adaptersIndex).toContain("const isE2eBuild = process.env['E2E_BUILD'] === '1'")
     })
 })
 

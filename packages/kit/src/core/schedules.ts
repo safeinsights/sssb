@@ -58,29 +58,33 @@ function isInt(value: unknown, min: number, max: number): value is number {
 export function parseScheduleSpec(value: unknown): ScheduleSpec {
     if (typeof value !== 'object' || value === null) throw new Error('schedule spec must be an object')
     const spec = value as Record<string, unknown>
-    switch (spec.type) {
+    switch (spec['type']) {
         case 'interval':
-            if (!isInt(spec.everyMinutes, 1, MAX_INTERVAL_MINUTES)) {
+            if (!isInt(spec['everyMinutes'], 1, MAX_INTERVAL_MINUTES)) {
                 throw new Error(`interval everyMinutes must be an integer 1..${MAX_INTERVAL_MINUTES}`)
             }
-            return { type: 'interval', everyMinutes: spec.everyMinutes }
+            return { type: 'interval', everyMinutes: spec['everyMinutes'] }
         case 'daily':
-            if (!isInt(spec.atUtcHour, 0, 23) || !isInt(spec.atUtcMinute, 0, 59)) {
+            if (!isInt(spec['atUtcHour'], 0, 23) || !isInt(spec['atUtcMinute'], 0, 59)) {
                 throw new Error('daily atUtcHour must be 0..23 and atUtcMinute 0..59')
             }
-            return { type: 'daily', atUtcHour: spec.atUtcHour, atUtcMinute: spec.atUtcMinute }
+            return { type: 'daily', atUtcHour: spec['atUtcHour'], atUtcMinute: spec['atUtcMinute'] }
         case 'weekly':
-            if (!isInt(spec.utcDay, 0, 6) || !isInt(spec.atUtcHour, 0, 23) || !isInt(spec.atUtcMinute, 0, 59)) {
+            if (
+                !isInt(spec['utcDay'], 0, 6) ||
+                !isInt(spec['atUtcHour'], 0, 23) ||
+                !isInt(spec['atUtcMinute'], 0, 59)
+            ) {
                 throw new Error('weekly utcDay must be 0..6, atUtcHour 0..23, atUtcMinute 0..59')
             }
             return {
                 type: 'weekly',
-                utcDay: spec.utcDay,
-                atUtcHour: spec.atUtcHour,
-                atUtcMinute: spec.atUtcMinute,
+                utcDay: spec['utcDay'],
+                atUtcHour: spec['atUtcHour'],
+                atUtcMinute: spec['atUtcMinute'],
             }
         default:
-            throw new Error(`unknown schedule spec type: ${String(spec.type)}`)
+            throw new Error(`unknown schedule spec type: ${String(spec['type'])}`)
     }
 }
 

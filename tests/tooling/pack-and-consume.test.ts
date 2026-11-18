@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import {
@@ -7,6 +9,7 @@ import {
     lockfileMoves,
     lockfileProblems,
     seamPeerProblems,
+    shippedFileProblems,
     tscErrors,
     undeclaredImports,
 } from '../../scripts/pack-and-consume/checks.mjs'
@@ -201,6 +204,52 @@ describe('the workaround register', () => {
             expect(workaround.what.length, id).toBeGreaterThan(40)
         }
     })
+
+    it('holds no workaround a step that has landed was to remove', () => {
+        // P3 removed its four (types-pg, undeclared-typescript, demo-presets-seam-skipped,
+        // strict-flags-kit-baseline). Raise this as each later step lands.
+        const landed = new Set(['P1', 'P1b', 'P2', 'P3'])
+        for (const [id, workaround] of Object.entries(WORKAROUNDS))
+            expect(landed.has(workaround.removedBy), id).toBe(false)
+    })
+})
+
+describe('shippedFileProblems', () => {
+    const shipped = ['package.json', 'LICENSE', 'src/theme.ts', 'src/testing/tmp-dir.ts', ...CONFORMANCE_SUITES]
+
+    it('accepts source plus exactly the conformance suites', () => {
+        expect(shippedFileProblems(shipped)).toEqual([])
+    })
+
+    it('refuses any other test or story file, and anything of the fixture', () => {
+        expect(
+            shippedFileProblems([
+                ...shipped,
+                'src/core/roles.test.ts',
+                'src/components/app-header.stories.tsx',
+                'src/demo-static/world-invite.test.tsx',
+                'src/adapters/real/db.contract.test.ts',
+                'test-fixture/app-config/seed.ts',
+            ]),
+        ).toHaveLength(5)
+    })
+
+    it('refuses a tarball missing a conformance suite', () => {
+        expect(shippedFileProblems(shipped.filter((file) => file !== CONFORMANCE_SUITES[0]))).toEqual([
+            `${CONFORMANCE_SUITES[0]}: a conformance suite is not shipped`,
+        ])
+    })
+
+    it("matches packages/kit/package.json's files allowlist, which re-includes exactly the suites", () => {
+        const manifest = JSON.parse(
+            readFileSync(path.resolve(import.meta.dirname, '../../packages/kit/package.json'), 'utf8'),
+        ) as { files: string[] }
+        // Exactly: `src`, the two negations, then the suites named back, and nothing else anywhere in the list.
+        const [first, ...rest] = manifest.files
+        expect(first).toBe('src')
+        expect(rest.slice(0, 2)).toEqual(['!src/**/*.test.*', '!src/**/*.stories.*'])
+        expect([...rest.slice(2)].sort()).toEqual([...CONFORMANCE_SUITES].sort())
+    })
 })
 
 describe('undeclaredImports', () => {
@@ -251,6 +300,17 @@ describe('undeclaredImports', () => {
             },
         ]
         expect(undeclaredImports(sources, manifest, builtins, specifiersOf).size).toBe(0)
+    })
+
+    it('reads the conformance suites, which ship, as source', () => {
+        const suite = CONFORMANCE_SUITES[0] as string
+        const found = undeclaredImports(
+            [{ file: suite, text: "import { z } from 'left-pad'" }],
+            manifest,
+            builtins,
+            specifiersOf,
+        )
+        expect(Object.fromEntries(found)).toEqual({ 'left-pad': [suite] })
     })
 
     it('still sees an import after a string that looks like a comment opener', () => {

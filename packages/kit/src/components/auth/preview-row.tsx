@@ -37,6 +37,9 @@ export function PreviewRow({
                 name={name}
                 radius={rounded ? 'xl' : 'sm'}
                 size={dim}
+                // Decorative: the title beside it already says the name, so assistive tech skips the
+                // initials rather than read "DO Dana Okoye".
+                aria-hidden
                 styles={{
                     placeholder: { color: '#fff', background: 'var(--mantine-color-dark-6)' },
                 }}

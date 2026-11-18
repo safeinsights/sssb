@@ -9,9 +9,42 @@ updates:
       cooldown:
           default-days: 3
       groups:
+          # React's own group, patch updates only (the `ignore` rules below drop its minors and majors). The four
+          # packages must move in one PR: react-dom throws at load when its version differs from `react`'s, so a
+          # PR that bumped one alone would be red by construction.
+          react:
+              patterns:
+                  - react
+                  - react-dom
+                  - '@types/react'
+                  - '@types/react-dom'
+              update-types: ['patch']
           minor-and-patch:
               update-types: ['minor', 'patch']
+              # React never arrives in this group: it has the group above, and nothing minor or major of it is
+              # taken here either.
+              exclude-patterns:
+                  - react
+                  - react-dom
+                  - '@types/react'
+                  - '@types/react-dom'
       open-pull-requests-limit: 5
+      ignore:
+          # React: no minor or major update from Dependabot. The apps, the root and `@sssb/kit`'s `react` peer
+          # range all sit on the same tilde (`~19.3.1`), and a bump that moves the apps without the peer forks
+          # React: an adopter's tree then holds two copies, which breaks hooks and context. That happened once
+          # (Dependabot #1, closed). A React minor is a deliberate PR that moves every declaration in one commit
+          # (the `deps/react-19-3` entry in docs/decision-log.md is the worked example). Patches within the
+          # tilde still arrive, and the peer range already accepts them. Lift this when the peer range is
+          # widened to cover a span of minors, so a bump of the apps can no longer leave it behind.
+          - dependency-name: react
+            update-types: ['version-update:semver-minor', 'version-update:semver-major']
+          - dependency-name: react-dom
+            update-types: ['version-update:semver-minor', 'version-update:semver-major']
+          - dependency-name: '@types/react'
+            update-types: ['version-update:semver-minor', 'version-update:semver-major']
+          - dependency-name: '@types/react-dom'
+            update-types: ['version-update:semver-minor', 'version-update:semver-major']
     - package-ecosystem: github-actions
       directory: /
       schedule:

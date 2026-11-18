@@ -226,6 +226,27 @@ function titleCase(slug: string): string {
         .join(' ')
 }
 
+/** The names of the workspace's packages that are not apps (`infra`, `spike-…`, `@sssb/kit`, …). */
+function workspacePackageNames(): string[] {
+    const dirs = ['infra']
+    for (const group of ['packages', 'spikes']) {
+        if (!existsSync(abs(group))) continue
+        for (const entry of readdirSync(abs(group), { withFileTypes: true })) {
+            if (entry.isDirectory()) dirs.push(`${group}/${entry.name}`)
+        }
+    }
+    return dirs.flatMap((dir) => {
+        if (!existsSync(abs(`${dir}/package.json`))) return []
+        let manifest: { name?: unknown } | null
+        try {
+            manifest = JSON.parse(readText(`${dir}/package.json`)) as { name?: unknown } | null
+        } catch {
+            return fail(`${dir}/package.json is not valid JSON, so its name cannot be checked against the slug`)
+        }
+        return typeof manifest?.name === 'string' ? [manifest.name] : []
+    })
+}
+
 function listApps(): string[] {
     return readdirSync(abs('apps'), { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
@@ -342,7 +363,8 @@ function renameApp(current: Identity, slug: string, displayName: string): void {
         if (!pkg.scripts) return
         const scripts: Record<string, string> = {}
         for (const [name, command] of Object.entries(pkg.scripts)) {
-            const renamed = name === `dev:${dir}` ? `dev:${slug}` : name
+            // `dev:<app>` and `tick:<app>` are the root's way to reach the SECOND app past the showcase-bound ones.
+            const renamed = name === `dev:${dir}` || name === `tick:${dir}` ? name.replace(`:${dir}`, `:${slug}`) : name
             scripts[renamed] = command.split(`--filter ${oldPackage} `).join(`--filter ${slug} `)
         }
         pkg.scripts = scripts
@@ -441,9 +463,11 @@ function ejectShowcase(survivor: string, onDisk: string): void {
                 note(skipped, `root script "${name}" dropped — apps/${survivor} has no ${delegated[1]} script`)
                 continue
             }
-            // `dev:<survivor>` existed only to reach the second app past the showcase-bound `dev`.
-            if (name === `dev:${survivor}` && scripts.dev === next) {
-                note(skipped, `root script "${name}" dropped — "dev" now means the same thing`)
+            // `dev:<survivor>` and `tick:<survivor>` existed only to reach the second app past the showcase-bound
+            // `dev` and `tick`.
+            const sibling = /^(dev|tick):/.exec(name)?.[1]
+            if (sibling && name === `${sibling}:${survivor}` && scripts[sibling] === next) {
+                note(skipped, `root script "${name}" dropped — "${sibling}" now means the same thing`)
                 continue
             }
             scripts[name] = next
@@ -901,6 +925,17 @@ async function main(): Promise<void> {
         // slug pattern above cannot spell.
         for (const reserved of ['kit', 'sssb']) {
             if (slug === reserved) fail(`"${reserved}" is reserved for the framework`)
+        }
+        // `repo` is the other vitest project in vitest.config.ts (the repo-hygiene suite), so an app called that
+        // would make two projects of one name and Vitest would refuse to start. The workspace's own packages
+        // collide the same way one layer down: the app's package name IS its slug, and `pnpm --filter infra`
+        // would then mean two packages. The package names are read from the tree rather than listed, so a
+        // workspace package added later is covered, and one an adopter deleted is not refused for nothing.
+        // (tests/tooling/init-app-slug.test.ts reads the vitest configs for project names, so a third one
+        // added there fails that test until it is listed here.)
+        if (slug === 'repo') fail('"repo" is reserved: it is the name of the repo-hygiene vitest project')
+        if (workspacePackageNames().includes(slug)) {
+            fail(`"${slug}" is the name of a workspace package that is not an app: --filter ${slug} would match both`)
         }
         // An app's contract database is its slug folded to underscores plus `_contract`, and `sssb_` is the prefix of the
         // framework's own fixture databases on the same server (tests/support/app-scaffold.ts), so an

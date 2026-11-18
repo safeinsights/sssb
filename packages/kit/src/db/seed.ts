@@ -20,7 +20,7 @@ import type { DB } from './schema'
  * the framework tolerates not knowing whether the seam exports something, and it is narrowed to exactly
  * one contract-typed function.
  */
-const appSeedRows = (appSeed as Record<string, unknown>).appSeedRows as AppSeedRows | undefined
+const appSeedRows = (appSeed as Record<string, unknown>)['appSeedRows'] as AppSeedRows | undefined
 
 /** What the seeder needs beyond the database to furnish a world (see AppSeedContext). */
 export interface SeedDeps {

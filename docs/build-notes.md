@@ -1980,3 +1980,86 @@ the panel is the element that carries it.
 - **Timings.** A full local run with a warm pnpm store took 77–88s. On CI, with a cold cache, the script took
   163s inside a 3m12s job: install 22s, the two typechecks 33s, unit tests and conformance 26s, `next build`
   22s, e2e 54s (Playwright's browser and its OS packages included).
+
+## Dependabot does not refresh the pack-and-consume lockfile seed (2026-11-17, `chore/post-p2-cleanup`)
+
+`scripts/pack-and-consume/consumer-lock.yaml` is the lockfile seed the `pack-and-consume` job installs its
+adopter-shaped workspace from. A Dependabot PR bumps `pnpm-lock.yaml` and the manifests, never that file, so after
+one merges the seed is behind until a later PR runs `pnpm pack-and-consume --update-lockfile` and commits what it
+rewrites (`deps/react-19-3` did so by hand). The job stays green meanwhile, by design: pnpm keeps each seeded
+resolution whose specifier still matches and resolves afresh only what moved, so the consumer still installs and
+the framework is still proved against what the ranges allow. What the drift costs is a standing notice and a
+re-resolution on every run: the script compares the seed with what the install resolved and, when they differ,
+prints the line "the consumer's resolution moved from its seed" (a `::notice` annotation on CI;
+`scripts/pack-and-consume.mjs:1040-1043`). The script's own comment already says that a Dependabot PR cannot refresh
+the seed and that this is "a prompt", not a failure (`scripts/pack-and-consume.mjs:1038-1039`). Why a moved range is
+re-resolved and nothing else is: `scripts/pack-and-consume.mjs:622-625`.
+Nothing makes anyone act on it.
+
+Proposed, not built, since either changes how the check behaves:
+
+- **A cheap gate:** fail the job on a pull request from someone other than Dependabot when the seed has drifted, so
+  the first human PR after a Dependabot merge carries the one-line refresh. It reuses the drift count the script
+  already computes. The cost is that an unrelated PR goes red for drift it did not cause, which is what the seed
+  exists to avoid for third-party releases, so it should stay a notice if that matters more.
+- **The Dependabot-side fix:** a workflow on Dependabot's pull requests that runs `pnpm pack-and-consume
+--update-lockfile` and pushes the result to the branch. It needs a token able to push to a Dependabot branch, which
+  is a repository settings decision for JP: a push made with the workflow's default token does not start the checks
+  again, so it takes a personal access token or an app token.
+
+## Union merge for the two append-only records (2026-11-17, `chore/post-p2-cleanup`)
+
+`.gitattributes` gives `docs/decision-log.md` and `docs/build-notes.md` git's built-in `union` merge. Two branches
+that each append an entry at the end of one of them used to stop `git merge` on a conflict, which happened on nearly
+every PR on 2026-11-17; with `merge=union` git keeps the added lines of both sides and does not stop. Probed in a
+scratch repository: two appends to one file conflicted without the attribute and merged with it, and the entries came
+out joined without the blank line that separates them, which `pnpm lint:fix` restores.
+
+The one risk: union keeps both sides' lines wherever they overlap, so two edits of the SAME line leave both versions
+in the file, with no conflict to say so (the probe left `RIGHT` and `LEFT` one above the other). Both files are meant
+to be appended to and never edited, so this should only follow an edit of an existing entry. After a merge that
+touched an entry already in the file, read that entry again before committing.
+
+It applies to merges git performs: `git merge origin/main` on a branch, which is how this repository takes main in.
+Whether GitHub's own merge, for the mergeability check and the merge button, honours the attribute is not verified
+here, so a PR can still show a conflict there that a local merge of `main` resolves.
+
+## Package hygiene (2026-11-17, ADR-0014 P3)
+
+- **`files` takes negations, and order matters.** `["src", "!src/**/*.test.ts", …, "src/i18n/namespaces.test.ts"]`
+  under `pnpm pack` drops the tests and keeps the files named after the negation. Check the tarball's list, not
+  the manifest: `pnpm pack --dry-run --json` in `packages/kit`.
+- **Read a `NEXT_PUBLIC_*` variable with a dot.** Next documents inlining `process.env.NEXT_PUBLIC_*` in that
+  form, and `noPropertyAccessFromIndexSignature` refuses it on `process.env`'s index signature.
+  `(process.env as { NEXT_PUBLIC_SENTRY_DSN?: string }).NEXT_PUBLIC_SENTRY_DSN` passes the flag, and SWC strips the
+  cast back to the dot form. Probe: a showcase `next build` with `NEXT_PUBLIC_SENTRY_DSN` set to a marker put the
+  marker in a client chunk. Whether the bracket form, `process.env['NEXT_PUBLIC_SENTRY_DSN']`, is inlined too was not
+  probed.
+- **`readlink -f apps/<app>/node_modules/<pkg>` misses a package the app finds at the root.** `@types/react`,
+  `@types/node` and `typescript` are root devDependencies, so an app has no `node_modules/@types/react` of its
+  own and resolves the root's by walking up. Compare the NEAREST `node_modules/<pkg>` instead, walking up from each
+  of `packages/kit` and the two apps (part 5's one-copy rule, checked by hand here until `sssb doctor` runs it); at
+  this step `react`, `react-dom`, `next`, `next-intl`, `@mantine/core`, `@types/react`, `@types/node`, `kysely`,
+  `typescript` and `vitest` resolved to one directory each.
+- **TypeScript takes no types from a `.mjs` under `node_modules`, even with `allowJs`**, at its default
+  `maxNodeModuleJsDepth` of 0. `src/testing/tmp-dir.ts` imports its marker from `./tmp-dir-marker.mjs` (plain
+  `.mjs`, so the leak guard can import it under bare node). In this repo `allowJs` reads it; from the tarball the
+  import is `TS7016`. `tmp-dir-marker.d.mts` declares it. knip sees no importer of a declaration file, so
+  `knip.json` ignores that one file in `packages/kit`, by name.
+- **The compiler contract is wider than the strict set.** The framework's own files also need, from the app's
+  tsconfig: `strict`, `moduleResolution: "bundler"`, `jsx` always set (`react-jsx` or `preserve`), `dom` in `lib`
+  for the components, and `skipLibCheck`. The counts, and how they were measured, are in
+  `packages/kit/tsconfig.strict.json`'s header. Options that gave no error in the same measurement, and none over
+  the strict set either: `verbatimModuleSyntax`, `jsx: "preserve"`, `noUncheckedSideEffectImports`,
+  `module: "preserve"`, `target: "es2020"`, `strictBuiltinIteratorReturn`, `allowImportingTsExtensions`.
+
+## Transitive advisories (2026-11-17, `deps/advisories`)
+
+- **`pnpm update -r --depth Infinity <names>` does not always move a transitive dependency.** It refreshed
+  `brace-expansion`, `js-yaml`, `nanoid`, `source-map-js` and `zod`, but left `fast-uri` 3.1.3 and `browserslist`
+  4.28.5 where they were, run twice, with patched versions inside every parent's range. Deleting those packages'
+  `packages:` and `snapshots:` entries from `pnpm-lock.yaml` and running `pnpm install` made pnpm re-resolve them
+  (it reports the lockfile as broken, then fixes it). Check the result with `pnpm install --frozen-lockfile`.
+- **Prove what a bundle holds from the bundler's own module list.** Next's chunks name modules by their
+  `node_modules/.pnpm/...` path; the static demo's list comes from Rollup's `this.getModuleIds()` in a scratch
+  plugin; the migrator's from an esbuild metafile.

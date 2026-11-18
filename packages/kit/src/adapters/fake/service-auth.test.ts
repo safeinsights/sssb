@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../../testing/tmp-dir'
 import { NotFoundError } from '../../ports/errors'
 import { verifyServiceCaller } from '../../service-auth/verify'
 import { fakeDb } from './db'
@@ -9,11 +9,11 @@ import { devWebhookSecret, mintServiceToken } from './service-auth'
 
 const tmp = makeTestTmpDir('app-svc-mint-')
 beforeAll(async () => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
     await fakeDb.ready()
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 async function orgId(slug: string): Promise<string> {

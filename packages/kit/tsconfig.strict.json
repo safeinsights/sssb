@@ -1,0 +1,33 @@
+{
+    // THE FRAMEWORK'S COMPILER CONTRACT (ADR-0014 part 2). @sssb/kit ships TypeScript source, so its files are
+    // compiled under the ADOPTER'S options, and `skipLibCheck` does not cover a `.ts` file. So the whole package
+    // compiles under every option in the strict set and at the ES2022 lib floor: an adopter who turns any of
+    // them on, or whose lib stops at ES2022, cannot break SSSB. Code that passes a flag still compiles with it
+    // off. The set is the one pack and consume turns on in its consumer (STRICT_FLAGS,
+    // scripts/pack-and-consume/checks.mjs), and tests/tooling/kit-strict.test.ts holds the two lists equal.
+    // This is the fast, in-repo half of that promise; pack and consume proves it from the tarball.
+    // `pnpm typecheck` runs it. The seam resolves to SSSB's own fixture (the root tsconfig's paths).
+    // THE REST OF THE CONTRACT is what the root tsconfig gives it and an adopter's app must give it too; off any of
+    // these, the framework's own files fail. Measured over this file's `include` and lib floor with the strict set
+    // off, each option overridden in turn (a probe config extending ../../tsconfig.json, 2026-11-17): `strict: true`
+    // (105 errors with it off), `moduleResolution: "bundler"` (`nodenext` 1479), `jsx: "react-jsx"` or
+    // `"preserve"`, always set (`react` 675, unset 749), `dom` in `lib` for the components (94 without it), and
+    // `skipLibCheck: true` (22 errors without it, all in dependencies' declarations). P4's tsconfig base in
+    // @sssb/tools sets them; until then pack and consume writes them (`tsconfig-written`).
+    "extends": "../../tsconfig.json",
+    "compilerOptions": {
+        "incremental": false,
+        "lib": ["dom", "dom.iterable", "es2022"],
+        "noUncheckedIndexedAccess": true,
+        "exactOptionalPropertyTypes": true,
+        "noPropertyAccessFromIndexSignature": true,
+        "erasableSyntaxOnly": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noImplicitReturns": true,
+        "noImplicitOverride": true,
+        "noFallthroughCasesInSwitch": true
+    },
+    "include": ["src/**/*.ts", "src/**/*.tsx"],
+    "exclude": []
+}

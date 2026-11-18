@@ -111,7 +111,7 @@ function fixturePath(purpose: string): string {
     // command that runs the app (next dev/build, pnpm llm:record). APP_FIXTURES_DIR overrides that for
     // runners whose cwd is the repo root — the unit suite runs every app's tests in one pass from
     // there. Same override shape as APP_DATA_DIR.
-    const root = process.env.APP_FIXTURES_DIR ?? path.join(process.cwd(), 'fixtures')
+    const root = process.env['APP_FIXTURES_DIR'] ?? path.join(process.cwd(), 'fixtures')
     return path.join(root, 'llm', `${purpose}.json`)
 }
 

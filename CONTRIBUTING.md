@@ -99,6 +99,6 @@ never to a vendor's API. `/new-port` (Claude command) scaffolds the layout.
 | contract | `pnpm test:contract`   | Real Postgres (embedded locally, service container in CI) |
 | demo     | `pnpm e2e:demo-static` | The built single-file shell from `file://`                |
 
-A test that needs a scratch directory uses `makeTestTmpDir()` (`tests/support/tmp-dir.ts`): a raw
+A test that needs a scratch directory uses `makeTestTmpDir()` (`tests/support/tmp-dir.ts`, re-exporting `packages/kit/src/testing/tmp-dir.ts`): a raw
 `mkdtemp` fails lint, and the unit and contract runs fail if a directory made that way is left behind
 (`scripts/check-tmpdir-leak.mjs`).

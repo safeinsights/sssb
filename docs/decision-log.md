@@ -1838,7 +1838,7 @@ primitive (S3 `CopyObject` server-side; a file copy in the fake), so it passes t
   2.5.3, Level A), but fixing it means choosing new accessible names in two locales, which is a11y design
   work rather than part of a dependency catch-up. The tilde keeps the hold through a lockfile
   regeneration: with 4.14.0 already in the lockfile, `^4.12.1` resolved to 4.14.0. The fix and the way to
-  lift the hold are in `.claude/future-tasks/label-in-name-axe-4-14.md`.
+  lift the hold are in `.claude/future-tasks/resolved/label-in-name-axe-4-14.md`.
 - **`react`, `react-dom` and their types are held at 19.2 (`~19.2.8`, `~19.2.17`, `~19.2.3`).** The group
   took React to 19.3.1, which put the showcase's static demo at 845,719 bytes, over the 840,000 budget
   re-based the same day (starter 755,326 of 820,000). With only `react` and `react-dom` pinned back to
@@ -2931,7 +2931,7 @@ Dependabot's #1.
   integrity hash; no other package's version moved, and the full run passed.
 - **`@axe-core/playwright` stays held at `~4.12.1`.** The other half of #1 is not decided:
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
-  hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
+  hold are still `.claude/future-tasks/resolved/label-in-name-axe-4-14.md`.
 
 ## Copyright assigned to Rice University (2026-11-17, `chore/copyright-rice`)
 
@@ -2940,3 +2940,257 @@ stays MIT. This change records the assignment: `LICENSE` now reads "Copyright (c
 University". JP opens and merges the PR that records it, with a commit he authored. `tests/docs/adopter-identity.test.ts` checks that an adopted
 tree keeps the notice verbatim, as MIT requires, so it now expects Rice University. ADR approver lines keep JP's
 name: they record who decided. This lands before P7, whose release-candidate tarballs carry the `LICENSE`.
+
+## A second npm owner is not needed (2026-11-17, `chore/post-p2-cleanup`)
+
+JP's call on 2026-11-17: the `sssb` npm organization and its packages keep `safeinsights-bot` as their only owner,
+and no second owner is added. The account's credentials are shared among the maintainers and its email is a group
+address, so losing one person does not lose the account. That answers the known risk ADR-0014 recorded on
+2026-11-17 ("The npm names have a single owner"), which rested on JP having no personal npm account and said a
+second, human owner would be added once a maintainer had one.
+
+- **ADR-0014 gets a dated addendum, and its body is untouched.** The addendum says the Consequences bullet no
+  longer describes a risk to carry and that the follow-up "add a second, human owner" is dropped.
+- **Nothing that would let someone reach the account is written here or in the ADR**: no credential, address or
+  place where one is kept. Where the credentials live is the maintainers' to know.
+- **Releases do not depend on it.** Publishing runs from GitHub Actions through trusted publishing (D11), so the
+  shared credentials are for administering the names, not for shipping a version.
+
+## Package hygiene (2026-11-17, ADR-0014 P3, `chore/package-hygiene`)
+
+- **A `files` allowlist, with the conformance suites re-included by name.** `packages/kit/package.json` ships
+  `src` minus every `*.test.*` and `*.stories.*` file, then names the five seam-conformance suites
+  back in. `pnpm pack` went from 293 files on main (2242a28) to 191: the 45 files of the test fixture and 60
+  test and story files no longer ship, and the scratch-directory helper's three files (below) now do. The suites
+  list lives once, in `CONFORMANCE_SUITES` (`scripts/pack-and-consume/checks.mjs:29`); a unit test
+  (`tests/tooling/pack-and-consume.test.ts:243`) holds the list to exactly `src`, the two negations and these,
+  and pack and consume checks the tarball itself (`shippedFileProblems`, `checks.mjs:43`). P5 replaces the suites
+  with `@sssb/kit/testing`.
+- **The strict set runs in this repo too, over the whole of `packages/kit/src`.** `packages/kit/tsconfig.strict.json`
+  turns on part 2's nine options at the ES2022 lib floor, and `pnpm typecheck` runs it, so a regression fails
+  `pnpm verify` and CI's `lint-typecheck-unit` before pack and consume sees it. Tests and stories are in it, because five tests ship and P5
+  ships more. 191 errors in `packages/kit/src` were fixed (this step's base source, typechecked under this config):
+  122 index-signature accesses written with brackets (and one more in `tests/support/contract-postgres.ts`, which
+  the contract tests bring into the program), 11 parameter properties written as fields, and the rest
+  possibly-undefined values handled by a guard that throws
+  where the invariant holds, a conditional spread, or an optional property declared `| undefined` where
+  `undefined` is part of its contract. No non-null assertion and no suppression. Pack and consume's baseline of
+  122 is gone: any error inside the framework fails its strict typecheck.
+- **`@types/node` is a peer, beside `@types/react`.** Part 2's rule is that the types of host singletons are peers,
+  and the rest dependencies; `@types/node` declares globals the way `@types/react` declares JSX, so two copies in one
+  program conflict. Its range, like the others', is the one this repo tests (`^26.6.5`); an adopter on an older
+  `@types/node` gets a peer warning until a test widens it. The peers parts 2 and 5 name are peers too, at this
+  repo's ranges: `@types/react` `~19.3.0` and `typescript` `~6.0.3` (part 2), and `kysely` `^0.29.7`, moved from
+  `dependencies` because an app's migrations receive the framework's `Kysely` instance (part 5). `@types/pg` is a
+  dependency. So the peers are `react`, `next`, `next-intl` and `@mantine/core` (as before), `kysely`,
+  `@types/react`, `@types/node` and `typescript`, plus `vitest`, optional (below); `@types/node` and `vitest` are
+  this step's additions to the set the ADR names.
+- **`vitest` is an optional peer.** Shipped files import it: the five conformance suites, and the
+  scratch-directory helper moved into the package (`packages/kit/src/testing/tmp-dir.ts`, internal, not in
+  `exports`), which the demo-presets suite uses. Pack and consume's undeclared-import check would otherwise fail
+  on it, rightly. `@sssb/kit/testing` (P5) needs the same peer.
+- **The helper moved; the repo's copy re-exports it.** 24 of the framework's files imported
+  `tests/support/tmp-dir`: 23 tests and the demo-presets conformance suite (part 2's 23, at 6d67a7c, counted the
+  test files importing anything from the repo's `tests/`). They import the package's own module now, and
+  `tests/support/tmp-dir.ts` re-exports it for the repo's and the apps' tests until P4 moves it into
+  `@sssb/tools`. The leak guard reads the marker suffix from the package.
+- **A lint rule holds the package's edge.** `sssb/no-path-out-of-package` reports, from any file in `packages/kit`
+  (fixture included), a relative or absolute path or a `file:` URL that lands outside it (a landing in app code is
+  `sssb/no-path-to-app-code`'s); an absolute path or `file:` URL into it, which names this checkout; and, from a
+  shipped file, a path to one the `files` allowlist leaves out (a test, a story, the fixture, a config beside
+  `src`), with `package.json` and `LICENSE` counted as shipped whatever `files` says. A `/// <reference path=…>`
+  or `types=…` counts as a path, in any case and with its attributes in any order, and a relative path's `?query`
+  or `#hash` is dropped before it is judged (`packageEdgeFinding`, `eslint.config.mjs:744`). The two real-Postgres
+  contract tests are its only exemptions, by name: they start their server through `tests/support/contract-postgres.ts`,
+  which needs `scripts/ports.mjs`, and P5 moves that runner into the package. Neither ships.
+- **What the review left for later steps.** The options the framework needs beyond the strict set (`strict`,
+  `moduleResolution: "bundler"`, `jsx`, `dom`, `skipLibCheck`) are written in `packages/kit/tsconfig.strict.json`'s
+  header and in the `tsconfig-written` workaround (`scripts/pack-and-consume/workarounds.mjs:36`), and P4's
+  tsconfig base is where an adopter gets them. `dedupePeerDependents: false`, which the consumer's workspace sets,
+  is a registered workaround now (`dedupe-peer-dependents-written`, `workarounds.mjs:68`, P12). `src/authz/route-scan.ts` and `src/adapters/real/rds-data-emulator.ts` ship
+  but nothing shipped reaches them; P5's `@sssb/kit/testing` is what will.
+
+## The release app, made by a script (2026-11-17, `ci/release-app-setup`)
+
+`release.yml` (P1b) needs a GitHub App whose token pushes the release commit and its tag. JP asked to make it the
+way CanopyCMS makes its App, by GitHub's App-manifest flow from a script, not by hand in settings.
+`pnpm release-app:init` (`scripts/release-app.ts`, `scripts/release-app/`) is that script, with
+`docs/runbooks/release-app.md` and the `release-app` cutover row. Decisions:
+
+- **Borrowed, not shared.** The loopback callback server, the manifest form, the JWT over `node:crypto` and the
+  read-back come from CanopyCMS's `src/cli/init-github-app.ts`, adapted rather than imported: Canopy's is a
+  per-site tool for adopters, and this one has one fixed repository and one fixed destination for the key.
+- **The key goes to `gh secret set` on stdin and nowhere else.** No file, no argv, no output. If `gh` fails, the
+  operator retries while the key is in memory; giving up costs one "Generate a private key" on the App's page.
+  Canopy also offers a key file as a fallback; this does not, so the only file the script writes is the creation
+  form (the manifest, no key), in a private temporary directory it removes. A failed manifest exchange (no answer,
+  or a GitHub error) is retried too, since only this process holds the one-time code.
+- **The client id is a variable, not a secret.** `release.yml` reads `vars.RELEASE_BOT_CLIENT_ID`, and a client id
+  is not secret.
+- **Who the App is, checked before anything trusts it.** The exchange's answer is checked before the key is stored
+  (owned by safeinsights, exactly `contents: write` and `metadata: read`). `bypass` and `verify` take `--app-id` on
+  the command line, so both look that id up in the organisation's installations, with the client id the
+  environment holds, on selected repositories, with exactly those permissions: a typo, or another App's id, never
+  becomes the bypass on `main`.
+- **The token asks for the App's permissions explicitly** (`permission-contents: write` on
+  `create-github-app-token`), so an App widened later mints nothing wider in `release.yml`.
+- **Four rulesets, not two.** A bypass covers every rule in its ruleset. Adding the App to `release tags: v*` as it
+  stood (creation, update, deletion, non-fast-forward) would have let it move and delete release tags, and the App
+  must also bypass the organisation's `require-pr`, which carries deletion and non-fast-forward on `main`. So the
+  rules the App passes and the rules nobody passes are split: `release tags: v*` keeps creation (App bypass), new
+  `release tags: v* immutable` holds the rest (no bypass), and new `main: history` re-states deletion and
+  non-fast-forward on `main` with no bypass. The script creates the no-bypass ones first. `main: required checks`
+  may hold only its checks, or the App would bypass whatever else was added there.
+- **The script never changes an organisation ruleset.** `require-pr` is shared by the org's repositories and needs
+  `admin:org`; the script lists it, and `verify` fails until it lists the App as "Always allow" and no other
+  actor. It also reports any other ruleset the release's push would meet (on `main`, or a tag ruleset that might
+  cover a release tag, judged generously), so `verify` cannot pass while the push would be refused.
+- **The drift guard pins the job that holds the key.** Canopy's guard drives its worker against a recording proxy;
+  the only consumer here is a workflow, so `tests/tooling/release-app-drift.test.ts` parses every workflow file
+  (the `yaml` package, a new root devDependency). It began as rules alone, a deny-by-default reading of the shell in
+  the step holding the token; each review round then found shell forms it let through (`PATH=`, `printf -v`, a
+  step before the mint writing `$GITHUB_ENV`, `container:`, a moving action ref). So the `push` job is pinned by a
+  hash of its parsed form, and any edit to it fails until it is re-reviewed; the rules stay, to say why the pinned
+  job needs exactly the App's permissions and to cover what lies outside that job (triggers, other jobs and
+  workflows, environment names in any case). In-memory mutations of the real workflow show the rules failing.
+- **What the key is worth is written down.** The App bypasses review and checks on `main`, so its key can land a
+  fast-forward commit there (including a merge through the API) and tag it, which starts a publish; it cannot
+  change workflow files. The runbook says so, and names a required reviewer on `npm-publish` as the setting that
+  would still stand between a stolen key and npm. That setting is JP's call and is not made here.
+
+## Transitive dependency advisories, handled by reach (2026-11-17, `deps/advisories`)
+
+JP's call on 2026-11-17: "address the transitive dependencies appropriately with judgement". Before this branch
+`pnpm audit` reported 37 advisory entries (33 distinct GHSA ids; 3 low, 10 moderate, 24 high), 18 of them in the
+`--prod` graph, every one in a transitive dependency. After it, 2 remain, 1 of them in the `--prod` graph. Only
+`pnpm-lock.yaml` changed: no `package.json` range, no `pnpm.overrides` entry.
+
+- **The policy.** An advisory whose package reaches shipped code is fixed whenever a fix exists, preferring a
+  lockfile refresh, then a parent upgrade, then a `pnpm.overrides` entry that names the advisory, why, and when to
+  remove it. "Shipped" means an app's server or client bundle, the migrator Lambda, the static demo, or the
+  `--prod` graph of `@sssb/kit` and the apps, which an adopter installs even when only its build tooling runs
+  it. A dev-only advisory (lint, commit hooks, Ladle, tests) is fixed when a lockfile refresh or a safe patch
+  bump does it, and otherwise accepted and recorded here. An advisory with no patched release is accepted and
+  rechecked when one appears. `minimumReleaseAge` is not bypassed for a fix, and no hold recorded in this log is
+  raised for one.
+- **Reach was measured, not inferred.** None of the twelve affected packages appears in what ships: the
+  showcase's simulated `next build` (its `.next/server` and `.next/static` chunks and its standalone trace), the
+  static demo's Rollup module graph (31 packages: React, Mantine, next-intl's runtime, floating-ui, valibot and
+  their helpers), or an esbuild bundle of the migrator entry with `infra/stack.ts`'s options (kysely and `pg`).
+  The 18 `--prod` entries reached the graph through build tooling: `postcss` and `styled-jsx`'s Babel under
+  `next`, webpack's `schema-utils`/`ajv` under `@sentry/nextjs`'s bundler plugins, `@rollup/plugin-commonjs` and
+  `@sentry/cloudflare`'s `vite` under `@sentry/nextjs`, `@parcel/watcher` under `next-intl`, and `zod` as the
+  `@anthropic-ai/sdk` optional peer that this workspace's `autoInstallPeers` installs. The SDK imports `zod` only
+  in its `helpers/zod` and `helpers/beta/zod` modules, and SSSB imports only the package root
+  (`packages/kit/src/adapters/real/llm.ts:1`); pack and consume's adopter install does not install `zod` at
+  all.
+- **Fixed by refreshing the lockfile inside the parents' existing ranges:** `fast-uri` 3.1.3 → 3.1.9 (12
+  entries), `browserslist` 4.28.5 → 4.29.5 (2; 4.29.6 is younger than the release-age window), `nanoid` 3.3.16
+  → 3.3.20, `source-map-js` 1.2.1 → 1.2.2, `zod` 4.4.3 → 4.6.7, `brace-expansion` 1.1.16 → 1.1.22 and 5.0.8 →
+  5.0.13 (9), `js-yaml` 4.3.0 → 4.3.2 (2), Ladle's `vite` 6.4.3 → 6.4.6 (5), and Ladle's `query-string` 9.4.1 →
+  9.5.1, which is inside Ladle's `^9.1.1` and moves `decode-uri-component` 0.4.1 → 0.5.1 (2).
+- **Accepted: GHSA-fc5q-39xc-vjpf, `picomatch` ReDoS (high, `--prod`).** No patched release exists: 4.0.7 and
+  2.3.2 are the newest of their lines and both are affected. It is reached through file watching and globbing
+  (`@parcel/watcher`, `@rollup/plugin-commonjs`, `vite`, `tinyglobby`). `next-intl`'s plugin requires
+  `@parcel/watcher` when it loads, so any process that evaluates `next.config.ts` loads it, a plain `next start`
+  included; the standalone server does not evaluate it, and its trace holds no `picomatch`. The advisory needs a
+  hostile glob pattern, and every pattern here comes from configuration, never from a request. Recheck when a
+  fixed `picomatch` is published.
+- **Accepted: GHSA-g3hv-75wg-m249, `minimatch` (moderate, dev-only).** `typescript-eslint` 8.72's estree takes
+  `minimatch` `^10.2.2`; the fix is in 11.0.1, which only `typescript-eslint` 8.73.0 takes, published
+  2026-11-16 and still inside the two-day release-age window. ESLint globs are this repository's own. The next
+  `typescript-eslint` refresh clears it; an override forcing a new major onto a transitive dependency was not
+  worth it for a dev-only moderate.
+- **Next's vendored copies are outside `pnpm audit`.** `next/dist/compiled` carries its own `zod`, `nanoid` and
+  `picomatch`, without versions an audit can read. They move only with `next` itself. Next's `picomatch` does run
+  at request time: `/_next/image` matches the requested URL against `images.remotePatterns` and `localPatterns`
+  (`next/dist/shared/lib/match-remote-pattern.js`). Those patterns are configuration, and neither app sets
+  `images`; an adopter who writes an extglob there should check it against GHSA-fc5q-39xc-vjpf.
+- **No standing audit gate on pull requests.** `pnpm audit --prod --audit-level high` is red today on the
+  unfixable `picomatch` entry, and with that one ignored it would still turn every open PR red on the day any new
+  advisory is published, whatever the PR touches. Advisories reach SSSB through Dependabot and through review
+  instead (the Next upgrade advisor is off; see "Next's upgrade advisor is switched off" above).
+
+## `pnpm tick`, and a dev ticker that is opt-in (2026-11-17, `feat/pnpm-tick`)
+
+JP asked for both on 2026-11-17, with the ticker as an option, and asked whether it should be the default. It is not.
+This is the "next step if it is wanted" that "`pnpm dev` without the Simulator has no tick source" (above) left.
+
+- **`pnpm tick` calls the route; it adds nothing to it.** `scripts/tick.mjs` POSTs the app's `/api/webhooks/cron` with
+  `Authorization: Bearer <the per-checkout dev secret>` from `<app>/.data/auth/webhook-secret`, which is how
+  `withWebhookSecret` authorizes any caller in a simulated world. No bypass, no flag the server reads, and nothing in
+  `packages/kit` or an app's `src` changed. The first request to a server is what creates the secret, so with none on
+  disk it sends one throwaway bearer first. `--url` accepts only loopback hosts over http, so the secret cannot be sent
+  anywhere but this machine, and a server in real mode (`WEBHOOK_SECRET`, no secret file) answers 401 with the reason.
+  Exit codes: 0 ticked, 1 the tick failed (unreachable, 401, non-2xx, a body that is not JSON), 2 a bad command line.
+  A schedule or delivery that FAILED inside a successful tick is printed and exits 0: the tick ran, and the next one
+  retries it.
+- **The ticker is a wrapper around `next dev`, not code in the app.** `pnpm dev` runs `next dev` through
+  `scripts/dev-tick.mjs` in both apps; with `DEV_TICK_SECONDS` unset it only starts the command, forwards SIGINT, SIGTERM and
+  SIGHUP, and exits with its code. (SIGINT is forwarded even though a terminal's Ctrl-C also reaches the server directly:
+  the wrapper is now the pid a supervisor holds, and swallowing it left `kill -INT` unable to stop `pnpm dev`; found by
+  review, and the SIGINT case seen failing with it unforwarded.) Putting it in the app would have meant reading `process.env` in `src`, which is lint-banned. The name is a count of seconds rather than a
+  `=1` flag like `E2E_BUILD` and `DEMO_MODE` because those pick a build and this takes a number; anything that is not a
+  whole number of 1 to 86400 is an error before the server starts, not a silent no (a typo for another unit, and far below the ~24.8 days
+  where `setTimeout`'s 32-bit limit overflows and the loop would tick continuously; seen with 9999999).
+- **Off by default, and why.** (1) The showcase's Simulator controls the world clock in a demo: a ticker firing digests
+  on real time underneath it changes when a presenter sees them fire. (2) The e2e suites expect a scheduler that does
+  nothing until a test asks, so a background tick could land between a test's two steps. (3) Hermetic dev should not
+  do work nobody asked for. Opt-in costs one environment variable for someone who wants it; default-on would put every
+  one of those three at the mercy of a timer.
+- **It cannot run where it must not.** Both playwright configs start `pnpm dev` with `DEV_TICK_SECONDS` blanked, so a
+  value exported in a developer's shell never reaches an e2e server; a test reads the configs for it. A ticker asked
+  for with `E2E_BUILD` or `DEMO_MODE` set is refused with a message. The e2e and demo servers (`start:e2e`,
+  `start:demo`) do not go through the wrapper at all, and the `file://` static demo has no server to tick. The blank
+  cannot reach a server Playwright did not start, and off CI it adopts one already on its port
+  (`reuseExistingServer`), so a ticking server you left running would be tested against. While a ticker runs it
+  leaves `<data dir>/dev-ticker.json` (pid, interval), and both playwright configs throw at load if that pid is alive;
+  a marker whose process is gone (a SIGKILLed wrapper) is ignored. Found by review; a test loads the real configs both
+  ways. The marker lives in the data directory, so wiping `.data` under a running ticker removes it too; that is already a
+  broken setup (the showcase's destructive spec wipes `.data` itself, `apps/showcase/playwright.config.ts:72`), and the
+  guard then has nothing to see.
+- **The ticker is one module with start, stop and status, for a Simulator control later.** `scripts/ticker.mjs`
+  (`createTicker`) owns the loop, the interval bounds, the dedup of repeated errors and the marker; it reads no
+  environment. `scripts/dev-tick.mjs` is the policy for `pnpm dev` and its only caller. JP asked whether the Simulator
+  can start it from its UI: not in this change (the panel is in `packages/kit`, which P3 is editing), but the shape is
+  there for it, and `.claude/future-tasks/simulator-ticker-control.md` has the design, including why the control must
+  keep it off by default and out of e2e and the static demo.
+- **`init-app` learned the second root script.** Root `tick:starter` is renamed with the app (`tick:<slug>`) and, when
+  the showcase is ejected, dropped as a duplicate of `tick`, as `dev:starter` already was; each seen failing against the
+  old `init-app` in `tests/docs/adopter-identity.test.ts`.
+- **Two things CI found that the local run could not.** (1) The adoption probe runs the whole suite in a tree `init-app`
+  has renamed and ejected, where `apps/showcase` and `apps/starter` do not exist; the tick tests named them. They now
+  read the app directories of the tree they run in (and the PORT key from the app's own `dev` script, which `init-app` does
+  not rename), and ran green in an `init-app acme --eject-showcase` copy. (2) Pack and consume's consumer workspace
+  holds only the scripts it is told to copy, and the starter's Playwright config now imports `scripts/ticker-marker.mjs`:
+  typecheck failed with "Cannot find module". A new named workaround, `tick-scripts-copied`, copies the four tick scripts,
+  removed by P4 with the rest (`sssb tick` in `@sssb/tools`); ADR-0014's table of what moves to `@sssb/tools`
+  (`scripts/ports.mjs` and the like) has no row for them yet.
+- **Lint.** The `scripts/**` block gained the globals these two scripts use (`fetch`, `URL`, `AbortController`,
+  `AbortSignal`, `setTimeout`, `clearTimeout`).
+
+## Label in Name fixed, and the axe hold lifted (2026-11-18, `fix/axe-label-in-name`)
+
+JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/label-in-name-axe-4-14.md`, the reason
+`@axe-core/playwright` was held at `~4.12.1` (the "held at `~4.12.1`" entries above).
+
+- **The hold is lifted.** `apps/showcase/package.json` has `^4.14.0` again, and `.github/dependabot.yml` no longer
+  ignores minor and major updates to it. The React rules there stay. 4.14.0 is the newest stable release, published
+  2026-10-15, well past the two-day `minimumReleaseAge`.
+- **Each control's accessible name starts with its visible text,** in both locales: the team switcher "{team}, switch
+  team", the account menu "{user's full name}, account menu" (the email if the name is blank), the Simulator pill
+  "Simulator, open the panel" or "Simulator, 3 unread emails, open the panel", and the Hide button "Hide the
+  Simulator panel".
+- **Three of them are named by content, not by `aria-label`.** axe 4.14 compares an `aria-label` with the text on
+  screen, word by word and in order, and it counts `aria-hidden` text. The switcher shows initials before the team
+  name, the account menu shows only initials, and axe joins the pill's label and badge into one word ("Simulator1").
+  No sensible `aria-label` contains those, and the rule only applies where there is one. The switcher's and pill's
+  names are their visible text plus a visually hidden suffix, so they cannot drift from the screen; the account
+  menu's is all visually hidden. Only the initials and the pill's badge are `aria-hidden`.
+- **Avatar initials are decorative.** They are WCAG 2.5.3's "symbolic text characters" case. `PreviewRow`'s avatar is
+  `aria-hidden` wherever it appears; a voice-control user says the person's or team's name. A checker that compares
+  the computed name (ACT rule 2ee8b8) may still flag the account menu, whose only visible text is initials.
+- **The pill's badge uses the name's number format** (`useFormatter().number`, as ICU's `#` does: "1,000" in en). The
+  notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
+- The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
+  `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.

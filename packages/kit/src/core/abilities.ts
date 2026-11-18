@@ -426,15 +426,15 @@ interface PersonFieldsCopy {
  */
 function personFieldsOf(actor: AbilityActor): PersonFieldsCopy {
     const loose = actor as unknown as Record<string, unknown>
-    const credential = loose.credential as { kind?: unknown; id?: unknown } | undefined | null
+    const credential = loose['credential'] as { kind?: unknown; id?: unknown } | undefined | null
     return {
-        kind: loose.kind,
+        kind: loose['kind'],
         credential: credential == null ? undefined : { kind: credential.kind, id: credential.id },
-        userId: loose.userId,
-        role: loose.role,
-        restricted: loose.restricted,
-        activeOrgId: loose.activeOrgId,
-        manageAll: loose.manageAll,
+        userId: loose['userId'],
+        role: loose['role'],
+        restricted: loose['restricted'],
+        activeOrgId: loose['activeOrgId'],
+        manageAll: loose['manageAll'],
     }
 }
 

@@ -105,7 +105,7 @@ export const realAuth: AuthPort = {
         if (!userId) throw new AuthRequiredError()
         const client = await clerkClient()
         if (update.name !== undefined) {
-            const [firstName, ...rest] = update.name.split(' ')
+            const [firstName = '', ...rest] = update.name.split(' ')
             await client.users.updateUser(userId, { firstName, lastName: rest.join(' ') })
         }
         if (update.locale !== undefined) {

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 
 // The server replay of a demo preset, against SSSB's OWN seam: the fixture registers `busy-harbor`
 // (packages/kit/test-fixture/app-config/presets.ts), one operation of every kind plus a viewpoint, and
@@ -13,10 +13,10 @@ import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
 // the fake adapters themselves, unmocked, which is the whole path the replay drives.
 const tmp = makeTestTmpDir('app-demo-presets-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 const cookieStore = new Map<string, { value: string }>()

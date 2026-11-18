@@ -1,6 +1,6 @@
 'use client'
 
-import { Avatar, Menu, UnstyledButton } from '@mantine/core'
+import { Avatar, Menu, UnstyledButton, VisuallyHidden } from '@mantine/core'
 import { useTranslations } from 'next-intl'
 import { SignOutIcon, UserIcon } from './auth-icons'
 import { PreviewRow } from './preview-row'
@@ -30,9 +30,16 @@ export function UserMenu({
     return (
         <Menu position="bottom-end" width={260}>
             <Menu.Target>
-                <UnstyledButton aria-label={t('userMenuLabel')} data-testid="user-menu">
+                {/* The trigger shows only initials. They are a symbol, like a "B" on a Bold button, not a
+                    label (WCAG 2.5.3's carve-out), so they are aria-hidden and a visually hidden line names
+                    the button with the user's full name (the email when the name is blank). Named by its
+                    content, never an aria-label: axe 4.14 compares an aria-label with the on-screen
+                    initials. A checker that compares the computed name instead may still flag this. */}
+                <UnstyledButton data-testid="user-menu">
+                    <VisuallyHidden>{t('userMenuLabel', { name: user.name.trim() || user.email })}</VisuallyHidden>
                     <Avatar
                         name={user.name}
+                        aria-hidden
                         radius="xl"
                         styles={{ placeholder: { color: '#fff', background: 'var(--mantine-color-dark-6)' } }}
                     />

@@ -42,7 +42,7 @@ Three kinds of thing live in this repo (see
   anything SSSB reaches for that only exists because the showcase supplies it fails to compile there.
 - **The repo scaffold**: the verify gate, lint fences, CI, docs doctrine, infra draft. You keep it.
   One rule in it reaches your own tests: a test that needs a scratch directory calls
-  `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `tests/support/tmp-dir.ts`, never `mkdtemp` (lint
+  `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `tests/support/tmp-dir.ts` (a re-export of `packages/kit/src/testing/tmp-dir.ts`), never `mkdtemp` (lint
   bans it), and `test:unit`, `test:coverage` and `test:contract` run through
   `scripts/check-tmpdir-leak.mjs`, which fails the run if a directory made that way survives it.
 
@@ -50,7 +50,7 @@ Apps live under `apps/` — one per product, each with its own `package.json`, c
 (ADR-0007). Root commands that operate on ALL apps (`pnpm verify`, `pnpm typecheck`, `pnpm lint`,
 `pnpm test:unit`, `pnpm test:e2e`, `pnpm build`, the demo-static trio) fan out with
 `pnpm --filter './apps/*'`, so they pick up an added or renamed app with no edit. The commands that
-must pick ONE app (`pnpm dev`, `pnpm start`, and the showcase-only `pnpm ladle`, `pnpm build:demo`,
+must pick ONE app (`pnpm dev`, `pnpm tick`, `pnpm start`, and the showcase-only `pnpm ladle`, `pnpm build:demo`,
 `pnpm dev:real`, `pnpm llm:record`) name an app, and `init-app` repoints or removes them for you.
 
 ## Fork and first boot
@@ -327,7 +327,7 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 `packages/kit/package.json`'s `exports` map is the contract: it lists the 132 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 47 modules of the package are internals — private sub-components, the fake-db plumbing, the
+other 48 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. If you find yourself
@@ -447,20 +447,30 @@ the showcase carries the same route over the same function.
   `withWebhookSecret(`, so if you edit the route keep that call, and keep the logic in SSSB's function.
 - **In a deployment** nothing calls it until you set up the scheduler: that is the `scheduled-tick` row of the
   [cutover checklist](cutover-checklist.md).
-- **In `pnpm dev`** nothing ticks it for you. The dev server runs no scheduler, and the starter's server app has no Simulator panel
-  (its `file://` demo has one, in the browser; the showcase's server app has one too, and its Jobs tab advances the world clock
-  and runs what is due). To tick by hand, POST the route
-  with the per-checkout dev secret. The first request, even with a wrong bearer, creates the secret at
-  `apps/<app>/.data/auth/webhook-secret`:
+- **In `pnpm dev`** nothing ticks it unless you ask. The dev server runs no scheduler, and the starter's server app has
+  no Simulator panel (its `file://` demo has one, in the browser; the showcase's server app has one too, and its Jobs
+  tab advances the world clock and runs what is due). Two ways to ask:
+    - **`pnpm tick`** calls the running dev server's route once and prints what ran (`pnpm tick:starter` for the starter
+      beside the showcase; once `init-app` has ejected the showcase, `pnpm tick` is your app). It exits 1 if the server is
+      down, rejects the secret or answers an error, and 2 for a bad command line. It authenticates as any caller must: it
+      reads the per-checkout dev secret from `apps/<app>/.data/auth/webhook-secret` (the first request to a server creates
+      the file, so a missing one is made that way) and sends it as the bearer. It adds nothing to the route and cannot
+      reach a server that is not on this machine (`--url` takes only `localhost`, `127.0.0.1` or `[::1]`). A server in
+      real mode checks `WEBHOOK_SECRET` and never reads that file, so `pnpm dev:real` is not something it ticks.
+    - **`DEV_TICK_SECONDS=30 pnpm dev`** also runs that call every 30 seconds while the server is up (any whole number
+      of seconds, 1 to 86400). It says nothing while nothing is due, and speaks when a job was spawned, a delivery moved, or
+      the server stopped answering. It is **off unless you set the variable**: the Simulator controls the world clock in a
+      demo, the e2e suites expect a scheduler that does nothing until a test asks, and hermetic dev does not do work nobody
+      asked for. The e2e servers are started with the variable blanked, and a ticker asked for while `E2E_BUILD` or
+      `DEMO_MODE` is set is refused. While a ticker runs it leaves `apps/<app>/.data/dev-ticker.json`, and the playwright
+      configs refuse to load while its process is alive, because Playwright adopts a dev server already on the app's port
+      and that one would still be ticking: stop it before `pnpm test:e2e`. (A wrapper that was killed outright leaves a
+      stale marker; one whose process is gone is ignored.)
 
-    ```sh
-    URL="http://localhost:$(node scripts/print-port.mjs starter)/api/webhooks/cron"   # the port key is still `starter`
-    curl -s -X POST "$URL" -H 'Authorization: Bearer x'     # a 401, and it creates the secret
-    curl -s -X POST "$URL" -H "Authorization: Bearer $(cat apps/<app>/.data/auth/webhook-secret)"
-    ```
-
-    The answer is `{"ok":true,"spawned":0,"failed":0,"deliveries":{…}}`. In a simulated world "now" is the Simulator's
-    world clock (real time plus whatever offset a demo advanced), so a tick honours a clock a demo moved.
+    The answer is `{"ok":true,"spawned":0,"failed":0,"deliveries":{…}}`, which `pnpm tick` prints as one line. In a
+    simulated world "now" is the Simulator's world clock (real time plus whatever offset a demo advanced), so a tick
+    honours a clock a demo moved. A schedule whose spawn failed, or a delivery that failed, shows in that line and is
+    retried by the next tick: the tick itself succeeded, so the exit code stays 0.
 
 ## Cutover — from hermetic to real
 

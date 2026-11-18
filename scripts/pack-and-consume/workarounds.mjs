@@ -13,22 +13,6 @@
 
 /** @type {Record<string, Workaround>} */
 export const WORKAROUNDS = {
-    'types-pg': {
-        removedBy: 'P3',
-        what: "each app declares @types/pg itself: @sssb/kit's source imports pg's types, and the package does not declare them (they are a devDependency of SSSB's workspace root). The framework's copy finds them only through pnpm's hidden hoist (node_modules/.pnpm/node_modules), which is also how an adopter's would",
-    },
-    'undeclared-typescript': {
-        removedBy: 'P3',
-        what: "src/authz/route-scan.ts imports `typescript`, which @sssb/kit does not declare; it resolves only through the consumer's own typescript and pnpm's hoist (P3 makes typescript a peer)",
-    },
-    'demo-presets-seam-skipped': {
-        removedBy: 'P3',
-        what: 'demo-presets-seam.test.ts is not run from the tarball: it imports ../../../../tests/support/tmp-dir, a path outside the package, so it cannot load from node_modules',
-    },
-    'strict-flags-kit-baseline': {
-        removedBy: 'P3',
-        what: "the strict-flag typecheck tolerates exactly STRICT_KIT_ERROR_BASELINE errors inside @sssb/kit's own source (scripts/pack-and-consume.mjs); the apps' own code must be clean",
-    },
     'prune-plugin-copied': {
         removedBy: 'P4',
         what: "scripts/vite-prune-mantine-css.ts is copied into the consumer, because the static demo's Vite config imports it from the repo's scripts/ (P4 moves it into @sssb/tools' Vite preset)",
@@ -37,13 +21,17 @@ export const WORKAROUNDS = {
         removedBy: 'P4',
         what: "scripts/ports.mjs and scripts/print-port.mjs are copied into the consumer, because the apps' dev scripts and Playwright config import them (P4: `sssb port` and the ports module in @sssb/tools)",
     },
+    'tick-scripts-copied': {
+        removedBy: 'P4',
+        what: "scripts/tick.mjs, dev-tick.mjs, ticker.mjs and ticker-marker.mjs are copied into the consumer, because the apps' dev and tick scripts run them and their Playwright config imports ticker-marker (P4: `sssb tick` and the ticker module in @sssb/tools)",
+    },
     'check-demo-size-copied': {
         removedBy: 'P4',
         what: "scripts/check-demo-size.mjs is copied into the consumer, because the apps' check:demo-size script runs it (P4: `sssb check-demo-size`)",
     },
     'tmp-dir-helper-copied': {
         removedBy: 'P4',
-        what: "tests/support/tmp-dir.ts and its marker module are copied into the consumer, because the starter's cron route test imports them by a repo-relative path (P4: makeTestTmpDir from @sssb/tools)",
+        what: "the scratch-directory helper and its marker module (packages/kit/src/testing) are copied into the consumer's tests/support, because the starter's cron route test imports them by a repo-relative path (P4: makeTestTmpDir from @sssb/tools)",
     },
     'vitest-config-written': {
         removedBy: 'P4',
@@ -51,7 +39,7 @@ export const WORKAROUNDS = {
     },
     'tsconfig-written': {
         removedBy: 'P4',
-        what: "each app's tsconfig.json is written by the script, at the ES2022 floor with only the app's `@/` path: the starter's extends this repo's root tsconfig and includes packages/kit/src (P4: the app extends @sssb/tools' tsconfig base)",
+        what: "each app's tsconfig.json is written by the script, at the ES2022 floor with only the app's `@/` path: the starter's extends this repo's root tsconfig and includes packages/kit/src. It also sets what @sssb/kit's source needs beyond the strict set and is written nowhere an adopter reads yet: strict, moduleResolution bundler, jsx react-jsx, dom in lib, skipLibCheck (packages/kit/tsconfig.strict.json's header) (P4: the app extends @sssb/tools' tsconfig base)",
     },
     'vite-aliases-removed': {
         removedBy: 'P4',
@@ -80,6 +68,10 @@ export const WORKAROUNDS = {
     'allow-builds-copied': {
         removedBy: 'P12',
         what: "the consumer's pnpm-workspace.yaml takes allowBuilds from this repo's, so a build script a kit dependency newly needs is approved here before an adopter would have to (P12: @sssb/create writes allowBuilds)",
+    },
+    'dedupe-peer-dependents-written': {
+        removedBy: 'P12',
+        what: "the consumer's pnpm-workspace.yaml sets dedupePeerDependents: false, so each importer of @sssb/kit gets an instance with its own seam (ADR-0014 part 5); an adopter's workspace has it only if they set it (P12: @sssb/create writes it; P5's sssb doctor advises when it is missing)",
     },
 }
 

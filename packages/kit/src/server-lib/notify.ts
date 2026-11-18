@@ -45,7 +45,7 @@ export interface NotifyDeps {
      * locale, so real mode omits this and copy falls back to the app default — a noted simplification a
      * real instance closes by enriching from its IdP. Never affects in_app (rendered client-side).
      */
-    resolveLocale?: (userId: string) => Locale | undefined
+    resolveLocale?: ((userId: string) => Locale | undefined) | undefined
 }
 
 interface NotifyInput {
