@@ -92,15 +92,15 @@ jobs:
             - run: pnpm install --frozen-lockfile --ignore-scripts
 
             # scripts/release.mjs prepare: the 0.x checks, the plan, the release notes (assembled from the pending
-            # changesets by scripts/release-notes.mjs, and written outside the tree because `changeset version` is about
-            # to delete the files they come from), and `changeset version` in the working tree. A changeset that cannot
-            # be read as a release-note entry stops it before anything is changed.
+            # changesets by scripts/release-notes.mjs and written to docs/releases/v<version>.md, a new file in the
+            # release commit) and `changeset version` in the working tree. A changeset that cannot be read as a
+            # release-note entry stops it before anything is changed.
             # Until P14 it answers `release: false` on every push, and the run ends here.
             - name: prepare the release
               id: prepare
               run: |
                   set -euo pipefail
-                  result=$(node scripts/release.mjs prepare --notes "$RUNNER_TEMP/release-notes.md")
+                  result=$(node scripts/release.mjs prepare)
                   echo "$result"
                   release=$(jq -r '.release' <<<"$result")
                   echo "release=$release" >> "$GITHUB_OUTPUT"
@@ -110,7 +110,7 @@ jobs:
                       echo "version=$version" >> "$GITHUB_OUTPUT"
                       git add -A
                       git diff --cached --binary HEAD > "$RUNNER_TEMP/release.patch"
-                      cat "$RUNNER_TEMP/release-notes.md" >> "$GITHUB_STEP_SUMMARY"
+                      cat "$(jq -r '.notes' <<<"$result")" >> "$GITHUB_STEP_SUMMARY"
                   else
                       echo "Nothing to release: $(jq -r '.reason' <<<"$result")" >> "$GITHUB_STEP_SUMMARY"
                   fi
@@ -122,17 +122,6 @@ jobs:
                   path: ${{ runner.temp }}/release.patch
                   if-no-files-found: error
                   retention-days: 7
-
-            # The notes for this release, for whoever publishes its GitHub release (P7 and P14). They are not in the
-            # patch: the `push` job commits only the version bumps, the deleted changesets and the package changelogs.
-            # `node scripts/release-notes.mjs --at "v<version>^" --version <version>` regenerates them from the tag.
-            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-              if: steps.prepare.outputs.release == 'true'
-              with:
-                  name: release-notes
-                  path: ${{ runner.temp }}/release-notes.md
-                  if-no-files-found: error
-                  retention-days: 90
 
     # The push's second half, and the only job that can reach the release app's key. It installs nothing and runs
     # no dependency's code, so nothing `plan` ran can reach this job's environment, steps or token; and it

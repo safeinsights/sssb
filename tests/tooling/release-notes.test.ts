@@ -113,7 +113,7 @@ describe('assembleNotes', () => {
                 }),
             }),
         )
-        expect(markdown).toMatch(/Action: required · `@sssb\/kit` minor/)
+        expect(markdown).toMatch(/Action: required · `@sssb\/kit`\n/)
         expect(markdown).toMatch(/\*\*What changed\.\*\* The registry takes a hook\./)
         expect(markdown).toMatch(/\*\*To adopt\.\*\* Register it in `app-config\/hooks\.ts`\./)
         expect(markdown).toMatch(/\*\*Now deletable\.\*\* A wrapper around the registry\./)
@@ -135,11 +135,13 @@ describe('assembleNotes', () => {
         expect(entries).toBe(5)
         expect(empty).toBe(1)
         expect(markdown).toMatch(
-            /5 changes for adopters\. 1 more change has no adopter-visible effect and is not listed\./,
+            /5 changes, 3 requiring action\. 1 change has no adopter-visible effect and is not listed\./,
         )
         // a release of nothing but empty changesets still has all its headings
         const none = assembleNotes(asList({ '.changeset/e.md': EMPTY }))
-        expect(none.markdown).toMatch(/No change in this release asks anything of an adopter\./)
+        expect(none.markdown).toMatch(
+            /No change in this release asks anything of an adopter\. 1 change has no adopter-visible effect and is not listed\./,
+        )
         expect(none.markdown).toMatch(/## Seam changes\n\nNone\./)
     })
 
@@ -156,7 +158,7 @@ describe('assembleNotes', () => {
         expect(order).toEqual(['First, by action', 'First, by name', 'Second', 'Third'])
     })
 
-    it('lists every package an entry names, with its bump', () => {
+    it('lists every package an entry names', () => {
         const text = changeset({ kind: 'scaffold', action: 'required' }).replace(
             "'@sssb/kit': minor",
             "'@sssb/tools': minor\n'@sssb/kit': patch",
@@ -164,7 +166,7 @@ describe('assembleNotes', () => {
         // action required with a patch is refused, so this is also the "one entry, two packages" shape
         const ok = text.replace("'@sssb/kit': patch", "'@sssb/kit': minor")
         expect(assembleNotes(asList({ '.changeset/x.md': ok })).markdown).toMatch(
-            /Action: required · `@sssb\/tools` minor, `@sssb\/kit` minor/,
+            /Action: required · `@sssb\/tools`, `@sssb\/kit`\n/,
         )
     })
 
@@ -333,14 +335,21 @@ describe('--since and --at: the notes of a release candidate, and of a release a
         expect(markdown).not.toMatch(/Gone one/)
     })
 
-    it('--since an edited file does not re-list it, but a file that is new does', () => {
+    it('--since lists a file that is new, and an edited one only as a correction, and says its range', () => {
         const r = repo({ 'old.md': SEAM('Old one') })
         r.git('tag', 'v1')
         r.write({ 'old.md': SEAM('Old one, corrected'), 'later.md': SEAM('Later') })
         r.commit('second')
-        const { markdown } = releaseNotes(r.dir, { since: 'v1' })
-        expect(markdown).toMatch(/### Later/)
-        expect(markdown).not.toMatch(/Old one/)
+        const { markdown } = releaseNotes(r.dir, { since: 'v1', version: '2' })
+        expect(markdown).toMatch(/^# Release notes: v2\n\nChanges since v1\.\n/)
+        const [sections, corrections] = markdown.split('## Corrections to earlier notes')
+        expect(sections).toMatch(/### Later/)
+        expect(sections).not.toMatch(/Old one/)
+        expect(corrections).toMatch(/edited after v1\. If you acted on the earlier text, read them again\./)
+        expect(corrections).toMatch(/### Old one, corrected/)
+        // nothing edited, no heading
+        r.git('tag', 'v2')
+        expect(releaseNotes(r.dir, { since: 'v2' }).markdown).not.toMatch(/Corrections/)
     })
 
     it('--at regenerates a release from the commit before it, after `changeset version` deleted the files', () => {
@@ -459,5 +468,74 @@ describe('the shape lint, where the notes depend on it', () => {
         expect(
             lintChangeset(changeset({ kind: 'seam', action: 'required', adopt: `See:\n\n${nested}\n\n# Real` })),
         ).toEqual([expect.stringMatching(/no `#` or `##` heading/)])
+    })
+})
+
+describe('what the lint accepts must read the same in the notes', () => {
+    it('refuses a body that starts with a fence, which would be cut as the title', () => {
+        const text = changeset({ kind: 'seam', action: 'required' }).replace(
+            '### A change',
+            '```sh\necho hi\n```\n\n### A change',
+        )
+        expect(lintChangeset(text)).toEqual([expect.stringMatching(/starts with a `### title` line/)])
+    })
+
+    it('refuses a code fence that is never closed, which would swallow the entries after it', () => {
+        const open = changeset({ kind: 'seam', action: 'required', adopt: 'Run:\n\n```sh\npnpm up' })
+        expect(lintChangeset(open)).toEqual([expect.stringMatching(/code fence is never closed/)])
+        expect(() => assembleNotes(asList({ '.changeset/a.md': open }))).toThrow(/never closed/)
+    })
+
+    it('keeps the blank lines inside a code block as written, and still collapses them outside', () => {
+        const code = ['```py', 'def a(): pass', '', '', 'def b(): pass', '```'].join('\n')
+        const entry = changeset({ kind: 'seam', action: 'required', adopt: `Run:\n\n${code}\n\n\n\nThen stop.` })
+        const { markdown } = assembleNotes(asList({ '.changeset/a.md': entry }))
+        expect(markdown).toContain(code)
+        // the three blank lines after the closing fence became one
+        expect(markdown).toContain('```\n\nThen stop.')
+    })
+
+    it('refuses a second `###` heading in a body, which would read as another change', () => {
+        const text = changeset({ kind: 'seam', action: 'required', extra: '### Details\n\nmore' })
+        expect(lintChangeset(text)).toEqual([expect.stringMatching(/one `###` heading, its title/)])
+        expect(lintChangeset(changeset({ kind: 'seam', action: 'required', extra: '#### Details\n\nmore' }))).toEqual(
+            [],
+        )
+    })
+
+    it('reads what Changesets reads: a BOM, a blank line first, comments, a quoted bump', () => {
+        const base = changeset({ kind: 'seam', action: 'required' })
+        expect(lintChangeset('\uFEFF' + base)).toEqual([])
+        expect(lintChangeset('\n\n' + base)).toEqual([])
+        expect(lintChangeset(base.replace("'@sssb/kit': minor", "# why\n'@sssb/kit': minor # a comment"))).toEqual([])
+        expect(lintChangeset(base.replace("'@sssb/kit': minor", "'@sssb/kit': 'minor'"))).toEqual([])
+        // and the notes of a BOM file have a clean entry
+        const { markdown } = assembleNotes(asList({ '.changeset/a.md': '\uFEFF' + base }))
+        expect(markdown).toMatch(/### A change\n\nAction: required/)
+    })
+
+    it('refuses what Changesets refuses: an unquoted @name, a duplicate package, a closing --- with text after it', () => {
+        const base = changeset({ kind: 'seam', action: 'required' })
+        expect(lintChangeset(base.replace("'@sssb/kit': minor", '@sssb/kit: minor'))).toEqual([
+            expect.stringMatching(/cannot read the frontmatter line/),
+        ])
+        expect(lintChangeset(base.replace("'@sssb/kit': minor", "'@sssb/kit': minor\n'@sssb/kit': minor"))).toEqual([
+            expect.stringMatching(/@sssb\/kit is named twice/),
+        ])
+        expect(lintChangeset(base.replace('---\n\n### A change', '--- ### A change'))).toEqual([
+            expect.stringMatching(/no frontmatter/),
+        ])
+    })
+
+    it('refuses a revision that starts with `-`, which git would read as an option', () => {
+        const r = repo({ 'a.md': SEAM('A') })
+        expect(() => readChangesets(r.dir, { since: '-R' })).toThrow(/not a revision: -R/)
+        expect(() => readChangesets(r.dir, { at: '-r' })).toThrow(/not a revision: -r/)
+        expect(main(['--since', '-R'], r.dir)).toBe(1)
+    })
+
+    it('says what git said when a revision does not exist', () => {
+        const r = repo({ 'a.md': SEAM('A') })
+        expect(() => readChangesets(r.dir, { at: 'nope' })).toThrow(/git ls-tree failed: .*nope/)
     })
 })

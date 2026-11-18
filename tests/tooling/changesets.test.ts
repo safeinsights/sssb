@@ -80,7 +80,7 @@ describe('changeset shape', () => {
     it.each([
         ['no frontmatter', '### T\n', 'no frontmatter'],
         ['a major', GOOD.replace('minor', 'major'), 'patch or minor'],
-        ['a non-@sssb package', GOOD.replace("'@sssb/kit'", 'showcase'), 'not an @sssb/* package'],
+        ['a non-@sssb package', GOOD.replace("'@sssb/kit'", "'showcase'"), 'not an @sssb/* package'],
         ['no title', GOOD.replace('### A seam gains a hook', 'Words.'), '`### title`'],
         ['an h2 title', GOOD.replace('### A seam', '## A seam'), '`### title`'],
         ['no kind', GOOD.replace('**Kind.** seam\n\n', ''), 'missing `**Kind.**`'],

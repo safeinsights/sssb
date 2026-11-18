@@ -127,6 +127,7 @@
                 "docs/adr/",
                 "docs/build-notes.md",
                 "docs/decision-log.md",
+                "docs/releases/",
                 ".claude/future-tasks/resolved/",
                 ".claude/worktrees/"
             ],

@@ -200,13 +200,18 @@ describe('release prepare (the plan job)', () => {
         const root = workspace([KIT('0.1.0', false), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
         const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
         const result = await prepare(root, { fetchImpl: npm })
-        expect(result).toEqual({ release: true, version: '0.2.0', packages: ['@sssb/kit'] })
+        expect(result).toEqual({
+            release: true,
+            version: '0.2.0',
+            packages: ['@sssb/kit'],
+            notes: 'docs/releases/v0.2.0.md',
+        })
         expect(JSON.parse(readFileSync(path.join(root, 'packages/kit/package.json'), 'utf8')).version).toBe('0.2.0')
         expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(false)
         expect(readFileSync(path.join(root, 'packages/kit/CHANGELOG.md'), 'utf8')).toMatch(/## 0\.2\.0/)
     })
 
-    it('writes the release notes from the changesets BEFORE Changesets deletes them, outside the tree', async () => {
+    it('writes the release notes from the changesets BEFORE Changesets deletes them, into the release commit', async () => {
         const root = workspace([KIT('0.1.0', false), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
         writeFileSync(
             path.join(root, '.changeset', 'feature.md'),
@@ -217,24 +222,18 @@ describe('release prepare (the plan job)', () => {
         execFileSync(
             'git',
             ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--no-verify', '-m', 'x'],
-            {
-                cwd: root,
-            },
+            { cwd: root },
         )
-        const notesFile = path.join(makeTestTmpDir('sssb-notes-'), 'release-notes.md')
         const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
-        await prepare(root, { fetchImpl: npm, notesFile })
-        // the changeset is consumed, and the notes it made are not
+        await prepare(root, { fetchImpl: npm })
+        // the changeset is consumed, and the notes it made are a file in the tree, for `git add -A` to stage
         expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(false)
-        const notes = readFileSync(notesFile, 'utf8')
+        const notes = readFileSync(path.join(root, 'docs/releases/v0.2.0.md'), 'utf8')
         expect(notes).toMatch(/^# Release notes: v0\.2\.0\n/)
-        expect(notes).toMatch(
-            /## Seam changes\n\n### A hook the registry takes\n\nAction: required · `@sssb\/kit` minor/,
-        )
+        expect(notes).toMatch(/## Seam changes\n\n### A hook the registry takes\n\nAction: required · `@sssb\/kit`\n/)
         expect(notes).toMatch(/\*\*To adopt\.\*\* Register it\./)
-        // the release commit carries nothing but what `changeset version` wrote: no notes file in the tree
         const status = execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })
-        expect(status).not.toMatch(/release-notes|RELEASE_NOTES/i)
+        expect(status).toMatch(/\?\? docs\//)
     })
 
     it('stops before changing anything when a changeset is not a readable entry', async () => {
@@ -254,14 +253,6 @@ describe('release prepare (the plan job)', () => {
         )
         expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(true)
         expect(JSON.parse(readFileSync(path.join(root, 'packages/kit/package.json'), 'utf8')).version).toBe('0.1.0')
-    })
-
-    it('refuses a notes file inside the tree, which the release commit would carry', async () => {
-        const root = workspace([KIT('0.1.0', false), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
-        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
-        await expect(prepare(root, { fetchImpl: npm, notesFile: path.join(root, 'RELEASE_NOTES.md') })).rejects.toThrow(
-            /outside the working tree/,
-        )
     })
 
     it('runs no install script, though Changesets formats through `pnpm exec` after bumping a version', async () => {
@@ -400,6 +391,27 @@ describe('release verify-release (the job holding the release key)', () => {
                 /may not change packages\/kit\/CHANGELOG\.md \(A 000000 → 120000\)/,
             ],
             [(_root, run) => run('tag', 'v0.2.0'), /0\.2\.0 is not newer than v0\.2\.0/],
+            [
+                // Notes for another version, or a file that is not notes.
+                (root) => writeFileSync(path.join(root, 'docs/releases/v0.2.0.md'), '# Release notes: v0.9.0\n'),
+                /docs\/releases\/v0\.2\.0\.md must be the release notes of v0\.2\.0/,
+            ],
+            [
+                (root) => writeFileSync(path.join(root, 'docs/releases/v0.9.0.md'), '# Release notes: v0.9.0\n'),
+                /may not change docs\/releases\/v0\.9\.0\.md/,
+            ],
+            [
+                (root) => {
+                    rmSync(path.join(root, 'docs/releases/v0.2.0.md'))
+                    symlinkSync('/etc/passwd', path.join(root, 'docs/releases/v0.2.0.md'))
+                },
+                /may not change docs\/releases\/v0\.2\.0\.md \(A 000000 → 120000\)/,
+            ],
+            [
+                // The notes missing altogether: a release that landed without them.
+                (root) => rmSync(path.join(root, 'docs/releases/v0.2.0.md')),
+                /the release notes docs\/releases\/v0\.2\.0\.md are not staged/,
+            ],
         ]
         // One `prepare` (a Changesets subprocess, ~0.7 s) for the whole test: each case works on its own copy of the
         // prepared tree, `.git` and the staged index included. Preparing per case took ~7 s alone and blew the 20 s
