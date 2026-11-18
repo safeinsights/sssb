@@ -226,15 +226,19 @@ function titleCase(slug: string): string {
         .join(' ')
 }
 
-/** The names of the workspace's packages that are not apps (`infra`, `spike-…`, `@sssb/kit`, …). */
+/**
+ * The names of the workspace's packages that are not apps (`@sssb/kit`, `spike-…`, and each app's deployment,
+ * `<app>-infra`, …).
+ */
 function workspacePackageNames(): string[] {
-    const dirs = ['infra']
+    const dirs: string[] = []
     for (const group of ['packages', 'spikes']) {
         if (!existsSync(abs(group))) continue
         for (const entry of readdirSync(abs(group), { withFileTypes: true })) {
             if (entry.isDirectory()) dirs.push(`${group}/${entry.name}`)
         }
     }
+    for (const app of listApps()) dirs.push(`apps/${app}/infra`)
     return dirs.flatMap((dir) => {
         if (!existsSync(abs(`${dir}/package.json`))) return []
         let manifest: { name?: unknown } | null
@@ -383,19 +387,13 @@ function renameApp(current: Identity, slug: string, displayName: string): void {
     )
     // tsconfig.json deliberately needs NO rewrite: no path in it names an app. `@sssb/app-config/*`
     // points at packages/kit/test-fixture, and there is no `@/*` entry to repoint.
-    // config/params too: infra/app.ts reads `params.database.transport` to pick the network shape. And
-    // the app's tsconfig, which the stack bundles its Lambdas with (`APP_TSCONFIG`): it is what points
-    // `@sssb/app-config/*` at this app's seam, so the migrator ships this app's migrations.
-    for (const file of ['infra/app.ts', 'infra/stack.ts', 'infra/lib/tags.ts']) {
-        rewrite(
-            file,
-            [
-                [`apps/${dir}/config/app`, `apps/${slug}/config/app`],
-                [`apps/${dir}/config/params`, `apps/${slug}/config/params`],
-                [`apps/${dir}/tsconfig.json`, `apps/${slug}/tsconfig.json`],
-            ],
-            'app config imports',
-        )
+    // Nor does the app's deployment: apps/<app>/infra reaches the app only by relative paths (`..`, its
+    // config/app and config/params), so it moves with the directory (ADR-0014, D8). Only its package name
+    // carries the slug, so `pnpm --filter <slug>-infra` keeps naming it.
+    if (existsSync(abs(`apps/${dir}/infra/package.json`))) {
+        editJson<PackageJson>(`apps/${dir}/infra/package.json`, 'deployment package name', (pkg) => {
+            pkg.name = `${slug}-infra`
+        })
     }
 
     // --- the docs -------------------------------------------------------------------------
@@ -504,19 +502,8 @@ function ejectShowcase(survivor: string, onDisk: string): void {
     )
     // tsconfig.json needs no rewrite here either — see the rename path. Its `@sssb/app-config/*` pointing
     // at packages/kit/test-fixture is what keeps `tsc` green through an eject.
-    // config/params is the survivor's own (every app carries one), so the stack's import follows it.
-    // So does the tsconfig the stack bundles with: the survivor's seam, and so its migrations.
-    for (const file of ['infra/app.ts', 'infra/stack.ts', 'infra/lib/tags.ts']) {
-        rewrite(
-            file,
-            [
-                [`apps/${SHOWCASE}/config/app`, `apps/${survivor}/config/app`],
-                [`apps/${SHOWCASE}/config/params`, `apps/${survivor}/config/params`],
-                [`apps/${SHOWCASE}/tsconfig.json`, `apps/${survivor}/tsconfig.json`],
-            ],
-            'app config imports',
-        )
-    }
+    // Nor does any deployment: the showcase's went with apps/showcase, and the survivor's own
+    // apps/<app>/infra names nothing but its own app (ADR-0014, D8).
 
     for (const doc of gatedDocs()) {
         rewrite(
@@ -923,13 +910,14 @@ async function main(): Promise<void> {
         // contract database `sssb_contract`, which is the framework fixture's own (and the next check
         // explains why no `sssb-…` slug is safe either). The framework package is `@sssb/kit`, which the
         // slug pattern above cannot spell.
-        for (const reserved of ['kit', 'sssb']) {
+        // `cdk` is @sssb/cdk's vitest project, the same collision as `kit`.
+        for (const reserved of ['kit', 'cdk', 'sssb']) {
             if (slug === reserved) fail(`"${reserved}" is reserved for the framework`)
         }
         // `repo` is the other vitest project in vitest.config.ts (the repo-hygiene suite), so an app called that
         // would make two projects of one name and Vitest would refuse to start. The workspace's own packages
-        // collide the same way one layer down: the app's package name IS its slug, and `pnpm --filter infra`
-        // would then mean two packages. The package names are read from the tree rather than listed, so a
+        // collide the same way one layer down: the app's package name IS its slug, and `pnpm --filter
+        // showcase-infra` would then mean two packages. The package names are read from the tree rather than listed, so a
         // workspace package added later is covered, and one an adopter deleted is not refused for nothing.
         // (tests/tooling/init-app-slug.test.ts reads the vitest configs for project names, so a third one
         // added there fails that test until it is listed here.)
@@ -959,7 +947,7 @@ async function main(): Promise<void> {
     }
     if (options.ejectShowcase) {
         summary.push('DELETE apps/showcase and packages/seed')
-        summary.push('repoint tsconfig, the vitest config, knip and infra at the surviving app')
+        summary.push('repoint the vitest config and knip at the surviving app')
     }
     // `--repo` alone is the fix-up for a tree init-app already adopted, and does only that: no citations, no
     // prose review, no "run pnpm install" (nothing about the workspace changed).

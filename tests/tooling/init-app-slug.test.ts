@@ -43,7 +43,7 @@ describe('init-app slug refusals', () => {
         expect(result.stderr).toMatch(/reserved/)
     })
 
-    it.each(['repo', 'infra', 'sssb', 'spike-kysely-pglite'])('refuses "%s"', (slug) => {
+    it.each(['repo', 'showcase-infra', 'sssb', 'spike-kysely-pglite'])('refuses "%s"', (slug) => {
         const result = initApp(slug)
         expect(result.status).toBe(1)
         expect(result.stderr).toContain(`"${slug}"`)
