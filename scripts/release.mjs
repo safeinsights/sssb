@@ -10,7 +10,9 @@
 //                                 also fails on what would stall a release later: a changeset naming a package
 //                                 outside the fixed group, a group member outside packages/ or without
 //                                 repository.url, a group that is part private.
-//   prepare [--allow-dirty]       The `plan` job. Plans, guards, then runs `changeset version` in the working
+//   prepare [--allow-dirty] [--notes <file>]
+//                                 The `plan` job. Plans, guards, assembles the release notes from the pending changesets
+//                                 (scripts/release-notes.mjs; written to <file>, which must be outside the tree), then runs `changeset version` in the working
 //                                 tree and commits nothing. stdout is one JSON object, `{"release":false,
 //                                 "reason":…}` or `{"release":true,"version":…,"packages":[…]}`.
 //   verify-release <version>      The `push` job, which holds the release app's key. From HEAD alone, works out
@@ -33,7 +35,7 @@
 // Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout carries only the result.
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -47,7 +49,7 @@ const REPOSITORY_URL = /^git\+https:\/\/github\.com\/[\w.-]+\/[\w.-]+\.git$/
 const REGISTRY = 'https://registry.npmjs.org'
 const USAGE = [
     'usage: release.mjs check',
-    '       release.mjs prepare [--allow-dirty]',
+    '       release.mjs prepare [--allow-dirty] [--notes <file>]',
     '       release.mjs publishable <version>',
     '       release.mjs preflight <version> <sha> <tarball>...',
     '       release.mjs verify-release <version>',
@@ -152,6 +154,11 @@ export async function check(root) {
             }
         }
     }
+    // The release notes are written from these files (scripts/release-notes.mjs), so a body that cannot be read
+    // would fail the release after its plan was already accepted. Loaded here, not at the top: release.yml's `push`
+    // and `publish` jobs run a lone copy of this file with no sibling modules.
+    const { lintChangesets } = await import('./release-notes.mjs')
+    problems.push(...lintChangesets(root, { judgePackages: false }))
     // Only the fixed group is ever published; the apps that depend on it would be planned too, and are noise.
     const asPublished = ws
         .plan({ ...ws.config, privatePackages: { version: true, tag: false } })
@@ -195,8 +202,11 @@ function latestStableTag(root) {
 /**
  * The `plan` job's preparation. Commits nothing: the `push` job applies what this leaves, after
  * `verifyRelease` has checked it.
+ * @param {string} root
+ * @param {{ allowDirty?: boolean, fetchImpl?: typeof fetch, notesFile?: string }} [options] `notesFile`: where to
+ *   write the release notes, which must be outside `root`
  */
-export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = {}) {
+export async function prepare(root, { allowDirty = false, fetchImpl = fetch, notesFile } = {}) {
     if (!allowDirty) {
         const dirty = git(root, ['status', '--porcelain']).trim()
         if (dirty) throw new Error(`the tree has uncommitted changes, which a release commit would carry:\n${dirty}`)
@@ -245,6 +255,20 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
                 `the changesets plan ${version}, which is not newer than ${what} (${floor}); a release never goes backwards`,
             )
         }
+    }
+
+    // THE RELEASE NOTES, from the changesets as they are NOW: `changeset version` deletes them. Assembled (and so
+    // judged) even when nobody asks for the file, so a malformed changeset stops the release before anything is
+    // changed. The file goes outside the tree, which the release commit would otherwise carry, and verifyRelease
+    // would refuse.
+    const { releaseNotes } = await import('./release-notes.mjs')
+    const { markdown } = releaseNotes(root, { version })
+    if (notesFile !== undefined) {
+        const rel = path.relative(root, path.resolve(notesFile))
+        if (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) {
+            throw new Error(`the release notes go outside the working tree, not ${notesFile}`)
+        }
+        writeFileSync(notesFile, markdown)
     }
 
     // This repository's own CLI, resolved here rather than at load (the publish job has no node_modules), so a
@@ -403,7 +427,7 @@ const CHANGELOG = /^packages\/[^/]+\/CHANGELOG\.md$/
 const BUMPS = ['patch', 'minor', 'major']
 
 /** Whether Changesets (@changesets/read 1.0.1) reads this `.changeset/` file as a changeset. */
-function isChangesetName(name) {
+export function isChangesetName(name) {
     return (
         name.endsWith('.md') &&
         !name.startsWith('.') &&
@@ -581,8 +605,14 @@ async function main(argv) {
         if (problems.length > 0) throw new Error(problems.join('\n'))
         return
     }
-    if (command === 'prepare' && (rest.length === 0 || (rest.length === 1 && rest[0] === '--allow-dirty'))) {
-        console.log(JSON.stringify(await prepare(root, { allowDirty: rest.length === 1 })))
+    if (command === 'prepare') {
+        const options = {}
+        for (let i = 0; i < rest.length; i++) {
+            if (rest[i] === '--allow-dirty') options.allowDirty = true
+            else if (rest[i] === '--notes' && rest[i + 1] !== undefined) options.notesFile = rest[++i]
+            else throw new Error(USAGE)
+        }
+        console.log(JSON.stringify(await prepare(root, options)))
         return
     }
     if (command === 'publishable' && rest.length === 1) {

@@ -39,6 +39,7 @@
         "test:contract": "sssb check-tmpdir-leak vitest run --config vitest.contract.config.ts",
         "changeset": "changeset",
         "release:check": "node scripts/release.mjs check",
+        "release:notes": "node scripts/release-notes.mjs",
         "release-app": "tsx scripts/release-app.ts",
         "release-app:init": "tsx scripts/release-app.ts create",
         "pack-and-consume": "node scripts/pack-and-consume.mjs"

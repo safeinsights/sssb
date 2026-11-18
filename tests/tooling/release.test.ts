@@ -65,7 +65,10 @@ function workspace(pkgs: Pkg[], changesets: Record<string, string[]> = {}, { git
     mkdirSync(path.join(root, '.changeset'))
     copyFileSync(CONFIG, path.join(root, '.changeset', 'config.json'))
     for (const [id, lines] of Object.entries(changesets)) {
-        writeFileSync(path.join(root, '.changeset', `${id}.md`), `---\n${lines.join('\n')}\n---\n\n${id}\n`)
+        // A body in the shape the release notes are assembled from (scripts/release-notes.mjs); `check` and `prepare`
+        // refuse any other.
+        const body = `### ${id}\n\n**Kind.** none\n\n**Action.** none\n\n**What changed.** ${id}\n`
+        writeFileSync(path.join(root, '.changeset', `${id}.md`), `---\n${lines.join('\n')}\n---\n\n${body}`)
     }
     if (installed) {
         writeFileSync(path.join(root, '.gitignore'), 'node_modules\n')
@@ -136,6 +139,22 @@ describe('release check (every PR)', () => {
         expect(problems).toEqual([expect.stringMatching(/takes @sssb\/kit from 1\.0\.0 to 1\.0\.1/)])
     })
 
+    it('refuses a changeset whose body cannot become a release-note entry, naming the file', async () => {
+        const root = workspace([KIT('0.1.0'), APP], { fix: ['"@sssb/kit": patch'] })
+        writeFileSync(path.join(root, '.changeset', 'fix.md'), "---\n'@sssb/kit': patch\n---\n\nJust some words.\n")
+        const { problems } = await check(root)
+        expect(problems.join('\n')).toMatch(/\.changeset\/fix\.md: the body starts with a `### title` line/)
+        expect(problems.join('\n')).toMatch(/\.changeset\/fix\.md: missing `\*\*Kind\.\*\*`/)
+    })
+
+    it('accepts an empty changeset, and says a package or a bump once, not twice', async () => {
+        const root = workspace([KIT('0.1.0'), APP], { app: ['"app": patch'] })
+        writeFileSync(path.join(root, '.changeset', 'nothing.md'), '---\n---\n')
+        const { problems } = await check(root)
+        // the fixed-group rule says it; the shape lint leaves the package names to it
+        expect(problems).toEqual([expect.stringMatching(/app\.md names app, which is not released/)])
+    })
+
     it('refuses a changeset naming a package outside the fixed group, which would stop every release', async () => {
         const only = workspace([KIT('0.1.0'), APP], { app: ['"app": patch'] })
         expect((await check(only)).problems).toEqual([
@@ -187,6 +206,64 @@ describe('release prepare (the plan job)', () => {
         expect(readFileSync(path.join(root, 'packages/kit/CHANGELOG.md'), 'utf8')).toMatch(/## 0\.2\.0/)
     })
 
+    it('writes the release notes from the changesets BEFORE Changesets deletes them, outside the tree', async () => {
+        const root = workspace([KIT('0.1.0', false), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        writeFileSync(
+            path.join(root, '.changeset', 'feature.md'),
+            "---\n'@sssb/kit': minor\n---\n\n### A hook the registry takes\n\n**Kind.** seam\n\n**Action.** required\n\n" +
+                '**What changed.** The registry takes a hook.\n\n**To adopt.** Register it.\n',
+        )
+        execFileSync('git', ['add', '-A'], { cwd: root })
+        execFileSync(
+            'git',
+            ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--no-verify', '-m', 'x'],
+            {
+                cwd: root,
+            },
+        )
+        const notesFile = path.join(makeTestTmpDir('sssb-notes-'), 'release-notes.md')
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        await prepare(root, { fetchImpl: npm, notesFile })
+        // the changeset is consumed, and the notes it made are not
+        expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(false)
+        const notes = readFileSync(notesFile, 'utf8')
+        expect(notes).toMatch(/^# Release notes: v0\.2\.0\n/)
+        expect(notes).toMatch(
+            /## Seam changes\n\n### A hook the registry takes\n\nAction: required · `@sssb\/kit` minor/,
+        )
+        expect(notes).toMatch(/\*\*To adopt\.\*\* Register it\./)
+        // the release commit carries nothing but what `changeset version` wrote: no notes file in the tree
+        const status = execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })
+        expect(status).not.toMatch(/release-notes|RELEASE_NOTES/i)
+    })
+
+    it('stops before changing anything when a changeset is not a readable entry', async () => {
+        const root = workspace([KIT('0.1.0', false), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        writeFileSync(path.join(root, '.changeset', 'feature.md'), "---\n'@sssb/kit': minor\n---\n\nwords\n")
+        execFileSync('git', ['add', '-A'], { cwd: root })
+        execFileSync(
+            'git',
+            ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--no-verify', '-m', 'x'],
+            {
+                cwd: root,
+            },
+        )
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        await expect(prepare(root, { fetchImpl: npm })).rejects.toThrow(
+            /feature\.md: the body starts with a `### title`/,
+        )
+        expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(true)
+        expect(JSON.parse(readFileSync(path.join(root, 'packages/kit/package.json'), 'utf8')).version).toBe('0.1.0')
+    })
+
+    it('refuses a notes file inside the tree, which the release commit would carry', async () => {
+        const root = workspace([KIT('0.1.0', false), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        await expect(prepare(root, { fetchImpl: npm, notesFile: path.join(root, 'RELEASE_NOTES.md') })).rejects.toThrow(
+            /outside the working tree/,
+        )
+    })
+
     it('runs no install script, though Changesets formats through `pnpm exec` after bumping a version', async () => {
         // pnpm 11 re-installs, scripts and all, before an `exec` in a workspace whose versions changed since the
         // last install, unless verify-deps-before-run is off.
@@ -217,6 +294,21 @@ describe('release prepare (the plan job)', () => {
         const root = workspace([KIT('0.1.0', false)], {}, { git: true })
         writeFileSync(path.join(root, 'stray.txt'), 'x')
         await expect(prepare(root, { fetchImpl: registry() })).rejects.toThrow(/uncommitted changes/)
+    })
+})
+
+describe('release.mjs run alone, as the push and publish jobs run it', () => {
+    it('loads and judges a release with no sibling module and no node_modules: nothing is imported statically', () => {
+        // release.yml's `push` job copies scripts/release.mjs out of the commit, and `publish` checks out only that
+        // file. A static import of scripts/release-notes.mjs would fail both with ERR_MODULE_NOT_FOUND.
+        const root = workspace([KIT('0.2.0', false)], {}, { git: true })
+        const alone = path.join(makeTestTmpDir('sssb-release-alone-'), 'release.mjs')
+        copyFileSync(SCRIPT, alone)
+        const run = spawnSync(process.execPath, [alone, 'verify-release', '0.2.1'], { cwd: root, encoding: 'utf8' })
+        expect(run.stderr).not.toMatch(/ERR_MODULE_NOT_FOUND|Cannot find module/)
+        // it reached its own checks, and failed them: nothing is pending
+        expect(run.status).toBe(1)
+        expect(run.stderr).toMatch(/release nothing/)
     })
 })
 
