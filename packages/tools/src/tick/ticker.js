@@ -1,11 +1,10 @@
 // @ts-check
 // The dev ticker: one object that owns start, stop, the interval and whether it is running.
 //
-// Today `sssb dev-tick` (dev-tick.js) is its only user (`DEV_TICK_SECONDS=30 pnpm dev`). It is a module of its own, with no
-// reading of the environment and no process wiring, so that a Simulator control (a server route, or the panel calling
-// one) can start and stop the same ticker later and read `status()` to show it. That control is not built here
-// (docs/decision-log.md, `.claude/future-tasks/simulator-ticker-control.md`); whoever builds it owns the policy that
-// keeps the ticker off by default and out of e2e and the static demo, as `resolveDevTick` does for the variable.
+// It has two users, each with its own policy: `sssb dev-tick` (dev-tick.js) (`DEV_TICK_SECONDS=30 pnpm dev`, `resolveDevTick`)
+// and the showcase Simulator's control (`apps/showcase/src/app/api/simulator/ticker/dev-ticker.ts`), which runs it inside
+// the dev server. It is a module of its own, with no reading of the environment and no process wiring, so that both can;
+// each caller owns the policy that keeps the ticker off by default and out of e2e and the static demo.
 //
 // A tick is `tickOnce` (tick.js): an HTTP client of the route `pnpm tick` calls, with the same dev secret.
 import { removeTickerMarker, writeTickerMarker } from './ticker-marker.js'

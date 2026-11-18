@@ -45,7 +45,7 @@ ignores it.
   not start with a word, or the parity test (`packages/kit/src/i18n/messages-parity.test.ts`, `icuArgs`) reads
   it as a placeholder, so the branches start with `#`.
 - Opening the panel from the pill, or hiding it, drops keyboard focus; found by the keyboard pass, already
-  on main, and recorded as `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
+  on main, and recorded as `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
 - Proof: the 12 tests that failed on 4.14 (ten in `a11y.spec.ts`, both locales of `smoke.spec.ts`) pass on
   4.14.0, with the rest of both files. Putting the switcher's old `aria-label` back turned nine of them red
   on this rule, and they went green again with it removed.

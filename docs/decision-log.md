@@ -3153,7 +3153,7 @@ This is the "next step if it is wanted" that "`pnpm dev` without the Simulator h
   (`createTicker`) owns the loop, the interval bounds, the dedup of repeated errors and the marker; it reads no
   environment. `scripts/dev-tick.mjs` is the policy for `pnpm dev` and its only caller. JP asked whether the Simulator
   can start it from its UI: not in this change (the panel is in `packages/kit`, which P3 is editing), but the shape is
-  there for it, and `.claude/future-tasks/simulator-ticker-control.md` has the design, including why the control must
+  there for it, and `.claude/future-tasks/resolved/simulator-ticker-control.md` has the design, including why the control must
   keep it off by default and out of e2e and the static demo.
 - **`init-app` learned the second root script.** Root `tick:starter` is renamed with the app (`tick:<slug>`) and, when
   the showcase is ejected, dropped as a duplicate of `tick`, as `dev:starter` already was; each seen failing against the
@@ -3272,3 +3272,74 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
   from each app, and the sibling package `gate` uses `@sssb/tools`' helper with no framework installed.
 - **knip** cannot see what a preset loads from the app or what `@sssb/tools` imports from its optional peers; the
   narrow entries are in `docs/build-notes.md`.
+  `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
+
+## A Simulator control for the dev ticker, and focus on panel toggle (2026-11-18, `feat/simulator-ticker-control`)
+
+JP asked on 2026-11-17 whether the Simulator could start the ticking clock from its UI. This builds
+`.claude/future-tasks/resolved/simulator-ticker-control.md` and, in the same panel, fixes
+`.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
+
+- **The ticker runs inside the dev server, owned by a route.** `apps/showcase/src/app/api/simulator/ticker/route.ts`
+  (GET status, POST start or stop) drives one `createTicker` from `scripts/ticker.mjs`, kept on `globalThis` so a hot
+  reload of the module does not orphan a running loop and start a second (`dev-ticker.ts` beside it). It ticks this
+  server's own `/api/webhooks/cron` over HTTP with the per-checkout dev secret, exactly as `pnpm tick` does, so
+  `withWebhookSecret` stays the only door into `runScheduledTick`. It leaves the same `dev-ticker.json` marker the
+  `DEV_TICK_SECONDS` wrapper does, with the server's pid, so `pnpm test:e2e` refuses to adopt a server whose ticker was
+  started from the UI (checked live: the playwright guard threw while it ran, and stop removed the marker).
+- **A new run-mode flag, `isSimulatedDevServer`, because `isSimulated` is not enough.** The future task said to 404
+  "outside a simulated world", like the flags route. But the hosted demo and CI's e2e build are simulated worlds with a
+  server, and the ticker must exist in neither. `@sssb/kit/adapters/index` already reads `DEMO_MODE` and `E2E_BUILD`
+  (it is where `process.env` may be read), so it now exports `isSimulatedDevServer`: simulated, `NODE_ENV` of
+  `development`, and neither switch. The logic is a pure function in `packages/kit/src/adapters/dev-server.ts`, outside
+  `index.ts`, because `production-guard.test.ts` counts every `&& !is…` in that file as a bypass of the fail-closed
+  guard; a source test pins how `index.ts` wires it. The route opens with the `isSimulated` 404 every simulator route
+  has, then a second 404 on `!isSimulatedDevServer`, and only then imports the ticker module, so a production build
+  never evaluates `scripts/ports.mjs` (which looks for the workspace root from the working directory at load).
+- **No `authorize(...)` call.** The brief said every new mutating route calls it. The scan's rule is "calls it, or has a
+  justified exemption whose gate it passes", and every route under `simulator/` passes the `opens-with-simulated-404`
+  gate: the Simulator's knobs are reachable signed-out (pick a person to sign in, reset the world), so there is no
+  actor to authorize. This route is one of those knobs, and the scan accepts it on that gate.
+- **The panel shows the control only where the route answers.** The kit's Jobs tab takes an optional `ticker` prop
+  (`DevTickerLike`); the showcase glue asks the route when the Jobs tab opens and on its poll, and on a 404 stops asking
+  for the page's life. So the control is absent in real mode, in every production build, and in the static demo, whose
+  twin never wires it. A local `pnpm test:e2e` runs against `pnpm dev`, where the control exists, stopped, and nothing
+  clicks it; `simulator-panel.spec.ts` asserts that locally and, on CI's `E2E_BUILD`, that the route is 404 and the
+  control absent.
+- **One ticker per world.** A live marker whose pid is not the server's (the `DEV_TICK_SECONDS` wrapper, or another
+  server on the same data directory) makes start answer 409, and the control says a ticker started outside the panel is
+  running, with its interval and pid, and to stop it there. The panel cannot stop a ticker another process owns.
+- **The origin is `http://localhost:<portFor('showcase')>`, not the request's host.** The dev secret is sent there as a
+  bearer, and a Host header is the client's to choose. `pnpm dev` takes its `--port` from the same function. A server
+  started on another port by hand ticks whatever listens on the derived port instead: its last-error line then says
+  "could not reach", or a 401 if another checkout's server is there. `pnpm tick` has the same exposure.
+- **The control keeps focus.** Start and Stop are one button whose label changes, not two buttons swapped, and it is
+  `aria-disabled` while a request is in flight rather than `disabled`: disabling a focused button moves
+  `document.activeElement` to `<body>` (measured in Chromium with Playwright). While the
+  ticker runs the interval field is not rendered: the status line names the interval, and a disabled Mantine field
+  on the dark panel was hard to read.
+- **Focus follows a panel toggle.** After `toggle()`, an effect keyed on `collapsed` focuses Hide when the panel opens
+  and the pill when it closes, gated on a ref only `toggle()` sets, so page load never takes focus. A mouse click on the
+  pill moves focus to Hide too; that is where the next Tab should start.
+- **`scripts/ticker.mjs` changed only in its header comment** (its two users, and where each one's policy lives), so
+  P4's move of the tick scripts into `@sssb/tools` resolves against it simply. The route's `dev-ticker.ts` imports
+  `scripts/ports.mjs`, `scripts/ticker.mjs` and `scripts/ticker-marker.mjs` by relative path (its test imports the last
+  two); when they move, those imports move with them.
+- **Two things review added.** The POST takes only `application/json` (415 otherwise): a page on another origin can
+  send a text/plain POST to localhost without a preflight, and this route starts a loop that outlives the request. And
+  the server removes its own marker on `exit`, so a dev server stopped with a UI ticker running leaves none behind.
+- **Left as they are, from review.** A Start clicked by hand during a local `pnpm test:e2e` ticks under the run (the
+  guard checks the marker at config load). Wiping `.data` under a running ticker removes its marker, as it does the
+  wrapper's. An `APP_DATA_DIR` set only in a `.env` file would reach the server but not the playwright config or the
+  wrapper, which read the shell's environment (no `.env` file exists here). Each needs an unusual setup, and closing
+  them means changing `scripts/` while P4 moves it.
+- **A dev-only route imports the ticker scripts at run time, and that crosses ADR-0014 rule 4 once P4 lands.** Rule 4
+  says only `@sssb/kit` is imported at run time; after P4 these scripts are `@sssb/tools`, an app devDependency. The
+  import stands because it is the showcase's (SSSB's reference app, not the starter an adopter keeps), Next bundles it
+  at build time so production never resolves the devDependency, and it sits behind the `isSimulatedDevServer` 404 so a
+  production build never evaluates it. If the rule is to hold without exception, the alternative is a kit-owned
+  ticker, which would duplicate `scripts/ticker.mjs`.
+- **The interval is a native number field, not Mantine's `NumberInput`.** `NumberInput` brought `react-number-format`
+  into the showcase's static demo, which renders the kit's Jobs tab but never the control, and put it 8,364 bytes over
+  its 860,000-byte budget. A `TextInput` of type number took the bundle to 840,890 bytes, under budget again; the route
+  validates the value either way.
