@@ -348,13 +348,24 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             plugins: sssb,
             rules: { 'sssb/no-real-adapter-import': 'error' },
         }),
+        // SSSB's real adapters, deny-by-default over src/ and config/ (both on the runtime module graph), tests and
+        // stories included: only by import(), so a simulated run never loads their vendor SDK. The app's own real
+        // adapters may import them statically, the way they import a vendor. Outside src/ and config/ (scripts/,
+        // tests/, infra/) nothing runs in the app's simulated mode, and the showcase's fixture recorder imports the
+        // real LLM client on purpose.
+        at('kit-real-adapters-by-import', {
+            files: files('src', 'config'),
+            ignores: [`${src('adapters/real')}/**`],
+            plugins: sssb,
+            rules: { 'sssb/no-kit-real-adapter-import': 'error' },
+        }),
         // Inside it, the registry and the fakes: no static import of real/ (the registry's import() is the only way
-        // in), and none of SSSB's real adapters.
+        // in).
         at('registry-and-fakes', {
             files: files('src/adapters'),
             ignores: [`${src('adapters/real')}/**`],
             plugins: sssb,
-            rules: { 'sssb/no-static-real-adapter-import': 'error', 'sssb/no-kit-real-adapter-import': 'error' },
+            rules: { 'sssb/no-static-real-adapter-import': 'error' },
         }),
         // ...and only the registry loads real/ dynamically. The registry is `index.ts` and nothing else, as the
         // recipe names it: an `index.mjs` beside it is one more module that may not load real/. Stories keep it: a

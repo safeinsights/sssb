@@ -17,7 +17,7 @@ is. A `client` together with any of the four client options is refused, since th
 and credentials come from the AWS SDK's own lookup. The storage port (`@sssb/kit/ports/storage`) is unchanged.
 
 **To adopt.** Where the app builds the storage port itself, import the factory from a module in its own
-`src/adapters/real/` (the registry and the fakes may not import SSSB's real adapters):
+`src/adapters/real/` (nothing else in the app may import SSSB's real adapters by a declaration):
 
 ```ts
 import { createS3Storage } from '@sssb/kit/adapters/real/s3-storage'

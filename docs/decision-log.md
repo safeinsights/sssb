@@ -4876,3 +4876,30 @@ forcePathStyle?, client? })`**, the adapter the real-mode registry builds, moved
   corrected too, so the record P14 reads for the whole series does not repeat the wrong advice. Rejected: editing only
   the `pre/` file (rc.2's notes would say nothing) and teaching the notes tool to read edits in `pre/` (the
   decision of 2026-11-18 above left reading `pre/` to P14).
+
+## SSSB's real adapters are fenced across the app, not only in its registry and fakes (2026-11-18, `fix/fence-kit-real-adapter-imports`)
+
+Found while publishing `@sssb/kit/adapters/real/s3-storage`: `sssb/no-kit-real-adapter-import` ran only over an app's
+`src/adapters/` (less `real/`), so a route, a domain module or a screen could import `@sssb/kit/adapters/real/llm` or
+`s3-storage` by a declaration and load the vendor SDK in a simulated run.
+
+- **The same rule id, a wider block.** `kit-real-adapters-by-import` in the app preset runs it over the app's `src/`
+  and `config/`, deny-by-default, less `src/adapters/real/`; `registry-and-fakes` no longer lists it. Rejected: a second
+  rule id. The pattern and what it bans are unchanged, only where; a second id would leave two rules saying one thing,
+  and an adopter config that switched the old one off for the registry would have kept doing so. The message now
+  says where it holds.
+- **What stays allowed, and why.** `import()` anywhere (it is a declaration rule, as the app's own real-adapter rule
+  is): the sign-in, accept-invite and layout modules load SSSB's real-mode forms and providers that way when
+  `!isSimulated`, and lint cannot see the branch. `src/adapters/real/` may import one statically, as it imports a
+  vendor: an app-owned storage adapter builds on `createS3Storage`. Outside `src/` and `config/` the rule does not
+  run: `scripts/`, `tests/` and `infra/` are not on the app's runtime module graph, and the showcase's fixture
+  recorder (`apps/showcase/scripts/llm-record.ts`) imports the real LLM client on purpose.
+- **What is banned with it.** Tests and stories (a story would put the SDK in the workshop; no test in `src/` needs
+  one, and the app's real adapters' own tests sit in `real/`); `import type` and re-exports, like every declaration
+  fence here. Rejected: allowing `import type`. It loads nothing, but the inline form (`import { type X }`) keeps a
+  side-effect import under `verbatimModuleSyntax`, and the type an app needs belongs to the port, not the adapter.
+  `config/` is included beyond the brief's `src/` because `config/app.ts` is on the runtime module graph, as for
+  the vendor and `process.env` bans.
+- **Existing code.** Neither app nor the starter-built template had a violating import: every reach into
+  `@sssb/kit/adapters/real/*` from `src/` is an `import()`. The kit-s3-storage changeset's parenthesis, which said the
+  ban held only in the registry and the fakes, is corrected in place (it is pending, in no release candidate yet).

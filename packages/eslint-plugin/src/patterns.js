@@ -71,13 +71,17 @@ export const appRealAdapterStaticPattern = {
         "`await import('./real/index')` when !isSimulated. A static import loads the vendor SDK in simulated " +
         'mode too (docs/recipes/app-owned-adapter.md).',
 }
-// SSSB publishes a few of its own real adapters (the LLM client, the real-mode forms). A fake or the registry
-// importing one statically would load its vendor SDK in simulated mode just the same.
+// SSSB publishes a few of its own real adapters (`@sssb/kit/adapters/real/*`: the LLM client, S3 storage, the
+// real-mode forms and providers, the migrate handler). Importing one loads its vendor SDK, so outside the app's own
+// real adapters (which may build on one, as an app-owned storage adapter builds on `createS3Storage`) a module
+// reaches one only by import(), the way the sign-in page loads SSSB's sign-in form when !isSimulated. DECLARATIONS
+// only, like the app's own real-adapter rule: `import type` is a declaration too, and is banned with the rest.
 export const kitRealAdapterPattern = {
     regex: '^@sssb/kit/adapters/real/',
     message:
-        "An app's registry and fakes never import SSSB's real adapters: that loads the vendor SDK in simulated " +
-        'mode. Reach SSSB through its registry (@sssb/kit/adapters/index) (docs/recipes/app-owned-adapter.md).',
+        "Outside the app's own real adapters (src/adapters/real/), SSSB's real adapters (@sssb/kit/adapters/real/*) " +
+        'are loaded only with import(), when !isSimulated: a static import loads the vendor SDK in simulated mode ' +
+        "too. Reach SSSB's ports through its registry (@sssb/kit/adapters/index) (docs/recipes/app-owned-adapter.md).",
 }
 
 // Hermetic dev: next/font/google fetches from Google Fonts at build, so pnpm dev would phone home. Self-host

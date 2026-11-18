@@ -249,13 +249,70 @@ describe('an app’s real adapters are reached through its registry', () => {
     it('a page may reach a real-mode-only component by dynamic import, as it reaches SSSB’s', async () => {
         const code = [
             "import { isSimulated } from '@sssb/kit/adapters/index'",
-            "import { RealSignInForm } from '@sssb/kit/adapters/real/sign-in-form'",
             "import { kv } from '@/adapters'",
             "import { live } from '@/adapters/realtime'",
+            "export const form = () => (isSimulated ? null : import('@sssb/kit/adapters/real/sign-in-form'))",
             "export const widget = () => (isSimulated ? null : import('@/adapters/real/kv-widget'))",
-            'export { RealSignInForm, kv, live }',
+            'export { kv, live }',
         ].join('\n')
-        expect(fired(await lint(`${APP}/src/app/[locale]/kv/page.tsx`, code), REAL_ADAPTER)).toBe(0)
+        const findings = await lint(`${APP}/src/app/[locale]/kv/page.tsx`, code)
+        expect(fired(findings, REAL_ADAPTER) + fired(findings, KIT_REAL_ADAPTER)).toBe(0)
+    })
+})
+
+// SSSB's published real adapters (`@sssb/kit/adapters/real/*`: the LLM client, S3 storage, the real-mode forms and
+// providers, the migrate handler) load their vendor SDK when imported. Outside the app's own real adapters, a module
+// reaches one only with import(), so a simulated run never loads the SDK: DENY BY DEFAULT over src/ and config/, a
+// directory nobody has named yet included, tests and stories too.
+describe('SSSB’s real adapters are loaded only by import(), outside the app’s own real adapters', () => {
+    const KIT_REAL_ZONES = [
+        `${APP}/src/domain/storage.ts`,
+        `${APP}/src/app/api/upload/route.ts`,
+        `${APP}/src/app/[locale]/layout.tsx`,
+        `${APP}/src/components/upload-card.tsx`,
+        `${APP}/src/components/upload-card.stories.tsx`,
+        `${APP}/src/components/upload-card.test.tsx`,
+        `${APP}/src/app-config/jobs.ts`,
+        `${APP}/src/jobs/publish.ts`,
+        `${APP}/src/demo-static/app.tsx`,
+        `${APP}/src/ports/storage.ts`,
+        `${APP}/src/somewhere-new/storage.ts`,
+        `${APP}/src/adapters/index.ts`,
+        `${APP}/src/adapters/server.ts`,
+        `${APP}/src/adapters/fake/storage.ts`,
+        `${APP}/config/app.ts`,
+        // a lookalike: an `adapters/real` that is not the app's adapters directory
+        `${APP}/src/domain/adapters/real/storage.ts`,
+    ]
+    it.each(KIT_REAL_ZONES)('%s may not import one of SSSB’s real adapters by a declaration', async (file) => {
+        for (const code of [
+            "import { createS3Storage } from '@sssb/kit/adapters/real/s3-storage'\nexport const make = createS3Storage\n",
+            "import type { S3StorageOptions } from '@sssb/kit/adapters/real/s3-storage'\nexport type O = S3StorageOptions\n",
+            "export { createRealLlm } from '@sssb/kit/adapters/real/llm'\n",
+            "export * from '@sssb/kit/adapters/real/providers'\n",
+            "import '@sssb/kit/adapters/real/index'\n",
+        ]) {
+            expect(fired(await lint(file, code), KIT_REAL_ADAPTER), code).toBe(1)
+        }
+    })
+
+    it.each([`${APP}/src/adapters/real/storage.ts`, `${APP}/src/adapters/real/storage.test.ts`])(
+        '%s, an app’s own real adapter, may build on one',
+        async (file) => {
+            const code =
+                "import { createS3Storage } from '@sssb/kit/adapters/real/s3-storage'\nexport const make = createS3Storage\n"
+            expect(fired(await lint(file, code), KIT_REAL_ADAPTER)).toBe(0)
+        },
+    )
+
+    it('anything else under @sssb/kit/adapters is not a real adapter', async () => {
+        const code = [
+            "import { isSimulated } from '@sssb/kit/adapters/index'",
+            "import { fakeStorage } from '@sssb/kit/adapters/fake/storage'",
+            "import { realtime } from '@sssb/kit/adapters/realtime'",
+            'export { isSimulated, fakeStorage, realtime }',
+        ].join('\n')
+        expect(fired(await lint(`${APP}/src/domain/storage.ts`, code), KIT_REAL_ADAPTER)).toBe(0)
     })
 })
 

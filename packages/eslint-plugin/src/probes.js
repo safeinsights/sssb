@@ -14,6 +14,8 @@ const IMPORTS_VENDOR = "import { S3Client } from '@aws-sdk/client-s3'\nexport co
 const LOADS_VENDOR = "export const load = () => import('@aws-sdk/client-s3')\n"
 const READS_ENV = 'export const region = process.env.AWS_REGION\n'
 const TAKES_RAW_DB = 'export const load = (db) => db.getDb()\n'
+const IMPORTS_KIT_REAL =
+    "import { createS3Storage } from '@sssb/kit/adapters/real/s3-storage'\nexport const s3 = createS3Storage\n"
 const SCREEN =
     'export const Card = () => <p>Saved to the edge</p>\nexport const Save = () => <button aria-label="Save">x</button>\n'
 
@@ -26,7 +28,7 @@ export const PROBES = [
     {
         path: `src/domain/${PROBE}.ts`,
         code:
-            `${IMPORTS_VENDOR}${LOADS_VENDOR}${READS_ENV}${TAKES_RAW_DB}` +
+            `${IMPORTS_VENDOR}${LOADS_VENDOR}${READS_ENV}${TAKES_RAW_DB}${IMPORTS_KIT_REAL}` +
             "import { kv } from '@/adapters/real/kv'\nexport { kv }\n" +
             "import { Inter } from 'next/font/google'\nexport const font = Inter\n",
         fires: [
@@ -35,18 +37,24 @@ export const PROBES = [
             'sssb/no-process-env',
             'sssb/no-raw-db-handle',
             'sssb/no-real-adapter-import',
+            'sssb/no-kit-real-adapter-import',
             'sssb/no-next-font-google',
         ],
     },
     {
         path: `config/${PROBE}.ts`,
-        code: `${IMPORTS_VENDOR}${READS_ENV}`,
-        fires: ['sssb/no-vendor-import', 'sssb/no-process-env'],
+        code: `${IMPORTS_VENDOR}${READS_ENV}${IMPORTS_KIT_REAL}`,
+        fires: ['sssb/no-vendor-import', 'sssb/no-process-env', 'sssb/no-kit-real-adapter-import'],
     },
     {
         path: `src/app/api/${PROBE}/route.ts`,
-        code: `${IMPORTS_VENDOR}${READS_ENV}${TAKES_RAW_DB}`,
-        fires: ['sssb/no-vendor-import', 'sssb/no-process-env', 'sssb/no-raw-db-handle'],
+        code: `${IMPORTS_VENDOR}${READS_ENV}${TAKES_RAW_DB}${IMPORTS_KIT_REAL}`,
+        fires: [
+            'sssb/no-vendor-import',
+            'sssb/no-process-env',
+            'sssb/no-raw-db-handle',
+            'sssb/no-kit-real-adapter-import',
+        ],
     },
     {
         path: `src/app/${PROBE}.tsx`,
@@ -55,19 +63,26 @@ export const PROBES = [
     },
     {
         path: `src/components/${PROBE}.tsx`,
-        code: `${SCREEN}${READS_ENV}${TAKES_RAW_DB}`,
-        fires: ['sssb/no-jsx-literals', 'sssb/no-literal-a11y-copy', 'sssb/no-process-env', 'sssb/no-raw-db-handle'],
+        code: `${SCREEN}${READS_ENV}${TAKES_RAW_DB}${IMPORTS_KIT_REAL}`,
+        fires: [
+            'sssb/no-jsx-literals',
+            'sssb/no-literal-a11y-copy',
+            'sssb/no-process-env',
+            'sssb/no-raw-db-handle',
+            'sssb/no-kit-real-adapter-import',
+        ],
     },
     {
         path: `src/demo-static/${PROBE}.tsx`,
         code: SCREEN,
         fires: ['sssb/no-jsx-literals'],
     },
-    // A route's or a screen's test keeps the tenancy ban; any test keeps the mkdtemp ban.
+    // A route's or a screen's test keeps the tenancy ban; any test keeps the mkdtemp ban, and any test in src/ the ban
+    // on a static import of SSSB's real adapters.
     {
         path: `src/components/${PROBE}.test.tsx`,
-        code: `${TAKES_RAW_DB}import { mkdtempSync } from 'node:fs'\nexport const dir = mkdtempSync('x')\n`,
-        fires: ['sssb/no-raw-db-handle', 'sssb/no-direct-mkdtemp'],
+        code: `${TAKES_RAW_DB}import { mkdtempSync } from 'node:fs'\nexport const dir = mkdtempSync('x')\n${IMPORTS_KIT_REAL}`,
+        fires: ['sssb/no-raw-db-handle', 'sssb/no-direct-mkdtemp', 'sssb/no-kit-real-adapter-import'],
     },
     {
         path: `tests/e2e/${PROBE}.spec.ts`,

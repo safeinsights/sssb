@@ -110,7 +110,7 @@ const staticRealAdapterInAdapters = declarationImportBan({
     patterns: [appRealAdapterStaticPattern],
 })
 const kitRealAdapterInAdapters = declarationImportBan({
-    description: "An app's registry and fakes never import SSSB's real adapters.",
+    description: "Outside an app's own real adapters, SSSB's real adapters are loaded only with import().",
     patterns: [kitRealAdapterPattern],
 })
 const dynamicRealAdapter = syntaxBan({

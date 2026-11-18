@@ -48,8 +48,11 @@ Unit tests (`*.test.ts`) may read `process.env`, as they already may everywhere 
 reads the environment. The vendor ban also covers the rest of `apps/<app>/` (`apps/<app>/config/`,
 `apps/<app>/tests/`, `apps/<app>/scripts/`), minus the three carve-outs the preset names:
 `apps/<app>/next.config.*` (the `.ts`, `.mts`, `.js` and `.mjs` names Next loads it from),
-`apps/<app>/tests/contract/`, and `apps/<app>/infra/`, the app's deployment. The registry and fakes also may not import SSSB's own published real adapters
-(`@sssb/kit/adapters/real/*`) statically.
+`apps/<app>/tests/contract/`, and `apps/<app>/infra/`, the app's deployment. SSSB's own published real adapters
+(`@sssb/kit/adapters/real/*`) load their SDK as well: outside `apps/<app>/src/adapters/real/`, which may build on one
+(an app-owned storage adapter on `createS3Storage`), no module in `apps/<app>/src/` or `apps/<app>/config/`, tests and
+stories included, imports one by a declaration (`import type` and re-exports too). A page reaches one with `import()`
+when `!isSimulated`, as the sign-in page loads SSSB's sign-in form (`sssb/no-kit-real-adapter-import`).
 
 Every row holds whatever the file's extension: `.mjs`, `.cjs`, `.js`, `.jsx`, `.mts` and `.cts` are fenced
 the same as `.ts` and `.tsx`. The registry is `index.ts` by name, so an `index.mjs` beside it is one more

@@ -18,7 +18,10 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - Vendor SDKs (`@clerk/*`, `@aws-sdk/*`, `@anthropic-ai/*`, `@sentry/*`, `posthog-*`, `mailgun.js`, `pg`) are
   imported only in an app's real adapters, `adapters/real/` (and in what runs outside the request path: `next.config.*`
   for the Sentry build plugin, the contract tests in `tests/contract/`, the deployment in `infra/`). Everything else
-  codes against a port: `@sssb/kit/ports/*`, or a port the app owns.
+  codes against a port: `@sssb/kit/ports/*`, or a port the app owns. SSSB's own real adapters
+  (`@sssb/kit/adapters/real/*`) load their SDK too, so outside `adapters/real/` (which may build on one) every module in
+  `src/` and `config/`, tests and stories included, reaches one only with `import()` when `!isSimulated`, never by an
+  import declaration (`import type` and re-exports included).
 - A vendor SSSB has no port for gets a port the app owns, under `src`: the port module (`ports/<name>.ts`), a registry
   (`adapters/index.ts`) that takes the run mode from SSSB's `isSimulated` (`@sssb/kit/adapters/index`) and loads the
   real adapter only with `import()`, a fake, and the real adapter in `adapters/real/`, the one directory that imports
