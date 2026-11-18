@@ -1,5 +1,5 @@
 // Run a test command with a private TMPDIR and fail if a scratch directory made through
-// tests/support/tmp-dir.ts is still there afterwards.
+// packages/kit/src/testing/tmp-dir.ts is still there afterwards.
 //
 //     node scripts/check-tmpdir-leak.mjs vitest run --config …
 //
@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { constants, tmpdir } from 'node:os'
 import path from 'node:path'
-import { TMP_DIR_MARKER_SUFFIX } from '../tests/support/tmp-dir-marker.mjs'
+import { TMP_DIR_MARKER_SUFFIX } from '../packages/kit/src/testing/tmp-dir-marker.mjs'
 
 const [command, ...args] = process.argv.slice(2)
 if (!command) {
@@ -65,7 +65,7 @@ async function main() {
             `check-tmpdir-leak: ${leaked.length} test temp dir(s) outlived the run:\n` +
                 leaked.map((name) => `  ${name}`).join('\n') +
                 '\nA marker survives only when its directory could not be removed or the cleanup hook ' +
-                'never ran. See tests/support/tmp-dir.ts.',
+                'never ran. See packages/kit/src/testing/tmp-dir.ts.',
         )
         return 1
     } finally {

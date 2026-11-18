@@ -2948,6 +2948,60 @@ second, human owner would be added once a maintainer had one.
 - **Releases do not depend on it.** Publishing runs from GitHub Actions through trusted publishing (D11), so the
   shared credentials are for administering the names, not for shipping a version.
 
+## Package hygiene (2026-11-17, ADR-0014 P3, `chore/package-hygiene`)
+
+- **A `files` allowlist, with the conformance suites re-included by name.** `packages/kit/package.json` ships
+  `src` minus every `*.test.*` and `*.stories.*` file, then names the five seam-conformance suites
+  back in. `pnpm pack` went from 293 files on main (2242a28) to 191: the 45 files of the test fixture and 60
+  test and story files no longer ship, and the scratch-directory helper's three files (below) now do. The suites
+  list lives once, in `CONFORMANCE_SUITES` (`scripts/pack-and-consume/checks.mjs:29`); a unit test
+  (`tests/tooling/pack-and-consume.test.ts:243`) holds the list to exactly `src`, the two negations and these,
+  and pack and consume checks the tarball itself (`shippedFileProblems`, `checks.mjs:43`). P5 replaces the suites
+  with `@sssb/kit/testing`.
+- **The strict set runs in this repo too, over the whole of `packages/kit/src`.** `packages/kit/tsconfig.strict.json`
+  turns on part 2's nine options at the ES2022 lib floor, and `pnpm typecheck` runs it, so a regression fails
+  `pnpm verify` and CI's `lint-typecheck-unit` before pack and consume sees it. Tests and stories are in it, because five tests ship and P5
+  ships more. 191 errors in `packages/kit/src` were fixed (this step's base source, typechecked under this config):
+  122 index-signature accesses written with brackets (and one more in `tests/support/contract-postgres.ts`, which
+  the contract tests bring into the program), 11 parameter properties written as fields, and the rest
+  possibly-undefined values handled by a guard that throws
+  where the invariant holds, a conditional spread, or an optional property declared `| undefined` where
+  `undefined` is part of its contract. No non-null assertion and no suppression. Pack and consume's baseline of
+  122 is gone: any error inside the framework fails its strict typecheck.
+- **`@types/node` is a peer, beside `@types/react`.** Part 2's rule is that the types of host singletons are peers,
+  and the rest dependencies; `@types/node` declares globals the way `@types/react` declares JSX, so two copies in one
+  program conflict. Its range, like the others', is the one this repo tests (`^26.6.5`); an adopter on an older
+  `@types/node` gets a peer warning until a test widens it. The peers parts 2 and 5 name are peers too, at this
+  repo's ranges: `@types/react` `~19.3.0` and `typescript` `~6.0.3` (part 2), and `kysely` `^0.29.7`, moved from
+  `dependencies` because an app's migrations receive the framework's `Kysely` instance (part 5). `@types/pg` is a
+  dependency. So the peers are `react`, `next`, `next-intl` and `@mantine/core` (as before), `kysely`,
+  `@types/react`, `@types/node` and `typescript`, plus `vitest`, optional (below); `@types/node` and `vitest` are
+  this step's additions to the set the ADR names.
+- **`vitest` is an optional peer.** Shipped files import it: the five conformance suites, and the
+  scratch-directory helper moved into the package (`packages/kit/src/testing/tmp-dir.ts`, internal, not in
+  `exports`), which the demo-presets suite uses. Pack and consume's undeclared-import check would otherwise fail
+  on it, rightly. `@sssb/kit/testing` (P5) needs the same peer.
+- **The helper moved; the repo's copy re-exports it.** 24 of the framework's files imported
+  `tests/support/tmp-dir`: 23 tests and the demo-presets conformance suite (part 2's 23, at 6d67a7c, counted the
+  test files importing anything from the repo's `tests/`). They import the package's own module now, and
+  `tests/support/tmp-dir.ts` re-exports it for the repo's and the apps' tests until P4 moves it into
+  `@sssb/tools`. The leak guard reads the marker suffix from the package.
+- **A lint rule holds the package's edge.** `sssb/no-path-out-of-package` reports, from any file in `packages/kit`
+  (fixture included), a relative or absolute path or a `file:` URL that lands outside it (a landing in app code is
+  `sssb/no-path-to-app-code`'s); an absolute path or `file:` URL into it, which names this checkout; and, from a
+  shipped file, a path to one the `files` allowlist leaves out (a test, a story, the fixture, a config beside
+  `src`), with `package.json` and `LICENSE` counted as shipped whatever `files` says. A `/// <reference path=…>`
+  or `types=…` counts as a path, in any case and with its attributes in any order, and a relative path's `?query`
+  or `#hash` is dropped before it is judged (`packageEdgeFinding`, `eslint.config.mjs:744`). The two real-Postgres
+  contract tests are its only exemptions, by name: they start their server through `tests/support/contract-postgres.ts`,
+  which needs `scripts/ports.mjs`, and P5 moves that runner into the package. Neither ships.
+- **What the review left for later steps.** The options the framework needs beyond the strict set (`strict`,
+  `moduleResolution: "bundler"`, `jsx`, `dom`, `skipLibCheck`) are written in `packages/kit/tsconfig.strict.json`'s
+  header and in the `tsconfig-written` workaround (`scripts/pack-and-consume/workarounds.mjs:36`), and P4's
+  tsconfig base is where an adopter gets them. `dedupePeerDependents: false`, which the consumer's workspace sets,
+  is a registered workaround now (`dedupe-peer-dependents-written`, `workarounds.mjs:68`, P12). `src/authz/route-scan.ts` and `src/adapters/real/rds-data-emulator.ts` ship
+  but nothing shipped reaches them; P5's `@sssb/kit/testing` is what will.
+
 ## The release app, made by a script (2026-11-17, `ci/release-app-setup`)
 
 `release.yml` (P1b) needs a GitHub App whose token pushes the release commit and its tag. JP asked to make it the

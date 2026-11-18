@@ -202,7 +202,14 @@ function makeWebhookSecret(): string {
 /** Resolve a person's role for one org, falling back to their first membership when the slug isn't
  *  (or is no longer) one they belong to — mirrors resolveMembership in the fake adapter. */
 function roleInOrg(person: SeedPerson, orgSlug: string): PersonRole {
-    return person.memberships.find((m) => m.orgSlug === orgSlug)?.role ?? person.memberships[0].role
+    return person.memberships.find((m) => m.orgSlug === orgSlug)?.role ?? firstMembership(person).role
+}
+
+/** A person's first membership; a seed person always has at least one (SeedPerson.memberships). */
+function firstMembership(person: SeedPerson): SeedPerson['memberships'][number] {
+    const first = person.memberships[0]
+    if (!first) throw new Error(`person ${person.id} has no memberships`)
+    return first
 }
 
 /** Turn the composition root's seeded outbox into MailItems (ids and timestamps are ours). */
@@ -1001,7 +1008,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
         if (!picked) return
         setPerson(picked)
         setInvitedViewpoint(null)
-        setActiveOrgSlug(picked.memberships[0].orgSlug)
+        setActiveOrgSlug(firstMembership(picked).orgSlug)
         go('dashboard')
     }
 
@@ -1041,7 +1048,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
                 key,
                 name: p.name,
                 email: p.email,
-                role: p.memberships[0].role,
+                role: p.memberships[0]?.role ?? '',
                 orgs: p.memberships,
                 tenantSlug: p.tenantSlug,
                 status: 'active' as const,
@@ -1090,7 +1097,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
         const remembered = continuityMap.current.get(key)
         setPerson(target)
         setInvitedViewpoint(null)
-        setActiveOrgSlug(remembered?.org ?? target.memberships[0].orgSlug)
+        setActiveOrgSlug(remembered?.org ?? firstMembership(target).orgSlug)
         go(remembered?.route ?? 'dashboard')
     }
 
@@ -1260,7 +1267,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
             notifyMemberOf,
             framework: frameworkPresetOperationHalves,
         }
-        let result: { ref?: string } | false
+        let result: { ref?: string | undefined } | false
         try {
             result = half(args, context)
         } catch {

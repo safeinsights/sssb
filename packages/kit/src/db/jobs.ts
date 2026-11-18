@@ -67,7 +67,7 @@ export async function recordJobStatus(
     tenantId: string,
     jobId: string,
     next: JobStatus,
-    extra?: { message?: string; resultKey?: string; error?: string },
+    extra?: { message?: string; resultKey?: string | undefined; error?: string | undefined },
 ): Promise<void> {
     const job = await db.withTenant(tenantId, async (trx) => {
         const current = await trx

@@ -25,7 +25,7 @@ export const DATABASE_ENV: Record<DatabaseTransport, Record<string, string>> = {
 }
 
 export function databaseTransport(): DatabaseTransport {
-    const value = process.env.DATABASE_TRANSPORT ?? 'pg'
+    const value = process.env['DATABASE_TRANSPORT'] ?? 'pg'
     if (!(DATABASE_TRANSPORTS as readonly string[]).includes(value)) {
         throw new Error(`DATABASE_TRANSPORT must be one of ${DATABASE_TRANSPORTS.join(', ')} (got "${value}")`)
     }

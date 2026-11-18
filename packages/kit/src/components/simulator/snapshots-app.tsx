@@ -70,7 +70,7 @@ export function SnapshotsApp({
     onLoadPreset,
     busyPreset,
 }: {
-    snapshots?: Snapshot[]
+    snapshots?: Snapshot[] | undefined
     onReset: () => void
     onSave?: (name: string) => void
     onRestore?: (name: string) => void
@@ -146,7 +146,7 @@ export function SnapshotsApp({
                         <Button
                             color="red.8"
                             size="xs"
-                            loading={busy}
+                            loading={busy === true}
                             data-testid="snapshots-reset-confirm"
                             onClick={confirmReset}
                         >
@@ -322,7 +322,7 @@ export function SnapshotsApp({
                         />
                         <Button
                             size="xs"
-                            loading={busy}
+                            loading={busy === true}
                             disabled={!nameValid}
                             data-testid="snapshots-save"
                             onClick={submitSave}

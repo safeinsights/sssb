@@ -41,7 +41,7 @@ export async function handler(): Promise<{ ok: true }> {
         return { ok: true }
     }
 
-    const secretArn = process.env.DB_SECRET_ARN
+    const secretArn = process.env['DB_SECRET_ARN']
     if (!secretArn) throw new Error('DB_SECRET_ARN is not set')
 
     const client = new SecretsManagerClient({})

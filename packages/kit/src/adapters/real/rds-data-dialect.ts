@@ -52,7 +52,7 @@ export interface RdsDataDialectConfig {
     secretArn: string
     database: string
     /** How long a SQL shape's inferred parameter types are trusted; `TYPE_CACHE_TTL_MS` when omitted. */
-    typeCacheTtlMs?: number
+    typeCacheTtlMs?: number | undefined
 }
 
 /**
@@ -74,7 +74,11 @@ export interface RdsDataDialectConfig {
  * (./rds-data-emulator.ts, `pnpm test:contract`); never run against the Data API itself.
  */
 export class RdsDataDialect implements Dialect {
-    constructor(private readonly config: RdsDataDialectConfig) {}
+    private readonly config: RdsDataDialectConfig
+
+    constructor(config: RdsDataDialectConfig) {
+        this.config = config
+    }
 
     createAdapter() {
         return new RdsDataPostgresAdapter()
@@ -156,7 +160,11 @@ const RESUME_DELAYS_MS = [1000, 2000, 4000, 8000]
 class RdsDataDriver implements Driver {
     readonly #types = new Map<string, { readonly types: readonly string[]; readonly at: number }>()
 
-    constructor(private readonly config: RdsDataDialectConfig) {}
+    private readonly config: RdsDataDialectConfig
+
+    constructor(config: RdsDataDialectConfig) {
+        this.config = config
+    }
 
     async init(): Promise<void> {}
 
@@ -291,10 +299,9 @@ class RdsDataDriver implements Driver {
         const isDml = keyword === 'insert' || keyword === 'update' || keyword === 'delete' || keyword === 'merge'
         return {
             rows,
-            numAffectedRows:
-                isDml || (keyword === 'with' && updated !== undefined && updated > 0)
-                    ? BigInt(updated ?? 0)
-                    : undefined,
+            ...(isDml || (keyword === 'with' && updated !== undefined && updated > 0)
+                ? { numAffectedRows: BigInt(updated ?? 0) }
+                : {}),
         }
     }
 
@@ -417,7 +424,11 @@ class RdsDataConnection implements DatabaseConnection {
      */
     failed = false
 
-    constructor(private readonly driver: RdsDataDriver) {}
+    private readonly driver: RdsDataDriver
+
+    constructor(driver: RdsDataDriver) {
+        this.driver = driver
+    }
 
     async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
         let result: QueryResult<unknown>

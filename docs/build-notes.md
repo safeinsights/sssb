@@ -2024,6 +2024,35 @@ It applies to merges git performs: `git merge origin/main` on a branch, which is
 Whether GitHub's own merge, for the mergeability check and the merge button, honours the attribute is not verified
 here, so a PR can still show a conflict there that a local merge of `main` resolves.
 
+## Package hygiene (2026-11-17, ADR-0014 P3)
+
+- **`files` takes negations, and order matters.** `["src", "!src/**/*.test.ts", …, "src/i18n/namespaces.test.ts"]`
+  under `pnpm pack` drops the tests and keeps the files named after the negation. Check the tarball's list, not
+  the manifest: `pnpm pack --dry-run --json` in `packages/kit`.
+- **Read a `NEXT_PUBLIC_*` variable with a dot.** Next documents inlining `process.env.NEXT_PUBLIC_*` in that
+  form, and `noPropertyAccessFromIndexSignature` refuses it on `process.env`'s index signature.
+  `(process.env as { NEXT_PUBLIC_SENTRY_DSN?: string }).NEXT_PUBLIC_SENTRY_DSN` passes the flag, and SWC strips the
+  cast back to the dot form. Probe: a showcase `next build` with `NEXT_PUBLIC_SENTRY_DSN` set to a marker put the
+  marker in a client chunk. Whether the bracket form, `process.env['NEXT_PUBLIC_SENTRY_DSN']`, is inlined too was not
+  probed.
+- **`readlink -f apps/<app>/node_modules/<pkg>` misses a package the app finds at the root.** `@types/react`,
+  `@types/node` and `typescript` are root devDependencies, so an app has no `node_modules/@types/react` of its
+  own and resolves the root's by walking up. Compare the NEAREST `node_modules/<pkg>` instead, walking up from each
+  of `packages/kit` and the two apps (part 5's one-copy rule, checked by hand here until `sssb doctor` runs it); at
+  this step `react`, `react-dom`, `next`, `next-intl`, `@mantine/core`, `@types/react`, `@types/node`, `kysely`,
+  `typescript` and `vitest` resolved to one directory each.
+- **TypeScript takes no types from a `.mjs` under `node_modules`, even with `allowJs`**, at its default
+  `maxNodeModuleJsDepth` of 0. `src/testing/tmp-dir.ts` imports its marker from `./tmp-dir-marker.mjs` (plain
+  `.mjs`, so the leak guard can import it under bare node). In this repo `allowJs` reads it; from the tarball the
+  import is `TS7016`. `tmp-dir-marker.d.mts` declares it. knip sees no importer of a declaration file, so
+  `knip.json` ignores that one file in `packages/kit`, by name.
+- **The compiler contract is wider than the strict set.** The framework's own files also need, from the app's
+  tsconfig: `strict`, `moduleResolution: "bundler"`, `jsx` always set (`react-jsx` or `preserve`), `dom` in `lib`
+  for the components, and `skipLibCheck`. The counts, and how they were measured, are in
+  `packages/kit/tsconfig.strict.json`'s header. Options that gave no error in the same measurement, and none over
+  the strict set either: `verbatimModuleSyntax`, `jsx: "preserve"`, `noUncheckedSideEffectImports`,
+  `module: "preserve"`, `target: "es2020"`, `strictBuiltinIteratorReturn`, `allowImportingTsExtensions`.
+
 ## Transitive advisories (2026-11-17, `deps/advisories`)
 
 - **`pnpm update -r --depth Infinity <names>` does not always move a transitive dependency.** It refreshed

@@ -36,7 +36,7 @@ export interface MailgunSignatureFields {
 }
 
 function signingKey(): string | null {
-    return isSimulated ? devWebhookSecret() : (process.env.MAILGUN_WEBHOOK_SIGNING_KEY ?? null)
+    return isSimulated ? devWebhookSecret() : (process.env['MAILGUN_WEBHOOK_SIGNING_KEY'] ?? null)
 }
 
 /** token -> expiry epoch ms; a token is a replay if seen while still within the window. */

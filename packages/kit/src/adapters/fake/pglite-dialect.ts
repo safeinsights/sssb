@@ -23,7 +23,10 @@ import {
  * so `date[]` follows without a second entry.
  */
 export function openPglite(dataDir?: string): PGlite {
-    return new PGlite({ dataDir, parsers: { [types.DATE]: (value: string) => value } })
+    return new PGlite({
+        ...(dataDir === undefined ? {} : { dataDir }),
+        parsers: { [types.DATE]: (value: string) => value },
+    })
 }
 
 /**
@@ -35,7 +38,11 @@ export function openPglite(dataDir?: string): PGlite {
  * tenant context is transaction-scoped (`SET LOCAL`), never session-level.
  */
 export class PGliteDialect implements Dialect {
-    constructor(private readonly client: PGlite) {}
+    private readonly client: PGlite
+
+    constructor(client: PGlite) {
+        this.client = client
+    }
 
     createAdapter() {
         return new PostgresAdapter()
@@ -97,13 +104,17 @@ class PGliteDriver implements Driver {
 }
 
 class PGliteConnection implements DatabaseConnection {
-    constructor(private readonly client: PGlite) {}
+    private readonly client: PGlite
+
+    constructor(client: PGlite) {
+        this.client = client
+    }
 
     async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
         const result = await this.client.query<R>(compiledQuery.sql, [...compiledQuery.parameters])
         return {
             rows: result.rows,
-            numAffectedRows: result.affectedRows === undefined ? undefined : BigInt(result.affectedRows),
+            ...(result.affectedRows === undefined ? {} : { numAffectedRows: BigInt(result.affectedRows) }),
         }
     }
 

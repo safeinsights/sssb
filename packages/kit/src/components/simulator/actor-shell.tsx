@@ -80,7 +80,11 @@ export function ActorShell({ actor, tick, startPaused, held, intervalMs, inline 
         setEntries((prev) => {
             const next: ActorLogEntry[] = [
                 ...prev,
-                { at: new Date().toISOString(), line: entry.line, note: entry.note },
+                {
+                    at: new Date().toISOString(),
+                    line: entry.line,
+                    ...(entry.note === undefined ? {} : { note: entry.note }),
+                },
             ]
             return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next
         })

@@ -29,6 +29,7 @@ export function OrgSwitcher({
     const t = useTranslations('org')
     if (orgs.length <= 1) return null
     const active = orgs.find((o) => o.slug === activeSlug) ?? orgs[0]
+    if (!active) return null
 
     return (
         <Menu position="bottom-end" width={264} withinPortal>

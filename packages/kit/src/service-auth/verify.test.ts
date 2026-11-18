@@ -1,6 +1,6 @@
 import { exportSPKI, generateKeyPair, SignJWT } from 'jose'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { fakeDb } from '../adapters/fake/db'
 import { AuthRequiredError } from '../ports/errors'
 import { SERVICE_JWT_AUDIENCE, verifyServiceCaller } from './verify'
@@ -81,7 +81,7 @@ interface Fixture {
 let fx: Fixture
 
 beforeAll(async () => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
     await fakeDb.ready()
 
     const now = Math.floor(Date.now() / 1000)
@@ -215,7 +215,7 @@ beforeAll(async () => {
 }, 30_000)
 
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 describe('verifyServiceCaller', () => {

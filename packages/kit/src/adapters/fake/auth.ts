@@ -110,7 +110,9 @@ export function personLocale(userId: string): Locale | undefined {
  * never returns undefined for a valid person.
  */
 function resolveMembership(person: SeedPerson, activeOrgSlug: string) {
-    return person.memberships.find((m) => m.orgSlug === activeOrgSlug) ?? person.memberships[0]
+    const membership = person.memberships.find((m) => m.orgSlug === activeOrgSlug) ?? person.memberships[0]
+    if (!membership) throw new Error(`person ${person.id} has no memberships`)
+    return membership
 }
 
 function toUser(person: SeedPerson, activeOrgSlug: string): AuthUser {
@@ -145,10 +147,9 @@ async function readSession(): Promise<{ person: SeedPerson; orgSlug: string } | 
         const { payload } = await jwtVerify(token, secret(), { issuer: ISSUER })
         const person = findPerson(payload.sub)
         if (!person) return null
-        const claimed = typeof payload.org === 'string' ? payload.org : undefined
+        const claimed = typeof payload['org'] === 'string' ? payload['org'] : undefined
         // A stale/foreign org claim must not stick — fall back to the first membership.
-        const orgSlug =
-            claimed && person.memberships.some((m) => m.orgSlug === claimed) ? claimed : person.memberships[0].orgSlug
+        const orgSlug = resolveMembership(person, claimed ?? '').orgSlug
         return { person, orgSlug }
     } catch {
         return null
@@ -178,10 +179,7 @@ export async function devSignIn(personId: string): Promise<void> {
     const person = findPerson(personId)
     if (!person) throw new ForbiddenError(`unknown person: ${personId}`)
     const remembered = readSimulatorState().people[`person:${personId}`]?.activeOrgSlug
-    const orgSlug =
-        remembered && person.memberships.some((m) => m.orgSlug === remembered)
-            ? remembered
-            : person.memberships[0].orgSlug
+    const orgSlug = resolveMembership(person, remembered ?? '').orgSlug
     await writeSession(person.id, orgSlug)
     await writeViewpointCookie(`person:${personId}`)
 }

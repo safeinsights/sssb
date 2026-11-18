@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { DEMO_INBOUND_DOMAIN, formatInboundRecipient } from '../core/inbound-email'
 
 // The intake records on its `inbound-email.received` row exactly the credential the HANDLER reports, and
@@ -15,10 +15,10 @@ vi.mock('./handlers', () => ({
 
 const tmp = makeTestTmpDir('app-inbound-credential-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 describe('intakeInboundEmail: the received row records the credential the handler reports', () => {

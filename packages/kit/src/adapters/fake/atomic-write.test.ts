@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../../testing/tmp-dir'
 import { stageCopy, writeFileAtomic, writeFileAtomicSync, writeJsonAtomic, writeJsonAtomicSync } from './atomic-write'
 
 function freshDir(): string {

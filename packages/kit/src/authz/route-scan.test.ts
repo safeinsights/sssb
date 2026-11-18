@@ -1,4 +1,4 @@
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'

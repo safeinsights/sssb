@@ -13,7 +13,7 @@ export function createRealLlm(apiKey: string): LlmPort {
 
     const toParams = (request: LlmRequest) => ({
         model: request.model ?? LLM_MODELS.default,
-        system: request.system,
+        ...(request.system === undefined ? {} : { system: request.system }),
         messages: request.messages,
         max_tokens: request.maxTokens ?? 1024,
     })
@@ -55,7 +55,7 @@ export function createRealLlm(apiKey: string): LlmPort {
             for (let round = 0; round < maxTurns; round++) {
                 const message = await client.messages.create({
                     model: request.model ?? LLM_MODELS.default,
-                    system: request.system,
+                    ...(request.system === undefined ? {} : { system: request.system }),
                     messages,
                     tools,
                     max_tokens: request.maxTokens ?? 1024,

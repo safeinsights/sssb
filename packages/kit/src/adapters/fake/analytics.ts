@@ -18,8 +18,8 @@ export interface CapturedEvent {
     id: string
     at: string
     event: string
-    properties?: Record<string, unknown>
-    distinctId?: string
+    properties?: Record<string, unknown> | undefined
+    distinctId?: string | undefined
 }
 
 /**
@@ -58,8 +58,8 @@ export const fakeAnalytics: AnalyticsPort = {
         // Simulator continuity piggyback: a signed-in page_view is exactly "where this person
         // last was", so the fake adapter records it here — keeping the beacon route port-pure
         // instead of importing simulator internals from product code.
-        if (event === 'page_view' && typeof distinctId === 'string' && typeof properties?.path === 'string') {
-            recordLastPath(distinctId, properties.path)
+        if (event === 'page_view' && typeof distinctId === 'string' && typeof properties?.['path'] === 'string') {
+            recordLastPath(distinctId, properties['path'])
         }
     },
     async isFlagEnabled(flag, defaultValue = false) {

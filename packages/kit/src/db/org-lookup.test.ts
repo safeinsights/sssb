@@ -1,15 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { orgIdentityForSlug, orgIdForSlug } from './org-lookup'
 import { tenantIdForSlug } from './tenant-lookup'
 
 // Fixture seed (SSSB's own seam): `depot` is an org of tenant `harbor`; `wharf` belongs to `lakeside`.
 const tmp = makeTestTmpDir('app-org-lookup-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 describe('orgIdentityForSlug', () => {
