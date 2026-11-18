@@ -3244,5 +3244,11 @@ JP asked on 2026-11-17 whether the Simulator could start the ticking clock from 
 - **Left as they are, from review.** A Start clicked by hand during a local `pnpm test:e2e` ticks under the run (the
   guard checks the marker at config load). Wiping `.data` under a running ticker removes its marker, as it does the
   wrapper's. An `APP_DATA_DIR` set only in a `.env` file would reach the server but not the playwright config or the
-  wrapper, which read the shell's environment (no `.env` file exists here). Each needs a hand to do something the
-  docs already say not to, and closing them means changing `scripts/` while P4 moves it.
+  wrapper, which read the shell's environment (no `.env` file exists here). Each needs an unusual setup, and closing
+  them means changing `scripts/` while P4 moves it.
+- **A dev-only route imports the ticker scripts at run time, and that crosses ADR-0014 rule 4 once P4 lands.** Rule 4
+  says only `@sssb/kit` is imported at run time; after P4 these scripts are `@sssb/tools`, an app devDependency. The
+  import stands because it is the showcase's (SSSB's reference app, not the starter an adopter keeps), Next bundles it
+  at build time so production never resolves the devDependency, and it sits behind the `isSimulatedDevServer` 404 so a
+  production build never evaluates it. If the rule is to hold without exception, the alternative is a kit-owned
+  ticker, which would duplicate `scripts/ticker.mjs`.
