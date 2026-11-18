@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -32,6 +33,7 @@ describe("this repo's apps keep every fence through the repo's config", () => {
 
 // The plugin by file URL: a scratch app outside the workspace cannot resolve `@sssb/eslint-plugin` by name.
 const PLUGIN = pathToFileURL(path.join(repoRoot, 'packages/eslint-plugin/src/index.js')).href
+const TS_ESLINT = pathToFileURL(createRequire(path.join(repoRoot, 'package.json')).resolve('typescript-eslint')).href
 const SOURCES: Record<string, string> = {
     'src/domain/tickets.ts': 'export const ticket = 1\n',
     'src/lib/format.ts': 'export const format = (n: number) => String(n)\n',
@@ -180,7 +182,7 @@ describe('an app config that composes the preset with blocks of its own', () => 
             'a processor that drops the fences’ findings',
             "{ files: ['src/lib/**'], processor: { meta: { name: 'mute' }, preprocess: (t) => [t], " +
                 "postprocess: (ms) => ms.flat().filter((m) => !m.ruleId?.startsWith('sssb/')) } }",
-            /src\/lib\/format\.ts: its processor is mute, and the preset's is none/,
+            /src\/lib\/format\.ts: it runs through a processor \(mute\), and the preset sets none/,
         ],
         [
             'a parser that returns an empty program',
@@ -361,5 +363,97 @@ describe("an app's own vendors under an apps/* root", () => {
         for (const app of ['billing', 'plain', 'not-yet-created']) {
             expect(await rulesAt(app, S3), app).toContain('sssb/no-vendor-import')
         }
+    })
+})
+
+// Round 2 of review: what reaches past the comparison without changing a rule's entry.
+describe('the fences as the app lints them, whatever its config or its lint command does with a finding', () => {
+    const READS_ENV = 'export const region = process.env.AWS_REGION\n'
+
+    it('fails on a processor that calls itself none', async () => {
+        const after =
+            "{ files: ['src/lib/**'], processor: { meta: { name: 'none' }, preprocess: (t) => [t], " +
+            "postprocess: (ms) => ms.flat().filter((m) => !m.ruleId?.startsWith('sssb/')) } }"
+        expect(await problemsOf(scratchApp(after))).toContain(
+            'src/lib/format.ts: it runs through a processor (none), and the preset sets none',
+        )
+    })
+
+    it('fails on an inline comment that turns a fence down to a warning', async () => {
+        const source = `/* eslint sssb/no-process-env: "warn" */\n${READS_ENV}`
+        const problems = await problemsOf(scratchApp('', { 'src/lib/format.ts': source }))
+        expect(problems.join('\n')).toMatch(
+            /src\/lib\/format\.ts:2: sssb\/no-process-env reports it, and the app's lint must fail on it/,
+        )
+    })
+
+    // `eslint --suppress-all` writes this file, and the ESLint CLI applies it; the API check-fences uses does not.
+    it('fails on a finding an eslint-suppressions.json lets through', async () => {
+        const appDir = scratchApp('', {
+            'src/lib/format.ts': READS_ENV,
+            'eslint-suppressions.json': JSON.stringify({
+                'src/lib/format.ts': { 'sssb/no-process-env': { count: 1 } },
+            }),
+        })
+        expect((await problemsOf(appDir)).join('\n')).toMatch(
+            /src\/lib\/format\.ts:1: sssb\/no-process-env reports it, and the app's lint must fail on it/,
+        )
+    })
+
+    // probes.js: an app that bans more than the preset is tightening, and check-fences has no business failing it.
+    it('leaves an app alone that relaxes a tightening of its own', async () => {
+        const after = "{ files: ['src/adapters/real/**'], rules: { 'sssb/no-process-env': 'error' } }"
+        const source = `// eslint-disable-next-line sssb/no-process-env\n${READS_ENV}`
+        expect(await problemsOf(scratchApp(after, { 'src/adapters/real/kv.ts': source }))).toEqual([])
+    })
+
+    it('leaves an app alone whose own typescript-eslint parser is another version', async () => {
+        const after =
+            `{ languageOptions: { parser: { ...(await import('${TS_ESLINT}')).default.parser, ` +
+            "meta: { name: 'typescript-eslint/parser', version: '99.0.0' } } } }"
+        expect(await problemsOf(scratchApp(after))).toEqual([])
+    })
+
+    it('fences a directory deeper in the app that has a build output’s name', async () => {
+        const appDir = scratchApp('', { 'src/coverage/report.ts': READS_ENV })
+        expect((await problemsOf(appDir)).join('\n')).toMatch(/src\/coverage\/report\.ts:1: sssb\/no-process-env/)
+    })
+
+    it('refuses a config that rewrites a rule on the shared plugin object', async () => {
+        expect(() => {
+            ;(sssb.rules['no-process-env'] as { create: unknown }).create = () => ({})
+        }).toThrow(TypeError)
+    })
+})
+
+// In a child Node process: vitest's module loader does not load a `file:` URL holding `%23` (an encoded `#`), and Node,
+// which is what loads an adopter's config, does.
+describe('an app whose directory name starts with #', () => {
+    it('keeps its exception and its vendors under an apps/* root', () => {
+        const root = realpathSync(makeTestTmpDir('hash-apps-'))
+        const app = path.join(root, 'apps', '#e')
+        mkdirSync(path.join(app, 'src/domain'), { recursive: true })
+        writeFileSync(path.join(app, 'src/domain/m.ts'), 'export const m = (db) => db.getDb()\n')
+        writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'e', sssb: { vendors: ['stripe'] } }))
+        writeFileSync(
+            path.join(app, 'lint-exceptions.mjs'),
+            "export default { 'sssb/no-raw-db-handle': [{ file: 'src/domain/m.ts', reason: 'the system' }] }\n",
+        )
+        const ESLINT = pathToFileURL(createRequire(path.join(repoRoot, 'package.json')).resolve('eslint')).href
+        const script = `
+const { ESLint } = await import(${JSON.stringify(ESLINT)})
+const { default: sssb } = await import(${JSON.stringify(PLUGIN)})
+const root = ${JSON.stringify(root)}
+const app = ${JSON.stringify(app)}
+const eslint = new ESLint({ cwd: root, overrideConfigFile: true, overrideConfig: await sssb.configs.app({ root: root + '/apps/*' }) })
+const [excepted] = await eslint.lintFiles([app + '/src/domain/m.ts'])
+const [stripe] = await eslint.lintText("import Stripe from 'stripe'\\nexport { Stripe }\\n", { filePath: app + '/src/domain/billing.ts' })
+console.log(JSON.stringify({ excepted: excepted.messages.map((m) => m.ruleId), stripe: stripe.messages.map((m) => m.ruleId) }))
+`
+        const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' })
+        expect(run.status, run.stderr).toBe(0)
+        const { excepted, stripe } = JSON.parse(run.stdout) as { excepted: string[]; stripe: string[] }
+        expect(excepted).not.toContain('sssb/no-raw-db-handle')
+        expect(stripe).toContain('sssb/no-vendor-import')
     })
 })

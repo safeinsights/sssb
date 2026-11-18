@@ -42,7 +42,7 @@ import { SRC_EXT, STORY_FILES, TEST_FILES } from './patterns.js'
 // that outlives its NEED is still the app's to delete). The path is matched literally (a Next route's `[locale]` is
 // not a glob).
 const APP_EXCEPTION_RULES = ['sssb/no-raw-db-handle']
-const GLOB_SPECIALS = /[*?[\]{}()!+@]/g
+const GLOB_SPECIALS = /[*?[\]{}()!+@#]/g
 
 /**
  * One app's exceptions, as `ignores` entries relative to the app (glob specials escaped), by rule id.
@@ -182,16 +182,18 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
 
     return [
         at('ignores', {
+            // Build and test output, at the app's root only: the same names deeper in the app (`src/coverage/`) are
+            // source a route can import, and fenced like any other.
             ignores: [
                 '**/node_modules/**',
-                '**/.next/**',
-                '**/.data/**',
-                '**/next-env.d.ts',
-                '**/.ladle/dist/**',
-                '**/dist-demo/**',
-                '**/test-results/**',
-                '**/playwright-report/**',
-                '**/coverage/**',
+                `${P}.next/**`,
+                `${P}.data/**`,
+                `${P}next-env.d.ts`,
+                `${P}.ladle/dist/**`,
+                `${P}dist-demo/**`,
+                `${P}test-results/**`,
+                `${P}playwright-report/**`,
+                `${P}coverage/**`,
                 // What Panda 2's codegen writes there (`.js` and `.d.ts`, its default `outExtension`): a hand-written
                 // `.ts`, `.mjs` or any other extension in that directory is fenced like any other module. A
                 // hand-written `.js` is not, since it has the extension of Panda's own output.
