@@ -613,6 +613,10 @@ minimumReleaseAge: 2880
     applyWorkaround('ports-copied')
     cpSync(path.join(REPO, 'scripts/ports.mjs'), path.join(WS, 'scripts/ports.mjs'))
     cpSync(path.join(REPO, 'scripts/print-port.mjs'), path.join(WS, 'scripts/print-port.mjs'))
+    applyWorkaround('tick-scripts-copied')
+    for (const name of ['tick.mjs', 'dev-tick.mjs', 'ticker.mjs', 'ticker-marker.mjs']) {
+        cpSync(path.join(REPO, 'scripts', name), path.join(WS, 'scripts', name))
+    }
     applyWorkaround('check-demo-size-copied')
     cpSync(path.join(REPO, 'scripts/check-demo-size.mjs'), path.join(WS, 'scripts/check-demo-size.mjs'))
     applyWorkaround('tmp-dir-helper-copied')

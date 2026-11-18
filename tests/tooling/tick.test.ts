@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
@@ -35,6 +35,16 @@ import { makeTestTmpDir } from '../support/tmp-dir'
 const TICK = fileURLToPath(new URL('../../scripts/tick.mjs', import.meta.url))
 const DEV_TICK = fileURLToPath(new URL('../../scripts/dev-tick.mjs', import.meta.url))
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+
+/**
+ * The apps of THIS tree, by directory: `showcase` and `starter` in the template, the adopter's own in a tree
+ * `init-app` has run on (the adoption probe runs this suite there). Never a literal list.
+ */
+const APP_DIRS = readdirSync(path.join(REPO_ROOT, 'apps'), { withFileTypes: true })
+    .filter(
+        (entry) => entry.isDirectory() && existsSync(path.join(REPO_ROOT, 'apps', entry.name, 'playwright.config.ts')),
+    )
+    .map((entry) => entry.name)
 
 const GOOD_BODY = { ok: true, spawned: 2, failed: 0, deliveries: { delivered: 1, failed: 0, dead: 0 } }
 
@@ -378,15 +388,24 @@ describe('resolveDevTick: off unless asked, and not where it must not run', () =
 })
 
 describe('the e2e servers are started with the ticker blanked', () => {
-    it.each(['showcase', 'starter'])('apps/%s/playwright.config.ts', (app) => {
+    it('finds at least one app to check', () => {
+        expect(APP_DIRS.length).toBeGreaterThan(0)
+    })
+
+    it.each(APP_DIRS)('apps/%s/playwright.config.ts', (app) => {
         const config = readFileSync(path.join(REPO_ROOT, 'apps', app, 'playwright.config.ts'), 'utf8')
         expect(config).toMatch(/env:\s*\{\s*DEV_TICK_SECONDS:\s*''\s*\}/)
     })
 
-    it.each(['showcase', 'starter'])('apps/%s `dev` goes through the wrapper and has a `tick` script', (app) => {
+    it.each(APP_DIRS)('apps/%s `dev` goes through the wrapper and has a `tick` script', (app) => {
         const scripts = JSON.parse(readFileSync(path.join(REPO_ROOT, 'apps', app, 'package.json'), 'utf8')).scripts
-        expect(scripts.dev).toContain(`node ../../scripts/dev-tick.mjs ${app} -- next dev --port`)
-        expect(scripts.tick).toBe(`node ../../scripts/tick.mjs ${app}`)
+        // the PORT key (`showcase` or `starter`), which `init-app` does not rename with the app
+        const key = /node \.\.\/\.\.\/scripts\/dev-tick\.mjs (showcase|starter) -- next dev --port/.exec(
+            scripts.dev,
+        )?.[1]
+        expect(key, scripts.dev).toBeDefined()
+        expect(scripts.dev).toContain(`print-port.mjs ${key})`)
+        expect(scripts.tick).toBe(`node ../../scripts/tick.mjs ${key}`)
     })
 })
 
@@ -572,7 +591,7 @@ describe('the ticker marker: what keeps a ticking dev server out of the e2e suit
         expect(() => assertNoLiveDevTicker({ APP_DATA_DIR: dataDir }, '/nowhere')).toThrow(/a dev ticker is running/)
     })
 
-    it.each(['showcase', 'starter'])(
+    it.each(APP_DIRS)(
         'apps/%s/playwright.config.ts really does refuse (the config as Playwright loads it)',
         async (app) => {
             const dataDir = makeTestTmpDir('sssb-marker-pw-')
