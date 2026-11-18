@@ -704,39 +704,74 @@ const appCodeDirOfPath = (filename, specifier) => {
     if (fromRoot === undefined) return undefined
     return APP_CODE_DIRS.find((dir) => isUnder(fromRoot, dir))
 }
-// THE PACKAGE'S EDGE (ADR-0014 P3). @sssb/kit is installed from a tarball of packages/kit alone, so a path out of
-// it names a file an adopter does not have: until P3, 23 of SSSB's tests and one shipped conformance suite reached
-// the repo's tests/support/tmp-dir.ts that way, and the suite could not run from the tarball. This rule reports a
-// relative or absolute path, or a `file:` URL, from packages/kit that lands anywhere outside it, judged exactly as
-// the app-code rule above judges one (case-insensitive, symlinks followed). A landing in app code is that rule's
-// finding, not this one's, so a path into apps/ is reported once. Its own rule id; the two exemptions are named in
-// the block that applies it.
+// THE PACKAGE'S EDGE (ADR-0014 P3). @sssb/kit is installed from a tarball of packages/kit's `files` alone, so a path
+// to anything else names a file an adopter does not have: until P3, 23 of SSSB's tests and one shipped conformance
+// suite reached the repo's tests/support/tmp-dir.ts that way, and the suite could not run from the tarball. A path
+// is judged where it really lands, exactly as the app-code rule above judges one (case-insensitive, symlinks
+// followed), and a landing in app code is that rule's finding, not this one's. This rule reports, from any file in
+// packages/kit (fixture included):
+//  - a path that lands outside packages/kit;
+//  - an absolute path or a `file:` URL, wherever it lands: it names this checkout, which an adopter's machine has not;
+//  - from a SHIPPED file, a path to a file the tarball leaves out (a test, a story, the fixture, a config), which
+//    exists here, so it typechecks and runs here and fails only once installed.
+// "Shipped" reads packages/kit/package.json's `files`: `src`, minus every test and story, plus the files it names
+// back (tests/tooling/pack-and-consume.test.ts pins that shape). `/// <reference path>` counts as a path too. Its own
+// rule id; the two exemptions are named in the block that applies it.
 const KIT_DIR = 'packages/kit'
-const outsideKitLanding = (filename, specifier) => {
-    const fromRoot = landingOfPath(filename, specifier)
-    if (fromRoot === undefined || isUnder(fromRoot, KIT_DIR)) return undefined
-    return APP_CODE_DIRS.some((dir) => isUnder(fromRoot, dir)) ? undefined : fromRoot
+const kitFiles = JSON.parse(readFileSync(join(import.meta.dirname, `${KIT_DIR}/package.json`), 'utf8')).files
+const withoutScriptExt = (file) => file.replace(/\.[cm]?[jt]sx?$/, '')
+const reincludedKitFiles = new Set(
+    kitFiles
+        .filter((entry) => !entry.startsWith('!') && entry !== 'src')
+        .map((entry) => withoutScriptExt(`${KIT_DIR}/${entry}`.toLowerCase())),
+)
+const TEST_OR_STORY = /\.(test|stories)(\.[cm]?[jt]sx?)?$/
+const isShippedKitFile = (fromRoot) =>
+    isUnder(fromRoot, `${KIT_DIR}/src`) &&
+    (!TEST_OR_STORY.test(fromRoot) || reincludedKitFiles.has(withoutScriptExt(fromRoot)))
+const isAbsoluteSpecifier = (specifier) => /^file:/i.test(specifier) || /^[\\/]/.test(specifier)
+// The message id and landing for a specifier that crosses the package's edge, or undefined when it does not.
+const packageEdgeFinding = (filename, specifier) => {
+    const landing = landingOfPath(filename, specifier)
+    if (landing === undefined || APP_CODE_DIRS.some((dir) => isUnder(landing, dir))) return undefined
+    if (!isUnder(landing, KIT_DIR)) return { messageId: 'outside', landing: landing || '.' }
+    if (isAbsoluteSpecifier(specifier)) return { messageId: 'absolute', landing }
+    const importer = relative(REPO_ROOT, realPathOf(filename).toLowerCase()).replaceAll('\\', '/')
+    if (isShippedKitFile(importer) && !isShippedKitFile(landing)) return { messageId: 'unshipped', landing }
+    return undefined
 }
+const REFERENCE_PATH = /^\/\s*<reference\s+path\s*=\s*(["'])(.+?)\1/
 /** @type {import('eslint').Rule.RuleModule} */
 const sssbNoPathOutOfPackageRule = {
     meta: {
         type: 'problem',
-        docs: { description: 'Framework code does not reach outside packages/kit by a relative or absolute path.' },
+        docs: {
+            description: "Framework code reaches only what @sssb/kit's tarball holds, and only by a relative path.",
+        },
         schema: [],
         messages: {
-            path:
+            outside:
                 '`{{specifier}}` leaves packages/kit (it lands in {{landing}}): @sssb/kit is installed from a ' +
                 'tarball of packages/kit alone, so an adopter has nothing there. Move what it needs into the ' +
                 'package (ADR-0014 P3).',
+            absolute:
+                '`{{specifier}}` is an absolute path or a `file:` URL: it names this checkout ({{landing}}), which ' +
+                "an adopter's machine does not have. Use a relative path (ADR-0014 P3).",
+            unshipped:
+                "`{{specifier}}` reaches {{landing}}, which packages/kit/package.json's `files` leaves out of the " +
+                'tarball, from a file that ships: it resolves here and fails once installed. Ship it, or move ' +
+                'what this file needs into shipped source (ADR-0014 P3).',
         },
     },
     create(context) {
+        const report = (loc, specifier) => {
+            const finding = packageEdgeFinding(context.filename, specifier.trim())
+            if (finding)
+                context.report({ ...loc, messageId: finding.messageId, data: { specifier, landing: finding.landing } })
+        }
         const check = (node) => {
             const specifier = literalSpecifier(node)
-            const landing =
-                typeof specifier === 'string' ? outsideKitLanding(context.filename, specifier.trim()) : undefined
-            if (landing === undefined) return
-            context.report({ node, messageId: 'path', data: { specifier, landing: landing || '.' } })
+            if (typeof specifier === 'string') report({ node }, specifier)
         }
         return {
             ImportDeclaration: (node) => check(node.source),
@@ -744,6 +779,13 @@ const sssbNoPathOutOfPackageRule = {
             ExportAllDeclaration: (node) => check(node.source),
             TSExternalModuleReference: (node) => check(node.expression),
             ...declarationlessVisitors(check),
+            // `/// <reference path="…" />` makes the compiler load a file just as an import does.
+            Program: () => {
+                for (const comment of context.sourceCode.getAllComments()) {
+                    const match = comment.type === 'Line' ? REFERENCE_PATH.exec(comment.value) : null
+                    if (match?.[2]) report({ loc: comment.loc }, match[2])
+                }
+            },
         }
     },
 }

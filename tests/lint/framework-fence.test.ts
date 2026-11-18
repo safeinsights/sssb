@@ -5,6 +5,7 @@ import { ESLint } from 'eslint'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../support/tmp-dir'
 import {
+    ABSOLUTE_IN_PACKAGE,
     APP,
     APP_CODE_DYNAMIC,
     APP_CODE_PATH,
@@ -20,6 +21,7 @@ import {
     NODE_MODULES_DYNAMIC,
     NODE_MODULES_STATIC,
     OUT_OF_PACKAGE_PATH,
+    UNSHIPPED_PATH,
     VENDOR_DYNAMIC,
     VENDOR_STATIC,
 } from './lint-text'
@@ -258,18 +260,20 @@ describe('a path into app code crosses the framework/app fence too', () => {
     })
 
     // Node loads a `file:` URL as the absolute path it names, so it is a path too, in any case of the scheme.
-    // Anywhere else out of packages/kit is the package-edge rule's finding, never both.
+    // Anywhere else out of packages/kit is the package-edge rule's finding, never both; and a `file:` URL into the
+    // package names this checkout, which an adopter's machine has not, so it is that rule's finding too.
     it.each([
-        ['into apps/', 'apps/showcase/src/domain/tickets.ts', 1, 0],
-        ['into the seed package', 'packages/seed/src/index.ts', 1, 0],
-        ['anywhere else', 'tests/support/tmp-dir.ts', 0, 1],
-        ['within the package', 'packages/kit/src/testing/tmp-dir.ts', 0, 0],
-    ])('a file: URL %s', async (_where, target, intoApp, outOfPackage) => {
+        ['into apps/', 'apps/showcase/src/domain/tickets.ts', 1, 0, 0],
+        ['into the seed package', 'packages/seed/src/index.ts', 1, 0, 0],
+        ['anywhere else', 'tests/support/tmp-dir.ts', 0, 1, 0],
+        ['within the package', 'packages/kit/src/testing/tmp-dir.ts', 0, 0, 1],
+    ])('a file: URL %s', async (_where, target, intoApp, outOfPackage, absolute) => {
         const url = pathToFileURL(path.join(process.cwd(), target)).href
         for (const spelled of [url, url.replace('file:', 'FILE:')]) {
             const findings = await lint(FIXTURE, `export const load = () => import(${JSON.stringify(spelled)})\n`)
             expect(fired(findings, APP_CODE_PATH), spelled).toBe(intoApp)
             expect(fired(findings, OUT_OF_PACKAGE_PATH), spelled).toBe(outOfPackage)
+            expect(fired(findings, ABSOLUTE_IN_PACKAGE), spelled).toBe(absolute)
         }
     })
 
@@ -313,6 +317,51 @@ describe('a path into app code crosses the framework/app fence too', () => {
         expect(
             fired(await lint(KIT[0] as string, `export const load = () => import(${to})\n`), OUT_OF_PACKAGE_PATH),
         ).toBe(1)
+    })
+
+    it('an absolute path into the package names this checkout, and is reported', async () => {
+        const to = JSON.stringify(path.join(process.cwd(), 'packages/kit/src/core/roles'))
+        const findings = await lint(KIT[0] as string, `import { r } from ${to}\nexport { r }\n`)
+        expect(fired(findings, ABSOLUTE_IN_PACKAGE)).toBe(1)
+        expect(fired(findings, OUT_OF_PACKAGE_PATH) + fired(findings, UNSHIPPED_PATH)).toBe(0)
+    })
+
+    // What ships is packages/kit/package.json's `files`, not the whole directory: a shipped file that reaches a test, a
+    // story or the fixture resolves here and fails once installed. A file that does not ship may reach them.
+    describe('a shipped file reaches only what ships', () => {
+        const shipped = 'packages/kit/src/db/kv.ts'
+        const reaches = [
+            ['the test fixture', '../../test-fixture/app-config/seed', 1],
+            ['a test', '../core/state-machine.test', 1],
+            ['a story', '../components/app-header.stories', 1],
+            ['a config beside src', '../../tsconfig.strict.json', 1],
+            ['a test the allowlist names back', '../i18n/namespaces.test', 0],
+            ['shipped source', '../core/state-machine', 0],
+            ['a shipped catalog', '../i18n/messages/en.json', 0],
+        ] as const
+        it.each(reaches)('from shipped source, %s', async (_what, to, expected) => {
+            expect(fired(await lint(shipped, `import x from '${to}'\nexport { x }\n`), UNSHIPPED_PATH)).toBe(expected)
+            expect(fired(await lint(shipped, `export const load = () => import('${to}')\n`), UNSHIPPED_PATH)).toBe(
+                expected,
+            )
+        })
+        it('from a conformance suite, which ships too', async () => {
+            const code = "import x from '../core/state-machine.test'\nexport { x }\n"
+            expect(fired(await lint('packages/kit/src/i18n/namespaces.test.ts', code), UNSHIPPED_PATH)).toBe(1)
+        })
+        it.each(['packages/kit/src/db/kv.test.ts', FIXTURE])('not from %s, which does not ship', async (file) => {
+            const code = `import x from ${JSON.stringify(pathFrom(file, 'packages/kit/test-fixture/app-config/seed'))}\nexport { x }\n`
+            expect(fired(await lint(file, code), UNSHIPPED_PATH)).toBe(0)
+        })
+        it('through a triple-slash reference path as well', async () => {
+            const code = '/// <reference path="../../test-fixture/app-config/seed.ts" />\nexport const x = 1\n'
+            expect(fired(await lint(shipped, code), UNSHIPPED_PATH)).toBe(1)
+            const out = '/// <reference path="../../../../tests/support/zz.d.ts" />\nexport const x = 1\n'
+            expect(fired(await lint(shipped, out), OUT_OF_PACKAGE_PATH)).toBe(1)
+            expect(
+                fired(await lint(shipped, '/// <reference types="node" />\nexport const x = 1\n'), UNSHIPPED_PATH),
+            ).toBe(0)
+        })
     })
 
     it('the contract tests are its only exemptions, and only by name', async () => {

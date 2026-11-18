@@ -302,6 +302,17 @@ describe('undeclaredImports', () => {
         expect(undeclaredImports(sources, manifest, builtins, specifiersOf).size).toBe(0)
     })
 
+    it('reads the conformance suites, which ship, as source', () => {
+        const suite = CONFORMANCE_SUITES[0] as string
+        const found = undeclaredImports(
+            [{ file: suite, text: "import { z } from 'left-pad'" }],
+            manifest,
+            builtins,
+            specifiersOf,
+        )
+        expect(Object.fromEntries(found)).toEqual({ 'left-pad': [suite] })
+    })
+
     it('still sees an import after a string that looks like a comment opener', () => {
         // A regex comment-stripper reads '/api/*' as the start of a comment and hides what follows.
         const text = "const glob = '/api/*'\nconst m = await import('left-pad')\nconst end = '*/'"

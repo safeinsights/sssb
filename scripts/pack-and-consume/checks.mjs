@@ -225,7 +225,7 @@ export function conformanceProblems(report, kitDirsByApp, requiredByApp = {}) {
  * (node_modules/.pnpm/node_modules) lends every package in the graph to every other, so an undeclared
  * import resolves in the consumer and the job stays green; an adopter whose graph lacks the package, or
  * who turns hoisting off, gets "cannot find module" inside node_modules/@sssb/kit. This reads the
- * source instead of trusting resolution. Test and story files are not the shipped surface, and are skipped.
+ * source instead of trusting resolution. Test and story files are not the shipped surface, and are skipped, bar the conformance suites, which ship.
  * The specifiers come from `specifiersOf`, which the job backs with TypeScript's own `preProcessFile`, so
  * comments, strings and template literals cannot hide an import or invent one.
  * @param {{ file: string, text: string }[]} sources
@@ -245,7 +245,7 @@ export function undeclaredImports(sources, manifest, builtins, specifiersOf) {
     /** @type {Map<string, string[]>} */
     const found = new Map()
     for (const { file, text } of sources) {
-        if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file)) continue
+        if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file) && !CONFORMANCE_SUITES.includes(file)) continue
         for (const spec of specifiersOf(text)) {
             if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:')) continue
             const parts = spec.split('/')
