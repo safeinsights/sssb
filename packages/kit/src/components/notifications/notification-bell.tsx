@@ -1,7 +1,7 @@
 'use client'
 
 import { Box, Menu, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core'
-import { useFormatter, useLocale, useTranslations } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 import {
     FRAMEWORK_NOTIFICATION_NAMESPACE,
     type NotificationKind,
@@ -40,7 +40,6 @@ export function NotificationBell({
     // Root translator too: an APP-registered kind's copy lives in the app catalog, and the namespace to
     // resolve it in comes from notificationCopy (core/notifications.ts).
     const tRoot = useTranslations()
-    const format = useFormatter()
     const locale = useLocale()
 
     return (
@@ -71,9 +70,7 @@ export function NotificationBell({
                                 lineHeight: '16px',
                             }}
                         >
-                            {/* Same locale number format as the label's ICU count, so at 1000+ the
-                                badge ("1,000") is still inside the name (WCAG 2.5.3 Label in Name). */}
-                            {format.number(unread)}
+                            {unread}
                         </Text>
                     ) : null}
                 </UnstyledButton>
