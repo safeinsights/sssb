@@ -203,6 +203,27 @@ function stagedBundle(fn) {
 }
 
 /**
+ * The database an app's slug names: the slug with each dash as an underscore. A slug is lowercase letters, digits
+ * and dashes, and dashes are ordinary in one (`acme-corp`), but Aurora PostgreSQL's database name (the cluster's
+ * `DatabaseName`, from `defaultDatabaseName`) may hold only letters, digits and underscores, start with a letter, and
+ * run to 63 characters: a dashed slug synthesized cleanly and failed at deploy. A slug has no underscore of its own,
+ * so two slugs never map to one name, and a slug with no dash maps to itself (`showcase`, `starter`), so an existing
+ * deployment's database keeps its name.
+ * @type {import('./index.d.ts').databaseNameFor}
+ */
+export function databaseNameFor(slug) {
+    if (!SLUG.test(slug)) throw new Error(`SssbApp: slug must be lowercase letters, digits and dashes (got "${slug}")`)
+    const name = slug.replaceAll('-', '_')
+    if (name.length > 63) {
+        throw new Error(`SssbApp: slug "${slug}" is ${slug.length} characters; a database name may have at most 63`)
+    }
+    return name
+}
+
+/** What a slug is: what `pnpm init-app` accepts. */
+const SLUG = /^[a-z][a-z0-9-]*$/
+
+/**
  * An SSSB app's deployment (ADR-0001, ADR-0014 part 8): the Next standalone server in one Lambda behind the
  * AWS Lambda Web Adapter, its Function URL behind CloudFront with static assets from S3, the framework's
  * migrator bundled with the app's own migrations, and Aurora PostgreSQL Serverless v2. A construct, not a
@@ -252,9 +273,11 @@ export class SssbApp extends Construct {
         // compare them, and the entry comes back from the resolver as a real path.
         const appDir = realpathSync(path.resolve(props.appDir))
         const slug = props.slug
-        if (!/^[a-z][a-z0-9-]*$/.test(slug ?? '')) {
+        if (!SLUG.test(slug ?? '')) {
             throw new Error(`SssbApp: slug must be lowercase letters, digits and dashes (got "${String(slug)}")`)
         }
+        // The database the migrator migrates and the server reads, named from the slug (databaseNameFor).
+        const databaseName = databaseNameFor(slug)
         // The slug names the database the migrator migrates and the server reads, so it must be this app's: a
         // root infra/ composing several apps could otherwise pair one app's directory with another's slug.
         const declared = declaredSlug(appDir)
@@ -316,7 +339,7 @@ export class SssbApp extends Construct {
             // The HTTPS endpoint the data-api transport calls. Left unset for pg, which needs no second way
             // in — unset rather than `false`, so the pg cluster synthesizes exactly as it did before.
             ...(dataApi && { enableDataApi: true }),
-            defaultDatabaseName: slug,
+            defaultDatabaseName: databaseName,
             storageEncrypted: true,
             removalPolicy,
         })
@@ -350,7 +373,7 @@ export class SssbApp extends Construct {
                   DATABASE_TRANSPORT: 'data-api',
                   DATABASE_CLUSTER_ARN: db.clusterArn,
                   DATABASE_SECRET_ARN: secret.secretArn,
-                  DATABASE_NAME: slug,
+                  DATABASE_NAME: databaseName,
               }
             : {
                   DATABASE_TRANSPORT: 'pg',
@@ -359,7 +382,7 @@ export class SssbApp extends Construct {
                   // (env-var exposure vs runtime secret fetch).
                   DATABASE_URL: `postgres://${secret.secretValueFromJson('username').unsafeUnwrap()}:${secret
                       .secretValueFromJson('password')
-                      .unsafeUnwrap()}@${db.clusterEndpoint.socketAddress}/${slug}`,
+                      .unsafeUnwrap()}@${db.clusterEndpoint.socketAddress}/${databaseName}`,
               }
 
         // pg: read the secret and open the database port to the function's security group. data-api: the

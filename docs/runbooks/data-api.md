@@ -18,6 +18,8 @@ proven. The dialect is `packages/kit/src/adapters/real/rds-data-dialect.ts`. It 
   through the Data API: see there.
 - Your shell can call `rds-data:*` on the cluster and `secretsmanager:GetSecretValue` on its secret.
 - For steps 1–4, at least one tenant with rows in a tenant-scoped table (`jobs` is in every app).
+- `DB` is the app's database: its slug with each dash as an underscore (`acme-corp` is `acme_corp`), the
+  `DATABASE_NAME` its server function runs with (`databaseNameFor` in `packages/cdk/src/sssb-app.js`).
 
 ```bash
 export CLUSTER=arn:aws:rds:REGION:ACCOUNT:cluster:NAME

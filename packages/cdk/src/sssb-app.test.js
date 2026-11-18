@@ -9,11 +9,11 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../../../tests/support/tmp-dir'
 import { dataApiShapeProblems, lambdaBundles, lambdaFunction, secretGrantProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf } from '@sssb/tools/kit'
-import { SssbApp } from './index.js'
+import { databaseNameFor, SssbApp } from './index.js'
 
 /** @typedef {import('@sssb/tools/assembly-checks').Resources} Resources */
 /** @typedef {'pg' | 'data-api'} Transport */
@@ -373,4 +373,86 @@ describe('a synth that does not bundle this stack', () => {
         const { all } = synthesize({ appDir, slug: /** @type {string} */ (slug?.[1]), transport: 'pg', bundle: false })
         expect(lambdaFunction(all, 'Server').env['APP_MODE']).toBe('real')
     })
+})
+
+/** What Aurora PostgreSQL accepts as a database name: letters, digits and underscores, from a letter, up to 63. */
+const AURORA_DATABASE_NAME = /^[A-Za-z][A-Za-z0-9_]{0,62}$/
+
+describe('the database name', () => {
+    it('is the slug with each dash as an underscore, and a slug with no dash unchanged', () => {
+        expect(databaseNameFor('showcase')).toBe('showcase')
+        expect(databaseNameFor('starter')).toBe('starter')
+        expect(databaseNameFor('acme-corp')).toBe('acme_corp')
+        expect(databaseNameFor('a-b-2')).toBe('a_b_2')
+        expect(databaseNameFor('a'.repeat(63))).toBe('a'.repeat(63))
+    })
+
+    it('is always a name Aurora accepts, and two slugs never share one', () => {
+        const slugs = [
+            'acme',
+            'acme-corp',
+            'acme-corp-2',
+            'acme2',
+            'a',
+            'a-b',
+            'ab',
+            'x'.repeat(63),
+            'x-'.repeat(31) + 'x',
+        ]
+        const names = slugs.map(databaseNameFor)
+        for (const name of names) expect(name).toMatch(AURORA_DATABASE_NAME)
+        expect(new Set(names).size).toBe(slugs.length)
+    })
+
+    it('refuses what is not a slug, or is too long for a database name', () => {
+        for (const bad of ['Acme', 'acme_corp', '-acme', '1acme', '', 'acme corp']) {
+            expect(() => databaseNameFor(bad), bad).toThrow(/slug must be lowercase letters, digits and dashes/)
+        }
+        expect(() => databaseNameFor('a'.repeat(64))).toThrow(/at most 63/)
+    })
+
+    // A scratch app inside this repository, so the construct finds the repository's lock file, esbuild and framework
+    // above it, as an app under apps/ does. Its slug has a dash, which init-app accepts and Aurora's names do not.
+    const scratch = path.join(REPO, 'node_modules/.cache', `sssb-cdk-dashed-${process.pid}`, 'my-app')
+    afterAll(() => rmSync(path.dirname(scratch), { recursive: true, force: true }))
+
+    it.each(/** @type {const} */ (['pg', 'data-api']))(
+        'is what a dashed-slug app synthesizes over %s: the cluster, the server and the migrator agree',
+        (transport) => {
+            mkdirSync(path.join(scratch, 'config'), { recursive: true })
+            mkdirSync(path.join(scratch, 'src/app-config/db/migrations'), { recursive: true })
+            writeFileSync(path.join(scratch, 'package.json'), JSON.stringify({ name: 'my-app', private: true }))
+            writeFileSync(path.join(scratch, 'config/app.ts'), "export const APP_SLUG = 'my-app'\n")
+            writeFileSync(
+                path.join(scratch, 'src/app-config/db/migrations/index.ts'),
+                'export const appMigrations = {}\n',
+            )
+
+            const { all } = synthesize({ appDir: scratch, slug: 'my-app', transport, bundle: false })
+            const cluster = Object.values(all).find((r) => r.Type === 'AWS::RDS::DBCluster')
+            expect(cluster?.Properties?.['DatabaseName']).toBe('my_app')
+            expect(cluster?.Properties?.['DatabaseName']).toMatch(AURORA_DATABASE_NAME)
+            const server = lambdaFunction(all, 'Server')
+            if (transport === 'pg') {
+                // The URL's database is the last segment of a CloudFormation join.
+                expect(JSON.stringify(server.env['DATABASE_URL'])).toMatch(/"\/my_app"\]\]\}$/)
+            } else {
+                expect(server.env['DATABASE_NAME']).toBe('my_app')
+                expect(lambdaFunction(all, 'Migrator').env['DATABASE_NAME']).toBe('my_app')
+            }
+        },
+    )
+
+    it.each(APPS)(
+        "keeps apps/%s's database name its slug, so an existing deployment's database is not replaced",
+        (app) => {
+            const appDir = path.join(REPO, 'apps', app)
+            const slug = /** @type {string} */ (
+                /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+            )
+            const { all } = synthesize({ appDir, slug, transport: 'pg', bundle: false })
+            const cluster = Object.values(all).find((r) => r.Type === 'AWS::RDS::DBCluster')
+            expect(cluster?.Properties?.['DatabaseName']).toBe(slug)
+        },
+    )
 })

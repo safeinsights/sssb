@@ -1,6 +1,14 @@
 import type * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 
+/**
+ * The database an app's slug names: the slug with each dash as an underscore, since Aurora PostgreSQL's database
+ * name may hold only letters, digits and underscores (`acme-corp` → `acme_corp`; `showcase` stays `showcase`). Throws
+ * for a string that is not a slug, or one over 63 characters. An adopter's own infra that does not use `SssbApp` names
+ * its database with this too.
+ */
+export declare function databaseNameFor(slug: string): string
+
 /** How the app reaches Postgres: the app's `params.database.transport` (ADR-0002, addendum 2026-11-16). */
 export type DatabaseTransport = 'pg' | 'data-api'
 
@@ -11,7 +19,10 @@ export interface SssbAppProps {
      * never from its own location (ADR-0014, rule 4).
      */
     readonly appDir: string
-    /** The app's slug (`config/app.ts`'s `APP_SLUG`): the database's name and the budget's prefix. */
+    /**
+     * The app's slug (`config/app.ts`'s `APP_SLUG`): the budget's prefix, and the database's name with each dash as an
+     * underscore (`databaseNameFor`).
+     */
     readonly slug: string
     /** The app's deployment params (`config/params.ts`); the construct reads `database.transport`. */
     readonly params: { readonly database: { readonly transport: DatabaseTransport } }
