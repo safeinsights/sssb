@@ -3,7 +3,7 @@
 
 /**
  * The real directory of the `@sssb/kit` an app resolves: the first `node_modules/@sssb/kit` walking up from the app's
- * directory, as Node's lookup finds it, never through NODE_PATH (which pnpm points at the hoisted store).
+ * directory, as Node's lookup finds it, never through NODE_PATH (which pnpm's bin shims point at the hoisted store).
  */
 export declare function kitDirOf(appDir: string): string
 

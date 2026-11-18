@@ -3293,6 +3293,47 @@ map, the cutover rows as data) was set before the work; these are the calls it d
   job requires every unit check's every test, named from the PACKED `checks.json`, to pass in each app, with the
   file itself not failed by the skip guard. The tarball must ship `checks.json` and `seam-specifiers.json` and no
   test file at all.
+## Changesets are required on PRs that change what ships, and carry the release note (2026-11-18, `ci/changeset-required`)
+
+JP asked whether CanopyCMS's way of keeping a changelog up to date could be copied. Its mechanism: every PR that
+changes a published package adds a `.changeset/*.md` that is its changelog entry, in a fixed template ending with a
+"Now deletable" part, and CI fails the PR without one. SSSB already had Changesets but no rule, template or lint.
+
+- **What was taken:** the gate, the template, the explicit "no adopter-visible effect" answer (an empty changeset),
+  and "Now deletable". The template's `**Kind.**` is one of P7's four release-note sections (`seam`, `migration`,
+  `operator`, `scaffold`) or `none`, so the notes can be written from the files by section.
+- **Kind and Action are separate fields.** Canopy keeps "which area" and "must the adopter act" apart; a first
+  version here tied the bump to Kind and left an additive migration or a new optional export with no honest home
+  (ADR-0014 part 10 calls a migration breaking only when it needs operator action). `**Action.** required` is a
+  `minor`; `optional` and `none` may be a `patch`. Part 10's other breaking items (a raised peer floor, a rule that
+  turns app code red) are filed under `seam`, and a change in two sections is two files.
+- **What was not taken:** CanopyCMS's 3,286-line assembly script, its area table and its int-prerelease labels. They
+  serve an npm prerelease channel; SSSB's release candidates are tarballs on a GitHub prerelease (ADR-0014 P7).
+  Assembling the notes from the files waits for `@sssb/tools` to exist to host it, and the stock
+  `@changesets/cli/changelog` ignores Kind and Action, so P7/P14 need a custom changelog function or an assembler
+  (said in `.changeset/README.md`). Rejected alternative: port the script whole.
+- **The gate is path-based, not `changeset status`.** Every package is `private` until P14 and `status` ignores
+  private packages, so it would pass for any change. "Ships" is every `@sssb/*` package under `packages/` (read from
+  its manifest, so P4's tools, P6's plugin, P9's cdk and P12's create are covered the day they land; the kit is
+  narrowed to its `files` allowlist, the seam-conformance tests included, other tests and stories not) and
+  `apps/starter`, the scaffold an adopter copies and the future `@sssb/create` template. `apps/showcase`,
+  `packages/seed`, the lockfile and the kit's `test-fixture` are not shipped. The lockfile counts in CanopyCMS
+  because its worker is an esbuild bundle; SSSB ships source. A test fails when the kit manifest's `files` gains an
+  entry the gate does not know.
+- **Known gap, taken on purpose:** while adoption is a fork, adopters also receive `infra/`, the cutover checklist,
+  the ESLint config, `.gitleaks.toml`, the CI workflows, `scripts/` and the docs. Gating them now would make every
+  P5, P6, P9 and P10 PR carry a changeset for files those steps are moving. Some of them land in packages and the
+  starter, which the gate covers; some land elsewhere (the showcase's `infra/`, a generator's write-once files).
+  The README says to check whether the gate sees a change.
+- **Exemptions:** the release merge (`integration` into `main`, same repository, so a fork's branch of that name is
+  not exempt); Dependabot's PRs unless one changes the kit's `peerDependencies`; a PR opened before the gate reached
+  its base branch (read from git, so no date is written down); and a file a PR carries only because it merged `main`
+  in (ported from CanopyCMS), since the repository does merge `main` back into branches.
+- **The logic is a shell script under `.github/scripts/`, tested by a vitest file** that builds real git repositories
+  (the machine's git config isolated), and the shape lint is `tests/support/changeset-shape.ts` run by the same file.
+  Neither adds a `scripts/` file, a `package.json` script or a `knip.json` entry, because P4 is moving `scripts/`
+  and P4, P5 and P6 own the root manifest. Each moving part of the script was mutated to confirm a case goes red.
+  `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
 
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 
@@ -3309,17 +3350,16 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
 - **One resolver, `packages/tools/src/kit.js`.** It finds the app's `@sssb/kit` by walking `node_modules` up from the
   app's directory, as Node's lookup does, and checks that every framework file a tool loads has its real path inside
   that directory. It started as `require.resolve(…, { paths: [appDir] })`, as the ADR wrote it; the tests found that
-  `pnpm exec` and `pnpm run` set `NODE_PATH` to the hoisted `.pnpm/node_modules`, which Node's resolver falls back to,
+  pnpm's bin shims (`node_modules/.bin/<bin>`, which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the hoisted `.pnpm/node_modules`, which Node's resolver falls back to,
   so an app with no framework of its own resolved the hoisted copy, another app's instance: the slip rule 4 exists for.
   The walk never reads `NODE_PATH`. Its users are the `dev:real` preflight, the Next preset's next-intl request path
   and `sssb guide`. `sssb/no-bare-kit-import` bans a literal `@sssb/kit` specifier (declarations, `import()`, type
   imports, `require`, any `.resolve('…')`, Vitest's loaders) in every package under `packages/` but the framework and
-  the showcase's seed, deny-by-default, so P6's and P9's packages are covered before anyone names them; seen red on a
-  probe in each form (`tests/lint/no-bare-kit-import.test.ts`).
+  the showcase's seed, deny-by-default, so P6's and P9's packages are covered before anyone names them; seen red on a probe in each form `tests/lint/no-bare-kit-import.test.ts` lists.
 - **A preset configures the app's own tools.** The Vite preset loads `@vitejs/plugin-react` and
   `vite-plugin-singlefile`, the Vitest preset the React plugin and jest-dom, and the Next preset next-intl's plugin,
-  each resolved from the app's directory, so `@sssb/tools` declares no peer it would have to keep in step and never
-  brings a second copy. jest-dom goes to Vitest as the bare specifier, not a resolved path: resolved with Node's
+  each resolved from the app's directory, so `@sssb/tools` never brings a second copy of them; its only peers are
+  optional: `next` and `vite` for its declarations' types, `vitest` for the scratch-directory helper's `afterAll`. jest-dom goes to Vitest as the bare specifier, not a resolved path: resolved with Node's
   `require` conditions it is jest-dom's CommonJS build, which cannot load Vitest.
 - **The Vite and Vitest presets pass the seam explicitly** (`@sssb/app-config` to the app's `src/app-config`), as the
   ADR says every SSSB builder does: the same directory as the link in an adopter's app, the only way in this
@@ -3344,9 +3384,9 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
 - **The tick scripts moved into `@sssb/tools`** (`sssb tick`, `sssb dev-tick`, `@sssb/tools/ticker`,
   `@sssb/tools/ticker-marker`), in a commit of their own: every app with a scheduled-tick route needs them, and the
   starter's Playwright config imports the marker. ADR-0014's table had no row for them (`pnpm tick` merged after it).
-  Their code is unchanged but for imports and entry points.
+  Their logic is unchanged: against `scripts/`, the diff is imports, entry points, comments, the usage text, and three constants no longer exported (for knip).
 - **The framework keeps its own scratch-directory helper** for its tests, the shipped conformance suites among them,
-  because no SSSB package depends on another; everyone else imports `@sssb/tools/testing/tmp-dir`. The two marker
+  because the framework depends on no other SSSB package; everyone else imports `@sssb/tools/testing/tmp-dir`. The two marker
   suffixes are held equal by `tests/tooling/tmp-dir.test.ts`. The framework's copy lost `makeTestTmpDirAsync`, which
   only the repository's own tests used.
 - **`sssb ci`** has three jobs today: `e2e-shards` (discovering shards from the workspace's apps, with a project named
@@ -3357,7 +3397,7 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
   `.claude/sssb-guide.md` with a `sha256` stamp and `--check` compares stamps; until P7 publishes the guide it says so
   and exits 1.
 - **The assembly checks** (`@sssb/tools/assembly-checks`: the migrator bundle, the fail-closed environment, #49's Data
-  API shape) are pure functions over a synthesized template, which `infra/check-shapes.ts` now calls. It also gained
+  API shape) are functions over a synthesized template and its assembly directory, which `infra/check-shapes.ts` now calls. It also gained
   the fail-closed check on the server function's environment, on both shapes.
 - **`sssb check-doc-paths`** runs the doc-path gate's engine (`@sssb/tools/doc-paths`) over the doc set in the root
   package.json's `sssb.docPaths`. `tests/docs/doc-set.ts` reads the same configuration, so the gate, the CLI and
@@ -3477,7 +3517,6 @@ ADR-0014 part 5 names doctor's three checks and part 3 its `vitest list`; part 2
 - **Port slots stay a closed list** (`showcase`, `starter`, `ladle`, `contractPg`), as `scripts/ports.mjs` had them, so
   two apps of an adopter's own made from the starter share one; the independent review found it, and
   `.claude/future-tasks/port-slots-for-adopter-apps.md` designs a slot an app declares itself.
-  `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
 
 ## A Simulator control for the dev ticker, and focus on panel toggle (2026-11-18, `feat/simulator-ticker-control`)
 
@@ -3548,3 +3587,45 @@ JP asked on 2026-11-17 whether the Simulator could start the ticking clock from 
   into the showcase's static demo, which renders the kit's Jobs tab but never the control, and put it 8,364 bytes over
   its 860,000-byte budget. A `TextInput` of type number took the bundle to 840,890 bytes, under budget again; the route
   validates the value either way.
+
+## Doc agents: one steward, plus a line-delta rule and a reading map (2026-11-18, `docs/doc-hygiene`)
+
+JP asked what is worth borrowing from CanopyCMS's documentation setup. Two things, and not the rest.
+
+- **Taken: the net-line-delta rule.** Canopy measured that its doc-update steps only ever added: four root docs grew
+  by 2,154 lines in a month and none shrank. SSSB has the same shape (every `doc-steward` step is written to add), so the
+  agent now reports the net line delta of each doctrine doc the diff touches, says why any grew, and proposes
+  deleting what the diff supersedes in the same pass. The dated records are exempt from deletion: they are
+  append-only, so for them it only notes growth. `CLAUDE.md` carries one sentence pointing at it.
+- **Taken: the task-to-doc table.** `docs/README.md` lists documents; it now also has a "Read this for X" table by
+  task, so an agent starting a job finds the doc to read first. Its backticked paths are gated
+  (`doc-paths.test.ts`); its links are not.
+- **Not taken: Canopy's four per-document maintainer agents.** `doc-steward` already walks SSSB's doc set in order,
+  and it is one agent to keep current instead of four whose scopes can drift.
+- **Not taken: `CODEBASE_GUIDE.md` and its codebase-guide agents.** A file-by-file map of the code is a second copy to
+  keep true. The agent instructions do have a planned home (ADR-0014's P4 `sssb guide`, content from P7, which
+  copies the app guide into an adopter's repo), but a file map like `CODEBASE_GUIDE.md` is deliberately not planned.
+  `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
+
+## Trojan Source scan and an action-pin gate, borrowed from CanopyCMS (2026-11-18, `ci/ci-hygiene`)
+
+- **A Trojan Source scan** (`.github/scripts/check-bidi.sh`, the first step after checkout in `checks.yml`, before
+  any install). It fails when a tracked file's contents or name holds one of the nine bidirectional reordering
+  codepoints (U+202A-202E, U+2066-2069), which let a reviewer read one program while the compiler builds another.
+  It is CanopyCMS's step, kept fail-closed: the locale is pinned, because `git grep -P` dies with exit 128 outside
+  a UTF-8 locale; the exit status is read with `case`, because `if git grep; then` reads 128 as "nothing found";
+  `pipefail` covers the filename pipeline; and the filename byte pattern is self-tested against all nine. It
+  scans from the repository root, and reads source-type files as text and refuses a NUL in one, because
+  `.gitattributes` or a NUL can make git call a file binary, which `git grep -I` skips.
+- **An action SHA-pin gate** (`tests/tooling/action-pins.test.ts`, finder in `tests/support/action-pins.ts`). It
+  parses every workflow and local composite action and fails on a `uses:` that is not a full 40-hex SHA
+  (`./` refs exempt, `docker://` flagged). Every action is already pinned today, so it prevents drift (a job merged
+  from a sibling branch, a Dependabot bump to a tag) rather than fixing anything. It does not check
+  `jobs.*.container` or `services.*.image` tags, or what a symlink points at.
+- **A bash script and vitest tests, not `scripts/`.** P4 is moving `scripts/`, and P4, P5 and P6 all
+  touch the root `package.json`, the lockfile and `knip.json` (ADR-0014, the paragraph after the step table), and P9's
+  row changes `pnpm-workspace.yaml` and the knip globs; neither piece needs a `package.json` script or a knip entry here. The script's
+  tests (`tests/tooling/check-bidi.test.ts`) run it against real scratch repositories, including a repository
+  that is not one, and a parent `LC_ALL=C`.
+- **Rejected: porting `check-action-pins.mjs` into `scripts/`** with a `package.json` script. It would grep for
+  `uses:` rather than parse, and would touch the files other work owns.

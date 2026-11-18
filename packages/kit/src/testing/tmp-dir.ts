@@ -7,7 +7,7 @@ import { TMP_DIR_MARKER_SUFFIX } from './tmp-dir-marker.mjs'
 /**
  * THE FRAMEWORK'S OWN COPY of the scratch-directory helper, for @sssb/kit's tests (the shipped conformance suites
  * among them). Everyone else imports @sssb/tools' (`@sssb/tools/testing/tmp-dir`); the framework keeps a copy
- * because no SSSB package depends on another (ADR-0014, rule 4). Both write the same marker, which
+ * because the framework depends on no other SSSB package (ADR-0014, rule 4). Both write the same marker, which
  * tests/tooling/tmp-dir.test.ts holds equal, so `sssb check-tmpdir-leak` sees either one's leaks.
  *
  * THE ONLY WAY A TEST MAKES A SCRATCH DIRECTORY. A raw `mkdtemp` in a test file leaves the directory
