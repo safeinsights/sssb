@@ -998,6 +998,36 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
     )
 
     it(
+        "fails an adopter's missing or stale guide copy; in-repo, reports a missing one and checks one that exists",
+        async () => {
+            /** The kit at `dir` starts shipping a guide, as @sssb/kit does from ADR-0014 P7. */
+            const shipGuide = (dir: string) => {
+                pkg(dir, { ...KIT_MANIFEST, exports: { ...KIT_MANIFEST.exports, './guide.md': './guide.md' } })
+                write(path.join(dir, 'guide.md'), '# Rules\n')
+            }
+            const copy = (ws: string) => path.join(ws, '.claude', 'sssb-guide.md')
+
+            const packed = doctorWorkspace('sssb-doctor-e2e-guide-packed-', 'packed', ['web'])
+            shipGuide(path.join(packed, 'store', 'web', 'node_modules', '@sssb', 'kit'))
+            const adopter = await doctor(packed, 'apps/web')
+            expect(adopter.out).toMatch(/^FAIL +apps\/web: app guide: the repository's copy is not the kit's/m)
+            expect(adopter.code).toBe(1)
+
+            const inRepo = doctorWorkspace('sssb-doctor-e2e-guide-in-repo-', 'in-repo', ['web'])
+            shipGuide(path.join(inRepo, 'packages', 'kit'))
+            const none = await doctor(inRepo, 'apps/web')
+            expect(none.out).toMatch(/^report +app guide: not checked: in-repo, .*holds no copy of it/m)
+            expect(none.code, none.out).toBe(0)
+
+            write(copy(inRepo), '# A copy with no stamp\n')
+            const stale = await doctor(inRepo, 'apps/web')
+            expect(stale.out).toMatch(/^FAIL +apps\/web: app guide: the repository's copy is not the kit's/m)
+            expect(stale.code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
         'fails when the workspace walk does not reach the app it runs for, or cannot read pnpm-workspace.yaml',
         async () => {
             const ws = doctorWorkspace('sssb-doctor-e2e-walk-', 'packed')
