@@ -1,5 +1,13 @@
 # @sssb/cdk
 
+## 0.2.0-rc.1
+
+### Patch Changes
+
+- Updated dependencies [7a1c762]
+- Updated dependencies [3dd44f2]
+    - @sssb/tools@0.2.0-rc.1
+
 ## 0.2.0-rc.0
 
 ### Minor Changes
