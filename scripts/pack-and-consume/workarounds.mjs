@@ -35,7 +35,7 @@ export const WORKAROUNDS = {
     },
     'tsconfig-written': {
         removedBy: 'P4',
-        what: "each app's tsconfig.json is written by the script, at the ES2022 floor with only the app's `@/` path: the starter's extends this repo's root tsconfig and includes packages/kit/src (P4: the app extends @sssb/tools' tsconfig base)",
+        what: "each app's tsconfig.json is written by the script, at the ES2022 floor with only the app's `@/` path: the starter's extends this repo's root tsconfig and includes packages/kit/src. It also sets what @sssb/kit's source needs beyond the strict set and is written nowhere an adopter reads yet: strict, moduleResolution bundler, jsx react-jsx, dom in lib, skipLibCheck (packages/kit/tsconfig.strict.json's header) (P4: the app extends @sssb/tools' tsconfig base)",
     },
     'vite-aliases-removed': {
         removedBy: 'P4',
@@ -64,6 +64,10 @@ export const WORKAROUNDS = {
     'allow-builds-copied': {
         removedBy: 'P12',
         what: "the consumer's pnpm-workspace.yaml takes allowBuilds from this repo's, so a build script a kit dependency newly needs is approved here before an adopter would have to (P12: @sssb/create writes allowBuilds)",
+    },
+    'dedupe-peer-dependents-written': {
+        removedBy: 'P12',
+        what: "the consumer's pnpm-workspace.yaml sets dedupePeerDependents: false, so each importer of @sssb/kit gets an instance with its own seam (ADR-0014 part 5); an adopter's workspace has it only if they set it (P12: @sssb/create writes it; P5's sssb doctor advises when it is missing)",
     },
 }
 

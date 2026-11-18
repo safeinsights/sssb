@@ -2966,3 +2966,9 @@ Dependabot's #1.
   a `file:` URL, from `packages/kit` (fixture included) that lands outside it. The two real-Postgres contract
   tests are its only exemptions, by name: they start their server through `tests/support/contract-postgres.ts`,
   which needs `scripts/ports.mjs`, and P5 moves that runner into the package. Neither ships.
+- **What the review left for later steps.** The options the framework needs beyond the strict set (`strict`,
+  `moduleResolution: "bundler"`, `jsx`, `dom`, `skipLibCheck`) are written in `packages/kit/tsconfig.strict.json`'s
+  header and in the `tsconfig-written` workaround, and P4's tsconfig base is where an adopter gets them.
+  `dedupePeerDependents: false`, which the consumer's workspace sets, is a registered workaround now
+  (`dedupe-peer-dependents-written`, P12). `src/authz/route-scan.ts` and `src/adapters/real/rds-data-emulator.ts` ship
+  but nothing shipped reaches them; P5's `@sssb/kit/testing` is what will.

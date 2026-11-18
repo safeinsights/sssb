@@ -1996,3 +1996,13 @@ the panel is the element that carries it.
   own and resolves the root's by walking up. The singleton check compares the NEAREST `node_modules/<pkg>`,
   walking up from each of `packages/kit` and the two apps; at this step `react`, `react-dom`, `next`, `next-intl`,
   `@mantine/core`, `@types/react`, `@types/node`, `kysely`, `typescript` and `vitest` resolved to one directory each.
+- **TypeScript does not read a `.mjs` under `node_modules`, even with `allowJs`.** `src/testing/tmp-dir.ts` imports
+  its marker from `./tmp-dir-marker.mjs` (plain `.mjs`, so the leak guard can import it under bare node). In this
+  repo `allowJs` reads it; from the tarball the import is `TS7016`. `tmp-dir-marker.d.mts` declares it. knip sees no
+  importer of a declaration file, so `knip.json` ignores that one file in `packages/kit`, by name.
+- **The compiler contract is wider than the strict set.** The independent review measured, from the tarball, what
+  else the framework's own files need from the app's tsconfig: `strict`, `moduleResolution: "bundler"`, `jsx`
+  always set (`react-jsx` or `preserve`), `dom` in `lib` for the components, and `skipLibCheck`. Each count is in
+  `packages/kit/tsconfig.strict.json`'s header. Options that also gave no error there: `verbatimModuleSyntax`,
+  `jsx: "preserve"`, `noUncheckedSideEffectImports`, `module: "preserve"`, `target: "es2020"`,
+  `strictBuiltinIteratorReturn`, `allowImportingTsExtensions`.

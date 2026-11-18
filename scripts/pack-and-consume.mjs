@@ -576,6 +576,7 @@ function scaffold(/** @type {string} */ tarball) {
     const repoWorkspace = readFileSync(path.join(REPO, 'pnpm-workspace.yaml'), 'utf8')
     const allowBuilds = /^allowBuilds:\n((?:[ #].*\n|\n)*?)(?=^\S)/m.exec(repoWorkspace)?.[0]
     if (!allowBuilds) fail("could not read allowBuilds from this repo's pnpm-workspace.yaml")
+    applyWorkaround('dedupe-peer-dependents-written')
     write(
         path.join(WS, 'pnpm-workspace.yaml'),
         `packages:
