@@ -2952,7 +2952,7 @@ way CanopyCMS makes its App, by GitHub's App-manifest flow from a script, not by
   is not secret.
 - **Who the App is, checked before anything trusts it.** The exchange's answer is checked before the key is stored
   (owned by safeinsights, exactly `contents: write` and `metadata: read`). `bypass` and `verify` take `--app-id` on
-  the command line, so both first find that id in the organisation's installations, with the client id the
+  the command line, so both look that id up in the organisation's installations, with the client id the
   environment holds, on selected repositories, with exactly those permissions: a typo, or another App's id, never
   becomes the bypass on `main`.
 - **The token asks for the App's permissions explicitly** (`permission-contents: write` on

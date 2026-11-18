@@ -28,7 +28,8 @@ export type PermissionSet = Readonly<Record<string, PermissionLevel>>
  * - `metadata: read`: implied by any repository permission; declared so this object states the whole
  *   surface, not just the part that is not automatic.
  * Nothing else. No `workflows`: GitHub refuses a push that changes `.github/workflows/` without it
- * (scripts/release.mjs verify-release refuses any file but the released manifests and changelogs first).
+ * (scripts/release.mjs verify-release, before the push, refuses any change but the released manifests'
+ * version lines, their changelogs and the consumed changesets).
  * That keeps workflow FILES out of a stolen key's reach, not what they run: `scripts/release.mjs`, `package.json`
  * scripts and `.nvmrc` are contents (docs/runbooks/release-app.md, "What the key is worth"). No `actions`,
  * `checks`, `pull_requests` or `administration`: the CI gate reads runs with the job's own GITHUB_TOKEN,
