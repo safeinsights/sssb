@@ -4087,3 +4087,106 @@ generator. What went, what replaced each, and what was kept:
 - **Docs, as far as P12 needs.** `docs/adopting.md`'s fork and `init-app` sections now start from the generator; its
   flags are as the P12 design names them, with `TODO(P12)` where the built CLI must confirm them. The full rewrite,
   and ADR-0013's supersession, are P15.
+
+## `@sssb/create` (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
+
+`packages/create`, `@sssb/create` with the bin `sssb-create` (what `pnpm create @sssb` and `npm create @sssb` run):
+plain JavaScript, no dependencies, no `@sssb/*` dependency (rule 4), `private: true` until P14 and in the fixed
+group. The choices the P12 row and the design left open, each with what was rejected:
+
+- **The template is built from the working tree, with an exclude list, and stamped.** `buildTemplate`
+  (`packages/create/src/template.js`) walks `apps/starter` and drops, at any depth, the names this repository's
+  `.gitignore` gives build output, local state and secrets (`node_modules`, `.next`, `.data`, `dist-demo`,
+  `test-results`, `playwright-report`, `coverage`, `cdk.out`, `out`, `dist`, `build`, `.turbo`, `.DS_Store`,
+  `next-env.d.ts`, `.eslintcache`, `*.tsbuildinfo`, every `.env*` but `.env.example`), then copies six generic root
+  files (`.editorconfig`, `.nvmrc`, `.prettierrc.json`, the two husky hooks, `commitlint.config.mjs`). It writes
+  `template/{meta.json, app/, root/}`, a leading `.` in a path segment stored as `_dot_` because npm's packing drops
+  some dotfiles. `meta.json` holds what the generator needs once it is away from the repository: the version, the
+  workflow's repository and commit, `packageManager`, `engines`, the ranges of the root's tools, the raw
+  `allowBuilds` block, `minimumReleaseAge`, the seam specifiers, the framework's cutover rows (less `scope: sssb`),
+  the action pins `app-checks.yml` uses and the gitleaks version `checks.yml` uses. The package's `prepack` builds
+  `template/` and its `postpack` removes it (it is gitignored, and ignored by Prettier and ESLint), so no copy of the
+  starter is ever committed; run from a checkout, with no `template/`, the bin builds one from that checkout into a
+  temporary directory, which is how the tests drive it. Rejected: `git ls-files`, as pack and consume's
+  `copyTracked` does, which needs a git checkout at pack time and a second path for the tests' stand-in repository.
+  The cost: an untracked, non-ignored file in a developer's `apps/starter` is packed (a release packs on CI's clean
+  checkout, where there is none). Also rejected: the generator reading the seam specifiers from `@sssb/kit` when it
+  runs (rule 4; and it runs before anything is installed).
+- **The workflow pin is the packing commit**: `git rev-parse HEAD`, asserted to hold
+  `.github/workflows/app-checks.yml`; `--workflow-ref <sha>` overrides it. An adopter's `uses:` resolves only if that
+  commit is on GitHub, which release packing satisfies and a local pack of an unpushed commit does not.
+- **The generated workflow is `.github/workflows/checks.yml`**, not the design's `ci.yml`: the starter's
+  `infra/README.md` already says "`.github/workflows/checks.yml` runs checks only", which is then true in both
+  trees. Three jobs: `sssb` (the reusable workflow at the pinned SHA, `permissions: contents: read`,
+  `synth: ./apps/<slug>/infra`, no secrets), `workspace-checks` (knip and jscpd, which `app-checks.yml` does not
+  run) and `secret-scan` (gitleaks as a pinned binary over the whole history, as SSSB's own). Triggers are pushes to
+  `main` and pull requests, with `permissions: {}` at the top. The one check to require is `sssb / all-checks`, as
+  P10 decided; the generated README asks for the other two jobs as well.
+- **The seam package's `exports` is one pattern plus the directory modules**: `./*` to `./*.ts` for the flat
+  modules and each directory module by name (`./db/migrations` to `./db/migrations/index.ts`), computed from the
+  seam specifiers against the template's seam; a specifier with no module fails generation. Rejected: a line per
+  specifier, which would leave a seam module a later kit adds unexported until the adopter edits the map. **Its
+  `type` is the app's own** (the starter declares none, so none is written), as pack and consume already did.
+  Rejected: the design's `type: module`, since a nested `package.json` resets the module type for everything under
+  it and the app's other files are CommonJS-typed (its configs use `__dirname`).
+- **The port service stays `starter`.** The generated app keeps `"sssb": { "port": "starter" }`,
+  `originFor('starter')`, `sssb tick starter` and `sssb dev-tick starter --`. The service names a port band in
+  `@sssb/tools` (`packages/tools/src/ports.js`: an app keeps the slot it was generated with when it is renamed), not
+  the app. A rename is a tools change, out of P12's scope; `tests/tooling/create-generate.test.ts` allows exactly
+  those forms of the word, and `.claude/future-tasks/neutral-app-port-service.md` carries the neutral service.
+- **The identity is renamed, and only the identity**: `APP_SLUG` and `<slug>_session` in `config/app.ts`,
+  `welcome.appName` and `welcome.title` in both catalogs, the root layout's title, the static demo's `<title>`, and
+  the app and infra package names. Each rename must find its text exactly once, so a template that moves its
+  identity fails generation rather than shipping half-renamed. The starter's prose was rewritten at the source
+  instead (D4: the starter is the template): its comments that named the showcase, "the starter" or a
+  `packages/kit/src/…` path now read true in both trees, and the static-shell spec's title lost "starter".
+  Rejected: rewriting prose in the generator, which is brittle and leaves the template false for an adopter reading
+  it.
+- **`--sssb <dir>` writes absolute `file:` paths and a pnpm `overrides` block** in `pnpm-workspace.yaml` mapping
+  every `@sssb/*` package to its tarball, with a comment to remove it on moving to published versions. Without it
+  pnpm asks the registry for `@sssb/tools`, which `@sssb/cdk` depends on at an exact version (P9's addendum). This
+  refines ADR-0014 part 7's "No overrides are used": that holds for published versions, where none is written, and
+  not for tarballs. `--sssb <version>` writes the version as given; the default is `^<the generator's version>`.
+- **The root's `sssb:doctor` is `sssb doctor --app apps/<slug>`.** An adopter's root installs no `@sssb/kit`, and
+  doctor will not start from a directory that does not resolve it; one run still checks every app. Rejected: a
+  bare `sssb doctor` at the root, which works in this repository only because its root resolves the framework.
+- **No Changesets for adopters.** An app workspace publishes nothing, and `.changeset/` and
+  `scripts/release-notes.mjs` are SSSB's release machinery for SSSB's packages. No `.changeset/` and no
+  `@changesets/cli` are written; an adopter who wants a changelog adds Changesets themselves.
+- **`docs/cutover-checklist.md` and `apps/<slug>/DEMO-SIZE.md` are generated.** The checklist is a task list, one
+  ``- [ ] `<id>`: <what>`` per framework row less `scope: sssb`: the starter's `config/params.ts` cites rows by id,
+  and `sssb doctor` reports a workspace that stops mentioning one. A list rather than SSSB's table, so the output is
+  Prettier-clean without re-implementing table alignment. `DEMO-SIZE.md` is written fresh, with the budget at
+  generation and an empty "Changes", because the starter's copy carries SSSB's history and links into
+  `jpslav/keel`; the starter's own copy is untouched.
+- **Not written: `LICENSE`, `.claude/`, `CLAUDE.md`, `.github/dependabot.yml`; and no `git init`.** The README says
+  to add a licence. The agent guide arrives with P7 (`sssb guide`) and the commands with P13's plugin. The generator
+  runs no `git init`, no install, no Prettier and no network; the README and the closing output put `git init`
+  first, before `pnpm install`, so husky's `prepare` finds a repository.
+- **The owner files come from flags.** `--repo owner/name` (validated) fills the advisory links in `SECURITY.md`,
+  `CODE_OF_CONDUCT.md` and the issue-template config; without it they name
+  `PLACEHOLDER_GITHUB_OWNER/PLACEHOLDER_GITHUB_REPO`, init-app's convention. `--owner` (repeatable, `@` optional,
+  `@user` or `@org/team`) fills `CODEOWNERS`; without it, a placeholder under a comment warning that "require review
+  from Code Owners" makes every PR unmergeable on an owner GitHub does not know. The closing output names whichever
+  is still a placeholder. `SECURITY.md` is the adopter's own short policy, pointing at SSSB only as "the repository
+  its packages name in their `package.json`", so no `safeinsights/sssb` survives but the `uses:` line.
+- **The slug rules are `@sssb/cdk`'s database name's.** `--slug`, else `<dir>`'s basename lowercased, refused
+  unless it matches `^[a-z][a-z0-9-]*$`, its database name (dashes to underscores) has at most 63 characters, and
+  that name is not a word Aurora PostgreSQL reserves. The reserved list is a copy of
+  `packages/cdk/src/database-name.js`'s (rule 4: no SSSB dependency), held equal by
+  `tests/tooling/create-args.test.ts`. init-app's other refusals (`kit`, `cdk`, `repo`, `sssb-*`) guarded collisions
+  inside SSSB's repository and do not apply to a fresh workspace.
+- **JSON is written Prettier-shaped without Prettier** (`packages/create/src/json.js`): `package.json` in
+  `JSON.stringify`'s layout (Prettier's `json-stringify` parser), other `.json` with short arrays of plain values on
+  one line within 120 columns. A test runs the repository's Prettier `--check` over a whole generated workspace.
+- **The root's devDependencies are a list in the generator** (`ROOT_DEV_DEPENDENCIES`) at this repository's
+  ranges, captured when the template is built: pack and consume's `root-devdeps-picked` workaround, moved. `vite`
+  and `@vitejs/plugin-react` are not among them: the app has them. The app gains `@sssb/eslint-plugin` and `eslint`.
+- **The generated `knip.json` has three narrow entries**: at the root, `vitest.contract.config.ts` as an entry
+  (knip's Vitest plugin reads `vitest.config.ts` only) and `esbuild` ignored (`SssbApp` bundles with the root's
+  esbuild); in the app, `@sssb/app-config` ignored (the link only the framework resolves) beside the two
+  preset-loaded tools this repository's knip already ignores. Their reasons are comments in
+  `packages/create/src/files.js`; the JSON carries none. It leaves `includeEntryExports` off, as
+  `docs/adopting.md` argues. This repository's `knip.json` gained no entry for `packages/create`.
+
+The `TODO(P12)` markers the previous section left in `docs/adopting.md` are resolved against the built CLI.

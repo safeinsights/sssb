@@ -3,18 +3,43 @@
 Adoption is one command, which writes a new repository for your app:
 
 ```sh
-pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research   # or: npm create @sssb acme ...
+pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research --owner @acme-org/devs
 cd acme
-pnpm install && pnpm verify                 # boots hermetically: no docker, no credentials, no network
+git init                                # first, so the install's `prepare` (husky) has a repository to hook
+pnpm install
+pnpm exec playwright install chromium   # once, for the e2e suites
+pnpm verify                             # hermetic: no docker, no credentials, no network
 ```
+
+With npm, the options follow a `--`: `npm create @sssb acme -- --name "Acme Research" …`. The generator prints the
+same next steps when it finishes. It installs nothing, runs no `git init` and touches no network.
 
 `@sssb/create` writes the workspace into a new directory: your app, generated from SSSB's `apps/starter` and
 renamed, its root config on SSSB's presets, its CI (a workflow calling SSSB's reusable one), and SSSB's packages as
 versioned dependencies. What it deliberately leaves for you (deployment params, seed data, cutover rows, repository
 settings) is listed under "What the generator leaves for you" below.
 
-**Until SSSB's packages are published** (ADR-0014's P14), `pnpm create @sssb` cannot fetch the generator from npm.
-TODO(P12): how to run it from a checkout of this repository until then, and which `--sssb` to pass.
+**Until SSSB's packages are published** (ADR-0014's P14), `pnpm create @sssb` cannot fetch the generator from npm,
+and its default `--sssb` (`^` and the generator's own version) has no release to resolve. Run the generator from a
+checkout of SSSB instead, against SSSB's packages packed into a directory:
+
+```sh
+# in a checkout of SSSB, installed (the kit's prepack builds with its devDependencies)
+for p in kit tools eslint-plugin cdk; do pnpm --dir packages/$p pack --pack-destination ~/sssb-tarballs; done
+node packages/create/bin/create.js ~/acme --sssb ~/sssb-tarballs --name "Acme Research" \
+    --repo acme-org/acme-research --owner @acme-org/devs
+```
+
+- **The template is the checkout's working tree.** A generator with no packed `template/` (one run from a
+  checkout) builds it from that checkout's `apps/starter` first, so an uncommitted edit there is in your app.
+- **The workflow pin is the checkout's `HEAD`**, which must hold `.github/workflows/app-checks.yml`. Your CI's
+  `uses:` line resolves only if that commit is on GitHub: push it, or pass `--workflow-ref <sha>` naming one that
+  is. A packed generator pins the commit it was packed from, which a release packs on CI from a pushed commit.
+- **`--sssb <dir>` wants exactly one `sssb-<package>-<version>.tgz` for each of `kit`, `tools`, `eslint-plugin`
+  and `cdk`.** The workspace depends on them by absolute `file:` path, and `pnpm-workspace.yaml` gets an
+  `overrides` block mapping every `@sssb/*` package to its tarball, because `@sssb/cdk` depends on `@sssb/tools` at
+  a registry version that pnpm would otherwise look up. When you move to published versions, remove the block and
+  replace the `file:` paths with the version.
 
 The workspace has no showcase. The showcase stays in SSSB's repository as the worked example you will read most in
 week one: keep a checkout of SSSB beside your own (`pnpm install && pnpm dev` there), read the slice you need, and
@@ -62,45 +87,84 @@ must pick ONE app (`pnpm dev`, `pnpm tick`, `pnpm start`, and the showcase-only 
    Fifteen minutes here saves days later: every capability you inherit is shown working, and Simulator is how
    you'll drive your own app in dev.
 3. Push, then make the repository settings only you can make: require the check `sssb / all-checks` on your
-   default branch, and the two settings under "Identity and the owner files" below.
+   default branch (and `workspace-checks` and `secret-scan`, your workflow's own jobs), the setting under "Identity
+   and the owner files" below, and, if the repository is private and in an organization, allow public reusable
+   workflows in the organization's Actions settings. The generated `README.md` lists the same.
 
 ## `pnpm create @sssb`
 
-```
-pnpm create @sssb <dir> [options]     (npm create @sssb <dir> [options] runs the same generator)
+`--help` prints the usage (`packages/create/src/args.js` holds it):
 
-  <dir>                  where to write the workspace; refused unless it is new or empty
-  --slug <slug>          the app's APP_SLUG: lowercase letters, digits and dashes, from a letter. Also the app's
-                         directory (apps/<slug>) and package name
-  --name "<Name>"        display name for UI copy and titles
-  --repo <owner/name>    the GitHub repository this will live in, for the advisory and discussions links
-  --owner <@handle>      the code owner and maintainer contact
-  --sssb <version|dir>   which @sssb/* to depend on: default ^<the generator's own version>; a directory of
-                         packed tarballs writes file: dependencies instead (release candidates, pack and consume)
-  --workflow-ref <sha>   the commit of SSSB's reusable workflow your CI calls (default: the commit the
-                         generator was packed from)
-  --yes                  TODO(P12): what it confirms or skips
+```
+pnpm create @sssb <dir> [options]      (npm create @sssb <dir> -- [options])
+
+  <dir>                  where to write the workspace: refused unless it does not exist or is empty
+  --slug <slug>          the app's slug (APP_SLUG): its directory apps/<slug>, its package name, its cookies and
+                         its database (default: <dir>'s name, lowercased)
+  --name "<Name>"        the display name, in the app's copy and titles (default: the slug, title-cased)
+  --repo <owner/name>    the GitHub repository the workspace will live in, for the security, conduct and issue
+                         links (default: PLACEHOLDER_GITHUB_OWNER/PLACEHOLDER_GITHUB_REPO)
+  --owner <@handle>      a code owner for CODEOWNERS, @user or @org/team; repeat it for several (default: a
+                         placeholder)
+  --sssb <version|dir>   the @sssb/* packages to depend on: a version or range (default: ^<the generator's own
+                         version>), or a directory of their packed tarballs, depended on by file: path
+  --workflow-ref <sha>   the commit of SSSB's reusable workflow your CI pins (default: the commit the generator
+                         was packed from)
+  --yes, -y              do not ask before writing
+  --help, -h             print the usage
 ```
 
-TODO(P12): check every flag above against `@sssb/create`'s own usage text, and fill in the defaults of `--slug`
-(from `<dir>`?) and `--name` (title-cased slug?), the slugs it refuses (reserved names, Aurora's database-name
-rules), and whether `--owner` takes several handles.
+What it refuses, before it writes anything:
+
+- **A slug** that is not lowercase letters, digits and dashes starting with a letter, whose database name (each dash
+  an underscore) is longer than 63 characters, or whose database name is a word Aurora PostgreSQL reserves (`user`,
+  `select`, `postgres` and the rest). The list is a copy of `@sssb/cdk`'s (`packages/cdk/src/database-name.js`), so
+  a slug the construct would refuse at synth is refused where it is chosen; `tests/tooling/create-args.test.ts`
+  holds the two lists equal. When `<dir>`'s name is not a valid slug, pass `--slug`.
+- **A second positional argument** (the display name is `--name`), an unknown option, and any option but
+  `--owner` given twice. `--flag=value` works as well as `--flag value`.
+- **A `--repo`** that is not `owner/name` in the characters GitHub allows, **an `--owner`** that is not a GitHub
+  user or team (the `@` may be left off; a repeated owner is written once), an empty `--name`, **a `--sssb`** that
+  is neither a directory nor a version (`0.2.0`, `^0.2.0`, `~0.2.0`, a prerelease suffix allowed: `latest` and
+  `>=` ranges are refused), and **a `--workflow-ref`** that is not a full 40-character commit SHA.
+
+`--yes` skips the one question it asks, "Create the <Name> workspace in <path>? [Y/n]". It asks only when standard
+input is a terminal, so a script or CI never waits on it; answering `n` writes nothing.
 
 ### What it writes
 
-- **Your app**, `apps/<slug>/`: the starter, renamed. `APP_SLUG` in `apps/<app>/config/app.ts`, the package name,
-  the display name in its catalogs (`welcome.appName`, `welcome.title`) and its titles, its configs on SSSB's
-  presets with nothing pointing back into SSSB's repository, its seam package
-  (`apps/<app>/src/app-config/package.json`, named `@sssb/app-config`), its conformance test
-  (`apps/<app>/src/sssb.conformance.test.ts`) and its deployment, `apps/<app>/infra/`.
-- **The root**: `package.json` (its scripts, `verify` included, and `sssb.apps`), `pnpm-workspace.yaml`, and the
-  Vitest, TypeScript, knip, jscpd, gitleaks, Prettier and git-ignore configs.
-- **CI**: a workflow of your own under `.github/workflows/` that calls SSSB's reusable workflow
-  (`.github/workflows/app-checks.yml` in SSSB's repository) pinned to a commit, so your checks are named
-  `sssb / <job>` and `sssb / all-checks` is the one to require; plus a secret scan of your own.
-- **The owner files**, from `--owner` and `--repo`: `CODEOWNERS`, `SECURITY.md`, `CODE_OF_CONDUCT.md` and the
-  issue templates.
-- **A `README.md`** of your own.
+- **Your app**, `apps/<slug>/`: the starter, renamed, and nothing else changed in its source. The renames are
+  `APP_SLUG` and the session cookie (`<slug>_session`) in `apps/<app>/config/app.ts`, the package names (`<slug>`,
+  and `<slug>-infra` for `apps/<app>/infra/`), and the display name in both catalogs (`welcome.appName`,
+  `welcome.title`), the root layout's title and the static demo's `<title>`. Around it: `@sssb/*` dependencies at
+  the `--sssb` you chose, `@sssb/eslint-plugin` and `eslint` added, a `tsconfig.json` on `@sssb/tools`' base that
+  keeps only the app's own `@/*` alias, an `eslint.config.mjs` applying the preset, and the seam package
+  (`apps/<app>/src/app-config/package.json`, named `@sssb/app-config`, linked as `link:./src/app-config`). Its
+  `exports` map is one pattern for the flat seam modules (`./*` to `./*.ts`) plus each directory module by name
+  (`./db/migrations`), so every specifier the framework imports resolves, and a seam module a later release adds is
+  exported once you write it. It declares the app's own module `type`, which for the starter is none. The app keeps
+  its conformance test (`apps/<app>/src/sssb.conformance.test.ts`) and its deployment, `apps/<app>/infra/`.
+- **The root**: `package.json` (named `<slug>-workspace`; its scripts, `verify` included, and `sssb.apps`),
+  `pnpm-workspace.yaml` (SSSB's `allowBuilds` approvals, `dedupePeerDependents: false`, and SSSB's
+  `minimumReleaseAge` with `@sssb/*` exempt), the Vitest configs on `@sssb/tools/vitest` (`vitest.config.ts` and
+  `vitest.contract.config.ts`), `tsconfig.json`, `eslint.config.mjs` (for the root's own files), knip, jscpd,
+  gitleaks, git-ignore and Prettier-ignore configs, and lint-staged's. `.editorconfig`, `.nvmrc`,
+  `.prettierrc.json`, the two husky hooks and `commitlint.config.mjs` are copied from SSSB's root as they are.
+- **CI**: `.github/workflows/checks.yml`, on pushes to `main` and on pull requests, with three jobs. `sssb` calls
+  SSSB's reusable workflow (`.github/workflows/app-checks.yml` in SSSB's repository) pinned to a commit, with
+  `contents: read`, no secrets and `synth: ./apps/<slug>/infra`, so its checks are named `sssb / <job>` and
+  `sssb / all-checks` is the one to require. `workspace-checks` runs knip and jscpd, which SSSB's workflow does not;
+  `secret-scan` runs gitleaks over the whole history with your `.gitleaks.toml`.
+- **The owner files**, from `--repo` and `--owner`: `CODEOWNERS`, `SECURITY.md` (your own short policy, which
+  points at SSSB only for a root cause in a shape SSSB gave the app), `CODE_OF_CONDUCT.md`, and under
+  `.github/ISSUE_TEMPLATE/` a two-field bug form and a `config.yml` linking the security advisory form.
+- **A `README.md`** of your own, **`docs/cutover-checklist.md`** and **`apps/<app>/DEMO-SIZE.md`** (both under
+  "What the generator leaves for you" below).
+
+It writes no `LICENSE`, no `CLAUDE.md` or `.claude/`, no `.github/dependabot.yml` and no `.changeset/`: a
+workspace that publishes no package has no use for SSSB's release-note machinery, and an adopter who wants a
+changelog adds Changesets themselves. The workspace's `packages/*` glob is there for packages of your own; none
+is written.
 
 ### Identity and the owner files
 
@@ -111,20 +175,22 @@ renaming (`APP_DATA_DIR`, the `app-simulator-*` browser keys, the `@app/*` works
 dev-server port key — see below). What is left is display copy, package naming, and the owner files.
 
 The owner files route YOUR users — a security report, a code-owner review, a conduct complaint — so they must
-name you, never SSSB's maintainer. The generator writes them from `--owner` and `--repo`. TODO(P12): what it
-writes when either is left out, and whether its closing output says so. A `CODEOWNERS` naming an account GitHub
-cannot resolve makes every PR unmergeable once "require review from Code Owners" is on.
+name you, never SSSB's maintainer. The generator writes them from its flags: `--repo` fills the advisory links in
+`SECURITY.md`, `CODE_OF_CONDUCT.md` and `.github/ISSUE_TEMPLATE/config.yml`, and `--owner` fills `CODEOWNERS` as
+`*   <owners>`. Without `--repo` those links name `PLACEHOLDER_GITHUB_OWNER/PLACEHOLDER_GITHUB_REPO`; without
+`--owner`, `CODEOWNERS` names `@PLACEHOLDER_GITHUB_OWNER` under a comment saying to replace it. Either way the
+generator's closing output ends "Still to fill in: …" naming them, and the generated `README.md` lists the files to
+edit. A `CODEOWNERS` naming an account GitHub cannot resolve makes every PR unmergeable once "require review from
+Code Owners" is on.
 
 **`--repo` names the repository, which is not the app's slug.** An app called `console` can live in a repo called
 `pages`, and a link that says `…/console/security/advisories/new` 404s while looking right.
 
-Filling in the owner and repository is necessary and not sufficient: **two of those links depend on repository
-settings that are off by default.** `/security/advisories/new` resolves for a non-maintainer only once
-**private vulnerability reporting** is on (Settings → Code security), and `/discussions` 404s until
-**Discussions** is enabled (Settings → General → Features). Leave the first off and your security
-policy names a private channel that does not exist, so the only route left is the public issue you
-just told people not to open. Turn both on when you push, or delete the links you are not going to
-honour.
+Filling in the owner and repository is necessary and not sufficient: **every one of those links depends on a
+repository setting that is off by default.** `/security/advisories/new` resolves for a non-maintainer only once
+**private vulnerability reporting** is on (Settings → Code security). Leave it off and your security policy and
+your conduct policy name a private channel that does not exist, so the only route left is the public issue you
+just told people not to open. Turn it on when you push.
 
 The framework catalog holds NO product name at all: one shared catalog cannot name two products, so
 `AppHeader` and `DemoShell` take a **required** `appName` prop and each app passes its own from its
@@ -140,7 +206,9 @@ a translated key that is merely the wrong one.
 `originFor('starter')`, and the override is still `STARTER_PORT`. That reads oddly and is correct: the
 keys in `@sssb/tools/ports` name a dev-server SLOT, not an app, and the app declares its slot in its own
 `package.json` (its scripts call `sssb port`, which reads the declaration), which the generator keeps when it renames the
-app. TODO(P12): confirm the generator keeps the `starter` slot.
+app: it renames only the identity listed under "What it writes", so the app's scripts also still say
+`sssb tick starter` and `sssb dev-tick starter --`. A neutral slot name in `@sssb/tools`, so that a generated app
+never says `starter`, is `.claude/future-tasks/neutral-app-port-service.md`.
 The declaration and the Playwright config that points at the server agree only because both spell the same literal. A
 per-adopter rename would add two more files to the rewrite surface for no functional gain, and a
 half-applied one produces two servers on two ports — silent wrong-app adoption, the exact failure that
@@ -159,22 +227,31 @@ These are the parts that take judgement:
 - **The starter's content** — its seed world, its welcome copy, its one entity and its static-demo
   wiring are all still there and all still on screen. The generator renamed the app around them. The next
   section lists each one and what to do about it.
-- **The cutover checklist** — [cutover-checklist.md](cutover-checklist.md) is yours: owners, dates, and
-  the proof each row owes. TODO(P12): whether the generator writes a copy into your workspace.
+- **The cutover checklist** — the generator writes `docs/cutover-checklist.md` into your workspace: a task list
+  with one `- [ ]` line per framework cutover row (`packages/kit/src/cutover/rows.json`, less the rows scoped to
+  SSSB's own repository), each its id and what it is. It is yours: add owners, dates, the proof each row owes, and
+  rows of your own. Keep every id in it: `sssb doctor` reports a framework row the file stops mentioning, and the
+  app's `apps/<app>/config/params.ts` names the row behind each placeholder. SSSB's own [cutover-checklist.md](cutover-checklist.md)
+  shows the level of detail a row deserves.
 - **The demo size budget** — `apps/<app>/package.json`'s `check:demo-size` passes the static demo's byte
   budget. It is yours now. The starter ships it roomy on purpose, sized for an app's own screens and not as
   a pacing gate (it still fails on gross bloat); re-set it when you want a tighter gate, to what your app
-  measures plus the headroom you want, in its own commit. `apps/<app>/DEMO-SIZE.md` beside it says what the
-  number was set for and how it got there, and is where you record each change and why; it still calls the
-  app by its template name, and that history is SSSB's and stays as written.
+  measures plus the headroom you want, in its own commit. The generator writes `apps/<app>/DEMO-SIZE.md` beside
+  it, fresh rather than copied: it says what the number is for, the budget at generation, and how to change it,
+  and its "Changes" list, empty, is where you record each change and why (SSSB's history of the starter's budget
+  stays in SSSB's repository).
   `sssb check-demo-size` is SSSB's (`@sssb/tools`) and holds no number: the number lives in the app's
   `package.json`, so re-set it there. When it goes red,
   the command's source (`packages/tools/src/commands/check-demo-size.js`, "WHEN IT GOES RED") says what to look at first.
-- **The licence** — this template is MIT, which means the product you build on it is yours with no
-  copyleft obligation. Your own product's licence is still a decision you make; nothing here makes it
-  for you.
-- **Your README and agent guide.** The `README.md` the generator writes is yours to fill in. TODO(P12): what it
-  holds, and whether the workspace gets a `CLAUDE.md` before ADR-0014's P13 ships the app guide as a plugin.
+- **The licence** — SSSB is MIT, which means the product you build on it is yours with no copyleft obligation. The
+  generator writes no `LICENSE`, and the `README.md` it writes says to add one: your product's licence is a
+  decision you make.
+- **Your README and agent guide.** The `README.md` the generator writes is yours to fill in. It starts with the
+  first commands, the layout, the repository settings only you can make (the ones above, plus replacing any
+  placeholder the generator left and adding a `LICENSE`) and how to upgrade SSSB. The workspace gets no `CLAUDE.md`
+  and no `.claude/` yet: the app guide (the app-facing half of SSSB's `CLAUDE.md`) ships inside `@sssb/kit` from
+  ADR-0014's P7, for `sssb guide` to copy in, and the app-author commands (`/new-slice` and the rest) as a Claude
+  Code plugin from P13. Until then, point an agent at SSSB's own `CLAUDE.md` and this document.
 
 ### The starter's content is still wired into your UI
 
@@ -245,21 +322,33 @@ of `@sssb/kit`); with `CONTRACT_DATABASE_URL` set it uses that server instead. S
 migrations without one, or the apps' params carry different keys (each `apps/<app>/infra/` hands its own to the same
 `SssbApp` construct, which reads the same keys from every app).
 
-Five of this repository's root scripts are not in the generated root, because the starter does not ship the
+The generated root's scripts are `dev`, `tick` and `start` (your app, by `pnpm --filter <slug>`); `build`,
+`typecheck`, `test:e2e`, `check:e2e` and the demo-static trio, fanned out over `apps/*`; `synth`, over
+`apps/*/infra`; `lint`, `lint:fix`, `test:unit`, `test:coverage`, `test:contract`, `knip` and `jscpd`; `prepare`
+(husky, then `sssb launch-json`); `sssb:doctor`, which is `sssb doctor --app apps/<slug>` because your root does
+not install `@sssb/kit` and doctor starts from a directory that resolves it (one run still checks every app); and
+`verify`. Five of this repository's root scripts are not there because the starter does not ship the
 capabilities behind them:
 `dev:real`, `llm:record`, `ladle`, `build:demo`, `start:demo`. They come back with the thing they
 drive — a Sentry/params-wired `next.config.ts` and a real-mode preflight for `dev:real`, an
 `@sssb/app-config/assistant` registration for `llm:record`, `@ladle/react` plus a `.ladle/` config for the
-workshop, Panda codegen for the demo build. Copy each from the showcase in SSSB's repository if you want it.
-TODO(P12): confirm the generated root's scripts.
+workshop, Panda codegen for the demo build. Copy each from the showcase in SSSB's repository if you want it. The
+rest of this repository's are SSSB's own: the second app's (`dev:starter`, `tick:starter`), releasing
+(`changeset`, `release:check`, `release:notes`, `release-app`, `release-app:init`), `pack-and-consume` and
+`pre:commit`.
 
 One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
 nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 137 published subpaths from its source (39
 counting its tests), so the same setting would start demanding you delete the other 102 — capabilities you merely have not
-reached yet, not dead code. The generated `knip.json` therefore leaves it off (TODO(P12): confirm). knip keeps reporting unused
+reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
-declaration.
+declaration. The generated `knip.json` carries three narrow entries beside the app's entry files: at the root,
+`vitest.contract.config.ts` as an entry (knip's Vitest plugin reads only `vitest.config.ts`) and `esbuild` as an
+ignored dependency (`@sssb/cdk` bundles the migrator with the root's esbuild at synth); in the app,
+`@sssb/app-config`, `@vitejs/plugin-react` and `vite-plugin-singlefile` as ignored dependencies (the seam link the
+framework resolves, and two tools SSSB's presets load from the app's directory). Their reasons are in
+`packages/create/src/files.js`, since JSON holds no comments.
 
 **What the showcase's absence does NOT cost you is the gate.** SSSB's own suite used to be welded to the demo's
 vocabulary — its seed slugs, its `tickets` table, its `export-tickets` job kind, its route tree — so
@@ -270,8 +359,9 @@ and a route tree that exists only to be read by the authorization scan. The root
 resolves `@sssb/app-config/*` there, and `vitest.config.ts` runs SSSB's suite in a `kit` project pointed at
 it. Nothing in that fixture is deletable by adoption, and its vocabulary is deliberately none of the
 apps' — so a framework test that reacquires a dependency on YOUR world fails loudly instead of passing
-by coincidence. `pnpm verify` is green on a freshly generated workspace, end to end: CI's adoption probe generates one
-with the packed `@sssb/create` on every PR and runs its `pnpm verify`.
+by coincidence. `pnpm verify` is green on a freshly generated workspace, end to end: on every PR, SSSB's CI generates
+one with the packed `@sssb/create` from the packed packages and runs its `pnpm verify`, as the required check
+`adoption-probe`.
 
 The one thing that DOES stay app-shaped is the conformance suite, `@sssb/kit/testing` — the authorization scan of
 your route tree, the i18n partition/parity checks, the pglite RLS suite, migration order, the demo-presets check and
@@ -501,9 +591,10 @@ the showcase carries the same route over the same function.
 
 ## Cutover — from hermetic to real
 
-Everything needing credentials, accounts or money is a row in
-[cutover-checklist.md](cutover-checklist.md) — **that file is yours**, pre-filled with the rows
-essentially every instance needs and waiting for your owners and dates. The pattern:
+Everything needing credentials, accounts or money is a row in your workspace's `docs/cutover-checklist.md` —
+**that file is yours**, written by the generator with SSSB's rows (the ones essentially every instance needs) and
+waiting for your owners, dates and proofs. The pattern, from SSSB's own
+[cutover-checklist.md](cutover-checklist.md):
 
 > **Row** = item name · what it is · what unlocks it · the exact verification that was deferred.
 
@@ -513,7 +604,7 @@ watched it talk to the real thing. Keep the discipline when you add rows: **name
 task.** "Set up email" is a task; "a real send through the email port with DKIM/SPF verified on the
 domain" is a proof.
 
-The file opens with a worked row — closed, dated, owned, with a proof column that was thought through
+SSSB's file opens with a worked row — closed, dated, owned, with a proof column that was thought through
 rather than restated. Read it once for the level of detail each row deserves before you fill in your own.
 
 **SSSB needs Postgres 16 or later.** Framework migration
@@ -525,8 +616,10 @@ older server that migration cannot run. Everything SSSB targets already meets it
 
 ## Staying current with SSSB
 
-A workspace `pnpm create @sssb` writes depends on SSSB's packages by version, so an update is `pnpm up` and reading
-the release notes' "Seam changes" ([ADR-0014](adr/0014-distribution-as-versioned-packages.md)). A repository
+A workspace `pnpm create @sssb` writes depends on SSSB's packages by version, so an update is `pnpm up` (every
+`@sssb/*` package together: they share one version), reading the release notes' "Seam changes"
+([ADR-0014](adr/0014-distribution-as-versioned-packages.md)), and raising the commit your
+`.github/workflows/checks.yml` pins SSSB's reusable workflow to, to the one the notes name. A repository
 adopted earlier as a fork of this one takes updates by `git merge` until it switches:
 [ADR-0013](adr/0013-upstream-updates-fork-and-merge.md) records that workflow, including which directories reliably
 conflict.

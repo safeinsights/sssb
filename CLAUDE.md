@@ -95,6 +95,15 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   the tools it configures (Vite's React plugin, next-intl's plugin, jest-dom) from the app, never its own copies. A
   new CLI command is a module in `packages/tools/src/commands/` plus one entry in `bin/sssb.js`'s `COMMANDS`; a new published
   helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
+- **`@sssb/create` (`packages/create`) is the generator** (ADR-0014 P12): `pnpm create @sssb <dir>` runs its bin,
+  `sssb-create`. Plain JavaScript with no dependencies at all, SSSB's packages included (rule 4), because it runs
+  before anything is installed. **Its template is `apps/starter`**, copied from the working tree when the package is
+  packed (`prepack` writes a gitignored `template/` beside the bin, `postpack` removes it; never commit it) and, run
+  from a checkout, built into a temporary directory first, which is how `tests/tooling/create-generate.test.ts`
+  drives it. The
+  workspace around the app is written by `packages/create/src/files.js`; a root file that names nothing of this
+  repository's can be copied instead (`ROOT_FILES` in `packages/create/src/template.js`). Running it by hand:
+  `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting.md`).
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.
 - **Screens are router-agnostic** — framework screens in `packages/kit/src/components`, app
@@ -204,7 +213,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   are derived per checkout by `@sssb/tools/ports`, so parallel agent sessions don't adopt each other's
   dev server; `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last
   also isolates `pnpm test:contract` between worktrees), and `pnpm exec sssb port <service>` reports it. Each app
-  declares its slot in its package.json (`"sssb": { "port": "starter" }`), which `sssb port` reads.
+  declares its slot in its package.json (`"sssb": { "port": "starter" }`), which `sssb port` reads; the slot is a
+  port band, not the app's name, so the app `@sssb/create` writes keeps `starter` too.
 - **A test that needs a scratch directory calls `makeTestTmpDir()` / `makeTestTmpDirAsync()`**
   (`@sssb/tools/testing/tmp-dir`; `tests/support/tmp-dir.ts` re-exports it; the framework's own tests use its
   copy, `packages/kit/src/testing/tmp-dir.ts`) — never `mkdtemp`/`mkdtempSync`, which `sssb/no-direct-mkdtemp`
@@ -225,7 +235,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   dev server's marker is live) and the demo. The ticking is `@sssb/tools/ticker` (start, stop, status), policy-free;
   all of it lives in `packages/tools/src/tick`. Never add a bypass to the route for any of them: it stays `withWebhookSecret`.
 - **A PR that changes what ships to adopters adds a changeset** (`.changeset/README.md` has the template and what
-  counts): every `@sssb/*` package's shipped files (today the kit and the tools) and `apps/starter`. It is the release-note entry, with a "Now deletable" part,
+  counts): every `@sssb/*` package's shipped files and `apps/starter`, the generator's template. It is the release-note entry, with a "Now deletable" part,
   and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset.
 - Before opening a PR, run `/pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.
@@ -271,10 +281,16 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   exists and passes where it does not (it then names SSSB's reference app, and a doc merged in from
   upstream must not turn an adopter's gate red); write `apps/<app>/…` when you mean the reader's own app.
 - **An adopter's workspace is generated, not forked**: `pnpm create @sssb <dir>` (`@sssb/create`, ADR-0014 P12)
-  writes it from `apps/starter` plus generated root config, renaming the app on the way. So anything in the starter
-  that names the app's directory or the product's display name is part of the generator's rewrite — and **never
-  hard-code the product name in a test**; specs read the app's own catalog via `apps/*/tests/catalog.ts`. See
-  `docs/adopting.md`.
+  writes it from `apps/starter` plus generated root config, renaming the app on the way. The generator renames
+  only the app's identity, each in one place that `packages/create/src/generate.js` names: `APP_SLUG` and the
+  `<slug>_session` cookie in `apps/<app>/config/app.ts`, `welcome.appName` and `welcome.title` in
+  `apps/<app>/messages/{en,es}.json`, the title in `apps/<app>/src/app/[locale]/layout.tsx` and in
+  `apps/<app>/src/demo-static/index.html`, and the app's and its infra's package names. Anything new in the starter that names the app's directory or the product's display name must go through
+  one of those (or become a new rename there, which must find its text exactly once), and **never hard-code the
+  product name in a test**; specs read the app's own catalog via `apps/*/tests/catalog.ts`. Everything else is
+  copied as written, so **starter prose must read true in an adopter's tree**: a comment that names the showcase,
+  "the starter" or a path into this repository (the framework's source tree; say `@sssb/kit/…`) fails
+  `tests/tooling/create-generate.test.ts`. See `docs/adopting.md`.
 - At the end of a slice or before a PR, run the `doc-steward` agent on the branch diff — it
   proposes updates to development-approach, an ADR addendum, decision-log, build-notes, and the
   cutover checklist so the docs keep telling the truth. It also reports the net line delta of each doctrine doc
