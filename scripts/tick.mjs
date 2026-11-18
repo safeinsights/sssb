@@ -20,7 +20,7 @@ export const TICK_APPS = ['showcase', 'starter']
 
 export const TICK_PATH = '/api/webhooks/cron'
 
-/** The route answers in well under a second on a warm server; a cold `next dev` compiles it on first hit. */
+/** A cold `next dev` compiles the route on its first hit, so the default is generous. */
 export const DEFAULT_TIMEOUT_SECONDS = 60
 
 /** Bounds that keep `AbortSignal.timeout` meaningful: a value that rounds to 0 times out at once, a huge one throws. */

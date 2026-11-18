@@ -1,6 +1,6 @@
 // A marker file that says "a dev ticker is running against this app's data directory".
 //
-// Why it exists: Playwright's `reuseExistingServer` (on off CI) ADOPTS a dev server already listening on the
+// Why it exists: Playwright's `reuseExistingServer` (everywhere but CI) ADOPTS a dev server already listening on the
 // app's port. A developer who ran `DEV_TICK_SECONDS=30 pnpm dev` and then `pnpm test:e2e` in the same checkout would
 // therefore run the suite against a server that spawns jobs and drains deliveries every 30 seconds, which is exactly
 // what the suite expects not to happen. Blanking the variable for the server Playwright starts cannot reach a server it

@@ -40,8 +40,8 @@ terminal.
   it (or must tick its own world clock, which is a different feature).
 - **The marker must follow the server's ticker**, not the wrapper's: call `createTicker` with `markerFile` so a ticker
   started from the UI also keeps `pnpm test:e2e` from adopting that server. Its pid is the dev server's.
-- **Two sources of ticking** (the `DEV_TICK_SECONDS` wrapper and the UI) must not run at once. The marker says which is
-  live; the control should show it and refuse to start a second.
+- **Two sources of ticking** (the `DEV_TICK_SECONDS` wrapper and the UI) must not run at once. The marker (pid and interval) shows
+  that one is live; the control should read it and refuse to start a second.
 - **Copy through next-intl** in both catalogs (kit's Simulator namespace), per the no-hard-coded-strings rule.
 
 ## Where it lands

@@ -3067,11 +3067,10 @@ This is the "next step if it is wanted" that "`pnpm dev` without the Simulator h
   `scripts/dev-tick.mjs` in both apps; with `DEV_TICK_SECONDS` unset it only starts the command, forwards SIGINT, SIGTERM and
   SIGHUP, and exits with its code. (SIGINT is forwarded even though a terminal's Ctrl-C also reaches the server directly:
   the wrapper is now the pid a supervisor holds, and swallowing it left `kill -INT` unable to stop `pnpm dev`; found by
-  review, and the SIGINT case seen failing with it unforwarded.) Putting it in the app would have meant reading `process.env` in `src` (lint-banned)
-  or an `instrumentation` hook that also runs in the production build. The name is a count of seconds rather than a
+  review, and the SIGINT case seen failing with it unforwarded.) Putting it in the app would have meant reading `process.env` in `src`, which is lint-banned. The name is a count of seconds rather than a
   `=1` flag like `E2E_BUILD` and `DEMO_MODE` because those pick a build and this takes a number; anything that is not a
-  whole number of 1 to 86400 is an error before the server starts, not a silent no (a larger one overflows a timer and
-  would tick continuously).
+  whole number of 1 to 86400 is an error before the server starts, not a silent no (a typo for another unit, and far below the ~24.8 days
+  where `setTimeout`'s 32-bit limit overflows and the loop would tick continuously; seen with 9999999).
 - **Off by default, and why.** (1) The showcase's Simulator controls the world clock in a demo: a ticker firing digests
   on real time underneath it changes when a presenter sees them fire. (2) The e2e suites expect a scheduler that does
   nothing until a test asks, so a background tick could land between a test's two steps. (3) Hermetic dev should not
@@ -3085,8 +3084,9 @@ This is the "next step if it is wanted" that "`pnpm dev` without the Simulator h
   (`reuseExistingServer`), so a ticking server you left running would be tested against. While a ticker runs it
   leaves `<data dir>/dev-ticker.json` (pid, interval), and both playwright configs throw at load if that pid is alive;
   a marker whose process is gone (a SIGKILLed wrapper) is ignored. Found by review; a test loads the real configs both
-  ways. The marker lives in the data directory, which e2e prep wipes: a wipe under a running ticker is already a broken
-  setup, and the marker is then simply absent.
+  ways. The marker lives in the data directory, so wiping `.data` under a running ticker removes it too; that is already a
+  broken setup (the showcase's destructive spec wipes `.data` itself, `apps/showcase/playwright.config.ts:72`), and the
+  guard then has nothing to see.
 - **The ticker is one module with start, stop and status, for a Simulator control later.** `scripts/ticker.mjs`
   (`createTicker`) owns the loop, the interval bounds, the dedup of repeated errors and the marker; it reads no
   environment. `scripts/dev-tick.mjs` is the policy for `pnpm dev` and its only caller. JP asked whether the Simulator

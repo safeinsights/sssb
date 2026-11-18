@@ -94,7 +94,8 @@ async function main(argv) {
 
     // This process is now the pid a supervisor holds (it was `next` itself when the script was a bare `next dev`), so
     // every signal that stopped the server has to reach it. A terminal's Ctrl-C reaches the child directly as well, so
-    // `next` sees SIGINT twice; it exits on the first.
+    // `next` sees SIGINT twice, which it tolerates (checked: SIGINT to the whole process group of `pnpm dev` with a real
+    // `next dev` exited 0, removed the marker and left no process behind).
     for (const name of /** @type {const} */ (['SIGINT', 'SIGTERM', 'SIGHUP'])) process.on(name, () => child.kill(name))
 
     const origin = `http://localhost:${portFor(/** @type {'showcase' | 'starter'} */ (parsed.app))}`

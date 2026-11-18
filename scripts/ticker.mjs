@@ -10,7 +10,7 @@
 import { removeTickerMarker, writeTickerMarker } from './ticker-marker.mjs'
 import { summarizeTick, tickDidWork, tickOnce } from './tick.mjs'
 
-/** A tick is a few queries; under a second is a typo for a unit. Over a day is a typo for another: it also overflows a timer. */
+/** A tick is a few queries; under a second is a typo for a unit. Over a day is a typo for another unit, and far below the ~24.8 days (2^31 ms) where `setTimeout` overflows and the loop would spin. */
 export const MIN_INTERVAL_SECONDS = 1
 export const MAX_INTERVAL_SECONDS = 86_400
 

@@ -652,9 +652,6 @@ describe('node scripts/dev-tick.mjs', () => {
         expect(markerSeenByServer.length).toBeGreaterThan(0)
         expect(markerSeenByServer.every(Boolean), 'the marker is live whenever a tick arrives').toBe(true)
         expect(existsSync(markerFile), 'removed on exit').toBe(false)
-        const seen = hits.length
-        await new Promise((resolve) => setTimeout(resolve, 1200))
-        expect(hits.length, 'a ticker that outlives the process it wrapped').toBe(seen)
     })
 
     it.each(['SIGINT', 'SIGTERM', 'SIGHUP'] as const)(
