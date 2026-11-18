@@ -75,17 +75,43 @@ async function eslintOf(appDir) {
 function* sourceFiles(dir, linkedDirs, atRoot = true) {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name)
+        const skipped = NEVER_WALKED.has(entry.name) || (atRoot && ROOT_OUTPUTS.has(entry.name))
         if (entry.isDirectory()) {
-            if (NEVER_WALKED.has(entry.name) || (atRoot && ROOT_OUTPUTS.has(entry.name))) continue
-            yield* sourceFiles(full, linkedDirs, false)
+            if (!skipped) yield* sourceFiles(full, linkedDirs, false)
         } else if (entry.isSymbolicLink()) {
             const target = existsSync(full) ? statSync(full) : undefined
-            if (target?.isDirectory()) linkedDirs.push(full)
-            else if (target?.isFile() && LINTED.has(extname(entry.name))) yield full
+            if (target?.isDirectory()) {
+                if (!skipped) linkedDirs.push(full)
+            } else if (target?.isFile() && LINTED.has(extname(entry.name))) yield full
         } else if (entry.isFile() && LINTED.has(extname(entry.name))) {
             yield full
         }
     }
+}
+
+/**
+ * Whether a symlinked directory holds a file the preset would lint, read through the link's own path (as ESLint would
+ * name it, had it entered). Each real directory is read once, so a link cycle ends.
+ * @param {string} dir
+ * @param {import('eslint').ESLint} preset
+ * @param {Set<string>} seen
+ * @returns {Promise<boolean>}
+ */
+async function holdsLintedFiles(dir, preset, seen = new Set()) {
+    const real = realpathSync(dir)
+    if (seen.has(real)) return false
+    seen.add(real)
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (NEVER_WALKED.has(entry.name)) continue
+        const full = join(dir, entry.name)
+        const target = entry.isSymbolicLink() ? (existsSync(full) ? statSync(full) : undefined) : entry
+        if (target?.isDirectory()) {
+            if (await holdsLintedFiles(full, preset, seen)) return true
+        } else if (target?.isFile() && LINTED.has(extname(entry.name)) && !(await preset.isPathIgnored(full))) {
+            return true
+        }
+    }
+    return false
 }
 
 /**
@@ -94,7 +120,7 @@ function* sourceFiles(dir, linkedDirs, atRoot = true) {
  * @returns {Promise<{ problems: string[], files: number, probes: number }>}
  */
 export async function checkFences({ appDir: given, ESLint: passed }) {
-    const appDir = realpathSync(resolve(given))
+    const appDir = realpathSync.native(resolve(given))
     const ESLint = passed ?? (await eslintOf(appDir))
     const composed = new ESLint({ cwd: appDir })
     const noInlineConfig = new ESLint({ cwd: appDir, allowInlineConfig: false })
@@ -157,7 +183,9 @@ export async function checkFences({ appDir: given, ESLint: passed }) {
         }
     }
     for (const dir of linkedDirs) {
-        problems.push(`${at(dir)}: a symlinked directory, which ESLint does not enter, so no fence sees its files`)
+        if (await holdsLintedFiles(dir, preset)) {
+            problems.push(`${at(dir)}: a symlinked directory, which ESLint does not enter, so no fence sees its files`)
+        }
     }
     // A config that does not load fails every lint the steps below would run; the problems above already say so.
     if (unloadable) return { problems, files: fenced.size, probes: 0 }

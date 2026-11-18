@@ -457,3 +457,45 @@ console.log(JSON.stringify({ excepted: excepted.messages.map((m) => m.ruleId), s
         expect(stripe).toContain('sssb/no-vendor-import')
     })
 })
+
+// Round 3 of review.
+describe('what check-fences leaves alone, and what it no longer misses', () => {
+    it('leaves a symlinked directory alone when ESLint would lint nothing in it', async () => {
+        const outside = realpathSync(makeTestTmpDir('check-fences-assets-'))
+        writeFileSync(path.join(outside, 'logo.png'), '')
+        const appDir = scratchApp('')
+        mkdirSync(path.join(appDir, 'public'), { recursive: true })
+        symlinkSync(outside, path.join(appDir, 'public/images'))
+        symlinkSync(outside, path.join(appDir, '.data'))
+        expect(await problemsOf(appDir)).toEqual([])
+    })
+
+    it("lets an exception name a screen's test, which keeps the tenancy ban otherwise", async () => {
+        const appDir = scratchApp('', {
+            'src/components/card.test.tsx': 'export const load = (db) => db.getDb()\n',
+            'lint-exceptions.mjs':
+                "export default { 'sssb/no-raw-db-handle': [{ file: 'src/components/card.test.tsx', reason: 'seeds rows' }] }\n",
+        })
+        expect(await problemsOf(appDir)).toEqual([])
+    })
+
+    it("keeps sssb/no-jsx-literals when react's own rule object is rewritten", async () => {
+        const rule = (await import('eslint-plugin-react')).default.rules['jsx-no-literals'] as { create: unknown }
+        const original = rule.create
+        rule.create = () => ({})
+        try {
+            const appDir = scratchApp('')
+            const [result] = await new ESLint({ cwd: appDir }).lintText('export const C = () => <p>Saved</p>\n', {
+                filePath: path.join(appDir, 'src/components/c.tsx'),
+            })
+            expect(result.messages.map((m) => m.ruleId)).toContain('sssb/no-jsx-literals')
+        } finally {
+            rule.create = original
+        }
+    })
+
+    it('refuses a config that edits the vendor list it shares with the rules', async () => {
+        const { vendorSdkPattern } = await import('../../packages/eslint-plugin/src/patterns.js')
+        expect(() => (vendorSdkPattern.group as string[]).splice(0, 1)).toThrow(TypeError)
+    })
+})

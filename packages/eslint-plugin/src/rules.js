@@ -136,6 +136,8 @@ const a11yLiteral = syntaxBan({
 // takes no options; it runs react's rule with these.
 const JSX_NO_LITERALS_OPTIONS = [{ noStrings: true, ignoreProps: true, allowedStrings: [] }]
 const reactJsxNoLiterals = reactPlugin.rules['jsx-no-literals']
+// Taken when the plugin loads: the rule object is eslint-plugin-react's, which an app's config can reach and rewrite.
+const reactJsxNoLiteralsCreate = reactJsxNoLiterals.create
 /** @type {import('eslint').Rule.RuleModule} */
 const jsxLiterals = {
     meta: {
@@ -146,7 +148,7 @@ const jsxLiterals = {
     },
     create(context) {
         // Every other property (report, sourceCode, filename, …) is the real context's, through the prototype.
-        return reactJsxNoLiterals.create(Object.create(context, { options: { value: JSX_NO_LITERALS_OPTIONS } }))
+        return reactJsxNoLiteralsCreate(Object.create(context, { options: { value: JSX_NO_LITERALS_OPTIONS } }))
     },
 }
 

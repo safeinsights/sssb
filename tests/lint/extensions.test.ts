@@ -191,6 +191,17 @@ describe('the carve-outs still let through what they were made for, in every spe
     })
 
     // Panda's generated styled-system is ignored, and only what Panda 2 writes there: `.js` and `.d.ts`.
+    // Build and test output is ignored at the app's root only (the preset's ignores, and the root config's, are
+    // anchored): the same names deeper in the app are source a route can import.
+    it.each(['coverage', 'test-results', 'playwright-report', 'dist-demo', '.next', '.data'])(
+        'src/%s/ is fenced, though the app-root directory of that name is not',
+        async (dir) => {
+            const file = `${APP}/src/${dir}/kv.ts`
+            expect(fired(await lint(file, readsEnv(file)), PROCESS_ENV)).toBe(1)
+            expect(await isIgnored(`${APP}/${dir}/kv.ts`)).toBe(true)
+        },
+    )
+
     it.each(['css.js', 'css.d.ts'])('generated styles (%s) are not linted', async (name) => {
         expect(await isIgnored(`${APP}/src/styles/generated/css/${name}`)).toBe(true)
     })

@@ -9,7 +9,7 @@ upgrade to it (2026-11-17) moved the hole from `.mjs` to `.js`. The name is kept
 
 ## What is true
 
-The app preset (`packages/eslint-plugin/src/app-config.js`) ignores `src/styles/generated/**/*.{js,d.ts}` in every
+The app preset (`packages/eslint-plugin/src/app-config.js`) ignores `apps/<app>/src/styles/generated/**/*.{js,d.ts}` in every
 app globally: that is what Panda's
 codegen writes there, and its output does not lint. The directory is committed, and `panda codegen` runs
 without `--clean`, so a hand-written `.js` file in it survives regeneration and is never linted. A route can

@@ -48,24 +48,22 @@ const REPO = { root: import.meta.dirname }
 /** @type {import('eslint').Linter.Config[]} */
 const eslintConfig = [
     {
+        // The repo's own output, at the repo's root. Each app's build and test output (.next, .data, dist-demo,
+        // coverage, test-results, playwright-report, .ladle/dist, next-env.d.ts) is the preset's to ignore, at the app's
+        // root only: the same names deeper in an app (`src/coverage/`) are source, and fenced.
         ignores: [
             '**/node_modules/**',
-            '**/.next/**',
-            '**/.data/**',
             'out/**',
             'build/**',
             'dist/**',
-            '**/next-env.d.ts',
             '.*',
             '!.ladle',
             '!.ladle/**',
-            '**/.ladle/dist/**',
-            '**/test-results/**',
-            '**/playwright-report/**',
-            '**/coverage/**',
+            'coverage/**',
+            'test-results/**',
+            'playwright-report/**',
             'spikes/*/node_modules/**',
             'infra/cdk.out/**',
-            '**/dist-demo/**',
         ],
     },
     js.configs.recommended,

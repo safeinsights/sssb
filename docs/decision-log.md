@@ -3317,3 +3317,21 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
   from each app, and the sibling package `gate` uses `@sssb/tools`' helper with no framework installed.
 - **knip** cannot see what a preset loads from the app or what `@sssb/tools` imports from its optional peers; the
   narrow entries are in `docs/build-notes.md`.
+- **What `sssb check-fences` defends against: an adopter's config weakening a fence by ACCIDENT.** Three review rounds
+  and an independent reviewer (Fable) on "can a config composed after the preset silently switch off or narrow a
+  fence?" closed every plain-configuration case they found: a rule turned off or down, narrowed to a directory, an
+  `ignores`, a nested config file, a processor or parser for one directory, an app's vendor list negated or swapped,
+  inline directives in every form ESLint reads, an `eslint-suppressions.json` (the ESLint CLI applies it, the ESLint
+  class does not, so check-fences now reports every fence finding in the app's own files, at any severity), symlinked
+  files and directories, and build-output names deeper in `src/`. What is left needs config code written to deceive,
+  and each case keys on the probes' public file name: a parser that borrows the real one's `meta`, the preset's blocks
+  rewritten to bind `sssb` to a look-alike plugin, a module the rules read rewritten. These are OUT OF SCOPE (manager,
+  2026-11-18): a config that is written to deceive can as well delete the preset, and no lint-time check stops that.
+  The plugin, its rules, its patterns and react's `create` are frozen or captured anyway, because that was cheap. The
+  stronger check, a probe at every real file's path, is `.claude/future-tasks/check-fences-real-file-probes.md`:
+  rejected for now because it adds a third lint per file to a check that already takes about 6.5s on the showcase.
+  Also not covered, by nature: flags on the app's lint command (any fence finding is still reported by check-fences,
+  whatever the command does with it), and a config that behaves differently when it detects which tool loaded it.
+- **Typed linting cannot pass check-fences yet.** Its probe files are virtual and outside the app's TypeScript
+  project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
+  with that reason (a false red, not a hole). Pages lints untyped today.

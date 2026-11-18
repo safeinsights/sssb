@@ -284,3 +284,30 @@ export const a11yLiteralSelector = {
     message:
         'aria-label/placeholder/title/alt carry user-visible copy — route them through next-intl (t()), never a string literal (ADR-0008).',
 }
+
+// Every pattern frozen, its lists included: the rules read them when they run, and an app's config is code that could
+// reach this module by its file path.
+for (const pattern of [
+    vendorSdkPattern,
+    appRealAdapterPattern,
+    appRealAdapterStaticPattern,
+    kitRealAdapterPattern,
+    nextFontPattern,
+    appCodePattern,
+    bareTraversalPattern,
+    nodeModulesPathPattern,
+    coreFrameworkPattern,
+    getDbSelector,
+    getDbComputedSelector,
+    getDbDestructureSelector,
+    getDbStringSelector,
+    processEnvSelector,
+    runModeEnvSelector,
+    runModeEnvDestructureSelector,
+    appRealAdapterDynamicSelector,
+    a11yLiteralSelector,
+]) {
+    if (pattern.group) Object.freeze(pattern.group)
+    Object.freeze(pattern)
+}
+Object.freeze(appCodePatterns)

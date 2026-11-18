@@ -254,6 +254,7 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
         }),
         at('tenancy-in-screen-tests', {
             files: ['app', 'components', 'demo-static'].map((dir) => `${src(dir)}/${TEST_FILES}`),
+            ignores: exceptions['sssb/no-raw-db-handle'],
             plugins: sssb,
             rules: { 'sssb/no-raw-db-handle': 'error' },
         }),
