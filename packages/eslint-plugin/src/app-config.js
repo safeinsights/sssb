@@ -151,6 +151,14 @@ function resolveRoot(root) {
     return { basePath: parent, prefix: '*/', apps }
 }
 
+/**
+ * `dir` as a glob Next's `settings.next.rootDir` matches to exactly that directory. Next replaces every backslash with
+ * a slash before fast-glob reads it, so a backslash escape becomes a path separator; a one-character class (`[(]`)
+ * survives. `!` stays as it is: `[!]` would be a negated class, and a `!` past the start of a pattern is literal.
+ * @param {string} dir
+ */
+const nextRootDir = (dir) => dir.replace(/[*?{}()+@#[\]]/g, (char) => `[${char}]`)
+
 // Next loads its config from these four names and no other (CONFIG_FILES in next's shared/lib/constants).
 const NEXT_CONFIG = 'next.config.{ts,mts,js,mjs}'
 // The files that legitimately reach a vendor directly, under an app prefix: Next's config, the contract tests, and the
@@ -245,8 +253,9 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             rules: nextPlugin.configs.recommended.rules,
             // Where Next's rules look for each app's `app/` and `pages/` (`no-html-link-for-pages`): the apps, not the
             // directory ESLint runs from, which from the workspace root has neither, and warns "Pages directory cannot
-            // be found". Each is a glob to Next (fast-glob), so a special character in a path is escaped.
-            settings: { next: { rootDir: apps.map((app) => app.dir.replace(GLOB_SPECIALS, '\\$&')) } },
+            // be found". Each is a glob to Next (fast-glob), which turns every backslash into a slash first, so a
+            // special character in a path is escaped as a one-character class instead (nextRootDir).
+            settings: { next: { rootDir: apps.map((app) => nextRootDir(app.dir)) } },
         }),
 
         // ---- the fences ----------------------------------------------------------------------------------------

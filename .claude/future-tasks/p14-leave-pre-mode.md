@@ -33,3 +33,6 @@ At P14, in the same PR that removes `private` from the fixed group:
    `.changeset/*.md`.
 4. A test that runs the real CLI from a group at `0.2.0-rc.3` with `pre/` changesets to `0.2.0`, through `prepare` and
    `verify-release`, as `tests/tooling/release.test.ts` does for candidates.
+5. Pack and consume's pages shape proves a release candidate's install recipe (`notesRecipe` in
+   `scripts/pack-and-consume.mjs`, from `candidateNotes`, which only an rc has) and says it is skipped for any other
+   version. A plain release's install lines (from npm, by version) need their own proof in its place.

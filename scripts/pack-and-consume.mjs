@@ -1277,10 +1277,15 @@ function serveTarballs(port) {
  * one workspace package, the URLs pointed at a local server holding the same files, and nothing else of SSSB's: no
  * `overrides`, and pnpm's default `blockExoticSubdeps` (on in pnpm 11). A package installed by URL that depended on
  * another SSSB package by version would fail here, looked for in the registry or, overridden to a URL, refused as an
- * exotic subdependency (pages' finding on v0.2.0-rc.1). The workspace keeps the generated one's `allowBuilds`, as an
- * adopter's does; `@sssb/cdk`'s peer must resolve to the package's own `@sssb/tools`.
+ * exotic subdependency (pages' finding on v0.2.0-rc.1). The workspace keeps the generated one's supply-chain guard
+ * (`minimumReleaseAge`); `@sssb/cdk`'s peer must resolve to the package's own `@sssb/tools`. Only a release candidate
+ * has these notes (`candidateNotes` refuses any other version), so past pre mode (P14) the step says it is skipped.
  */
 function notesRecipe() {
+    if (!/-rc\.\d+$/.test(PACKED_VERSION)) {
+        console.log(`${PACKED_VERSION} is not a release candidate, which alone has these notes: skipped`)
+        return
+    }
     const root = path.join(BASE, 'notes-root')
     rmSync(root, { recursive: true, force: true })
     mkdirSync(path.join(root, 'docs', 'releases'), { recursive: true })
@@ -1306,11 +1311,14 @@ function notesRecipe() {
         const sssb = JSON.parse(block[1].replaceAll(released, `http://127.0.0.1:${notesPort}/`))
         const dir = path.join(BASE, 'notes-recipe')
         rmSync(dir, { recursive: true, force: true })
-        const allowBuilds = /\nallowBuilds:\n(?: {4}.*\n)+/.exec(
+        // The generated workspace's supply-chain guard, as an adopter's workspace has it: this job's tarballs become a
+        // release's assets, so nothing published in the last days is installed here, and no install script runs
+        // (`--ignore-scripts`: the step checks resolution, not builds).
+        const guard = /\nminimumReleaseAge: .*\nminimumReleaseAgeExclude:\n(?: {4}.*\n)+/.exec(
             readFileSync(path.join(WS, 'pnpm-workspace.yaml'), 'utf8'),
         )
-        if (!allowBuilds) fail('the generated pnpm-workspace.yaml has no allowBuilds block to keep')
-        write(path.join(dir, 'pnpm-workspace.yaml'), `packages:\n    - infra\n${allowBuilds[0]}`)
+        if (!guard) fail('the generated pnpm-workspace.yaml has no minimumReleaseAge guard to keep')
+        write(path.join(dir, 'pnpm-workspace.yaml'), `packages:\n    - infra\n${guard[0]}`)
         write(
             path.join(dir, 'package.json'),
             `${JSON.stringify({ name: 'notes-recipe', private: true, packageManager: readJson(path.join(REPO, 'package.json')).packageManager }, null, 4)}\n`,
@@ -1320,7 +1328,7 @@ function notesRecipe() {
             path.join(dir, 'infra', 'package.json'),
             `${JSON.stringify({ name: 'infra', private: true, dependencies: { ...sssb, 'aws-cdk-lib': infra['aws-cdk-lib'], constructs: infra.constructs } }, null, 4)}\n`,
         )
-        run('pnpm', ['install'], { cwd: dir })
+        run('pnpm', ['install', '--ignore-scripts'], { cwd: dir })
         const at = (/** @type {string} */ name) => realpathSync(path.join(dir, 'infra', 'node_modules', '@sssb', name))
         const peer = realpathSync(path.join(path.dirname(at('cdk')), 'tools'))
         if (peer !== at('tools')) fail(`@sssb/cdk's peer @sssb/tools is ${peer}, not the package's own ${at('tools')}`)

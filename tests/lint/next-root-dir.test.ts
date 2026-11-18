@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import sssb from '@sssb/eslint-plugin'
 import { describe, expect, it } from 'vitest'
+import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
  * Next's `no-html-link-for-pages` looks for an app's `app/` and `pages/` under `settings.next.rootDir`, and without it
@@ -36,13 +37,31 @@ describe("Next's root dir", () => {
         60_000,
     )
 
-    it('names each app, escaped as a glob, in the block that runs Next’s rules', async () => {
+    it('names each app in the block that runs Next’s rules, as the directories Next then finds', async () => {
         const configs = await sssb.configs.app({ root: path.join(repoRoot, 'apps', '*') })
-        const next = configs.find((block) => block.name === 'sssb/app/next')
-        expect(next?.settings?.next).toEqual({ rootDir: APPS.sort().map((app) => path.join(repoRoot, 'apps', app)) })
+        expect(nextRootDirs(configs)).toEqual(APPS.sort().map((app) => path.join(repoRoot, 'apps', app)))
         const single = await sssb.configs.app({ root: path.join(repoRoot, 'apps', APPS[0]!) })
-        expect(single.find((block) => block.name === 'sssb/app/next')?.settings?.next).toEqual({
-            rootDir: [path.join(repoRoot, 'apps', APPS[0]!)],
-        })
+        expect(nextRootDirs(single)).toEqual([path.join(repoRoot, 'apps', APPS[0]!)])
+    })
+
+    // Next turns every backslash into a slash before its glob reads the root dir, so the preset escapes a special
+    // character as a one-character class, which survives that.
+    it.each(['my(app)', 'a+b@c#d', 'x[1]{2}', 'w!x', 's*t?u'])('finds an app at a path with %s in it', async (name) => {
+        const app = path.join(realpathSync(makeTestTmpDir('next-root-dir-')), name)
+        mkdirSync(path.join(app, 'src', 'app'), { recursive: true })
+        writeFileSync(path.join(app, 'package.json'), '{ "name": "special" }\n')
+        expect(nextRootDirs(await sssb.configs.app({ root: app }))).toEqual([app])
     })
 })
+
+/** The directories Next's own `getRootDirs` finds for the `settings.next.rootDir` the preset's `next` block sets. */
+function nextRootDirs(configs: { name?: string; settings?: Record<string, unknown> }[]): string[] {
+    const next = configs.find((block) => block.name === 'sssb/app/next')
+    const plugin = createRequire(path.join(repoRoot, 'packages/eslint-plugin/package.json')).resolve(
+        '@next/eslint-plugin-next',
+    )
+    const { getRootDirs } = require(path.join(path.dirname(plugin), 'utils', 'get-root-dirs.js')) as {
+        getRootDirs: (context: { cwd: string; settings: Record<string, unknown> }) => string[]
+    }
+    return getRootDirs({ cwd: '/nowhere', settings: next?.settings ?? {} }).map((dir) => path.resolve(dir))
+}
