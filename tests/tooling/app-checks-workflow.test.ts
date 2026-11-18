@@ -155,6 +155,43 @@ describe('app-checks.yml, the reusable workflow', () => {
         }
     })
 
+    // What a work step runs with is part of what it runs: an `APP` left pointing at one app runs every shard against
+    // it with every shard name intact. So each work step's keys and environment are pinned, as all-checks' is, and no
+    // job carries `defaults` (a `run.shell` there wraps every step) or checks out anything but the commit under test.
+    it('pins each work step’s environment, all-checks’ step, and what every job checks out', () => {
+        const ENV: Record<string, Record<string, string>> = {
+            'lint-typecheck-unit': { APPS: '${{ inputs.apps }}' },
+            contract: { CONTRACT_DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/postgres' },
+            discover: { APPS: '${{ inputs.apps }}' },
+            e2e: {
+                APP: '${{ matrix.shard.app }}',
+                PROJECT: '${{ matrix.shard.project }}',
+                NEXT_TELEMETRY_DISABLED: '1',
+                E2E_BUILD: '1',
+            },
+            'demo-static': { APP: '${{ matrix.demo.app }}' },
+            synth: { SYNTH: '${{ inputs.synth }}' },
+        }
+        for (const [id, job] of Object.entries(reusable.jobs)) {
+            expect((job as Record<string, unknown>)['defaults'], id).toBeUndefined()
+            for (const step of job.steps ?? []) {
+                if (step.uses?.startsWith('actions/checkout@')) {
+                    expect((step as Record<string, unknown>)['with'], `${id}: checkout`).toBeUndefined()
+                }
+            }
+            const work = (job.steps ?? []).filter((step) => step.run?.trim().startsWith('pnpm exec sssb ci '))
+            if (id === 'all-checks') continue
+            expect(work.length, id).toBe(1)
+            const keys = Object.keys(work[0]!).filter((key) => key !== 'id')
+            expect(keys.sort(), id).toEqual(['env', 'run'])
+            expect(work[0]!.env, id).toEqual(ENV[id])
+        }
+        const judge = reusable.jobs['all-checks']!.steps!
+        expect(judge.length).toBe(1)
+        expect(Object.keys(judge[0]!).sort()).toEqual(['env', 'name', 'run'])
+        expect(judge[0]!.env).toEqual({ NEEDS: '${{ toJson(needs) }}', SYNTH: '${{ inputs.synth }}' })
+    })
+
     // The matrices come from `discover`, never a hand-written list that an added app would not be in.
     it('takes both matrices from discover', () => {
         expect(reusable.jobs['e2e']!.strategy).toEqual({
@@ -279,6 +316,27 @@ describe('the check names the rulesets require', () => {
             ...demos.map((d) => `sssb / demo-static (${d.name})`),
         ]
         expect(names.sort()).toEqual(expected.sort())
+    })
+
+    // In SSSB's own tree the per-app names are pinned literally too: the rulesets require them by name, and a renamed
+    // Playwright project or app would otherwise change them with this test still green.
+    it("are, in SSSB's own tree, the five the rulesets name", () => {
+        const apps = readdirSync(path.join(ROOT, 'apps'))
+            .filter((app) => existsSync(path.join(ROOT, 'apps', app, 'package.json')))
+            .sort()
+        if (apps.join(' ') !== 'showcase starter') return
+        expect(
+            [
+                ...shards.map((s) => `sssb / e2e (${s.name})`),
+                ...demos.map((d) => `sssb / demo-static (${d.name})`),
+            ].sort(),
+        ).toEqual([
+            'sssb / demo-static (showcase)',
+            'sssb / demo-static (starter)',
+            'sssb / e2e (showcase)',
+            'sssb / e2e (showcase-destructive)',
+            'sssb / e2e (starter)',
+        ])
     })
 
     // The per-app names come from the matrix jobs' `name:` templates, which are pinned here like the fixed names.

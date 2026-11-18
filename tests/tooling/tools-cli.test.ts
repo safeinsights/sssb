@@ -29,8 +29,8 @@ function sssb(cwd: string, args: string[], env: Record<string, string> = {}): Ru
     const result = spawnSync(process.execPath, [SSSB, ...args], {
         cwd,
         encoding: 'utf8',
-        // GITHUB_OUTPUT is the CI runner's, never this test's.
-        env: { ...process.env, GITHUB_OUTPUT: '', ...env },
+        // GITHUB_OUTPUT and GITHUB_ACTIONS are the CI runner's, never this test's: a warning prints as plain text here.
+        env: { ...process.env, GITHUB_OUTPUT: '', GITHUB_ACTIONS: '', ...env },
     })
     return { status: result.status, stdout: result.stdout, stderr: result.stderr }
 }
@@ -284,7 +284,6 @@ describe('sssb ci', () => {
             path.join(root, 'apps/beta/playwright.config.ts'),
             "export default { projects: [{ name: 'chromium' }] }\n",
         )
-        app(root, 'apps/gamma', { name: 'gamma' }) // no Playwright config: no shard
 
         const result = sssb(root, ['ci', 'e2e-shards'])
 
@@ -322,6 +321,16 @@ describe('sssb ci', () => {
             { name: 'alpha', app: 'apps/alpha', run: 'pnpm exec sssb ci e2e --app apps/alpha' },
         ])
         expect(readFileSync(output, 'utf8')).toBe(`earlier=1\nmatrix=${matrix}\n`)
+    })
+
+    it('fails, naming the app, when an app has no Playwright config, rather than leaving it out of the matrix', () => {
+        const root = workspace('ci-no-config')
+        app(root, 'apps/alpha', { name: 'alpha' })
+        write(path.join(root, 'apps/alpha/playwright.config.ts'), 'export default {}\n')
+        app(root, 'apps/gamma', { name: 'gamma' })
+        const result = sssb(root, ['ci', 'e2e-shards'])
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('apps/gamma has no Playwright config')
     })
 
     it('exits 1 for an unknown job', () => {
@@ -467,6 +476,20 @@ describe('sssb ci, the reusable workflow’s jobs', () => {
         const { root, ran } = scripted('ci-contract', { 'test:contract': 3 })
         expect(sssb(root, ['ci', 'contract']).status).toBe(3)
         expect(ran()).toEqual(['test:contract'])
+    })
+
+    it('`sssb.apps` is read as `--apps` is: normalised, each app once, and an apps/<name> it leaves out is named', () => {
+        const root = workspace('ci-sssb-apps', { sssb: { apps: ['./apps/alpha/', 'apps/alpha'] } })
+        for (const name of ['alpha', 'beta']) {
+            app(root, `apps/${name}`, { name, scripts: { 'build:demo-static': 'vite build' } })
+            write(path.join(root, `apps/${name}/playwright.config.ts`), 'export default {}\n')
+        }
+        const result = sssb(root, ['ci', 'matrix'])
+        expect(result.status).toBe(0)
+        expect(JSON.parse(/^static demos: (.*)$/m.exec(result.stdout)?.[1] ?? '[]')).toEqual([
+            { name: 'alpha', app: 'apps/alpha' },
+        ])
+        expect(result.stdout).toContain('WARNING: `sssb.apps` in the root package.json leaves out apps/beta')
     })
 
     it('`synth` fails when a package the selector matches has no synth script, naming it', () => {

@@ -20,9 +20,18 @@
 //
 // `e2e-shards` and `matrix` import nothing outside Node, so they run before `pnpm install`.
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { appLabels, readJson, takeAppDir, takeOption, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
+import {
+    appLabels,
+    normalAppDir,
+    readJson,
+    takeAppDir,
+    takeOption,
+    UsageError,
+    workspaceApps,
+    workspaceRootOf,
+} from '../app.js'
 
 const PLAYWRIGHT_CONFIGS = [
     'playwright.config.ts',
@@ -54,7 +63,11 @@ function sh(cwd, command) {
  * @returns {string[]}
  */
 export function appsOf(root, listed) {
-    if (listed === undefined || listed.trim() === '') return workspaceApps(root)
+    if (listed === undefined || listed.trim() === '') {
+        const apps = workspaceApps(root)
+        warnLeftOut(root, apps, '`sssb.apps` in the root package.json')
+        return apps
+    }
     /** @type {string[]} */
     const apps = []
     for (const app of listed.split(/\s+/).filter(Boolean)) {
@@ -64,15 +77,32 @@ export function appsOf(root, listed) {
         if (!existsSync(path.join(root, app, 'package.json'))) {
             throw new UsageError(`sssb ci: --apps names ${app}, which is not a package (no package.json)`)
         }
-        const normal = path.posix.normalize(app.split(path.sep).join('/')).replace(/\/+$/, '')
+        const normal = normalAppDir(app)
         if (!apps.includes(normal)) apps.push(normal)
     }
-    const left = workspaceApps(root).filter((app) => !apps.includes(app))
-    if (left.length > 0) {
-        const note = `--apps leaves out ${left.join(', ')}, which the workspace lists as apps: their e2e, static demo and check-fences do not run`
-        console.log(process.env['GITHUB_ACTIONS'] ? `::warning title=sssb ci::${note}` : `WARNING: ${note}`)
-    }
+    warnLeftOut(root, apps, '--apps')
     return apps
+}
+
+/**
+ * Names, in a warning (a GitHub Actions annotation on CI), every app the job does not cover: one the workspace lists
+ * as an app, or an `apps/<name>` package. The caller chose the list, so this is not a failure, but a list that went
+ * stale when an app was added is the way an app goes unchecked with every check green.
+ * @param {string} root
+ * @param {string[]} apps
+ * @param {string} source
+ */
+function warnLeftOut(root, apps, source) {
+    const appsDir = path.join(root, 'apps')
+    const underApps = existsSync(appsDir)
+        ? readdirSync(appsDir, { withFileTypes: true })
+              .filter((entry) => entry.isDirectory() && existsSync(path.join(appsDir, entry.name, 'package.json')))
+              .map((entry) => `apps/${entry.name}`)
+        : []
+    const left = [...new Set([...workspaceApps(root), ...underApps])].filter((app) => !apps.includes(app)).sort()
+    if (left.length === 0) return
+    const note = `${source} leaves out ${left.join(', ')}: their e2e, static demo and check-fences do not run`
+    console.log(process.env['GITHUB_ACTIONS'] ? `::warning title=sssb ci::${note}` : `WARNING: ${note}`)
 }
 
 /**
@@ -164,6 +194,12 @@ export async function run(args) {
         const root = workspaceRootOf(process.cwd())
         const apps = appsOf(root, listed)
         const shards = e2eShards(root, apps)
+        const noE2e = apps.filter((app) => !shards.some((shard) => shard.app === app))
+        if (noE2e.length > 0) {
+            throw new UsageError(
+                `sssb ci ${job}: ${noE2e.join(', ')} has no Playwright config (${PLAYWRIGHT_CONFIGS.join(', ')}), so its e2e would not run`,
+            )
+        }
         if (job === 'e2e-shards') {
             const matrix = JSON.stringify(shards)
             console.log(`computed matrix: ${matrix}`)
@@ -173,13 +209,7 @@ export async function run(args) {
         // EVERY app the job covers has e2e and a static demo: one that lacks either would drop out of the matrix with
         // every check still green. (A matrix with no entries would fail its job in GitHub Actions without saying why.)
         const demos = demoApps(root, apps)
-        const noE2e = apps.filter((app) => !shards.some((shard) => shard.app === app))
         const noDemo = apps.filter((app) => !demos.some((demo) => demo.app === app))
-        if (noE2e.length > 0) {
-            throw new UsageError(
-                `sssb ci matrix: ${noE2e.join(', ')} has no Playwright config (${PLAYWRIGHT_CONFIGS.join(', ')}), so its e2e would not run`,
-            )
-        }
         if (noDemo.length > 0) {
             throw new UsageError(
                 `sssb ci matrix: ${noDemo.join(', ')} has no build:demo-static script, so its static demo would not be checked`,
@@ -246,7 +276,9 @@ export async function run(args) {
             encoding: 'utf8',
         })
         if (listing.status !== 0)
-            throw new UsageError(`sssb ci synth: pnpm could not list --filter ${filter}\n${listing.stderr}`)
+            throw new UsageError(
+                `sssb ci synth: pnpm could not list --filter ${filter}\n${listing.stdout}${listing.stderr}`,
+            )
         /** @type {{ path: string }[]} */
         const matched = JSON.parse(listing.stdout || '[]')
         if (matched.length === 0) throw new UsageError(`sssb ci synth: --filter ${filter} matches no package`)
