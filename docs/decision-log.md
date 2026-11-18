@@ -4724,26 +4724,37 @@ Measured in a workspace `@sssb/create` generated, with `nodeLinker: pnp` (pnpm 1
 
 Decisions, each with what was rejected:
 
-- **Doctor requires `isolated`, pnpm's default, and checks it first, alone** (`nodeLinkerProblem`,
-  `packages/tools/src/commands/doctor-checks.js`, called at the top of `run` in
+- **Doctor requires `isolated`, pnpm's default, with no Plug'n'Play left, and checks it first, alone**
+  (`nodeLinkerProblem`, `packages/tools/src/commands/doctor-checks.js`, called at the top of `run` in
   `packages/tools/src/commands/doctor.js`). It reads the layout pnpm actually installed, `nodeLinker` in the root's
-  `node_modules/.modules.yaml`, which pnpm 11 writes as JSON, rather than the setting (`pnpm-workspace.yaml`,
-  `.npmrc`, an environment variable or a flag could each ask for it). Both `pnp` and `hoisted` fail, naming the setting
-  to remove; nothing else is checked, since every other check reads the isolated layout. Rejected: supporting `pnp` or
-  `hoisted` (each app's own kit instance, linked to its own seam, is ADR-0014 part 5's model, and `hoisted` holds one
-  instance for every app); failing only `pnp` (`hoisted` breaks the same model, and doctor's indirect failure there
-  named the wrong cause).
+  `node_modules/.modules.yaml` (JSON in pnpm 11; a damaged or YAML file is read for a `nodeLinker` key, and one that
+  cannot be read fails), rather than the setting (`pnpm-workspace.yaml`, `.npmrc`, an environment variable or a flag
+  could each ask for it). Both `pnp` and `hoisted` fail. So do `.pnp.cjs` or `.pnp.loader.mjs` left at the root, and
+  doctor's own `NODE_OPTIONS` loading a `.pnp.cjs`: the review found that removing the setting and reinstalling leaves
+  `.pnp.cjs` behind, `pnpm run` keeps loading it, and doctor then spent 6 minutes on three killed listings and printed
+  two false FAILs (PnP resolving inside doctor itself). The message names the setting to remove and the files to delete.
+  Nothing else is checked, since every other check reads the isolated layout. Rejected: supporting `pnp` or `hoisted`
+  (each app's own kit instance, linked to its own seam, is ADR-0014 part 5's model, and `hoisted` holds one instance
+  for every app); failing only `pnp` (`hoisted` breaks the same model, and doctor's indirect failure there named the
+  wrong cause); stripping PnP from the listing's environment (doctor's own resolution was wrong too).
 - **Not added to the shared kit resolver** (`packages/tools/src/kit.js`). It resolved the kit under pnp (pnpm still
   links direct dependencies into `node_modules` there), so the other `sssb` commands are left to fail on their own;
   doctor, which every workspace's `pnpm verify` runs, is where the layout is named. Rejected: checking the layout on
   every resolution, a file read per command for a setting doctor already names.
-- **Every `vitest list` doctor spawns is killed after 120 s** (`SSSB_DOCTOR_VITEST_TIMEOUT` seconds overrides it;
-  `vitestList` in `packages/tools/src/commands/doctor-vitest.js`), and reported as that listing's error ("did not
-  finish within …"), which doctor already turns into a problem, so no other cause can hang it. 120 s is far above the
-  few seconds a listing takes. Rejected: no limit (a `spawnSync` that never returns also blocks a test runner's own
-  timeout, as the probe of this very test showed); writing the child's output to files instead of pipes (tried, for a
-  grandchild holding a pipe: `spawnSync` returned at the limit either way, so it bought nothing).
-- **Tests** (`tests/tooling/tools-doctor.test.ts`): `nodeLinkerProblem` on isolated, pnp, hoisted and nothing
-  installed; doctor end to end on a workspace marked pnp fails at once with only that problem; a fake `vitest` that
-  never exits, leaving a child behind, is stopped at a 1 s limit, and at the environment's. Seen red: without the
-  check the end-to-end test fails; without the timeout, or ignoring the variable, the test never returns.
+- **A `vitest list` that runs past 120 s is killed, with every process it started** (`SSSB_DOCTOR_VITEST_TIMEOUT`
+  seconds overrides it, rounded up to whole milliseconds; `vitestList` in `packages/tools/src/commands/doctor-vitest.js`),
+  and reported as that listing's error ("did not finish within …"), which doctor already turns into a problem, so no
+  other cause can hang it. A small launcher (`node -e`) runs Vitest in a process group of its own and kills the group:
+  the review found that killing Vitest's own process left a pool worker of a hung test file running under init, and
+  `SIGTERM` does no better. After one listing runs out of time, doctor returns that error for every later listing
+  instead of waiting again (`listOnce`, `doctor.js`), so one hang costs one limit, not one per config. 120 s is far
+  above the few seconds a listing takes. Rejected: no limit (a `spawnSync` that never returns also blocks a test
+  runner's own timeout, as the probe of this very test showed); writing the child's output to files instead of pipes
+  (tried, for a grandchild holding a pipe: `spawnSync` returned at the limit either way, so it bought nothing).
+- **Tests** (`tests/tooling/tools-doctor.test.ts`): `nodeLinkerProblem` on isolated, pnp, hoisted, nothing installed,
+  a truncated or YAML record, an unreadable one, PnP files left at the root and a `NODE_OPTIONS` loading one; doctor end
+  to end on a workspace marked pnp fails at once with only that problem; a fake `vitest` that never exits, with a
+  "worker" that never exits either, is stopped at a 1 s limit with the worker dead, and at the environment's
+  (`0.0015`, rounded); doctor end to end on configs that never load waits out one 3 s limit and reports the other
+  listings as not listed. Seen red, one guard at a time: each of these fails without its guard; with no limit at all, or
+  ignoring the variable, the test never returns.

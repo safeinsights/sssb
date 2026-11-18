@@ -440,8 +440,11 @@ flags your package.json scripts pass to vitest and which script runs each contra
 sure CI runs the config doctor names. Before any of that it fails a workspace pnpm installed with a `nodeLinker` other
 than `isolated`, pnpm's default (`pnp` or `hoisted`, from `pnpm-workspace.yaml` or `.npmrc`): every app needs its own
 `@sssb/kit` linked to its own seam in `node_modules`, which only `isolated` gives; nothing else is checked until it is.
-Each `vitest list` doctor runs is stopped after 120 seconds (`SSSB_DOCTOR_VITEST_TIMEOUT`, in seconds, changes the
-limit), so a listing that never finishes is a problem doctor names rather than a hang. It also fails a second copy of
+It fails the same way while `.pnp.cjs` or `.pnp.loader.mjs` is left at the root, since `pnpm run` keeps loading them
+after the setting is gone: delete them and reinstall. Each `vitest list` doctor runs is stopped after 120 seconds, with
+every process it started (`SSSB_DOCTOR_VITEST_TIMEOUT`, in seconds, changes the limit), so a listing that never
+finishes is a problem doctor names rather than a hang; after one listing runs out of time, doctor does not wait on the
+rest. It also fails a second copy of
 any peer `@sssb/kit` declares (React, Next,
 Kysely...), an importer of the framework anywhere in the workspace that does not run on its own seam or declares it as
 a `link:` (which the next `pnpm add <pkg>` for the app unlinks) or by a name that no workspace package, or several,
