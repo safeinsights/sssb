@@ -847,3 +847,20 @@ Two details of P1 that the body did not pin down:
   and a `link:` seam outside the workspace, under pnpm 11.21). P2's pack and consume is the standing test of that.
 - **PR numbers in the dated records and the ADR bodies refer to `jpslav/keel`**, including this ADR's own; the ADR
   index says so once rather than an addendum on every ADR (`docs/decision-log.md`, 2026-11-17, P1).
+
+## Addendum — 2026-11-17: a second npm owner is not needed
+
+JP decided that the `sssb` npm organization and its packages do not need a second owner. The `safeinsights-bot`
+npm account stays their only owner, and its credentials are shared among the maintainers and its email is a group
+address, so no one person's absence locks the names. This changes two things the body said:
+
+- **The Consequences bullet "The npm names have a single owner" no longer describes a risk to carry.** The account
+  is still the one owner of record, but "if that account were lost, no one could publish or administer the names"
+  no longer follows from a lost person: access to it is held by several maintainers, and a message to it reaches a
+  group. What remains is the account's own recovery, which belongs to whoever holds it, and is not written in this
+  repository.
+- **The follow-up "Add a second, human owner to the `sssb` organization and to every package" is dropped.** The plan
+  table above lists it as waiting for a maintainer with a personal npm account; nothing now waits for one.
+
+Nothing else in the body changed. Publishing still goes through trusted publishing from GitHub Actions with no
+long-lived token (D11), so the shared account's credentials are not part of any release.
