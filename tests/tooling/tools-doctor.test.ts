@@ -916,6 +916,27 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
     )
 
     it(
+        'fills in EVERY * of a tsconfig target with the probe, not only the first',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-stars-', 'in-repo')
+            const a = path.join(ws, 'apps', 'a')
+            const b = path.join(ws, 'apps', 'b')
+            json(path.join(a, 'tsconfig.json'), {
+                compilerOptions: { paths: { '@sssb/app-config/*': ['./src/app-config/*/*'] } },
+            })
+            // Where the probe lands through the FIRST star is a real directory holding a link literally named `*` to
+            // another app's seam. Filling only the first star read the second as that link (the other app's seam);
+            // filling both reads it as a path under the app's own seam that does not exist, which is inside the app.
+            const probeDir = path.join(a, 'src', 'app-config', '__sssb_doctor_probe__')
+            mkdirSync(probeDir, { recursive: true })
+            link(path.join(probeDir, '*'), path.join(b, 'src', 'app-config'))
+            const { out } = await doctor(ws, 'apps/a')
+            expect(out).not.toMatch(/apps\/a: its tsconfig sends/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
         "fails a tsconfig target or a Vitest alias (RegExp, array form) that sends the seam to another app's",
         async () => {
             const ws = doctorWorkspace('sssb-doctor-e2e-aliases-', 'in-repo')
