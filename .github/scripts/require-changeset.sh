@@ -41,7 +41,8 @@ SELF=".github/scripts/require-changeset.sh"
 
 # Tests the `files` allowlist of packages/kit/package.json ships anyway.
 KIT_SHIPPED_TESTS='^packages/kit/src/(i18n/namespaces\.test\.ts|i18n/messages-parity\.test\.ts|db/rls-pglite\.test\.ts|db/migrate\.test\.ts|server-lib/demo-presets-seam\.test\.ts)$'
-NOT_SHIPPED='\.(test|stories)\.[^/]+$|/test-fixture/'
+# `[A-Za-z0-9]+`, not `[^/]+`: a path may hold a newline, which `[^/]` matches and an extension never does.
+NOT_SHIPPED='\.(test|stories)\.[A-Za-z0-9]+$|/test-fixture/'
 
 if [ "$BASE_REF" = "main" ] && [ "$HEAD_REF" = "integration" ] && [ -n "$REPO" ] && [ "$HEAD_REPO" = "$REPO" ]; then
   echo "Release merge from integration; its changes carried their own changesets."
@@ -63,36 +64,52 @@ fi
 base=$(git merge-base "origin/$BASE_REF" HEAD)
 
 # `-z` and quotePath off: without them git prints a path with a non-ASCII character or a quote as a C-quoted string,
-# which no pattern below matches, so a shipped file would read as not shipped. `--no-renames` so a file moved out of
+# which no pattern below matches, so a shipped file would read as not shipped. Paths are matched with `[[ =~ ]]`,
+# never `grep` on a here-string, because grep reads a path with a newline as several lines. `--no-renames` so a file moved out of
 # the shipped set still counts as changed. Captured, not piped into `grep -q`: under pipefail an early-exiting grep
 # can SIGPIPE git and turn a match into a silent pass.
 changed=()
 while IFS= read -r -d '' f; do changed+=("$f"); done < <(git -c core.quotePath=false diff --no-renames --name-only -z "$base" HEAD)
 
-# Which packages/<dir> are `@sssb/*`, from HEAD's manifest or, for a package the PR deletes, the base's.
+# Which packages/<dir> are `@sssb/*`: either side of the PR names one (so renaming a package away from `@sssb/*`, or
+# deleting it, is a change to what ships), and a manifest that does not parse counts as shipped rather than as not
+# one. A directory with no manifest on either side is not a package.
 sssb_package() {
-  local dir=$1 manifest
-  manifest=$(git show "HEAD:packages/$dir/package.json" 2>/dev/null || git show "$base:packages/$dir/package.json" 2>/dev/null || true)
-  [ -n "$manifest" ] || return 1
-  node -e 'const n = JSON.parse(require("fs").readFileSync(0, "utf8")).name; process.exit(typeof n === "string" && n.startsWith("@sssb/") ? 0 : 1)' <<<"$manifest"
+  local dir=$1 rev manifest verdict
+  for rev in HEAD "$base"; do
+    manifest=$(git show "$rev:packages/$dir/package.json" 2>/dev/null || true)
+    [ -n "$manifest" ] || continue
+    verdict=$(node -e 'try { const n = JSON.parse(require("fs").readFileSync(0, "utf8")).name; console.log(typeof n === "string" && n.startsWith("@sssb/") ? "yes" : "no") } catch { console.log("yes") }' <<<"$manifest")
+    [ "$verdict" = "yes" ] && return 0
+  done
+  return 1
 }
 
-# A file this PR carries only because it merged `main` in: equal to main's copy, and main changed it since main and
-# the base diverged. Skipped when there is no origin/main (a repository whose base is its only branch).
+# A file this PR carries only because it merged `main` in: the newest commit on main (since main and the base
+# diverged) that touched it is in this PR's history, and the PR's copy is main's copy as of that commit. A hand-applied
+# copy of a hotfix is not that, and neither is a file main changed after the PR last merged it.
 from_main() {
   [ -n "$mainbase" ] || return 1
-  git diff --quiet origin/main HEAD -- "$1" && ! git diff --quiet "$mainbase" origin/main -- "$1"
+  local c
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    git merge-base --is-ancestor "$c" HEAD || continue
+    git diff --quiet "$c" HEAD -- "$1" && return 0
+    return 1
+  done < <(git log --format=%H "$mainbase..origin/main" -- "$1")
+  return 1
 }
 mainbase=$(git merge-base "origin/$BASE_REF" origin/main 2>/dev/null || true)
 
-# `sssb_package` once per package directory, not once per file.
-sssb_dirs=" "
-other_dirs=" "
+# `sssb_package` once per package directory, not once per file. Delimited by `/`, which a directory name cannot hold
+# (a space or a newline in a name would otherwise join or split entries).
+sssb_dirs="/"
+other_dirs="/"
 is_sssb_dir() {
-  case "$sssb_dirs" in *" $1 "*) return 0 ;; esac
-  case "$other_dirs" in *" $1 "*) return 1 ;; esac
-  if sssb_package "$1"; then sssb_dirs+="$1 "; return 0; fi
-  other_dirs+="$1 "
+  case "$sssb_dirs" in *"/$1/"*) return 0 ;; esac
+  case "$other_dirs" in *"/$1/"*) return 1 ;; esac
+  if sssb_package "$1"; then sssb_dirs+="$1/"; return 0; fi
+  other_dirs+="$1/"
   return 1
 }
 
@@ -107,12 +124,12 @@ for f in ${changed[@]+"${changed[@]}"}; do
       if [ "$dir" = kit ]; then
         if [ "$f" = packages/kit/package.json ]; then
           :
-        elif [[ "$f" == packages/kit/src/* ]] && { grep -qE "$KIT_SHIPPED_TESTS" <<<"$f" || ! grep -qE "$NOT_SHIPPED" <<<"$f"; }; then
+        elif [[ "$f" == packages/kit/src/* ]] && { [[ "$f" =~ $KIT_SHIPPED_TESTS ]] || ! [[ "$f" =~ $NOT_SHIPPED ]]; }; then
           :
         else
           continue
         fi
-      elif grep -qE "$NOT_SHIPPED" <<<"$f"; then
+      elif [[ "$f" =~ $NOT_SHIPPED ]]; then
         continue
       fi
       ;;

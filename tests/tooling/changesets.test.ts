@@ -152,6 +152,10 @@ type Pr = {
     baseAdvance?: Record<string, string>
     /** `main` changed these files after the branches diverged, and the PR merged main in. */
     mergedFromMain?: Record<string, string>
+    /** `main` changed these files but the PR never merged it (it may hold a hand-applied copy). */
+    mainOnly?: Record<string, string>
+    /** `main` changed these files again after the PR last merged it. */
+    mainAfterMerge?: Record<string, string>
 }
 
 function git(cwd: string, date: string, ...args: string[]) {
@@ -244,6 +248,15 @@ function runGate(pr: Pr) {
         g(GATE_DATE, 'switch', '-q', 'work')
         g(GATE_DATE, 'merge', '-q', '--no-ff', '-m', 'merge main', 'refs/remotes/origin/main')
     }
+    const moveMain = (files: Record<string, string>) => {
+        g(GATE_DATE, 'switch', '-q', '--detach', 'refs/remotes/origin/main')
+        write(cwd, files)
+        commit('2026-02-03T00:00:00Z', 'main moves on again')
+        g(GATE_DATE, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        g(GATE_DATE, 'switch', '-q', 'work')
+    }
+    if (pr.mainOnly) moveMain(pr.mainOnly)
+    if (pr.mainAfterMerge) moveMain(pr.mainAfterMerge)
     // A base without the gate still runs it: the PR's own workflow file carries it, as an untracked copy here.
     copyGate()
     const r = spawnSync('bash', [path.join(cwd, GATE_REL)], {
@@ -386,6 +399,55 @@ describe('require-changeset gate', () => {
         expect(r.status, r.out).toBe(0)
         // the PR's own kit change alongside the merge still needs one
         expect(runGate({ files: KIT_SRC, mergedFromMain: fromMain }).status).toBe(1)
+    })
+
+    it('does not exempt a hand-applied copy of a main change the PR never merged', () => {
+        const hotfix = { 'packages/kit/src/core/hotfix.ts': 'fix' }
+        const r = runGate({ files: hotfix, mainOnly: hotfix })
+        expect(r.status, r.out).toBe(1)
+    })
+
+    it('still exempts what the PR merged from main after main moves on again', () => {
+        const fromMain = { 'packages/kit/src/core/hotfix.ts': 'fix' }
+        const r = runGate({
+            files: { 'docs/x.md': 'a' },
+            mergedFromMain: fromMain,
+            mainAfterMerge: { 'packages/kit/src/core/hotfix.ts': 'fix 2' },
+        })
+        // main's newest copy is newer than what the PR merged, but the PR's copy is main's copy as of the merge it took
+        expect(r.status, r.out).toBe(0)
+    })
+
+    describe('paths and manifests that try to hide a shipped change', () => {
+        const pkg = (name: string) => JSON.stringify({ name })
+        it('renaming a package away from @sssb/*, or breaking its manifest, is still a shipped change', () => {
+            const foo = { 'packages/foo/package.json': pkg('@sssb/foo') }
+            const renamed = runGate({
+                baseFiles: foo,
+                files: { 'packages/foo/package.json': pkg('@app/foo'), 'packages/foo/src/a.ts': 'a' },
+            })
+            expect(renamed.status, renamed.out).toBe(1)
+            const broken = runGate({
+                files: { 'packages/kit/package.json': '{"name":"@sssb/kit",}', 'packages/kit/src/a.ts': 'a' },
+            })
+            expect(broken.status, broken.out).toBe(1)
+            // a new package whose manifest does not parse has no base manifest to fall back on
+            const added = runGate({ files: { 'packages/new/package.json': '{bad', 'packages/new/src/a.ts': 'a' } })
+            expect(added.status, added.out).toBe(1)
+        })
+
+        it('a package directory with a space in its name does not hide the kit', () => {
+            const r = runGate({ files: { 'packages/a kit/notes.txt': 'a', ...KIT_SRC } })
+            expect(r.status, r.out).toBe(1)
+        })
+
+        it('a file name holding a newline cannot pass as a test file', () => {
+            const foo = { 'packages/foo/package.json': pkg('@sssb/foo') }
+            const r = runGate({ baseFiles: foo, files: { 'packages/foo/src/x.test.ts\nb.ts': 'a' } })
+            expect(r.status, r.out).toBe(1)
+            const kit = runGate({ files: { 'packages/kit/src/x.test.ts\nb.ts': 'a' } })
+            expect(kit.status, kit.out).toBe(1)
+        })
     })
 
     describe('the release merge and the other exemptions', () => {
