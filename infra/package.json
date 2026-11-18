@@ -13,6 +13,7 @@
         "constructs": "^10.8.1"
     },
     "devDependencies": {
+        "@sssb/tools": "workspace:*",
         "aws-cdk": "^2.1146.0"
     }
 }

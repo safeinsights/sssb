@@ -49,7 +49,7 @@ export interface WorldClockLike {
 /**
  * The dev ticker, wired by the real glue only, and only when the dev server answers for it (a simulated `next dev`;
  * never a production build, the demo, e2e or the static twin, which has no server). `running`..`lastError` are the
- * ticker's own status (scripts/ticker.mjs); `elsewhere` is a ticker this panel did not start, live on the same world.
+ * ticker's own status (@sssb/tools/ticker); `elsewhere` is a ticker this panel did not start, live on the same world.
  */
 export interface DevTickerLike {
     running: boolean

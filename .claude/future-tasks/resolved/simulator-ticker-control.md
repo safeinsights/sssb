@@ -28,11 +28,11 @@ start the ticking clock from its UI?
 
 ## What exists
 
-`scripts/ticker.mjs` is the ticker as an object: `createTicker({ origin, markerFile })` returns `start(seconds)`,
+`packages/tools/src/tick/ticker.js` (`@sssb/tools/ticker`) is the ticker as an object: `createTicker({ origin, markerFile })` returns `start(seconds)`,
 `stop()` and `status()` (`{ running, seconds, ticks, lastTickAt, lastError }`). It reads no environment and wires no
-process, so it can be driven from anywhere. Today its only user is `scripts/dev-tick.mjs`, which is the policy for
+process, so it can be driven from anywhere. Today its only user is `sssb dev-tick` (`packages/tools/src/tick/dev-tick.js`), which is the policy for
 `pnpm dev`: start it only when `DEV_TICK_SECONDS` is set, refuse under `E2E_BUILD` and `DEMO_MODE`, and leave a marker
-(`scripts/ticker-marker.mjs`) that both apps' playwright configs refuse to load past, because Playwright adopts a dev
+(`packages/tools/src/tick/ticker-marker.js`, `@sssb/tools/ticker-marker`) that both apps' playwright configs refuse to load past, because Playwright adopts a dev
 server already on its port. `docs/decision-log.md` ("`pnpm tick`, and a dev ticker that is opt-in") records why it is off
 by default.
 

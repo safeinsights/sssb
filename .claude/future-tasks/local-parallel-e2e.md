@@ -11,7 +11,7 @@ preferred route any more — only the shard runner itself is missing.
 
 Two things to know before starting:
 
-- **`scripts/serve-standalone.mjs` already carries a forward reference to a runner that does not
+- **`sssb serve-standalone` already carries a forward reference to a runner that does not
   exist.** Its `APP_DATA_DIR` comment ends "…which is how the shard runner gives each shard its own",
   and there is no shard runner in `scripts/` — `scripts/e2e-shards.mjs` was reverted, not shipped. The
   serve half is genuinely ready; the sentence describing its caller is aspirational. Whoever builds this
@@ -27,7 +27,7 @@ mutate each other (`e2e-shared-world-blocks-parallelism.md`). But parallelism is
 are separate — that is exactly why CI's job matrix works. The local equivalent is to shard into N
 processes, each with:
 
-- its own port (`scripts/ports.mjs`), and
+- its own port (`@sssb/tools/ports`), and
 - its own world via `APP_DATA_DIR` (the override `adapters/fake/data-dir.ts` already reads).
 
 It also dissolves an ordering constraint: the destructive project only runs after chromium
@@ -60,7 +60,7 @@ The attempt was reverted rather than shipped; this file is what it produced.
    compile — which may eat the gain, since compile is most of dev-mode e2e cost.
 2. **Shard against the PRODUCTION build instead (preferred).** `E2E_BUILD=1` now exists and is
    proven: build once, then run N `serve-standalone` processes on N ports with N `APP_DATA_DIR`s.
-   `scripts/serve-standalone.mjs` spawns a plain `node server.js` with no dev lock at all, so the
+   `sssb serve-standalone` spawns a plain `node server.js` with no dev lock at all, so the
    blocker simply does not apply. And the build is shared, so the compile is paid once for all shards
    rather than N times.
 
@@ -75,7 +75,7 @@ The attempt was reverted rather than shipped; this file is what it produced.
 
 ## Watch out for
 
-- `scripts/serve-standalone.mjs` pins `APP_DATA_DIR` to the app's `.data` when the caller does not set
+- `sssb serve-standalone` pins `APP_DATA_DIR` to the app's `.data` when the caller does not set
   one. A shard runner MUST set it, or every shard shares one world and the whole exercise is pointless.
 - Port band: reserve one, disjoint from the app band (3200–3599) and contract Postgres (5440+), and
   index it by checkout slot so two worktrees sharding at once still cannot collide.

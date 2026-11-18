@@ -1,15 +1,19 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll } from 'vitest'
 import { TMP_DIR_MARKER_SUFFIX } from './tmp-dir-marker.mjs'
 
 /**
+ * THE FRAMEWORK'S OWN COPY of the scratch-directory helper, for @sssb/kit's tests (the shipped conformance suites
+ * among them). Everyone else imports @sssb/tools' (`@sssb/tools/testing/tmp-dir`); the framework keeps a copy
+ * because the framework depends on no other SSSB package (ADR-0014, rule 4). Both write the same marker, which
+ * tests/tooling/tmp-dir.test.ts holds equal, so `sssb check-tmpdir-leak` sees either one's leaks.
+ *
  * THE ONLY WAY A TEST MAKES A SCRATCH DIRECTORY. A raw `mkdtemp` in a test file leaves the directory
  * behind on every run; left in place long enough that has filled a developer's temp filesystem past
  * 100GB. `sssb/no-direct-mkdtemp` (eslint.config.mjs) bans the raw call in test files, and
- * scripts/check-tmpdir-leak.mjs fails the run if a directory made here was not removed.
+ * `sssb check-tmpdir-leak` fails the run if a directory made here was not removed.
  *
  * Each call creates `<tmpdir>/<prefix>XXXXXX`, writes an EMPTY MARKER FILE beside it
  * (`<dir>` + TMP_DIR_MARKER_SUFFIX) and queues both for removal when the test file finishes. The
@@ -47,13 +51,5 @@ export function makeTestTmpDir(prefix: string): string {
     const dir = mkdtempSync(path.join(tmpdir(), prefix))
     created.push(dir)
     writeFileSync(dir + TMP_DIR_MARKER_SUFFIX, '')
-    return dir
-}
-
-/** Make a scratch directory that is removed when the test file finishes. Async variant. */
-export async function makeTestTmpDirAsync(prefix: string): Promise<string> {
-    const dir = await mkdtemp(path.join(tmpdir(), prefix))
-    created.push(dir)
-    await writeFile(dir + TMP_DIR_MARKER_SUFFIX, '')
     return dir
 }

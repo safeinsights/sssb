@@ -3,7 +3,7 @@ import { Kysely, PostgresDialect, sql } from 'kysely'
 import { Pool } from 'pg'
 import type { Login } from '@sssb/kit/db/owner-pass'
 import type { DB } from '@sssb/kit/db/schema'
-import { portFor } from '../../scripts/ports.mjs'
+import { portFor } from '@sssb/tools/ports'
 import { makeTestTmpDirAsync } from './tmp-dir'
 
 /**
@@ -20,7 +20,7 @@ import { makeTestTmpDirAsync } from './tmp-dir'
  *  - CONTRACT_DATABASE_URL set (CI): that server, which several suites share, each in its own database. The URL
  *    must be a SUPERUSER's, to a database that already exists (`postgres`).
  *  - unset (a developer's machine): an embedded-postgres of the suite's own, on the port derived per checkout
- *    (scripts/ports.mjs `contractPg`), stopped when the suite ends. `vitest.contract.config.ts` runs files one at
+ *    (`contractPg` in @sssb/tools/ports), stopped when the suite ends. `vitest.contract.config.ts` runs files one at
  *    a time, so two never hold that port together.
  */
 

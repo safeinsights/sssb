@@ -1,6 +1,9 @@
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { portForRoot } from '../../scripts/ports.mjs'
+import { portForRoot } from '@sssb/tools/ports'
+import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
  * Every dev server and every e2e run in this repo now gets its port from this function, so its two
@@ -65,5 +68,27 @@ describe('portForRoot', () => {
     it('rejects an unknown service name', () => {
         // @ts-expect-error -- deliberately outside the known set
         expect(() => portForRoot(MAIN, 'nope', {})).toThrow(/unknown service/)
+    })
+})
+
+describe('portFor with no workspace file', () => {
+    it('falls back to the nearest .git, then the start directory, instead of throwing', () => {
+        const scratch = realpathSync(makeTestTmpDir('sssb-ports-nows-'))
+        const PORTS_JS = path.resolve(__dirname, '../../packages/tools/src/ports.js')
+        const script = `import {portFor} from ${JSON.stringify(PORTS_JS)}; console.log(portFor('starter'))`
+        const env = { ...process.env }
+        delete env['STARTER_PORT']
+        const printed = (cwd: string) =>
+            spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd, env, encoding: 'utf8' })
+
+        const bare = printed(scratch)
+        expect(bare.stderr).toBe('')
+        expect(bare.stdout.trim()).toBe('3100')
+
+        mkdirSync(path.join(scratch, 'repo', '.git'), { recursive: true })
+        mkdirSync(path.join(scratch, 'repo', 'sub'), { recursive: true })
+        const nested = printed(path.join(scratch, 'repo', 'sub'))
+        expect(nested.stderr).toBe('')
+        expect(nested.stdout.trim()).toBe('3100')
     })
 })

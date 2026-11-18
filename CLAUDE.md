@@ -72,6 +72,15 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   tests), so the app's registry and fakes cannot read it; reading the run mode in an app's real adapters;
   a static import of an app's `adapters/real` anywhere in the app outside `real/` itself; and any import of
   `real/` from a fake. That the registry uses `isSimulated` is convention: lint cannot follow a value.
+- **`@sssb/tools` (`packages/tools`) is SSSB's tooling: the `sssb` CLI, the Next, Vite and Vitest presets, the
+  tsconfig base the apps extend, and helpers** (ADR-0014 P4). It is plain JavaScript that Node loads directly
+  (`// @ts-check`, a hand-written `.d.ts` beside each export, checked by the root `tsc`), and it has **no dependency on
+  `@sssb/kit`** (rule 4): it reaches the framework only through `packages/tools/src/kit.js`, which resolves
+  `@sssb/kit` from the APP's directory and checks the real path of what it got. `sssb/no-bare-kit-import` bans a bare
+  `@sssb/kit` specifier in every package under `packages/` but the framework and the showcase's seed. A preset loads
+  the tools it configures (Vite's React plugin, next-intl's plugin, jest-dom) from the app, never its own copies. A
+  new CLI command is a module in `packages/tools/src/commands/` plus one entry in `bin/sssb.js`'s `COMMANDS`; a new published
+  helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.
 - **Screens are router-agnostic** — framework screens in `packages/kit/src/components`, app
@@ -155,29 +164,31 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   the pglite RLS suite, the demo-presets check, the migration numbering and upgrade check) run under every app project as well, and that is what proves the seam against
   real apps rather than only against the fixture. E2E
   lives in `apps/*/tests/e2e/` (showcase on :3000, starter on :3100). In a LINKED WORKTREE both ports
-  are derived per checkout by `scripts/ports.mjs`, so parallel agent sessions don't adopt each other's
+  are derived per checkout by `@sssb/tools/ports`, so parallel agent sessions don't adopt each other's
   dev server; `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last
-  also isolates `pnpm test:contract` between worktrees), and `print-port.mjs` reports it.
+  also isolates `pnpm test:contract` between worktrees), and `pnpm exec sssb port <service>` reports it. Each app
+  declares its slot in its package.json (`"sssb": { "port": "starter" }`), which `sssb port` reads.
 - **A test that needs a scratch directory calls `makeTestTmpDir()` / `makeTestTmpDirAsync()`**
-  (`packages/kit/src/testing/tmp-dir.ts`; `tests/support/tmp-dir.ts` re-exports it) — never `mkdtemp`/`mkdtempSync`, which `sssb/no-direct-mkdtemp` bans in test
-  files. The helper removes the directory when the file finishes; `test:unit`, `test:coverage` and
-  `test:contract` run through `scripts/check-tmpdir-leak.mjs`, which fails the run if one survives. Do not
-  call `vitest run` directly in a new script that is meant to gate — route it through that script.
+  (`@sssb/tools/testing/tmp-dir`; `tests/support/tmp-dir.ts` re-exports it; the framework's own tests use its
+  copy, `packages/kit/src/testing/tmp-dir.ts`) — never `mkdtemp`/`mkdtempSync`, which `sssb/no-direct-mkdtemp`
+  bans in test files. The helper removes the directory when the file finishes; `test:unit`, `test:coverage` and
+  `test:contract` run through `sssb check-tmpdir-leak`, which fails the run if one survives. Do not
+  call `vitest run` directly in a new script that is meant to gate — route it through that command.
 - **E2E `workers` stays 1.** Every worker shares one `.data` behind one dev server, so parallelism buys
   flakes, not speed (measured; the old "10GB VM / OOM" reason was wrong). Parallelism belongs where the
   worlds are separate: across apps locally, across CI shards. Read
   `.claude/future-tasks/e2e-shared-world-blocks-parallelism.md` before raising it.
 - Component workshop: `pnpm ladle` (screens AND react-email templates).
 - **Scheduled work in dev only runs when something ticks it.** `pnpm tick` (`pnpm tick:starter`) calls the running
-  dev server's `/api/webhooks/cron` once with the dev secret (`scripts/tick.mjs`); `DEV_TICK_SECONDS=<n> pnpm dev`
-  does it every n seconds (`scripts/dev-tick.mjs`, which `pnpm dev` runs `next dev` through), and the showcase's Simulator
+  dev server's `/api/webhooks/cron` once with the dev secret (`sssb tick`); `DEV_TICK_SECONDS=<n> pnpm dev`
+  does it every n seconds (`sssb dev-tick`, which `pnpm dev` runs `next dev` through), and the showcase's Simulator
   (Jobs tab) starts and stops it inside the dev server (`apps/showcase/src/app/api/simulator/ticker`, 404 outside a simulated
   `next dev`: kit's `isSimulatedDevServer`). The ticker is **off by
   default** and stays off under e2e (the playwright configs blank the variable, and refuse to load while a ticking
-  dev server's marker is live) and the demo. The ticking is `scripts/ticker.mjs` (start, stop, status), policy-free. Never add a bypass to the
-  route for any of them: it stays `withWebhookSecret`.
+  dev server's marker is live) and the demo. The ticking is `@sssb/tools/ticker` (start, stop, status), policy-free;
+  all of it lives in `packages/tools/src/tick`. Never add a bypass to the route for any of them: it stays `withWebhookSecret`.
 - **A PR that changes what ships to adopters adds a changeset** (`.changeset/README.md` has the template and what
-  counts): every `@sssb/*` package's shipped files (today the kit) and `apps/starter`. It is the release-note entry, with a "Now deletable" part,
+  counts): every `@sssb/*` package's shipped files (today the kit and the tools) and `apps/starter`. It is the release-note entry, with a "Now deletable" part,
   and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset.
 - Before opening a PR, run `/pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.

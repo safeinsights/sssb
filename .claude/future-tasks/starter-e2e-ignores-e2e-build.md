@@ -33,7 +33,7 @@ whose whole job is to catch framework assumptions should be the app CI builds.
 ## Shape of the change
 
 - `apps/starter/package.json` gains `build:e2e` and `start:e2e`, copied from the showcase's pair
-  (`E2E_BUILD=1 APP_MODE=simulated next build`, and `scripts/serve-standalone.mjs` for the serve half —
+  (`E2E_BUILD=1 APP_MODE=simulated next build`, and `sssb serve-standalone` for the serve half —
   `next.config.ts` sets `output: 'standalone'`, so plain `next start` does not serve it).
 - `apps/starter/playwright.config.ts` takes the showcase's `E2E_BUILD` branch, including the longer
   `webServer.timeout` a build needs before it can serve.

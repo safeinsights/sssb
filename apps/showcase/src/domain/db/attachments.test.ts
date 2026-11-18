@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '@sssb/tools/testing/tmp-dir'
 import { orgIdForSlug } from '@sssb/kit/db/org-lookup'
 import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 

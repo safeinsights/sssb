@@ -1,13 +1,14 @@
+// @ts-check
 // The dev ticker: one object that owns start, stop, the interval and whether it is running.
 //
-// It has two users, each with its own policy: `scripts/dev-tick.mjs` (`DEV_TICK_SECONDS=30 pnpm dev`, `resolveDevTick`)
+// It has two users, each with its own policy: `sssb dev-tick` (dev-tick.js) (`DEV_TICK_SECONDS=30 pnpm dev`, `resolveDevTick`)
 // and the showcase Simulator's control (`apps/showcase/src/app/api/simulator/ticker/dev-ticker.ts`), which runs it inside
 // the dev server. It is a module of its own, with no reading of the environment and no process wiring, so that both can;
 // each caller owns the policy that keeps the ticker off by default and out of e2e and the static demo.
 //
-// A tick is `tickOnce` (scripts/tick.mjs): an HTTP client of the route `pnpm tick` calls, with the same dev secret.
-import { removeTickerMarker, writeTickerMarker } from './ticker-marker.mjs'
-import { summarizeTick, tickDidWork, tickOnce } from './tick.mjs'
+// A tick is `tickOnce` (tick.js): an HTTP client of the route `pnpm tick` calls, with the same dev secret.
+import { removeTickerMarker, writeTickerMarker } from './ticker-marker.js'
+import { summarizeTick, tickDidWork, tickOnce } from './tick.js'
 
 /** A tick is a few queries; under a second is a typo for a unit. Over a day is a typo for another unit, and far below the ~24.8 days (2^31 ms) where `setTimeout` overflows and the loop would spin. */
 export const MIN_INTERVAL_SECONDS = 1
@@ -57,7 +58,7 @@ export function abortableSleep(ms, signal) {
  *   log?: (line: string) => void,
  *   sleep?: (ms: number, signal: AbortSignal) => Promise<void>,
  *   now?: () => Date,
- * }} options `markerFile`: where a live ticker is recorded (scripts/ticker-marker.mjs); none, none written.
+ * }} options `markerFile`: where a live ticker is recorded (ticker-marker.js); none, none written.
  */
 export function createTicker({
     origin,

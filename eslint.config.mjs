@@ -490,28 +490,29 @@ const sssbPublicSurfaceRule = {
 // ---------------------------------------------------------------------------------------------
 // NO RAW mkdtemp IN TESTS. A test that calls `mkdtemp`/`mkdtempSync` itself leaves the directory
 // behind on every run, and enough runs filled a dev machine's temp filesystem past 100GB. Tests make
-// scratch directories through packages/kit/src/testing/tmp-dir.ts, which queues the removal. Its own rule id,
+// scratch directories through @sssb/tools' helper (the framework's own tests through its copy in
+// packages/kit/src/testing/tmp-dir.ts), which queues the removal. Its own rule id,
 // not a `no-restricted-syntax` selector: that rule's config merges by key, so a later block that
 // re-declares it for overlapping files REPLACES this one without a word (the merge trap above).
 //
 // Deliberately narrow: it matches the call by the NAME it is made under — bare `mkdtempSync(…)`,
 // `fs.mkdtempSync(…)`, `fsp.mkdtemp(…)`, `await mkdtemp(…)` — and not a renamed import
 // (`import { mkdtemp as m }`) or a computed key. No lint rule chases an arbitrary alias; the
-// per-run TMPDIR sweep in scripts/check-tmpdir-leak.mjs is what bounds the damage if one slips by.
+// per-run TMPDIR sweep in `sssb check-tmpdir-leak` is what bounds the damage if one slips by.
 /** @type {import('eslint').Rule.RuleModule} */
 const sssbNoDirectMkdtempRule = {
     meta: {
         type: 'problem',
         docs: {
-            description:
-                'Tests make scratch directories through packages/kit/src/testing/tmp-dir.ts, never a raw mkdtemp.',
+            description: 'Tests make scratch directories through @sssb/tools/testing/tmp-dir, never a raw mkdtemp.',
         },
         schema: [],
         messages: {
             direct:
                 '`{{name}}()` leaves its directory behind on every test run. Use makeTestTmpDir() / ' +
-                'makeTestTmpDirAsync() from packages/kit/src/testing/tmp-dir.ts, which removes the directory when the ' +
-                'test file finishes — or, in a Playwright spec, testInfo.outputPath(), which Playwright ' +
+                'makeTestTmpDirAsync() from @sssb/tools/testing/tmp-dir (in the framework, makeTestTmpDir() from ' +
+                'packages/kit/src/testing/tmp-dir.ts), which removes the directory when the test file finishes — ' +
+                'or, in a Playwright spec, testInfo.outputPath(), which Playwright ' +
                 'clears at the start of every run.',
         },
     },
@@ -897,8 +898,53 @@ const sssbNoRawDbHandleRule = {
 // ONE plugin object, shared by every block that registers `sssb/*` rules. Flat config checks plugin
 // identity across overlapping blocks, so two inline `{ sssb: { rules: … } }` literals matching the
 // same file would be a "Cannot redefine plugin" error the moment a file matched both.
+// ---------------------------------------------------------------------------------------------
+// NO BARE @sssb/kit IN ANY OTHER SSSB PACKAGE (ADR-0014, rule 4). @sssb/tools (and every SSSB package after it but
+// the framework) has no dependency on @sssb/kit, so a bare `@sssb/kit/…` resolved from the package's own location
+// finds whichever copy pnpm hoisted into `.pnpm/node_modules`: in a workspace with two apps, the other app's
+// instance on the other app's seam. ADR-0014's independent review reproduced exactly that. Those packages reach the
+// framework only through the shared resolver (packages/tools/src/kit.js), which resolves from the APP's directory
+// and checks the real path, and whose specifiers are built at run time, never written as a literal. Its own rule
+// id, not a no-restricted-imports group, for the merge trap above. It sees a declaration, `export … from`,
+// import(), a type import('…'), require(), `import x = require(…)`, any `.resolve('…')` call (require.resolve,
+// createRequire(…).resolve, import.meta.resolve), and vitest's loaders: every way the slip can be written with a
+// literal.
+const isBareKitSpecifier = (specifier) => typeof specifier === 'string' && /^@sssb\/kit(\/|$)/.test(specifier.trim())
+/** @type {import('eslint').Rule.RuleModule} */
+const sssbNoBareKitImportRule = {
+    meta: {
+        type: 'problem',
+        docs: { description: 'SSSB packages other than the framework never name @sssb/kit by a bare specifier.' },
+        schema: [],
+        messages: {
+            bare:
+                '`{{specifier}}` names the framework by a bare specifier, which resolves from this package, not from ' +
+                "the app, and can load another app's @sssb/kit (ADR-0014, rule 4). Reach it through the shared resolver " +
+                '(packages/tools/src/kit.js: resolveAppsKit(appDir, subpath)).',
+        },
+    },
+    create(context) {
+        const check = (node) => {
+            const specifier = literalSpecifier(node)
+            if (isBareKitSpecifier(specifier)) context.report({ node, messageId: 'bare', data: { specifier } })
+        }
+        return {
+            ...declarationlessVisitors(check),
+            ImportDeclaration: (node) => check(node.source),
+            ExportAllDeclaration: (node) => check(node.source),
+            ExportNamedDeclaration: (node) => check(node.source),
+            TSImportEqualsDeclaration: (node) => check(node.moduleReference?.expression),
+            'CallExpression[callee.type="MemberExpression"][callee.property.name="resolve"]': (node) =>
+                check(node.arguments[0]),
+            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
+                check(node.arguments[0]),
+        }
+    },
+}
+
 const sssbPlugin = {
     rules: {
+        'no-bare-kit-import': sssbNoBareKitImportRule,
         'public-surface': sssbPublicSurfaceRule,
         'no-direct-mkdtemp': sssbNoDirectMkdtempRule,
         'no-dynamic-vendor-import': sssbNoDynamicVendorImportRule,
@@ -955,7 +1001,6 @@ const eslintConfig = [
             globals: {
                 process: 'readonly',
                 console: 'readonly',
-                // tick.mjs and dev-tick.mjs: an HTTP client with a timeout, and a stoppable timer
                 URL: 'readonly',
                 fetch: 'readonly',
                 AbortController: 'readonly',
@@ -964,6 +1009,35 @@ const eslintConfig = [
                 clearTimeout: 'readonly',
             },
         },
+    },
+    // @sssb/tools is plain JavaScript that Node loads directly (ADR-0014 part 2): a CLI, presets and helpers, with
+    // Node's globals. Every SSSB package but the framework (and the showcase's seed, which is app content) is held to
+    // rule 4's ban: the glob names packages/* and carves out the two, so the next SSSB package is covered before
+    // anyone names it.
+    {
+        files: ['packages/tools/**/*.{js,mjs}'],
+        languageOptions: {
+            globals: {
+                process: 'readonly',
+                console: 'readonly',
+                URL: 'readonly',
+                fetch: 'readonly',
+                AbortController: 'readonly',
+                AbortSignal: 'readonly',
+                setTimeout: 'readonly',
+                clearTimeout: 'readonly',
+                setInterval: 'readonly',
+                clearInterval: 'readonly',
+                NodeJS: 'readonly',
+                TextDecoder: 'readonly',
+            },
+        },
+    },
+    {
+        files: [`packages/*/**/*.${SRC_EXT}`, 'packages/*/**/*.d.ts'],
+        ignores: ['packages/kit/**', 'packages/seed/**'],
+        plugins: { sssb: sssbPlugin },
+        rules: { 'sssb/no-bare-kit-import': 'error' },
     },
     // Kysely migrations are conventionally typed Kysely<any> (schema evolves under them), and
     // spikes are proof harnesses — relax the any ban there only.
@@ -1266,7 +1340,7 @@ const eslintConfig = [
     },
     // THE PACKAGE'S EDGE (sssbNoPathOutOfPackageRule): no framework file, fixture included, reaches outside
     // packages/kit by path. Two named exemptions, both P5's: the real-Postgres contract tests start their server
-    // through the repo's tests/support/contract-postgres.ts, which reads scripts/ports.mjs and embedded-postgres. P5
+    // through the repo's tests/support/contract-postgres.ts, which reads @sssb/tools/ports and embedded-postgres. P5
     // moves the contract runner into @sssb/kit/testing; neither file ships (the `files` allowlist keeps tests out).
     {
         files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
@@ -1338,13 +1412,13 @@ const eslintConfig = [
     // contract test, packages/kit/test-fixture included; `apps/*/tests/**` adds the Playwright specs
     // and their support files, which are `.spec.ts` or plain helpers and which no leak guard wraps; the
     // fixture glob is named anyway (FIXTURE_FILES_GLOB, as every framework-invariant gate here does) so
-    // a future non-`.test` helper added there is covered too. packages/kit/src/testing/tmp-dir.ts is the one place the raw call is
-    // meant to live — it matches neither glob, and is ignored explicitly so that stays true if either
-    // glob is ever widened. `apps/*/tests/**` takes every extension because Playwright's default
+    // a future non-`.test` helper added there is covered too. The two helpers (packages/kit/src/testing/tmp-dir.ts and
+    // packages/tools/src/testing/tmp-dir.js) are the places the raw call is meant to live; they match neither glob,
+    // and are ignored explicitly so that stays true if either glob is ever widened. `apps/*/tests/**` takes every extension because Playwright's default
     // testMatch picks up a `.spec.mjs` or `.test.js` there too, and neither app's config narrows it.
     {
         files: [TEST_FILES, `apps/*/tests/**/*.${SRC_EXT}`, FIXTURE_FILES_GLOB],
-        ignores: ['packages/kit/src/testing/tmp-dir.ts'],
+        ignores: ['packages/kit/src/testing/tmp-dir.ts', 'packages/tools/src/testing/tmp-dir.js'],
         plugins: { sssb: sssbPlugin },
         rules: { 'sssb/no-direct-mkdtemp': 'error' },
     },
