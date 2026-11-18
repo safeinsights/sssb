@@ -60,19 +60,25 @@ function lockFileAbove(appDir) {
 const asBundleComment = (root, file) => path.relative(root, realpathSync(file)).split(path.sep).join('/')
 
 /**
- * The app's own migrations, by the names the bundle must carry (the keys Kysely records): every literal key of
- * the seam's migration index, and the name of every migration file beside it (`1001_items.ts` is `1001_items`,
- * the seam's convention). The files are what make the check fail closed: an index whose keys are computed, or
- * which re-exports another registry, still has to put each of these names into the bundle as a string.
+ * The app's own migrations, by the names the bundle must carry (the keys Kysely records): the literal keys of the
+ * seam's migration index, comments left out. An index with migration files beside it but no literal key (keys
+ * computed, or another registry re-exported) would make the check expect nothing, so it is refused instead.
  * @param {string} index
  * @returns {string[]}
  */
 function seamMigrationNames(index) {
-    const keys = [...readFileSync(index, 'utf8').matchAll(/['"](\d+_[^'"]+)['"]\s*:/g)].map((match) => match[1])
-    const files = readdirSync(path.dirname(index))
-        .map((file) => /^(\d+_[^.]+)\.(?:ts|mts|js|mjs)$/.exec(file)?.[1])
-        .filter((name) => name !== undefined)
-    return [...new Set([...keys, ...files])].map((name) => /** @type {string} */ (name)).sort()
+    const source = readFileSync(index, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:'"])\/\/.*$/gm, '$1')
+    const keys = [...source.matchAll(/['"](\d+_[^'"]+)['"]\s*:/g)].map((match) => /** @type {string} */ (match[1]))
+    const files = readdirSync(path.dirname(index)).filter((file) => /^\d+_[^.]+\.(?:ts|mts|js|mjs)$/.test(file))
+    if (keys.length === 0 && files.length > 0) {
+        throw new Error(
+            `SssbApp: ${index} registers none of ${files.join(', ')} under a literal key. Register each migration ` +
+                "as `'1001_name': m1001`, so the migrator's bundle can be checked for it.",
+        )
+    }
+    return [...new Set(keys)].sort()
 }
 
 /**
@@ -107,6 +113,7 @@ function resolveMigrator(appDir) {
     if (!existsSync(seamIndex)) {
         throw new Error(`SssbApp: ${appDir} has no migration index at ${path.join(SEAM_DIR, SEAM_MIGRATIONS_INDEX)}`)
     }
+    const migrations = seamMigrationNames(seamIndex)
     // An app that links its seam as a package (an adopter's, ADR-0014 part 1) must link THIS directory: the
     // server's build resolves the link, and the migrator would otherwise bundle a different seam from the one the
     // server runs on.
@@ -114,11 +121,30 @@ function resolveMigrator(appDir) {
     if (existsSync(linked) && realpathSync(linked) !== realpathSync(seamDir)) {
         throw new Error(
             `SssbApp: ${appDir} links @sssb/app-config to ${realpathSync(linked)}, not to its ${SEAM_DIR}, ` +
-                'which is the seam the migrator is bundled with',
+                'which is the seam the migrator is bundled with. Link the seam with `link:./src/app-config` (a ' +
+                '`file:` dependency installs a copy).',
         )
     }
     const lockFile = lockFileAbove(appDir)
     const projectRoot = path.dirname(lockFile)
+    // esbuild runs from the project root and CDK refuses an entry outside it; say why, rather than CDK's error.
+    const relativeEntry = path.relative(projectRoot, entry)
+    if (relativeEntry.startsWith('..') || path.isAbsolute(relativeEntry)) {
+        throw new Error(
+            `SssbApp: the @sssb/kit ${appDir} resolves (${kitDir}) is outside the project root ${projectRoot}, ` +
+                'where the migrator is bundled from. Install the framework into the project rather than linking a ' +
+                'checkout from elsewhere.',
+        )
+    }
+    // CDK bundles with the esbuild it can run from the project root (`pnpm exec esbuild`, `npx --no-install`),
+    // and otherwise falls back to Docker, where the seam alias and the path comments the check reads, both host
+    // paths, would name nothing. So the project root must install it.
+    if (!existsSync(path.join(projectRoot, 'node_modules/esbuild/package.json'))) {
+        throw new Error(
+            `SssbApp: no esbuild at ${projectRoot}, the project root the migrator is bundled from. Add esbuild to ` +
+                "that package's devDependencies: the construct bundles locally, never in CDK's Docker fallback.",
+        )
+    }
     return {
         entry,
         seamDir: realpathSync(seamDir),
@@ -129,7 +155,7 @@ function resolveMigrator(appDir) {
                 asBundleComment(projectRoot, path.join(kitDir, KIT_MIGRATIONS_INDEX)),
                 asBundleComment(projectRoot, seamIndex),
             ],
-            migrations: seamMigrationNames(seamIndex),
+            migrations,
         },
     }
 }
@@ -138,7 +164,7 @@ function resolveMigrator(appDir) {
  * A function's properties as they will be deployed: the rendered CloudFormation, escape-hatch overrides included,
  * with every token the stack can resolve resolved.
  * @param {cdk.aws_lambda.Function} fn
- * @returns {{ Environment?: { Variables?: Record<string, unknown> }, Code?: { S3Key?: unknown } }}
+ * @returns {{ Environment?: { Variables?: Record<string, unknown> }, Code?: { S3Bucket?: unknown, S3Key?: unknown } }}
  */
 function renderedProperties(fn) {
     const cfn = /** @type {any} */ (fn.node.defaultChild)
@@ -150,23 +176,26 @@ function renderedProperties(fn) {
 }
 
 /**
- * Problems with the migrator's code: none staged, or a deployed `Code` that is not the bundle staged in this
- * synth (an escape-hatch override would deploy something the bundle check never read).
+ * The code esbuild staged for a NodejsFunction during this synth, and problems with what it deploys: a `Code`
+ * other than the asset this synth staged (an escape-hatch override would deploy something the bundle check never
+ * read). Compared with the asset's own bucket and key, as the stack's synthesizer assigned them, so a bucket
+ * prefix or a legacy synthesizer's parameters compare equal.
  * @param {cdk.aws_lambda.Function} fn
  * @returns {{ code: string | undefined, problems: string[] }}
  */
 function stagedBundle(fn) {
-    const stage = /** @type {{ absoluteStagedPath?: unknown, assetHash?: unknown } | undefined} */ (
-        fn.node.tryFindChild('Code')?.node.tryFindChild('Stage')
-    )
+    const asset = /** @type {cdk.aws_s3_assets.Asset | undefined} */ (fn.node.tryFindChild('Code'))
+    const stage = /** @type {{ absoluteStagedPath?: unknown } | undefined} */ (asset?.node.tryFindChild('Stage'))
     const dir = stage?.absoluteStagedPath
-    if (typeof dir !== 'string') return { code: undefined, problems: [] }
+    if (asset === undefined || typeof dir !== 'string') return { code: undefined, problems: [] }
     const file = ['index.mjs', 'index.js'].map((name) => path.join(dir, name)).find((name) => existsSync(name))
-    const deployed = renderedProperties(fn).Code?.S3Key
+    const stack = cdk.Stack.of(fn)
+    const staged = JSON.stringify(stack.resolve({ S3Bucket: asset.s3BucketName, S3Key: asset.s3ObjectKey }))
+    const deployed = renderedProperties(fn).Code
     const problems =
-        deployed === `${String(stage?.assetHash)}.zip`
+        JSON.stringify({ S3Bucket: deployed?.S3Bucket, S3Key: deployed?.S3Key }) === staged
             ? []
-            : [`it deploys ${JSON.stringify(deployed)}, not the bundle this synth staged (${String(stage?.assetHash)})`]
+            : [`it deploys ${JSON.stringify(deployed)}, not the bundle this synth staged (${staged})`]
     return { code: file === undefined ? undefined : readFileSync(file, 'utf8'), problems }
 }
 
@@ -192,7 +221,7 @@ function stagedBundle(fn) {
  * - that the migrator's bundle carries the app's own migrations, built from the app's seam and no test
  *   fixture (when this synth bundles the stack at all: `cdk deploy OtherStack` skips it).
  *
- * The migrator is bundled LOCALLY, by the esbuild this package depends on, never in CDK's Docker fallback: the
+ * The migrator is bundled LOCALLY, by the esbuild the project root installs, never in CDK's Docker fallback: the
  * seam alias and the bundle's path comments the check reads are paths on the machine running the synth.
  *
  * Gates before any deploy (docs/cutover-checklist.md): `cloud-accounts` and `recurring-cost` (Aurora, NAT

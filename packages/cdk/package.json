@@ -25,8 +25,7 @@
         "node": ">=24"
     },
     "dependencies": {
-        "@sssb/tools": "workspace:*",
-        "esbuild": "^0.28.2"
+        "@sssb/tools": "workspace:*"
     },
     "peerDependencies": {
         "aws-cdk-lib": "^2.274.0",

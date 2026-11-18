@@ -3242,12 +3242,19 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   app's directory with another's slug); an app whose linked `@sssb/app-config` is not its own `src/app-config`; a
   migrator whose deployed `Code` is not the bundle this synth staged (an escape-hatch override); a migrator
   environment carrying `DEMO_MODE` or `E2E_BUILD`; and a `production` that is not a boolean, which in JavaScript
-  silently gave the destructive non-production defaults. The expected migration names now include every migration
-  file's name beside the seam's index, so an index with computed keys, which made the name check expect nothing,
-  fails instead (seen: `[[1001, 'items'].join('_')]` in the starter's index fails the synth).
-- **Local bundling only.** `@sssb/cdk` depends on `esbuild`, and Docker bundling is unsupported (`docs/build-notes.md`,
-  P9). Rejected: an alias relative to the working directory, which in Docker is `/`, not the project root, and which
-  `NodejsFunction` does not let a caller change.
+  silently gave the destructive non-production defaults. The migration names it expects are the index's literal keys,
+  comments left out; an index with migration files beside it and no literal key, whose computed keys made the check
+  expect nothing, is refused (seen, in a scratch app). Round 1's first answer, also expecting every migration file's
+  name, was rejected in round 2: a migration registered under a key other than its file name, or a draft file not
+  registered yet, would fail the synth for nothing.
+- **Local bundling only, and the construct checks for it.** It refuses a project root (the lock file's directory)
+  with no `node_modules/esbuild`, and a framework installed outside that root, each with a message saying what to
+  change (`docs/build-notes.md`, P9). Rejected: an alias relative to the working directory, which in Docker is `/`,
+  not the project root, and which `NodejsFunction` does not let a caller change; and round 1's first answer, an
+  `esbuild` dependency of `@sssb/cdk`, which round 2 showed is not what CDK runs.
+- **The deployed migrator's `Code` is compared with the asset's own bucket and key, as the synthesizer assigned
+  them**, not with `<asset hash>.zip`, which round 2 showed fails under a synthesizer's `bucketPrefix` and under the
+  legacy synthesizer. A stack with `bucketPrefix: 'apps/'` synthesizes in the test.
 - **Accepted, not closed:**
     - App source can still import from `apps/<app>/infra`, which the vendor fence no longer covers; the
       `tests/contract` carve-out has the same shape. No import pattern bans it without also banning an app's own

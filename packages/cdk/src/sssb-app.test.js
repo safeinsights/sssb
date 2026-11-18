@@ -240,7 +240,7 @@ describe('the synth assertions fail', () => {
             cfn.addPropertyOverride('Code.S3Key', 'elsewhere.zip')
         }
         expect(() => synthesize({ appDir, slug, transport: 'pg', configure: swap })).toThrow(
-            /the migrator bundle is wrong: it deploys "elsewhere\.zip", not the bundle this synth staged/,
+            /the migrator bundle is wrong: it deploys .*elsewhere\.zip.*, not the bundle this synth staged/,
         )
     })
 
@@ -267,10 +267,54 @@ describe('the synth assertions fail', () => {
         )
     })
 
+    it('when the seam registers its migrations under no literal key', () => {
+        const scratch = scratchApp()
+        const migrations = path.join(scratch, 'src/app-config/db/migrations')
+        writeFileSync(path.join(migrations, '1001_things.ts'), 'export async function up() {}\n')
+        writeFileSync(
+            path.join(migrations, 'index.ts'),
+            "import * as m1001 from './1001_things'\n" +
+                "// '1001_things': m1001, (a comment is not a registration)\n" +
+                "export const appMigrations = { [[1001, 'things'].join('_')]: m1001 }\n",
+        )
+        expect(construct({ appDir: scratch, slug: 'scratch' })).toThrow(
+            /registers none of 1001_things\.ts under a literal key/,
+        )
+    })
+
+    it('when the framework is installed outside the project root', () => {
+        const scratch = scratchApp()
+        writeFileSync(path.join(scratch, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n")
+        expect(construct({ appDir: scratch, slug: 'scratch' })).toThrow(/is outside the project root/)
+    })
+
     it('when the params name no transport it builds', () => {
         expect(construct({ params: { database: { transport: /** @type {any} */ ('mysql') } } })).toThrow(
             /params\.database\.transport must be pg or data-api/,
         )
+    })
+})
+
+describe('a stack whose synthesizer prefixes its asset keys', () => {
+    it("passes: the migrator's deployed code is compared with the key the synthesizer gave it", () => {
+        const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
+        const slug = /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))
+        const app = new cdk.App({ outdir: makeTestTmpDir('sssb-cdk-') })
+        const stack = new cdk.Stack(app, 'Prefixed', {
+            synthesizer: new cdk.DefaultStackSynthesizer({ bucketPrefix: 'apps/' }),
+        })
+        new SssbApp(stack, 'Default', {
+            appDir,
+            slug: /** @type {string} */ (slug?.[1]),
+            params: { database: { transport: 'pg' } },
+            environment: 'Staging',
+            production: false,
+        })
+        const migrator = lambdaFunction(
+            /** @type {Resources} */ (Template.fromStack(stack).toJSON().Resources),
+            'Migrator',
+        )
+        expect(migrator.id).toMatch(/^Migrator/)
     })
 })
 

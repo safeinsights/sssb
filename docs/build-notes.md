@@ -2081,6 +2081,14 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   bundling runs in the constructor.
 - **CDK caches a staged bundle for the rest of the process.** The test that tampers with one calls
   `AssetStaging.clearAssetHashCache()` afterwards, or a later synth in the same file would be handed the tampered copy.
+- **The migrator bundles locally, never in Docker.** CDK's `NodejsFunction` falls back to bundling in a Docker image
+  when it finds no esbuild, and there it runs from `/` with the project mounted at `/asset-input`: the seam alias,
+  an absolute host path, would name nothing, and the bundle's path comments would no longer be relative to the
+  project root the check computes them from. What CDK runs locally is `pnpm exec -- esbuild` (or `npx --no-install`)
+  from the project root, so the project root's own `node_modules/esbuild` is what matters: a dependency of
+  `@sssb/cdk` is found by CDK's `require` through pnpm's hidden hoist, which stops the Docker fallback, and then the
+  `exec` fails (reproduced by P9's second review round). The construct checks the project root instead. Read from
+  aws-cdk-lib 2.277's `aws-lambda-nodejs/lib/bundling.js` and `package-installation.js`; no Docker was run.
 
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 
@@ -2112,10 +2120,3 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 - **A Vitest config with an async default needs its return type named.** `defineConfig(async () => ({ … }))` failed
   `tsc` (no overload matched: the inferred literal is wider than `UserConfig`); `async (): Promise<ViteUserConfig> =>`
   passes. The config is async because the presets are: they `import()` the app's plugins.
-- **The migrator bundles locally, never in Docker.** CDK's `NodejsFunction` falls back to bundling in a Docker image
-  when it finds no esbuild, and there it runs from `/` with the project mounted at `/asset-input`: the seam alias,
-  an absolute host path, would name nothing, and the bundle's path comments would no longer be relative to the
-  project root the check computes them from. So `@sssb/cdk` depends on `esbuild`, which puts a copy where CDK's own
-  `require` finds it, and the construct says Docker bundling is unsupported. knip reports the dependency as unused,
-  because nothing imports it (`knip.json`, `packages/cdk`, `ignoreDependencies`). Found by P9's review, read from
-  aws-cdk-lib 2.277's `aws-lambda-nodejs/lib/bundling.js`; there is no Docker on the machine it was found on.
