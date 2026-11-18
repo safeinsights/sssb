@@ -5123,3 +5123,44 @@ _Accepted gap_ and adds to the rule.
   `packages/kit/tsconfig.strict.json`, is what compiles the kit against a seam without `appRoles` (the strict config
   resolves the seam to the fixture, which exports it): reading `.appRoles` directly fails `apps/starter` and
   `apps/showcase` with TS2339 and passes the strict config.
+
+## P14: the first release to public npm (2026-11-18, `release/p14-first-npm-release`)
+
+JP's standing rule for this work: decide, record the decision and what was rejected, and report it.
+
+- **0.2.0, not 0.1.0.** The P14 row predates the candidates; the group is at `0.2.0-rc.2`, and leaving pre mode takes
+  it to `0.2.0`. Recorded in an ADR-0014 addendum rather than by editing the row. Rejected: forcing 0.1.0, which is
+  behind the candidates already installed and which `prepare` refuses as going backwards.
+- **Pre mode is left by deleting `.changeset/pre.json`.** Rejected: `changeset pre exit` (`"mode": "exit"`). Read
+  from `@changesets/assemble-release-plan` 7.0.0 and `apply-release-plan` 8.1.1: both release every `pre/`
+  changeset and delete it; exit mode adds a forced patch when nothing is pending and deletes `pre.json` in the
+  release commit, which `verify-release` would then have to accept. Deleting it in the PR keeps one state fewer.
+- **Out of pre mode the `pre/` changesets are pending everywhere at once**: `loadWorkspace`, `verify-release` and the
+  notes tool. `check` judges them again (the next release reads them); all 31 pass today's lint. `check`'s rule
+  against a pending changeset reusing a consumed one's name now holds in both modes. Rejected: leaving them unlinted
+  out of pre mode, which would let the release find a malformed one after merge.
+- **The first plain release's notes are every changeset since the first candidate.** Rejected: notes that point at
+  the three candidates' prereleases, which an adopter starting on 0.2.0 from npm would have to chase. Pages, on rc.2,
+  gets its delta from `--since v0.2.0-rc.2`; the "Upgrading to this release" section is a sibling task's.
+- **The changeset is `scaffold`, `optional`, a patch on all five packages.** An adopter on a candidate's tarballs
+  keeps working; moving to npm is their choice. A patch and a minor both release 0.2.0 from `0.2.0-rc.2`. Rejected:
+  `required`/`minor`, which would tell pages it breaks by doing nothing.
+- **The release dry-run is a `checks.yml` job that rehearses the real commands**, `prepare` → `verify-release` (from a
+  copied checker) → local commit and tag → `publishable` → `pnpm pack` → `preflight` (reading npm) → `npx
+npm@11.21.2 publish --provenance --dry-run`. Measured: npm 11.21.2 accepts `--provenance --dry-run` with no OIDC
+  token (it signs nothing on a dry run) and refuses a prerelease version without `--tag`, so the rehearsal fails a
+  release that would publish a candidate. The job holds `contents: read` only, keeps no credentials, and sets
+  `SSSB_CREATE_UNPUSHED_PIN` for its packing (its release commit exists only there). Rejected: a dry-run job in
+  `release.yml` (it would run only on `main` and tags, after the decision), and packing at the PR's own version
+  (`0.2.0-rc.2`, which is not what a merge publishes). Not a required check until JP adds it to the rulesets.
+- **"Nothing publishes early" is a test over the workflow files** (`tests/tooling/release-reach.test.ts`), not prose:
+  the triggers, the `if`s and `needs` from a tag to `publish`, the order of `pack`'s gates, the id-token holders, and
+  no publish elsewhere but a dry run. Each was seen red: a `pull_request` trigger added to release.yml, and
+  `--dry-run` dropped from the rehearsal. What it cannot read (environments' deployment rules, the tag ruleset, npm's
+  trusted publishers) stays JP's settings, listed in release.yml's header.
+- **A copy of this repository's own tree is released in a test** (manifests and `.changeset/` only): `prepare` with
+  the real CLI, then `verify-release` and `publishable`. While the group is a candidate, the release must be its own
+  version. Seen red with `verify-release`'s `pre/` handling removed.
+- **Not changed: `pack` still packs again on the tag** rather than publishing the tarballs `checks`' pack-and-consume
+  job tested on the release commit, as a candidate's tag does. Out of this task's scope; the rehearsal packs as `pack`
+  does.

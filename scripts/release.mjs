@@ -9,10 +9,12 @@
 //                                 a group member outside packages/ or without repository.url, a group that is part
 //                                 private, a changeset whose body is not a readable release-note entry
 //                                 (scripts/release-notes.mjs), and a private group outside pre mode `rc` or a public
-//                                 one inside it. While the group is private (until P14) every release is a release
+//                                 one inside it. While the group was private (until P14) every release was a release
 //                                 candidate, `0.x.y-rc.N`, cut by a merge to main and shipped as a GitHub prerelease
-//                                 (ADR-0014 P7); .changeset/pre.json and a config that versions private packages are
-//                                 what make Changesets plan one.
+//                                 (ADR-0014 P7); .changeset/pre.json and a config that versions private packages
+//                                 made Changesets plan one. From P14 the group is public and out of pre mode, and a
+//                                 release is a plain `0.x.y` on npm, carrying the candidates' `.changeset/pre/` files
+//                                 the first time.
 //   prepare [--allow-dirty]       The `plan` job. Plans, guards, writes the release notes (assembled from the pending
 //                                 changesets by scripts/release-notes.mjs) to docs/releases/v<version>.md, then runs
 //                                 `changeset version` in the working tree and commits nothing. stdout is one JSON
@@ -21,11 +23,12 @@
 //   verify-release <version>      The `push` job, which holds the release app's key. From HEAD alone, works out
 //                                 the release the pending changesets imply (a candidate's `-rc.N` as Changesets 3
 //                                 numbers it) and fails unless the staged patch is exactly that, notes file included,
-//                                 each consumed changeset deleted or, in pre mode, moved unchanged to
-//                                 `.changeset/pre/`; prints `verified <version>`. Needs no installed dependencies.
-//   publishable <version>         The tag's pack job. The packages to publish, as JSON, and `[]` while every
-//                                 package is private. Fails if a non-private package is outside the fixed group
-//                                 or at another version.
+//                                 each consumed changeset deleted (out of pre mode, the `.changeset/pre/` ones too)
+//                                 or, in pre mode, moved unchanged to `.changeset/pre/`; prints `verified <version>`.
+//                                 Needs no installed dependencies.
+//   publishable <version>         The tag's pack job. The packages to publish, as JSON (`[]` were every package
+//                                 private). Fails if a non-private package is outside the fixed group or at another
+//                                 version.
 //   preflight <version> <sha> <tarball>…
 //                                 The publish job, before its first publish. Prints the tarballs still to publish
 //                                 after checking each one's own manifest. A version already on npm from this
@@ -256,9 +259,8 @@ export async function check(root) {
         }
     } else if (ws.pre) {
         problems.push(
-            'the fixed group is public: leave pre mode before releasing it to npm (ADR-0014 P14, ' +
-                '.claude/future-tasks/p14-leave-pre-mode.md); release candidates are GitHub prereleases of the private ' +
-                'group only',
+            'the fixed group is public: leave pre mode before releasing it to npm, by deleting .changeset/pre.json ' +
+                '(ADR-0014 P14). Release candidates were GitHub prereleases of the private group only',
         )
     }
     // ONE VERSION FOR THE GROUP, as its manifests say. Changesets plans a fixed group from its highest version, but
@@ -465,7 +467,7 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
 
 /**
  * The packages a tag publishes: every non-private workspace package, each of which must be in the fixed group
- * and at the tag's version. Empty while every package is private, which makes the publish a no-op until P14.
+ * and at the tag's version. Empty were every package private, which made the publish a no-op until P14.
  */
 export async function publishable(root, version) {
     if (!PLAIN_VERSION.test(version)) throw new Error(`not a release version: '${version}'`)

@@ -19,9 +19,9 @@ renamed, its root config on SSSB's presets, its CI (a workflow calling SSSB's re
 versioned dependencies. What it deliberately leaves for you (deployment params, seed data, cutover rows, repository
 settings) is listed under "What the generator leaves for you" below.
 
-**Until SSSB's packages are published** (ADR-0014's P14), `pnpm create @sssb` cannot fetch the generator from npm,
-and its default `--sssb` (`^` and the generator's own version) has no release to resolve. Run the generator from a
-checkout of SSSB instead, against SSSB's packages packed into a directory:
+SSSB's packages are on npm from 0.2.0 (ADR-0014's P14), so `pnpm create @sssb` fetches the generator from there, and
+its default `--sssb` (`^` and the generator's own version) resolves to that release. **To build on a commit that is not
+released yet**, run the generator from a checkout of SSSB instead, against SSSB's packages packed into a directory:
 
 ```sh
 # in a checkout of SSSB, installed (the kit's prepack builds with its devDependencies)

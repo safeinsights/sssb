@@ -149,8 +149,9 @@ jobs:
                   echo "A merge of this commit to main would publish v$version: $(jq -r '[.[].name] | join(", ")' <<<"$todo")" >> "$GITHUB_STEP_SUMMARY"
 
     # A PR that changes what SSSB hands an adopter (every `@sssb/*` package's shipped files, today the kit, and the starter) adds a changeset: its
-    # release-note entry, which ADR-0014 P7's notes are assembled from. Path-based, because every package is private
-    # until P14 and `changeset status` ignores private packages. The script, its exemptions and its tests:
+    # release-note entry, which ADR-0014 P7's notes are assembled from. Path-based, because what ships includes the
+    # starter and the plugin, which no package's `changeset status` sees (and, until P14, every package was private,
+    # which `status` ignores). The script, its exemptions and its tests:
     # .github/scripts/require-changeset.sh, tests/tooling/changesets.test.ts. A newer push to the PR re-runs it, so
     # adding the file turns it green.
     changeset-required:

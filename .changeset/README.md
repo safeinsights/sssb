@@ -34,7 +34,7 @@ branch; and a file a PR carries only because it merged `main` in. The rule and i
 `.github/scripts/require-changeset.sh` and `tests/tooling/changesets.test.ts`.
 
 If adopters would see no difference (a refactor, an internal fix), add an **empty changeset**: a file holding only
-`---` and `---`. `pnpm changeset add --empty` writes one once the packages are public; until then write it by hand.
+`---` and `---`, which `pnpm changeset add --empty` writes.
 
 ## Template
 
@@ -80,9 +80,8 @@ adopter's tree.
   deletes the files. `scripts/release-notes.mjs` reads them first and writes the notes an adopter reads (below).
 
 `.github/workflows/release.yml` versions the pending ones on the next push to `main` and publishes the result.
-`pnpm changeset` writes one once the packages are public; until then it stops at "No versionable packages found",
-so write the file by hand. This README is not a changeset; Changesets skips it, and `AGENTS.md`, `CLAUDE.md`,
-`GEMINI.md` and dotfiles too.
+`pnpm changeset` writes one (then fill in the body). This README is not a changeset; Changesets skips it, and
+`AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and dotfiles too.
 
 - **One version for the set.** Every `@sssb/*` workspace package is in one fixed group (`config.json`), so a
   changeset for one of them releases all of them at the same version. Name only those packages: CI refuses a
@@ -92,10 +91,9 @@ so write the file by hand. This README is not a changeset; Changesets skips it, 
   breaking channel and a patch must be compatible. Changesets turns a `major` on 0.x into 1.0.0, and npm versions
   cannot be withdrawn, so CI's `release-plan` job fails on a `major` changeset and on any plan that reaches 1.0.0
   (`pnpm release:check`). ADR-0014 part 10 lists what counts as breaking.
-- **Nothing reaches npm before ADR-0014's P14.** Every package is `"private": true` until then, and Changesets runs in
-  pre mode (see "Release candidates, until P14"), so a release is a candidate `0.x.y-rc.N`, shipped as tarballs on a
-  GitHub prerelease. `pnpm release:check` judges the plan as it will be once the packages are public, which is the
-  only plan that can reach npm.
+- **A release is a plain version on npm** (ADR-0014 P14): the packages are public and Changesets is out of pre mode.
+  Before P14 every release was a candidate `0.x.y-rc.N`, shipped as tarballs on a GitHub prerelease ("Release
+  candidates, until P14", below). CI's `release-dry-run` job rehearses, on every PR, what a merge would publish.
 - `format` is `prettier`: Changesets formats the changelogs a release writes with the repository's own Prettier,
   which `pnpm lint` checks.
 
@@ -120,11 +118,12 @@ are no dates, so the same changesets give the same bytes.
 only to correct it) comes back under "Corrections to earlier notes", so an adopter who followed the earlier text is
 told. `--since` and `--at` read git, not the working tree, so a changeset not yet committed is not in them.
 
-In pre mode (below) a consumed changeset is moved to `pre/` and is no longer pending, so none of these read it: a
-candidate's notes hold only what is new. A finished candidate's notes are the file its release commit carries
+The tool reads what Changesets would consume. In pre mode (below) a consumed changeset is moved to `pre/` and is no
+longer pending, so a candidate's notes hold only what is new. Out of pre mode the `pre/` ones are pending again, so
+the release that left it, 0.2.0, carries the whole series of candidates, and `--since <the last candidate's tag>`
+gives what is new since it. A finished release's notes are the file its release commit carries
 (`docs/releases/v<version>.md`), or `--at <release commit>^ --version <version>`, which regenerates them from the commit
-before it. The notes of the whole series of candidates, for the release that leaves pre mode (ADR-0014 P14), are not
-something this tool reads yet: it reads `.changeset/*.md` only.
+before it.
 
 A changeset that is not a readable entry stops the command with its file and what is wrong, and `pnpm release:check`
 (CI's `release-plan` job) says the same on every PR. The frontmatter is read one quoted `'@sssb/<package>': bump` per
@@ -137,32 +136,41 @@ which `verify-release` accepts at exactly that path. The job also appends them t
 
 ## Release candidates, until P14
 
-While the packages are private, every release is a release candidate (ADR-0014 P7): `pre.json` holds Changesets' pre
+While the packages were private, every release was a release candidate (ADR-0014 P7): `pre.json` held Changesets' pre
 mode with the tag `rc`, and `config.json` versions private packages and ignores every package outside `@sssb/*`
-(`"*"` and `"@app/*"`), so a merge to `main` that carries changesets cuts `0.x.y-rc.N`. No one decides a release
-separately from the merge. In pre mode Changesets moves each changeset it consumes to `pre/` instead of deleting it;
-those are kept until pre mode ends at P14 and are not pending, so the next candidate's notes hold only what is new. The
-candidate's tag then attaches the tarballs CI tested to a GitHub prerelease, with these notes, the install lines and
-each tarball's sha512 (`docs/runbooks/release-app.md`). `pnpm release:check` fails a PR that takes the group out of pre
-mode while it is private, or into pre mode once it is public. The four `history-since-keel-*.md` changesets hold
-everything since keel's `24b0589` that predates changesets, and so appear once, in the first candidate's notes.
+(`"*"` and `"@app/*"`), so a merge to `main` that carried changesets cut `0.x.y-rc.N`. No one decides a release
+separately from the merge. In pre mode Changesets moves each changeset it consumes to `pre/` instead of deleting it,
+where it is not pending, so the next candidate's notes held only what was new. The candidate's tag attached the
+tarballs CI tested to a GitHub prerelease, with these notes, the install lines and each tarball's sha512
+(`docs/runbooks/release-app.md`). `pnpm release:check` fails a PR that takes a private group out of pre mode, or puts
+a public one into it. The four `history-since-keel-*.md` changesets hold everything since keel's `24b0589` that
+predates changesets, and so appeared once, in the first candidate's notes.
+
+**Leaving pre mode (P14)** deleted `pre.json` in the change that made the packages public (not `changeset pre exit`,
+whose `"mode": "exit"` `release.mjs` refuses: `docs/decision-log.md`, 2026-11-18, P14). Changesets then counts every
+`pre/` changeset as pending again, so the next merge to `main` releases them with the new ones at the version the
+candidates were heading for (`0.2.0-rc.2` to `0.2.0`: a patch or a minor takes a prerelease to its own version) and
+deletes them all. `tests/tooling/release-pre-mode.test.ts` runs that against the real CLI, and releases a copy of this
+repository's own tree.
 
 ### What reads `.changeset/pre/` and `pre.json`
 
 `changeset version` in pre mode writes two things into `.changeset/` that are Changesets' own state, not changesets:
-`pre.json` (which `release.mjs` requires to be exactly `{"mode": "pre", "tag": "rc"}`), and `pre/`, where each
-changeset it consumed is moved byte for byte. A tool that enumerates `.changeset/` has to know both, and each decides
-what to do with the moved files:
+`pre.json` (which `release.mjs` requires to be exactly `{"mode": "pre", "tag": "rc"}`, or absent), and `pre/`, where
+each changeset it consumed is moved byte for byte. A tool that enumerates `.changeset/` has to know both, and each
+decides what to do with the moved files:
 
-- **Held to the rules for changesets: `.changeset/*.md` only.** The shape lint over the tree
-  (`tests/tooling/changesets.test.ts`), `release.mjs` (`check` and `prepare` judge and assemble what is pending: the package
-  names, the 0.x rule and the body shape) and the notes tool read the files directly in `.changeset/`. `release.mjs` also reads `pre/`'s names (`check` and `prepare`
-  refuse a pending changeset with the name of a consumed one) and, in `verify-release`, requires that a release commit
-  move each consumed changeset to `pre/<name>.md` unchanged. That check runs on a release commit only: a PR may edit a
-  file in `pre/`, which is why the shape lint does not trust them.
-- **Not linted:** `pre/`. The files were linted when they were pending, and a rule tightened since must not turn a
-  shipped candidate's record red. The shape test still fails on anything in `pre/` that is not a changeset file (a
-  `.md` file, not a README, an agent file or a dotfile), and on any other subdirectory of `.changeset/`.
+- **Held to the rules for changesets: what is pending.** In pre mode that is `.changeset/*.md`; out of it (from P14)
+  `pre/*.md` too, until the next release deletes them. The shape lint over the tree (`tests/tooling/changesets.test.ts`)
+  reads `.changeset/*.md`; `release.mjs` (`check` and `prepare` judge and assemble what is pending: the package names,
+  the 0.x rule and the body shape) and the notes tool read what is pending. `release.mjs` also reads `pre/`'s names
+  (`check` and `prepare` refuse a pending changeset with the name of a consumed one) and, in `verify-release`, requires
+  that a release commit in pre mode move each consumed changeset to `pre/<name>.md` unchanged, and one out of it delete
+  every pending one, `pre/` included.
+- **Not linted by the shape test:** `pre/`. The files were linted when they were pending, and a rule tightened since
+  must not turn a shipped candidate's record red (out of pre mode `release.mjs check` judges them again, since the next
+  release reads them). The shape test still fails on anything in `pre/` that is not a changeset file (a `.md` file, not
+  a README, an agent file or a dotfile), and on any other subdirectory of `.changeset/`.
 - **Never a changeset a PR adds:** the `changeset-required` gate counts only `.changeset/<name>.md`, so what a release
   commit adds to `pre/` is not one, and a release commit merged back from `main` is not charged to the PR that carries
   it (its version bumps and `pre/` files are `main`'s).
