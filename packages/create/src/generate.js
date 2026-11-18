@@ -30,6 +30,12 @@ const SSSB_PACKAGES = ['kit', 'tools', 'eslint-plugin', 'cdk']
 const SEAM = '@sssb/app-config'
 
 /**
+ * The seam's own package name: unique in the workspace, as the app's is (`<slug>`, its infra `<slug>-infra`).
+ * @param {string} slug
+ */
+const seamPackage = (slug) => `${slug}-app-config`
+
+/**
  * A TypeScript string literal quoted the way Prettier would quote it (single quotes unless the value has more of
  * them than of double quotes), so a display name with an apostrophe does not fail the first `pnpm lint`.
  * @param {string} value
@@ -381,7 +387,7 @@ function writeWorkspace(root, c, templateDir) {
     delete manifest.license
     manifest.description = `${name}: the app.`
     pinSssb(manifest, spec)
-    manifest.dependencies = sorted({ ...manifest.dependencies, [SEAM]: 'link:./src/app-config' })
+    manifest.dependencies = sorted({ ...manifest.dependencies, [SEAM]: `workspace:${seamPackage(slug)}@*` })
     manifest.devDependencies = sorted({
         ...manifest.devDependencies,
         '@sssb/eslint-plugin': spec('eslint-plugin'),
@@ -397,12 +403,15 @@ function writeWorkspace(root, c, templateDir) {
     pinSssb(infra, spec)
     writeFileSync(inApp('infra/package.json'), packageJson(infra))
 
-    // The seam package (ADR-0014 part 1, option C): `@sssb/app-config`, linked from the app's src/app-config, with an
-    // export for every module the framework imports. It takes the app's module `type`, because a nested package.json
-    // resets it for everything below it.
+    // The seam package (ADR-0014 part 1, option C): the app's src/app-config, a workspace package of the app's own name
+    // that the app takes under the name the framework imports (`@sssb/app-config`: `workspace:<slug>-app-config@*`),
+    // with an export for every module the framework imports. A workspace package, not a `link:`, because pnpm's
+    // partial installs for the app (`add <pkg>`, `remove`, `update <pkg>`) drop a `link:` dependency as the provider of
+    // @sssb/kit's peer (the 2026-11-18 addendum to ADR-0014). It takes the app's module `type`, because a nested package.json resets it for everything
+    // below it.
     const seamDir = inApp('src/app-config')
     /** @type {Record<string, unknown>} */
-    const seam = { name: SEAM, private: true }
+    const seam = { name: seamPackage(slug), private: true }
     if (manifest.type) seam['type'] = manifest.type
     seam['exports'] = seamExports(seamDir, meta.seamSpecifiers)
     writeFileSync(path.join(seamDir, 'package.json'), packageJson(seam))
@@ -462,10 +471,47 @@ function writeWorkspace(root, c, templateDir) {
     }
 
     const all = filesUnder(root)
-    // Nothing may still point at a workspace package this workspace does not have.
-    for (const file of all.filter((f) => path.basename(f) === 'package.json')) {
-        if (readFileSync(path.join(root, file), 'utf8').includes('"workspace:'))
-            throw new CreateError(`${file} still depends on a package by workspace: protocol`)
+    // Nothing may still point at a workspace package this workspace does not have (the seam is one it has): a package
+    // is the workspace's when pnpm-workspace.yaml's `packages` globs (a `*` is one path segment) cover its directory.
+    const globs = readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8')
+        .split('\n\n')[0]
+        .split('\n')
+        .flatMap((line) => /^\s*-\s+(\S+)\s*$/.exec(line)?.[1] ?? [])
+        .map(
+            (glob) =>
+                new RegExp(
+                    `^${glob
+                        .split('*')
+                        .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+                        .join('[^/]+')}$`,
+                ),
+        )
+    const manifests = all
+        .filter((f) => path.basename(f) === 'package.json')
+        .map((file) => {
+            try {
+                return { file, json: readJson(path.join(root, file)) }
+            } catch (err) {
+                throw new CreateError(`${file} is not valid JSON: ${/** @type {Error} */ (err).message}`)
+            }
+        })
+    const member = (/** @type {string} */ file) => {
+        const dir = path.dirname(file).split(path.sep).join('/')
+        return dir === '.' || globs.some((glob) => glob.test(dir))
+    }
+    const names = new Set(manifests.filter(({ file }) => member(file)).map(({ json }) => json.name))
+    for (const { file, json } of manifests) {
+        for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+            for (const [dep, spec] of Object.entries(json[field] ?? {})) {
+                if (typeof spec !== 'string' || !spec.startsWith('workspace:')) continue
+                // `workspace:<name>@<range>` takes the package <name> under the alias `dep`; any other form, `dep`.
+                const target = /^(@?[^@]+)@/.exec(spec.slice('workspace:'.length))?.[1] ?? dep
+                if (!names.has(target))
+                    throw new CreateError(
+                        `${file} still depends on ${target} by workspace: protocol, a package it lacks`,
+                    )
+            }
+        }
     }
     return all
 }

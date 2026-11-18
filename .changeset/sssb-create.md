@@ -11,8 +11,8 @@
 **What changed.** `pnpm create @sssb <dir>` (`npm create @sssb <dir> -- …`) writes a new SSSB app workspace: the
 starter under `apps/<slug>/`, its `infra/` included, renamed to the app's slug and display name; the workspace's
 config on SSSB's presets (Vitest, the tsconfig base, the ESLint plugin) with its own knip, jscpd, gitleaks, Prettier,
-commitlint and husky setup; the seam linked as `@sssb/app-config` with an `exports` map covering every seam module the
-framework imports; `allowBuilds`, `dedupePeerDependents: false` and `sssb.apps`; the owner files from `--repo` and
+commitlint and husky setup; the seam a workspace package (`<slug>-app-config`) the app takes as `@sssb/app-config`, with an
+`exports` map covering every seam module the framework imports; `allowBuilds`, `dedupePeerDependents: false` and `sssb.apps`; the owner files from `--repo` and
 `--owner`; `docs/cutover-checklist.md` with the framework's rows; `.claude/sssb-guide.md`, the app guide as `sssb guide` writes
 it; and `.github/workflows/checks.yml`, which calls SSSB's reusable workflow pinned to a commit. Its `pnpm verify` runs
 what that CI runs, but the secret scan. `--sssb <dir>` depends on packed tarballs instead of published versions.

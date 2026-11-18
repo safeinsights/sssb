@@ -50,11 +50,13 @@ importers:
   apps/console:
     dependencies:
       '@sssb/app-config':
-        specifier: link:./src/app-config
+        specifier: workspace:console-app-config@*
         version: link:src/app-config
       '@sssb/kit':
         specifier: file:../../../tarballs/sssb-kit-0.1.0.tgz
         version: file:../tarballs/sssb-kit-0.1.0.tgz(@sssb/app-config@apps+console+src+app-config)(react@19.2.9)
+
+  apps/console/src/app-config: {}
 
 packages:
 
@@ -633,12 +635,15 @@ describe('the lockfile seed', () => {
         const seed = seedFromLockfile(workspaceLock, run)
         expect(seedMachinePathProblems(seed, '/run/abc')).toEqual([])
         const leaky = seedFromLockfile(
-            workspaceLock.replace('link:./src/app-config', 'link:/run/abc/workspace/apps/console/src/app-config'),
+            workspaceLock.replace(
+                'version: link:src/app-config',
+                'version: link:/run/abc/workspace/apps/console/src/app-config',
+            ),
             run,
         )
         expect(seedMachinePathProblems(leaky, '/run/abc')).toEqual([
             expect.stringMatching(
-                /^line \d+ holds a path into this run's directory \(\/run\/abc\): specifier: link:\/run\/abc/,
+                /^line \d+ holds a path into this run's directory \(\/run\/abc\): version: link:\/run\/abc/,
             ),
         ])
     })

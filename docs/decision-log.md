@@ -4648,3 +4648,64 @@ playwright` (a version unpinned against `@playwright/test`).
 - **Command names say `/sssb:`** wherever they mean the plugin's: the starter's comments (a generated workspace holds
   no bare `/<command>`, which `tests/tooling/create-generate.test.ts` checks against the plugin's command list), the
   kit's shipped comments, the docs, `README.md` and `CONTRIBUTING.md`; a framework port is `/new-kit-port`.
+
+## The seam is a workspace package (2026-11-18, `fix/pnpm-add-seam-link`)
+
+P13 found that `pnpm add` in a generated workspace unlinks the app's seam from its `@sssb/kit`, and worked around it in
+the plugin's commands (its task, cited in P13's entry above, is now
+`.claude/future-tasks/resolved/pnpm-add-drops-seam-link.md`). This fixes it in what `@sssb/create` writes (ADR-0014's addendum of the same date has the
+cause, in pnpm's source). Each decision, and what was rejected:
+
+- **Each app's `src/app-config` is a workspace package named `<slug>-app-config`, declared
+  `"@sssb/app-config": "workspace:<slug>-app-config@*"`**, with `apps/*/src/app-config` in `pnpm-workspace.yaml`'s
+  packages (`packages/create/src/generate.js`, `packages/create/src/files.js`). Tried first in generated workspaces
+  under the pinned pnpm 11.14.0, counting the kit's peer suffix in the lockfile and running `sssb doctor` after each
+  command: `add`, `remove`, `update` (with `--filter`, `-r` and `--latest`), `add -w`, `add` run in the app, and a
+  fresh install all kept it, with one app and with two. Rejected, each tried the same way and each dropping the peer
+  on the first `add`: a `.pnpmfile.cjs` `readPackage` hook re-declaring the peer on the kit;
+  `resolvePeersFromWorkspaceRoot: false`; `dedupePeerDependents: true` (which also breaks part 5's instance per
+  importer); `autoInstallPeers: false`; `dependenciesMeta.<seam>.injected`; pnpm 11.21.0 in `packageManager`.
+  Rejected without trying: a `sssb add` wrapper (authors and agents reach for `pnpm add`, and Renovate or Dependabot
+  never run a wrapper); one seam package named `@sssb/app-config` declared `workspace:*` (it works for one app, but
+  two apps' seams would be two workspace packages of one name).
+- **The name is `<slug>-app-config`, beside `<slug>` and `<slug>-infra`.** The slug check already refuses a slug that
+  names a package the workspace installs; the seam's name is not checked against them, since nothing a workspace
+  installs ends in `-app-config`. `workspace:` resolves only to a workspace package, so this unscoped name is never
+  fetched from a registry; the name the kit's peer declares stays `@sssb/app-config`, in SSSB's scope.
+- **`@sssb/kit`'s manifest does not change**, so P2's dead-registry check of the packed kit is not re-run: the seam
+  stays an optional peer in `peerDependenciesMeta` alone. Its shipped source does: the conformance suite's `seam-map`
+  check (`packages/kit/src/testing/conformance/seam-map.ts`) refused a seam package not named `@sssb/app-config`, which
+  pack and consume's unit step found. It now reads the app's declaration and requires the name a
+  `workspace:<name>@<range>` names, else `@sssb/app-config`. Rejected: dropping the name check (a seam package whose
+  name matches nothing the app declares is a seam pnpm does not link).
+- **`sssb doctor` fails a `link:` seam even while it is linked** (`importerSeamProblems`,
+  `packages/tools/src/commands/doctor-checks.js`), with the four changes in the message. Rejected: reporting it
+  without failing, which leaves an adopter green until their next `pnpm add`, then red with a message about the kit.
+  It also fails an importer whose declared seam is another importer's (`workspace:` makes that one edit away).
+- **The generator's check that no `package.json` depends on a missing workspace package** now reads each
+  `workspace:` specifier's target (`workspace:<name>@<range>` names `<name>`; any other form, the dependency's own
+  key) instead of refusing every `workspace:`, which would refuse the seam.
+- **The generated `knip.json` gives the seam a workspace entry of its own** (`apps/<app>/src/app-config`, every `.ts`
+  an entry), since knip now counts its files as that workspace's: the app's entry pattern for them matched nothing.
+- **Pack and consume's generated shape adds `partialInstallsKeepSeam` after every other step**
+  (`scripts/pack-and-consume.mjs`): `pnpm --filter <app> add ms@2.1.3`, `remove ms`, `update zod`, each followed by
+  `sssb doctor` and `checkSeamLinks`. Last, because each rewrites files the generator wrote, which the step before
+  holds unchanged. `ms` is in the seed already. Seen red with the `link:` seam: "after pnpm add, sssb doctor fails".
+- **P13's workaround is reverted**: the plugin's **Adding a package** sections, the gate's rule failing an un-negated
+  `pnpm add` (and the negation reading only it needed), and the section test. The commands say
+  `pnpm --filter <app> add <pkg>`, as before P13.
+- **Doctor fails a `workspace:` seam whose name is not exactly one workspace package's.** The review asked which pnpm
+  command or setting still unlinks the seam without doctor noticing; it found one: a copy of an app's seam left under
+  its name in a package that takes no kit (`apps/zzz/src/app-config` named `acme-app-config`). pnpm took both without
+  a warning and linked the later one, into the app and its kit alike, so the seam check's two readings agreed and
+  doctor said ok. Rejected: holding every seam to `<importer>/src/app-config` (it would also refuse a seam an adopter
+  keeps elsewhere on purpose, which the names alone do not). Everything else the review reported running (the claim
+  check re-ran `dedupe`, `install --force` and `nodeLinker: hoisted`, with the same result) kept the seam or made
+  doctor fail: `pnpm up -r` with and without `--latest`, `--lockfile-only` and Renovate-style updates, `dedupe`,
+  `rebuild`, `prune`, `patch`, `catalog:`, overrides, `install --force`, pnpm 11.21.0, `shamefullyHoist`,
+  `publicHoistPattern`, the three workspace-protocol settings, renaming an app, and running pnpm inside the seam
+  (kept); `nodeLinker: hoisted`, `injectWorkspacePackages`, `injected`, a filtered install, and a copied second app
+  with the seam's name or dependency left unrenamed (failed). Not run: `nodeLinker: pnp` (doctor's Vitest listing hung
+  there), `pnpm import`, Renovate and Dependabot themselves, and a kit from a registry.
+- **Not covered: `nodeLinker: hoisted`.** One hoisted `@sssb/kit` cannot hold two apps' seams; with two apps doctor
+  fails it ("runs on a seam not its own"), as it did before this change.
