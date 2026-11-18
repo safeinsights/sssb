@@ -3439,10 +3439,10 @@ ADR-0014 part 5 names doctor's three checks and part 3 its `vitest list`; part 2
   The workflow-SHA and plugin-pin comparisons print "not checked" with the reason: nothing to compare yet (no release
   stamp, no reusable workflow until P10, no plugin until P13). Doctor runs `sssb guide --check` once the kit ships a
   guide (`guide.js` already promised it), and reports that it does not until then.
-- **SSSB-only cutover rows**: a row whose "What it is" begins "SSSB's own repository only" (`release-app`) is not looked
-  for in an adopter's checklist, and doctor says it skipped it. Rejected for now: a `scope` field in `rows.json`, which
-  is a kit change and would be the sturdier marker; the prefix is held by `tests/docs/cutover-rows.test.ts`'s equality
-  with the doc.
+- **SSSB-only cutover rows**: a row marked `"scope": "sssb"` in `rows.json` (`release-app`) is not looked for in an
+  adopter's checklist, and doctor says it skipped it. `tests/docs/cutover-rows.test.ts` holds the field to the
+  checklist's own wording (exactly the rows whose "What it is" begins "SSSB's own repository only"). Rejected: doctor
+  matching that wording itself, which made a sentence in a doc the switch.
 - **The scripts are `sssb:doctor` and `check:e2e`, not `doctor`**: `pnpm doctor` is pnpm's own command and shadows a
   script of that name (measured: the root's `pnpm doctor` ran pnpm's environment check and exited 0).
   `pnpm sssb:doctor` runs the apps one at a time, so the two reports do not interleave.

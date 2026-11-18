@@ -28,7 +28,7 @@ describe('@sssb/kit/cutover/rows.json', () => {
     const doc = checklistRows(readFileSync(path.join(REPO_ROOT, 'docs/cutover-checklist.md'), 'utf8'))
     const shipped = (
         JSON.parse(readFileSync(path.join(REPO_ROOT, 'packages/kit/src/cutover/rows.json'), 'utf8')) as {
-            rows: Array<{ id: string; what: string }>
+            rows: Array<{ id: string; what: string; scope?: 'sssb' }>
         }
     ).rows
 
@@ -40,7 +40,19 @@ describe('@sssb/kit/cutover/rows.json', () => {
         expect(
             shipped,
             'packages/kit/src/cutover/rows.json has drifted from the "## Rows" table of docs/cutover-checklist.md',
-        ).toEqual(doc)
+        ).toEqual(doc.map((row) => expect.objectContaining(row)))
+        expect(shipped.map((row) => Object.keys(row).sort())).toEqual(
+            shipped.map((row) => (row.scope === undefined ? ['id', 'what'] : ['id', 'scope', 'what'])),
+        )
+    })
+
+    it("marks `scope: 'sssb'` exactly the rows the checklist calls SSSB's own (sssb doctor does not look for them)", () => {
+        // The field is what doctor reads; the checklist's wording is what a reader sees. Held together here, so
+        // neither can say a row is an adopter's while the other says it is not.
+        const ownBySentence = doc.filter((row) => /^SSSB's own repository only\b/.test(row.what)).map((row) => row.id)
+        expect(shipped.filter((row) => row.scope === 'sssb').map((row) => row.id)).toEqual(ownBySentence)
+        expect(shipped.every((row) => row.scope === undefined || row.scope === 'sssb')).toBe(true)
+        expect(ownBySentence.length).toBeGreaterThan(0)
     })
 
     it('names each row once', () => {

@@ -86,6 +86,7 @@
         },
         {
             "id": "release-app",
+            "scope": "sssb",
             "what": "SSSB's own repository only: the GitHub App whose token lets `release.yml` push the release commit to `main` and its `vX.Y.Z` tag. Made by `pnpm release-app:init` (`docs/runbooks/release-app.md`)"
         },
         {

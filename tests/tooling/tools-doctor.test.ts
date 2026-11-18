@@ -326,15 +326,17 @@ describe('cutoverReport', () => {
         rows: [
             { id: 'auth-dev', what: 'Managed auth' },
             { id: 'errors', what: 'Error tracking' },
-            { id: 'release-app', what: "SSSB's own repository only: the release GitHub App" },
+            { id: 'release-app', scope: 'sssb', what: "SSSB's own repository only: the release GitHub App" },
+            // The field decides, not the wording: the same sentence without the field is an adopter's row.
+            { id: 'look-alike', what: "SSSB's own repository only, says the prose" },
         ],
     }
 
     it('reports the framework rows the checklist never names in backticks, and sets SSSB-only rows apart', () => {
         expect(cutoverReport(rows, '| ⬜ | `auth-dev` | ... |\nWe track errors elsewhere.')).toEqual({
-            unmentioned: ['errors'],
+            unmentioned: ['errors', 'look-alike'],
             sssbOnly: ['release-app'],
         })
-        expect(cutoverReport(rows, null).unmentioned).toEqual(['auth-dev', 'errors'])
+        expect(cutoverReport(rows, null).unmentioned).toEqual(['auth-dev', 'errors', 'look-alike'])
     })
 })

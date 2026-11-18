@@ -384,14 +384,14 @@ export function versionProblems(packages) {
 
 /**
  * The framework's cutover rows (`@sssb/kit/cutover/rows.json`) the workspace's own checklist never mentions, by their
- * backticked item name. A row whose "what it is" says it belongs to SSSB's own repository only (`release-app`) is no
+ * backticked item name. A row marked `scope: 'sssb'` (`release-app`) belongs to SSSB's own repository only, is no
  * adopter's to record, and is set apart instead.
- * @param {{ rows: { id: string, what: string }[] }} rows
+ * @param {{ rows: { id: string, what: string, scope?: string }[] }} rows
  * @param {string | null} checklist the text of the workspace's docs/cutover-checklist.md, null when it has none
  * @returns {{ unmentioned: string[], sssbOnly: string[] }}
  */
 export function cutoverReport(rows, checklist) {
-    const sssbOnly = rows.rows.filter((row) => /^SSSB's own repository only\b/.test(row.what)).map((row) => row.id)
+    const sssbOnly = rows.rows.filter((row) => row.scope === 'sssb').map((row) => row.id)
     const unmentioned = rows.rows
         .filter((row) => !sssbOnly.includes(row.id))
         .filter((row) => checklist === null || !checklist.includes(`\`${row.id}\``))
