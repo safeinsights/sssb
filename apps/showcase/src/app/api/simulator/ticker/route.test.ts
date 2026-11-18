@@ -19,8 +19,14 @@ vi.mock('./dev-ticker', () => ({ devTickerControl: () => control }))
 
 const { GET, POST } = await import('./route')
 
-function post(body: unknown) {
-    return POST(new Request('http://localhost/api/simulator/ticker', { method: 'POST', body: JSON.stringify(body) }))
+function post(body: unknown, contentType = 'application/json') {
+    return POST(
+        new Request('http://localhost/api/simulator/ticker', {
+            method: 'POST',
+            headers: { 'content-type': contentType },
+            body: JSON.stringify(body),
+        }),
+    )
 }
 
 afterEach(() => {
@@ -71,6 +77,12 @@ describe('/api/simulator/ticker', () => {
             expect(control.stop).toHaveBeenCalledOnce()
             expect((await post({ action: 'pause' })).status).toBe(400)
             expect((await post('start')).status).toBe(400)
+        })
+
+        it('refuses a body that is not declared JSON, which a cross-origin page could send without a preflight', async () => {
+            run.isSimulatedDevServer = true
+            expect((await post({ action: 'start', seconds: 1 }, 'text/plain')).status).toBe(415)
+            expect(control.start).not.toHaveBeenCalled()
         })
     })
 })
