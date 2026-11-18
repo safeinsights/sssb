@@ -3,7 +3,8 @@ import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSy
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { isChangesetName as releaseIsChangesetName } from '../../scripts/release.mjs'
+import { check as prettierCheck, resolveConfig } from 'prettier'
+import { changesetReleases, isChangesetName as releaseIsChangesetName } from '../../scripts/release.mjs'
 import {
     assembleNotes,
     isChangesetName,
@@ -542,5 +543,81 @@ describe('what the lint accepts must read the same in the notes', () => {
         expect(() => readChangesets(r.dir, { at: 'nope' })).toThrow(
             /git ls-tree failed: fatal: Not a valid object name nope/,
         )
+    })
+})
+
+describe("the notes are a file in the release commit, so they hold to the repository's own gates", () => {
+    const target = path.join(ROOT, 'docs/releases/v0.2.0.md')
+    const clean = async (markdown: string) =>
+        prettierCheck(markdown, { ...(await resolveConfig(target, { editorconfig: true })), filepath: target })
+
+    it('are prettier-clean (`pnpm lint` checks every markdown file, and a red release commit blocks the publish)', async () => {
+        const everything = {
+            '.changeset/a.md': changeset({ kind: 'seam', action: 'required', title: 'A', deletable: 'Old code.' }),
+            '.changeset/b.md': changeset({ kind: 'migration', action: 'optional', title: 'B' }),
+            '.changeset/c.md': changeset({ kind: 'operator', action: 'none', bump: 'patch', title: 'C' }),
+            '.changeset/d.md': changeset({ kind: 'none', action: 'none', bump: 'patch', title: 'D' }),
+            '.changeset/e.md': EMPTY,
+        }
+        expect(await clean(assembleNotes(asList(everything), { version: '0.2.0' }).markdown)).toBe(true)
+        expect(await clean(assembleNotes(asList({ '.changeset/e.md': EMPTY })).markdown)).toBe(true)
+        const withCorrections = assembleNotes(asList(everything), {
+            since: 'v0.1.0',
+            corrections: asList({ '.changeset/z.md': changeset({ kind: 'seam', action: 'required', title: 'Z' }) }),
+        })
+        expect(await clean(withCorrections.markdown)).toBe(true)
+        // and the notes of the repository's own changesets, which is what a release would commit
+        expect(await clean(releaseNotes(ROOT, { version: '0.2.0' }).markdown)).toBe(true)
+    })
+
+    it('never leave a run of blank lines outside a code block', () => {
+        const { markdown } = assembleNotes(
+            asList({
+                '.changeset/a.md': changeset({ kind: 'seam', action: 'required', title: 'A' }),
+                '.changeset/b.md': changeset({ kind: 'scaffold', action: 'required', title: 'B' }),
+            }),
+        )
+        expect(markdown).not.toMatch(/\n\n\n/)
+    })
+})
+
+describe('release.mjs reads the frontmatter the lint accepts', () => {
+    // The `push` job (which holds the release key) reads each changeset with `changesetReleases`. A changeset the lint
+    // and Changesets accept but that reader refused would pass every PR check and then stop the release in `push`.
+    const body = '\n### T\n\n**Kind.** seam\n\n**Action.** required\n\n**What changed.** x\n\n**To adopt.** y\n'
+    const forms: [string, string, string[]][] = [
+        ['plain', "---\n'@sssb/kit': minor\n---\n", ['@sssb/kit']],
+        ['a BOM', "﻿---\n'@sssb/kit': minor\n---\n", ['@sssb/kit']],
+        ['blank lines first', "\n\n---\n'@sssb/kit': minor\n---\n", ['@sssb/kit']],
+        ['a comment line', "---\n# why\n'@sssb/kit': minor\n---\n", ['@sssb/kit']],
+        ['a trailing comment', "---\n'@sssb/kit': minor # why\n---\n", ['@sssb/kit']],
+        ['a quoted bump', "---\n'@sssb/kit': 'minor'\n---\n", ['@sssb/kit']],
+        ['double quotes', '---\n"@sssb/kit": minor\n---\n', ['@sssb/kit']],
+        ['CRLF', "---\r\n'@sssb/kit': minor\r\n---\r\n", ['@sssb/kit']],
+        ['two packages', "---\n'@sssb/kit': minor\n'@sssb/tools': minor\n---\n", ['@sssb/kit', '@sssb/tools']],
+        ['a closing --- with trailing spaces', "---\n'@sssb/kit': minor\n---  \n", ['@sssb/kit']],
+    ]
+    it.each(forms)('%s', (_name, frontmatter, names) => {
+        const text = frontmatter + body
+        expect(lintChangeset(text)).toEqual([])
+        expect(changesetReleases(text, 'x.md').map((r: { name: string }) => r.name)).toEqual(names)
+    })
+
+    it('reads an empty changeset as naming nothing', () => {
+        expect(lintChangeset(EMPTY)).toEqual([])
+        expect(changesetReleases(EMPTY, 'x.md')).toEqual([])
+        expect(changesetReleases('---\n\n---\n', 'x.md')).toEqual([])
+    })
+})
+
+describe('a fence under a list item is still a fence', () => {
+    it('keeps its blank lines, and is closed by its own fence', () => {
+        const nested = ['- Run:', '', '    ```py', '    a = 1', '', '', '    b = 2', '    ```'].join('\n')
+        const { markdown } = assembleNotes(
+            asList({
+                '.changeset/a.md': changeset({ kind: 'seam', action: 'required', adopt: `Steps:\n\n${nested}` }),
+            }),
+        )
+        expect(markdown).toContain('    a = 1\n\n\n    b = 2')
     })
 })

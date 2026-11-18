@@ -55,8 +55,9 @@ export function isChangesetName(name) {
 /**
  * The frontmatter's `'name': bump` lines and the body, read without a YAML parser (this module has no dependency): one
  * package per line, the name quoted (YAML reserves a leading `@`), a trailing `# comment` allowed, and anything else
- * a problem rather than a guess. A leading BOM or whitespace is skipped and the closing `---` is on its own line, as
- * Changesets reads it.
+ * a problem rather than a guess. A leading BOM or whitespace is skipped and the closing `---` is on its own line (its
+ * trailing spaces are allowed; Changesets also allows leading ones, which are refused here). release.mjs reads the same
+ * frontmatter with `changesetReleases`, which must accept everything this accepts: a test holds them together.
  * @param {string} text
  * @returns {{ packages: { name: string, bump: string }[], body: string, problems: string[] } | null} null when there is
  *   no frontmatter at all
@@ -92,13 +93,13 @@ function fenceMask(lines) {
     /** @type {string | null} */
     let fence = null
     for (const line of lines) {
-        const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)
+        const open = /^\s*(`{3,}|~{3,})/.exec(line)
         if (fence === null) {
             inside.push(Boolean(open))
             if (open) fence = open[1]
         } else {
             inside.push(true)
-            if (open && open[1][0] === fence[0] && open[1].length >= fence.length && /^ {0,3}[`~]+\s*$/.test(line)) {
+            if (open && open[1][0] === fence[0] && open[1].length >= fence.length && /^\s*[`~]+\s*$/.test(line)) {
                 fence = null
             }
         }
@@ -240,7 +241,7 @@ const byFile = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)
 /** @param {NonNullable<ReturnType<typeof entryOf>>} e */
 function render(e) {
     const names = e.packages.map((p) => `\`${p.name}\``).join(', ')
-    return [`### ${e.title}`, '', `Action: ${e.action} · ${names}`, '', e.text, '']
+    return [`### ${e.title}`, '', `Action: ${e.action} · ${names}`, '', e.text]
 }
 
 /**
@@ -266,13 +267,14 @@ export function assembleNotes(changesets, { version, since, corrections = [], ju
     const corrected = [...corrections].sort(byFile).flatMap(({ file, text }) => entryOf(file, text) ?? [])
     const rank = (/** @type {string} */ action) => ACTIONS.indexOf(action)
     const required = entries.filter((e) => e.action === 'required').length
-    const out = [`# Release notes${version ? `: v${version}` : ''}`, '']
-    if (since) out.push(`Changes since ${since}.`, '')
+    const out = [`# Release notes${version ? `: v${version}` : ''}`]
+    if (since) out.push('', `Changes since ${since}.`)
     const emptyNote =
         empty > 0
             ? `${empty} ${empty === 1 ? 'change has' : 'changes have'} no adopter-visible effect and ${empty === 1 ? 'is' : 'are'} not listed.`
             : ''
     out.push(
+        '',
         entries.length === 0
             ? ['No change in this release asks anything of an adopter.', emptyNote].filter(Boolean).join(' ')
             : [
@@ -286,9 +288,9 @@ export function assembleNotes(changesets, { version, since, corrections = [], ju
         const inSection = entries.filter((e) => e.kind === kind).sort((a, b) => rank(a.action) - rank(b.action))
         // The four named sections are always present, empty or not (ADR-0014 part 10); "Other changes" only when used.
         if (inSection.length === 0 && kind === 'none') continue
-        out.push('', `## ${heading}`, '')
-        if (inSection.length === 0) out.push('None.')
-        for (const e of inSection) out.push(...render(e))
+        out.push('', `## ${heading}`)
+        if (inSection.length === 0) out.push('', 'None.')
+        for (const e of inSection) out.push('', ...render(e))
     }
     if (corrected.length > 0) {
         out.push(
@@ -296,9 +298,8 @@ export function assembleNotes(changesets, { version, since, corrections = [], ju
             '## Corrections to earlier notes',
             '',
             `These entries were edited after ${since ?? 'the earlier notes'}. If you acted on the earlier text, read them again.`,
-            '',
         )
-        for (const e of corrected) out.push(...render(e))
+        for (const e of corrected) out.push('', ...render(e))
     }
     return { markdown: out.join('\n').trimEnd() + '\n', entries: entries.length, empty }
 }

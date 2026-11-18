@@ -438,16 +438,20 @@ export function isChangesetName(name) {
  * The releases a changeset's frontmatter names, read without a YAML parser (the `push` job installs none): one
  * `"name": type` per line, and anything else fails rather than being guessed at.
  */
-function changesetReleases(text, where) {
-    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n?---/.exec(text)
+export function changesetReleases(text, where) {
+    // What scripts/release-notes.mjs's lint accepts, which is what Changesets reads: a BOM or blank lines first, `#`
+    // comments, a quoted bump. A reader stricter than the lint would fail a release in the `push` job, after its plan
+    // was accepted (tests/tooling/release-notes.test.ts holds the two together).
+    const frontmatter = /^\uFEFF?\s*---\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)/.exec(text)
     if (!frontmatter) throw new Error(`${where}: no frontmatter`)
-    return frontmatter[1]
+    return (frontmatter[1] ?? '')
         .split(/\r?\n/)
-        .filter((line) => line.trim())
+        .map((line) => line.replace(/\s+#.*$/, '').trim())
+        .filter((line) => line && !line.startsWith('#'))
         .map((line) => {
-            const m = /^\s*(["']?)([^"'\s:][^"']*?)\1\s*:\s*(major|minor|patch|none)\s*$/.exec(line)
+            const m = /^(["']?)([^"'\s:][^"']*?)\1\s*:\s*(["']?)(major|minor|patch|none)\3$/.exec(line)
             if (!m) throw new Error(`${where}: cannot read "${line}"`)
-            return { name: m[2], type: m[3] }
+            return { name: m[2], type: m[4] }
         })
 }
 
