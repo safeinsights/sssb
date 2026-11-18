@@ -32,8 +32,7 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  *         runs); `pnpm exec <bin>` takes a binary a dependency of the package it runs in declares (the workspace
  *         root, or the app under `--filter <app>`, `-C`, `cd`), never one pnpm only happens to hoist; `sssb …`
  *         names a command `sssb --help` lists; `npx`, `npm`, `yarn`, `pnpm dlx` of SSSB's packages, and a package
- *         binary run bare, fail, behind an environment prefix (`CI=1 …`) too; so does `pnpm add` (or `pnpm install
- *         <pkg>`) unless the prose says not to run it ("never `pnpm add`"): it drops the app's seam link;
+ *         binary run bare, fail, behind an environment prefix (`CI=1 …`) too;
  *       - `@sssb/<package>/<subpath>` is a dependency of the generated workspace and in that package's `exports`,
  *         `@sssb/app-config/<module>` and `@/<module>` resolve in the app, `sssb/<rule>` is an
  *         `@sssb/eslint-plugin` rule, `/sssb:<command>` is a plugin command; so is a specifier inside
@@ -479,10 +478,9 @@ function packageDir(c: Context, value: string, kind: 'filter' | 'dir'): 'app' | 
 
 /**
  * Problems with a command line: `pnpm …`, `sssb …`, and any other command's path arguments. An environment prefix
- * (`CI=1 pnpm …`, `env X=y …`) is read past, so the command behind it is checked as if bare. `negated`: the prose
- * says NOT to run it ("never `pnpm add`"), which excuses only the dependency-adding rule.
+ * (`CI=1 pnpm …`, `env X=y …`) is read past, so the command behind it is checked as if bare.
  */
-function checkCommand(c: Context, span: string, created: string[], negated = false): string[] {
+function checkCommand(c: Context, span: string, created: string[]): string[] {
     const problems: string[] = []
     let cwd: 'root' | 'app' = 'root'
     for (const segment of span.split(/&&|\|\||;|\|/).map((s) => s.trim())) {
@@ -546,14 +544,6 @@ function checkCommand(c: Context, span: string, created: string[], negated = fal
             if (!bins.has(bin)) at(`no dependency of ${where} provides "${bin}" in a generated workspace`)
             else if (!repoBins.has(bin)) at(`no dependency of ${where} provides "${bin}" in SSSB's own repository`)
             problems.push(...checkArgs(c, words.slice(i + 2), dirOf(target), created, segment))
-        } else if (
-            command === 'add' ||
-            (['install', 'i'].includes(command) && words.slice(i + 1).some((w) => !w.startsWith('-')))
-        ) {
-            if (!negated)
-                at(
-                    "`pnpm add` drops the app's seam link in an installed generated workspace: edit the app's package.json and `pnpm install` (a command's **Adding a package**)",
-                )
         } else if (command === 'dlx') {
             if (/^(@sssb\/|sssb$)/.test(words[i + 1] ?? ''))
                 at("`pnpm dlx` fetches SSSB's tools from the registry, past the workspace's pinned copy")
@@ -757,8 +747,6 @@ const CREATE_BEFORE = /\bcreate(?:\s+(?:the|a|an)(?:\s+new)?\s+(?:file|directory
 const NOT_CREATE_BEFORE =
     /\b(?:not|never|n't|no)(?:\s+(?:ever|yet|again|also|even))*\s+create(?:\s+(?:the|a|an)(?:\s+new)?\s+(?:file|directory|folder))?\s*\(?\s*$/i
 const CREATE_AFTER = /^\s+you\s+create\b/i
-/** Prose before a command span that says not to run it, or that it was run: "never (with) `…`", "(nor `…`". */
-const NEGATED_COMMAND = /(?:\b(?:never|not|nor|no|n't)(?:\s+[a-z]+)?|\balready\s+ran)\s*\(?\s*$/i
 /** A module named in a call: `require(…)`, `require.resolve(…)`, `import(…)`, `import.meta.resolve(…)`. */
 const CALL_SPECIFIER = /\b(?:require(?:\.resolve)?|import(?:\.meta\.resolve)?)\(\s*(['"`])((?:@sssb\/|@\/)[^'"`]*)\1/g
 
@@ -811,10 +799,8 @@ function referenceProblems(c: Context, text: string): string[] {
             return CREATE_AFTER.test(prose.slice(end, end + 20))
         })
         .map(({ text }) => normalize(text))
-    // A command the prose says not to run ("never `pnpm add`", "nor `…`"), or one it says was run ("already ran").
-    const negated = (start: number) => NEGATED_COMMAND.test(prose.slice(Math.max(0, start - 30), start))
 
-    for (const { text: raw, start, end } of spans) {
+    for (const { text: raw, end } of spans) {
         if (raw.includes('\n') && PATH_CHARS.test(raw.replace(/\s+/g, '')) && raw.replace(/\s+/g, '').includes('/')) {
             problems.push(
                 `\`${raw.replace(/\s+/g, '')}\`: a path broken across lines, which markdown renders with a space`,
@@ -823,7 +809,7 @@ function referenceProblems(c: Context, text: string): string[] {
         }
         const span = raw.replace(/\s+/g, ' ').trim()
         if (/\s/.test(span)) {
-            problems.push(...checkCommand(c, span, created, negated(start)))
+            problems.push(...checkCommand(c, span, created))
             continue
         }
         const problem = checkToken(c, span, created, /^\s*\(if any\)/.test(prose.slice(end, end + 12)))
@@ -884,20 +870,6 @@ describe('the plugin: every reference resolves in a generated workspace', () => 
         expect(existsSync(path.join(ctx.ws, 'pnpm-workspace.yaml'))).toBe(true)
         for (const output of WORKSPACE_OUTPUTS)
             expect(ctx.ignored.map((x) => x.replace(/^\//, ''))).not.toContain(output)
-    })
-
-    it('says how to add a package the one way that keeps the seam linked, in every command that adds one', () => {
-        const section = (text: string) =>
-            /\n## Adding a package\n([\s\S]*?)(?=\n## |$)/.exec(text)?.[1].replace(/\s+/g, ' ')
-        const texts = files.map((file) => readFileSync(path.join(REPO, file), 'utf8'))
-        const sections = texts.map(section).filter((text): text is string => text !== undefined)
-        // The commands that add one: the static demo's schema library, a port's SDK, the axe sweep's library.
-        expect(sections.length).toBeGreaterThanOrEqual(3)
-        expect(new Set(sections).size, 'every copy is the same text').toBe(1)
-        for (const [i, text] of texts.entries()) {
-            if (text.includes('**Adding a package**')) expect(section(text), files[i]).toBeDefined()
-        }
-        expect(sections[0]).toContain('`git checkout HEAD -- pnpm-lock.yaml`')
     })
 
     // A canary for the checker itself: each planted reference must fail with ITS problem, so a rule that stops
@@ -985,14 +957,13 @@ describe('the plugin: every reference resolves in a generated workspace', () => 
             '```ts\nconst f = require.resolve(`@sssb/kit/i18n/nope/${locale}.json`)\n```',
             'no @sssb/kit subpath under ./i18n/nope/',
         ],
-        // Another package manager, an environment prefix, and a dependency added with `pnpm add`.
+        // Another package manager, and an environment prefix.
         ['`npm run verify`', "`npm` is not this workspace's package manager"],
         ['`yarn verify`', "`yarn` is not this workspace's package manager"],
         ['`CI=1 pnpm nope6`', 'no "nope6" script in the workspace root'],
         ['`env CI=1 npx sssb doctor`', '`npx` reaches past the workspace'],
-        ['`pnpm --filter <app> add left-pad`', "`pnpm add` drops the app's seam link"],
-        ['`pnpm install left-pad`', "`pnpm add` drops the app's seam link"],
-        ['Then run `pnpm add left-pad`.', "`pnpm add` drops the app's seam link"],
+        // A dependency added to a package a generated workspace lacks.
+        ['`pnpm --filter nope add left-pad`', 'no package "nope" in a generated workspace'],
         // The lockfile is the workspace root's: from the app's directory it is not there.
         ['`cd apps/<app> && git checkout HEAD -- pnpm-lock.yaml`', '`pnpm-lock.yaml` (in `git checkout'],
         // Negations and non-create verbs: what follows is NOT created, so it must exist.
@@ -1028,8 +999,9 @@ describe('the plugin: every reference resolves in a generated workspace', () => 
             // The create forms beyond "create `x`".
             'create the file `src/app-config/brand-new.ts`, then edit `src/app-config/brand-new.ts`',
             'the spec at `tests/demo-static/made-here.spec.ts` you create',
-            // A command the prose says not to run, or that was run; the lockfile by name, from the root.
-            'never `pnpm --filter <app> add valibot` (nor `pnpm add`); if you already ran `pnpm add`, run',
+            // A dependency added to the app (the seam is a workspace package, which `pnpm add` keeps linked); the
+            // lockfile by name, from the root.
+            '`pnpm --filter <app> add valibot` `pnpm --filter <app> add -D @axe-core/playwright` `pnpm add`',
             '`git checkout HEAD -- pnpm-lock.yaml`, then `pnpm install`; `rm -rf node_modules pnpm-lock.yaml && pnpm install`',
             '`CI=1 pnpm verify` `pnpm view valibot version` `pnpm install --frozen-lockfile`',
             "`require.resolve('@sssb/kit/i18n/messages/<locale>.json')`",

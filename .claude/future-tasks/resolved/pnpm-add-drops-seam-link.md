@@ -1,6 +1,6 @@
 # `pnpm add` in a generated workspace drops the kit's seam link
 
-**Priority:** P1 · **Status:** open
+**Priority:** P1 · **Status:** resolved 2026-11-18 (`fix/pnpm-add-seam-link`; see "Resolution" at the end)
 **Found by:** the P13 plugin review (round 1 and round 2, 2026-11-18), walking the plugin's commands in a workspace
 `@sssb/create` generated from packed tarballs, with pnpm 11.14.0. Reproduced three times, with `valibot`, `ms` and
 `@axe-core/playwright`.
@@ -64,3 +64,37 @@ tree to fix it.
 Whichever lands: a test in the pack-and-consume probe (`scripts/pack-and-consume.mjs`) that runs
 `pnpm --filter <app> add` in the consumer and asserts doctor stays ok, and the plugin's **Adding a package** section
 and its gate rule relaxed to match.
+
+## Resolution (2026-11-18)
+
+**The fix: the first candidate, the seam as a workspace package.** `@sssb/create` lists `apps/*/src/app-config` in
+`pnpm-workspace.yaml`, names each seam `<slug>-app-config`, and has the app declare
+`"@sssb/app-config": "workspace:<slug>-app-config@*"`. Each app keeps an instance of its own linked to its own seam
+(part 5), and the kit's manifest is unchanged.
+
+**The cause, in pnpm 11.14.0's bundled source.** A partial install re-resolves only some of an importer's
+dependencies. The rest become "top parents" read from `node_modules` (`getTopParents`), with no linked directory, so
+peer resolution (`createPkgsByName`) finds no provider for the kit's optional peer and drops it. A fresh install
+resolves the `link:` as well, which is why it worked there.
+
+**What was tried, in generated workspaces** (a scratch harness counting the suffix, then running doctor):
+
+- **Kept the seam:** the workspace package, through `add`, `remove`, `update`, `update -r`, `update --latest`,
+  `add -w`, `add` run in the app, and a fresh install, with one app and with two.
+- **Dropped the seam on the first `add`:**
+    - a `.pnpmfile.cjs` `readPackage` hook re-declaring the peer;
+    - `resolvePeersFromWorkspaceRoot: false`;
+    - `dedupePeerDependents: true`;
+    - `autoInstallPeers: false`;
+    - `dependenciesMeta.injected`;
+    - pnpm 11.21.0.
+- **Not tried:** the `sssb add` wrapper, once the generator's own fix held.
+
+**What landed with it:**
+
+- **`sssb doctor`** fails a `link:` seam (naming the change) and a seam two importers declare.
+- **Pack and consume's generated shape** ends with `pnpm add`, `remove` and `update` in the app, each followed by
+  doctor; seen red with the `link:` seam.
+- **The plugin's "Adding a package" sections and their gate rule are gone.**
+- **Records:** ADR-0014's addendum "the seam is a workspace package", the decision log, and
+  `.changeset/seam-workspace-package.md` (what an existing workspace changes).

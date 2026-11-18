@@ -171,7 +171,9 @@ ends as the signal asked.
   `welcome.title`), the root layout's title and the static demo's `<title>`. Around it: `@sssb/*` dependencies at
   the `--sssb` you chose, `@sssb/eslint-plugin` and `eslint` added, a `tsconfig.json` on `@sssb/tools`' base that
   keeps only the app's own `@/*` alias, an `eslint.config.mjs` applying the preset, and the seam package
-  (`apps/<app>/src/app-config/package.json`, named `@sssb/app-config`, linked as `link:./src/app-config`). Its
+  (`apps/<app>/src/app-config/package.json`, a workspace package named `<slug>-app-config`, which the app declares
+  under the name the framework imports, `"@sssb/app-config": "workspace:<slug>-app-config@*"`: a `link:` would be
+  unlinked from the app's `@sssb/kit` by the next `pnpm add`, `remove` or `update`). Its
   `exports` map is one pattern for the flat seam modules (`./*` to `./*.ts`) plus each directory module by name
   (`./db/migrations`), so every specifier the framework imports resolves, and a seam module a later release adds is
   exported once you write it. It declares the app's own module `type`, which for the starter is none. The app's and
@@ -179,7 +181,8 @@ ends as the signal asked.
   its conformance test (`apps/<app>/src/sssb.conformance.test.ts`) and its deployment, `apps/<app>/infra/`, which
   the app's `typecheck` covers with `apps/<app>/infra/tsconfig.json`.
 - **The root**: `package.json` (named `<slug>-workspace`; its scripts, `verify` included, and `sssb.apps`),
-  `pnpm-workspace.yaml` (SSSB's `allowBuilds` approvals, `dedupePeerDependents: false`, and SSSB's
+  `pnpm-workspace.yaml` (each app's seam, `apps/*/src/app-config`, among its packages; SSSB's `allowBuilds`
+  approvals, `dedupePeerDependents: false`, and SSSB's
   `minimumReleaseAge` with `@sssb/*` exempt), the Vitest configs on `@sssb/tools/vitest` (`vitest.config.ts` and
   `vitest.contract.config.ts`), `tsconfig.json`, `eslint.config.mjs` (for the root's own files), knip, jscpd,
   gitleaks, git-ignore and Prettier-ignore configs, and lint-staged's. `.editorconfig`, `.nvmrc`,
@@ -391,11 +394,12 @@ nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's
 counting its tests), so the same setting would start demanding you delete the other 103 — capabilities you merely have not
 reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
-declaration. The generated `knip.json` carries three narrow entries beside the app's entry files: at the root,
+declaration. The generated `knip.json` carries a few narrow entries beside the app's entry files: at the root,
 `vitest.contract.config.ts` as an entry (knip's Vitest plugin reads only `vitest.config.ts`) and `esbuild` as an
 ignored dependency (`@sssb/cdk` bundles the migrator with the root's esbuild at synth); in the app,
-`@sssb/app-config`, `@vitejs/plugin-react` and `vite-plugin-singlefile` as ignored dependencies (the seam link the
-framework resolves, and two tools SSSB's presets load from the app's directory). Their reasons are in
+`@sssb/app-config`, `@vitejs/plugin-react` and `vite-plugin-singlefile` as ignored dependencies (the seam the
+framework resolves, and two tools SSSB's presets load from the app's directory); and the seam, a workspace of its own
+to knip, with every `.ts` file an entry, since the framework reads it and the app's code does not. Their reasons are in
 `packages/create/src/files.js`, since JSON holds no comments.
 
 **What the showcase's absence does NOT cost you is the gate.** SSSB's own suite used to be welded to the demo's
@@ -434,7 +438,8 @@ failed, and so is a bare `vitest` from the app's own directory (what the app's s
 run is the root's and that one would not run the suite, even if it runs none of the app's tests; so are the narrowing
 flags your package.json scripts pass to vitest and which script runs each contract config: doctor cannot see which config or flags your CI uses, so make
 sure CI runs the config doctor names. It also fails a second copy of any peer `@sssb/kit` declares (React, Next,
-Kysely...), an importer of the framework anywhere in the workspace that does not run on its own seam, and an
+Kysely...), an importer of the framework anywhere in the workspace that does not run on its own seam or declares it as
+a `link:` (which the next `pnpm add` unlinks), and an
 `@sssb/*` package out of step with the framework's version, and it reports framework cutover rows your
 `docs/cutover-checklist.md` never mentions. Inside SSSB's own repository it says "in-repo mode" and checks each app's
 seam aliases instead of links. **`sssb check-e2e`** asks your own Playwright which files your configs load
