@@ -66,7 +66,7 @@ spike is the worked example.
 carry design detail; the rest is re-sequenced freely as evidence arrives. Order by learning and risk:
 load-bearing certainties first, genuinely uncertain features after the evidence that can reshape them. The map
 is a hypothesis with provenance, and the slices are themselves the validation instrument — it changes when the
-evidence says so, not when someone re-raises an argument. (`.claude/commands/new-slice.md` scaffolds a slice
+evidence says so, not when someone re-raises an argument. (The plugin's `/sssb:new-slice`, `plugins/sssb/commands/new-slice.md`, scaffolds a slice
 the house way.)
 
 ## One-way vs two-way doors — what becomes an ADR ✅
@@ -124,8 +124,9 @@ you to it forever.
 **Tradeoff.** One thin layer of indirection. On a greenfield app it is near-free; retrofitting onto an app
 with vendor calls everywhere is the strangler pattern (introduce the wrapper, forbid new direct imports,
 migrate call sites opportunistically). See ADRs [0003](adr/0003-auth-clerk-headless-custom-ui.md),
-[0006](adr/0006-isomorphic-core.md), [0009](adr/0009-llm-anthropic.md); `.claude/commands/new-port.md`
-scaffolds a port with both adapters.
+[0006](adr/0006-isomorphic-core.md), [0009](adr/0009-llm-anthropic.md); `.claude/commands/new-kit-port.md`
+scaffolds a framework port with both adapters (`/new-kit-port`), and the plugin's `/sssb:new-port`
+(`plugins/sssb/commands/new-port.md`) one the app owns.
 
 ## What the template ships — three kinds of things ✅
 

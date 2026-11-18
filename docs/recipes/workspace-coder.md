@@ -24,7 +24,8 @@ no app's domain. §5 says how to get the one legitimate use of that first choice
 
 ## 2. The port
 
-Scaffold with `/new-port workspace` (`.claude/commands/new-port.md`), which first asks whose port it is.
+Scaffold with `/new-kit-port workspace` (`.claude/commands/new-kit-port.md`) for SSSB's port, or `/sssb:new-port
+workspace` (the plugin's `plugins/sssb/commands/new-port.md`) for one the app owns; both first ask whose port it is.
 This recipe predates app-owned ports and assumes SSSB's: if only your app will call it, the same three
 files can live in your app instead (`docs/recipes/app-owned-adapter.md`), and a fork is better off that
 way (ADR-0013). Be clear about where SSSB's answer lands:

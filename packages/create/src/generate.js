@@ -441,6 +441,8 @@ function writeWorkspace(root, c, templateDir) {
         'SECURITY.md': files.securityMd(c),
         'CODE_OF_CONDUCT.md': files.codeOfConduct(c),
         'README.md': files.readme(c),
+        'CLAUDE.md': files.CLAUDE_MD,
+        '.claude/settings.json': files.claudeSettings(c),
         'docs/cutover-checklist.md': files.cutoverChecklist(c),
         '.github/workflows/checks.yml': files.workflow(c),
         '.github/ISSUE_TEMPLATE/config.yml': files.issueConfig(c),

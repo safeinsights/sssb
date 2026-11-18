@@ -34,6 +34,8 @@ const READ_FILES = [
     'packages/kit/src/testing/seam-specifiers.json',
     'packages/kit/src/cutover/rows.json',
     'packages/kit/src/guide.md',
+    '.claude-plugin/marketplace.json',
+    'plugins/sssb/.claude-plugin/plugin.json',
 ]
 
 /**
@@ -224,6 +226,11 @@ describe('@sssb/create: the pinned commit must be on GitHub', () => {
 
         writeFileSync(path.join(repo, 'packages/kit/src/guide.md'), '# another guide\n')
         refusedFor('packages/kit/src/guide.md')
+        git(repo, ['checkout', '--', 'packages/kit/src/guide.md'])
+
+        // The plugin the workspace's settings enable at the pinned commit must be that commit's too.
+        writeFileSync(path.join(repo, 'plugins/sssb/new.md'), '# a command\n')
+        refusedFor('plugins/sssb/new.md')
     })
 
     it(`packing refuses an unpushed pin, unless ${UNPUSHED_PIN_ENV}=1`, () => {

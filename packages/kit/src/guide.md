@@ -30,6 +30,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - Deployment and service parameters exist only in `config/params.ts`. Secret values never enter the repository.
 - `pnpm dev` stays hermetic: no docker, no credentials, no network. Never add `next/font/google`, telemetry, or
   anything that phones home.
+- Anything that needs real credentials, accounts or money is a row in the workspace's cutover checklist, never a
+  blocker: the app boots, and is tested, without it.
 
 ## Data
 
@@ -77,3 +79,14 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - E2E specs live in `tests/e2e/` and reach the framework only through `@sssb/kit/testing/e2e` (`sssb check-e2e`).
   Playwright's `workers` stays 1: every worker shares one `.data` behind one dev server.
 - Dead code fails `knip`. Never silence a finding with a broad ignore; add the narrowest entry, with its reason.
+
+## The dev loop
+
+- Scheduled work runs in dev only when something ticks it: the app's `pnpm tick` calls the running dev server's cron
+  route once, and `DEV_TICK_SECONDS=<n> pnpm dev` ticks it every n seconds. The ticker is off by default and stays off
+  under e2e. The cron route (`src/app/api/webhooks/cron/route.ts`) stays behind `withWebhookSecret`: never add a
+  bypass for the ticker.
+- In a linked git worktree the app's ports are derived per checkout, so parallel sessions never adopt each other's dev
+  server; `pnpm exec sssb port`, run from the app, prints its port.
+- Before finishing a change, run `pnpm verify` from the workspace root. Format with `pnpm lint:fix`, never by hand.
+  Commit messages are conventional commits; the commit-msg hook runs commitlint.

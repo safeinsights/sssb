@@ -96,6 +96,7 @@ describe('@sssb/create: the generated workspace', () => {
         const root = all.filter((file) => !file.startsWith('apps/'))
         expect(root.sort()).toEqual(
             [
+                '.claude/settings.json',
                 '.claude/sssb-guide.md',
                 '.editorconfig',
                 '.github/ISSUE_TEMPLATE/bug_report.yml',
@@ -110,6 +111,7 @@ describe('@sssb/create: the generated workspace', () => {
                 '.prettierignore',
                 '.prettierrc.json',
                 'CODEOWNERS',
+                'CLAUDE.md',
                 'CODE_OF_CONDUCT.md',
                 'README.md',
                 'SECURITY.md',
@@ -143,13 +145,17 @@ describe('@sssb/create: the generated workspace', () => {
      * NOTHING OF SSSB'S REPOSITORY SURVIVES: its apps' names, its workspace's name, its framework's path, its own
      * repository (but the pinned workflow), its maintainer, the project's old name, and its spikes and dated records
      * (build notes, decision log), which a workspace does not have. Two allowances, each pinned to
-     * its exact form: the reusable workflow's `uses:` line names SSSB's repository, and `starter` is the name of the
+     * its exact form: the reusable workflow's `uses:` line and the plugin marketplace's `repo` in .claude/settings.json
+     * name SSSB's repository, and `starter` is the name of the
      * port service in @sssb/tools (`sssb port`, `originFor`, `sssb tick`/`dev-tick`), which the app keeps when it is
      * renamed (@sssb/tools' ports.js). And every relative path stays inside its own app, or inside the workspace.
      */
     it('carries no survivor of SSSB’s repository', () => {
         const allowed: Record<string, RegExp[]> = {
-            'safeinsights/sssb': [/^ {8}uses: safeinsights\/sssb\/\.github\/workflows\/app-checks\.yml@[0-9a-f]{40} /],
+            'safeinsights/sssb': [
+                /^ {8}uses: safeinsights\/sssb\/\.github\/workflows\/app-checks\.yml@[0-9a-f]{40} /,
+                /^ {16}"repo": "safeinsights\/sssb",$/,
+            ],
             starter: [/originFor\('starter'\)/, /"port": "starter"/, /sssb (?:dev-)?tick starter\b/],
         }
         const banned = [
@@ -170,11 +176,15 @@ describe('@sssb/create: the generated workspace', () => {
             lines.forEach((line, index) => {
                 for (const token of banned) {
                     if (!line.toLowerCase().includes(token)) continue
-                    // `uses:` is allowed only in the workflow file.
+                    // `uses:` is allowed only in the workflow file, the marketplace's `repo` only in the settings.
                     const ok = (allowed[token] ?? []).some(
                         (pattern) =>
                             pattern.test(line) &&
-                            (token !== 'safeinsights/sssb' || file === '.github/workflows/checks.yml'),
+                            (token !== 'safeinsights/sssb' ||
+                                file ===
+                                    (line.includes('uses:')
+                                        ? '.github/workflows/checks.yml'
+                                        : '.claude/settings.json')),
                     )
                     if (!ok) survivors.push(`${file}:${index + 1}: ${token}: ${line.trim()}`)
                 }
@@ -237,6 +247,32 @@ describe('@sssb/create: the generated workspace', () => {
         const other = path.join(makeTestTmpDir('create-ref-'), 'ws')
         generate({ templateDir: template, target: other, slug: 'acme', name: 'Acme', workflowRef: 'a'.repeat(40) })
         expect(read(other, '.github/workflows/checks.yml')).toContain(`app-checks.yml@${'a'.repeat(40)} `)
+    })
+
+    it("enables SSSB's Claude Code plugin from its marketplace, pinned to the workflow's commit", () => {
+        const marketplace = readJson(REPO, '.claude-plugin/marketplace.json')
+        const plugin = readJson(REPO, 'plugins/sssb/.claude-plugin/plugin.json')
+        expect(marketplace.plugins.map((entry: { name: string }) => entry.name)).toContain(plugin.name)
+        const enabled = `${plugin.name}@${marketplace.name}`
+        expect(enabled).toBe('sssb@sssb')
+        expect(readJson(ws, '.claude/settings.json')).toEqual({
+            extraKnownMarketplaces: {
+                [marketplace.name]: { source: { source: 'github', repo: 'safeinsights/sssb', ref: HEAD } },
+            },
+            enabledPlugins: { [enabled]: true },
+        })
+        // The same commit as the workflow's pin, which follows an override.
+        const other = path.join(makeTestTmpDir('create-ref-plugin-'), 'ws')
+        generate({ templateDir: template, target: other, slug: 'acme', name: 'Acme', workflowRef: 'a'.repeat(40) })
+        expect(readJson(other, '.claude/settings.json').extraKnownMarketplaces.sssb.source.ref).toBe('a'.repeat(40))
+
+        // The workspace's own CLAUDE.md imports the app guide's copy, on a line of its own (an import, not a mention).
+        expect(read(ws, 'CLAUDE.md').split('\n')).toContain('@.claude/sssb-guide.md')
+        const readme = read(ws, 'README.md')
+        expect(readme).toContain(`\`claude plugin install ${enabled} --scope project\``)
+        expect(readme).toContain('**Claude Code 2.1.324 or later**')
+        expect(readme).toContain('`/sssb:new-entity`')
+        expect(readme).toContain("the plugin marketplace's `ref` in `.claude/settings.json`")
     })
 
     it('links the seam as a package whose exports map covers every specifier the framework imports', () => {

@@ -193,9 +193,12 @@ ends as the signal asked.
 - **A `README.md`** of your own, **`docs/cutover-checklist.md`** and **`apps/<app>/DEMO-SIZE.md`** (both under
   "What the generator leaves for you" below).
 - **`.claude/sssb-guide.md`**, SSSB's app guide as `pnpm exec sssb guide` writes it: a stamped copy of the one
-  `@sssb/kit` ships, which `sssb doctor` requires (below, "Your README and agent guide").
+  `@sssb/kit` ships, which `sssb doctor` requires, and a short **`CLAUDE.md`** that imports it (below, "Your README
+  and agent guide").
+- **`.claude/settings.json`**: SSSB's Claude Code plugin marketplace (`sssb`), pinned to the same commit as the
+  workflow, and its plugin enabled (`sssb@sssb`; below, "Your README and agent guide").
 
-It writes no `LICENSE`, no `CLAUDE.md`, no `.github/dependabot.yml` and no `.changeset/`: a
+It writes no `LICENSE`, no `.github/dependabot.yml` and no `.changeset/`: a
 workspace that publishes no package has no use for SSSB's release-note machinery, and an adopter who wants a
 changelog adds Changesets themselves. The workspace's `packages/*` glob is there for packages of your own; none
 is written.
@@ -283,12 +286,15 @@ These are the parts that take judgement:
 - **Your README and agent guide.** The `README.md` the generator writes is yours to fill in. It starts with the
   first commands, the layout, the repository settings only you can make (the ones above, plus replacing any
   placeholder the generator left and adding a `LICENSE`) and how to upgrade SSSB. The workspace gets
-  `.claude/sssb-guide.md`, the app guide (the app-facing half of SSSB's `CLAUDE.md`) that `@sssb/kit` ships, and no
-  `CLAUDE.md`: write your own and import the guide from it with `@.claude/sssb-guide.md`. Edit nothing in the guide's
+  `.claude/sssb-guide.md`, the app guide (the app-facing half of SSSB's `CLAUDE.md`) that `@sssb/kit` ships, and a
+  `CLAUDE.md` that imports it (`@.claude/sssb-guide.md`) above a heading for your own rules: the file is yours from
+  then on, so keep the import line. Edit nothing in the guide's
   copy (a rerun overwrites it). Its header stamps the hash of the guide it was copied from, and `sssb doctor` fails
   when that is not the installed kit's guide, so after an upgrade `pnpm exec sssb guide` refreshes it and the change
-  reaches your diff. The app-author commands (`/new-slice` and the rest) arrive as a
-  Claude Code plugin with ADR-0014's P13.
+  reaches your diff. The app-author commands arrive as SSSB's Claude Code plugin, which `.claude/settings.json`
+  enables from SSSB's marketplace pinned to the workflow's commit: `/sssb:new-slice`, `/sssb:new-entity` and the
+  rest. A commit `ref` needs Claude Code 2.1.324 or later, and enabling it does not install it: each person runs
+  `claude plugin install sssb@sssb --scope project` once per clone, after trusting the folder.
 
 ### The starter's content is still wired into your UI
 
@@ -659,7 +665,9 @@ older server that migration cannot run. Everything SSSB targets already meets it
 A workspace `pnpm create @sssb` writes depends on SSSB's packages by version, so an update is `pnpm up` (every
 `@sssb/*` package together: they share one version), reading the release notes' "Seam changes"
 ([ADR-0014](adr/0014-distribution-as-versioned-packages.md)), and raising the commit your
-`.github/workflows/checks.yml` pins SSSB's reusable workflow to, to the one the notes name. Then run
+`.github/workflows/checks.yml` pins SSSB's reusable workflow to, and the plugin marketplace's `ref` in
+`.claude/settings.json`, to the one the notes name (`sssb doctor` reports either when it is not the release commit
+the installed `@sssb/kit` names). Then run
 `pnpm exec sssb guide` to refresh `.claude/sssb-guide.md`: `sssb doctor` fails until its stamp is the installed
 kit's guide. A repository
 adopted earlier as a fork of this one takes updates by `git merge` until it switches:
@@ -702,6 +710,6 @@ exist), dated records, and future tasks. Three consequences for you:
 
 The habits that keep the rest truthful, which you inherit: record unplanned decisions in
 `decision-log.md` and hard-won lessons in `build-notes.md` as they happen; amend an ADR by appending a
-dated addendum, never by editing what it said; run the `doc-steward` agent on every branch diff before a
-PR; `/pre-pr` runs the verify gate plus a branch review. `CLAUDE.md` teaches all of this to agent
+dated addendum, never by editing what it said; run the `sssb:doc-steward` agent on every branch diff before a
+PR; `/sssb:pre-pr` runs the verify gate plus a branch review. `CLAUDE.md` teaches all of this to agent
 sessions — keep it current as your product diverges.

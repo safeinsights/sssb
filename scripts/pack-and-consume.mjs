@@ -12,7 +12,9 @@
 //   generated  (shape 2) the generator's output and NOTHING else: not one file of it is edited (the run fails if one
 //              changed), and the workspace's OWN gates run: `pnpm verify`, the unit tests and `pnpm test:contract` (on
 //              embedded Postgres) held to the conformance suite, the reusable workflow's `sssb ci lint-typecheck-unit`
-//              and `sssb ci synth`, `pnpm knip` and `pnpm jscpd` (the workspace's own CI job). CI's `adoption-probe`
+//              and `sssb ci synth`, `pnpm knip` and `pnpm jscpd` (the workspace's own CI job), then that the workflow's
+//              pin, the plugin marketplace's in `.claude/settings.json` and the packed kit's release stamp are one
+//              commit, which holds the plugin, and that `sssb doctor` says they match. CI's `adoption-probe`
 //              job, a required check. A failure here is the generator's to fix, never this script's.
 //   (neither)  both, the pages shape first.
 //
@@ -83,6 +85,7 @@ import {
     createPackageProblems,
     createPackEnv,
     expectedConformanceTests,
+    generatedPinProblems,
     heldUnitScripts,
     lockfileFromSeed,
     seedFromLockfile,
@@ -1416,6 +1419,46 @@ function contractGenerated() {
     console.log(`contract: all ${count} contract tests ran and passed, on embedded Postgres`)
 }
 
+/**
+ * THE PINS (ADR-0014 part 5, P13): the generated `.claude/settings.json` pins SSSB's marketplace to the commit the
+ * generated workflow pins the reusable workflow to; the packed kit's release stamp names that commit; `sssb doctor`'s
+ * pin report says they match; and the plugin is at that commit (its manifest and the marketplace's, in this checkout:
+ * locally that is the packing commit, so the plugin must be committed before packing, as the starter must be for the
+ * generator's template).
+ */
+function pinsGenerated() {
+    const plugin = readJson(path.join(REPO, 'plugins/sssb/.claude-plugin/plugin.json')).name
+    const doctor = run('pnpm', ['exec', 'sssb', 'doctor', '--app', path.join('apps', GEN_APP)], {
+        cwd: GEN,
+        env: generatedEnv(),
+        capture: true,
+    })
+    const { commit, problems } = generatedPinProblems({
+        workflow: readFileSync(path.join(GEN, '.github/workflows/checks.yml'), 'utf8'),
+        settings: readFileSync(path.join(GEN, '.claude/settings.json'), 'utf8'),
+        stamp: KIT_STAMP,
+        plugin,
+        doctorOutput: doctor.stdout,
+    })
+    if (commit !== null) {
+        for (const file of ['.claude-plugin/marketplace.json', 'plugins/sssb/.claude-plugin/plugin.json']) {
+            const at = run('git', ['cat-file', '-e', `${commit}:${file}`], {
+                cwd: REPO,
+                env: process.env,
+                capture: true,
+                allowFailure: true,
+                quiet: true,
+            })
+            if (at.status !== 0)
+                problems.push(`${file} is not in commit ${commit}, which the generated settings pin the marketplace to`)
+        }
+    }
+    if (problems.length > 0) fail(`the generated pins do not agree:\n  ${problems.join('\n  ')}`)
+    console.log(
+        `the workflow, the plugin marketplace and @sssb/kit's release stamp all name ${commit}, doctor says so, and the plugin is there`,
+    )
+}
+
 /** No file the generator wrote was changed by anything the run did: the workspace was checked as generated. */
 function generatedUntouched() {
     const changed = []
@@ -1453,6 +1496,8 @@ console.log(
 let KIT_MANIFEST = { exports: {} }
 /** The tarball of every @sssb package a workspace installs, by package name. @type {Record<string, string>} */
 const tarballs = {}
+/** The packed @sssb/kit's release stamp (`dist/release.json`), null when it has none. @type {string | null} */
+let KIT_STAMP = null
 /**
  * Packs one workspace package into TARBALLS, beside the others, and returns the tarball's path.
  * @param {string} dir repo-relative package directory
@@ -1481,8 +1526,13 @@ const packedFiles = (file) =>
 step('pack every @sssb package, and extract @sssb/create', () => {
     rmSync(TARBALLS, { recursive: true, force: true })
     mkdirSync(TARBALLS, { recursive: true })
-    const kit = pack('packages/kit')
+    // Its prepack stamps the commit it is packed from (dist/release.json, ADR-0014 P13) and refuses shipped sources
+    // that differ from it, under the generator's switch (createPackEnv): the stamp and the generator's pin are one commit.
+    const kit = pack('packages/kit', createPackEnv(process.env))
     tarballs['@sssb/kit'] = kit
+    KIT_STAMP = packedFiles(kit).includes('dist/release.json')
+        ? run('tar', ['-xzOf', kit, 'package/dist/release.json'], { cwd: BASE, capture: true }).stdout
+        : null
     const manifest = packedManifest(kit)
     KIT_MANIFEST = manifest
     PACKED_VERSION = String(manifest.version)
@@ -1633,6 +1683,7 @@ if (RUN_GENERATED) {
     step('generated: sssb ci synth (the reusable workflow’s job, offline)', synthGenerated)
     step('generated: pnpm knip (the workspace’s own job)', () => run('pnpm', ['knip'], { cwd: GEN }))
     step('generated: pnpm jscpd (the workspace’s own job)', () => run('pnpm', ['jscpd'], { cwd: GEN }))
+    step('generated: the workflow and plugin pins are the kit’s release commit, and the plugin is there', pinsGenerated)
     step('generated: every file the generator wrote is unchanged', generatedUntouched)
 }
 

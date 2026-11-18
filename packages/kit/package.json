@@ -17,7 +17,7 @@
         "dist"
     ],
     "scripts": {
-        "prepack": "node scripts/build-testing-e2e.mjs"
+        "prepack": "node scripts/build-testing-e2e.mjs && node scripts/stamp-release.mjs"
     },
     "exports": {
         "./package.json": "./package.json",

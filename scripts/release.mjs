@@ -593,12 +593,38 @@ export async function preflight(root, version, sha, files, fetchImpl = fetch) {
     return todo
 }
 
+/** The package whose tarball carries the release stamp. */
+const KIT_NAME = '@sssb/kit'
+
+/**
+ * The commit `@sssb/kit`'s release stamp (`package/dist/release.json`, written by its prepack) names, or null when the
+ * tarball holds none or one that names no commit. Read only from a tarball `packedManifest` accepted.
+ * @param {string} file
+ * @returns {string | null}
+ */
+function releaseStamp(file) {
+    const listed = execFileSync('tar', ['-tzf', file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 2] }).split('\n')
+    if (!listed.includes('package/dist/release.json')) return null
+    try {
+        const { commit } = JSON.parse(
+            execFileSync('tar', ['-xzOf', file, 'package/dist/release.json'], {
+                encoding: 'utf8',
+                stdio: ['ignore', 'pipe', 2],
+            }),
+        )
+        return typeof commit === 'string' && SHA.test(commit) ? commit : null
+    } catch {
+        return null
+    }
+}
+
 /**
  * THE RELEASE CANDIDATE'S ASSETS, checked before anything is attested or attached (ADR-0014 P7). The tarballs are
  * the ones `checks`' pack-and-consume job packed and tested on this very commit, handed over as that run's artifact,
  * never packed again here. They must be exactly the fixed group as this commit's `packages/` holds it, one tarball
- * each, laid out as `pnpm pack` lays one out, each at the candidate's version. Private is expected: a candidate is
- * cut only of the private group. Returns `[{name, file, size, sha256, sha512}]` by name, `sha512` in the
+ * each, laid out as `pnpm pack` lays one out, each at the candidate's version, and `@sssb/kit`'s release stamp
+ * (`dist/release.json`, P13) must name this commit, which `sssb doctor` holds an adopter's pins to. Private is
+ * expected: a candidate is cut only of the private group. Returns `[{name, file, size, sha256, sha512}]` by name, `sha512` in the
  * `sha512-<base64>` form a lockfile's `integrity` takes. Needs no installed dependency.
  * @param {string} root the release commit's checkout
  * @param {string} version
@@ -615,6 +641,7 @@ export function candidate(root, version, files) {
         const manifest = JSON.parse(readFileSync(file, 'utf8'))
         if (inFixedGroup(manifest.name)) group.set(manifest.name, manifest.version)
     }
+    const head = git(root, ['rev-parse', 'HEAD']).trim()
     const problems = []
     const assets = []
     for (const file of files) {
@@ -634,6 +661,11 @@ export function candidate(root, version, files) {
         const expectedFile = `${name.slice(1).replace('/', '-')}-${version}.tgz`
         if (path.basename(file) !== expectedFile) problems.push(`${file} holds ${name}, so is named ${expectedFile}`)
         if (group.get(name) !== version) problems.push(`this commit has ${name} at ${group.get(name)}, not ${version}`)
+        if (name === KIT_NAME) {
+            const stamp = releaseStamp(file)
+            if (stamp !== head)
+                problems.push(`${file}: ${name}'s release stamp names ${stamp ?? 'no commit'}, not ${head}`)
+        }
         const bytes = readFileSync(file)
         assets.push({
             name,

@@ -131,9 +131,13 @@ function attestation(sha: string): Answer {
 }
 
 /** A tarball laid out as `pnpm pack` lays it out, holding only this manifest. */
-function tarball(dir: string, file: string, manifest: Record<string, unknown>) {
+function tarball(dir: string, file: string, manifest: Record<string, unknown>, extra: Record<string, string> = {}) {
     const staging = path.join(dir, `${file}-staging`)
     writeJson(path.join(staging, 'package', 'package.json'), manifest)
+    for (const [name, text] of Object.entries(extra)) {
+        mkdirSync(path.dirname(path.join(staging, 'package', name)), { recursive: true })
+        writeFileSync(path.join(staging, 'package', name), text)
+    }
     execFileSync('tar', ['-czf', path.join(dir, file), '-C', staging, 'package'])
     return path.join(dir, file)
 }
@@ -745,11 +749,23 @@ describe('a release candidate, end to end, against a local fake tag', () => {
         return root
     }
 
-    /** The tarballs `checks`' pack-and-consume job hands over, as `pnpm pack` lays them out. */
-    function tarballs(root: string, version: string, names = ['kit', 'tools']) {
+    /**
+     * The tarballs `checks`' pack-and-consume job hands over, as `pnpm pack` lays them out: the kit's carries its
+     * release stamp, naming the commit it was packed from (`stamp`, by default the checkout's HEAD; null for none).
+     */
+    function tarballs(root: string, version: string, names = ['kit', 'tools'], stamp?: string | null) {
         const dir = makeTestTmpDir('sssb-rc-tarballs-')
+        const commit =
+            stamp === undefined
+                ? execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+                : stamp
         return names.map((n) =>
-            tarball(dir, `sssb-${n}-${version}.tgz`, { name: `@sssb/${n}`, version, private: true }),
+            tarball(
+                dir,
+                `sssb-${n}-${version}.tgz`,
+                { name: `@sssb/${n}`, version, private: true },
+                n === 'kit' && commit !== null ? { 'dist/release.json': `${JSON.stringify({ commit })}\n` } : {},
+            ),
         )
     }
 
@@ -834,6 +850,20 @@ describe('a release candidate, end to end, against a local fake tag', () => {
         // a release candidate is of the commit it tags: one whose manifests say another version is refused
         const behind = workspace([KIT('0.1.0'), TOOLS('0.1.0')], {}, { git: true })
         expect(() => candidate(behind, v, tarballs(behind, v))).toThrow(/this commit has @sssb\/kit at 0\.1\.0/)
+    })
+
+    it("refuses a kit whose release stamp is not this commit's, or that carries none", async () => {
+        const root = await staged()
+        commit(root, 'chore: release v0.2.0-rc.0')
+        const v = '0.2.0-rc.0'
+        const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+        expect(() => candidate(root, v, tarballs(root, v))).not.toThrow()
+        expect(() => candidate(root, v, tarballs(root, v, ['kit', 'tools'], 'b'.repeat(40)))).toThrow(
+            `@sssb/kit's release stamp names ${'b'.repeat(40)}, not ${head}`,
+        )
+        expect(() => candidate(root, v, tarballs(root, v, ['kit', 'tools'], null))).toThrow(
+            `@sssb/kit's release stamp names no commit, not ${head}`,
+        )
     })
 
     it('refuses a tarball laid out other than as one package/, before reading it', async () => {

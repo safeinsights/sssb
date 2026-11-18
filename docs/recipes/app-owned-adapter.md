@@ -14,7 +14,7 @@ template ships"):
 
 - **It passes one of them** (every instance needs it, or it teaches an integration mechanic SSSB lacks),
   or **SSSB's own code calls it.** Then it is SSSB's port, under `packages/kit/src/ports/`. Build it with
-  `/new-port` and send it upstream (`docs/adr/0013-upstream-updates-fork-and-merge.md`). Do not carry it
+  `/new-kit-port` and send it upstream (`docs/adr/0013-upstream-updates-fork-and-merge.md`). Do not carry it
   in your fork.
 - **It fails both, and only your app calls it.** Then it is yours, and this page applies.
 
