@@ -4927,3 +4927,46 @@ These bullets replace the refusal and the "Teardown is unchanged" sentences abov
   `app_user` read as ordinary roles to `refusedOf`; the post-migration ADMIN assertion fails when the owner's ADMIN on a
   named role is revoked during the migration. Both are in `packages/kit/src/adapters/real/db.contract.test.ts`, and
   each was seen red with its check removed.
+
+Review round 2 (same day; the reviewer's finding confirmed on Postgres 18.4) changed these. They add to round 1's
+bullets, and replace its reading that a named role's walk passes through `app_user`.
+
+- **`app_user` is held to the ordinary-role rule too.** Every later owner gets ADMIN on it, as on a named role, but
+  nothing read its own attributes: with `app_user` made LOGIN CREATEDB with a known password and a member of
+  `pg_execute_server_program`, both owner passes and the RLS proofs stayed green, and every owner got ADMIN on it.
+  `refusedOf` now reads `app_user` first, then the named roles, wherever they exist, and the same three places act on
+  it. `grantAppRoles` refuses a non-ordinary `app_user` and grants nothing; `runOwnerPass` now calls it BEFORE it grants
+  `app_user`, so nothing at all is granted on a refusal (a test records every statement the pass sends and sees no
+  GRANT). The check after the migrations covers it, and the conformance check `app-roles` gains a fifth test, "app_user
+  is an ordinary role once the app's migrations ran". The framework's own migrations ask nothing of it the rule
+  forbids: 0001 creates it NOLOGIN, 0015 grants it TO the migrating role (a membership of that role, not of
+  `app_user`), and no framework migration makes it a member of anything.
+- **For `app_user`, the membership rule is adjusted, not copied.** It may hold none of the six attributes, and it may be
+  a member of the named roles and of any role ORDINARY IN SHAPE: none of the six attributes and not `pg_*` or `rds_*`,
+  at any depth. The reason is measured: CI's contract job runs every suite against ONE server
+  (`CONTRACT_DATABASE_URL`, `.github/workflows/app-checks.yml`), and `app_user` is cluster-wide, so once the framework's
+  suite has migrated there as the superuser, `app_user` is a member of `fixture_docket_clerk` for good (the
+  superuser's grant, which no teardown removes). With the named-roles-only rule, every owner pass of both apps' suites
+  failed on a fresh shared Postgres 18.4 (6 tests, and the kit's own case for it: 7 of 57); with this one all 57 pass,
+  twice over on the same server.
+  The same holds on any cluster several apps share. A named role's walk now stops at `app_user`, which answers for what
+  it leads to under its own rule. _Rejected:_ the named roles' rule for `app_user` (breaks every shared server, as
+  measured); cleaning the fixture's grant up after the framework's suite (any app that grants its role to `app_user`,
+  as the guide allows, would break the next app's pass the same way). _Accepted gap:_ the shape rule cannot see what an
+  unnamed attribute-free role owns or is granted in other databases; on a cluster several apps share, `app_user` is
+  shared too, so each app's owner already reaches what the others grant it.
+- **The contract tests assert the one error they expect, and that no owner is left** (`expectOnly` and `ownersOn` in
+  `packages/kit/src/adapters/real/db.contract.test.ts`): the outcome is an Error and not an AggregateError, whose text
+  would still contain the expected message when the teardown also leaked; and no `sssb_owner_*` role is on the server
+  that was not there before. The second owner's hook drops each role whatever the other did and reports every failure
+  (`dropPassRoles`, with a test of its own).
+- **The AggregateError stays.** Measured: Vitest 4.1 prints each error an AggregateError holds on its own, the inner
+  assertion's expected/actual diff included, so nothing is hidden. _Rejected:_ rethrowing the pass's own error with the
+  teardown failure as its `cause`: its message would no longer say an owner was left, so a caller matching the message
+  would not see the leak, and a `cause` the error already had would be overwritten.
+- **Seen red, one change at a time:** `refusedOf` without `app_user` (3 contract tests, 2 pglite tests); `app_user`
+  granted before `grantAppRoles` (the recorded-GRANT test); a teardown that always reports a leak (the LOGIN and ADMIN
+  tests, which `String(outcome)` let pass); a teardown that silently keeps the owner (the four tests that read
+  `ownersOn`, and round 1's teardown test); the hook
+  helper dropping in sequence (its test); the fixture's 1004 making `app_user` LOGIN and a member of
+  `pg_read_server_files` (the new conformance test).

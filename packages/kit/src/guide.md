@@ -50,12 +50,13 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'reviewer')`. Keep it an ordinary role, before and after every
   migration: NOLOGIN, never CREATEDB, CREATEROLE, SUPERUSER, BYPASSRLS or REPLICATION, and a member of no role (at any
   depth) but `app_user` and the app's other named roles (`GRANT reviewer TO app_user` is fine; `GRANT pg_read_all_data
-TO reviewer` is not). Name it in
+TO reviewer` is not). Leave the framework's `app_user` ordinary too, since every later owner gets ADMIN on it as well:
+  never change its attributes, and grant it only the app's named roles, never a `pg_*` one. Name your role in
   `appRoles`, exported beside `appMigrations` from `src/app-config/db/migrations/index.ts`:
   `export const appRoles = ['reviewer'] as const`. The contract tests' owner pass grants a later database owner ADMIN on
-  exactly those roles, as Aurora's master user holds on a role it created, and refuses a role that is not ordinary;
-  the conformance suite's `app-roles` check fails a role the migrations create and `appRoles` does not name, a name
-  they do not create, and a named role they leave more than ordinary. Never name `app_user` or a `pg_*` or `rds_*` role.
+  exactly those roles and `app_user`, as Aurora's master user holds on a role it created, and refuses a role that is
+  not ordinary; the conformance suite's `app-roles` check fails a role the migrations create and `appRoles` does not
+  name, a name they do not create, and a named role or `app_user` they leave more than ordinary. Never name `app_user` or a `pg_*` or `rds_*` role.
 - After any migration or database change, run the contract tests on real Postgres (`pnpm test:contract` from the
   workspace root). After renumbering or renaming a migration, wipe
   the local `.data` first.

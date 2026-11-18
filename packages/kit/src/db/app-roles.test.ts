@@ -54,6 +54,7 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
             ]
             const found = await refusedOf(db, named)
             expect(Object.fromEntries(found.map((role) => [role.rolname, role.refused]))).toEqual({
+                app_user: [],
                 harbor_clerk: [],
                 depot_ok: [],
                 depot_login: ['LOGIN'],
@@ -70,6 +71,69 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
             expect(
                 shownRefused(found.filter((role) => role.rolname === 'depot_chain' || role.rolname === 'depot_ok')),
             ).toBe('"depot_chain" (member of "pg_read_server_files", member of "wharf_middle")')
+        } finally {
+            await db.destroy()
+        }
+    }, 30_000)
+
+    // Every later owner is handed ADMIN on app_user too. It is shared by every database on a server, so it may be a
+    // member of a role another app named (CI's one contract server), but never of a predefined or privileged one.
+    it('reads app_user too, first: each attribute refused, and every membership but the named roles and roles ordinary in shape', async () => {
+        const db = new Kysely<DB>({ dialect: new PGliteDialect(openPglite()) })
+        try {
+            for (const statement of [
+                'CREATE ROLE app_user NOLOGIN',
+                'CREATE ROLE harbor_clerk NOLOGIN',
+                // Another app's ordinary role, which this app does not name.
+                'CREATE ROLE other_app_reader NOLOGIN',
+                'CREATE ROLE wharf_boss NOLOGIN SUPERUSER',
+                'CREATE ROLE wharf_middle NOLOGIN',
+                'GRANT pg_read_server_files TO wharf_middle',
+                'CREATE ROLE rds_fixture NOLOGIN',
+                'ALTER ROLE app_user SUPERUSER BYPASSRLS REPLICATION CREATEROLE CREATEDB LOGIN',
+                'GRANT harbor_clerk TO app_user',
+                'GRANT other_app_reader TO app_user',
+                'GRANT wharf_boss TO app_user',
+                'GRANT wharf_middle TO app_user',
+                'GRANT rds_fixture TO app_user',
+                'GRANT pg_execute_server_program TO app_user',
+                // A named role that is a member of app_user: what app_user leads to is app_user's to answer for.
+                'CREATE ROLE depot_ok NOLOGIN',
+                'GRANT app_user TO depot_ok',
+            ]) {
+                await sql.raw(statement).execute(db)
+            }
+            const found = await refusedOf(db, ['harbor_clerk', 'depot_ok'])
+            expect(found.map((role) => [role.rolname, role.refused])).toEqual([
+                [
+                    'app_user',
+                    [
+                        'SUPERUSER',
+                        'BYPASSRLS',
+                        'REPLICATION',
+                        'CREATEROLE',
+                        'CREATEDB',
+                        'LOGIN',
+                        'member of "pg_execute_server_program"',
+                        'member of "pg_read_server_files"',
+                        'member of "rds_fixture"',
+                        'member of "wharf_boss"',
+                    ],
+                ],
+                ['harbor_clerk', []],
+                ['depot_ok', []],
+            ])
+
+            // Ordinary again, with the other app's role and a named one still granted: nothing refused.
+            for (const statement of [
+                'ALTER ROLE app_user NOSUPERUSER NOBYPASSRLS NOREPLICATION NOCREATEROLE NOCREATEDB NOLOGIN',
+                'REVOKE wharf_boss, wharf_middle, rds_fixture, pg_execute_server_program FROM app_user',
+            ]) {
+                await sql.raw(statement).execute(db)
+            }
+            expect(shownRefused(await refusedOf(db, ['harbor_clerk', 'depot_ok']))).toBe('')
+            // ...and with no role named at all, as an app that creates none on a server another app's suite migrated.
+            expect(await refusedOf(db, [])).toEqual([{ rolname: 'app_user', refused: [] }])
         } finally {
             await db.destroy()
         }

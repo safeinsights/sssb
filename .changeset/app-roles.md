@@ -14,9 +14,12 @@ later owner ADMIN on exactly those roles, as it does on `app_user`, so a migrati
 every pass, not only the first. It grants on an ordinary role only: it refuses, before granting anything, a named role
 that can log in, has CREATEDB, CREATEROLE, SUPERUSER, BYPASSRLS or REPLICATION, or is a member, at any depth, of any role
 but `app_user` and the app's other named roles (ADMIN lets the owner grant itself SET on the role and act as all of
-those), and it fails when the owner's own migrations leave a named role more than ordinary. A new conformance check,
-`app-roles`, fails a role the migrations create that `appRoles` does not name, a name no migration creates, and a named
-role the migrations leave more than ordinary, on pglite in the unit run. The owner pass's teardown now also revokes what
+those), and it fails when the owner's own migrations leave a named role more than ordinary. It holds `app_user`, on
+which every later owner gets ADMIN too, to the same attributes, before granting and after the migrations: `app_user` may
+be a member of the app's named roles and of other attribute-free roles (another app's, on a shared server), never of a
+`pg_*` or `rds_*` role or one with any of those attributes. A new conformance check, `app-roles`, fails a role the
+migrations create that `appRoles` does not name, a name no migration creates, and a named role or `app_user` the
+migrations leave more than ordinary, on pglite in the unit run. The owner pass's teardown now also revokes what
 its owner granted (`DROP OWNED BY`), so a migration that grants a role TO `app_user` no longer leaves the owner behind,
 and an owner it cannot drop fails the pass instead of staying on the server. An app that creates no role changes
 nothing.
@@ -39,6 +42,8 @@ DO $$ BEGIN
     END IF;
 END $$
 ```
+
+Leave `app_user` ordinary as well: never change its attributes, and grant it only your named roles.
 
 Then make a migration that only warned when it lacked ADMIN on its role fail again: the owner pass now gives a later
 owner that ADMIN, so a failure there is real.
