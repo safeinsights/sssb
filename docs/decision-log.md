@@ -3096,5 +3096,13 @@ This is the "next step if it is wanted" that "`pnpm dev` without the Simulator h
 - **`init-app` learned the second root script.** Root `tick:starter` is renamed with the app (`tick:<slug>`) and, when
   the showcase is ejected, dropped as a duplicate of `tick`, as `dev:starter` already was; each seen failing against the
   old `init-app` in `tests/docs/adopter-identity.test.ts`.
+- **Two things CI found that the local run could not.** (1) The adoption probe runs the whole suite in a tree `init-app`
+  has renamed and ejected, where `apps/showcase` and `apps/starter` do not exist; the tick tests named them. They now
+  read the app directories of the tree they run in (and the PORT key from the app's own `dev` script, which `init-app` does
+  not rename), and ran green in an `init-app acme --eject-showcase` copy. (2) Pack and consume's consumer workspace
+  holds only the scripts it is told to copy, and the starter's Playwright config now imports `scripts/ticker-marker.mjs`:
+  typecheck failed with "Cannot find module". A new named workaround, `tick-scripts-copied`, copies the four tick scripts,
+  removed by P4 with the rest (`sssb tick` in `@sssb/tools`); ADR-0014's table of what moves to `@sssb/tools`
+  (`scripts/ports.mjs` and the like) has no row for them yet.
 - **Lint.** The `scripts/**` block gained the globals these two scripts use (`fetch`, `URL`, `AbortController`,
   `AbortSignal`, `setTimeout`, `clearTimeout`).
