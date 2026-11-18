@@ -7,14 +7,22 @@
 #      pending changesets with Changesets, and then `push`, which checks that result and pushes it as a release
 #      commit and its `vX.Y.Z` tag;
 #   2. that tag's push runs `pack`, which waits for `checks` to pass on the release commit and packs, and then
-#      `publish`, which publishes the packed tarballs with provenance.
+#      `publish`, which publishes the packed tarballs with provenance. A release candidate's tag
+#      (`vX.Y.Z-rc.N`) runs `candidate`, `attest` and `prerelease` instead (below).
 # Each pair splits the same way: the first job installs the workspace's dependencies and holds no secret; the
 # second holds the secret (the release app's key in `push`, npm's id-token in `publish`), installs nothing, and
-# re-checks what the first handed it. No job holds both a token that writes to the repository and the id-token.
+# re-checks what the first handed it. No job holds both a token that writes to the repository and the id-token. A
+# run holds the id-token in one job at most: `publish` on a release's tag, `attest` (to sign, in no environment, so
+# npm's trusted publisher refuses it) on a candidate's.
 #
-# NOTHING REACHES NPM BEFORE P14. Every package is `"private": true` until then, so Changesets plans no
-# release (`privatePackages.version` is false in .changeset/config.json), `plan` reports none and `push` is
-# skipped, and on a tag `pack` finds nothing publishable and `publish` is skipped. As a third lock, `publish`
+# RELEASE CANDIDATES UNTIL P14, AND NOTHING ON NPM (ADR-0014 P7; JP, 2026-11-18: the merge to main is the release
+# decision). Every package is `"private": true` until P14, and Changesets is in pre mode with the tag `rc`
+# (.changeset/pre.json), versioning private packages; scripts/release.mjs `check` fails a PR that breaks that pairing.
+# So a push to main with pending changesets versions the group to `0.x.y-rc.N`, and `push` tags it `v0.x.y-rc.N`.
+# That tag's run is the candidate's: `candidate` waits for `checks` on the release commit and takes the tarballs its
+# pack-and-consume job packed and tested there, `attest` signs them, and `prerelease` attaches them to a GitHub
+# prerelease with the notes. A candidate's tag never runs `pack` or `publish`. On a plain `vX.Y.Z` tag (P14 on),
+# `pack` finds nothing publishable while every package is private and `publish` is skipped; as a third lock, `publish`
 # refuses any tarball whose own manifest says private. Do not count on npm for that: `npm publish <tarball>
 # --dry-run` (11.21.2) accepted a private one.
 #
@@ -26,7 +34,8 @@
 #     repository only, contents write), whose token may push to `main` past its rules;
 #   - environment `npm-publish`: deployment refs `v*` tags only, administrators not exempt;
 #   - a tag ruleset on `v*` that only the release app may create, that nobody may move or delete, with no other
-#     bypass. Without it anyone who can push a tag can run an edited copy of this file in `npm-publish`;
+#     bypass. Without it anyone who can push a tag can run an edited copy of this file in `npm-publish`, or attach a
+#     prerelease of their own: `v*` covers a candidate's `vX.Y.Z-rc.N` too;
 #   - `main`'s ruleset: changes through a reviewed PR with `checks` required, only the release app bypassing;
 #   - on npmjs.com, per package: a trusted publisher naming `safeinsights/sssb`, `release.yml` and the
 #     environment `npm-publish`, with publishing requiring 2FA and disallowing tokens. npm binds the publisher to
@@ -39,7 +48,7 @@ name: release
 on:
     push:
         branches: [main]
-        tags: ['v[0-9]+.[0-9]+.[0-9]+']
+        tags: ['v[0-9]+.[0-9]+.[0-9]+', 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+']
 
 # Every job states its own.
 permissions: {}
@@ -95,7 +104,7 @@ jobs:
             # changesets by scripts/release-notes.mjs and written to docs/releases/v<version>.md, a new file in the
             # release commit) and `changeset version` in the working tree. A changeset that cannot be read as a
             # release-note entry stops it before anything is changed.
-            # Until P14 it answers `release: false` on every push, and the run ends here.
+            # Until P14 the release it prepares is a candidate, `0.x.y-rc.N` (pre mode); with nothing pending the run ends here.
             - name: prepare the release
               id: prepare
               run: |
@@ -106,7 +115,7 @@ jobs:
                   echo "release=$release" >> "$GITHUB_OUTPUT"
                   if [ "$release" = "true" ]; then
                       version=$(jq -r '.version' <<<"$result")
-                      [[ "$version" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::not a 0.x release version: '$version'"; exit 1; }
+                      [[ "$version" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]] || { echo "::error::not a 0.x release version: '$version'"; exit 1; }
                       echo "version=$version" >> "$GITHUB_OUTPUT"
                       git add -A
                       git diff --cached --binary HEAD > "$RUNNER_TEMP/release.patch"
@@ -159,7 +168,7 @@ jobs:
                   VERSION: ${{ needs.plan.outputs.version }}
               run: |
                   set -euo pipefail
-                  [[ "$VERSION" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::not a 0.x release version: '$VERSION'"; exit 1; }
+                  [[ "$VERSION" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]] || { echo "::error::not a 0.x release version: '$VERSION'"; exit 1; }
                   cp scripts/release.mjs "$RUNNER_TEMP/release.mjs"
                   git apply --index "$RUNNER_TEMP/release/release.patch"
                   out=$(node "$RUNNER_TEMP/release.mjs" verify-release "$VERSION")
@@ -207,7 +216,8 @@ jobs:
     # The tag's first half: everything that needs the workspace's dependencies, with no id-token.
     pack:
         name: pack
-        if: startsWith(github.ref, 'refs/tags/v')
+        # A release's tag, never a candidate's: `vX.Y.Z-rc.N` runs `candidate` below, and never reaches npm.
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
         runs-on: ubuntu-latest
         timeout-minutes: 90
         permissions:
@@ -331,3 +341,163 @@ jobs:
                       npx --yes npm@11.21.2 publish "$file" --access public --provenance
                   done
                   echo "Published v$VERSION: $(jq -r '[.[].name] | join(", ")' <<<"$todo")" >> "$GITHUB_STEP_SUMMARY"
+
+    # A RELEASE CANDIDATE (ADR-0014 P7). While the packages are private every release is a candidate: `push` tags the
+    # release commit `vX.Y.Z-rc.N`, and that tag's run lands here, never in `pack` or `publish` (nothing reaches npm).
+    # Three jobs, split as the npm pair is: `candidate` holds no token that writes anything and runs no dependency's
+    # code; `attest` holds only the id-token, to sign; `prerelease` holds only `contents: write`, to attach. The
+    # tarballs are the ones `checks`' pack-and-consume job packed and TESTED on this very commit, handed over as that
+    # run's artifact and never packed again, so what is attached is what CI tested.
+    candidate:
+        name: candidate
+        if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-rc.')
+        runs-on: ubuntu-latest
+        timeout-minutes: 90
+        permissions:
+            contents: read
+            # The CI gate lists this commit's `checks` runs, and the tarballs are that run's artifact.
+            actions: read
+        outputs:
+            version: ${{ steps.tag.outputs.version }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            # Only the release commit on main: the commit that added this candidate's notes, which `push` made and
+            # `verify-release` checked. A candidate tag anywhere else stops here.
+            - name: check the tag is a release candidate's release commit on main
+              id: tag
+              run: |
+                  set -euo pipefail
+                  [[ "$GITHUB_REF_NAME" =~ ^v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.(0|[1-9][0-9]*)$ ]] || { echo "::error::$GITHUB_REF_NAME is not a release candidate's tag"; exit 1; }
+                  git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+                  version=${GITHUB_REF_NAME#v}
+                  notes="docs/releases/v$version.md"
+                  git cat-file -e "HEAD:$notes" || { echo "::error::$GITHUB_REF_NAME has no $notes"; exit 1; }
+                  if git cat-file -e "HEAD^:$notes" 2>/dev/null; then echo "::error::$notes predates $GITHUB_REF_NAME's commit, which is not the release commit"; exit 1; fi
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+
+            # THE CI GATE on the release commit, as for a release, then that run's tarballs. Nothing is installed: the
+            # commands below need no dependency.
+            - name: wait for checks to pass on the release commit, and fetch the tarballs it tested
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  set -euo pipefail
+                  out=$(node scripts/release.mjs checks-run "$GITHUB_SHA")
+                  [[ "$out" =~ ^run\ ([1-9][0-9]*)$ ]] || { echo "::error::the CI gate did not report a run"; exit 1; }
+                  gh run download "${BASH_REMATCH[1]}" --repo "$GITHUB_REPOSITORY" --name sssb-tarballs --dir "$RUNNER_TEMP/candidate/tarballs"
+
+            - name: check the tarballs and write the prerelease notes
+              env:
+                  VERSION: ${{ steps.tag.outputs.version }}
+              run: |
+                  set -euo pipefail
+                  dir="$RUNNER_TEMP/candidate"
+                  node scripts/release.mjs candidate "$VERSION" "$dir"/tarballs/*.tgz > "$dir/assets.json"
+                  node scripts/release.mjs candidate-notes "$VERSION" "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$dir/assets.json" > "$dir/notes.md"
+                  cat "$dir/notes.md" >> "$GITHUB_STEP_SUMMARY"
+
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: candidate
+                  path: ${{ runner.temp }}/candidate
+                  if-no-files-found: error
+                  retention-days: 7
+                  # "Re-run all jobs" uploads it again in the same run.
+                  overwrite: true
+
+    # The candidate's provenance: one attestation per tarball, signed with this run's id-token. This job and `publish`
+    # never run in the same run (a candidate's tag never reaches `pack`), and it is in no environment, so npm's trusted
+    # publisher, which names the `npm-publish` environment, refuses its token. It installs and runs nothing but the
+    # pinned attest action, and writes only attestations.
+    attest:
+        name: attest
+        needs: candidate
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            id-token: write
+            attestations: write
+        steps:
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+              with:
+                  name: candidate
+                  path: ${{ runner.temp }}/candidate
+            - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+              with:
+                  subject-path: ${{ runner.temp }}/candidate/tarballs/*.tgz
+
+    # The GitHub prerelease, the only job that writes to the repository on a candidate's tag, with the run's own token
+    # (no app: a release is not a push, and starts no workflow). It checks out nothing, installs nothing and runs only
+    # gh, jq and sha256sum. The release is created as a DRAFT holding every tarball, checked byte for byte against what
+    # `candidate` checked, and only then made visible, as a prerelease that is never `latest`. A re-run finishes a draft
+    # a failed run left, and confirms a published one rather than changing it; a published candidate whose tarballs
+    # differ fails here, never replaced.
+    prerelease:
+        name: prerelease
+        needs: [candidate, attest]
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+              with:
+                  name: candidate
+                  path: ${{ runner.temp }}/candidate
+            - name: publish the prerelease
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  VERSION: ${{ needs.candidate.outputs.version }}
+              run: |
+                  set -euo pipefail
+                  [[ "$VERSION" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.(0|[1-9][0-9]*)$ ]] || { echo "::error::not a release candidate: '$VERSION'"; exit 1; }
+                  dir="$RUNNER_TEMP/candidate"
+                  tag="v$VERSION"
+                  repo="$GITHUB_REPOSITORY"
+                  # What `candidate` checked: each tarball's name and sha256, sorted.
+                  jq -r '.[] | "\(.sha256)  \(.file)"' "$dir/assets.json" | sort > "$RUNNER_TEMP/expected"
+                  [ "$(wc -l < "$RUNNER_TEMP/expected")" -gt 0 ] || { echo "::error::no tarballs to attach"; exit 1; }
+                  (cd "$dir/tarballs" && sha256sum -- *.tgz | sort) | diff "$RUNNER_TEMP/expected" - || { echo "::error::the tarballs are not the ones candidate checked"; exit 1; }
+
+                  # Only "not found" means no release yet; any other error (the API, the network) stops here, rather
+                  # than create a second draft beside one a lookup failed to see.
+                  if state=$(gh release view "$tag" --repo "$repo" --json isDraft --jq 'if .isDraft then "draft" else "published" end' 2>"$RUNNER_TEMP/view.err"); then
+                      :
+                  elif grep -q 'release not found' "$RUNNER_TEMP/view.err"; then
+                      state=none
+                  else
+                      cat "$RUNNER_TEMP/view.err" >&2
+                      echo "::error::could not read $tag's release"
+                      exit 1
+                  fi
+                  if [ "$state" = none ]; then
+                      gh release create "$tag" --repo "$repo" --verify-tag --draft --prerelease --title "$tag" --notes-file "$dir/notes.md"
+                      state=draft
+                  fi
+                  # A draft is not visible, so every tarball is (re)uploaded into it, replacing any a failed run left
+                  # part-written; its title and notes are set again when it is published, below.
+                  if [ "$state" = draft ]; then
+                      for file in $(jq -r '.[].file' "$dir/assets.json"); do
+                          gh release upload "$tag" --repo "$repo" --clobber "$dir/tarballs/$file"
+                      done
+                  fi
+
+                  # Byte for byte, what the release holds: exactly these tarballs and nothing else.
+                  got="$RUNNER_TEMP/got"
+                  rm -rf "$got"
+                  gh release download "$tag" --repo "$repo" --dir "$got" --pattern '*'
+                  (cd "$got" && sha256sum -- * | sort) | diff "$RUNNER_TEMP/expected" - || { echo "::error::$tag holds other files than this candidate's tarballs"; exit 1; }
+
+                  if [ "$state" = draft ]; then
+                      gh release edit "$tag" --repo "$repo" --title "$tag" --notes-file "$dir/notes.md" --draft=false --prerelease --latest=false
+                  fi
+                  shown=$(gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
+                  [ "$shown" = "false true" ] || { echo "::error::$tag is not a published prerelease ($shown)"; exit 1; }
+                  echo "Released $tag as a GitHub prerelease: https://github.com/$repo/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"

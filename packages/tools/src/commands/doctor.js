@@ -19,7 +19,8 @@
 //     `src/` tests, else the one Vitest finds walking up from the app, else Vitest's defaults there) must list every
 //     unit check from the app's own `src/sssb.conformance.test.ts`; some config that runs its `tests/contract/` files
 //     must list every contract check from them;
-//   - an app guide copy that is stale against the guide the kit ships (`sssb guide --check`), once the kit ships one.
+//   - an app guide copy that is stale against the guide the kit ships (`sssb guide --check`), once the kit ships one;
+//     in-repo, only once the repository holds a copy (SSSB's own repo, where the kit's guide is the source).
 //
 // It REPORTS, without failing: every other Vitest config (`vitest*.config.*` at the root or in an app) that runs some of
 // an app's `src/` tests but not its suite, or its `tests/contract/` files without listing every contract check, or that
@@ -131,7 +132,7 @@ export async function run(args) {
         ...targets.map((target) => versions(root, target)),
         ...apps.flatMap((app) => RUNNERS.flatMap((runner) => conformance(root, app, runner, plans, cache))),
         ...commandLines(root, appDir, apps, plans),
-        ...(await guides(root, apps)),
+        ...(await guides(root, apps, inRepo)),
         {
             status: 'report',
             title:
@@ -701,19 +702,36 @@ function commandLines(root, appDir, apps, plans) {
 
 /**
  * The app guide (`sssb guide --check`) of every app, once the framework ships one.
+ *
+ * IN-REPO, a missing copy is reported, not failed. There the kit is a package of the workspace and its guide
+ * (`packages/kit/src/guide.md`) is the source, checked by the doc gate; a copy is the adopter's mechanism, and SSSB's
+ * own repository takes one only when its `CLAUDE.md` imports it (ADR-0014 P13). Once a copy exists it is checked as
+ * an adopter's is. An adopter's workspace is never in-repo, so a missing copy fails there.
+ *
  * @param {string} root
  * @param {string[]} apps
+ * @param {boolean} inRepo
  * @returns {Promise<Result[]>}
  */
-async function guides(root, apps) {
+async function guides(root, apps, inRepo) {
     /** @type {Result[]} */
     const results = []
+    /** @param {string} title */
+    const reportOnce = (title) => {
+        if (!results.some((r) => r.title === title)) results.push({ status: 'report', title })
+    }
     for (const app of apps) {
         try {
             resolveAppsKit(app, 'guide.md')
         } catch {
-            const title = 'app guide: not checked: this @sssb/kit ships no guide (it arrives at P7)'
-            if (!results.some((r) => r.title === title)) results.push({ status: 'report', title })
+            reportOnce('app guide: not checked: this @sssb/kit ships no guide (it arrives at P7)')
+            continue
+        }
+        if (inRepo && !existsSync(path.join(workspaceRootOf(app), '.claude', 'sssb-guide.md'))) {
+            reportOnce(
+                "app guide: not checked: in-repo, the kit's guide is this workspace's own source and the repository " +
+                    'holds no copy of it (`.claude/sssb-guide.md`) yet',
+            )
             continue
         }
         const name = relativeTo(root)(app)

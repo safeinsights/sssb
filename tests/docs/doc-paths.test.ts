@@ -24,6 +24,17 @@ describe('doctrine docs cite paths that exist', () => {
         expect(missingIncludes()).toEqual([])
     })
 
+    // The app guide `@sssb/kit` ships cites paths inside the reader's app (ADR-0014 P7), so `sssb.docPaths.relativeTo`
+    // has it read against the starter. Were that mapping dropped, its citations would be read against the root, and
+    // were the guide dropped from `include`, nothing would read it at all: both would quietly stop checking it.
+    it('reads the app guide, and reads it against apps/starter', () => {
+        const guide = 'packages/kit/src/guide.md'
+        expect(docs).toContain(guide)
+        const cited = citedPaths(guide).map(({ path }) => path)
+        expect(cited.length).toBeGreaterThan(10)
+        expect(cited.filter((path) => !path.startsWith('apps/starter/'))).toEqual([])
+    })
+
     it.each(docs)('%s', (file) => {
         const broken = citedPaths(file)
             .filter(({ path }) => !resolves(path))

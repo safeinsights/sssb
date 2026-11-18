@@ -9,9 +9,17 @@ import {
     conformanceProblems,
     createPackageProblems,
     expectedConformanceTests,
+    GENERATED_VERIFY_GATES,
+    lockfileFromSeed,
     lockfileMoves,
     packagesBeyondSeed,
     lockfileProblems,
+    SEED_TARBALLS,
+    SEED_VERSION,
+    seedFromLockfile,
+    seedMachinePathProblems,
+    templateAppProblems,
+    verifyGateProblems,
     pluginManifestProblems,
     pluginShippedFileProblems,
     seamPeerProblems,
@@ -522,25 +530,192 @@ describe('createPackageProblems', () => {
         ])
     })
 
-    it("fails a checkout's local state in the template, at any depth, and a stray or test file outside it", () => {
-        for (const file of [
-            'template/app/node_modules/x/index.js',
-            'template/app/_dot_next/server.js',
-            'template/app/_dot_data/pglite/base',
-            'template/app/_dot_env.local',
-            'template/app/infra/cdk.out/manifest.json',
-            'template/app/test-results/trace.zip',
-            'template/app/tsconfig.tsbuildinfo',
-        ]) {
-            expect(createPackageProblems(manifest, [...files, file]), file).toEqual([
-                expect.stringMatching(new RegExp(`^${file.replaceAll('.', '\\.')}: a checkout's local state`)),
-            ])
-        }
+    it('fails a stray or test file outside the template', () => {
         expect(createPackageProblems(manifest, [...files, 'src/generate.test.js'])).toEqual([
             'src/generate.test.js: a test file is shipped',
         ])
         expect(createPackageProblems(manifest, [...files, 'scripts/build-template.js'])).toEqual([
             'scripts/build-template.js: outside bin/, src/ and template/',
+        ])
+    })
+})
+
+describe('templateAppProblems', () => {
+    const tracked = ['package.json', 'src/sssb.conformance.test.ts', '.env.example', 'infra/cdk.json']
+    const packed = [
+        'package.json',
+        'bin/create.js',
+        'template/meta.json',
+        'template/root/_dot_editorconfig',
+        'template/app/package.json',
+        'template/app/src/sssb.conformance.test.ts',
+        'template/app/_dot_env.example',
+        'template/app/infra/cdk.json',
+    ]
+
+    it('passes a template app that is exactly the tracked starter, its `_dot_` paths read as the workspace gets them', () => {
+        expect(templateAppProblems(packed, tracked)).toEqual([])
+    })
+
+    // An allowlist: local state under ANY name fails, not only the names a deny list thought of.
+    it("fails any file git does not track, whatever its name, at any depth: a checkout's local state", () => {
+        for (const file of [
+            'template/app/node_modules/x/index.js',
+            'template/app/_dot_next/server.js',
+            'template/app/_dot_env.local',
+            'template/app/infra/cdk.out/manifest.json',
+            'template/app/tsconfig.tsbuildinfo',
+            'template/app/_dot_vercel/project.json',
+            'template/app/scratch/notes.txt',
+        ]) {
+            expect(templateAppProblems([...packed, file], tracked), file).toEqual([
+                expect.stringMatching(new RegExp(`^${file.replaceAll('.', '\\.')}: not a file git tracks`)),
+            ])
+        }
+    })
+
+    it('fails a tracked file the template left out, and accepts a file the build itself writes when it is named', () => {
+        expect(templateAppProblems(packed, [...tracked, 'src/app/page.tsx'])).toEqual([
+            'apps/starter/src/app/page.tsx: tracked, but not in the packed template',
+        ])
+        const withGenerated = [...packed, 'template/app/src/generated.ts']
+        expect(templateAppProblems(withGenerated, tracked)).toHaveLength(1)
+        expect(templateAppProblems(withGenerated, tracked, ['src/generated.ts'])).toEqual([])
+    })
+})
+
+describe('the lockfile seed', () => {
+    const run = { tarballs: '/run/abc/tarballs', version: '0.1.0' }
+    const workspaceLock = GOOD_LOCKFILE.replace(
+        'importers:\n',
+        `overrides:\n  '@sssb/kit': file:${run.tarballs}/sssb-kit-0.1.0.tgz\n\nimporters:\n`,
+    ).replace('file:../../../tarballs/sssb-kit-0.1.0.tgz', `file:${run.tarballs}/sssb-kit-0.1.0.tgz`)
+
+    it("holds a token for the run's tarball directory and for the fixed group's version, and nothing else of the run", () => {
+        const seed = seedFromLockfile(workspaceLock, run)
+        expect(seed).not.toContain(run.tarballs)
+        expect(seed).not.toMatch(/sssb-kit-0\.1\.0/)
+        expect(seed).toContain(`'@sssb/kit': file:${SEED_TARBALLS}/sssb-kit-${SEED_VERSION}.tgz`)
+        expect(seed).toContain(`    version: ${SEED_VERSION}\n`)
+        // The other packages' versions are their own, never the token.
+        expect(seed).toContain('      react: 19.2.9')
+        expect(lockfileFromSeed(seed, run)).toBe(workspaceLock)
+    })
+
+    // A release candidate's tarballs are named for its prerelease version: the seed must still name the files the
+    // generator wrote, or every specifier and override misses and pnpm re-resolves the workspace.
+    it("names the tarballs a release candidate packs, at the candidate's version, in specifiers, overrides and keys", () => {
+        const seed = seedFromLockfile(workspaceLock, run)
+        const rc = lockfileFromSeed(seed, { tarballs: '/elsewhere/tarballs', version: '0.2.0-rc.3' })
+        expect(rc).toContain("'@sssb/kit': file:/elsewhere/tarballs/sssb-kit-0.2.0-rc.3.tgz")
+        expect(rc).toContain('specifier: file:/elsewhere/tarballs/sssb-kit-0.2.0-rc.3.tgz')
+        expect(rc).toContain("  '@sssb/kit@file:../tarballs/sssb-kit-0.2.0-rc.3.tgz':\n")
+        expect(rc).toContain('    version: 0.2.0-rc.3\n')
+        expect(rc).not.toMatch(/0\.1\.0|__PACK_AND_CONSUME/)
+        // And back: the seed an rc run writes is the same seed.
+        expect(seedFromLockfile(rc, { tarballs: '/elsewhere/tarballs', version: '0.2.0-rc.3' })).toBe(seed)
+    })
+
+    it('takes the committed seed as it is: its version is the token', () => {
+        const committed = readFileSync(
+            path.resolve(__dirname, '../../scripts/pack-and-consume/consumer-lock.yaml'),
+            'utf8',
+        )
+        expect(committed).toContain(`sssb-kit-${SEED_VERSION}.tgz`)
+        expect(committed).not.toMatch(/sssb-(kit|tools|eslint-plugin|cdk|create)-\d/)
+    })
+
+    it("names any line that would carry a path into the run's directory, which only the tarballs' may", () => {
+        const seed = seedFromLockfile(workspaceLock, run)
+        expect(seedMachinePathProblems(seed, '/run/abc')).toEqual([])
+        const leaky = seedFromLockfile(
+            workspaceLock.replace('link:./src/app-config', 'link:/run/abc/workspace/apps/console/src/app-config'),
+            run,
+        )
+        expect(seedMachinePathProblems(leaky, '/run/abc')).toEqual([
+            expect.stringMatching(
+                /^line \d+ holds a path into this run's directory \(\/run\/abc\): specifier: link:\/run\/abc/,
+            ),
+        ])
+    })
+})
+
+describe('verifyGateProblems', () => {
+    /** A verify that holds every gate `sssb / all-checks` does, the way the generator writes one. */
+    const scripts: Record<string, string> = {
+        typecheck: "pnpm --filter './apps/*' typecheck && tsc --noEmit",
+        lint: 'eslint . && prettier --check .',
+        'test:unit': 'sssb check-tmpdir-leak vitest run',
+        'test:contract': 'sssb check-tmpdir-leak vitest run --config vitest.contract.config.ts',
+        'test:e2e': "pnpm --filter './apps/*' test:e2e",
+        knip: 'knip',
+        jscpd: 'jscpd',
+        'sssb:doctor': 'sssb doctor --app apps/console',
+        'check:e2e': "pnpm --filter './apps/*' check:e2e",
+        'check-fences': "pnpm --filter './apps/*' exec sssb check-fences",
+        'build:demo-static': "pnpm --filter './apps/*' build:demo-static",
+        'check:demo-size': "pnpm --filter './apps/*' check:demo-size",
+        'e2e:demo-static': "pnpm --filter './apps/*' e2e:demo-static",
+        synth: "pnpm --filter './apps/*/infra' synth",
+        checks: "concurrently 'pnpm:typecheck' 'pnpm:lint' 'pnpm:test:unit' 'pnpm:knip' 'pnpm:jscpd'",
+        verify:
+            "pnpm checks && concurrently 'pnpm:sssb:doctor' 'pnpm:check:e2e' 'pnpm:check-fences' && pnpm run test:contract " +
+            '&& pnpm synth && pnpm test:e2e && pnpm build:demo-static && pnpm check:demo-size && pnpm e2e:demo-static',
+    }
+
+    it('passes a verify that reaches every gate, through scripts that run scripts, and says which script runs each', () => {
+        const { problems, runBy } = verifyGateProblems(scripts)
+        expect(problems).toEqual([])
+        expect(runBy.get('unit tests')).toBe('test:unit')
+        expect(runBy.get('check-fences')).toBe('check-fences')
+        expect([...runBy.keys()]).toEqual(GENERATED_VERIFY_GATES.map((g) => g.gate))
+    })
+
+    it('fails each gate dropped from verify, by name', () => {
+        for (const { gate, scripts: names = [] } of GENERATED_VERIFY_GATES) {
+            const dropped = { ...scripts }
+            for (const name of names) {
+                dropped.verify = dropped
+                    .verify!.replaceAll(`'pnpm:${name}'`, '')
+                    .replaceAll(`pnpm run ${name} `, 'true ')
+                dropped.verify = dropped.verify.replace(
+                    new RegExp(`pnpm ${name.replace(/[.:]/g, '\\$&')}( |$)`),
+                    'true$1',
+                )
+                dropped.checks = dropped.checks!.replaceAll(`'pnpm:${name}'`, '')
+            }
+            expect(verifyGateProblems(dropped).problems, gate).toEqual([
+                expect.stringMatching(`^verify does not run ${gate} `),
+            ])
+        }
+    })
+
+    it("counts a gate's command run inline, and never another package's script of the same name", () => {
+        const inline = { ...scripts, verify: scripts.verify!.replace("'pnpm:check-fences'", "'sssb check-fences'") }
+        expect(verifyGateProblems(inline).runBy.get('check-fences')).toBe('verify')
+        // `pnpm --filter … synth` runs the infra package's synth, not the root's: verify reaching only that is no synth.
+        const filtered = {
+            ...scripts,
+            verify: scripts.verify!.replace('pnpm synth', "pnpm --filter './apps/*/infra' synth"),
+        }
+        delete filtered.synth
+        expect(verifyGateProblems(filtered).problems).toEqual([expect.stringMatching(/^verify does not run synth /)])
+    })
+
+    it('fails a workspace with no verify, and the verify the generator wrote before it held the CI set', () => {
+        expect(verifyGateProblems({}).problems).toEqual(['the root package.json has no verify script'])
+        const narrow = {
+            ...scripts,
+            verify:
+                "concurrently --kill-others-on-fail --group 'pnpm:typecheck' 'pnpm:lint' 'pnpm:test:unit' 'pnpm:knip' " +
+                "'pnpm:sssb:doctor' 'pnpm:check:e2e' && pnpm test:e2e && pnpm build:demo-static && pnpm check:demo-size " +
+                '&& pnpm e2e:demo-static',
+        }
+        expect(verifyGateProblems(narrow).problems.map((p) => p.replace(/ \(.*$/, ''))).toEqual([
+            'verify does not run jscpd',
+            'verify does not run check-fences',
+            'verify does not run contract tests',
+            'verify does not run synth',
         ])
     })
 })

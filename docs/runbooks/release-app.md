@@ -1,9 +1,33 @@
 # Runbook: the release app
 
 > **For SSSB's own repository** (`safeinsights/sssb`). The release app is the GitHub App whose token lets
-> `.github/workflows/release.yml` push a release commit to `main` and create its `vX.Y.Z` tag. Nothing
-> publishes before ADR-0014's P14, so this can be done any time before then; the cutover row is
-> `release-app` in `docs/cutover-checklist.md`.
+> `.github/workflows/release.yml` push a release commit to `main` and create its `vX.Y.Z` tag. Since ADR-0014's
+> P7 every merge to `main` that carries changesets cuts a release candidate, so make the app **before the first such
+> merge**: until it exists, that merge's `push` job fails at minting the token, having written nothing, and the
+> changesets stay pending for the next merge. The cutover row is `release-app` in `docs/cutover-checklist.md`.
+
+## What a merge to `main` does once the app exists
+
+While the packages are private (until P14), a release is a release candidate, and the merge is the decision: there
+is no other step. Each run is in GitHub's Actions tab, workflow `release`.
+
+1. **`plan`** waits for `checks` to pass on the merge commit, then `release.mjs prepare` versions every `@sssb/*`
+   package to the next candidate (`0.2.0-rc.0` for the first, from `0.1.0` and minor changesets), writes the notes to
+   `v<version>.md` under docs/releases in the release commit, and moves the consumed changesets to `.changeset/pre/`. Nothing pending (or only
+   empty changesets) ends the run here, green, with the reason in its summary.
+2. **`push`** checks that patch with `verify-release`, commits it as `chore: release v<version>`, tags it
+   `v<version>`, and pushes both to `main` with the app's token. That push starts `checks` on the release commit and
+   a second `release` run for the tag.
+3. **`candidate`** (the tag's run) waits for `checks` to pass on the release commit, downloads the `sssb-tarballs`
+   artifact its pack-and-consume job left, checks them (`release.mjs candidate`) and writes the prerelease's notes.
+4. **`attest`** signs one build-provenance attestation per tarball.
+5. **`prerelease`** creates the GitHub release as a draft, attaches the tarballs, downloads them again to check every
+   byte, and only then publishes it as a prerelease that is never "Latest". A re-run finishes a draft a failed run
+   left, and confirms a published candidate without changing it.
+
+The push to `main` also runs `plan` again, on the release commit, which finds nothing pending and stops. If any step
+fails, nothing later runs: a failed `push` leaves no tag (the push is atomic) and the next merge cuts the candidate; a
+failed tag run is re-run from the Actions tab ("Re-run failed jobs"). Nothing is ever published to npm before P14.
 
 `pnpm release-app:init` makes the App by GitHub's App-manifest flow (borrowed from CanopyCMS's
 `init-github-app`), so its permissions come from code rather than from boxes ticked in settings. The code is

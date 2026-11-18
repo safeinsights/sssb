@@ -159,6 +159,57 @@ describe('reference apps', () => {
     })
 })
 
+describe('relativeTo', () => {
+    // The app guide's shape: it cites paths inside the reader's app, and the gate checks them against one app here.
+    const guide = '`src/app-config/` and `config/params.ts`\nand `src/gone`\n'
+    const mapped = {
+        ...config,
+        roots: [...config.roots, 'config/'],
+        include: ['guide.md'],
+        relativeTo: { 'guide.md': 'apps/one' },
+    }
+
+    it("resolves a mapped doc's citations under its directory, and names the joined path when one is broken", () => {
+        const root = workspace({
+            'guide.md': guide,
+            'apps/one/src/app-config/x.ts': '',
+            'apps/one/config/params.ts': '',
+            'src/gone/x.ts': '', // present at the ROOT, which must not rescue the citation
+        })
+        expect(docPathProblems(root, mapped)).toEqual(['guide.md:2 cites `apps/one/src/gone`'])
+        // Unmapped, the same doc is read against the root, where `src/app-config` and `config/` are not.
+        expect(docPathProblems(root, { ...mapped, relativeTo: {} })).toEqual([
+            'guide.md:1 cites `src/app-config`',
+            'guide.md:1 cites `config/params.ts`',
+        ])
+    })
+
+    it('fails an `apps/` citation in a mapped doc, since an app holds no `apps/` of its own', () => {
+        const root = workspace({ 'guide.md': '`apps/one/src`\n', 'apps/one/src/x.ts': '' })
+        expect(docPathProblems(root, mapped)).toEqual(['guide.md:1 cites `apps/one/apps/one/src`'])
+    })
+
+    it('applies the reference-app rule to the joined path', () => {
+        const toStarter = { ...mapped, referenceApps: ['starter'], relativeTo: { 'guide.md': 'apps/starter/' } }
+        expect(docPathProblems(workspace({ 'guide.md': guide }), toStarter)).toEqual([])
+        const present = workspace({ 'guide.md': guide, 'apps/starter/package.json': '{}' })
+        expect(docPathProblems(present, toStarter)).toEqual([
+            'guide.md:1 cites `apps/starter/src/app-config`',
+            'guide.md:1 cites `apps/starter/config/params.ts`',
+            'guide.md:2 cites `apps/starter/src/gone`',
+        ])
+    })
+
+    it('is validated when read', () => {
+        expect(() => readDocPathsConfig(workspace({}, { ...config, relativeTo: ['apps/one'] }))).toThrow(
+            /docPaths\.relativeTo/,
+        )
+        expect(() => readDocPathsConfig(workspace({}, { ...config, relativeTo: { 'guide.md': 1 } }))).toThrow(
+            /docPaths\.relativeTo/,
+        )
+    })
+})
+
 describe('citationsIn', () => {
     it('keeps one span shared by the citations read out of it', () => {
         const found = citationsIn('`cp apps/a/x.ts apps/a/y.ts`', config)

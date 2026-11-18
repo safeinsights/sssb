@@ -5,10 +5,10 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@sssb/kit': file:__PACK_AND_CONSUME_TARBALLS__/sssb-kit-0.1.0.tgz
-  '@sssb/tools': file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-0.1.0.tgz
-  '@sssb/eslint-plugin': file:__PACK_AND_CONSUME_TARBALLS__/sssb-eslint-plugin-0.1.0.tgz
-  '@sssb/cdk': file:__PACK_AND_CONSUME_TARBALLS__/sssb-cdk-0.1.0.tgz
+  '@sssb/kit': file:__PACK_AND_CONSUME_TARBALLS__/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz
+  '@sssb/tools': file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz
+  '@sssb/eslint-plugin': file:__PACK_AND_CONSUME_TARBALLS__/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz
+  '@sssb/cdk': file:__PACK_AND_CONSUME_TARBALLS__/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz
 
 importers:
 
@@ -24,8 +24,8 @@ importers:
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.15.0(jiti@2.7.0))
       '@sssb/tools':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-0.1.0.tgz
-        version: file:../tarballs/sssb-tools-0.1.0.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
       '@testing-library/jest-dom':
         specifier: ^7.0.1
         version: 7.0.1(@testing-library/dom@10.4.2)(vitest@4.1.12)
@@ -93,8 +93,8 @@ importers:
         specifier: link:./src/app-config
         version: link:src/app-config
       '@sssb/kit':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-kit-0.1.0.tgz
-        version: file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rxjs@7.8.2)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)(zod@4.6.7)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rxjs@7.8.2)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)(zod@4.6.7)
       kysely:
         specifier: ^0.29.7
         version: 0.29.9
@@ -115,11 +115,11 @@ importers:
         specifier: ^1.64.1
         version: 1.65.1
       '@sssb/eslint-plugin':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-eslint-plugin-0.1.0.tgz
-        version: file:../tarballs/sssb-eslint-plugin-0.1.0.tgz(eslint@10.15.0(jiti@2.7.0))(typescript@6.0.3)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz(eslint@10.15.0(jiti@2.7.0))(typescript@6.0.3)
       '@sssb/tools':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-0.1.0.tgz
-        version: file:../tarballs/sssb-tools-0.1.0.tgz(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
       '@vitejs/plugin-react':
         specifier: ^6.1.2
         version: 6.3.0(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
@@ -139,8 +139,8 @@ importers:
   apps/console/infra:
     dependencies:
       '@sssb/cdk':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-cdk-0.1.0.tgz
-        version: file:../tarballs/sssb-cdk-0.1.0.tgz(aws-cdk-lib@2.277.0(constructs@10.8.1))(constructs@10.8.1)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz(aws-cdk-lib@2.277.0(constructs@10.8.1))(constructs@10.8.1)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
       aws-cdk-lib:
         specifier: ^2.274.0
         version: 2.277.0(constructs@10.8.1)
@@ -161,8 +161,8 @@ importers:
         specifier: link:./src/app-config
         version: link:src/app-config
       '@sssb/kit':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-kit-0.1.0.tgz
-        version: file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rxjs@7.8.2)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)(zod@4.6.7)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rxjs@7.8.2)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)(zod@4.6.7)
       kysely:
         specifier: ^0.29.7
         version: 0.29.9
@@ -183,11 +183,11 @@ importers:
         specifier: ^1.64.1
         version: 1.65.1
       '@sssb/eslint-plugin':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-eslint-plugin-0.1.0.tgz
-        version: file:../tarballs/sssb-eslint-plugin-0.1.0.tgz(eslint@10.15.0(jiti@2.7.0))(typescript@6.0.3)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz(eslint@10.15.0(jiti@2.7.0))(typescript@6.0.3)
       '@sssb/tools':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-0.1.0.tgz
-        version: file:../tarballs/sssb-tools-0.1.0.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
       '@vitejs/plugin-react':
         specifier: ^6.1.2
         version: 6.3.0(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
@@ -207,8 +207,8 @@ importers:
   apps/ledger/infra:
     dependencies:
       '@sssb/cdk':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-cdk-0.1.0.tgz
-        version: file:../tarballs/sssb-cdk-0.1.0.tgz(aws-cdk-lib@2.277.0(constructs@10.8.1))(constructs@10.8.1)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz(aws-cdk-lib@2.277.0(constructs@10.8.1))(constructs@10.8.1)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
       aws-cdk-lib:
         specifier: ^2.274.0
         version: 2.277.0(constructs@10.8.1)
@@ -223,8 +223,8 @@ importers:
   packages/gate:
     devDependencies:
       '@sssb/tools':
-        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-0.1.0.tgz
-        version: file:../tarballs/sssb-tools-0.1.0.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
+        specifier: file:__PACK_AND_CONSUME_TARBALLS__/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz
+        version: file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
 
 packages:
 
@@ -2198,24 +2198,24 @@ packages:
     resolution: {integrity: sha512-lCA6QG22dPk9ecHbv91jDQZsmtPUjdS1aE2Il6NNPqe7DrYc0dZQi6DhcESk2KYXH2sp5xbAcGdYMZDFnuzA2A==}
     engines: {node: '>=18.0.0'}
 
-  '@sssb/cdk@file:../tarballs/sssb-cdk-0.1.0.tgz':
-    resolution: {integrity: sha512-sJXVdjhlMbzwRbw2ZUL/cZerfI6kiIBwUCM5sATlML2f1q9c+r5NOJnUhsZIf84Nu9YoG99XaVRnqygX/u4Vgw==, tarball: file:../tarballs/sssb-cdk-0.1.0.tgz}
-    version: 0.1.0
+  '@sssb/cdk@file:../tarballs/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz':
+    resolution: {integrity: sha512-sJXVdjhlMbzwRbw2ZUL/cZerfI6kiIBwUCM5sATlML2f1q9c+r5NOJnUhsZIf84Nu9YoG99XaVRnqygX/u4Vgw==, tarball: file:../tarballs/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz}
+    version: __PACK_AND_CONSUME_VERSION__
     engines: {node: '>=24'}
     peerDependencies:
       aws-cdk-lib: ^2.274.0
       constructs: ^10.8.1
 
-  '@sssb/eslint-plugin@file:../tarballs/sssb-eslint-plugin-0.1.0.tgz':
-    resolution: {integrity: sha512-CEal1qt5NqX5zIiZUJAYWFV5br0QAtVKOu2ccMB0Coar3FS9TV1OZlD2sE/ucwiaO9p986YdICIqkbq3lqmHyg==, tarball: file:../tarballs/sssb-eslint-plugin-0.1.0.tgz}
-    version: 0.1.0
+  '@sssb/eslint-plugin@file:../tarballs/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz':
+    resolution: {integrity: sha512-CEal1qt5NqX5zIiZUJAYWFV5br0QAtVKOu2ccMB0Coar3FS9TV1OZlD2sE/ucwiaO9p986YdICIqkbq3lqmHyg==, tarball: file:../tarballs/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz}
+    version: __PACK_AND_CONSUME_VERSION__
     engines: {node: '>=24'}
     peerDependencies:
       eslint: ^10.13.0
 
-  '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz':
-    resolution: {integrity: sha512-Dtwl3FgfR6Q8Le6tsdJXee4E/B5z4CJ8ntaStO+D3ToVQaN7qiPHzp+bSHvDHd0uk/I+fh1oOgwhehPGO2Embw==, tarball: file:../tarballs/sssb-kit-0.1.0.tgz}
-    version: 0.1.0
+  '@sssb/kit@file:../tarballs/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz':
+    resolution: {integrity: sha512-Dtwl3FgfR6Q8Le6tsdJXee4E/B5z4CJ8ntaStO+D3ToVQaN7qiPHzp+bSHvDHd0uk/I+fh1oOgwhehPGO2Embw==, tarball: file:../tarballs/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz}
+    version: __PACK_AND_CONSUME_VERSION__
     peerDependencies:
       '@mantine/core': ^9.7.3
       '@sssb/app-config': '*'
@@ -2236,9 +2236,9 @@ packages:
       vitest:
         optional: true
 
-  '@sssb/tools@file:../tarballs/sssb-tools-0.1.0.tgz':
-    resolution: {integrity: sha512-Hw3nYC3YYSiPJvG+eOcK2PWxPIkL1q2ag/WnM8BN0MuE+v3WDv8tCYb8V9SgZRgTDAPIA4VrhJleAWdifZPWBw==, tarball: file:../tarballs/sssb-tools-0.1.0.tgz}
-    version: 0.1.0
+  '@sssb/tools@file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz':
+    resolution: {integrity: sha512-Hw3nYC3YYSiPJvG+eOcK2PWxPIkL1q2ag/WnM8BN0MuE+v3WDv8tCYb8V9SgZRgTDAPIA4VrhJleAWdifZPWBw==, tarball: file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz}
+    version: __PACK_AND_CONSUME_VERSION__
     engines: {node: '>=24'}
     hasBin: true
     peerDependencies:
@@ -6385,9 +6385,9 @@ snapshots:
     dependencies:
       tslib: 2.9.1
 
-  '@sssb/cdk@file:../tarballs/sssb-cdk-0.1.0.tgz(aws-cdk-lib@2.277.0(constructs@10.8.1))(constructs@10.8.1)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)':
+  '@sssb/cdk@file:../tarballs/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz(aws-cdk-lib@2.277.0(constructs@10.8.1))(constructs@10.8.1)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)':
     dependencies:
-      '@sssb/tools': file:../tarballs/sssb-tools-0.1.0.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
+      '@sssb/tools': file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)
       aws-cdk-lib: 2.277.0(constructs@10.8.1)
       constructs: 10.8.1
     transitivePeerDependencies:
@@ -6395,7 +6395,7 @@ snapshots:
       - vite
       - vitest
 
-  '@sssb/eslint-plugin@file:../tarballs/sssb-eslint-plugin-0.1.0.tgz(eslint@10.15.0(jiti@2.7.0))(typescript@6.0.3)':
+  '@sssb/eslint-plugin@file:../tarballs/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz(eslint@10.15.0(jiti@2.7.0))(typescript@6.0.3)':
     dependencies:
       '@eslint/js': 10.0.1(eslint@10.15.0(jiti@2.7.0))
       '@next/eslint-plugin-next': 16.4.6(eslint@10.15.0(jiti@2.7.0))
@@ -6410,7 +6410,7 @@ snapshots:
       - supports-color
       - typescript
 
-  '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rxjs@7.8.2)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)(zod@4.6.7)':
+  '@sssb/kit@file:../tarballs/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rxjs@7.8.2)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)(zod@4.6.7)':
     dependencies:
       '@anthropic-ai/sdk': 1.8.0(zod@4.6.7)
       '@aws-sdk/client-codebuild': 3.1169.0
@@ -6458,7 +6458,7 @@ snapshots:
       - wrangler
       - zod
 
-  '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rxjs@7.8.2)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)(zod@4.6.7)':
+  '@sssb/kit@file:../tarballs/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rxjs@7.8.2)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)(zod@4.6.7)':
     dependencies:
       '@anthropic-ai/sdk': 1.8.0(zod@4.6.7)
       '@aws-sdk/client-codebuild': 3.1169.0
@@ -6506,7 +6506,7 @@ snapshots:
       - wrangler
       - zod
 
-  '@sssb/tools@file:../tarballs/sssb-tools-0.1.0.tgz(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)':
+  '@sssb/tools@file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)':
     dependencies:
       esbuild: 0.28.2
       postcss: 8.5.33
@@ -6515,7 +6515,7 @@ snapshots:
       vite: 8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
       vitest: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
-  '@sssb/tools@file:../tarballs/sssb-tools-0.1.0.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)':
+  '@sssb/tools@file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(vitest@4.1.12)':
     dependencies:
       esbuild: 0.28.2
       postcss: 8.5.33

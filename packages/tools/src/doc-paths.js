@@ -50,6 +50,15 @@ export function readDocPathsConfig(root) {
         if (block[key] !== undefined && !isStringList(block[key]))
             throw new Error(`sssb: \`sssb.docPaths.${key}\` must be a list of strings when present`)
     }
+    const bases = block.relativeTo
+    if (
+        bases !== undefined &&
+        (typeof bases !== 'object' ||
+            bases === null ||
+            Array.isArray(bases) ||
+            !Object.values(bases).every((base) => typeof base === 'string'))
+    )
+        throw new Error('sssb: `sssb.docPaths.relativeTo` must map doc paths to directories (strings) when present')
     return block
 }
 
@@ -160,9 +169,20 @@ export function citationsIn(text, config) {
     return found
 }
 
-/** @type {import('./doc-paths.d.ts').citedPaths} */
+/**
+ * A doc named in `relativeTo` cites paths relative to a directory, not to the root: the app guide `@sssb/kit` ships
+ * says `src/app-config/` and `config/params.ts` because an adopter reads it about their own app, so SSSB checks it
+ * against `apps/starter`. Its citations come back joined onto that directory, so `resolves`, the reference-app rule
+ * and every message see the path as it sits in this tree. In such a doc EVERY citation is relative to the directory,
+ * so an `apps/…` or `packages/…` path in it fails, which is right: an adopter's app holds neither.
+ *
+ * @type {import('./doc-paths.d.ts').citedPaths}
+ */
 export function citedPaths(file, config, root) {
-    return citationsIn(readFileSync(path.resolve(root, file), 'utf8'), config)
+    const found = citationsIn(readFileSync(path.resolve(root, file), 'utf8'), config)
+    const base = config.relativeTo?.[file.replace(/^\.\//, '')]?.replace(/\/+$/, '')
+    if (base === undefined) return found
+    return found.map((citation) => ({ ...citation, path: path.posix.join(base, citation.path) }))
 }
 
 /**

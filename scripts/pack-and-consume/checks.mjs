@@ -347,6 +347,45 @@ export function toolsShippedFileProblems(files) {
 }
 
 /**
+ * The packed @sssb/cdk: named so, depending on no framework (ADR-0014 rule 4) and on `@sssb/tools` at exactly its own
+ * version (the fixed group's lockstep, which the pack resolved from `workspace:*`), shipping JavaScript, declarations
+ * and its Lambda placeholder asset, and no test. Returns the problems.
+ * @param {Record<string, unknown>} manifest
+ * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
+ */
+export function cdkPackProblems(manifest, files) {
+    const problems = []
+    if (manifest.name !== '@sssb/cdk') problems.push(`the packed manifest is named ${manifest.name}, not @sssb/cdk`)
+    for (const field of /** @type {const} */ ([
+        'dependencies',
+        'peerDependencies',
+        'optionalDependencies',
+        'peerDependenciesMeta',
+    ])) {
+        const deps = /** @type {Record<string, string> | undefined} */ (manifest[field]) ?? {}
+        for (const [dep, range] of Object.entries(deps)) {
+            if (dep === '@sssb/kit') problems.push(`${field} names @sssb/kit: @sssb/cdk depends on no framework`)
+            else if (dep.startsWith('@sssb/') && (field !== 'dependencies' || dep !== '@sssb/tools')) {
+                problems.push(`${field} names ${dep}: @sssb/cdk's one SSSB dependency is @sssb/tools`)
+            } else if (dep === '@sssb/tools' && range !== manifest.version) {
+                problems.push(
+                    `@sssb/tools is ${range}, not exactly ${String(manifest.version)}: the set moves together`,
+                )
+            }
+        }
+    }
+    for (const file of files) {
+        if (['package.json', 'README.md', 'LICENSE', 'CHANGELOG.md'].includes(file)) continue
+        if (/\.test\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test file is shipped`)
+        else if (/^src\/assets\//.test(file)) continue
+        else if (!/^src\/.*\.(js|d\.ts)$/.test(file))
+            problems.push(`${file}: neither JavaScript nor a declaration in src/`)
+    }
+    if (!files.includes('src/index.js')) problems.push('src/index.js: the construct is not shipped')
+    return problems
+}
+
+/**
  * The packed @sssb/eslint-plugin's manifest: named so, no dependency on any SSSB package (ADR-0014 rule 4), and ESLint a
  * peer, so the plugin runs inside the app's own ESLint. Returns the problems.
  * @param {Record<string, unknown>} manifest
@@ -393,25 +432,10 @@ export function pluginShippedFileProblems(files) {
 }
 
 /**
- * Local state a developer's checkout holds under the starter, as the packed template stores it (a leading `.` in a
- * path segment is stored as `_dot_`): none of it may reach an adopter's workspace.
- */
-const TEMPLATE_LOCAL_STATE = new Set([
-    'node_modules',
-    '_dot_next',
-    '_dot_data',
-    'test-results',
-    'playwright-report',
-    'coverage',
-    'cdk.out',
-    'dist-demo',
-])
-
-/**
  * The packed @sssb/create (ADR-0014 P12): named so, with its bin, no dependency at all (it runs before anything is
  * installed, and depends on no SSSB package, rule 4), shipping JavaScript under bin/ and src/ and the template its
- * prepack built (template/meta.json, the app under template/app/), and none of a checkout's local state in that
- * template. Returns the problems.
+ * prepack built (template/meta.json, the app under template/app/). What template/app/ holds, file by file, is
+ * `templateAppProblems`'. Returns the problems.
  * @param {Record<string, unknown>} manifest
  * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
  */
@@ -428,16 +452,8 @@ export function createPackageProblems(manifest, files) {
     }
     for (const file of files) {
         if (['package.json', 'README.md', 'LICENSE'].includes(file)) continue
-        if (file.startsWith('template/')) {
-            const segments = file.split('/')
-            const local = segments.find(
-                (segment) =>
-                    TEMPLATE_LOCAL_STATE.has(segment) ||
-                    segment.endsWith('.tsbuildinfo') ||
-                    (segment.startsWith('_dot_env') && segment !== '_dot_env.example'),
-            )
-            if (local) problems.push(`${file}: a checkout's local state (${local}) is in the template`)
-        } else if (!/^(bin|src)\//.test(file)) problems.push(`${file}: outside bin/, src/ and template/`)
+        if (file.startsWith('template/')) continue
+        else if (!/^(bin|src)\//.test(file)) problems.push(`${file}: outside bin/, src/ and template/`)
         else if (/\.test\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test file is shipped`)
         else if (!/\.js$/.test(file)) problems.push(`${file}: not JavaScript`)
     }
@@ -450,6 +466,187 @@ export function createPackageProblems(manifest, files) {
     for (const entry of Object.values(bin ?? {}))
         if (!files.includes(entry.replace(/^\.\//, ''))) problems.push(`${entry}: the bin is not shipped`)
     return problems
+}
+
+/**
+ * The packed template's app (`template/app/`), file for file, against what the repository tracks under apps/starter
+ * (`git ls-files apps/starter`) plus the files the template build itself writes there (`generated`): an allowlist, so
+ * no checkout's local state (an env file, a build's output, a cache under a name nobody thought to deny) can reach an
+ * adopter, and no tracked file of the starter can go missing. The template stores a leading `.` of a path segment as
+ * `_dot_` (npm's packing drops some dotfiles); this compares the paths as the workspace gets them. Returns the problems.
+ * @param {readonly string[]} files every file in the @sssb/create package, relative to its root, `/`-separated
+ * @param {readonly string[]} tracked every file git tracks under apps/starter, relative to apps/starter
+ * @param {readonly string[]} [generated] files the template build writes into template/app/, relative to it
+ */
+export function templateAppProblems(files, tracked, generated = []) {
+    const fromStored = (/** @type {string} */ stored) =>
+        stored
+            .split('/')
+            .map((segment) => (segment.startsWith('_dot_') ? `.${segment.slice('_dot_'.length)}` : segment))
+            .join('/')
+    /** Each packed app file as the workspace gets it, to the path the tarball stores it at. */
+    const packed = new Map(
+        files
+            .filter((file) => file.startsWith('template/app/'))
+            .map((file) => [fromStored(file.slice('template/app/'.length)), file]),
+    )
+    const expected = new Set([...tracked, ...generated])
+    const problems = []
+    for (const [file, stored] of [...packed].sort()) {
+        if (!expected.has(file))
+            problems.push(`${stored}: not a file git tracks under apps/starter (a checkout's local state?)`)
+    }
+    for (const file of [...expected].sort()) {
+        if (!packed.has(file)) problems.push(`apps/starter/${file}: tracked, but not in the packed template`)
+    }
+    return problems
+}
+
+/** The packed @sssb packages a lockfile can name by tarball file. */
+const SSSB_TARBALL_NAMES = '(kit|tools|eslint-plugin|cdk|create)'
+/** The seed's stand-in for this run's tarball directory, an absolute path that differs between machines. */
+export const SEED_TARBALLS = '__PACK_AND_CONSUME_TARBALLS__'
+/** The seed's stand-in for the fixed group's version, which every release (and every release candidate) moves. */
+export const SEED_VERSION = '__PACK_AND_CONSUME_VERSION__'
+
+/** @param {string} text */
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * Rewrites the version of every packed @sssb package a lockfile names: in each tarball's file name
+ * (`sssb-kit-<version>.tgz`, in specifiers, overrides, keys and dependency edges) and in the `version:` line of each
+ * one's `packages:` entry.
+ * @param {string} text
+ * @param {string} from
+ * @param {string} to
+ */
+function swapSssbVersion(text, from, to) {
+    const name = new RegExp(`(sssb-${SSSB_TARBALL_NAMES}-)${escapeRegExp(from)}(\\.tgz)`, 'g')
+    let inSssbEntry = false
+    return text
+        .split('\n')
+        .map((line) => {
+            if (/^ {2}'@sssb\/(kit|tools|eslint-plugin|cdk|create)@file:/.test(line)) inSssbEntry = true
+            else if (/^ {0,2}\S/.test(line)) inSssbEntry = false
+            const renamed = line.replace(name, `$1${to}$3`)
+            return inSssbEntry && renamed === `    version: ${from}` ? `    version: ${to}` : renamed
+        })
+        .join('\n')
+}
+
+/**
+ * The committed seed made from an installed workspace's lockfile: this run's tarball directory and the fixed group's
+ * version replaced by their tokens, so the seed matches the next run's workspace on any machine and at any version (a
+ * release candidate packs `sssb-kit-0.2.0-rc.0.tgz`, and the seed still names the tarball the generator wrote).
+ * @param {string} lockText
+ * @param {{ tarballs: string, version: string }} run
+ */
+export function seedFromLockfile(lockText, { tarballs, version }) {
+    return swapSssbVersion(lockText.replaceAll(tarballs, SEED_TARBALLS), version, SEED_VERSION)
+}
+
+/**
+ * The seed as a workspace's pnpm-lock.yaml for this run: each token replaced by this run's tarball directory and the
+ * version it packed. A seed written before the version was a token names a literal version, and is taken as it is.
+ * @param {string} seed
+ * @param {{ tarballs: string, version: string }} run
+ */
+export function lockfileFromSeed(seed, { tarballs, version }) {
+    return swapSssbVersion(seed.replaceAll(SEED_TARBALLS, tarballs), SEED_VERSION, version)
+}
+
+/**
+ * What would make a seed machine-specific: a path into this run's directory left in it after the tokens went in (a
+ * workspace's absolute path pnpm recorded somewhere other than the tarballs'). Checked on every run, from the seed
+ * this run's lockfile would make, not only when the seed is written, so a change that introduces one fails the PR that
+ * makes it rather than the next refresh. Returns the problems.
+ * @param {string} seed `seedFromLockfile` of the run's lockfile
+ * @param {string} base this run's directory
+ */
+export function seedMachinePathProblems(seed, base) {
+    return seed
+        .split('\n')
+        .map((line, i) => ({ line, at: i + 1 }))
+        .filter(({ line }) => line.includes(base))
+        .map(({ line, at }) => `line ${at} holds a path into this run's directory (${base}): ${line.trim()}`)
+}
+
+/**
+ * Every gate a generated workspace's `pnpm verify` must run, so that it holds locally what the reusable workflow's
+ * `sssb / all-checks` holds in CI (`sssb ci`'s jobs, plus knip and jscpd). Each is met by a root script verify
+ * reaches (`scripts`) or by a command a reached script, or verify itself, runs (`commands`). `e2e` marks the gates
+ * `--skip-build-and-e2e` leaves out.
+ * @type {readonly { gate: string, scripts?: string[], commands?: string[], e2e?: boolean }[]}
+ */
+export const GENERATED_VERIFY_GATES = [
+    { gate: 'typecheck', scripts: ['typecheck'] },
+    { gate: 'lint', scripts: ['lint'] },
+    { gate: 'unit tests', scripts: ['test:unit', 'test:coverage'] },
+    { gate: 'knip', scripts: ['knip'] },
+    { gate: 'jscpd', scripts: ['jscpd'] },
+    { gate: 'doctor', scripts: ['sssb:doctor'], commands: ['sssb doctor'] },
+    { gate: 'check-e2e', scripts: ['check:e2e'], commands: ['sssb check-e2e'] },
+    { gate: 'check-fences', scripts: ['check-fences', 'check:fences'], commands: ['sssb check-fences'] },
+    { gate: 'contract tests', scripts: ['test:contract'] },
+    { gate: 'synth', scripts: ['synth'] },
+    { gate: 'e2e', scripts: ['test:e2e'], e2e: true },
+    { gate: 'static demo build', scripts: ['build:demo-static'], e2e: true },
+    { gate: 'static demo size', scripts: ['check:demo-size'], e2e: true },
+    { gate: 'static demo e2e', scripts: ['e2e:demo-static'], e2e: true },
+]
+
+/**
+ * The root scripts a command runs, by name: `pnpm <script>`, `pnpm run <script>` and concurrently's `pnpm:<script>`,
+ * counting only names the root defines (`pnpm --filter … <script>` runs another package's script, not the root's).
+ * @param {string} command
+ * @param {Record<string, string>} scripts
+ */
+function scriptsRunBy(command, scripts) {
+    const names = []
+    for (const match of command.matchAll(/(?:^|[\s'"&|;(])pnpm(?::|\s+(?:run\s+)?)([\w:.-]+)/g)) {
+        const name = /** @type {string} */ (match[1])
+        if (Object.hasOwn(scripts, name)) names.push(name)
+    }
+    return names
+}
+
+/**
+ * How a generated workspace's `verify` meets each of `GENERATED_VERIFY_GATES`: the root scripts it reaches (through
+ * any depth of scripts calling scripts), and for each gate the script that runs it (or `verify` itself, for a command
+ * it runs inline). A gate verify does not reach is a problem: the generated required check would go green with that
+ * gate dropped. Returns `{ problems, runBy }`, `runBy` mapping each gate met to the script that meets it.
+ * @param {Record<string, string>} scripts the generated root package.json's scripts
+ */
+export function verifyGateProblems(scripts) {
+    const problems = []
+    /** @type {Map<string, string>} */
+    const runBy = new Map()
+    if (typeof scripts.verify !== 'string') return { problems: ['the root package.json has no verify script'], runBy }
+    const reached = new Set()
+    const queue = ['verify']
+    while (queue.length > 0) {
+        const script = /** @type {string} */ (queue.shift())
+        if (reached.has(script)) continue
+        reached.add(script)
+        queue.push(...scriptsRunBy(/** @type {string} */ (scripts[script]), scripts))
+    }
+    for (const { gate, scripts: names = [], commands = [] } of GENERATED_VERIFY_GATES) {
+        const byName = names.find((name) => reached.has(name))
+        const byCommand = [...reached].find((script) =>
+            commands.some((command) =>
+                new RegExp(`(?:^|[\\s'"&|;(])${escapeRegExp(command)}(?=$|[\\s'"&|;)])`).test(
+                    /** @type {string} */ (scripts[script]),
+                ),
+            ),
+        )
+        const by = byName ?? byCommand
+        if (by === undefined)
+            problems.push(
+                `verify does not run ${gate} (${[...names, ...commands].map((n) => `\`${n}\``).join(' or ')})`,
+            )
+        else runBy.set(gate, by)
+    }
+    return { problems, runBy }
 }
 
 /**

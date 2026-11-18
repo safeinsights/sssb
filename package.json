@@ -119,7 +119,8 @@
                 "CLAUDE.md",
                 "CONTRIBUTING.md",
                 "SECURITY.md",
-                "CODE_OF_CONDUCT.md"
+                "CODE_OF_CONDUCT.md",
+                "packages/kit/src/guide.md"
             ],
             "exempt": [
                 "docs/adr/",
@@ -132,7 +133,10 @@
             "referenceApps": [
                 "showcase",
                 "starter"
-            ]
+            ],
+            "relativeTo": {
+                "packages/kit/src/guide.md": "apps/starter"
+            }
         }
     }
 }

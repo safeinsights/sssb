@@ -1,7 +1,9 @@
 // PACK AND CONSUME (ADR-0014 part 7, rule 5, steps P2 and P12): proves the framework the way an adopter gets
 // it. Packs @sssb/kit, @sssb/tools, @sssb/eslint-plugin, @sssb/cdk and @sssb/create, generates workspaces OUTSIDE this
 // repository with the PACKED generator (extracted from its tarball, run under plain Node, `--sssb <tarball dir>`), so
-// they install the TARBALLS (never `workspace:`), and runs each workspace's checks. Two shapes:
+// they install the TARBALLS (never `workspace:`), and runs each workspace's checks. The tarballs it packs, flat in one
+// directory, are also what a release candidate attaches (ADR-0014 P7: checks.yml keeps them as the run's artifact).
+// Two shapes:
 //
 //   pnpm pack-and-consume [--shape pages|generated] [--dir <path>] [--skip-build-and-e2e] [--update-lockfile]
 //
@@ -74,10 +76,17 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
+    cdkPackProblems,
     checkE2eFailProblems,
     checkE2eOkProblems,
     createPackageProblems,
     expectedConformanceTests,
+    lockfileFromSeed,
+    seedFromLockfile,
+    seedMachinePathProblems,
+    GENERATED_VERIFY_GATES,
+    templateAppProblems,
+    verifyGateProblems,
     STRICT_FLAGS,
     conformanceProblems,
     tarballIntegrities,
@@ -155,10 +164,14 @@ const LOCK_SEED = path.join(REPO, 'scripts/pack-and-consume/consumer-lock.yaml')
 /**
  * The generator writes the tarballs' ABSOLUTE paths (each app's and the root's `file:` specifiers, and the
  * pnpm-workspace.yaml `overrides` that pnpm copies into the lockfile), and this run's directory differs between
- * machines. The seed holds this token in its place, swapped for TARBALLS when it is copied in and back when it is
- * written, so the seed's specifiers and overrides match the workspace's exactly and pnpm keeps its resolution.
+ * machines; each tarball's file name carries the fixed group's version, which every release candidate moves
+ * (`sssb-kit-0.2.0-rc.0.tgz`). The seed holds a token for each (checks.mjs' SEED_TARBALLS and SEED_VERSION), swapped
+ * for TARBALLS and the version just packed when it is copied in and back when it is written, so the seed's specifiers
+ * and overrides match the workspace's exactly, on any machine and at any version, and pnpm keeps its resolution.
  */
-const SEED_TARBALLS = '__PACK_AND_CONSUME_TARBALLS__'
+/** The fixed group's version, as every packed manifest holds it. */
+let PACKED_VERSION = ''
+const seedRun = () => ({ tarballs: TARBALLS, version: PACKED_VERSION })
 // Node, TypeScript and pnpm all look UP the tree (node_modules, @types, a workspace root), so a parent
 // directory holding any of these would lend the consumer what it did not install.
 for (let dir = path.dirname(BASE); dir !== path.dirname(dir); dir = path.dirname(dir)) {
@@ -309,11 +322,24 @@ function generate(target, flags) {
  */
 function seedLockfile(dir) {
     if (!existsSync(LOCK_SEED)) fail(`no lockfile seed at ${LOCK_SEED}: run with --update-lockfile to make one`)
-    write(path.join(dir, 'pnpm-lock.yaml'), readFileSync(LOCK_SEED, 'utf8').replaceAll(SEED_TARBALLS, TARBALLS))
+    write(path.join(dir, 'pnpm-lock.yaml'), seedText())
 }
 
 /** The seed as it was copied in, to measure how far an install's resolution moved from it. */
-const seedText = () => readFileSync(LOCK_SEED, 'utf8').replaceAll(SEED_TARBALLS, TARBALLS)
+const seedText = () => lockfileFromSeed(readFileSync(LOCK_SEED, 'utf8'), seedRun())
+
+/**
+ * The seed an installed workspace's lockfile makes, refused if it would hold a path into this run's directory: run on
+ * every install, so a change that would make the seed machine-specific fails the PR that makes it, not the next
+ * refresh.
+ * @param {string} lockText
+ */
+function seedOf(lockText) {
+    const seed = seedFromLockfile(lockText, seedRun())
+    const problems = seedMachinePathProblems(seed, BASE)
+    if (problems.length > 0) fail(`the lockfile's seed would be machine-specific:\n  ${problems.join('\n  ')}`)
+    return seed
+}
 
 /**
  * After an install: the integrity pnpm recorded for each SSSB package is the tarball's just packed, not one an earlier
@@ -363,7 +389,8 @@ function instrumentApp(app) {
     // subpath, so every `exports` key (the JSON catalogs aside) is re-exported here, type-only, and both
     // typechecks cover each one against this app's seam. Nothing imports this file, so no bundle sees it.
     const surface = Object.keys(KIT_MANIFEST.exports)
-        .filter((key) => key !== './package.json' && !key.endsWith('.json'))
+        // Data files have no types to import: the catalogs (`.json`) and the app guide (`guide.md`).
+        .filter((key) => key !== './package.json' && !key.endsWith('.json') && !key.endsWith('.md'))
         .map((key, i) => `export type * as m${i} from '@sssb/kit/${key.slice(2)}'`)
     if (surface.length < 100)
         fail(`the framework's exports map lists only ${surface.length} modules; expected its whole public surface`)
@@ -1011,6 +1038,11 @@ function staticDemo() {
  * config with Playwright's error, naming the kit file it reaches.
  */
 function doctorAndCheckE2e() {
+    // The app guide the tarball ships (ADR-0014 P7), copied as an adopter copies it, once for the workspace: doctor
+    // fails an adopter's app whose copy is missing or stale, and this workspace is an adopter's.
+    run('pnpm', ['exec', 'sssb', 'guide'], { cwd: appDir('console') })
+    const guideCheck = run('pnpm', ['exec', 'sssb', 'guide', '--check'], { cwd: appDir('ledger'), capture: true })
+    console.log(guideCheck.stdout.trim())
     for (const app of ['console', 'ledger']) {
         const doctor = run('pnpm', ['run', 'sssb:doctor'], { cwd: appDir(app), capture: true })
         console.log(doctor.stdout)
@@ -1206,8 +1238,13 @@ const GEN_APP = 'console'
  * JSON and HTML, each quoted its own way, and the workspace's lint, typecheck and e2e read every one of them.
  */
 const GEN_NAME = "Harbor & O'Neill Console"
-/** What the workspace's `pnpm verify` runs before its e2e and static demo: what `--skip-build-and-e2e` keeps. */
-const VERIFY_WITHOUT_E2E = ['typecheck', 'lint', 'test:unit', 'knip', 'sssb:doctor', 'check:e2e']
+/**
+ * The gates this shape runs as steps of their own, held to more than an exit code (the unit and contract runs, to
+ * every conformance test the packed registry names) or run whatever verify does (synth and jscpd, with
+ * --skip-build-and-e2e): `--skip-build-and-e2e` leaves them out of its script-by-script verify, which would run them
+ * twice.
+ */
+const OWN_STEP_GATES = new Set(['unit tests', 'contract tests', 'synth', 'jscpd'])
 
 /** @param {string} dir */
 const fileHashes = (dir) =>
@@ -1245,6 +1282,7 @@ function installGenerated() {
     seedLockfile(GEN)
     run('pnpm', ['install', '--no-frozen-lockfile'], { cwd: GEN })
     const lockText = checkInstalledTarballs(GEN)
+    seedOf(lockText)
     checkSeamLinks(lockText, [GEN_APP])
     // The seed's importers are a superset of this workspace's (the pages shape's second app and sibling package go,
     // and pnpm moves some `optional` flags with them), so what says the resolution left the seed is a package version
@@ -1257,9 +1295,38 @@ function installGenerated() {
     }
 }
 
-/** The workspace's own `pnpm verify`; with --skip-build-and-e2e, the part of it before e2e, script by script. */
+/** The environment the generated workspace's checks run with: its own ports, and never a developer's database. */
+const generatedEnv = () =>
+    consumerEnv({
+        STARTER_PORT: String(generatedPort),
+        CI: process.env.CI ?? '1',
+        CONTRACT_PG_PORT: String(generatedContractPort),
+        CONTRACT_DATABASE_URL: '',
+    })
+
+/**
+ * How the generated verify meets each gate `sssb / all-checks` holds (checks.mjs' GENERATED_VERIFY_GATES), read from
+ * the generated root package.json before anything runs it: the generated required check must not go green with a gate
+ * dropped from verify, so a verify that leaves one out fails here, naming it.
+ */
+function verifyComposition() {
+    const scripts = readJson(path.join(GEN, 'package.json')).scripts ?? {}
+    const { problems, runBy } = verifyGateProblems(scripts)
+    if (problems.length > 0)
+        fail(`the generated workspace's verify does not hold what sssb / all-checks holds:\n  ${problems.join('\n  ')}`)
+    console.log(
+        `verify runs every gate: ${[...runBy].map(([gate, script]) => (gate === script ? gate : `${gate} (${script})`)).join(', ')}`,
+    )
+    return runBy
+}
+
+/**
+ * The workspace's own `pnpm verify`. With --skip-build-and-e2e, the part of it before e2e and the static demo, gate by
+ * gate through the script verify runs it with, less the gates this shape runs as steps of their own (OWN_STEP_GATES).
+ */
 function verifyGenerated() {
-    const env = consumerEnv({ STARTER_PORT: String(generatedPort), CI: process.env.CI ?? '1' })
+    const runBy = verifyComposition()
+    const env = generatedEnv()
     if (!SKIP_BUILD_AND_E2E) {
         const withDeps = process.env.CI ? ['--with-deps'] : []
         run('pnpm', ['exec', 'playwright', 'install', ...withDeps, 'chromium'], {
@@ -1268,38 +1335,57 @@ function verifyGenerated() {
         run('pnpm', ['verify'], { cwd: GEN, env })
         return
     }
-    const verify = readJson(path.join(GEN, 'package.json')).scripts?.verify ?? ''
-    for (const script of VERIFY_WITHOUT_E2E) {
-        if (!verify.includes(`'pnpm:${script}'`))
-            fail(`the generated workspace's verify no longer runs ${script}; update VERIFY_WITHOUT_E2E`)
+    const ran = new Set()
+    for (const { gate, e2e } of GENERATED_VERIFY_GATES) {
+        const script = /** @type {string} */ (runBy.get(gate))
+        if (e2e || OWN_STEP_GATES.has(gate) || ran.has(script)) continue
+        // A gate verify runs inline, not through a script of its own, cannot be run alone without running verify whole.
+        if (script === 'verify') {
+            console.log(`--skip-build-and-e2e: ${gate} runs inline in verify, so it was NOT run here`)
+            continue
+        }
+        ran.add(script)
         run('pnpm', ['run', script], { cwd: GEN, env })
     }
     console.log('\n--skip-build-and-e2e: the generated verify ran WITHOUT its e2e and static demo')
 }
 
-/** `pnpm test:contract` on an embedded Postgres, held to every contract test the PACKED registry names. */
-function contractGenerated() {
+/**
+ * A root script of the generated workspace run with Vitest's JSON report (options after the script name reach Vitest,
+ * through `sssb check-tmpdir-leak`), and the app's conformance file held to every test the PACKED registry names for
+ * the runner: an exit code alone would pass a run that filtered the suite out or skipped it.
+ * @param {string} script
+ * @param {'unit' | 'contract'} runner
+ * @param {string} file the app's conformance file, relative to the app
+ */
+function heldRun(script, runner, file) {
     mkdirSync(REPORTS, { recursive: true })
-    const report = path.join(REPORTS, 'generated-contract.json')
+    const report = path.join(REPORTS, `generated-${runner}.json`)
     rmSync(report, { force: true })
-    // Options after the script name reach the script: Vitest's reporters, through `sssb check-tmpdir-leak`.
-    run('pnpm', ['run', 'test:contract', '--reporter=default', '--reporter=json', `--outputFile.json=${report}`], {
+    run('pnpm', ['run', script, '--reporter=default', '--reporter=json', `--outputFile.json=${report}`], {
         cwd: GEN,
-        env: consumerEnv({ CONTRACT_PG_PORT: String(generatedContractPort), CONTRACT_DATABASE_URL: '' }),
+        env: generatedEnv(),
     })
     const dir = path.join(GEN, 'apps', GEN_APP)
-    const expected = expectedConformanceTests(
-        readJson(path.join(kitOf(dir).kit, 'src/testing/checks.json')),
-        'contract',
-    )
-    const problems = conformanceProblems(
-        readJson(report),
-        { [GEN_APP]: path.join(dir, 'tests/contract/rls-contract.test.ts') },
-        expected,
-    )
+    const expected = expectedConformanceTests(readJson(path.join(kitOf(dir).kit, 'src/testing/checks.json')), runner)
+    const problems = conformanceProblems(readJson(report), { [GEN_APP]: path.join(dir, file) }, expected)
     if (problems.length > 0)
-        fail(`the generated workspace's contract suite did not run in full:\n  ${problems.join('\n  ')}`)
-    console.log(`contract: all ${expected.length} contract tests ran and passed, on embedded Postgres`)
+        fail(
+            `the generated workspace's ${script} did not run the ${runner} checks in full:\n  ${problems.join('\n  ')}`,
+        )
+    return expected.length
+}
+
+/** `pnpm test:unit`, held to every unit conformance test the PACKED registry names. */
+function unitGenerated() {
+    const count = heldRun('test:unit', 'unit', 'src/sssb.conformance.test.ts')
+    console.log(`conformance: all ${count} checks' tests ran and passed, from @sssb/kit/testing`)
+}
+
+/** `pnpm test:contract` on an embedded Postgres, held to every contract test the PACKED registry names. */
+function contractGenerated() {
+    const count = heldRun('test:contract', 'contract', 'tests/contract/rls-contract.test.ts')
+    console.log(`contract: all ${count} contract tests ran and passed, on embedded Postgres`)
 }
 
 /** No file the generator wrote was changed by anything the run did: the workspace was checked as generated. */
@@ -1342,10 +1428,14 @@ const tarballs = {}
 /**
  * Packs one workspace package into TARBALLS, beside the others, and returns the tarball's path.
  * @param {string} dir repo-relative package directory
+ * @param {Record<string, string>} [env] added to this process's environment for the pack
  */
-function pack(dir) {
+function pack(dir, env = {}) {
     const before = new Set(readdirSync(TARBALLS))
-    run('pnpm', ['pack', '--pack-destination', TARBALLS], { cwd: path.join(REPO, dir), env: process.env })
+    run('pnpm', ['pack', '--pack-destination', TARBALLS], {
+        cwd: path.join(REPO, dir),
+        env: { ...process.env, ...env },
+    })
     const packed = readdirSync(TARBALLS).filter((name) => name.endsWith('.tgz') && !before.has(name))
     if (packed.length !== 1) fail(`${dir}: expected one new tarball, found ${packed.join(', ') || 'none'}`)
     return path.join(TARBALLS, /** @type {string} */ (packed[0]))
@@ -1367,6 +1457,7 @@ step('pack every @sssb package, and extract @sssb/create', () => {
     tarballs['@sssb/kit'] = kit
     const manifest = packedManifest(kit)
     KIT_MANIFEST = manifest
+    PACKED_VERSION = String(manifest.version)
     const problems = seamPeerProblems(manifest)
     if (problems.length > 0) fail(`the packed manifest breaks the seam pin:\n  ${problems.join('\n  ')}`)
     console.log(
@@ -1398,14 +1489,37 @@ step('pack every @sssb package, and extract @sssb/create', () => {
         `${path.basename(plugin)}: ${pluginFiles.length} files, ${Math.round(statSync(plugin).size / 1024)} KB; JavaScript and declarations only, no SSSB dependency`,
     )
 
-    // @sssb/cdk: each generated app's infra/ takes it; its own checks are its package's tests and each app's synth.
-    tarballs['@sssb/cdk'] = pack('packages/cdk')
+    // @sssb/cdk: each generated app's infra/ takes it, and each app's synth runs it. Its packed shape is checked here.
+    const cdk = pack('packages/cdk')
+    tarballs['@sssb/cdk'] = cdk
+    const cdkFiles = packedFiles(cdk)
+    const cdkProblems = cdkPackProblems(packedManifest(cdk), cdkFiles)
+    if (cdkProblems.length > 0) fail(`the packed @sssb/cdk is not what it must be:\n  ${cdkProblems.join('\n  ')}`)
+    console.log(
+        `${path.basename(cdk)}: ${cdkFiles.length} files, ${Math.round(statSync(cdk).size / 1024)} KB; JavaScript and declarations, no dependency on the framework`,
+    )
 
     // @sssb/create: the generator, with the template its prepack built from this checkout packed into it, and no
-    // dependency at all. Its postpack removes the template from the working tree again.
-    const create = pack('packages/create')
+    // dependency at all. Its postpack removes the template from the working tree again. Its prepack refuses to pin a
+    // commit no branch on GitHub holds; a PR's merge commit and a local run's HEAD are such commits, and their
+    // tarballs never leave this run, so the pin may be unpushed there. A push's commit is on GitHub, and its tarballs
+    // are the run's artifact a release candidate attaches (checks.yml), so a push packs with the check on.
+    const create = pack(
+        'packages/create',
+        process.env.GITHUB_EVENT_NAME === 'push' ? {} : { SSSB_CREATE_UNPUSHED_PIN: '1' },
+    )
     const createFiles = packedFiles(create)
-    const createProblems = createPackageProblems(packedManifest(create), createFiles)
+    // The template's app, file for file, is what git tracks under apps/starter: an allowlist, so no local state of
+    // this checkout (whatever its name) and no missing file reaches an adopter.
+    const tracked = run('git', ['ls-files', '-z', '--', 'apps/starter'], { cwd: REPO, env: process.env, capture: true })
+        .stdout.split('\0')
+        .filter(Boolean)
+        .map((file) => file.slice('apps/starter/'.length))
+    if (tracked.length === 0) fail('git tracks no file under apps/starter: the template has nothing to compare with')
+    const createProblems = [
+        ...createPackageProblems(packedManifest(create), createFiles),
+        ...templateAppProblems(createFiles, tracked),
+    ]
     if (createProblems.length > 0)
         fail(`the packed @sssb/create is not what it must be:\n  ${createProblems.join('\n  ')}`)
     if (existsSync(path.join(REPO, 'packages/create/template')))
@@ -1416,6 +1530,27 @@ step('pack every @sssb package, and extract @sssb/create', () => {
     console.log(
         `${path.basename(create)}: ${createFiles.length} files, ${Math.round(statSync(create).size / 1024)} KB, its template among them; no dependencies; extracted to ${path.relative(BASE, CREATE)}/`,
     )
+
+    // EVERY released package, here, at PR time: a release candidate attaches one tarball per `@sssb/*` package, flat
+    // as TARBALLS holds them, and refuses to go on without one, after its tag exists (release.mjs `candidate`). So a
+    // package added to packages/ fails this job until it is packed (and its shape checked) above.
+    const packed = new Set([...Object.keys(tarballs), '@sssb/create'])
+    // One version for the set (the fixed group), which the seed's version token stands for.
+    const versions = [...Object.values(tarballs), create].map(
+        (file) => `${path.basename(file)}: ${packedManifest(file).version}`,
+    )
+    const strays = versions.filter((entry) => !entry.endsWith(`: ${PACKED_VERSION}`))
+    if (strays.length > 0) fail(`the packed set is not at one version (${PACKED_VERSION}):\n  ${strays.join('\n  ')}`)
+    const released = readdirSync(path.join(REPO, 'packages'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && existsSync(path.join(REPO, 'packages', entry.name, 'package.json')))
+        .map((entry) => readJson(path.join(REPO, 'packages', entry.name, 'package.json')).name)
+        .filter((name) => typeof name === 'string' && name.startsWith('@sssb/'))
+    const unpacked = released.filter((name) => !packed.has(name))
+    if (unpacked.length > 0) {
+        fail(
+            `packages/ holds ${unpacked.join(', ')}, which this step does not pack; a release candidate needs every one`,
+        )
+    }
 })
 
 if (RUN_PAGES) {
@@ -1424,10 +1559,8 @@ if (RUN_PAGES) {
         run('pnpm', ['install', '--no-frozen-lockfile'], { cwd: WS })
         const lock = path.join(WS, 'pnpm-lock.yaml')
         const lockText = checkInstalledTarballs(WS)
+        const seed = seedOf(lockText)
         if (UPDATE_LOCKFILE) {
-            const seed = lockText.replaceAll(TARBALLS, SEED_TARBALLS)
-            if (seed.includes(BASE))
-                fail(`the lockfile holds a path into this run's directory (${BASE}) besides the tarballs'`)
             writeFileSync(LOCK_SEED, seed)
             console.log(`wrote the resolution back to ${path.relative(REPO, LOCK_SEED)}: commit it`)
             return
@@ -1467,12 +1600,16 @@ if (RUN_GENERATED) {
     step('generated: run the packed generator', generateWorkspace)
     step('generated: install the tarballs', installGenerated)
     step(`generated: pnpm verify${SKIP_BUILD_AND_E2E ? ' (without e2e and the static demo)' : ''}`, verifyGenerated)
+    step('generated: pnpm test:unit, held to every conformance test', unitGenerated)
     step('generated: pnpm test:contract, on embedded Postgres', contractGenerated)
     step('generated: sssb ci lint-typecheck-unit (the reusable workflow’s job)', () =>
         run('pnpm', ['exec', 'sssb', 'ci', 'lint-typecheck-unit'], { cwd: GEN }),
     )
-    step('generated: pnpm synth (the app’s infra/, offline)', () => run('pnpm', ['synth'], { cwd: GEN }))
-    step('generated: pnpm jscpd', () => run('pnpm', ['jscpd'], { cwd: GEN }))
+    // Without --skip-build-and-e2e, verify ran both (its composition is pinned before it runs).
+    if (SKIP_BUILD_AND_E2E) {
+        step('generated: pnpm synth (the app’s infra/, offline)', () => run('pnpm', ['synth'], { cwd: GEN }))
+        step('generated: pnpm jscpd', () => run('pnpm', ['jscpd'], { cwd: GEN }))
+    }
     step('generated: every file the generator wrote is unchanged', generatedUntouched)
 }
 

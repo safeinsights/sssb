@@ -4,7 +4,20 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../support/tmp-dir'
-import { check, prepare, preflight, publishable, verifyRelease, waitForChecks } from '../../scripts/release.mjs'
+import {
+    bump,
+    candidate,
+    candidateNotes,
+    check,
+    impliedVersion,
+    nextCandidate,
+    prepare,
+    unwrap,
+    preflight,
+    publishable,
+    verifyRelease,
+    waitForChecks,
+} from '../../scripts/release.mjs'
 
 /**
  * scripts/release.mjs is what release.yml and CI's `release-plan` job run (ADR-0014 part 10). Each fixture is a
@@ -42,9 +55,19 @@ function writeJson(file: string, value: unknown) {
 /**
  * A workspace with these packages and changesets (`{ id: frontmatter lines }`), committed when `git` is set.
  * `installed` runs `pnpm install --ignore-scripts` first, as the `plan` job does, under a root `prepare` script
- * that leaves a `prepare-ran` file wherever a later step runs scripts after all.
+ * that leaves a `prepare-ran` file wherever a later step runs scripts after all. `pre` writes `.changeset/pre.json` in
+ * pre mode with the tag `rc`; by default it is written when the fixed group is private, as this repository has it
+ * until P14 (a private group's releases are candidates, ADR-0014 P7).
  */
-function workspace(pkgs: Pkg[], changesets: Record<string, string[]> = {}, { git = false, installed = false } = {}) {
+function workspace(
+    pkgs: Pkg[],
+    changesets: Record<string, string[]> = {},
+    {
+        git = false,
+        installed = false,
+        pre = pkgs.filter((p) => p.name.startsWith('@sssb/')).every((p) => p.private),
+    } = {},
+) {
     const root = makeTestTmpDir('sssb-release-')
     writeJson(path.join(root, 'package.json'), {
         name: 'fixture',
@@ -64,6 +87,7 @@ function workspace(pkgs: Pkg[], changesets: Record<string, string[]> = {}, { git
     }
     mkdirSync(path.join(root, '.changeset'))
     copyFileSync(CONFIG, path.join(root, '.changeset', 'config.json'))
+    if (pre) writeJson(path.join(root, '.changeset', 'pre.json'), { mode: 'pre', tag: 'rc' })
     for (const [id, lines] of Object.entries(changesets)) {
         // A body in the shape the release notes are assembled from (scripts/release-notes.mjs); `check` and `prepare`
         // refuse any other.
@@ -115,22 +139,70 @@ function tarball(dir: string, file: string, manifest: Record<string, unknown>) {
 }
 
 describe('release check (every PR)', () => {
-    it('refuses a major changeset on 0.x, though Changesets plans nothing for a private package', async () => {
+    it('refuses a major changeset on 0.x, in a release candidate as in a release', async () => {
         const root = workspace([KIT('0.1.0'), APP], { breaking: ['"@sssb/kit": major'] })
         const { problems, plan } = await check(root)
         expect(problems.join('\n')).toMatch(/breaking\.md files a major for @sssb\/kit, which is on 0\.1\.0/)
-        expect(problems.join('\n')).toMatch(/takes @sssb\/kit from 0\.1\.0 to 1\.0\.0/)
-        // Judged as published: the kit alone, never the private app that depends on it.
+        expect(problems.join('\n')).toMatch(/takes @sssb\/kit from 0\.1\.0 to 1\.0\.0-rc\.0/)
+        // The kit alone, never the private app that depends on it: the config ignores every unscoped package.
         expect(plan.map((r: { name: string; newVersion: string }) => [r.name, r.newVersion])).toEqual([
-            ['@sssb/kit', '1.0.0'],
+            ['@sssb/kit', '1.0.0-rc.0'],
         ])
     })
 
-    it('accepts a minor, the breaking channel on 0.x', async () => {
-        const root = workspace([KIT('0.1.0'), APP], { breaking: ['"@sssb/kit": minor'] })
-        const { problems, plan } = await check(root)
-        expect(problems).toEqual([])
-        expect(plan.map((r: { newVersion: string }) => r.newVersion)).toEqual(['0.2.0'])
+    it('accepts a minor, the breaking channel on 0.x: a candidate while private, a release once public', async () => {
+        const candidate = workspace([KIT('0.1.0'), APP], { breaking: ['"@sssb/kit": minor'] })
+        expect(await check(candidate)).toMatchObject({ problems: [], plan: [{ newVersion: '0.2.0-rc.0' }] })
+        const release = workspace([KIT('0.1.0', false), APP], { breaking: ['"@sssb/kit": minor'] })
+        expect(await check(release)).toMatchObject({ problems: [], plan: [{ newVersion: '0.2.0' }] })
+    })
+
+    it('ties pre mode to privacy: a private group cuts candidates, a public one leaves pre mode', async () => {
+        // Without pre mode a merge to main would cut a plain version of a private group, which nothing can publish.
+        const unmarked = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { pre: false })
+        expect((await check(unmarked)).problems).toEqual([expect.stringMatching(/pre\.json must be \{"mode": "pre"/)])
+        // npm sees no candidate: a public group's release is plain.
+        const publicPre = workspace([KIT('0.1.0', false)], { feature: ['"@sssb/kit": minor'] }, { pre: true })
+        expect((await check(publicPre)).problems).toEqual([
+            expect.stringMatching(/the fixed group is public: leave pre mode/),
+        ])
+    })
+
+    it('reads pre.json strictly: exactly pre mode with the tag rc, or nothing', async () => {
+        for (const state of [
+            { mode: 'exit', tag: 'rc' },
+            { mode: 'pre', tag: 'beta' },
+            { mode: 'pre', tag: 'rc', x: 1 },
+        ]) {
+            const root = workspace([KIT('0.1.0')])
+            writeJson(path.join(root, '.changeset', 'pre.json'), state)
+            await expect(check(root)).rejects.toThrow(/pre\.json must be exactly \{"mode": "pre", "tag": "rc"\}/)
+        }
+    })
+
+    it('refuses a group member at another version, which the release would refuse after merge', async () => {
+        // A package that joins the group mid-cycle at 0.1.0, beside one at a candidate's version.
+        const tools: Pkg = { ...KIT('0.1.0'), dir: 'packages/tools', name: '@sssb/tools' }
+        const root = workspace([KIT('0.2.0-rc.0'), tools], { fix: ['"@sssb/kit": patch'] })
+        expect((await check(root)).problems).toEqual([
+            expect.stringMatching(/several versions \(@sssb\/kit@0\.2\.0-rc\.0, @sssb\/tools@0\.1\.0\)/),
+        ])
+    })
+
+    it('refuses a pending changeset named like one an earlier candidate consumed', async () => {
+        const root = workspace([KIT('0.2.0-rc.0')], { feature: ['"@sssb/kit": minor'] })
+        mkdirSync(path.join(root, '.changeset', 'pre'))
+        copyFileSync(path.join(root, '.changeset', 'feature.md'), path.join(root, '.changeset', 'pre', 'feature.md'))
+        expect((await check(root)).problems).toEqual([
+            expect.stringMatching(/feature\.md has the name of a changeset an earlier release candidate consumed/),
+        ])
+    })
+
+    it('requires a config that versions private packages while the group is private', async () => {
+        const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] })
+        const file = path.join(root, '.changeset', 'config.json')
+        writeJson(file, { ...JSON.parse(readFileSync(file, 'utf8')), privatePackages: { version: false, tag: false } })
+        expect((await check(root)).problems).toEqual([expect.stringMatching(/must version private packages/)])
     })
 
     it('refuses any plan reaching 1.0.0, even with no major changeset', async () => {
@@ -188,12 +260,78 @@ describe('release check (every PR)', () => {
 })
 
 describe('release prepare (the plan job)', () => {
-    it('releases nothing while every package is private, and consumes no changeset', async () => {
+    it('cuts a release candidate while the group is private: rc versions, the changesets moved to pre/', async () => {
         const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
         const result = await prepare(root, { fetchImpl: registry() })
-        expect(result).toEqual({ release: false, reason: expect.stringMatching(/name only private packages/) })
-        expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(true)
-        expect(JSON.parse(readFileSync(path.join(root, 'packages/kit/package.json'), 'utf8')).version).toBe('0.1.0')
+        expect(result).toEqual({
+            release: true,
+            version: '0.2.0-rc.0',
+            packages: ['@sssb/kit'],
+            notes: 'docs/releases/v0.2.0-rc.0.md',
+        })
+        const manifest = (dir: string) => JSON.parse(readFileSync(path.join(root, dir, 'package.json'), 'utf8'))
+        expect(manifest('packages/kit')).toMatchObject({ version: '0.2.0-rc.0', private: true })
+        // the app the config ignores keeps its version
+        expect(manifest('apps/app').version).toBe('0.1.0')
+        // consumed, but kept until pre mode ends: Changesets 3 moves it, byte for byte
+        expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(false)
+        expect(readFileSync(path.join(root, '.changeset', 'pre', 'feature.md'), 'utf8')).toMatch(
+            /^---\n"@sssb\/kit": minor/,
+        )
+        expect(readFileSync(path.join(root, 'docs/releases/v0.2.0-rc.0.md'), 'utf8')).toMatch(
+            /^# Release notes: v0\.2\.0-rc\.0\n/,
+        )
+    })
+
+    it('numbers the next candidate on from the last, and keeps the version it is heading for', async () => {
+        // Cut rc.0 from a minor, then a patch and a minor in turn: both are already inside 0.2.0, so only N moves.
+        const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        const commit = (message: string) => {
+            execFileSync('git', ['add', '-A'], { cwd: root })
+            execFileSync(
+                'git',
+                [
+                    '-c',
+                    'user.name=t',
+                    '-c',
+                    'user.email=t@example.invalid',
+                    'commit',
+                    '-q',
+                    '--no-verify',
+                    '-m',
+                    message,
+                ],
+                { cwd: root },
+            )
+        }
+        await prepare(root, { fetchImpl: registry() })
+        commit('rc.0')
+        for (const [id, type, expected] of [
+            ['fix', 'patch', '0.2.0-rc.1'],
+            ['more', 'minor', '0.2.0-rc.2'],
+        ]) {
+            const body = `### ${id}\n\n**Kind.** none\n\n**Action.** none\n\n**What changed.** ${id}\n`
+            writeFileSync(path.join(root, '.changeset', `${id}.md`), `---\n"@sssb/kit": ${type}\n---\n\n${body}`)
+            commit(`add ${id}`)
+            expect(await prepare(root, { fetchImpl: registry() })).toMatchObject({ release: true, version: expected })
+            commit(expected)
+        }
+        // nothing new pending: no release, though the consumed changesets are still in .changeset/pre/
+        expect(await prepare(root, { fetchImpl: registry() })).toEqual({
+            release: false,
+            reason: 'no changesets are pending',
+        })
+    })
+
+    it('refuses a candidate whose tag already exists, or that is not ahead of the latest release', async () => {
+        const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        execFileSync('git', ['tag', 'v0.2.0-rc.0'], { cwd: root })
+        await expect(prepare(root, { fetchImpl: registry() })).rejects.toThrow(/the tag v0\.2\.0-rc\.0 already exists/)
+        execFileSync('git', ['tag', '-d', 'v0.2.0-rc.0'], { cwd: root, stdio: 'ignore' })
+        execFileSync('git', ['tag', 'v0.2.0'], { cwd: root })
+        await expect(prepare(root, { fetchImpl: registry() })).rejects.toThrow(
+            /not newer than the latest stable tag \(0\.2\.0\)/,
+        )
     })
 
     it('versions a public fixed group with Changesets and leaves the commit to the workflow', async () => {
@@ -494,6 +632,231 @@ describe('release verify-release (the job holding the release key)', () => {
         const result = spawnSync(process.execPath, [link, 'verify-release', '0.2.0'], { cwd: root, encoding: 'utf8' })
         expect(result.status).toBe(1)
         expect(result.stderr).toMatch(/the pending changesets release nothing/)
+    })
+})
+
+describe('release candidates (ADR-0014 P7): the version they take, as Changesets 3 computes it', () => {
+    it("bumps a prerelease to the version it is heading for, as semver's inc does", () => {
+        // Each row is semver/functions/inc's answer (semver 7), which Changesets 3 calls before appending -rc.N.
+        for (const [from, type, to] of [
+            ['0.1.0', 'patch', '0.1.1'],
+            ['0.1.0', 'minor', '0.2.0'],
+            ['0.1.0', 'major', '1.0.0'],
+            ['0.2.0-rc.1', 'patch', '0.2.0'],
+            ['0.2.0-rc.1', 'minor', '0.2.0'],
+            ['0.2.0-rc.1', 'major', '1.0.0'],
+            ['0.1.1-rc.0', 'patch', '0.1.1'],
+            ['0.1.1-rc.0', 'minor', '0.2.0'],
+            ['1.0.0-rc.0', 'major', '1.0.0'],
+        ] as const) {
+            expect(bump(from, type), `${from} ${type}`).toBe(to)
+        }
+    })
+
+    it('numbers a candidate one past the group, from 0', () => {
+        expect(nextCandidate(['0.1.0', '0.1.0'])).toBe(0)
+        expect(nextCandidate(['0.2.0-rc.0', '0.2.0-rc.0'])).toBe(1)
+        expect(impliedVersion(['0.2.0-rc.4'], ['patch', 'none'], true)).toBe('0.2.0-rc.5')
+        expect(impliedVersion(['0.1.0'], ['minor', 'patch'], true)).toBe('0.2.0-rc.0')
+        expect(impliedVersion(['0.1.0'], ['patch'], false)).toBe('0.1.1')
+        expect(impliedVersion(['0.1.0'], ['none'], true)).toBeNull()
+        expect(() => impliedVersion(['0.1.0', '0.2.0'], ['patch'], true)).toThrow(/several versions/)
+    })
+})
+
+describe("the prerelease notes' line breaks", () => {
+    it('joins wrapped lines, which a GitHub release renders as hard breaks, and leaves the rest as it was', () => {
+        const wrapped = [
+            '# Release notes: v0.2.0-rc.0',
+            '',
+            'A paragraph wrapped',
+            'onto two lines.',
+            '',
+            '- an item',
+            '  continued',
+            '- another',
+            '',
+            '| a | b |',
+            '| --- | --- |',
+            '',
+            '```yaml',
+            'overrides:',
+            "    '@sssb/kit': x",
+            '```',
+            '### A title',
+            'right under it',
+        ].join('\n')
+        expect(unwrap(wrapped)).toBe(
+            [
+                '# Release notes: v0.2.0-rc.0',
+                '',
+                'A paragraph wrapped onto two lines.',
+                '',
+                '- an item continued',
+                '- another',
+                '',
+                '| a | b |',
+                '| --- | --- |',
+                '',
+                '```yaml',
+                'overrides:',
+                "    '@sssb/kit': x",
+                '```',
+                '### A title',
+                'right under it',
+            ].join('\n'),
+        )
+    })
+})
+
+describe("the prerelease notes' line breaks, where joining would change what an adopter copies", () => {
+    const untouched = (text: string) => expect(unwrap(text)).toBe(text)
+
+    it('leaves a fence that holds a shorter fence, and a ~~~ fence that holds backticks, as they were', () => {
+        untouched(['````md', '```ts', 'const a = 1', 'const b = 2', '```', '````'].join('\n'))
+        untouched(['~~~', '```', 'line one', 'line two', '~~~'].join('\n'))
+    })
+
+    it('leaves indented code, hard breaks, HTML, link definitions and setext underlines on their own lines', () => {
+        untouched(['Before:', '', '    code one', '    code two'].join('\n'))
+        untouched(['a hard break  ', 'after it'].join('\n'))
+        untouched(['a backslash break\\', 'after it'].join('\n'))
+        untouched(['<details>', '<summary>More</summary>', 'text', '</details>'].join('\n'))
+        untouched(['[a]: https://example.invalid/a', '[b]: https://example.invalid/b'].join('\n'))
+        untouched(['A setext title', '---'].join('\n'))
+        untouched(['a | table', '--- | ---', 'x | y'].join('\n'))
+    })
+})
+
+describe('a release candidate, end to end, against a local fake tag', () => {
+    const TOOLS = (version: string): Pkg => ({ ...KIT(version), dir: 'packages/tools', name: '@sssb/tools' })
+    const commit = (root: string, message: string) =>
+        execFileSync(
+            'git',
+            ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--no-verify', '-m', message],
+            { cwd: root },
+        )
+
+    /** The `plan` job's prepare, staged as the `push` job applies it. */
+    async function staged() {
+        const root = workspace([KIT('0.1.0'), TOOLS('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        expect(await prepare(root, { fetchImpl: registry() })).toMatchObject({ version: '0.2.0-rc.0' })
+        execFileSync('git', ['add', '-A'], { cwd: root })
+        return root
+    }
+
+    /** The tarballs `checks`' pack-and-consume job hands over, as `pnpm pack` lays them out. */
+    function tarballs(root: string, version: string, names = ['kit', 'tools']) {
+        const dir = makeTestTmpDir('sssb-rc-tarballs-')
+        return names.map((n) =>
+            tarball(dir, `sssb-${n}-${version}.tgz`, { name: `@sssb/${n}`, version, private: true }),
+        )
+    }
+
+    it('plans, verifies, tags and assembles the prerelease: the flow a merge to main runs', async () => {
+        const root = await staged()
+        // `push`: the staged patch is exactly the candidate
+        expect(() => verifyRelease(root, '0.2.0-rc.0')).not.toThrow()
+        commit(root, 'chore: release v0.2.0-rc.0')
+        execFileSync('git', ['tag', 'v0.2.0-rc.0'], { cwd: root })
+        // the tag's `candidate` job: the release commit is the one that added the notes
+        const added = execFileSync('git', ['diff', '--name-status', 'HEAD^', 'HEAD', '--', 'docs/releases'], {
+            cwd: root,
+            encoding: 'utf8',
+        })
+        expect(added).toBe('A\tdocs/releases/v0.2.0-rc.0.md\n')
+        const assets = candidate(root, '0.2.0-rc.0', tarballs(root, '0.2.0-rc.0'))
+        expect(assets.map((a: { name: string; file: string }) => [a.name, a.file])).toEqual([
+            ['@sssb/kit', 'sssb-kit-0.2.0-rc.0.tgz'],
+            ['@sssb/tools', 'sssb-tools-0.2.0-rc.0.tgz'],
+        ])
+        for (const a of assets) expect(a.sha512).toMatch(/^sha512-[A-Za-z0-9+/]+=*$/)
+        const notes = candidateNotes(root, '0.2.0-rc.0', 'safeinsights/sssb', SHA, assets)
+        expect(notes).toMatch(/^# Release notes: v0\.2\.0-rc\.0\n/)
+        const url = 'https://github.com/safeinsights/sssb/releases/download/v0.2.0-rc.0/sssb-kit-0.2.0-rc.0.tgz'
+        expect(notes).toContain(`overrides:\n    '@sssb/kit': ${url}\n`)
+        expect(notes).toContain(`"@sssb/kit": "${url}"`)
+        expect(notes).toContain(`| \`@sssb/kit\` | [\`sssb-kit-0.2.0-rc.0.tgz\`](${url}) | \`${assets[0].sha512}\` |`)
+        expect(notes).toContain(`cut from \`${SHA}\``)
+        // pinned to the release workflow, the candidate's tag and this commit, not just the repository
+        expect(notes).toContain(
+            'gh attestation verify <tarball> --repo safeinsights/sssb --signer-workflow ' +
+                'safeinsights/sssb/.github/workflows/release.yml \\\n' +
+                `    --source-ref refs/tags/v0.2.0-rc.0 --source-digest ${SHA}`,
+        )
+        // unwrapped: the install paragraph, wrapped in the source, is one line in the release body
+        expect(notes).toMatch(
+            /\nIn `pnpm-workspace\.yaml`, map every package to its tarball, so that .* release candidate:\n/,
+        )
+        // the CLI the workflow runs, with no sibling module and no node_modules
+        const alone = path.join(makeTestTmpDir('sssb-release-alone-'), 'release.mjs')
+        copyFileSync(SCRIPT, alone)
+        const files = tarballs(root, '0.2.0-rc.0')
+        const out = spawnSync(process.execPath, [alone, 'candidate', '0.2.0-rc.0', ...files], {
+            cwd: root,
+            encoding: 'utf8',
+        })
+        expect(out.stderr).toBe('')
+        expect(JSON.parse(out.stdout)).toHaveLength(2)
+    })
+
+    it("refuses tarballs that are not this commit's group at this version, one each", async () => {
+        const root = await staged()
+        commit(root, 'chore: release v0.2.0-rc.0')
+        const v = '0.2.0-rc.0'
+        expect(() => candidate(root, v, tarballs(root, '0.2.0-rc.1'))).toThrow(
+            /holds @sssb\/kit@0\.2\.0-rc\.1, not 0\.2\.0-rc\.0/,
+        )
+        expect(() => candidate(root, v, tarballs(root, v, ['kit']))).toThrow(/no tarball holds @sssb\/tools/)
+        expect(() => candidate(root, v, tarballs(root, v, ['kit', 'tools', 'cdk']))).toThrow(
+            /holds @sssb\/cdk, which is not in this commit's fixed group/,
+        )
+        const renamed = tarballs(root, v)
+        const odd = path.join(path.dirname(renamed[0]!), 'kit; rm -rf.tgz')
+        copyFileSync(renamed[0]!, odd)
+        expect(() => candidate(root, v, [odd, renamed[1]!])).toThrow(
+            /holds @sssb\/kit, so is named sssb-kit-0\.2\.0-rc\.0\.tgz/,
+        )
+        const twice = [...tarballs(root, v), ...tarballs(root, v, ['kit'])]
+        expect(() => candidate(root, v, twice)).toThrow(/@sssb\/kit is packed twice/)
+        expect(() => candidate(root, '0.2.0', tarballs(root, v))).toThrow(/not a release candidate: '0\.2\.0'/)
+        // a release candidate is of the commit it tags: one whose manifests say another version is refused
+        const behind = workspace([KIT('0.1.0'), TOOLS('0.1.0')], {}, { git: true })
+        expect(() => candidate(behind, v, tarballs(behind, v))).toThrow(/this commit has @sssb\/kit at 0\.1\.0/)
+    })
+
+    it('refuses a tarball laid out other than as one package/, before reading it', async () => {
+        const root = await staged()
+        commit(root, 'chore: release v0.2.0-rc.0')
+        const dir = makeTestTmpDir('sssb-rc-stray-')
+        const staging = path.join(dir, 'staging')
+        writeJson(path.join(staging, 'pkg', 'package.json'), { name: '@sssb/kit', version: '0.2.0-rc.0' })
+        execFileSync('tar', ['-czf', path.join(dir, 'odd.tgz'), '-C', staging, 'pkg'])
+        expect(() => candidate(root, '0.2.0-rc.0', [path.join(dir, 'odd.tgz')])).toThrow(
+            /is not laid out as one package/,
+        )
+    })
+
+    it('verify-release refuses a candidate whose changesets are deleted, edited or numbered wrong', async () => {
+        const deleted = await staged()
+        execFileSync('git', ['rm', '-q', '--cached', '.changeset/pre/feature.md'], { cwd: deleted })
+        rmSync(path.join(deleted, '.changeset/pre/feature.md'))
+        expect(() => verifyRelease(deleted, '0.2.0-rc.0')).toThrow(
+            /feature\.md is deleted, not moved to \.changeset\/pre\//,
+        )
+
+        const edited = await staged()
+        writeFileSync(path.join(edited, '.changeset/pre/feature.md'), 'something else\n')
+        execFileSync('git', ['add', '-A'], { cwd: edited })
+        expect(() => verifyRelease(edited, '0.2.0-rc.0')).toThrow(/pre\/feature\.md must hold exactly what/)
+
+        const numbered = await staged()
+        expect(() => verifyRelease(numbered, '0.2.0-rc.1')).toThrow(/release 0\.2\.0-rc\.0, not 0\.2\.0-rc\.1/)
+        expect(() => verifyRelease(numbered, '0.2.0')).toThrow(/not a 0\.x release candidate version: '0\.2\.0'/)
+
+        const repo = await staged()
+        execFileSync('git', ['tag', 'v0.2.0-rc.0'], { cwd: repo })
+        expect(() => verifyRelease(repo, '0.2.0-rc.0')).toThrow(/the tag v0\.2\.0-rc\.0 already exists/)
     })
 })
 

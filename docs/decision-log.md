@@ -3851,7 +3851,7 @@ map, the cutover rows as data) was set before the work; these are the calls it d
   scratch dir (`removeTestTmpDir`), in one hook so the order holds; and `tmp-dir.ts` registers a hook for each later
   file whose first call comes while it is collected. Rejected: `process.on('exit')` (pool teardown may not fire it)
   and pushing into Vitest's runner hooks (internals, in a shipped file). `@sssb/tools/testing/tmp-dir` has the same
-  single-hook flaw, left for `.claude/future-tasks/tools-tmp-dir-without-isolation.md`.
+  single-hook flaw, left for `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
 - **The demo-presets check's teardown waits for a replay that outlived its test.** A Vitest timeout fails the test
   but cannot stop its body: the replay ran on into `afterAll`, which closed the db and restored APP_DATA_DIR, and the
   replay then wrote `auth/`, `pglite/` and `simulator/` into the working directory's `.data` (reproduced: a probe that
@@ -4051,6 +4051,101 @@ as it stands after three rounds of review (ADR-0014's addendum "P5 as built" lis
   through an app module) check-e2e must exit 1, failing `playwright.config.ts` as unlistable and naming
   `@sssb/kit:src/core/webhook-signing.ts`. Rejected: adding the spec to `apps/starter` itself, whose one e2e spec is
   its tenancy claim.
+
+## `@sssb/tools/testing/tmp-dir` under `isolate: false`: a setup module, and never removing too early (2026-11-18, `fix/tools-tmp-dir-isolation`)
+
+Resolves `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
+
+- **No hook registered at a call is both late enough and wide enough.** The task's design, and the kit's fix in P5,
+  register a hook at a later file's first call. Review reproduced, in real Vitest runs, that a hook registered from a
+  `describe` body belongs to that `describe` and removed directories the rest of the file still used, and that it runs
+  before any `afterAll` the file registered earlier, so the cleanup could precede the file closing what lives in the
+  directory. Registering a hook per suite instead still removed a nested `describe`'s directory before an outer test
+  used it. The kit's copy is unchanged here and has the first two: `.claude/future-tasks/kit-tmp-dir-cleanup-order.md`.
+- **A setup module carries the file's hook,** and is the supported path under `isolate: false`. Vitest runs a setup
+  file before every test file even with `isolate: false`, and an `afterAll` it registers runs after the file's own
+  (checked with Vitest 4.1.12, three files in one worker). `@sssb/tools/testing/tmp-dir-setup` calls
+  `registerTestTmpDirCleanup()`; `appTestProject` adds it to every app project, so an app on the preset needs nothing.
+  Rejected: asking adopters to import the helper first in every file (a later file's import is a cache hit, which
+  registers nothing).
+- **Without it, never too early, at the cost of the last file.** A later file's first call registers a hook that removes
+  only EARLIER files' directories (a worker runs files one after another, so those files have finished). Every file's
+  directories are removed except each worker's last file's, which `sssb check-tmpdir-leak` reports, and the helper says once per
+  worker which setup file is missing. A leak the gate names is recoverable; a directory removed under a running test
+  is a false red.
+- **A file's first registration removes what earlier files left.** Vitest runs no `afterAll` for a file whose tests are
+  all skipped (`it.skip`, a `-t` filter), so its directories stayed queued; they go when the next file in the worker
+  registers, and that file's stale registry entries go too, so a watch-mode rerun registers again. With isolation
+  nothing carries to the next file, so a skipped file's directories are left for good; that predates this change and
+  is Vitest's. The cleanup's place after the file's own `afterAll` also assumes `sequence.hooks: 'stack'`, Vitest's
+  default; `'list'` and `'parallel'` reverse it. Both limits are in the module's header.
+- **`removeTestTmpDir` removes only what the helper made.** The kit's removes any path it is given, recursively.
+- **A new `exports` subpath, so the changeset is a `seam` entry,** optional: an app on the preset gets the setup module,
+  and another project with `isolate: false` adds it to `setupFiles`.
+
+## The first release candidate, cut by a merge to main (2026-11-18, ADR-0014 P7, `feat/release-candidate`)
+
+JP, 2026-11-18: "I don't want publishing a release to be my call separately from merges to main." Each decision below
+names what was rejected; ADR-0014's addendum of the same date summarises them.
+
+- **Changesets' pre mode `rc`, not a hand-pushed tag.** A merge to `main` with changesets versions the group to
+  `0.x.y-rc.N` through `release.yml`'s existing `plan` and `push`, so a candidate passes the same gates as a release
+  (CI on the merge commit, `verify-release` in the job holding the key, the atomic push). Rejected: a separate
+  `workflow_dispatch` or a tag pushed by hand, each a release step apart from the merge, which is what JP ruled out.
+  This reverses P1b's "never Changesets' pre mode" (its `loadWorkspace` refused a `pre.json`).
+- **Private packages are versioned, and everything outside `@sssb/*` is ignored with `"*"` and `"@app/*"`.** Without
+  the ignore the apps, their infra and the showcase's seed are bumped as dependents (seen: `showcase -> 0.1.1-rc.0`).
+  Rejected: naming the apps (`init-app` renames them), and `"!@sssb/*"`, which Changesets' matcher does not read as a
+  negation (seen: every app still planned).
+- **Pre mode and privacy are tied by `release.mjs check`**: a private group needs pre mode `rc` and a config that
+  versions private packages; a public group must have left pre mode. Rejected: leaving it to review, since a private
+  group outside pre mode would cut a plain `0.x.y` on the next merge, tagged, with nothing able to publish it.
+- **`verify-release` recomputes the candidate's number itself**, because the `push` job installs nothing: semver's
+  `inc` on the group's version (a prerelease bumped by a patch or a minor is already on its way there), then one past
+  the group's highest `-rc.N`, which is Changesets 3's `getPreVersion` over a fixed group. `prepare` refuses to go on
+  when Changesets' number and this one differ. A consumed changeset must be moved to `.changeset/pre/` byte for byte.
+  Rejected: trusting the plan job's number, which ran dependency code.
+- **The tarballs attached are the ones CI tested on the release commit**: `checks`' pack-and-consume job uploads them
+  as `sssb-tarballs` on a push (overwriting on a re-run, so the artifact is the last attempt's), and `candidate`
+  downloads that run's artifact after the CI gate. Rejected: packing again in the tag run, whose bytes nobody tested.
+  Pack and consume now packs `@sssb/cdk` too (its packed shape checked, not installed: P12).
+- **The id-token on a candidate's tag is `attest`'s**, in no environment, so npm's trusted publisher (bound to the
+  `npm-publish` environment) refuses it; a candidate's tag never runs `pack` or `publish`. Each run holds the id-token in
+  one job. Rejected: attesting in `prerelease`, which would put the id-token beside `contents: write`.
+- **`prerelease` creates a draft, uploads, downloads every asset to compare sha256s, then publishes** as a prerelease
+  never marked latest; a re-run finishes a draft and confirms a published candidate, and fails rather than replace one
+  whose bytes differ. Rejected: `gh release create` with the assets in one call, which on a failure part-way leaves a
+  visible prerelease missing a tarball while the run is red.
+- **The pre-changeset history is four changesets**, `.changeset/history-since-keel-*.md`, one per section, consumed by
+  the first candidate. Rejected: a seed file the assembler would include once, which needed a change to
+  `scripts/release-notes.mjs` (another session's) and a rule for "once" that changesets already have.
+- **The install lines use `overrides`** in `pnpm-workspace.yaml` as well as each package's dependency, because the packed
+  `@sssb/cdk` depends on `@sssb/tools` at exactly its version, which npm does not have (seen: offline, cdk's tarball
+  installed with tools resolved to its tarball through the override).
+- **The app guide: `sssb doctor` reports a missing copy in this repository** rather than failing, because here the guide
+  is the source and no copy is kept until this repo's `CLAUDE.md` imports one (P13); in an adopter's workspace it fails.
+  Rejected: committing `.claude/sssb-guide.md` now, a second copy of the guide nothing reads yet. The guide's changeset is
+  a `seam` change, `required`, because doctor now fails an adopter who never runs `sssb guide`.
+- **Until JP makes the release app, a merge to `main` with changesets fails at `push`'s token mint**, having written
+  nothing; the changesets stay pending. Rejected: skipping `push` when the app is missing, which would turn a missing
+  release into a green run, the failure the review question names.
+- **What the reviews added (P7).** Both found the flow sound: no path to npm, to a non-candidate version while private,
+  off `main`, or to tarballs other than the tested ones. Closed after them; each is seen failing in a test except
+  three no unit test reaches: `prepare`'s cross-check reading the manifests (`check` refuses a split group first), pack
+  and consume's unpacked-package check (CI runs it), and `overwrite` on the `candidate` artifact (a workflow setting):
+    - `check` refuses a fixed group at more than one version (a package joining mid-cycle at `0.1.0` passed `check` and
+      `prepare`, then stalled `push`), and a pending changeset named like one in `.changeset/pre/` (Changesets would
+      overwrite it); `prepare`'s cross-check reads the manifests, not the plan, whose `oldVersion` Changesets evens out.
+    - `candidate` requires each tarball's file name to be the one `pnpm pack` gives it; pack and consume fails when a
+      `@sssb/*` package is not packed, at PR time rather than after a candidate's tag exists.
+    - `prerelease` treats only "release not found" as no release, re-uploads every tarball into a draft with
+      `--clobber`, and publishes with its own title and notes, so neither a lookup failure, a half-written asset nor a
+      draft someone else made decides what goes out; `candidate`'s artifact overwrites on "Re-run all jobs".
+    - The notes' attestation check names the signing workflow, the tag and the commit (`--signer-workflow`,
+      `--source-ref`, `--source-digest`), not just the repository, which any workflow of it could satisfy.
+    - The prerelease notes are unwrapped (`unwrap`): a release body renders each newline as a line break, seen through
+      GitHub's markdown API in `gfm` mode; with soft breaks joined, the rendered sample had none.
+      Left for P14: leaving pre mode (`.claude/future-tasks/p14-leave-pre-mode.md`).
 
 ## Retiring init-app, the adoption probe and the adopter-identity test (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
 
