@@ -14,7 +14,10 @@
 //                  tests with the conformance suite (@sssb/kit/testing) run from the tarball, its contract
 //                  suite (@sssb/kit/testing/contract) on embedded Postgres, the migrator bundle, `next build`,
 //                  e2e, the static demo, its size and its e2e. It owns an
-//                  adapter (src/adapters/real/), and a seam module that imports through its `@/` alias.
+//                  adapter (src/adapters/real/), a seam module that imports through its `@/` alias, and an e2e spec
+//                  that imports `@sssb/kit/testing/e2e` and an app domain module, which `sssb check-e2e` must pass,
+//                  Playwright must load (`--list`, even with `--skip-build-and-e2e`), and whose negatives (specs
+//                  reaching the framework's source, dropped in for one run) check-e2e must fail by name.
 //   apps/ledger    a second app with a different seam (its own slug and an extra migration, imported
 //                  through `@/`): typecheck, unit + conformance, contract, and the migrator bundle, which must
 //                  hold its own migrations and not the console's.
@@ -49,6 +52,8 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
+    checkE2eFailProblems,
+    checkE2eOkProblems,
     expectedConformanceTests,
     STRICT_FLAGS,
     conformanceProblems,
@@ -490,7 +495,34 @@ export const consoleServiceOrgs: readonly string[] = []
         'export const serviceManagedOrgSlugs: readonly string[] = []',
         'export const serviceManagedOrgSlugs: readonly string[] = consoleServiceOrgs',
     )
+
+    // An e2e spec that imports @sssb/kit/testing/e2e and an app domain module (ADR-0014 part 7), so `sssb check-e2e`
+    // has the case it exists for, and Playwright loads the compiled entry under Node. It takes no page, so it needs no
+    // server, but it runs with the rest of the suite in the e2e step.
+    write(
+        path.join(dir, CONSOLE_E2E_SPEC),
+        `import { createHmac } from 'node:crypto'
+import { expect, test } from '@playwright/test'
+import { verifyWebhookSignature, WEBHOOK_REPLAY_TOLERANCE_MS } from '@sssb/kit/testing/e2e'
+import { consoleServiceOrgs } from '@/domain/service-orgs'
+
+// The framework reaches a spec only through @sssb/kit/testing/e2e, compiled and seam-free (ADR-0014 part 2); the app's
+// own modules come in as usual. The signature is computed here, with node:crypto, and checked by the framework.
+test('the e2e entry verifies a webhook signature computed in the spec', () => {
+    const body = JSON.stringify({ serviceOrgs: consoleServiceOrgs })
+    const secret = 'console-e2e-secret'
+    const t = 1_700_000_000
+    const v1 = createHmac('sha256', secret).update(\`\${t}.\${body}\`).digest('hex')
+    const opts = { toleranceMs: WEBHOOK_REPLAY_TOLERANCE_MS, now: new Date(t * 1000) }
+    expect(verifyWebhookSignature(body, \`t=\${t},v1=\${v1}\`, secret, opts)).toEqual({ ok: true })
+    expect(verifyWebhookSignature(\`\${body} \`, \`t=\${t},v1=\${v1}\`, secret, opts)).toEqual({ ok: false, reason: 'signature' })
+})
+`,
+    )
 }
+
+/** The console's spec that reaches the framework through @sssb/kit/testing/e2e, relative to the app. */
+const CONSOLE_E2E_SPEC = 'tests/e2e/kit-entry.spec.ts'
 
 /** The ledger: a different seam, whose extra migration comes in through the app's `@/` alias. */
 function shapeLedger(/** @type {string} */ dir) {
@@ -1006,6 +1038,9 @@ function staticDemo() {
 /**
  * `sssb doctor` and `sssb check-e2e` in each app, as its verify runs them (ADR-0014 part 7): from the tarball, so
  * doctor must NOT find itself in in-repo mode here, and it walks a workspace whose every importer links its own seam.
+ * In the console, check-e2e must have checked the spec that reaches the framework through `@sssb/kit/testing/e2e`,
+ * resolved through the installed exports map to the compiled entry; and then, with two specs dropped in that reach the
+ * framework's source (one directly, one through an app module), it must fail naming both.
  */
 function doctorAndCheckE2e() {
     for (const app of ['console', 'ledger']) {
@@ -1013,8 +1048,63 @@ function doctorAndCheckE2e() {
         console.log(doctor.stdout)
         if (doctor.stdout.includes('in-repo mode'))
             fail(`${app}: sssb doctor took the tarball's kit for this repo's own`)
-        run('pnpm', ['run', 'check:e2e'], { cwd: appDir(app) })
+        const checked = run('pnpm', ['run', 'check:e2e'], { cwd: appDir(app), capture: true })
+        console.log(checked.stdout)
+        if (app !== 'console') continue
+        const okProblems = checkE2eOkProblems(checked, CONSOLE_E2E_SPEC)
+        if (okProblems.length > 0) fail(`console: sssb check-e2e:\n  ${okProblems.join('\n  ')}`)
     }
+
+    const kitFile = '@sssb/kit:src/core/webhook-signing.ts'
+    const probes = {
+        'tests/e2e/reaches-kit-source.spec.ts':
+            "import { WEBHOOK_SIGNATURE_HEADER } from '@sssb/kit/core/webhook-signing'\nconsole.log(WEBHOOK_SIGNATURE_HEADER)\n",
+        'tests/e2e/reaches-kit-through-app.spec.ts':
+            "import { probeHeader } from '@/domain/e2e-probe'\nconsole.log(probeHeader)\n",
+        'src/domain/e2e-probe.ts':
+            "export { WEBHOOK_SIGNATURE_HEADER as probeHeader } from '@sssb/kit/core/webhook-signing'\n",
+    }
+    for (const [file, text] of Object.entries(probes)) write(path.join(appDir('console'), file), text)
+    let probed
+    try {
+        probed = run('pnpm', ['exec', 'sssb', 'check-e2e'], {
+            cwd: appDir('console'),
+            capture: true,
+            allowFailure: true,
+        })
+    } finally {
+        for (const file of Object.keys(probes)) rmSync(path.join(appDir('console'), file))
+    }
+    const failProblems = checkE2eFailProblems(probed, [
+        { spec: 'tests/e2e/reaches-kit-source.spec.ts', kitFile },
+        { spec: 'tests/e2e/reaches-kit-through-app.spec.ts', kitFile },
+    ])
+    if (failProblems.length > 0) {
+        console.error(`${probed.stdout}\n${probed.stderr}`)
+        fail(`console: sssb check-e2e with specs reaching the framework's source:\n  ${failProblems.join('\n  ')}`)
+    }
+    console.log(
+        `sssb check-e2e failed the two specs reaching ${kitFile}, as it must:\n  ${probed.stdout
+            .split('\n')
+            .filter((line) => /^FAIL|^ {10}/.test(line))
+            .join('\n  ')}`,
+    )
+}
+
+/**
+ * Playwright itself loads every console spec, the one importing `@sssb/kit/testing/e2e` and an app module included:
+ * `--list` loads each file under Node, as a run does, without starting the dev server or a browser. So the spec
+ * check-e2e passes is proven loadable even when `--skip-build-and-e2e` skips the run.
+ */
+function playwrightLoadsSpecs() {
+    const listed = run('pnpm', ['exec', 'playwright', 'test', '--list', '--reporter=list'], {
+        cwd: appDir('console'),
+        env: consumerEnv({ CI: '1' }),
+        capture: true,
+    })
+    console.log(listed.stdout)
+    if (!listed.stdout.includes(`${path.basename(CONSOLE_E2E_SPEC)}:`))
+        fail(`playwright test --list did not list ${CONSOLE_E2E_SPEC}`)
 }
 
 /** THE NEGATIVE FIXTURE: an importer of @sssb/kit that links no seam, joining the workspace after the verify. */
@@ -1198,6 +1288,7 @@ step('unit tests and the conformance suite, from the workspace root', unitTests)
 step('contract tests on embedded Postgres, from the workspace root', contractTests)
 step('migrator bundles, with no alias and no tsconfig', migratorBundles)
 step('sssb doctor and sssb check-e2e, in each app', doctorAndCheckE2e)
+step('Playwright loads every console spec (--list: no server, no browser)', playwrightLoadsSpecs)
 step('negative fixture: an importer with no seam, which sssb doctor names', negativeFixture)
 step('the compiled e2e entry loads under plain Node, with no seam', e2eEntryUnderNode)
 step('the dev:real preflight, through esbuild from each app', realEnvPreflight)

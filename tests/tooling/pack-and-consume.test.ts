@@ -3,6 +3,8 @@ import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import {
+    checkE2eFailProblems,
+    checkE2eOkProblems,
     CONFORMANCE_DATA,
     conformanceProblems,
     expectedConformanceTests,
@@ -423,5 +425,69 @@ describe('lockfileMoves', () => {
             '        version: link:src/app-config\n      react: 19.2.9\n',
         )
         expect(lockfileMoves(GOOD_LOCKFILE, moved)).toEqual({ added: 1, removed: 0 })
+    })
+})
+
+describe("the consumer's check-e2e verdicts (sssb check-e2e's own output format)", () => {
+    const head =
+        'sssb check-e2e: apps/console: 5 file(s) Playwright loads (playwright.config.ts; under tests/e2e); @sssb/kit/testing/e2e is @sssb/kit:dist/testing/e2e.js'
+    const spec = 'tests/e2e/kit-entry.spec.ts'
+    const through = `ok      ${spec}  (reaches the kit through @sssb/kit/testing/e2e)`
+    const green = [
+        head,
+        'ok      playwright.config.ts',
+        through,
+        'sssb check-e2e: ok, no file reaches @sssb/kit other than through @sssb/kit/testing/e2e',
+    ].join('\n')
+
+    it('accepts a green run that checked the spec through the compiled entry', () => {
+        expect(checkE2eOkProblems({ status: 0, stdout: green }, spec)).toEqual([])
+    })
+
+    it('fails a vacuous green run, a spec not seen reaching the entry, an entry from source, and a red run', () => {
+        expect(checkE2eOkProblems({ status: 0, stdout: green.replace(through, '') }, spec)).toEqual([
+            `sssb check-e2e did not report "${through}"`,
+        ])
+        expect(checkE2eOkProblems({ status: 0, stdout: green.replace(through, `ok      ${spec}`) }, spec)).toHaveLength(
+            1,
+        )
+        const source = green.replace('@sssb/kit:dist/testing/e2e.js', '@sssb/kit:src/testing/e2e.ts (in-repo mode: …)')
+        expect(checkE2eOkProblems({ status: 0, stdout: source }, spec)).toHaveLength(2)
+        expect(checkE2eOkProblems({ status: 1, stdout: green }, spec)).toEqual(['sssb check-e2e exited 1, not 0'])
+        expect(checkE2eOkProblems({ status: 0, stdout: '' }, spec)).toHaveLength(2)
+    })
+
+    const kitFile = '@sssb/kit:src/core/webhook-signing.ts'
+    const red = [
+        head,
+        'FAIL    tests/e2e/a.spec.ts reaches 2 @sssb/kit file(s) other than @sssb/kit/testing/e2e:',
+        `          ${kitFile}  (tests/e2e/a.spec.ts -> ${kitFile})`,
+        'ok      tests/e2e/c.spec.ts',
+        'FAIL    tests/e2e/b.spec.ts reaches 2 @sssb/kit file(s) other than @sssb/kit/testing/e2e:',
+        `          ${kitFile}  (tests/e2e/b.spec.ts -> src/domain/e2e-probe.ts -> ${kitFile})`,
+        'sssb check-e2e: 2 problem(s): a spec may reach the kit only through @sssb/kit/testing/e2e, which Node can load',
+    ].join('\n')
+    const expected = [
+        { spec: 'tests/e2e/a.spec.ts', kitFile },
+        { spec: 'tests/e2e/b.spec.ts', kitFile },
+    ]
+
+    it('accepts a red run naming each spec with the kit file it enters', () => {
+        expect(checkE2eFailProblems({ status: 1, stdout: red }, expected)).toEqual([])
+    })
+
+    it('fails a run that exits 0, a spec it does not fail, and a failure that names another kit file', () => {
+        expect(checkE2eFailProblems({ status: 0, stdout: red }, expected)).toEqual(['sssb check-e2e exited 0, not 1'])
+        expect(
+            checkE2eFailProblems({ status: 1, stdout: red }, [...expected, { spec: 'tests/e2e/c.spec.ts', kitFile }]),
+        ).toEqual(['sssb check-e2e did not fail tests/e2e/c.spec.ts'])
+        // The kit file under a's FAIL line does not count for b.
+        const elsewhere = red.replace(
+            `          ${kitFile}  (tests/e2e/b.spec.ts -> src/domain/e2e-probe.ts -> ${kitFile})`,
+            '          @sssb/kit:src/core/other.ts  (tests/e2e/b.spec.ts -> @sssb/kit:src/core/other.ts)',
+        )
+        expect(checkE2eFailProblems({ status: 1, stdout: elsewhere }, expected)).toEqual([
+            `sssb check-e2e failed tests/e2e/b.spec.ts without naming ${kitFile}`,
+        ])
     })
 })

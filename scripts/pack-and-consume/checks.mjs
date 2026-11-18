@@ -366,3 +366,55 @@ export function lockfileMoves(seed, lockfile) {
     for (const [line, n] of before) removed += Math.max(0, n - (after.get(line) ?? 0))
     return { added, removed }
 }
+
+/**
+ * What `sssb check-e2e` must say in the consumer's console app, which carries a spec that reaches the framework through
+ * `@sssb/kit/testing/e2e` (ADR-0014 part 7): exit 0, the entry resolved through the INSTALLED exports map to the
+ * compiled `dist/testing/e2e.js` (not in-repo mode), and that spec checked and seen reaching the kit through it. So a
+ * green run cannot be a vacuous one that checked no such spec.
+ * @param {{ status: number | null, stdout: string }} result
+ * @param {string} spec the spec's path relative to the app
+ */
+export function checkE2eOkProblems(result, spec) {
+    const problems = []
+    if (result.status !== 0) problems.push(`sssb check-e2e exited ${result.status}, not 0`)
+    const head = result.stdout.split('\n').find((line) => line.startsWith('sssb check-e2e: ') && line.includes(' is '))
+    if (head === undefined) problems.push('sssb check-e2e printed no line naming what @sssb/kit/testing/e2e is')
+    else {
+        if (!head.includes('@sssb/kit/testing/e2e is @sssb/kit:dist/testing/e2e.js'))
+            problems.push(`@sssb/kit/testing/e2e is not the compiled dist/testing/e2e.js: ${head}`)
+        if (head.includes('in-repo mode'))
+            problems.push(`sssb check-e2e took the tarball's kit for SSSB's own: ${head}`)
+    }
+    const ok = `ok      ${spec}  (reaches the kit through @sssb/kit/testing/e2e)`
+    if (!result.stdout.split('\n').includes(ok)) problems.push(`sssb check-e2e did not report "${ok}"`)
+    return problems
+}
+
+/**
+ * What `sssb check-e2e` must say once a spec reaching the framework's source is dropped into the app: exit 1, and each
+ * such spec named in a FAIL line, with the kit file where it enters the framework on an indented line below it.
+ * @param {{ status: number | null, stdout: string }} result
+ * @param {readonly { spec: string, kitFile: string }[]} expected
+ */
+export function checkE2eFailProblems(result, expected) {
+    const problems = []
+    if (result.status !== 1) problems.push(`sssb check-e2e exited ${result.status}, not 1`)
+    const lines = result.stdout.split('\n')
+    for (const { spec, kitFile } of expected) {
+        const at = lines.findIndex((line) => line.startsWith(`FAIL    ${spec} reaches `))
+        if (at < 0) {
+            problems.push(`sssb check-e2e did not fail ${spec}`)
+            continue
+        }
+        /** @type {string[]} */
+        const detail = []
+        for (const line of lines.slice(at + 1)) {
+            if (!line.startsWith('          ')) break
+            detail.push(line.trim())
+        }
+        if (!detail.some((line) => line.startsWith(`${kitFile}  (`)))
+            problems.push(`sssb check-e2e failed ${spec} without naming ${kitFile}`)
+    }
+    return problems
+}
