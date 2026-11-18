@@ -374,8 +374,8 @@ The generated root's scripts are `dev`, `tick` and `start` (your app, by `pnpm -
 `typecheck`, `test:e2e`, `check:e2e`, `check:fences` (`sssb check-fences` in each app, as SSSB's reusable workflow
 runs it) and the demo-static trio, fanned out over `apps/*` with `--fail-if-no-match`; `synth`, over
 `apps/*/infra`; `lint`, `lint:fix`, `test:unit`, `test:coverage`, `test:contract`, `knip` and `jscpd`; `prepare`
-(husky, then `sssb launch-json`); `sssb:doctor`, which is `sssb doctor --app apps/<slug>` because your root does
-not install `@sssb/kit` and doctor starts from a directory that resolves it (one run still checks every app); and
+(husky, then `sssb launch-json`); `sssb:doctor`, which is `sssb doctor`: your root does not install `@sssb/kit`, so with no `--app` doctor starts from
+the workspace's first app (`sssb.apps`, else `apps/*`), and one run checks every app; and
 `verify`, which runs what the workspace's CI runs but the secret scan: typecheck, lint, the unit tests with
 coverage, knip, jscpd, the fences, doctor, check-e2e and synth side by side, then the contract tests on their own
 (`VERIFY` in `packages/create/src/files.js` says why), the e2e suites and the static demo.
@@ -437,7 +437,16 @@ Vitest config (a browser, integration or CI config) that runs some of an app's t
 failed, and so is a bare `vitest` from the app's own directory (what the app's scripts and `pnpm -r` run) when the main
 run is the root's and that one would not run the suite, even if it runs none of the app's tests; so are the narrowing
 flags your package.json scripts pass to vitest and which script runs each contract config: doctor cannot see which config or flags your CI uses, so make
-sure CI runs the config doctor names. It also fails a second copy of any peer `@sssb/kit` declares (React, Next,
+sure CI runs the config doctor names. Before any of that it fails a workspace pnpm installed with a `nodeLinker` other
+than `isolated`, pnpm's default (`pnp` or `hoisted`, from `pnpm-workspace.yaml`, a `pnpm_config_node_linker` variable
+or a `--config.node-linker` flag): every app needs its own `@sssb/kit` linked to its own seam, which `hoisted` cannot
+give, and under `pnp` scripts run under Plug'n'Play, where Vitest's listing never finishes; nothing else is checked
+until it is. It fails the same way while `.pnp.cjs` is left at the root, since `pnpm run` keeps loading it after the
+setting is gone: delete it and reinstall. Each `vitest list` doctor runs is stopped after 120 seconds, with every
+process it started (on macOS and Linux; on Windows only Vitest's own process; `SSSB_DOCTOR_VITEST_TIMEOUT`, in
+seconds, changes the limit), so a listing that never finishes is a problem doctor names rather than a hang; after one
+listing runs out of time, doctor does not wait on the rest. It also fails a second copy of
+any peer `@sssb/kit` declares (React, Next,
 Kysely...), an importer of the framework anywhere in the workspace that does not run on its own seam or declares it as
 a `link:` (which the next `pnpm add <pkg>` for the app unlinks) or by a name that no workspace package, or several,
 have, and an

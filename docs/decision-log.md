@@ -4709,3 +4709,144 @@ cause, in pnpm's source). Each decision, and what was rejected:
   there), `pnpm import`, Renovate and Dependabot themselves, and a kit from a registry.
 - **Not covered: `nodeLinker: hoisted`.** One hoisted `@sssb/kit` cannot hold two apps' seams; with two apps doctor
   fails it ("runs on a seam not its own"), as it did before this change.
+
+## `sssb doctor` needs nodeLinker isolated, and stops a vitest list that never ends (2026-11-18, `fix/doctor-nodelinker-pnp`)
+
+The workspace-package seam's review (the entry above) found `pnpm sssb:doctor` hanging under `nodeLinker: pnp`.
+Measured in a workspace `@sssb/create` generated, with `nodeLinker: pnp` (pnpm 11.14.0):
+
+- **Run directly, doctor finished and said "sssb doctor: ok"**: a false pass on a layout nothing of SSSB's is built for.
+- **Run as `pnpm sssb:doctor`, it hung.** `pnpm run` puts `--require=<root>/.pnp.cjs` in `NODE_OPTIONS`, and the
+  `vitest list` child doctor spawns, inheriting it, never finished. The same listing without that option finished in
+  under 3 s.
+- **Under `nodeLinker: hoisted`, doctor failed only indirectly** ("runs on a seam not its own", from the seam check),
+  never naming the cause.
+
+Decisions, each with what was rejected:
+
+- **Doctor requires `isolated`, pnpm's default, with no Plug'n'Play left, and checks it first, alone**
+  (`nodeLinkerProblem`, `packages/tools/src/commands/doctor-checks.js`, called at the top of `run` in
+  `packages/tools/src/commands/doctor.js`). It reads the layout pnpm actually installed, `nodeLinker` in the root's
+  `node_modules/.modules.yaml` (JSON in pnpm 11; a damaged or YAML file is read for a `nodeLinker` key, and one that
+  cannot be read fails), rather than the setting (`pnpm-workspace.yaml`, an environment variable or a flag could each ask
+  for it; pnpm 11 ignores `node-linker` in `.npmrc`). Both `pnp` and `hoisted` fail. So does a `.pnp.cjs` left at the root (pnpm writes and loads no other PnP file), and
+  doctor's own `NODE_OPTIONS` loading a `.pnp.cjs`: the review found that removing the setting and reinstalling leaves
+  `.pnp.cjs` behind, `pnpm run` keeps loading it, and doctor then spent 6 minutes on three killed listings and printed
+  two false FAILs (PnP resolving inside doctor itself). The message names the setting to remove and the file to delete.
+  Nothing else is checked, since every other check reads the isolated layout. Rejected: supporting `pnp` (pnpm 11
+  still builds the isolated `node_modules` there, but `.pnp.cjs` makes every script resolve through Plug'n'Play, which
+  doctor's checks and Vitest's listing do not survive) or `hoisted` (one instance for every app, against ADR-0014 part
+  5's own instance per app, linked to its own seam); failing only `pnp` (`hoisted` breaks the same model, and doctor's indirect failure there named the
+  wrong cause); stripping PnP from the listing's environment (doctor's own resolution was wrong too).
+- **Not added to the shared kit resolver** (`packages/tools/src/kit.js`). It resolved the kit under pnp (pnpm still
+  links direct dependencies into `node_modules` there), so the other `sssb` commands are left to fail on their own;
+  doctor, which every workspace's `pnpm verify` runs, is where the layout is named. Rejected: checking the layout on
+  every resolution, a file read per command for a setting doctor already names.
+- **A `vitest list` that runs past 120 s is killed, with every process it started** (`SSSB_DOCTOR_VITEST_TIMEOUT`
+  seconds overrides it, rounded up to whole milliseconds; `vitestList` in `packages/tools/src/commands/doctor-vitest.js`),
+  and reported as that listing's error ("did not finish within …"), which doctor already turns into a problem, so no
+  other cause can hang it. A small launcher (`node -e`) runs Vitest in a process group of its own and kills the group (on Windows, Vitest's own process only):
+  the review found that killing Vitest's own process left a pool worker of a hung test file running under init, and
+  `SIGTERM` does no better. After one listing runs out of time, doctor returns "not listed, since an earlier listing ran out of time (…)" for every later listing
+  instead of waiting again (`listOnce`, `doctor.js`), so one hang costs one limit, not one per config. 120 s is far
+  above the few seconds a listing takes. Rejected: no limit (a `spawnSync` that never returns also blocks a test
+  runner's own timeout, as the probe of this very test showed); writing the child's output to files instead of pipes
+  (tried, for a grandchild holding a pipe: `spawnSync` returned at the limit either way, so it bought nothing).
+- **Tests** (`tests/tooling/tools-doctor.test.ts`): `nodeLinkerProblem` on isolated, pnp, hoisted, nothing installed,
+  a truncated or YAML record, an unreadable one, PnP files left at the root and a `NODE_OPTIONS` loading one; doctor end
+  to end on a workspace marked pnp fails at once with only that problem; a fake `vitest` that never exits, with a
+  "worker" that never exits either, is stopped at a 1 s limit with the worker dead, and at the environment's
+  (`0.0015`, rounded); doctor end to end on configs that never load waits out one 3 s limit and reports the other
+  listings as not listed. Seen red, one guard at a time: each of these fails without its guard; with no limit at all the test
+  never returns, and ignoring the variable it fails only after the 120 s default limit.
+
+## `sssb doctor` works from the root with no `--app`, rather than every instruction learning `--app` (2026-11-18, `fix/doctor-from-root`)
+
+Found by the seam-link session: the files `@sssb/create` generates, its README among them, tell people to run
+`pnpm exec sssb doctor`, which failed at a generated workspace's root ("does not resolve @sssb/kit"), because that root
+takes no framework and doctor resolved the kit from the working directory. The root script `sssb:doctor` worked only
+because the generator wrote `sssb doctor --app apps/<slug>` into it.
+
+- **Chosen: the short form works.** With no `--app`, doctor starts from the working directory when it resolves
+  `@sssb/kit` (an app, or this repository's root, as before). At a workspace root that does not, it starts from the
+  workspace's first app (`sssb.apps`, else `apps/*`) and says so in its first line. Doctor already ran ONE time for the
+  whole workspace once given any app, so the start does not change what it finds, with one addition: when doctor chose
+  the start itself, its workspace walk must also reach every app the workspace names, because the walk only had to reach
+  the one doctor runs for, and `--app <an app the walk drops>` fails where the bare form would have passed. An explicit `--app` is never replaced, and a root with no apps refuses, saying what to pass. People and
+  agents type the short form, so the short form has to be the one that works.
+- **Rejected: change every instruction to `--app apps/<name>`.** That is a longer command to remember, every doc, guide
+  line and generated comment would carry an app name that is wrong for the next workspace, and the next person to write
+  `pnpm exec sssb doctor` in a README repeats the bug.
+- **The generated root script is now `sssb doctor`**, with the `--app` form still valid for workspaces generated
+  before. `docs/adopting.md`, `CLAUDE.md` and the generator's comment said why `--app` was there and no longer do.
+- **Pinned where it matters:** end-to-end tests run doctor as a child process from the root of a workspace laid out on
+  disk (packed and in-repo), from an app, with an explicit `--app`, with `sssb.apps` reordering the first app, from a
+  root with no apps and outside a workspace; and pack-and-consume runs the bare form from the real generated
+  workspace's root before it reads doctor's pin report. A changeset (`@sssb/tools`, `@sssb/create`, scaffold, optional).
+
+## `.changeset/pre/` and `pre.json` are Changesets' own state, and every tool that walks `.changeset/` says what it does with them (2026-11-18, `fix/changeset-pre-dir`)
+
+The first release candidate (`v0.2.0-rc.0`, commit 28a04c1) was cut by the release flow, and CI failed on it in
+`tests/tooling/changesets.test.ts` ("every changeset in this tree is well formed": `expected [ 'pre' ] to deeply equal
+[]`). In pre mode `changeset version` moves each changeset it consumes to `.changeset/pre/`, byte for byte, and keeps
+`.changeset/pre.json`; that test read `pre` as a stray subdirectory. The tag run's `candidate` job refused to publish
+because `checks` had failed on the commit, which is what it is for, and nothing was published. Reproduced first on the
+`.changeset/` directory of 28a04c1 (the whole directory, with the earlier pending files removed as a merge-back would
+leave it): that test failed, and `release.mjs check`, `release-notes.mjs --check` and the `changeset-required` gate (run
+over a merge of `main` into `integration`) all passed. `release.mjs` already knew about `pre/` (P7); only that test, and
+nothing that ran the tools together over such a tree, did not.
+
+What each tool does with the moved files, decided one by one (`.changeset/README.md`, "What reads `.changeset/pre/`"):
+
+- **The shape lint over the tree** reads `.changeset/*.md` only, and does not lint `pre/`: they were linted when they
+  were pending, and a rule tightened since must not turn a shipped candidate's record red. It does fail on anything in
+  `pre/` that is not a changeset file and on any other subdirectory, so a stray is still caught. The enumeration is one
+  helper, `tests/support/changeset-files.ts`, which the whole-flow test uses too. Rejected: lint `pre/` as well (it
+  would pin every old rule forever), and skip every subdirectory (a stray directory would pass).
+- **`release.mjs` `check`, `prepare`, `verify-release`**: they already treat `pre/` as consumed, with one change in
+  `check`: its package-name and 0.x-major rules judged every changeset, `pre/`'s included, so a group or a rule that
+  changed after a candidate could have turned that candidate's record red on every later PR (found by claim-check, by
+  adding a `pre/` file naming another package). They now judge the pending ones only; the name-reuse rule still reads
+  `pre/`'s names.
+- **`release-notes.mjs`**: unchanged, pending only. A candidate's notes hold what is new, and are regenerated after its
+  release commit moved the changesets with `--at <release commit>^` (the flow test pins that they equal the committed
+  file). A `--consumed` flag to read `pre/` for the whole series' notes (what the release that leaves pre mode, P14, will
+  want) was written and then cut in review: nothing calls it before P14, it adds a way to lint `pre/`, which the rule
+  above says not to do, and it brought its own edge cases (a `pre` that is a file, symlinks). P14 will decide how it
+  gets the series' notes, from the `docs/releases/` files or from `pre/`.
+- **The `changeset-required` gate**: unchanged; it counts only `.changeset/<name>.md`, so what a release commit adds to
+  `pre/` never satisfies it, and a release commit merged back from `main` is not charged to the PR (a test pins both).
+- **Added: `tests/tooling/release-pre-mode.test.ts`**, which prepares a fixture workspace (the `plan` job), stages and
+  checks it (`verify-release`), commits and tags it as a candidate, builds the prerelease's notes from it
+  (`candidateNotes`), then runs the directory reader, `release.mjs check` and the notes tool over the committed tree and
+  cuts the next candidate from it, checking its notes carry only what is new and regenerate from the commit before it.
+- **No changeset in this PR**: nothing it changes is a gated path. The changeset on `integration` already (`@sssb/tools`,
+  `@sssb/create`: doctor from the root) is what lets the next merge to `main` cut `rc.1`; a merge of `main` into
+  `integration` planned `0.2.0-rc.0 -> 0.2.0-rc.1` from it.
+
+## A vouched-for bypass actor on an organisation ruleset passes `release-app verify` (2026-11-18, `fix/release-app-verify-org-bypass`)
+
+JP created the release app (App 5820735), and `pnpm release-app verify --app-id 5820735` failed on one thing: the
+organisation ruleset `require-pr` (7484436) also lets App 4038189, canopycms-release-bot, bypass it always, and
+`release.yml` assumes the release app is the only actor that can push to `main` past it. JP says that App is installed
+on `safeinsights/canopycms` only, so it cannot reach this repository. The API shows only part of that: the
+organisation's installation list (which `verify` already reads with the operator's own token) says the App is
+installed once, on selected repositories, but which repositories are selected needs a token this tool does not have.
+
+- **A checked-in list, not a flag.** `VOUCHED_ORG_BYPASSES` in `scripts/release-app/rulesets.ts` names each actor a
+  person has vouched for: the organisation ruleset's id, the actor's type and id, its name, a one-line reason, who
+  vouched and the date. `verify` and `bypass` report each as a ✓ with that reason, and anything else on an
+  organisation ruleset the release meets still fails. A command-line flag was rejected: it would widen the check for
+  whatever it named, a typo included, with no record of who decided or why.
+- **Exact matches only, and Apps only.** An entry covers one App (`Integration` and its id) on one ruleset; the same
+  App on another ruleset, another actor type with the same id, or a neighbouring id is not covered. An organisation
+  admin, a team or a role cannot be vouched for: "cannot reach this repository" is never true of one.
+- **The vouch holds only while the installation list agrees.** `verify` and `bypass` read the organisation's
+  installations and accept the vouch only while the App is installed exactly once, on selected repositories, and not
+  suspended; otherwise it is a ✗ that says what changed. So the drift nobody would notice (the App moved to all
+  repositories, a second installation) turns the check red; the part the tool cannot see (which repositories are
+  selected) stays the person's word. The review of this change found the tool already read that list, which the
+  first version of this entry said it could not.
+- **The first entry:** Integration 4038189 on `require-pr`, canopycms-release-bot, installed on
+  `safeinsights/canopycms` only, vouched for by JP on 2026-11-18. It has to be re-vouched or removed if that App is
+  ever installed on more repositories.

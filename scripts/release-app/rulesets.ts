@@ -31,6 +31,57 @@ const RELEASE_TAGS = 'refs/tags/v*'
 
 type Rule = { type: string; parameters?: unknown }
 type BypassActor = { actor_id: number | null; actor_type: string; bypass_mode: string }
+
+/**
+ * A bypass actor on an ORGANISATION ruleset that a person has vouched cannot use it on this repository, so the
+ * release app is still, in effect, the only one. Only an App can be vouched for: "cannot reach this repository" is
+ * never true of an organisation admin, a team or a role. The API shows part of the claim and not the rest: the
+ * organisation's installation list (which `verify` already reads) says whether the App is installed once, on
+ * selected repositories, and not suspended, but which repositories are selected needs a token this tool does not
+ * have. So the claim is checked in here, by name, with who made it and when; `verify` and `bypass` report it as a ✓
+ * with its reason only while the installation list still agrees, and as a ✗ once it does not (the App moved to all
+ * repositories, a second installation, or none). It matches one actor on one ruleset exactly (id and ruleset id);
+ * anything else that bypasses an organisation ruleset the release meets still fails. Re-vouch, or remove the entry,
+ * when the claim stops being true.
+ */
+export type VouchedBypass = {
+    /** The organisation ruleset's id. */
+    ruleset: number
+    /** GitHub's `actor_type` and `actor_id`: an App, by its App id. */
+    actorType: 'Integration'
+    actorId: number
+    /** What the actor is, for a person reading the report. */
+    name: string
+    /** Why it cannot reach this repository, in one line. */
+    reason: string
+    /** Who vouched, and on which date (YYYY-MM-DD). */
+    vouchedBy: string
+    on: string
+}
+
+export const VOUCHED_ORG_BYPASSES: readonly VouchedBypass[] = [
+    {
+        ruleset: 7484436,
+        actorType: 'Integration',
+        actorId: 4038189,
+        name: 'canopycms-release-bot',
+        reason: 'installed on safeinsights/canopycms only, so it cannot push to safeinsights/sssb',
+        vouchedBy: 'JP',
+        on: '2026-11-18',
+    },
+]
+
+/** The entry that vouches for `actor` on organisation ruleset `rulesetId`, if one does. */
+export function vouchedFor(
+    rulesetId: number,
+    actor: BypassActor,
+    list: readonly VouchedBypass[] = VOUCHED_ORG_BYPASSES,
+): VouchedBypass | undefined {
+    return list.find(
+        (entry) =>
+            entry.ruleset === rulesetId && entry.actorType === actor.actor_type && entry.actorId === actor.actor_id,
+    )
+}
 type RulesetBody = {
     name: string
     target: 'branch' | 'tag'
@@ -195,8 +246,10 @@ type OrgGate = {
     types: string[]
     /** `always` or `exempt`: the push passes. `wrong-mode`: listed, but only for pull requests. */
     app: 'listed' | 'missing' | 'wrong-mode'
-    /** Every other bypass actor: each can do what the App can on this ruleset's refs. */
+    /** Every other bypass actor no one has vouched for: each can do what the App can on this ruleset's refs. */
     others: BypassActor[]
+    /** Other bypass actors a person has vouched cannot reach this repository (VOUCHED_ORG_BYPASSES). */
+    vouched: { actor: BypassActor; vouch: VouchedBypass }[]
 }
 
 export type Gates = { org: OrgGate[]; problems: string[] }
@@ -245,7 +298,12 @@ function covers(ruleset: RulesetBody, ref: string): boolean {
  * ruleset that applies to the repository, the organisation's included, with details; one missing from it is
  * reported as unreadable.
  */
-export function externalGates(activeOnMain: ActiveRule[], rulesets: Ruleset[], appId: number): Gates {
+export function externalGates(
+    activeOnMain: ActiveRule[],
+    rulesets: Ruleset[],
+    appId: number,
+    vouches: readonly VouchedBypass[] = VOUCHED_ORG_BYPASSES,
+): Gates {
     const managed = new Set([MAIN_CHECKS, MAIN_HISTORY, TAGS_CREATE, TAGS_IMMUTABLE])
     const byId = new Map(rulesets.map((ruleset) => [ruleset.id, ruleset]))
     const problems: string[] = []
@@ -266,6 +324,11 @@ export function externalGates(activeOnMain: ActiveRule[], rulesets: Ruleset[], a
         }
         const actors = ruleset.bypass_actors ?? []
         const mine = actors.filter((actor) => actor.actor_type === 'Integration' && actor.actor_id === appId)
+        const rest = actors.filter((actor) => !(actor.actor_type === 'Integration' && actor.actor_id === appId))
+        const vouched = rest.flatMap((actor) => {
+            const vouch = vouchedFor(ruleset.id, actor, vouches)
+            return vouch ? [{ actor, vouch }] : []
+        })
         org.push({
             id: ruleset.id,
             name: ruleset.name,
@@ -275,7 +338,8 @@ export function externalGates(activeOnMain: ActiveRule[], rulesets: Ruleset[], a
                 : mine.length > 0
                   ? 'wrong-mode'
                   : 'missing',
-            others: actors.filter((actor) => !(actor.actor_type === 'Integration' && actor.actor_id === appId)),
+            others: rest.filter((actor) => !vouchedFor(ruleset.id, actor, vouches)),
+            vouched,
         })
     }
 

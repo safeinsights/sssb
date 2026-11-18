@@ -12,6 +12,7 @@ import {
     isInRepoKit,
     kitImporters,
     missingTests,
+    nodeLinkerProblem,
     packageDirFrom,
     ownTests,
     parseWorkspaceYaml,
@@ -23,7 +24,12 @@ import {
     vitestInvocations,
     workspacePackages,
 } from '../../packages/tools/src/commands/doctor-checks.js'
-import { projectsRunning, vitestDefaultConfig, vitestRunsFor } from '../../packages/tools/src/commands/doctor-vitest.js'
+import {
+    projectsRunning,
+    vitestDefaultConfig,
+    vitestList,
+    vitestRunsFor,
+} from '../../packages/tools/src/commands/doctor-vitest.js'
 import { kitDirOf } from '../../packages/tools/src/kit.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
@@ -459,6 +465,106 @@ describe('one SSSB per importer, with its own seam', () => {
     })
 })
 
+describe('the installed layout', () => {
+    // What pnpm 11 writes: JSON, which is YAML, with the layout it installed.
+    const installed = (linker: string | null) => {
+        const ws = realpathSync(makeTestTmpDir('sssb-doctor-linker-'))
+        if (linker !== null)
+            json(path.join(ws, 'node_modules', '.modules.yaml'), { layoutVersion: 5, nodeLinker: linker })
+        return ws
+    }
+
+    const FIX =
+        "SSSB needs nodeLinker isolated, pnpm's default, which gives each app its own @sssb/kit linked to its own seam " +
+        "with no Plug'n'Play. Remove the nodeLinker setting from pnpm-workspace.yaml (and any " +
+        'pnpm_config_node_linker variable or --config.node-linker flag), delete .pnp.cjs at the workspace root if it is ' +
+        'there, then run pnpm install'
+
+    it('passes isolated, pnpm’s default, and a workspace nothing is installed in', () => {
+        expect(nodeLinkerProblem(installed('isolated'), {})).toBeNull()
+        expect(nodeLinkerProblem(installed(null), {})).toBeNull()
+    })
+
+    it.each(['pnp', 'hoisted'])('fails nodeLinker %s, naming it and the fix', (linker) => {
+        expect(nodeLinkerProblem(installed(linker), {})).toBe(
+            `pnpm installed this workspace with nodeLinker ${linker} (node_modules/.modules.yaml). ${FIX}`,
+        )
+    })
+
+    it('reads a damaged or YAML record, and fails one it cannot read', () => {
+        const truncated = installed(null)
+        write(path.join(truncated, 'node_modules', '.modules.yaml'), '{\n  "nodeLinker": "pnp",\n')
+        expect(nodeLinkerProblem(truncated, {})).toMatch(/^pnpm installed this workspace with nodeLinker pnp /)
+        const yaml = installed(null)
+        write(path.join(yaml, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\nnodeLinker: hoisted\n')
+        expect(nodeLinkerProblem(yaml, {})).toMatch(/with nodeLinker hoisted /)
+        const unreadable = installed(null)
+        mkdirSync(path.join(unreadable, 'node_modules', '.modules.yaml'), { recursive: true })
+        expect(nodeLinkerProblem(unreadable, {})).toMatch(/^node_modules\/\.modules\.yaml, .* cannot be read \(EISDIR/)
+    })
+
+    // Back on isolated, PnP's files outlive the setting, and `pnpm run` still loads them into every script.
+    it("fails Plug'n'Play's files left at the root, and a doctor running under them, on an isolated layout", () => {
+        const left = installed('isolated')
+        write(path.join(left, '.pnp.cjs'), '')
+        expect(nodeLinkerProblem(left, {})).toBe(
+            `.pnp.cjs at the workspace root makes pnpm run every script under Plug'n'Play, whatever layout it installed. ${FIX}`,
+        )
+        expect(nodeLinkerProblem(installed('isolated'), { NODE_OPTIONS: '--require=/ws/.pnp.cjs' })).toBe(
+            `doctor runs under Plug'n'Play (NODE_OPTIONS loads a .pnp.cjs: --require=/ws/.pnp.cjs). ${FIX}`,
+        )
+    })
+})
+
+describe('vitestList', () => {
+    it('stops a listing that never finishes, and every process it started, and says so', async () => {
+        const dir = realpathSync(makeTestTmpDir('sssb-doctor-hang-'))
+        pkg(dir, { name: 'hang', private: true })
+        // A "vitest" that never exits, with a "worker" of its own that never exits either; each run writes both pids down.
+        const pidFile = path.join(dir, 'pids')
+        pkg(path.join(dir, 'node_modules', 'vitest'), { name: 'vitest', version: '4.0.0', bin: { vitest: 'cli.js' } })
+        write(
+            path.join(dir, 'node_modules', 'vitest', 'cli.js'),
+            "const worker = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' })\n" +
+                `require('node:fs').appendFileSync(${JSON.stringify(pidFile)}, \`\${process.pid} \${worker.pid}\\n\`)\n` +
+                'setInterval(() => {}, 1000)\n',
+        )
+        const pids = () =>
+            existsSync(pidFile) ? readFileSync(pidFile, 'utf8').split(/\s+/).filter(Boolean).map(Number) : []
+        const alive = (pid: number) => {
+            try {
+                process.kill(pid, 0)
+                return true
+            } catch {
+                return false
+            }
+        }
+        try {
+            const started = Date.now()
+            const result = vitestList({ cwd: dir, config: null }, { timeoutMs: 1000 })
+            expect(result).toEqual({
+                ok: false,
+                timedOut: true,
+                error: 'vitest list did not finish within 1s, so doctor stopped it (SSSB_DOCTOR_VITEST_TIMEOUT sets the limit, in seconds)',
+            })
+            expect(Date.now() - started).toBeLessThan(5000)
+            // Its worker went with it, rather than living on under init.
+            await new Promise((resolve) => setTimeout(resolve, 300))
+            expect(pids().filter(alive), 'processes the listing started outlived it').toEqual([])
+            // The limit doctor uses, from the environment, in seconds, rounded up to a whole millisecond.
+            process.env.SSSB_DOCTOR_VITEST_TIMEOUT = '0.0015'
+            expect(vitestList({ cwd: dir, config: null })).toMatchObject({
+                ok: false,
+                error: expect.stringMatching(/within 0\.002s/),
+            })
+        } finally {
+            delete process.env.SSSB_DOCTOR_VITEST_TIMEOUT
+            // Whatever failed above, nothing of the fake's is left running.
+            for (const pid of pids().filter(alive)) process.kill(pid, 'SIGKILL')
+        }
+    }, 20_000)
+})
+
 describe('in-repo mode', () => {
     const ws = realpathSync(makeTestTmpDir('sssb-doctor-in-repo-'))
     write(path.join(ws, 'pnpm-workspace.yaml'), "packages:\n  - 'apps/*'\n  - 'packages/*'\n  - '!packages/old'\n")
@@ -723,13 +829,31 @@ function doctorWorkspace(prefix: string, mode: Mode, apps: string[] = ['a', 'b']
 }
 
 /** `sssb doctor --app <app>`, run as a child process from the workspace root, out of this Vitest's environment. */
-async function doctor(ws: string, app: string) {
-    const env = { ...process.env }
+async function doctor(ws: string, app: string, extraEnv: Record<string, string> = {}) {
+    const env = { ...process.env, ...extraEnv }
     for (const key of Object.keys(env)) if (key.startsWith('VITEST')) delete env[key]
     const run = promisify(execFile)
     try {
         const { stdout, stderr } = await run(process.execPath, [SSSB, 'doctor', '--app', path.join(ws, app)], {
             cwd: ws,
+            env,
+            maxBuffer: 16 * 1024 * 1024,
+        })
+        return { code: 0, out: `${stdout}${stderr}` }
+    } catch (error) {
+        const failed = error as { code?: number; stdout?: string; stderr?: string }
+        return { code: failed.code ?? -1, out: `${failed.stdout ?? ''}${failed.stderr ?? ''}` }
+    }
+}
+
+/** `sssb doctor <args>`, run as a child process from `cwd`, out of this Vitest's environment. */
+async function doctorIn(cwd: string, args: string[] = []) {
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.startsWith('VITEST')) delete env[key]
+    const run = promisify(execFile)
+    try {
+        const { stdout, stderr } = await run(process.execPath, [SSSB, 'doctor', ...args], {
+            cwd,
             env,
             maxBuffer: 16 * 1024 * 1024,
         })
@@ -1101,6 +1225,42 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
     )
 
     it(
+        'fails at once, before any check, in a workspace pnpm installed with nodeLinker pnp',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-pnp-', 'packed')
+            json(path.join(ws, 'node_modules', '.modules.yaml'), { layoutVersion: 5, nodeLinker: 'pnp' })
+            const started = Date.now()
+            const { code, out } = await doctor(ws, 'apps/a')
+            expect(out).toMatch(/^FAIL +installed layout: pnpm installed this workspace with nodeLinker pnp/m)
+            expect(out).toMatch(/Nothing else is checked until it is\nsssb doctor: 1 problem\(s\)\n$/)
+            expect(out).not.toMatch(/conformance suite|vitest list/)
+            expect(code).toBe(1)
+            expect(Date.now() - started).toBeLessThan(10_000)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'waits out one listing that never finishes, not every listing after it',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-hang-', 'packed')
+            // Configs that never finish loading: each listing of them would run to the limit.
+            const hang = 'setInterval(() => {}, 1000)\nexport default new Promise(() => {})\n'
+            write(path.join(ws, 'vitest.config.mjs'), hang)
+            write(path.join(ws, 'vitest.contract.config.mjs'), hang)
+            const started = Date.now()
+            const { code, out } = await doctor(ws, 'apps/a', { SSSB_DOCTOR_VITEST_TIMEOUT: '3' })
+            const seconds = (Date.now() - started) / 1000
+            expect(out).toMatch(/vitest list did not finish within 3s, so doctor stopped it/)
+            expect(out).toMatch(/not listed, since an earlier listing ran out of time/)
+            expect(code).toBe(1)
+            // One limit, plus doctor's own work; not one per listing.
+            expect(seconds).toBeLessThan(9)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
         'reads column-0 `packages` entries, so a seamless importer there is named',
         async () => {
             const ws = doctorWorkspace('sssb-doctor-e2e-col0-', 'packed')
@@ -1405,4 +1565,173 @@ describe('pinReport: the workflow and plugin pins against the kit’s release st
         expect(githubRepositoryOf({ url: 'https://gitlab.com/o/r' })).toBeNull()
         expect(githubRepositoryOf(undefined)).toBeNull()
     })
+})
+
+/**
+ * The short form, `sssb doctor` with no `--app`, is what the generated files and READMEs tell people to
+ * type (`pnpm exec sssb doctor`), and people type it at the workspace root. A generated workspace's root takes no
+ * @sssb/kit, so it used to fail there ("does not resolve @sssb/kit"). One run checks every app, so it now starts from
+ * the workspace's first app.
+ */
+describe.concurrent('sssb doctor with no --app, from the root of a workspace whose root takes no @sssb/kit', () => {
+    for (const mode of ['packed', 'in-repo'] as const) {
+        it(
+            `${mode}: starts from the first app, says so, and checks every app`,
+            async () => {
+                const ws = doctorWorkspace(`sssb-doctor-root-${mode}-`, mode)
+                const { code, out } = await doctorIn(ws)
+                expect(out).toMatch(
+                    /^sssb doctor: no --app, and the working directory .* takes no @sssb\/kit: starting from apps\/a\./m,
+                )
+                expect(out).toMatch(/^sssb doctor: apps\/a, @sssb\/kit 0\.1\.0/m)
+                // the whole workspace, not only the app it started from
+                expect(out).toMatch(/^ok +apps\/b: one copy of each singleton/m)
+                expect(out).toMatch(/^ok +apps\/b: the conformance suite would run/m)
+                expect(code, out).toBe(0)
+            },
+            E2E_TIMEOUT,
+        )
+    }
+
+    it(
+        'finds what `--app` finds: the same workspace, a defect in the second app, fails from the root as it does with --app',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-defect-', 'packed')
+            // apps/b has no suite: the check that would catch it names apps/b, however doctor was started.
+            rmSync(path.join(ws, 'apps', 'b', 'src', 'sssb.conformance.test.ts'))
+            const fromRoot = await doctorIn(ws)
+            const withApp = await doctor(ws, 'apps/a')
+            expect(fromRoot.code, fromRoot.out).toBe(1)
+            expect(withApp.code, withApp.out).toBe(1)
+            expect(fromRoot.out).toMatch(/FAIL +apps\/b:/)
+            expect(withApp.out).toMatch(/FAIL +apps\/b:/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'starts from the first app `sssb.apps` lists, not the alphabetical one',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-listed-', 'packed')
+            const manifest = JSON.parse(readFileSync(path.join(ws, 'package.json'), 'utf8'))
+            manifest.sssb = { apps: ['apps/b', 'apps/a'] }
+            json(path.join(ws, 'package.json'), manifest)
+            const { code, out } = await doctorIn(ws)
+            expect(out).toMatch(/starting from apps\/b\./)
+            expect(out).toMatch(/^ok +apps\/a: one copy of each singleton/m)
+            expect(code, out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'from an app directory it is unchanged: that app, no note',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-fromapp-', 'packed')
+            const { code, out } = await doctorIn(path.join(ws, 'apps', 'b'))
+            expect(out).toMatch(/^sssb doctor: apps\/b, @sssb\/kit/m)
+            expect(out).not.toMatch(/no --app/)
+            expect(code, out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'at a workspace root with no apps and no @sssb/kit it refuses, saying why and what to pass',
+        async () => {
+            const ws = realpathSync(makeTestTmpDir('sssb-doctor-root-empty-'))
+            write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n    - packages/*\n')
+            pkg(ws, { name: 'ws', private: true })
+            const { code, out } = await doctorIn(ws)
+            expect(code).toBe(1)
+            expect(out).toMatch(/is a workspace root that takes no @sssb\/kit and has no apps .* pass --app <dir>/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'outside any workspace, or in a directory with no package.json, the usual refusal',
+        async () => {
+            const dir = realpathSync(makeTestTmpDir('sssb-doctor-root-none-'))
+            const { code, out } = await doctorIn(dir)
+            expect(code).toBe(1)
+            expect(out).toMatch(
+                /not a package \(no package\.json\): run this from an app's directory or pass --app <dir>/,
+            )
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'a workspace root that resolves @sssb/kit is the app itself: no default, no note',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-resolves-', 'in-repo')
+            // this root is an importer of the kit, as the repository's own root is
+            link(path.join(ws, 'node_modules', '@sssb', 'kit'), path.join(ws, 'packages', 'kit'))
+            const { out } = await doctorIn(ws)
+            expect(out).toMatch(/^sssb doctor: \(the workspace root\), @sssb\/kit/m)
+            expect(out).not.toMatch(/no --app/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'a directory inside an app (no package.json of its own), or a workspace root with none, is refused, not defaulted',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-inside-', 'packed')
+            mkdirSync(path.join(ws, 'apps', 'a', 'src', 'deep'), { recursive: true })
+            const inside = await doctorIn(path.join(ws, 'apps', 'a', 'src', 'deep'))
+            expect(inside.code).toBe(1)
+            expect(inside.out).toMatch(/not a package \(no package\.json\)/)
+            const bare = realpathSync(makeTestTmpDir('sssb-doctor-root-nopkg-'))
+            write(path.join(bare, 'pnpm-workspace.yaml'), 'packages:\n    - apps/*\n')
+            const noPackage = await doctorIn(bare)
+            expect(noPackage.code).toBe(1)
+            expect(noPackage.out).toMatch(/not a package \(no package\.json\)/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'says why it picked the first app even when that app is the one that fails (it resolves no @sssb/kit)',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-firstbad-', 'packed')
+            rmSync(path.join(ws, 'apps', 'a', 'node_modules', '@sssb', 'kit'))
+            const { code, out } = await doctorIn(ws)
+            expect(code).toBe(1)
+            expect(out).toMatch(/starting from apps\/a\.[\s\S]*apps\/a does not resolve @sssb\/kit/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'fails when the walk drops an app the workspace names, as `--app <that app>` would, instead of passing from the first',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-dropped-', 'packed')
+            // pnpm-workspace.yaml no longer lists apps/b: the walk reaches a, not b, though apps/b exists and names a seam
+            write(
+                path.join(ws, 'pnpm-workspace.yaml'),
+                'packages:\n    - apps/a\n    - apps/a/src/app-config\n    - packages/*\n',
+            )
+            const fromRoot = await doctorIn(ws)
+            const withApp = await doctor(ws, 'apps/b')
+            expect(withApp.code, withApp.out).toBe(1)
+            expect(fromRoot.code, fromRoot.out).toBe(1)
+            expect(fromRoot.out).toMatch(/FAIL +workspace walk: it does not reach every app the workspace names/)
+            expect(fromRoot.out).toMatch(/apps\/b is named by the workspace/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'an explicit --app is never replaced by the default',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-explicit-', 'packed')
+            const { code, out } = await doctorIn(ws, ['--app', 'apps/b'])
+            expect(out).toMatch(/^sssb doctor: apps\/b, @sssb\/kit/m)
+            expect(out).not.toMatch(/no --app/)
+            expect(code, out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
 })

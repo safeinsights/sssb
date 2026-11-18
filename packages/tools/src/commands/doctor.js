@@ -4,9 +4,16 @@
 // WORKSPACE: it walks pnpm-workspace.yaml for every importer of @sssb/kit and every APP (in-repo, the apps the
 // workspace's commands fan out over, `sssb.apps` or apps/*; otherwise every importer with a seam of its own,
 // `src/app-config`), and gives each app the per-app checks, the one it runs for (`--app`, or the working directory)
-// among them. It fails, naming every problem, on:
+// among them. WHERE IT STARTS: `--app <dir>`, or the working directory when it resolves @sssb/kit (an app, or an
+// in-repo root), or, at the root of a workspace whose root takes no @sssb/kit (a generated workspace's), the
+// workspace's first app; the walk then also has to reach every app the workspace names, so starting from the first
+// finds what starting from any other would. It fails, naming every problem, on:
 //
-//   - a workspace walk that cannot read pnpm-workspace.yaml, or that does not reach the app doctor runs for;
+//   - FIRST, and alone: a layout pnpm installed with a `nodeLinker` other than `isolated` (`pnp`, `hoisted`), or a
+//     `.pnp.cjs` at the root or in doctor's own NODE_OPTIONS, which the checks below are not built for, and under which
+//     (Plug'n'Play) Vitest's listing never finishes;
+//   - a workspace walk that cannot read pnpm-workspace.yaml, or that does not reach the app doctor runs for (or, when it
+//     chose its own start, any app the workspace names);
 //   - two copies of a singleton: a peer of @sssb/kit found from the kit's directory and from an app's must be ONE
 //     real directory (the `readlink -f` check build-notes tells a dependency PR to run by hand);
 //   - an importer of @sssb/kit, anywhere in the workspace, without its own seam: it must declare its
@@ -35,7 +42,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { readJson, takeAppDir, UsageError, workspaceRootOf } from '../app.js'
+import { readJson, takeAppDir, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '../kit.js'
 import {
     aliasProblems,
@@ -46,6 +53,7 @@ import {
     importerSeamProblems,
     kitPeers,
     missingTests,
+    nodeLinkerProblem,
     ownTests,
     packageDirFrom,
     parseWorkspaceYaml,
@@ -89,14 +97,58 @@ const RUNNERS = /** @type {const} */ (['unit', 'contract'])
  * @property {string[]} nested the workspace packages inside the app, whose files are not the app's
  */
 
+/**
+ * The app doctor runs for, and whether it was chosen for the person. Doctor checks the whole workspace from any of its
+ * apps, so the short form has to work where people type it, the root: with no `--app`, a working directory that
+ * resolves `@sssb/kit` is the app (as before), and a workspace root that does not (a generated workspace's root takes
+ * no framework) starts from the workspace's first app.
+ * @param {string[]} args
+ * @param {string} [cwd]
+ * @returns {{ dir: string, defaulted: boolean, named: string[] }} `named`: when doctor chose the app, every app the
+ *   workspace names (absolute), which the walk must all reach: the person did not name one to hold it to
+ */
+export function doctorApp(args, cwd = process.cwd()) {
+    if (args.includes('--app')) return { dir: takeAppDir(args, cwd), defaulted: false, named: [] }
+    const here = path.resolve(cwd)
+    if (existsSync(path.join(here, 'package.json')) && packageDirFrom(here, '@sssb/kit') !== null) {
+        return { dir: here, defaulted: false, named: [] }
+    }
+    if (existsSync(path.join(here, 'pnpm-workspace.yaml')) && existsSync(path.join(here, 'package.json'))) {
+        const apps = workspaceApps(here)
+        if (apps.length === 0) {
+            throw new UsageError(
+                `sssb doctor: ${here} is a workspace root that takes no @sssb/kit and has no apps (\`sssb.apps\` in its ` +
+                    'package.json, or apps/<name>): pass --app <dir>',
+            )
+        }
+        return { dir: path.resolve(here, apps[0]), defaulted: true, named: apps.map((a) => path.resolve(here, a)) }
+    }
+    // Neither: the usual refusal, which says to run from an app or pass --app.
+    return { dir: takeAppDir(args, cwd), defaulted: false, named: [] }
+}
+
 /** @param {string[]} args */
 export async function run(args) {
-    const appDir = realpathSync(takeAppDir(args))
+    const chosen = doctorApp(args)
+    const appDir = realpathSync(chosen.dir)
     if (args.length > 0) throw new UsageError(`sssb doctor: unknown argument ${args[0]} (usage: doctor [--app <dir>])`)
     const root = realpathSync(workspaceRootOf(appDir))
+    const rel = relativeTo(root)
+    // Said before anything can fail on the app it chose, so a failure there is read with the reason it was picked.
+    if (chosen.defaulted) {
+        console.log(
+            `sssb doctor: no --app, and the working directory (${root}) takes no @sssb/kit: starting from ${rel(appDir)}. One run checks every app of the workspace.`,
+        )
+    }
+    // First: under another layout nothing below holds, and under Plug'n'Play (`.pnp.cjs` in NODE_OPTIONS) Vitest's
+    // listing never finishes until the limit stops it.
+    const layout = nodeLinkerProblem(root)
+    if (layout !== null) {
+        console.log(`sssb doctor: ${rel(appDir)}`)
+        return print([{ status: 'FAIL', title: `installed layout: ${layout}. Nothing else is checked until it is` }])
+    }
     const kitDir = kitDirOf(appDir)
     const version = kitVersionOf(appDir)
-    const rel = relativeTo(root)
     const heading = `sssb doctor: ${rel(appDir)}, @sssb/kit ${version} at ${rel(kitDir)}`
 
     /** @type {Workspace} */
@@ -130,7 +182,12 @@ export async function run(args) {
 
     /** @type {Result[]} */
     const results = [
-        walk(root, appDir, workspace),
+        walk(
+            root,
+            appDir,
+            workspace,
+            chosen.named.map((dir) => realpathSync(dir)),
+        ),
         ...targets.map((target) => singletons(root, target)),
         inRepo ? await inRepoAliases(root, workspace, plans) : importers(root, workspace),
         ...targets.map((target) => versions(root, target)),
@@ -189,9 +246,11 @@ const nestedIn = (packages, app) =>
  * @param {string} root
  * @param {string} appDir
  * @param {Workspace} workspace
+ * @param {string[]} [named] the apps the workspace names, when doctor chose its own start: each must be reached too,
+ *   or the bare form would pass a workspace whose walk drops an app that `--app <it>` would fail
  * @returns {Result}
  */
-function walk(root, appDir, workspace) {
+function walk(root, appDir, workspace, named = []) {
     const rel = relativeTo(root)
     const importerDirs = workspace.importers.map(({ dir }) => dir)
     const importers = importerDirs.map(rel).join(', ') || 'none'
@@ -208,11 +267,30 @@ function walk(root, appDir, workspace) {
             `${rel(appDir)} has a seam (src/app-config) but is not among the apps the walk found (${apps})` +
                 (workspace.inRepo ? ": in-repo, the apps are the root package.json's sssb.apps, or apps/*" : ''),
         )
+    /** @type {string[]} */
+    const unreached = []
+    for (const dir of named) {
+        if (dir === appDir) continue
+        if (!importerDirs.includes(dir) || !workspace.apps.includes(dir)) {
+            unreached.push(
+                `${rel(dir)} is named by the workspace (\`sssb.apps\`, or apps/*) but the walk does not reach it as an app that ` +
+                    `takes @sssb/kit (importers: ${importers}; apps: ${apps}): check pnpm-workspace.yaml's packages globs, and that ` +
+                    `${rel(dir)}'s package.json declares @sssb/kit`,
+            )
+        }
+    }
+    if (problems.length === 0 && unreached.length > 0) {
+        return {
+            status: 'FAIL',
+            title: 'workspace walk: it does not reach every app the workspace names, so the checks below do not cover them',
+            lines: unreached,
+        }
+    }
     return problems.length > 0
         ? {
               status: 'FAIL',
               title: `workspace walk: it does not reach ${rel(appDir)}, the app doctor runs for, so the checks below do not cover it`,
-              lines: problems,
+              lines: [...problems, ...unreached],
           }
         : {
               status: 'ok',
@@ -426,10 +504,22 @@ function listOnce(run, options, cache) {
     const key = [run.cwd, run.config ?? '', options.filesOnly ? 'files' : 'tests', ...(options.projects ?? [])].join(
         '\0',
     )
-    const listed = cache.get(key) ?? vitestList(run, options)
+    // After one listing ran out of time, the rest are not waited on: each would likely hang the same way, and the
+    // limit is per listing, so one app's configs could each spend it.
+    const listed = cache.get(key) ?? cache.get(STOPPED) ?? vitestList(run, options)
     cache.set(key, listed)
+    if (!listed.ok && listed.timedOut && !cache.has(STOPPED)) {
+        cache.set(STOPPED, {
+            ok: false,
+            timedOut: true,
+            error: `not listed, since an earlier listing ran out of time (${listed.error})`,
+        })
+    }
     return listed
 }
+
+/** The cache key of the error every listing after one that ran out of time returns. */
+const STOPPED = '\0stopped'
 
 /**
  * WHICH RUNS HOLD AN APP TO WHICH CHECKS, found with `vitest list --filesOnly` alone (it loads each config and globs
