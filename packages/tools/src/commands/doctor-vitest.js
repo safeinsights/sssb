@@ -114,11 +114,30 @@ function vitestCli(cwd) {
 /** The environment variable that sets the limit on one `vitest list`, in seconds. */
 const TIMEOUT_ENV = 'SSSB_DOCTOR_VITEST_TIMEOUT'
 
-/** The limit on one `vitest list`, in milliseconds: `SSSB_DOCTOR_VITEST_TIMEOUT` seconds when set, else 120 s. */
+/** The limit on one `vitest list`, in whole milliseconds: `SSSB_DOCTOR_VITEST_TIMEOUT` seconds when set, else 120 s. */
 function listTimeoutMs() {
     const seconds = Number(process.env[TIMEOUT_ENV])
-    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 120_000
+    return Number.isFinite(seconds) && seconds > 0 ? Math.min(Math.ceil(seconds * 1000), 2 ** 31 - 1) : 120_000
 }
+
+/** The exit code the launcher gives when it stopped Vitest at the limit. */
+const TIMED_OUT = 124
+
+/**
+ * Runs Vitest (`process.argv` after the limit) in a process group of its own and, at the limit (ms), kills the whole
+ * group, so no pool worker of a listing that never finished outlives it (killing Vitest's own process leaves them
+ * running), then exits TIMED_OUT. Otherwise it exits with Vitest's code. Run with `node -e`, so it ships as this string.
+ */
+const LAUNCHER = `
+const { spawn } = require('node:child_process')
+const [limit, ...args] = process.argv.slice(1)
+const child = spawn(process.execPath, args, { stdio: 'inherit', detached: process.platform !== 'win32' })
+const stop = () => {
+    try { process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGKILL') } catch {}
+}
+const timer = setTimeout(() => { stop(); process.exit(${TIMED_OUT}) }, Number(limit))
+child.on('exit', (code) => { clearTimeout(timer); stop(); process.exit(code ?? 1) })
+`
 
 /** @typedef {{ name: string, file: string, projectName?: string }} ListedTest */
 /** @typedef {{ file: string, projectName?: string }} ListedFile */
@@ -126,11 +145,11 @@ function listTimeoutMs() {
 /**
  * `vitest list --json=<file>`, with `--filesOnly` or not, from `run.cwd`, selecting `projects` (none: all). Returns
  * what it listed, or the error Vitest stopped with (a test file that throws while it is collected stops the list,
- * and Vitest then writes no JSON at all). A listing that runs past `timeoutMs` is killed and reported as an error,
- * so nothing it waits on can hang doctor.
+ * and Vitest then writes no JSON at all). A listing that runs past `timeoutMs` is killed, its workers with it, and
+ * reported as an error with `timedOut`, so nothing it waits on can hang doctor.
  * @param {VitestRun} run
  * @param {{ filesOnly?: boolean, projects?: readonly string[], timeoutMs?: number }} [options]
- * @returns {{ ok: true, listed: ListedTest[] } | { ok: false, error: string }}
+ * @returns {{ ok: true, listed: ListedTest[] } | { ok: false, error: string, timedOut?: true }}
  */
 export function vitestList(run, { filesOnly = false, projects = [], timeoutMs = listTimeoutMs() } = {}) {
     const cli = vitestCli(run.cwd)
@@ -142,18 +161,23 @@ export function vitestList(run, { filesOnly = false, projects = [], timeoutMs = 
         if (filesOnly) args.push('--filesOnly')
         if (run.config) args.push('--config', run.config)
         for (const project of projects) args.push('--project', project)
-        const result = spawnSync(process.execPath, args, {
+        const result = spawnSync(process.execPath, ['-e', LAUNCHER, String(timeoutMs), ...args], {
             cwd: run.cwd,
             encoding: 'utf8',
             env: { ...process.env, VITE_CONFIG_NATIVE_IGNORE_WARNING: 'true' },
             maxBuffer: 64 * 1024 * 1024,
-            timeout: timeoutMs,
+            // The launcher's own limit, past Vitest's: should the launcher itself stall, this one still returns.
+            timeout: timeoutMs + 10_000,
             killSignal: 'SIGKILL',
         })
         const output = `${result.stderr ?? ''}\n${result.stdout ?? ''}`
-        if (/** @type {NodeJS.ErrnoException | undefined} */ (result.error)?.code === 'ETIMEDOUT') {
+        if (
+            result.status === TIMED_OUT ||
+            /** @type {NodeJS.ErrnoException | undefined} */ (result.error)?.code === 'ETIMEDOUT'
+        ) {
             return {
                 ok: false,
+                timedOut: true,
                 error: `vitest list did not finish within ${timeoutMs / 1000}s, so doctor stopped it (${TIMEOUT_ENV} sets the limit, in seconds)`,
             }
         }

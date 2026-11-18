@@ -474,48 +474,97 @@ describe('the installed layout', () => {
         return ws
     }
 
+    const FIX =
+        "SSSB needs nodeLinker isolated, pnpm's default, which gives each app its own @sssb/kit linked to its own seam. " +
+        'Remove the nodeLinker (or node-linker) setting from pnpm-workspace.yaml and .npmrc, delete .pnp.cjs and ' +
+        '.pnp.loader.mjs at the workspace root if they are there, then run pnpm install'
+
     it('passes isolated, pnpm’s default, and a workspace nothing is installed in', () => {
-        expect(nodeLinkerProblem(installed('isolated'))).toBeNull()
-        expect(nodeLinkerProblem(installed(null))).toBeNull()
+        expect(nodeLinkerProblem(installed('isolated'), {})).toBeNull()
+        expect(nodeLinkerProblem(installed(null), {})).toBeNull()
     })
 
     it.each(['pnp', 'hoisted'])('fails nodeLinker %s, naming it and the fix', (linker) => {
-        expect(nodeLinkerProblem(installed(linker))).toBe(
-            `pnpm installed this workspace with nodeLinker ${linker} (node_modules/.modules.yaml); SSSB needs nodeLinker ` +
-                "isolated, pnpm's default, which gives each app its own @sssb/kit linked to its own seam. Remove the " +
-                'nodeLinker (or node-linker) setting from pnpm-workspace.yaml and .npmrc, then run pnpm install',
+        expect(nodeLinkerProblem(installed(linker), {})).toBe(
+            `pnpm installed this workspace with nodeLinker ${linker} (node_modules/.modules.yaml). ${FIX}`,
+        )
+    })
+
+    it('reads a damaged or YAML record, and fails one it cannot read', () => {
+        const truncated = installed(null)
+        write(path.join(truncated, 'node_modules', '.modules.yaml'), '{\n  "nodeLinker": "pnp",\n')
+        expect(nodeLinkerProblem(truncated, {})).toMatch(/^pnpm installed this workspace with nodeLinker pnp /)
+        const yaml = installed(null)
+        write(path.join(yaml, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\nnodeLinker: hoisted\n')
+        expect(nodeLinkerProblem(yaml, {})).toMatch(/with nodeLinker hoisted /)
+        const unreadable = installed(null)
+        mkdirSync(path.join(unreadable, 'node_modules', '.modules.yaml'), { recursive: true })
+        expect(nodeLinkerProblem(unreadable, {})).toMatch(/^node_modules\/\.modules\.yaml, .* cannot be read \(EISDIR/)
+    })
+
+    // Back on isolated, PnP's files outlive the setting, and `pnpm run` still loads them into every script.
+    it("fails Plug'n'Play's files left at the root, and a doctor running under them, on an isolated layout", () => {
+        const left = installed('isolated')
+        write(path.join(left, '.pnp.cjs'), '')
+        expect(nodeLinkerProblem(left, {})).toBe(
+            `.pnp.cjs at the workspace root makes pnpm run every script under Plug'n'Play, whatever layout it installed. ${FIX}`,
+        )
+        expect(nodeLinkerProblem(installed('isolated'), { NODE_OPTIONS: '--require=/ws/.pnp.cjs' })).toBe(
+            `doctor runs under Plug'n'Play (NODE_OPTIONS loads a .pnp.cjs: --require=/ws/.pnp.cjs). ${FIX}`,
         )
     })
 })
 
 describe('vitestList', () => {
-    it('stops a listing that never finishes, even one whose child holds its output open, and says so', () => {
+    it('stops a listing that never finishes, and every process it started, and says so', async () => {
         const dir = realpathSync(makeTestTmpDir('sssb-doctor-hang-'))
         pkg(dir, { name: 'hang', private: true })
-        // A "vitest" that never exits, and leaves a child of its own holding stdout and stderr for 4 s.
+        // A "vitest" that never exits, with a "worker" of its own that never exits either and writes its pid down.
+        const pidFile = path.join(dir, 'worker.pid')
         pkg(path.join(dir, 'node_modules', 'vitest'), { name: 'vitest', version: '4.0.0', bin: { vitest: 'cli.js' } })
         write(
             path.join(dir, 'node_modules', 'vitest', 'cli.js'),
-            "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 4000)'], { stdio: 'inherit' })\n" +
+            "const worker = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' })\n" +
+                `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(worker.pid))\n` +
                 'setInterval(() => {}, 1000)\n',
         )
         const started = Date.now()
         const result = vitestList({ cwd: dir, config: null }, { timeoutMs: 1000 })
         expect(result).toEqual({
             ok: false,
+            timedOut: true,
             error: 'vitest list did not finish within 1s, so doctor stopped it (SSSB_DOCTOR_VITEST_TIMEOUT sets the limit, in seconds)',
         })
-        // Back at the limit, not when the child it left behind exits.
-        expect(Date.now() - started).toBeLessThan(3500)
-        // The limit doctor uses, from the environment (seconds).
-        process.env.SSSB_DOCTOR_VITEST_TIMEOUT = '1'
+        expect(Date.now() - started).toBeLessThan(5000)
+        // Its worker went with it, rather than living on under init.
+        const worker = Number(readFileSync(pidFile, 'utf8'))
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        const alive = () => {
+            try {
+                process.kill(worker, 0)
+                return true
+            } catch {
+                return false
+            }
+        }
+        const left = alive()
+        if (left) process.kill(worker, 'SIGKILL')
+        expect(left, 'the worker outlived the listing').toBe(false)
+        // The limit doctor uses, from the environment, in seconds, rounded up to a whole millisecond.
+        process.env.SSSB_DOCTOR_VITEST_TIMEOUT = '0.0015'
         try {
             expect(vitestList({ cwd: dir, config: null })).toMatchObject({
                 ok: false,
-                error: expect.stringMatching(/within 1s/),
+                error: expect.stringMatching(/within 0\.002s/),
             })
         } finally {
             delete process.env.SSSB_DOCTOR_VITEST_TIMEOUT
+            const again = Number(readFileSync(pidFile, 'utf8'))
+            try {
+                process.kill(again, 'SIGKILL')
+            } catch {
+                // Already gone, as it should be.
+            }
         }
     }, 20_000)
 })
@@ -772,8 +821,8 @@ function doctorWorkspace(prefix: string, mode: Mode, apps: string[] = ['a', 'b']
 }
 
 /** `sssb doctor --app <app>`, run as a child process from the workspace root, out of this Vitest's environment. */
-async function doctor(ws: string, app: string) {
-    const env = { ...process.env }
+async function doctor(ws: string, app: string, extraEnv: Record<string, string> = {}) {
+    const env = { ...process.env, ...extraEnv }
     for (const key of Object.keys(env)) if (key.startsWith('VITEST')) delete env[key]
     const run = promisify(execFile)
     try {
@@ -1138,6 +1187,26 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
             expect(out).not.toMatch(/conformance suite|vitest list/)
             expect(code).toBe(1)
             expect(Date.now() - started).toBeLessThan(10_000)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'waits out one listing that never finishes, not every listing after it',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-hang-', 'packed')
+            // Configs that never finish loading: each listing of them would run to the limit.
+            const hang = 'setInterval(() => {}, 1000)\nexport default new Promise(() => {})\n'
+            write(path.join(ws, 'vitest.config.mjs'), hang)
+            write(path.join(ws, 'vitest.contract.config.mjs'), hang)
+            const started = Date.now()
+            const { code, out } = await doctor(ws, 'apps/a', { SSSB_DOCTOR_VITEST_TIMEOUT: '3' })
+            const seconds = (Date.now() - started) / 1000
+            expect(out).toMatch(/vitest list did not finish within 3s, so doctor stopped it/)
+            expect(out).toMatch(/not listed, since an earlier listing ran out of time/)
+            expect(code).toBe(1)
+            // One limit, plus doctor's own work; not one per listing.
+            expect(seconds).toBeLessThan(9)
         },
         E2E_TIMEOUT,
     )

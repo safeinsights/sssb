@@ -429,10 +429,22 @@ function listOnce(run, options, cache) {
     const key = [run.cwd, run.config ?? '', options.filesOnly ? 'files' : 'tests', ...(options.projects ?? [])].join(
         '\0',
     )
-    const listed = cache.get(key) ?? vitestList(run, options)
+    // After one listing ran out of time, the rest are not waited on: each would likely hang the same way, and the
+    // limit is per listing, so one app's configs could each spend it.
+    const listed = cache.get(key) ?? cache.get(STOPPED) ?? vitestList(run, options)
     cache.set(key, listed)
+    if (!listed.ok && listed.timedOut && !cache.has(STOPPED)) {
+        cache.set(STOPPED, {
+            ok: false,
+            timedOut: true,
+            error: `not listed, since an earlier listing ran out of time (${listed.error})`,
+        })
+    }
     return listed
 }
+
+/** The cache key of the error every listing after one that ran out of time returns. */
+const STOPPED = '\0stopped'
 
 /**
  * WHICH RUNS HOLD AN APP TO WHICH CHECKS, found with `vitest list --filesOnly` alone (it loads each config and globs
