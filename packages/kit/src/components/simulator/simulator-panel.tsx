@@ -439,8 +439,8 @@ export function SimulatorPanel({
             >
                 {/* Named by its content, never an aria-label (WCAG 2.5.3 Label in Name): the visible
                     "Simulator", then a visually hidden ", 3 unread emails, open the panel" (Chromium
-                    computes "Simulator , 3 unread…": the hidden text is absolutely positioned, so it gets a
-                    space before it; screen readers don't voice it). The badge is
+                    computes "Simulator , 3 unread…": the hidden text is absolutely positioned, which it
+                    pads with a space). The badge is
                     aria-hidden because the hidden text says its count with a unit; both use the same
                     locale number format, so the digits a voice user sees are the ones in the name. axe
                     4.14 reads label and badge as one word ("Simulator3"), which no aria-label contains. */}

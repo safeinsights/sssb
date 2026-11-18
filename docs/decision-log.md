@@ -3170,13 +3170,19 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   ignores minor and major updates to it. The React rules there stay. 4.14.0 is the newest stable release, published
   2026-10-15, well past the two-day `minimumReleaseAge`.
 - **Each control's accessible name starts with its visible text,** in both locales: the team switcher "{team}, switch
-  team", the account menu "{user's full name}, account menu", the Simulator pill "Simulator" or "Simulator 3 unread
-  emails", then "open the panel", and the Hide button "Hide the Simulator panel".
+  team", the account menu "{user's full name}, account menu" (the email if the name is blank), the Simulator pill
+  "Simulator, open the panel" or "Simulator, 3 unread emails, open the panel", and the Hide button "Hide the
+  Simulator panel".
 - **Three of them are named by content, not by `aria-label`.** axe 4.14 compares an `aria-label` with the text on
   screen, word by word and in order, and it counts `aria-hidden` text. The switcher shows initials before the team
-  name, the account menu shows only initials, and the pill's label and badge sit in sibling elements with no space, so
-  axe reads "Simulator1". No sensible `aria-label` contains those. A `VisuallyHidden` name that starts with what a
-  sighted user reads meets WCAG 2.5.3, and the rule only applies to `aria-label`/`aria-labelledby`. The visible pieces
-  are `aria-hidden` so nothing is announced twice.
-- **Avatar initials are decorative.** `PreviewRow`'s avatar is `aria-hidden` wherever it appears. A voice-control user
-  says the person's or team's name, which is in the accessible name, rather than the initials.
+  name, the account menu shows only initials, and axe joins the pill's label and badge into one word ("Simulator1").
+  No sensible `aria-label` contains those, and the rule only applies where there is one. The switcher's and pill's
+  names are their visible text plus a visually hidden suffix, so they cannot drift from the screen; the account
+  menu's is all visually hidden. Only the initials and the pill's badge are `aria-hidden`.
+- **Avatar initials are decorative.** They are WCAG 2.5.3's "symbolic text characters" case. `PreviewRow`'s avatar is
+  `aria-hidden` wherever it appears; a voice-control user says the person's or team's name. A checker that compares
+  the computed name (ACT rule 2ee8b8) may still flag the account menu, whose only visible text is initials.
+- **The pill's badge uses the name's number format** (`useFormatter().number`, as ICU's `#` does: "1,000" in en). The
+  notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
+- The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
+  `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.

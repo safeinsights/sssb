@@ -8,32 +8,44 @@ Each control's accessible name now starts with its visible text, in both locales
 `@axe-core/playwright` is `^4.14.0` in `apps/showcase/package.json`, and `.github/dependabot.yml` no longer
 ignores it.
 
-| Control              | Accessible name now (en / es)                                                                                                                                             | How                                          |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `org-switcher`       | `switchTriggerLabel`: "{name}, switch team" / "{name}, cambiar equipo"                                                                                                    | visually hidden text; visible row hidden     |
-| `user-menu`          | `userMenuLabel`: "{name}, account menu" / "{name}, menú de la cuenta" (the user's full name)                                                                              | visually hidden text; initials hidden        |
-| `simulator-pill`     | `pillName` "Simulator, open the panel"; with unread mail `pillUnreadName` "Simulator 3 unread emails, open the panel" (es "Simulador 3 correos sin leer, abrir el panel") | visually hidden text; label and badge hidden |
-| `simulator-collapse` | `collapseAriaLabel`: "Hide the Simulator panel" / "Ocultar el panel Simulador"                                                                                            | `aria-label`, now starting with "Hide"       |
+| Control              | Accessible name now (en / es)                                                                                                                   | How                                                                                                                      |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `org-switcher`       | "Frontline Desk, switch team" / "Frontline Desk, cambiar equipo"                                                                                | the visible team name, then a visually hidden `org.switchTriggerSuffix`                                                  |
+| `user-menu`          | `auth.userMenuLabel`: "{name}, account menu" / "{name}, menú de la cuenta" (full name; the email if it is blank)                                | visually hidden; the initials avatar is `aria-hidden`                                                                    |
+| `simulator-pill`     | "Simulator, open the panel"; with unread mail "Simulator, 3 unread emails, open the panel" (es "Simulador, 3 correos sin leer, abrir el panel") | the visible "Simulator", then a visually hidden `simulator.pillSuffix` or `pillUnreadSuffix`; the badge is `aria-hidden` |
+| `simulator-collapse` | `simulator.collapseAriaLabel`: "Hide the Simulator panel" / "Ocultar el panel Simulador"                                                        | `aria-label`, now starting with "Hide"                                                                                   |
 
 - **Three of the four are named by their content, not an `aria-label`.** axe 4.14 does not read the
-  accessibility tree for this rule. It takes the ON-SCREEN text (`aria-hidden` text included), splits both
-  strings into words, and needs the visible words, in order, inside the `aria-label`. On these three
-  controls no sensible label can pass: the switcher shows "initials + team name", the account menu
-  shows only initials, and the pill's label and badge are sibling elements with no space between them,
-  which axe reads as one word ("Simulator1"). So each gets a `VisuallyHidden` name that starts with what
-  a sighted user reads, and the visible pieces are `aria-hidden` so nothing is read twice. axe only checks
-  `aria-label`/`aria-labelledby`, so a content name is out of the rule's scope; it still satisfies the
-  WCAG criterion, because the name begins with the visible label.
-- **Initials are decorative, not a label.** The account menu's name carries the user's full name, as this
-  task suggested; a voice-control user says "click Dana", not "click DO". `PreviewRow`'s avatar is
-  `aria-hidden` everywhere, so the switcher's menu items and the account menu's header no longer read
-  the initials before the name ("FD Frontline Desk").
-- **The unread badge is formatted with `useFormatter().number`,** the same locale rules as the name's ICU
-  `#`, so a count of 1000 shows "1,000" in both places.
-- Catalog: `org.switchTriggerLabel` and `simulator.pillUnreadName` are new; `simulator.pillAriaLabel`
-  became `simulator.pillName`, since it no longer feeds an `aria-label`. `auth.userMenuLabel` gained a
-  `{name}` placeholder. A plural branch must not start with a word, or the parity test reads it as a
-  placeholder, so the branches start with `#`.
+  accessibility tree for this rule. It takes the ON-SCREEN text (`aria-hidden` text included, axe-core's
+  `labelContentNameMismatchEvaluate` calling `visibleVirtual` with `screenReader` false), splits both strings
+  into words, and needs the visible words, in order, inside the `aria-label`. On these three controls no
+  sensible label can pass: the switcher shows "initials + team name", the account menu shows only initials,
+  and the pill's label and badge are sibling elements whose text axe joins with no space ("Simulator1"). The
+  rule only applies where there is an `aria-label` or `aria-labelledby` (`labelContentNameMismatchMatches`), so
+  a content name is outside it. It still meets WCAG 2.5.3, because the name starts with the visible label.
+- **The name is built from the visible text where there is any.** The switcher's name is its visible team
+  name plus the hidden suffix, and the pill's is its visible "Simulator" plus the hidden suffix, so the name
+  cannot drift from the screen (the independent review's suggestion). Only the decorative parts are
+  `aria-hidden`: the initials and the pill's badge, whose count the suffix says with a unit.
+- Chromium computes "Frontline Desk , switch team" and "Simulator , 3 unread emails, …": `VisuallyHidden` is
+  absolutely positioned, which Chromium treats as a block boundary and pads with a space. It is whitespace
+  before a comma.
+- **Initials are decorative, not a label.** They are WCAG 2.5.3's "symbolic text characters" case, like a "B"
+  on a Bold button. The account menu's name carries the user's full name, as this task suggested; a
+  voice-control user says "click Dana", not "click DO". A checker that compares the computed name rather than
+  an `aria-label` (ACT rule 2ee8b8) may still flag the account menu. `PreviewRow`'s avatar is `aria-hidden`
+  everywhere, so the switcher's menu items and the account menu's header no longer read the initials before
+  the name ("FD Frontline Desk").
+- **The pill's badge uses `useFormatter().number`,** the same locale rules as the ICU `#` in its name, so the
+  digits match: "1,000" in en, "1000" in es (run through next-intl's `createTranslator` and `createFormatter`).
+  The notification bell was left alone. Its label's plain `{count}` renders "1000" with no grouping, which is what
+  its badge shows; formatting the badge would have broken that.
+- Catalog: `org.switchTriggerSuffix`, `simulator.pillSuffix` and `simulator.pillUnreadSuffix` are new;
+  `simulator.pillAriaLabel` is gone; `auth.userMenuLabel` gained a `{name}` placeholder. A plural branch must
+  not start with a word, or the parity test (`packages/kit/src/i18n/messages-parity.test.ts`, `icuArgs`) reads
+  it as a placeholder, so the branches start with `#`.
+- Opening the panel from the pill, or hiding it, drops keyboard focus; found by the keyboard pass, already
+  on main, and recorded as `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
 - Proof: the 12 tests that failed on 4.14 (ten in `a11y.spec.ts`, both locales of `smoke.spec.ts`) pass on
   4.14.0, with the rest of both files. Putting the switcher's old `aria-label` back turned nine of them red
   on this rule, and they went green again with it removed.
