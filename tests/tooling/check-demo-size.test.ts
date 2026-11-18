@@ -6,18 +6,20 @@ import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
- * scripts/check-demo-size.mjs is the gate on the single-file demo's size, run from each app's own directory.
+ * `sssb check-demo-size` (@sssb/tools) is the gate on the single-file demo's size, run from each app's own directory.
  * It has three outcomes and each is pinned here: pass quietly, pass with a warning when the headroom is
  * thin (the cue the future-task used to ask a person to notice by measuring), and fail.
  */
-const SCRIPT = fileURLToPath(new URL('../../scripts/check-demo-size.mjs', import.meta.url))
+const SSSB = fileURLToPath(new URL('../../packages/tools/bin/sssb.js', import.meta.url))
+const SCRIPT = fileURLToPath(new URL('../../packages/tools/src/commands/check-demo-size.js', import.meta.url))
 
 /** An app directory whose built demo is exactly `bytes` long, checked against `budget` (none: the script is run bare). */
 function run(bytes: number, budget?: string, env: Record<string, string> = {}) {
     const app = makeTestTmpDir('sssb-demo-size-')
+    writeFileSync(path.join(app, 'package.json'), '{}')
     mkdirSync(path.join(app, 'dist-demo'))
     writeFileSync(path.join(app, 'dist-demo', 'index.html'), 'x'.repeat(bytes))
-    const result = spawnSync(process.execPath, [SCRIPT, ...(budget === undefined ? [] : [budget])], {
+    const result = spawnSync(process.execPath, [SSSB, 'check-demo-size', ...(budget === undefined ? [] : [budget])], {
         cwd: app,
         encoding: 'utf8',
         // a clean environment: GITHUB_ACTIONS must be absent unless the test sets it. (The cast is for Next's

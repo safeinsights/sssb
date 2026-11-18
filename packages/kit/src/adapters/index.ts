@@ -7,6 +7,7 @@ import type { EmailPort } from '../ports/email'
 import type { JobsPort } from '../ports/jobs'
 import type { LlmPort } from '../ports/llm'
 import type { StoragePort } from '../ports/storage'
+import { simulatedDevServer } from './dev-server'
 import { fakeAnalytics } from './fake/analytics'
 import { fakeAuth } from './fake/auth'
 import { fakeDb } from './fake/db'
@@ -55,12 +56,25 @@ export const isDemoMode = process.env['DEMO_MODE'] === '1'
  */
 const isE2eBuild = process.env['E2E_BUILD'] === '1'
 
+/**
+ * A developer's own `next dev` of a simulated world, and nothing else (./dev-server.ts says why each condition is
+ * there): what a dev-only Simulator affordance asks before it exists. False in real mode, in every production build
+ * (deployed, demo, e2e) and under Vitest.
+ */
+export const isSimulatedDevServer = simulatedDevServer({
+    isSimulated,
+    nodeEnv: process.env.NODE_ENV,
+    isDemoMode,
+    isE2eBuild,
+})
+
 // Fail CLOSED: a production build must never silently serve fake auth
 // because APP_MODE was forgotten. The guard is about ACCIDENTS, so every way past it is an explicit,
 // deliberate opt-in: DEMO_MODE=1 for demo builds, E2E_BUILD=1 for a production-build test run.
 // Neither can be set by forgetting something. `authorized-mutations.test.ts`'s sibling
-// `production-guard.test.ts` proves the guard still closes when no opt-in is set, and that no
-// deployed environment in `infra/stack.ts` carries either flag.
+// `production-guard.test.ts` proves the guard still closes when no opt-in is set. That no deployed
+// environment carries either flag is @sssb/cdk's: the SssbApp construct fails `cdk synth` if the server's
+// final environment sets either one or anything but APP_MODE=real.
 if (isSimulated && process.env.NODE_ENV === 'production' && !isDemoMode && !isE2eBuild) {
     // The message deliberately does NOT offer the bypasses as remedies. An earlier wording listed all
     // three env vars as ways to proceed, which hands someone debugging a real deployment a menu with

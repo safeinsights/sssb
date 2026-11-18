@@ -39,7 +39,7 @@ For each new capability, work these six steps in order:
    existing screen), router-agnostic (data + callbacks as props). Auth is FRAMEWORK code, so its copy
    goes in the FRAMEWORK half of the split catalog — `packages/kit/src/i18n/messages/{en,es}.json`,
    under a framework namespace (`auth`, `profile`, `org`, `acceptInvite`). Putting an auth key in an
-   app's `apps/<app>/messages/{en,es}.json` fails `packages/kit/src/i18n/namespaces.test.ts`, which
+   app's `apps/<app>/messages/{en,es}.json` fails the conformance suite's `i18n-partition` check (`packages/kit/src/testing/conformance/i18n.ts`), which
    holds the two halves DISJOINT; the app catalog is for namespaces the app registers through
    `apps/<app>/src/app-config/messages.ts`. Both halves stay key- and placeholder-identical across
    en/es. If a Clerk client _form_ is unavoidable (sign-in, ticket sign-up), slot it into an owned shell

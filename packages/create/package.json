@@ -1,0 +1,29 @@
+{
+    "name": "@sssb/create",
+    "version": "0.1.0",
+    "private": true,
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/safeinsights/sssb.git",
+        "directory": "packages/create"
+    },
+    "type": "module",
+    "description": "SSSB's generator: `pnpm create @sssb <dir>` writes a new app workspace from SSSB's starter, its infra/ included, with the workspace's config on SSSB's presets, the owner files and a CI workflow calling SSSB's reusable checks. Plain JavaScript with no dependencies; it never depends on another SSSB package (ADR-0014, rule 4).",
+    "bin": {
+        "sssb-create": "./bin/create.js"
+    },
+    "files": [
+        "bin",
+        "src",
+        "template",
+        "!src/**/*.test.*"
+    ],
+    "scripts": {
+        "prepack": "node scripts/build-template.js",
+        "postpack": "node scripts/build-template.js --clean"
+    },
+    "engines": {
+        "node": ">=24"
+    }
+}

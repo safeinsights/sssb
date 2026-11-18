@@ -18,7 +18,7 @@ import type { ServiceIdentity } from '../service-auth/verify'
 /**
  * The server-side authorization seam. Product mutation routes call {@link authorize}
  * explicitly after they've resolved the subject's org (the id is handler-derived, so it can't be
- * pre-wrapped as middleware). A build-time scanner (authorized-mutations.test.ts) proves every
+ * pre-wrapped as middleware). A build-time scanner (the conformance suite's `authz-mutations` check, ./app-exemptions.ts) proves every
  * mutating route either calls authorize(...) or is a justified exemption.
  *
  * It judges two kinds of actor (@sssb/kit/core/abilities `Actor`), each carrying the credential it came with:

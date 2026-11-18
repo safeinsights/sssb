@@ -3153,7 +3153,7 @@ This is the "next step if it is wanted" that "`pnpm dev` without the Simulator h
   (`createTicker`) owns the loop, the interval bounds, the dedup of repeated errors and the marker; it reads no
   environment. `scripts/dev-tick.mjs` is the policy for `pnpm dev` and its only caller. JP asked whether the Simulator
   can start it from its UI: not in this change (the panel is in `packages/kit`, which P3 is editing), but the shape is
-  there for it, and `.claude/future-tasks/simulator-ticker-control.md` has the design, including why the control must
+  there for it, and `.claude/future-tasks/resolved/simulator-ticker-control.md` has the design, including why the control must
   keep it off by default and out of e2e and the static demo.
 - **`init-app` learned the second root script.** Root `tick:starter` is renamed with the app (`tick:<slug>`) and, when
   the showcase is ejected, dropped as a duplicate of `tick`, as `dev:starter` already was; each seen failing against the
@@ -3193,4 +3193,1519 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 - **The pill's badge uses the name's number format** (`useFormatter().number`, as ICU's `#` does: "1,000" in en). The
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
-  `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
+  `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
+
+## `@sssb/cdk` and per-app infra (2026-11-18, ADR-0014 P9, `feat/sssb-cdk`)
+
+- **`SssbApp` is a construct with five props** (`appDir`, `slug`, `params`, `environment`, `production`). Rejected:
+  reading the `environment` context inside the construct, as the old stack did. Which environments exist is the app's
+  policy (Pages has its own), so `infra/app.ts` reads and checks the context and hands the construct a name and a
+  boolean.
+- **The construct's id is `Default`** in both apps, so logical ids stay as they were (ADR-0014, addendum 2026-11-18).
+  Rejected: a descriptive id such as `App`, which would have renamed every resource and made the first deploy after P9
+  replace the database and the VPC.
+- **The seam reaches esbuild as an alias alone; the app's tsconfig is no longer passed.** Rejected: passing both. Seen
+  failing without the alias: the bundle then names neither the app's migration registry nor any of its four migrations,
+  and the synth fails on each.
+- **Kit resolution and the assembly checks come from `@sssb/tools`** (`@sssb/tools/kit`'s `kitDirOf`,
+  `kitVersionOf` and `resolveAppsKit`, which P4 published for this; `@sssb/tools/assembly-checks`): `@sssb/cdk`
+  depends on `@sssb/tools`, a plain dependency. Rejected: a resolver of `@sssb/cdk`'s own, which would split rule 4's
+  one shared check in two, and a peer dependency, the form ADR-0014 part 10 warns can lift the fixed group to 1.0.0.
+  Part 10 says the packages carry no dependency on each other; the probe it calls for, a `minor` and then a `patch`
+  changeset on `@sssb/tools` through `pnpm release:check`, planned the same step for all three packages and nothing
+  at 1.0.0 (ADR-0014, addendum 2026-11-18, P9). P4's resolver walks `node_modules` from the app rather than calling
+  `require.resolve`, which matters here: the construct runs under `pnpm exec`, which sets `NODE_PATH` to the
+  hoisted store.
+- **`check-shapes` became `packages/cdk/src/sssb-app.test.js`, a Vitest project of its own (`cdk`)**, which discovers
+  every `apps/*/infra` and synthesizes both shapes for each. It reads `DATABASE_ENV` from the `@sssb/kit` each app
+  resolves (by file, since it is not a published subpath), so it keeps the runtime and the infra from drifting on a
+  name. `init-app` reserves the slug `cdk` with `kit`, since a project of that name would collide.
+- **Each app's infra is outside the app's vendor fence** (`APP_INFRA_GLOB`), as ADR-0014 part 8 asked: a CDK custom
+  resource there may call the AWS SDK. Pinned in `tests/lint/extensions.test.ts`, and seen failing without the
+  carve-out.
+- **`@sssb/cdk` typechecks under every flag of the framework's strict set but `exactOptionalPropertyTypes`**
+  (`packages/cdk/tsconfig.json` against `packages/kit/tsconfig.strict.json`), which aws-cdk-lib's own declarations
+  fail: six errors, every one between two of CDK's own types (`Vpc` against `IVpc`, `Bucket` against `IBucket`,
+  `DefaultStackSynthesizer` against `IStackSynthesizer`, and the props objects that carry them). It ships
+  JavaScript and a declaration file, so an adopter's flags never reach its sources.
+- **`init-app` renames the app's infra package** (`<slug>-infra`) with the app, and refuses a slug that names one.
+  Nothing else in an app's `infra/` names the app, so nothing else is rewritten.
+- **CI synthesizes with `--fail-if-no-match`**, because `pnpm --filter` with no match exits 0: a tree whose apps all
+  lost their `infra/` would otherwise pass the synth step having run nothing.
+- **Pack and consume copies `apps/starter/infra` but does not install or synthesize it**: the consumer's workspace lists
+  `apps/*` and `packages/*`, and `@sssb/cdk` is not packed. The construct's synth assertions are what catch a wrong
+  kit or a wrong seam in a consumer; proving that from tarballs is P12's, when the generator ships the starter's
+  `infra/`.
+- **What the reviews added, each seen failing in `packages/cdk/src/sssb-app.test.js`.** The independent review asked
+  whether a stack could run with fake adapters, the wrong app's migrations or another app's seam while every check
+  passed, and found no accidental route; the code review found no HIGH. The construct now also refuses: a `slug`
+  other than the `APP_SLUG` the app's `config/app.ts` declares (a root `infra/` composing several apps could pair one
+  app's directory with another's slug); an app whose linked `@sssb/app-config` is not its own `src/app-config`; a
+  migrator whose deployed `Code` is not the bundle this synth staged (an escape-hatch override); a migrator
+  environment carrying `DEMO_MODE` or `E2E_BUILD`; and a `production` that is not a boolean, which in JavaScript
+  silently gave the destructive non-production defaults. The migration names it expects are the index's literal keys,
+  comments left out; an index with migration files beside it and no literal key, whose computed keys made the check
+  expect nothing, is refused (seen, in a scratch app). Round 1's first answer, also expecting every migration file's
+  name, was rejected in round 2: a migration registered under a key other than its file name, or a draft file not
+  registered yet, would fail the synth for nothing.
+- **Local bundling only, and the construct checks for it.** It refuses a project root (the lock file's directory)
+  with no `node_modules/esbuild`, and a framework installed outside that root, each with a message saying what to
+  change (`docs/build-notes.md`, P9). Rejected: an alias relative to the working directory, which in Docker is `/`,
+  not the project root, and which `NodejsFunction` does not let a caller change; and round 1's first answer, an
+  `esbuild` dependency of `@sssb/cdk`, which round 2 showed is not what CDK runs.
+- **The deployed migrator's `Code` is compared with the asset's own bucket and key, as the synthesizer assigned
+  them**, not with `<asset hash>.zip`, which round 2 showed fails under a synthesizer's `bucketPrefix` and under the
+  legacy synthesizer. A stack with `bucketPrefix: 'apps/'` synthesizes in the test.
+- **Accepted, not closed:**
+    - App source can still import from `apps/<app>/infra`, which the vendor fence no longer covers; the
+      `tests/contract` carve-out has the same shape. No import pattern bans it without also banning an app's own
+      module that happens to be called `infra`.
+    - The VPC's `Name` tags carry the construct path (`…/Default/Vpc`), so they change in place on the first deploy
+      after P9.
+    - What synth cannot see (the server's uploaded zip, a synth with validation off, changes after synth, a seam
+      index that brings in another app's registry, re-exported by an app with no migration files of its own or
+      spread beside a literal key) is
+      `.claude/future-tasks/deployed-artifact-identity.md`.
+    - A project whose only esbuild is a global one is refused, though CDK would bundle with it locally.
+    - The migration-key regex reads text: a `//` or `/*` inside a key's string can hide later keys from the check
+      (it then fails closed if none is left), and a comment directly after a quote can count a key that is not
+      there (a false alarm, never a pass).
+- **Found, not this branch's:** `defaultDatabaseName` is the slug, and `init-app` accepts dashes, which an Aurora
+  database name cannot hold. A follow-up.
+
+## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
+
+P4 of ADR-0014: the `sssb` CLI, the helpers any workspace package imports, the Next, Vite and Vitest presets and the
+tsconfig base, as `packages/tools` (`@sssb/tools`, `private` until P14, in the Changesets fixed group). Both apps use
+them; `scripts/` keeps only what is this repository's own (`init-app`, `release`, `release-app`, `pack-and-consume`).
+
+- **JavaScript with hand-written declarations, and no build.** Every module is ESM with `// @ts-check`, and each
+  published entry has a `.d.ts` beside it that the JavaScript is annotated against, so the root `tsc` checks the
+  implementation against its contract. A build step was the alternative ADR-0014 allows ("written in TypeScript and
+  built when packed"); without one, the bin and the presets run from source inside this repository too, where a
+  workspace link would otherwise need a build before any app script could start. Pack and consume checks that the
+  tarball ships only JavaScript, declarations and the tsconfig base (`toolsShippedFileProblems`).
+- **One resolver, `packages/tools/src/kit.js`.** It finds the app's `@sssb/kit` by walking `node_modules` up from the
+  app's directory, as Node's lookup does, and checks that every framework file a tool loads has its real path inside
+  that directory. It started as `require.resolve(…, { paths: [appDir] })`, as the ADR wrote it; the tests found that
+  pnpm's bin shims (`node_modules/.bin/<bin>`, which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the hoisted `.pnpm/node_modules`, which Node's resolver falls back to,
+  so an app with no framework of its own resolved the hoisted copy, another app's instance: the slip rule 4 exists for.
+  The walk never reads `NODE_PATH`. Its users are the `dev:real` preflight, the Next preset's next-intl request path
+  and `sssb guide`. `sssb/no-bare-kit-import` bans a literal `@sssb/kit` specifier (declarations, `import()`, type
+  imports, `require`, any `.resolve('…')`, Vitest's loaders) in every package under `packages/` but the framework and
+  the showcase's seed, deny-by-default, so P6's and P9's packages are covered before anyone names them; seen red on a probe in each form `tests/lint/no-bare-kit-import.test.ts` lists.
+- **A preset configures the app's own tools.** The Vite preset loads `@vitejs/plugin-react` and
+  `vite-plugin-singlefile`, the Vitest preset the React plugin and jest-dom, and the Next preset next-intl's plugin,
+  each resolved from the app's directory, so `@sssb/tools` never brings a second copy of them; its only peers are
+  optional: `next` and `vite` for its declarations' types, `vitest` for the scratch-directory helper's `afterAll`. jest-dom goes to Vitest as the bare specifier, not a resolved path: resolved with Node's
+  `require` conditions it is jest-dom's CommonJS build, which cannot load Vitest.
+- **The Vite and Vitest presets pass the seam explicitly** (`@sssb/app-config` to the app's `src/app-config`), as the
+  ADR says every SSSB builder does: the same directory as the link in an adopter's app, the only way in this
+  repository. The Next preset does not, since `next build` resolves the seam through the app's tsconfig `paths` here
+  and the link in an adopter's app. Pack and consume therefore proves the link through `tsc`, `next build`, the
+  migrator bundle and the negative fixture, and no longer through Vitest.
+- **The Next preset takes the app's directory** (`withSssb(config, { appDir: __dirname })`). Its default, the working
+  directory, is the app's when Next loads the config, but knip loads it from the repository root, and the next-intl
+  request path came out relative to the wrong directory.
+- **Each app declares its port slot** in its package.json (`"sssb": { "port": "starter" }`). `sssb port` with no
+  argument reads it, as do `sssb serve-standalone` and `sssb launch-json`, so the dev server, the standalone server
+  and the browser pane read one declaration. The slots are unchanged (showcase, starter, ladle, contractPg) and still
+  name a slot, not an app, so `init-app`, which leaves the declaration as it is, needs no change. The browser pane's
+  configurations are named `<app directory>-dev`, so the showcase's `app-dev` is now `showcase-dev`.
+- **The `dev:real` preflight is bundled by esbuild** (`sssb check-real-env`), as CommonJS, with every package but the
+  framework and the app's own source left external at the path esbuild resolves from the importing file, preferring
+  each package's `require` entry. Under plain Node two packages fail otherwise: `@clerk/nextjs`'s ES build imports
+  directories, which Node refuses, and `pg`'s CommonJS has no named exports for an ES `import { Pool }`.
+- **The tsconfig base sits at the ES2022 floor** (target and lib) and carries the compiler contract
+  `packages/kit/tsconfig.strict.json`'s header measured. Both apps extend it and typecheck there; they had `esnext` from
+  the root config before. The root config extends it too and raises `lib` to `esnext` for the repo's scripts and tests.
+- **The tick scripts moved into `@sssb/tools`** (`sssb tick`, `sssb dev-tick`, `@sssb/tools/ticker`,
+  `@sssb/tools/ticker-marker`), in a commit of their own: every app with a scheduled-tick route needs them, and the
+  starter's Playwright config imports the marker. ADR-0014's table had no row for them (`pnpm tick` merged after it).
+  Their logic is unchanged: against `scripts/`, the diff is imports, entry points, comments, the usage text, and three constants no longer exported (for knip).
+- **The framework keeps its own scratch-directory helper** for its tests, the shipped conformance suites among them,
+  because the framework depends on no other SSSB package; everyone else imports `@sssb/tools/testing/tmp-dir`. The two marker
+  suffixes are held equal by `tests/tooling/tmp-dir.test.ts`. The framework's copy lost `makeTestTmpDirAsync`, which
+  only the repository's own tests used.
+- **`sssb ci`** has three jobs today: `e2e-shards` (discovering shards from the workspace's apps, with a project named
+  `destructive` splitting an app in two, as the shell in `checks.yml` did), `e2e` and `demo-static`. `checks.yml` runs
+  `e2e-shards` from the package's source before any install, as its shell loop ran. P10's reusable workflow adds the
+  rest.
+- **`sssb guide` exists ahead of the guide.** It copies the framework's published `@sssb/kit/guide.md` to
+  `.claude/sssb-guide.md` with a `sha256` stamp and `--check` compares stamps; until P7 publishes the guide it says so
+  and exits 1.
+- **The assembly checks** (`@sssb/tools/assembly-checks`: the migrator bundle, the fail-closed environment, #49's Data
+  API shape) are functions over a synthesized template and its assembly directory, which `infra/check-shapes.ts` now calls. It also gained
+  the fail-closed check on the server function's environment, on both shapes.
+- **`sssb check-doc-paths`** runs the doc-path gate's engine (`@sssb/tools/doc-paths`) over the doc set in the root
+  package.json's `sssb.docPaths`. `tests/docs/doc-set.ts` reads the same configuration, so the gate, the CLI and
+  `init-app`'s rewriter still share one list.
+- **Pack and consume** packs `@sssb/tools` beside the framework and installs both tarballs. Nine P4 workarounds are
+  gone: `prune-plugin-copied`, `ports-copied`, `check-demo-size-copied`, `tmp-dir-helper-copied`,
+  `vitest-config-written`, `tsconfig-written`, `vite-aliases-removed`, `next-intl-request-path` and
+  `tick-scripts-copied`. One is new, `in-repo-tsconfig-stripped` (P12): the starter's tsconfig extends the base but also
+  maps the framework and the seam to source and includes `packages/kit/src`, which only this repository can. New
+  steps check the packed tools (no SSSB dependency in any field, JavaScript only) and run the `dev:real` preflight
+  from each app, and the sibling package `gate` uses `@sssb/tools`' helper with no framework installed.
+- **knip** cannot see what a preset loads from the app or what `@sssb/tools` imports from its optional peers; the
+  narrow entries are in `docs/build-notes.md`.
+- **What review changed** (two rounds and a diff review, Opus and Fable). Framework source is now recognised by its
+  package, not its path: a file is the framework's when its nearest named package.json is `@sssb/kit`'s
+  (`isFrameworkFile`), which also catches a copy of the framework's tree reached by a relative path. The `dev:real`
+  preflight bundles every file outside `node_modules` (a workspace package the seam imports included, so its own
+  `@sssb/kit` imports are checked rather than loaded natively past the check) and runs the identity check on every
+  bundled input and every external. Each bundled file that uses `import.meta` is first transformed with `import.meta`
+  defined as an object holding its own location, since a CommonJS bundle has none. The Vite and Vitest presets add a
+  guard plugin that runs the same check on every module they load, so a workspace package bringing a framework
+  instance of its own fails there too, instead of running beside the app's on the app's seam. `resolveFromApp` walks
+  `node_modules` as `kitDirOf` does. The doc-path gate, and this repository's `tests/docs/doc-paths.test.ts`, fail an
+  `include` entry that names nothing. Labels for shards and launch configurations are unique; `sssb tick` and
+  `sssb dev-tick` take `--app`.
+- **The resolver is published as `@sssb/tools/kit`** (`kitDirOf`, `kitVersionOf`, `assertAppsKitFile`,
+  `resolveAppsKit`, `isFrameworkFile`, `assertNoForeignFramework`, `resolveFromApp`, `importFromApp`), at P9's
+  request: `@sssb/cdk`'s construct runs the same check rather than a second copy. P9 records the dependency that
+  takes on `@sssb/tools`.
+- **Port slots stay a closed list** (`showcase`, `starter`, `ladle`, `contractPg`), as `scripts/ports.mjs` had them, so
+  two apps of an adopter's own made from the starter share one; the independent review found it, and
+  `.claude/future-tasks/port-slots-for-adopter-apps.md` designs a slot an app declares itself.
+
+## A Simulator control for the dev ticker, and focus on panel toggle (2026-11-18, `feat/simulator-ticker-control`)
+
+JP asked on 2026-11-17 whether the Simulator could start the ticking clock from its UI. This builds
+`.claude/future-tasks/resolved/simulator-ticker-control.md` and, in the same panel, fixes
+`.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
+
+- **The ticker runs inside the dev server, owned by a route.** `apps/showcase/src/app/api/simulator/ticker/route.ts`
+  (GET status, POST start or stop) drives one `createTicker` from `scripts/ticker.mjs`, kept on `globalThis` so a hot
+  reload of the module does not orphan a running loop and start a second (`dev-ticker.ts` beside it). It ticks this
+  server's own `/api/webhooks/cron` over HTTP with the per-checkout dev secret, exactly as `pnpm tick` does, so
+  `withWebhookSecret` stays the only door into `runScheduledTick`. It leaves the same `dev-ticker.json` marker the
+  `DEV_TICK_SECONDS` wrapper does, with the server's pid, so `pnpm test:e2e` refuses to adopt a server whose ticker was
+  started from the UI (checked live: the playwright guard threw while it ran, and stop removed the marker).
+- **A new run-mode flag, `isSimulatedDevServer`, because `isSimulated` is not enough.** The future task said to 404
+  "outside a simulated world", like the flags route. But the hosted demo and CI's e2e build are simulated worlds with a
+  server, and the ticker must exist in neither. `@sssb/kit/adapters/index` already reads `DEMO_MODE` and `E2E_BUILD`
+  (it is where `process.env` may be read), so it now exports `isSimulatedDevServer`: simulated, `NODE_ENV` of
+  `development`, and neither switch. The logic is a pure function in `packages/kit/src/adapters/dev-server.ts`, outside
+  `index.ts`, because `production-guard.test.ts` counts every `&& !is…` in that file as a bypass of the fail-closed
+  guard; a source test pins how `index.ts` wires it. The route opens with the `isSimulated` 404 every simulator route
+  has, then a second 404 on `!isSimulatedDevServer`, and only then imports the ticker module, so a production build
+  never evaluates `scripts/ports.mjs` (which looks for the workspace root from the working directory at load).
+- **No `authorize(...)` call.** The brief said every new mutating route calls it. The scan's rule is "calls it, or has a
+  justified exemption whose gate it passes", and every route under `simulator/` passes the `opens-with-simulated-404`
+  gate: the Simulator's knobs are reachable signed-out (pick a person to sign in, reset the world), so there is no
+  actor to authorize. This route is one of those knobs, and the scan accepts it on that gate.
+- **The panel shows the control only where the route answers.** The kit's Jobs tab takes an optional `ticker` prop
+  (`DevTickerLike`); the showcase glue asks the route when the Jobs tab opens and on its poll, and on a 404 stops asking
+  for the page's life. So the control is absent in real mode, in every production build, and in the static demo, whose
+  twin never wires it. A local `pnpm test:e2e` runs against `pnpm dev`, where the control exists, stopped, and nothing
+  clicks it; `simulator-panel.spec.ts` asserts that locally and, on CI's `E2E_BUILD`, that the route is 404 and the
+  control absent.
+- **One ticker per world.** A live marker whose pid is not the server's (the `DEV_TICK_SECONDS` wrapper, or another
+  server on the same data directory) makes start answer 409, and the control says a ticker started outside the panel is
+  running, with its interval and pid, and to stop it there. The panel cannot stop a ticker another process owns.
+- **The origin is `http://localhost:<portFor('showcase')>`, not the request's host.** The dev secret is sent there as a
+  bearer, and a Host header is the client's to choose. `pnpm dev` takes its `--port` from the same function. A server
+  started on another port by hand ticks whatever listens on the derived port instead: its last-error line then says
+  "could not reach", or a 401 if another checkout's server is there. `pnpm tick` has the same exposure.
+- **The control keeps focus.** Start and Stop are one button whose label changes, not two buttons swapped, and it is
+  `aria-disabled` while a request is in flight rather than `disabled`: disabling a focused button moves
+  `document.activeElement` to `<body>` (measured in Chromium with Playwright). While the
+  ticker runs the interval field is not rendered: the status line names the interval, and a disabled Mantine field
+  on the dark panel was hard to read.
+- **Focus follows a panel toggle.** After `toggle()`, an effect keyed on `collapsed` focuses Hide when the panel opens
+  and the pill when it closes, gated on a ref only `toggle()` sets, so page load never takes focus. A mouse click on the
+  pill moves focus to Hide too; that is where the next Tab should start.
+- **`scripts/ticker.mjs` changed only in its header comment** (its two users, and where each one's policy lives), so
+  P4's move of the tick scripts into `@sssb/tools` resolves against it simply. The route's `dev-ticker.ts` imports
+  `scripts/ports.mjs`, `scripts/ticker.mjs` and `scripts/ticker-marker.mjs` by relative path (its test imports the last
+  two); when they move, those imports move with them.
+- **Two things review added.** The POST takes only `application/json` (415 otherwise): a page on another origin can
+  send a text/plain POST to localhost without a preflight, and this route starts a loop that outlives the request. And
+  the server removes its own marker on `exit`, so a dev server stopped with a UI ticker running leaves none behind.
+- **Left as they are, from review.** A Start clicked by hand during a local `pnpm test:e2e` ticks under the run (the
+  guard checks the marker at config load). Wiping `.data` under a running ticker removes its marker, as it does the
+  wrapper's. An `APP_DATA_DIR` set only in a `.env` file would reach the server but not the playwright config or the
+  wrapper, which read the shell's environment (no `.env` file exists here). Each needs an unusual setup, and closing
+  them means changing `scripts/` while P4 moves it.
+- **A dev-only route imports the ticker scripts at run time, and that crosses ADR-0014 rule 4 once P4 lands.** Rule 4
+  says only `@sssb/kit` is imported at run time; after P4 these scripts are `@sssb/tools`, an app devDependency. The
+  import stands because it is the showcase's (SSSB's reference app, not the starter an adopter keeps), Next bundles it
+  at build time so production never resolves the devDependency, and it sits behind the `isSimulatedDevServer` 404 so a
+  production build never evaluates it. If the rule is to hold without exception, the alternative is a kit-owned
+  ticker, which would duplicate `scripts/ticker.mjs`.
+- **The interval is a native number field, not Mantine's `NumberInput`.** `NumberInput` brought `react-number-format`
+  into the showcase's static demo, which renders the kit's Jobs tab but never the control, and put it 8,364 bytes over
+  its 860,000-byte budget. A `TextInput` of type number took the bundle to 840,890 bytes, under budget again; the route
+  validates the value either way.
+
+## Changesets are required on PRs that change what ships, and carry the release note (2026-11-18, `ci/changeset-required`)
+
+JP asked whether CanopyCMS's way of keeping a changelog up to date could be copied. Its mechanism: every PR that
+changes a published package adds a `.changeset/*.md` that is its changelog entry, in a fixed template ending with a
+"Now deletable" part, and CI fails the PR without one. SSSB already had Changesets but no rule, template or lint.
+
+- **What was taken:** the gate, the template, the explicit "no adopter-visible effect" answer (an empty changeset),
+  and "Now deletable". The template's `**Kind.**` is one of P7's four release-note sections (`seam`, `migration`,
+  `operator`, `scaffold`) or `none`, so the notes can be written from the files by section.
+- **Kind and Action are separate fields.** Canopy keeps "which area" and "must the adopter act" apart; a first
+  version here tied the bump to Kind and left an additive migration or a new optional export with no honest home
+  (ADR-0014 part 10 calls a migration breaking only when it needs operator action). `**Action.** required` is a
+  `minor`; `optional` and `none` may be a `patch`. Part 10's other breaking items (a raised peer floor, a rule that
+  turns app code red) are filed under `seam`, and a change in two sections is two files.
+- **What was not taken:** CanopyCMS's 3,286-line assembly script, its area table and its int-prerelease labels. They
+  serve an npm prerelease channel; SSSB's release candidates are tarballs on a GitHub prerelease (ADR-0014 P7).
+  Assembling the notes from the files waits for `@sssb/tools` to exist to host it, and the stock
+  `@changesets/cli/changelog` ignores Kind and Action, so P7/P14 need a custom changelog function or an assembler
+  (said in `.changeset/README.md`). Rejected alternative: port the script whole.
+- **The gate is path-based, not `changeset status`.** Every package is `private` until P14 and `status` ignores
+  private packages, so it would pass for any change. "Ships" is every `@sssb/*` package under `packages/` (read from
+  its manifest, so P4's tools, P6's plugin, P9's cdk and P12's create are covered the day they land; the kit is
+  narrowed to its `files` allowlist, the seam-conformance tests included, other tests and stories not) and
+  `apps/starter`, the scaffold an adopter copies and the future `@sssb/create` template. `apps/showcase`,
+  `packages/seed`, the lockfile and the kit's `test-fixture` are not shipped. The lockfile counts in CanopyCMS
+  because its worker is an esbuild bundle; SSSB ships source. A test fails when the kit manifest's `files` gains an
+  entry the gate does not know.
+- **Known gap, taken on purpose:** while adoption is a fork, adopters also receive `infra/`, the cutover checklist,
+  the ESLint config, `.gitleaks.toml`, the CI workflows, `scripts/` and the docs. Gating them now would make every
+  P5, P6, P9 and P10 PR carry a changeset for files those steps are moving. Some of them land in packages and the
+  starter, which the gate covers; some land elsewhere (the showcase's `infra/`, a generator's write-once files).
+  The README says to check whether the gate sees a change.
+- **Exemptions:** the release merge (`integration` into `main`, same repository, so a fork's branch of that name is
+  not exempt); Dependabot's PRs unless one changes the kit's `peerDependencies`; a PR opened before the gate reached
+  its base branch (read from git, so no date is written down); and a file a PR carries only because it merged `main`
+  in (ported from CanopyCMS), since the repository does merge `main` back into branches.
+- **The logic is a shell script under `.github/scripts/`, tested by a vitest file** that builds real git repositories
+  (the machine's git config isolated), and the shape lint is `tests/support/changeset-shape.ts` run by the same file.
+  Neither adds a `scripts/` file, a `package.json` script or a `knip.json` entry, because P4 is moving `scripts/`
+  and P4, P5 and P6 own the root manifest. Each moving part of the script was mutated to confirm a case goes red.
+
+## Doc agents: one steward, plus a line-delta rule and a reading map (2026-11-18, `docs/doc-hygiene`)
+
+JP asked what is worth borrowing from CanopyCMS's documentation setup. Two things, and not the rest.
+
+- **Taken: the net-line-delta rule.** Canopy measured that its doc-update steps only ever added: four root docs grew
+  by 2,154 lines in a month and none shrank. SSSB has the same shape (every `doc-steward` step is written to add), so the
+  agent now reports the net line delta of each doctrine doc the diff touches, says why any grew, and proposes
+  deleting what the diff supersedes in the same pass. The dated records are exempt from deletion: they are
+  append-only, so for them it only notes growth. `CLAUDE.md` carries one sentence pointing at it.
+- **Taken: the task-to-doc table.** `docs/README.md` lists documents; it now also has a "Read this for X" table by
+  task, so an agent starting a job finds the doc to read first. Its backticked paths are gated
+  (`doc-paths.test.ts`); its links are not.
+- **Not taken: Canopy's four per-document maintainer agents.** `doc-steward` already walks SSSB's doc set in order,
+  and it is one agent to keep current instead of four whose scopes can drift.
+- **Not taken: `CODEBASE_GUIDE.md` and its codebase-guide agents.** A file-by-file map of the code is a second copy to
+  keep true. The agent instructions do have a planned home (ADR-0014's P4 `sssb guide`, content from P7, which
+  copies the app guide into an adopter's repo), but a file map like `CODEBASE_GUIDE.md` is deliberately not planned.
+
+## Trojan Source scan and an action-pin gate, borrowed from CanopyCMS (2026-11-18, `ci/ci-hygiene`)
+
+- **A Trojan Source scan** (`.github/scripts/check-bidi.sh`, the first step after checkout in `checks.yml`, before
+  any install). It fails when a tracked file's contents or name holds one of the nine bidirectional reordering
+  codepoints (U+202A-202E, U+2066-2069), which let a reviewer read one program while the compiler builds another.
+  It is CanopyCMS's step, kept fail-closed: the locale is pinned, because `git grep -P` dies with exit 128 outside
+  a UTF-8 locale; the exit status is read with `case`, because `if git grep; then` reads 128 as "nothing found";
+  `pipefail` covers the filename pipeline; and the filename byte pattern is self-tested against all nine. It
+  scans from the repository root, and reads source-type files as text and refuses a NUL in one, because
+  `.gitattributes` or a NUL can make git call a file binary, which `git grep -I` skips.
+- **An action SHA-pin gate** (`tests/tooling/action-pins.test.ts`, finder in `tests/support/action-pins.ts`). It
+  parses every workflow and local composite action and fails on a `uses:` that is not a full 40-hex SHA
+  (`./` refs exempt, `docker://` flagged). Every action is already pinned today, so it prevents drift (a job merged
+  from a sibling branch, a Dependabot bump to a tag) rather than fixing anything. It does not check
+  `jobs.*.container` or `services.*.image` tags, or what a symlink points at.
+- **A bash script and vitest tests, not `scripts/`.** P4 is moving `scripts/`, and P4, P5 and P6 all
+  touch the root `package.json`, the lockfile and `knip.json` (ADR-0014, the paragraph after the step table), and P9's
+  row changes `pnpm-workspace.yaml` and the knip globs; neither piece needs a `package.json` script or a knip entry here. The script's
+  tests (`tests/tooling/check-bidi.test.ts`) run it against real scratch repositories, including a repository
+  that is not one, and a parent `LC_ALL=C`.
+- **Rejected: porting `check-action-pins.mjs` into `scripts/`** with a `package.json` script. It would grep for
+  `uses:` rather than parse, and would touch the files other work owns.
+
+## The database is named from the slug with dashes as underscores (2026-11-18, `fix/aurora-db-name`)
+
+`@sssb/cdk`'s entry above left this as a follow-up: `SssbApp` named the deployed database by the app's slug, `pnpm
+init-app` accepts dashes in a slug, and Aurora PostgreSQL's database names take letters, numbers and underscores only,
+so `pnpm init-app my-app` gave a stack that synthesized and failed at deploy.
+
+- **Derived, not refused.** Dashes are ordinary in a slug, so the construct names the database
+  `databaseNameFor(slug)`: the slug with each dash as an underscore (`packages/cdk/src/database-name.js`). A slug has no
+  underscore of its own, so two slugs never share a name, and a slug with no dash names the same database as before:
+  the showcase's and the starter's templates are unchanged but for one variable on the migrator.
+- **Every place the name is used takes it from there**: the cluster's `defaultDatabaseName`, the server's
+  `DATABASE_NAME` (data-api) or the path of its `DATABASE_URL` (pg), and the migrator's `DATABASE_NAME`, on both
+  transports now. On pg the migrator used to take the name from the secret's `dbname`, which the synthesized secret
+  does not carry (only the cluster's secret attachment would add it, at deploy); the framework's handler now prefers
+  `DATABASE_NAME`. The contract test databases already folded dashes (`contractDatabaseName`), and nothing in
+  `packages/kit/src/db` or an app's `config/params.ts` turns the slug into a database or role name.
+- **Refused where the name cannot be made**: a slug over 63 characters, or one whose name the engine reserves (its
+  reserved key words, `postgres`, `rdsadmin`, `template0`, `template1`), throws at synth, and `pnpm init-app` refuses it
+  where the slug is chosen, importing the same function.
+- **Proved** by a test that synthesizes a dashed-slug app on both transports (red with the old naming), by `pnpm
+init-app my-app` in a copy of the repository followed by its real `cdk synth` (`DatabaseName: my_app`), and by
+  `init-app` refusing `user`, `select`, `rdsadmin` and a 64-character slug (each red without the check).
+
+## `@sssb/eslint-plugin`: the fences as one plugin (2026-11-18, ADR-0014 P6, `feat/eslint-plugin`)
+
+- **Every fence is a rule with an id of its own.** The fences that were `no-restricted-imports` patterns or
+  `no-restricted-syntax` selectors are now `sssb/no-vendor-import`, `sssb/no-next-font-google`,
+  `sssb/no-real-adapter-import`, `sssb/no-static-real-adapter-import`, `sssb/no-kit-real-adapter-import`,
+  `sssb/no-dynamic-real-adapter-import`, `sssb/no-process-env`, `sssb/no-run-mode-env`, `sssb/no-literal-a11y-copy`,
+  and, SSSB-internal, `sssb/no-app-import` and `sssb/no-framework-import-in-core`. The declaration rules match as
+  `no-restricted-imports` did (the `ignore` package with `allowRelativePaths` and `ignorecase`, a `regex` with `iu`,
+  the specifier trimmed, `import m = require()` included; they also trim that last form's specifier, which ESLint
+  does not, a tightening) and report each pattern's own message, so every
+  probe in `tests/lint` kept its message fragment and only its rule id changed. `eslint.config.mjs` no longer sets
+  either core rule. The alternative, keeping the core rules for SSSB's own repository and ids only in the preset,
+  would have left two readings of each fence.
+- **`react/jsx-no-literals` became `sssb/no-jsx-literals`**: react's rule, run with SSSB's options fixed and no
+  options of its own. The alternative, leaving `react/jsx-no-literals` in the preset, let an adopter's block that
+  configures that rule for its own reasons replace SSSB's options for every file it matched.
+- **`configs.app({ root })` is async**, because it imports the app's `lint-exceptions.mjs` (an ES module, re-read by
+  mtime as before). A synchronous factory through `require()` of ESM was the alternative; it cannot re-read an edited
+  file in a long-lived lint server. Adopters write `...(await sssb.configs.app({ root: import.meta.dirname }))`.
+- **`root` must be absolute, and every block carries `basePath`**: `root` itself, or its parent directory when
+  `root`'s last segment is `*`. A relative root is refused: it would be
+  relative to wherever ESLint started (ADR-0014 part 4). A last segment of `*` means every app in that directory;
+  this repo's config passes `join(import.meta.dirname, 'apps/*')`, the ADR's `apps/*` anchored.
+- **The internal rules' anchors are a `{ root }` option**, read when the rule runs: `sssb/public-surface` and
+  `sssb/no-path-out-of-package` read `packages/kit/package.json` under it, and both path rules resolve landings
+  against it. Nothing in the plugin reads a file when it loads but its own `package.json` (for `meta.version`).
+- **Scope changes, each a tightening or a no-op.** The a11y-copy ban now covers the app's registry
+  (`src/adapters/index.ts`), which lost it only because the fakes block ignored the registry for the dynamic real/
+  ban. The `next/font/google` ban now covers `next.config.*` and `tests/contract/`, which the vendor block's carve-outs
+  had dropped with it. The registry pattern (`appRealAdapterPattern`, now `sssb/no-real-adapter-import`) no longer applies to
+  `packages/*/src`: a package
+  has no registry, and in `packages/kit/src` the merge trap had already replaced it with the framework fence's list.
+  `SSSB_LINT_EXCEPTIONS_ROOT` is gone: the tests point `configs.app` at a scratch tree directly.
+- **An app adds its own vendors in its `package.json`** (`"sssb": { "vendors": [...] }`, beside P4's `sssb.port`). An
+  app-owned adapter's SDK used to go into `vendorSdkPattern` in a fork's `eslint.config.mjs`; once the list ships in
+  the plugin, an adopter cannot edit it. The first cut was a `configs.app({ root, vendors })` option, and round 1 of
+  review (both reviewers) found it could narrow SSSB's list: `ignore` reads a leading `!` as a negation, and
+  check-fences skipped the vendor rules' options, so a later block could also swap the app's list for one directory.
+  Now the list is a file check-fences reads too, the options are compared exactly, and a leading `!` is refused in
+  the package.json and in the rules' schema. The alternative, keeping the option and teaching check-fences a superset
+  test, still needed check-fences to know the app's list, which only a file gives it.
+- **What the plugin depends on.** `eslint` is a peer; the base config's plugins (`@eslint/js`, `typescript-eslint`,
+  `eslint-plugin-react`, `-react-hooks`, `-jsx-a11y`, `@next/eslint-plugin-next`, `eslint-config-prettier`) and
+  `ignore` are dependencies, so `configs.app` needs nothing else installed. An adopter's own block that binds one of
+  those plugins to another copy gets ESLint's loud `Cannot redefine plugin`, never a silent change.
+- **The e2e import ban (ADR-0014 part 2) waits for P5.** The spec it allows, `@sssb/kit/testing/e2e`, does not exist
+  yet, and `apps/showcase/tests/e2e/destructive/simulator-webhooks.spec.ts` imports `@sssb/kit/core/webhook-signing`.
+- **What `sssb check-fences` defends against: an adopter's config weakening a fence by ACCIDENT.** Three review rounds
+  and an independent reviewer (Fable) on "can a config composed after the preset silently switch off or narrow a
+  fence?" closed every plain-configuration case they found: a rule turned off or down, narrowed to a directory, an
+  `ignores`, a nested config file, a processor or parser for one directory, an app's vendor list negated or swapped,
+  inline directives in every form ESLint reads, an `eslint-suppressions.json` (the ESLint CLI applies it, the ESLint
+  class only with `applySuppressions: true`, which check-fences does not pass, so check-fences now reports every fence finding in the app's own files, at any severity), symlinked
+  files and directories, and build-output names deeper in `src/`. What is left needs config code written to deceive,
+  and each case keys on the probes' public file name: a parser that borrows the real one's `meta`, the preset's blocks
+  rewritten to bind `sssb` to a look-alike plugin, a module the rules read rewritten. These are OUT OF SCOPE (manager,
+  2026-11-18): a config that is written to deceive can as well delete the preset, and no lint-time check stops that.
+  The plugin, its rules, its patterns and react's `create` are frozen or captured anyway, because that was cheap. The
+  stronger check, a probe at every real file's path, is `.claude/future-tasks/check-fences-real-file-probes.md`:
+  rejected for now because it adds a third lint per file to a check that already takes about 5s on the showcase (233
+  files; `sssb check-fences --app apps/showcase`, measured 2026-11-18).
+  Also not covered, by nature: flags on the app's lint command (any fence finding is still reported by check-fences,
+  whatever the command does with it), and a config that behaves differently when it detects which tool loaded it.
+- **Typed linting cannot pass check-fences yet.** Its probe files are virtual and outside the app's TypeScript
+  project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
+  with that reason (a false red, not a hole).
+
+## The reusable workflow (2026-11-18, ADR-0014 P10, `ci/reusable-workflow`)
+
+- **`.github/workflows/app-checks.yml`**, `on: workflow_call` only, `permissions: contents: read`, no secrets. Its jobs
+  are `lint-typecheck-unit` (the workspace's lint, typecheck and unit tests, then `sssb check-fences` in each app,
+  one `sssb doctor` run and `sssb check-e2e` in each app),
+  `contract` (a `postgres:16` service and the workspace's `test:contract`), `discover` (the e2e shards and the
+  static-demo apps), `e2e (<shard>)`, `demo-static (<app>)`, an optional `synth`, and `all-checks`. Every step that
+  is not setup is one `pnpm exec sssb ci <job>`; the jobs P10 adds to `sssb ci` are `lint-typecheck-unit`,
+  `contract`, `matrix` and `synth`, and `--apps` narrows the ones that fan out.
+- **`all-checks` is the one check an adopter requires.** A skipped job reports as a passing check, and a job that
+  never starts reports nothing, so requiring the jobs one by one lets a check go missing or pass without running.
+  `all-checks` runs `if: always()`, needs every other job, and fails unless each one's result is `success` (synth's
+  `skipped` when no synth was asked for). A test holds its `needs` and its list to every other job. The alternative,
+  documenting a list of checks to require, leaves each adopter's ruleset to drift from the workflow.
+- **A job with nothing to run fails.** A missing root script, an e2e or static-demo list that comes out empty, or a
+  synth selector that matches no package is an error, not a quiet pass. So the workflow assumes a few conventions,
+  which it says at its top: a pnpm workspace at the repository's root, depending on `@sssb/tools`, whose root defines
+  `lint`, `typecheck`, `test:unit` (or `test:coverage`, which is run instead when present) and `test:contract`, and
+  apps that each have a Playwright config and a `test:e2e` script (and a `chromium` project beside a `destructive`
+  one), and the scripts `build:demo-static`, `check:demo-size` and `e2e:demo-static`. `@sssb/create` (P12) writes them.
+- **`apps` is optional and defaults to the workspace's apps** (the root's `sssb.apps`, or every `apps/<name>`, P4's
+  rule). This repository passes none, so `pnpm init-app`'s rename and eject need no edit to `checks.yml`. A listed app
+  must be a package inside the workspace.
+- **`synth` is a pnpm `--filter` selector** (`./apps/console/infra`, or this repository's `./apps/*/infra`), run with
+  `--fail-if-no-match`. Empty skips the job.
+- **This repository calls it by its local path**, so it runs at the commit under test; an adopter pins it to a
+  commit SHA. The alternative, pinning this repository's own call to an earlier SHA, would test old CI against new
+  code.
+- **Check names change.** GitHub names a called workflow's jobs `<caller job> / <job>`, so the app checks are now
+  `sssb / lint-typecheck-unit`, `sssb / contract`, `sssb / discover`, `sssb / e2e (showcase)`,
+  `sssb / e2e (showcase-destructive)`, `sssb / e2e (starter)`, `sssb / demo-static (showcase)`,
+  `sssb / demo-static (starter)`, `sssb / synth` and `sssb / all-checks`. The old `e2e-shards` is `sssb / discover`,
+  and the old single `demo-static` is one job per app. What only this repository checks (the bidi scan, knip, jscpd,
+  the spike) is a new job, `repo-checks`. `tests/tooling/app-checks-workflow.test.ts` pins the fixed names, and
+  in SSSB's own tree the five per-app names, so a renamed job or Playwright project goes red here before a ruleset
+  blocks every PR (a renamed app skips the per-app pin).
+- **`release.yml` is unchanged.** Its gate (`scripts/release.mjs wait-for-checks`) reads the conclusion of
+  `checks.yml`'s push run, and a called workflow's jobs are part of that run and of its conclusion
+  (docs.github.com, "Reusing workflow configurations": the called workflow's jobs run in
+  the caller's workflow run; PR 28's runs show them there).
+- **`sssb doctor` and `sssb check-e2e` (P5) run inside `sssb ci lint-typecheck-unit`**, after check-fences,
+  not as jobs of their own: no check name changes, and the job already has the workspace installed. Doctor runs once,
+  for the first app (one run checks every app of the workspace, and an adopter's root need not resolve `@sssb/kit`;
+  run from `apps/showcase` here it makes the root's checks less the root's own singleton and version lines, which
+  check no app). check-e2e runs in each app the job covers. In this repository they leave `repo-checks`, where
+  merging P5 had put them. The alternative, two more jobs, would add two required check names for no isolation
+  gained: both need the same install.
+
+## Release notes are assembled from the changesets by a script, and committed with the release (2026-11-18, `feat/release-notes`)
+
+The entry on requiring changesets (`ci/changeset-required`) deferred this until `@sssb/tools` existed; this ends that deferral, but in `scripts/` rather than in `@sssb/tools` (below). #21 made every PR
+that changes what ships carry a changeset with a Kind and an Action; ADR-0014 part 10 wants notes with "Seam changes",
+"Framework migrations", "Operator actions" and "Scaffold changes to apply by hand", and the stock Changesets changelog
+ignores Kind and Action and deletes the files. `scripts/release-notes.mjs` reads the files first and writes those
+sections, with each entry's What changed, To adopt and Now deletable.
+
+- **Taken from CanopyCMS** (`scripts/migration-notes.mjs`): the entries are the changeset files, assembled by a script
+  that lints them first and gives the same bytes for the same files; the idea that a later candidate says what changed
+  since the earlier one (`--since`, and the corrections to entries edited after it). **Not taken:** its area table, int
+  labels, `## Unreleased` table, rewriting a changelog in the repository and `--promote`, which serve an npm
+  prerelease channel. The whole of that script is 3,286 lines, about half of them its own self-test.
+- **A script in `scripts/`, not an `@sssb/tools` command.** Only SSSB's maintainers release SSSB. `@sssb/tools` ships
+  to adopters, so a command there would ship maintainer-only code, and P4 left `scripts/` for what is the repository's
+  own. `pnpm release:notes` runs it. Rejected: `sssb release-notes`.
+- **One shape lint, and it is the assembler's.** `lintChangeset` moved from `tests/support/changeset-shape.ts` into the
+  script, which the test file re-exports: the tests, `release.mjs check`, `release.mjs prepare` and the command lint a
+  changeset with the same code. It no longer uses the `yaml` package, because the `push` and `publish` jobs install
+  nothing and the module must load there: the frontmatter is read one quoted `'@sssb/pkg': bump` per line, with `#`
+  comments and a quoted bump allowed and a BOM skipped, as Changesets reads it. A changeset using YAML's other forms
+  is refused. `release.mjs` has its own small reader for the same frontmatter (`changesetReleases`, which `verify-release`
+  runs in the key-holding job), and a test holds the two together: a reader stricter than the lint would pass every
+  PR and then stop a release in `push`. Review found exactly that, after the lint was widened to what Changesets reads.
+- **Loaded dynamically.** release.yml's `push` job copies `scripts/release.mjs` out of the commit and `publish` checks
+  out three files (`release.mjs` among them, `release-notes.mjs` not), so `release.mjs` imports the notes module only inside `check` and `prepare`; a test runs the lone
+  copy to pin it.
+- **`check` lints every changeset on every PR; `prepare` always assembles before `changeset version`.** A changeset that
+  is not a readable entry would otherwise fail a release after its plan was accepted. Both leave the package names and
+  bumps to the plan's own checks (`judgePackages: false`), so a bump Changesets accepts (`none`) cannot pass one and
+  stop the other. While every package is private `prepare` returns before this point, so a release stays dormant;
+  the lint on PRs does not.
+- **The notes are a file in the release commit, `docs/releases/v<version>.md`.** The first version kept them out (the
+  `push` job is hash-pinned, and a lone `verifyRelease` cannot regenerate them to compare) and offered an artifact and
+  the run summary. Review answered that `verifyRelease` already accepts any bytes in `packages/*/CHANGELOG.md`, so one
+  more plain file is the same class of trust, and that an artifact expires: ADR-0014 part 10 says these sections
+  "replace the merge-time discovery ADR-0013 relied on", and a fork merging `main` gets the deleted changesets and no
+  notes unless a file carries them. So `prepare` writes the file before `changeset version`, `verifyRelease` accepts
+  exactly one added plain file at that path whose first line is `# Release notes: v<version>` and requires it, and the
+  `plan` job also appends the notes to its summary. The job's YAML (its hash) does not change. Its content is not
+  regenerated and compared, because the checker runs alone; it comes from reviewed changesets, like the changelogs.
+  Rejected: an artifact only (expires, and not in the repository).
+- **`docs/releases/` is exempt from the doc-path gate** (`sssb.docPaths.exempt`), like the other dated records: the
+  notes cite paths in an adopter's tree (`apps/<app>/…`) that this repository does not hold. They are also held to
+  prettier, since `pnpm lint` checks every markdown file and a red release commit blocks the publish: the first draft
+  left two blank lines between sections and review found it; a test now checks the notes of the repository's own
+  changesets and of fixtures against the repository's prettier config.
+- **`--since <ref>` and corrections.** A release candidate's notes are what was added since the previous one, with the
+  range in the heading, and the changesets EDITED since (the README allows editing one only to correct it) come back
+  under "Corrections to earlier notes", so an adopter who followed an earlier, wrong instruction is told. `--since`
+  and `--at` read git, never the working tree.
+- **No GitHub release is created.** That is publishing, which P7 (a release candidate, from `--since <previous tag>`)
+  and P14 (npm) own.
+- **Order inside a section:** Action required first, then optional, then none, then by file name, so the entries that
+  break an adopter who does nothing come first. The Action line names the packages, not their bumps: the group is
+  fixed, and the Action says what the adopter must do.
+- **The `release.test.ts` fixtures now carry a shaped body**, since `check` and `prepare` refuse any other.
+- **Not done, left for P7 and P14** (review raised each; none is needed for a first release candidate to be honest):
+  the history since 24b0589 (the rename among it) is still hand-written, so P14's unattended notes would omit it unless
+  it is backfilled as changesets or a hand-written `docs/releases/` file first; labelling each entry with the
+  candidate that first carried it; refusing a rename or deletion of a changeset a candidate already carried;
+  ordering entries so a scaffold step an adopter needs first comes before the seam change that presupposes it;
+  prepending sha512s and install lines to the notes for P7's GitHub release (a header file or `--no-title`); whether
+  GitHub's release body renders these hard-wrapped lines as it should (unverified); and the VPC entry from P9, which
+  is filed Operator actions with Action none though its body says lookups by tag need the new value.
+
+## `@sssb/kit/testing/e2e`: compiled when packed, source in the repo (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+ADR-0014 part 2: Playwright loads e2e specs with Node, so a spec reaches the kit only through
+`@sssb/kit/testing/e2e`, shipped compiled and seam-free, and packing fails if that entry imports the seam.
+
+- **The split.** `core/webhook-signing.ts` read `APP_SLUG` from the seam when it loaded. The pure half (SHA-256,
+  HMAC, sign/verify, the replay tolerance, the Mailgun recompute) moved to `core/webhook-hmac.ts`, which imports
+  nothing; `webhook-signing.ts` keeps the three `APP_SLUG` header names and `export *`s the rest, so its published
+  surface and every importer are unchanged. The `node:crypto` cross-check moved with the code
+  (`webhook-hmac.test.ts`). `webhook-hmac.ts` gets no `exports` line: only `webhook-signing` and the e2e entry
+  import it, so it is one more internal module.
+- **The mechanism: `exports` names the compiled file, and a `prepack` script builds it.**
+  `"./testing/e2e": "./dist/testing/e2e.js"`, with `dist` in the `files` allowlist and gitignored.
+  `packages/kit/scripts/build-testing-e2e.mjs` (the kit's `prepack`; `pnpm pack`, and so pack and consume, runs
+  it) bundles `src/testing/e2e.ts` with esbuild into one ES2022 module with no imports, and emits its declarations
+  with the TypeScript API (`dist/testing/e2e.d.ts`, found by the sibling rule, so the map keeps one string per key;
+  relative specifiers get `.js` so `nodenext` resolves them too). esbuild became a kit devDependency (the root already had it).
+- **Why not the alternatives.** `publishConfig.exports` replaces the whole map, so it would repeat 130-odd entries.
+  Conditions (`"sssb-source"` in the repo, `default` for Node) would make the map's values objects, which the
+  public-surface test reads as strings, and would need the condition passed to tsc, Vitest and
+  Playwright. A `prepare` script was not needed: **nothing in this repo resolves through `exports`.** Every tool
+  aliases `@sssb/kit/*` to `packages/kit/src` (tsconfig `paths`, both Vitest configs, each app's Vite build), and
+  Playwright honours tsconfig `paths` too: `playwright test --list` loads `simulator-webhooks.spec.ts` with no
+  `dist/` on disk. So in the repo a spec runs the entry's source through Playwright's transform, and building on
+  every install would only add a step that can fail an install. `public-surface.test.ts` reads a `./dist/<p>.js`
+  target as its source `./src/<p>.ts`, for both the "target exists" check and the internal-module count.
+- **The seam guard is the build.** It fails, naming the importer, if the closure imports `@sssb/app-config/*` or
+  any other package (a plugin records every bare specifier before esbuild resolves it; no tsconfig is read, since
+  the root one maps the seam to the test fixture), or if the bundle or the declarations reach a file outside an
+  explicit allowed set (`src/testing/e2e.ts`, `src/core/webhook-hmac.ts`). A failed build deletes `dist/`, so a
+  half-built entry is never packed. Seen failing: with the entry re-exporting from `../core/webhook-signing`, the
+  build exited 1 with `@sssb/app-config/identity (imported by src/core/webhook-signing.ts)`; with
+  `../core/state-machine` added, it exited 1 naming that file; restored, it passed. Review added a second half:
+  esbuild sees only literal specifiers, so the EMITTED file is parsed with TypeScript and must hold no module import
+  or export, no `import()`, no `import.meta`, and no free reference to a loader (`require`, `module`, `globalThis`,
+  `eval`, `Function`, ...), since `globalThis['req'+'uire']` never spells require. Rejected: a regex over the output
+  (misses the computed key), and an allowlist of free identifiers (needs a binder, for an output that uses no
+  globals). Not closed, deliberately: `[].filter.constructor(...)` reaches `Function` through a property chain; the
+  scan catches the accidental loader a contributor writes, and a deliberate bypass in SSSB's own source is code
+  review's to catch. The script takes `--entry`/`--out-dir` so its tests build into scratch dirs, and refuses (exit 2,
+  before touching anything) an `--out-dir` that is neither the package's `dist/`, a new path, nor an empty directory,
+  since it wipes its output on failure.
+- **Proven from the tarball.** Pack and consume gained a step: plain Node, from the consumer's `seamless` package
+  (the one with no seam), imports `@sssb/kit/testing/e2e`, checks it resolved to `dist/testing/e2e.js`, and calls
+  the verifier. The consumer's whole-surface typecheck now covers the entry's declarations.
+- **The apps' specs moved onto it.** Bundling every file under `apps/*/tests/{e2e,demo-static}` (and the Playwright
+  configs) with esbuild, through each app's tsconfig, found three that reached the kit at run time:
+  `simulator-webhooks.spec.ts` (`core/webhook-signing`, now `@sssb/kit/testing/e2e`), `tickets-pagination.spec.ts`
+  (`src/domain/tickets` imports `core/state-machine`; `TICKET_PAGE_SIZE` moved to `src/domain/ticket-page-size.ts`,
+  which `tickets.ts` re-exports) and the static demo's `static-shell.spec.ts` (`src/app-config/presets` imports the
+  `ticket.assign` definition, which runs `core/abilities` and `core/roles`; the preset list moved to
+  `src/app-config/presets/list.ts`, which `presets.ts` re-exports). `tours.spec.ts` reads `src/app-config/tours`,
+  whose kit import is type-only and erased. The starter's specs reach nothing. That check is now the gate
+  `sssb check-e2e` (below); the lint ban on other `@sssb/kit/*` imports from specs is P6's preset (ADR-0014 part 4).
+
+## The conformance suite's unit half: what moved, what stayed, and the choices the design left open (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+`@sssb/kit/testing` (`conformanceSuite({ appDir, optOut })`) replaces the five seam-conformance test files and the
+authorization scan's walk of `apps/*`; each app calls it from `src/sssb.conformance.test.ts`. The design (checks as
+data in `checks.json`, fixed test names, named opt-outs, the file-level skip guard, app-owned exemptions, the seam
+map, the cutover rows as data) was set before the work; these are the calls it did not pin down.
+
+- **The app file passes `appDir: path.resolve(import.meta.dirname, '..')`.** Measured under the app projects'
+  happy-dom environment (Vitest 4.1.12): `import.meta.dirname` and `import.meta.url` are the file's real path and
+  `file:` URL, in the app and in kit code alike; only the global `URL` mis-resolves a relative reference. So the
+  suite takes a directory, never reads `process.cwd()`, and resolves nothing with `new URL`.
+- **An app's `authz-exemptions.mjs` is loaded with Node's `require`, not `import()`.** Under happy-dom, Vite reads an
+  absolute path as a URL under the project root and refuses a `file:` URL, so a dynamic import of the file failed
+  ("Cannot find module") for any app outside the Vitest root. `require` of an ES module is Node's own (22.12+), and
+  the file is plain JavaScript, as `lint-exceptions.mjs` is.
+- **"Collides with a framework entry" means overlaps, not only equals.** An app entry fails if its key equals a
+  framework exemption or required-alongside key, sits under a framework prefix, or is a prefix over one: an exact
+  entry wins over a prefix in the scan, and an exemption is checked before the `service/` gate, so an app file entry
+  at `webhooks/x/route.ts` or `service/x/route.ts` would otherwise weaken a framework gate. A malformed or colliding
+  entry is reported AND not applied.
+- **The per-handler results are one assertion.** The test names are fixed (doctor computes them), so
+  `every mutating handler reaches authorize(...) or passes its exemption's gate` lists every failing
+  `<app>: <rel> <VERB> …` line; likewise the numbering, catalog-key and preset-copy checks list every offender instead
+  of stopping at the first (`expect.soft` for the ICU placeholders).
+- **Three migration cases stay the kit's own** (`packages/kit/src/db/migrate.test.ts`): `outOfSequence`'s unit case,
+  the synthetic-registry case, and the refuse/renamed cases. The last two exercise the guard on the FRAMEWORK
+  sequence (the first and second framework migrations), and nothing an app registers changes the outcome: the
+  app's migrations only ride along in `migrateToLatest`, and if they fail, `rls-pglite` and `migration-order` fail
+  first. Moving them would add two pglite migrations to every app's run for no new coverage. `migration-order` keeps
+  the numbering and the upgrade-to-the-same-schema case, which are about how the two sequences compose.
+- **The demo-presets mocks are `vi.doMock`, registered while the file is collected, and proven applied.** A
+  library's `vi.mock` is not hoisted; `doMock` (resolved relative to the calling module, measured) applies to every
+  later import, and the suite imports everything that reaches the adapter registry inside a test. The mocked
+  registry carries a marker, and the two tests that replay check it first, so a mock that silently did not apply
+  fails with a sentence instead of replaying on the real adapters.
+- **The replay's data dir is ASSIGNED, not `vi.stubEnv`ed** (`setDataRoot` in
+  `packages/kit/src/adapters/fake/data-dir.ts`, where the lint allows an env write, restored in the check's
+  `afterAll`), and each test that reaches the adapters first proves `dataRoot()` is still the scratch dir. Under an
+  adopter's `unstubEnvs: true` Vitest unstubs before every test, so the replay fell back to `<cwd>/.data` and reset
+  the developer's dev world (reproduced). Rejected: a lint exemption for `demo-presets.ts`, and re-stubbing in a
+  `beforeEach` (a concurrent test's unstub still undoes it mid-test).
+- **`seam-specifiers.json` is checked against the `files` allowlist read in order** (npm's last-match-wins), and a
+  seam module's spelling anywhere other than an import specifier (a template, a string) fails the scan. Today the
+  shipped source imports 18 specifiers, all literal.
+- **`cutover/rows.json` holds `{ id, what }` verbatim from the "## Rows" table**, markdown and all, including
+  `release-app`, which is SSSB's own repository's row: equality with the doc is the rule. That row carries
+  `"scope": "sssb"`, which doctor reads (below).
+- **The contract checks are in `checks.json` too** (`contract-owner-pass`, `contract-rls`, `contract-data-api`,
+  `runner: "contract"`), named from the old `tests/support/contract-suite.ts` tests and two of
+  `rds-data.contract.test.ts`'s; `contractSuite` (next entry) registers them. The unit suite refuses an opt-out
+  naming one.
+- **The skip guard is a file-level `aroundAll`, checked after the whole file has run.** It began as an `afterAll`;
+  Vitest abandons a suite's remaining `afterAll` hooks at the first that throws, so a guard that fired skipped
+  `server.stop()` and the scratch-dir cleanup. `aroundAll`'s teardown runs after every `afterAll` of the file under
+  any `sequence.hooks` (Vitest >= 4.1, inside the peer range). Rejected: registering the guard first (right only under
+  `stack`), wrapping the checks in an enclosing `describe` (changes every full name doctor computes), and having the
+  guard run the cleanups itself. The guard tells three causes apart: a check kept from running by a failed setup hook,
+  one that was to run when the file started and did not (a cancelled run: `--bail`, an interrupt), and only the rest
+  as an `.only`, `.skip` or name filter.
+- **Each check's tests run in order, whatever the adopter's config says** (`describe.sequential`, which changes no
+  name). Under `sequence.concurrent: true` the demo-presets replay always failed: Vitest's mocker hands an import made
+  while a `vi.doMock` factory is still running the REAL module, and two of the check's tests imported the registry at
+  once; the checks' shared state (the data root, the fake world) wants order too. Rejected: warming the mock in a
+  `beforeAll` (fixes the race, not the shared state) and documenting "don't use `sequence.concurrent`" (a false red
+  with no escape but an opt-out).
+- **Without isolation the suite cleans up per file.** Under `isolate: false` the replay's pglite client stayed cached
+  on `globalThis` pointing at the scratch world, and the kit's `tmp-dir.ts` registered its one cleanup hook in the
+  first file only. Now the demo-presets check's `afterAll` closes the fake db, restores the data root and removes its
+  scratch dir (`removeTestTmpDir`), in one hook so the order holds; and `tmp-dir.ts` registers a hook for each later
+  file whose first call comes while it is collected. Rejected: `process.on('exit')` (pool teardown may not fire it)
+  and pushing into Vitest's runner hooks (internals, in a shipped file). `@sssb/tools/testing/tmp-dir` has the same
+  single-hook flaw, left for `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
+- **The demo-presets check's teardown waits for a replay that outlived its test.** A Vitest timeout fails the test
+  but cannot stop its body: the replay ran on into `afterAll`, which closed the db and restored APP_DATA_DIR, and the
+  replay then wrote `auth/`, `pglite/` and `simulator/` into the working directory's `.data` (reproduced: a probe that
+  parks the first preset's invite for 1.5 s past a 300 ms timeout, with a second file keeping the worker alive). Now
+  the replay test's body is recorded on the file's scratch world; `afterAll` marks the world stopping (the replay stops
+  before its next preset) and waits for the body to settle, up to 30 s (`demoPresets.replayStopWaitMs`); only then
+  closes the db, restores APP_DATA_DIR and removes the dir. If the body is still running after the wait, the teardown
+  FAILS saying so and leaves APP_DATA_DIR on the scratch dir, closing and removing it once the replay settles (the db
+  only if the adapters still point there). The hook's own timeout is the wait plus 30 s (it was the adopter's
+  `hookTimeout`). Pinned by the two timed-out-replay cases of `packages/kit/src/testing/conformance/adopter-config.test.ts`,
+  both seen red with the wait removed. Rejected: waiting on simulator-admin's world queue (`tail`): it covers
+  `applyDemoPreset`'s reset and script but not the test body's reads after it (`readActorHolds` makes its directory
+  under the data root, `listMembers` and `getCurrentUser` reach auth files and the db), which would then run against
+  `.data`; and keeping APP_DATA_DIR on the scratch dir unconditionally, which leaks the dir on every timeout. The
+  timeout and the wait are injectable only by mutating the exported `demoPresets` object before `conformanceSuite()`
+  registers (the kit's own test does); `@sssb/kit/testing` exports `conformanceSuite` alone, as before.
+- **An app's nested exemption prefixes are refused, both of them** (`hooks/` and `hooks/partner/` would leave a route
+  under both to whichever the scan met first). Rejected: most-specific-wins in `exemptionFor`, which is shared with
+  the framework's policy and would change its matching too.
+- **`seam-map` resolves an `exports` target as Node does**, measured against Node: Node's own conditions for an ES
+  import, in the target's key order, `null` stopping a conditions object, Node's pattern-key order, a non-empty `*`
+  match, and the targets Node refuses (`ERR_INVALID_PACKAGE_TARGET`) reported as such; the target must be a file, and
+  a `types`-only entry fails. Rejected: adding a bundler's conditions (`module`, `browser`), which belong to one
+  environment and cannot stand in for Node, tsx and migration scripts.
+- **`seam-map` matches `module-sync`, and resolves an `exports` array as Node does.** Measured against Node's own
+  resolver: each array and condition case in `packages/kit/src/testing/conformance/seam-map.test.ts` gives what Node
+  24.19's `import.meta.resolve` gives for a fixture package holding the same map. Node matches `module-sync` by default for an ES import, so
+  `{"module-sync": "./ms.js", "default": "./ok.js"}` loads `ms.js`; the conditions are now `node`, `import`,
+  `module-sync`, `default`. In an array a `null` item does NOT stop the search: Node goes on to the next item and keeps the null only as the answer if no later item
+  gives a file. An array whose items all match no condition is unmatched, so the condition holding it falls through to
+  the next one; an empty array is `null`; and when no item gives a file, the answer is the last null-or-invalid item's
+  (`[null, "../x"]` is invalid, `["../x", null]` is not found). A conditions object still stops at a `null` (the entry
+  above). `seam-map.test.ts` pins `module-sync`, the null item, the invalid item after a null, the unmatched array and
+  the empty array, each seen red with its line of `seam-map.ts` reverted. Rejected: nothing new; this
+  corrects reading an array's `null` as stopping the search, which holds only for a conditions object.
+- **Pack and consume** drops `conformance-by-include`: the consumer apps carry the starter's
+  `src/sssb.conformance.test.ts`, their Vitest projects keep `configDefaults.exclude` (node_modules and all), and the
+  job requires every unit check's every test, named from the PACKED `checks.json`, to pass in each app, with the
+  file itself not failed by the skip guard. The tarball must ship `checks.json` and `seam-specifiers.json` and no
+  test file at all.
+
+## The contract runner ships in `@sssb/kit/testing` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+- **`contractSuite` from `@sssb/kit/testing/contract`** replaces the repo's `tests/support/contract-suite.ts` and
+  `contract-postgres.ts`. Each app's `tests/contract/rls-contract.test.ts` is one call,
+  `contractSuite({ port: portFor('contractPg'), optOut: {} })`; the database defaults to `contractDatabaseName` of the
+  seam's `APP_SLUG` (`database` overrides it). Its checks are the `contract` checks of `checks.json`
+  (`contract-owner-pass`, `contract-rls`, `contract-data-api`), registered, opted out and guarded against skipping by the
+  same code as the unit suite's (`packages/kit/src/testing/conformance/register.ts`), in the old order: owner pass
+  twice, then the superuser proofs. New: `contract-data-api` runs the app's migrations and proofs, and the owner pass,
+  over the RDS Data API transport through the emulator, in `<slug>_contract_data_api`, made empty first so the
+  migrations really run through the dialect. Before, only SSSB's fixture met the Data API.
+- **The server half is `packages/kit/src/adapters/real/contract-postgres.ts`** (and the Data API passes
+  `contract-data-api.ts` beside it), because it drives `pg` and only an adapters directory may import a vendor SDK; the
+  testing module imports it, and loads everything that reaches the seam lazily, so `contractDatabaseName` imports with no
+  seam (the repo's scaffold gate uses it). No lint exemption was widened; the package-edge rule lost its two named
+  exemptions (the kit's own contract tests no longer reach `tests/support`). The emulator ships, as before, under `src`;
+  it gets no `exports` subpath because nothing outside the runner needs it.
+- **`embedded-postgres` is an OPTIONAL peer of `@sssb/kit`**, imported with `import()` only when
+  `CONTRACT_DATABASE_URL` is unset, with an error naming the package when it is missing. It is also the kit's
+  devDependency, and both apps' (so the template, and pack and consume's consumer, carry it); the root's, and the root's
+  `pg` and `@types/pg`, went (knip). Rejected: a plain dependency, which would put Postgres binaries in every adopter's
+  production install for a test-only path; an adopter whose CI brings its own server needs none of it. Like `vitest`,
+  it is optional at run time, not to the type checker: an app that keeps `tests/contract` keeps the package.
+- **The port is the caller's**: `port` (the apps pass `portFor('contractPg')` from `@sssb/tools/ports`), else
+  `CONTRACT_PG_PORT`, else a refusal that says which to set. The framework takes no `@sssb/tools` (rule 4), so the kit's
+  own contract tests get `CONTRACT_PG_PORT` from `vitest.contract.config.ts`. Rejected: importing `scripts/ports.mjs`
+  or `@sssb/tools/ports` from the kit. Scratch directories are the kit's `makeTestTmpDir` (its copy has no async
+  variant, and none is needed).
+- **Pack and consume runs it.** `contract-test-dropped` is gone: the consumer apps keep `tests/contract`, the workspace
+  gets a `vitest.contract.config.ts` built from the preset as an adopter would write one, and a step runs it on
+  embedded Postgres on a free port (CONTRACT_DATABASE_URL blanked) and holds each app to every `contract` test of the
+  packed `checks.json` (`expectedConformanceTests(registry, 'contract')`, `conformanceProblems`). No service was added
+  to the workflow.
+
+## `sssb doctor` and `sssb check-e2e` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+ADR-0014 part 5 names doctor's three checks and part 3 its `vitest list`; part 2 names check-e2e. What they left open,
+as it stands after three rounds of review (ADR-0014's addendum "P5 as built" lists where this departs from its body):
+
+- **One doctor run checks the whole workspace.** Doctor walks `pnpm-workspace.yaml` for every importer of `@sssb/kit`
+  (in any dependency field, `peerDependencies` included) and every APP (in-repo, `sssb.apps` or `apps/*`; otherwise
+  every importer with its own `src/app-config`), and gives each app the per-app checks. So the root's `sssb:doctor` is
+  one `sssb doctor`, and an app's own `sssb:doctor` checks every app too. It fails unless the app it runs for is among
+  the importers it found and, when that app has a seam, among the apps: the first walk read a column-0 `packages`
+  list as empty and passed every workspace-wide check over nothing. Rejected: `pnpm --filter './apps/*' sssb:doctor`,
+  which silently skips an app without the script; and a `--app apps/<x>` per app, which ejecting or renaming breaks.
+- **`pnpm-workspace.yaml` is read by a small reader that throws on what it does not understand**, naming the line
+  (in `packages` or `dedupePeerDependents`: anchors, aliases, tags such as an unquoted `!glob`, nested items; anywhere:
+  a duplicate key, a second document, a flow collection still open at the end; any other key's value is skipped
+  unread, `parseWorkspaceYaml` in `packages/tools/src/commands/doctor-checks.js:58`), and a file it cannot read is a
+  FAIL that stops the run. Rejected: the `yaml`
+  package, which `packages/tools` reaches only through the root's hoisting; and a reader that returns what it can,
+  which is how the empty list happened.
+- **Doctor reads `vitest list --json=<file>`, never stdout.** Vitest 4 writes the list to the file when `--json` is given a
+  path (`--outputFile` is ignored by `list`), so Vite's warnings on stdout cannot corrupt it. When a test file throws
+  while it is collected (an opt-out typo), Vitest exits 1 and writes NO file; doctor then names Vitest's error line
+  (never its `Collect Error` banner) and every expected test as not listed. Rejected: parsing stdout between brackets.
+- **Which Vitest runs hold an app to which checks.** Discovery is `vitest list --filesOnly`, which loads each config and
+  globs but runs no `globalSetup` (measured, Vitest 4.1.12). The MAIN unit run is the first run a bare `vitest` would
+  make for the app that runs any of its `src/` test files: from the root with the root's own config, then from the app
+  with the config Vitest finds walking up (the app's, else the root's, else Vitest's defaults). It must list every unit
+  check; no such run, or a bare run doctor cannot list, fails. Some config that runs the app's `tests/contract/` files
+  must list every contract check. Every other config (each `vitest*.config.*` at the root and in the app, and the
+  `vite.config.*` Vitest itself would load) that runs some of the app's `src/` tests but not its suite file, runs its
+  contract files without every contract check, or cannot be listed, is a REPORT that names it. Only the main run and
+  the contract configs are listed in full. The projects are the ones that run a file inside the app, asked rather than
+  assumed by name (here the contract projects are rooted at the repo). Rejected: holding every config that runs any of
+  the app's tests to every check (round 1), which failed a browser, integration or env-gated config beside a passing
+  main one with no escape but deleting it, held a build-only `vite.config.ts` to the suite, and ran every such
+  config's `globalSetup`; and guessing CI's config from workflow files.
+- **What that rule does not catch, accepted.** A CI step that runs a non-main config (a `vitest.ci.config.ts` excluding
+  `**/sssb.*`) is a report, not a failure, so CI can go green without the checks if nobody reads it; and a non-main
+  config that does run the suite file is not listed by name, so a `testNamePattern` set there is not seen. Doctor
+  cannot see which config CI runs, as it cannot see CI's flags; failing every config made legitimate ones impossible
+  to keep.
+- **The bare `vitest` from the app's directory is reported when the root's bare run is the main one** and the app's
+  would not run `src/sssb.conformance.test.ts`, even when it runs none of the app's `src/` files: a root config with
+  root-relative globs finds nothing from the app and passes on `passWithNoTests`, so an app script `vitest run` under
+  `pnpm -r test` runs no check. Found with `--filesOnly` only (no `globalSetup`), and report-only: it never joins the
+  contract configs, which are listed in full and alias-checked (`planFor` in `packages/tools/src/commands/doctor.js`).
+  The report names the run (a bare `vitest` from `apps/web` loads `vitest.config.mjs`), what it runs ("none of its
+  src/ test files, so not src/sssb.conformance.test.ts"), and that if CI runs it there (the app's own scripts,
+  `pnpm -r`) instead of the main run from the root, the conformance checks do not run. Pinned by
+  `tests/tooling/tools-doctor.test.ts` ("reports, and does not fail, the bare `vitest` from the app's directory…"),
+  seen red with the report removed.
+  Rejected: failing it (doctor still cannot see which run CI makes; the main-run rule is unchanged), and adding it to
+  the contract configs: in SSSB's own repository the root config run from `apps/showcase` lists the showcase's
+  `tests/contract/` file under the `repo` project, which has no seam alias, and that turned `sssb doctor` red.
+- **CI's command line is reported, not checked.** Doctor reports every narrowing flag or file filter (`-t`, `--project`,
+  `--exclude`, `--shard`, `--changed`, `related`, a positional path...) that the root's and the apps' package.json
+  scripts pass to vitest, and, since it lists the contract checks and never runs them, which script runs each app's
+  contract config, or that none does. Rejected: failing on a narrowing flag (a sharded CI is legitimate, and doctor
+  cannot see the other shards).
+- **Check names and opt-out markers count only from the app's own suite files**: the unit ones from
+  `<app>/src/sssb.conformance.test.ts`, the contract ones from `<app>/tests/contract/`, never from a workspace package
+  nested in the app. Each opt-out prints as a report with its reason. Rejected: a marker from any listed test (round
+  1), which let an ordinary test file opt a check out.
+- **Optional peers** (`vitest`, `embedded-postgres`): neither side has it is a note (not installed); only the kit finds
+  it is a note (not the app's to share); only the app finds it fails, because the kit would load another copy or none.
+  A required peer the app cannot find fails. Peers are compared as real package DIRECTORIES found by walking
+  `node_modules` up from each side, never NODE_PATH (the shared resolver's reason).
+- **In-repo mode is detected, not configured**: the kit the app resolves is in-repo when its real directory is one of
+  the workspace's package directories. There the per-importer seam check is replaced by an alias check over every
+  app: each target of every tsconfig `paths` key that is or starts with `@sssb/app-config` (read by the app's own
+  TypeScript, so `extends` and `baseUrl` count), and every alias, string or RegExp, that would match a seam specifier
+  in the Vitest projects of the app's main unit run and contract configs (read through `createVitest`), must land in
+  the app's own `src/app-config`. Every matching alias counts, not only the one that wins today; a tsconfig key that
+  matches only by wildcard (`@sssb/*`) is not covered. The other importers (the root, `packages/seed`) are named as
+  not checked: in-repo each compiles within a program that names a seam. Rejected: a flag or environment variable,
+  which an adopter could set.
+- **The per-importer walk includes the workspace ROOT** (pnpm treats it as an importer). The seam an instance runs on
+  is `@sssb/app-config` as Node's lookup finds it from the kit's own directory, and doctor names whose seam that is.
+- **Versions in step** cover every `@sssb/*` the app resolves (nearest `node_modules/@sssb` first), the seam left out.
+  The workflow-SHA and plugin-pin comparisons print "not checked" with the reason: nothing to compare yet (no release
+  stamp, no reusable workflow until P10, no plugin until P13). Doctor runs `sssb guide --check` once the kit ships a
+  guide (`guide.js` already promised it), and reports that it does not until then.
+- **SSSB-only cutover rows**: a row marked `"scope": "sssb"` in `rows.json` (`release-app`) is not looked for in an
+  adopter's checklist, and doctor says it skipped it. `tests/docs/cutover-rows.test.ts` holds the field to the
+  checklist's own wording (exactly the rows whose "What it is" begins "SSSB's own repository only"). Rejected: doctor
+  matching that wording itself, which made a sentence in a doc the switch.
+- **The scripts are `sssb:doctor` and `check:e2e`, not `doctor`**: `pnpm doctor` is pnpm's own command and shadows a
+  script of that name (measured: the root's `pnpm doctor` ran pnpm's environment check and exited 0). The root's
+  `check:e2e` fans out over `apps/*`.
+- **check-e2e asks Playwright which files it loads.** Each config (`playwright*.config.*` in the app, plus each
+  `--config <file>`) is listed by the app's own Playwright from the app's directory, `playwright test --list
+--reporter=json`, the report written to a file (`PLAYWRIGHT_JSON_OUTPUT_FILE`: a spec's own output shares stdout).
+  Measured on Playwright 1.65.1, `--list` starts no `webServer`, runs no global setup and needs no browser. The checked
+  files are each config, the global setup and teardown the report names, and every file holding a listed test; each
+  is then bundled. A config Playwright cannot list fails with Playwright's error (and the kit file, when the error
+  names one); a config that lists no test fails. Rejected, in order: reading the configs' text with regexes (a
+  template literal, `path.join`, a project-level `testDir` or an array `globalSetup` each defeated it); loading them
+  ourselves through an esbuild bundle (any `require` broke it, Playwright's own CommonJS scaffold and
+  `globalSetup: require.resolve(...)` included, while Playwright loaded both); re-implementing Playwright's file
+  selection; and the hidden `test-server` command's `listFiles`.
+- **What Playwright's report cannot say.** Any load error makes `--list` list nothing, and Node's error for TypeScript
+  under `node_modules` names the kit file but not the spec, so in an adopter's workspace a spec reaching the kit's
+  source fails its CONFIG, with the kit file named; the per-spec import chain is reported wherever Playwright can load
+  the spec (this repository, where the kit is workspace source). The report holds only the FIRST entry of a
+  `globalSetup`/`globalTeardown` array, so a second is not checked; and a matched file holding no test is not listed.
+- **check-e2e follows what Playwright transforms**: a bare specifier is bundled when its real path is outside
+  `node_modules` (the app's files, a sibling workspace package such as Pages' `packages/gate`, and what they import)
+  or is framework source in any copy (`isFrameworkFile`); every other package stays external. The allowed set comes
+  from bundling `@sssb/kit/testing/e2e` alone from the app: in-repo its source closure, from a tarball the compiled
+  file only. A failure names the file, the kit file where it ENTERS the kit, and the import chain. Rejected: bundling
+  only the app's own files (the first version), which left a workspace package external and missed a spec reaching the
+  kit through it.
+- **`createRequire` is checked by the app's own TypeScript parser**: a followed file outside the kit whose code names
+  `createRequire` fails for each `@sssb/kit` string literal in its code that esbuild did not resolve, except the entry
+  and `@sssb/kit/package.json`. Rejected: a regex over the text, which matched comments and failed
+  `createRequire(import.meta.url)('@sssb/kit/package.json')`.
+- **Pack and consume proves both from the tarball.** The negative fixture joins after the verify, with a second
+  install: doctor walks every package, so with `packages/seamless` installed from the start the verify's doctor could
+  not be green. The consumer's console carries `tests/e2e/kit-entry.spec.ts`, which imports `@sssb/kit/testing/e2e`
+  and an app domain module; check-e2e must pass it, `playwright test --list` must load it (even with
+  `--skip-build-and-e2e`), and with two specs dropped in that reach `@sssb/kit/core/webhook-signing` (directly and
+  through an app module) check-e2e must exit 1, failing `playwright.config.ts` as unlistable and naming
+  `@sssb/kit:src/core/webhook-signing.ts`. Rejected: adding the spec to `apps/starter` itself, whose one e2e spec is
+  its tenancy claim.
+
+## `@sssb/tools/testing/tmp-dir` under `isolate: false`: a setup module, and never removing too early (2026-11-18, `fix/tools-tmp-dir-isolation`)
+
+Resolves `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
+
+- **No hook registered at a call is both late enough and wide enough.** The task's design, and the kit's fix in P5,
+  register a hook at a later file's first call. Review reproduced, in real Vitest runs, that a hook registered from a
+  `describe` body belongs to that `describe` and removed directories the rest of the file still used, and that it runs
+  before any `afterAll` the file registered earlier, so the cleanup could precede the file closing what lives in the
+  directory. Registering a hook per suite instead still removed a nested `describe`'s directory before an outer test
+  used it. The kit's copy is unchanged here and has the first two: `.claude/future-tasks/resolved/kit-tmp-dir-cleanup-order.md`.
+- **A setup module carries the file's hook,** and is the supported path under `isolate: false`. Vitest runs a setup
+  file before every test file even with `isolate: false`, and an `afterAll` it registers runs after the file's own
+  (checked with Vitest 4.1.12, three files in one worker). `@sssb/tools/testing/tmp-dir-setup` calls
+  `registerTestTmpDirCleanup()`; `appTestProject` adds it to every app project, so an app on the preset needs nothing.
+  Rejected: asking adopters to import the helper first in every file (a later file's import is a cache hit, which
+  registers nothing).
+- **Without it, never too early, at the cost of the last file.** A later file's first call registers a hook that removes
+  only EARLIER files' directories (a worker runs files one after another, so those files have finished). Every file's
+  directories are removed except each worker's last file's, which `sssb check-tmpdir-leak` reports, and the helper says once per
+  worker which setup file is missing. A leak the gate names is recoverable; a directory removed under a running test
+  is a false red.
+- **A file's first registration removes what earlier files left.** Vitest runs no `afterAll` for a file whose tests are
+  all skipped (`it.skip`, a `-t` filter), so its directories stayed queued; they go when the next file in the worker
+  registers, and that file's stale registry entries go too, so a watch-mode rerun registers again. With isolation
+  nothing carries to the next file, so a skipped file's directories are left for good; that predates this change and
+  is Vitest's. The cleanup's place after the file's own `afterAll` also assumes `sequence.hooks: 'stack'`, Vitest's
+  default; `'list'` and `'parallel'` reverse it. Both limits are in the module's header.
+- **`removeTestTmpDir` removes only what the helper made.** The kit's removes any path it is given, recursively.
+- **A new `exports` subpath, so the changeset is a `seam` entry,** optional: an app on the preset gets the setup module,
+  and another project with `isolate: false` adds it to `setupFiles`.
+
+## The first release candidate, cut by a merge to main (2026-11-18, ADR-0014 P7, `feat/release-candidate`)
+
+JP, 2026-11-18: "I don't want publishing a release to be my call separately from merges to main." Each decision below
+names what was rejected; ADR-0014's addendum of the same date summarises them.
+
+- **Changesets' pre mode `rc`, not a hand-pushed tag.** A merge to `main` with changesets versions the group to
+  `0.x.y-rc.N` through `release.yml`'s existing `plan` and `push`, so a candidate passes the same gates as a release
+  (CI on the merge commit, `verify-release` in the job holding the key, the atomic push). Rejected: a separate
+  `workflow_dispatch` or a tag pushed by hand, each a release step apart from the merge, which is what JP ruled out.
+  This reverses P1b's "never Changesets' pre mode" (its `loadWorkspace` refused a `pre.json`).
+- **Private packages are versioned, and everything outside `@sssb/*` is ignored with `"*"` and `"@app/*"`.** Without
+  the ignore the apps, their infra and the showcase's seed are bumped as dependents (seen: `showcase -> 0.1.1-rc.0`).
+  Rejected: naming the apps (`init-app` renames them), and `"!@sssb/*"`, which Changesets' matcher does not read as a
+  negation (seen: every app still planned).
+- **Pre mode and privacy are tied by `release.mjs check`**: a private group needs pre mode `rc` and a config that
+  versions private packages; a public group must have left pre mode. Rejected: leaving it to review, since a private
+  group outside pre mode would cut a plain `0.x.y` on the next merge, tagged, with nothing able to publish it.
+- **`verify-release` recomputes the candidate's number itself**, because the `push` job installs nothing: semver's
+  `inc` on the group's version (a prerelease bumped by a patch or a minor is already on its way there), then one past
+  the group's highest `-rc.N`, which is Changesets 3's `getPreVersion` over a fixed group. `prepare` refuses to go on
+  when Changesets' number and this one differ. A consumed changeset must be moved to `.changeset/pre/` byte for byte.
+  Rejected: trusting the plan job's number, which ran dependency code.
+- **The tarballs attached are the ones CI tested on the release commit**: `checks`' pack-and-consume job uploads them
+  as `sssb-tarballs` on a push (overwriting on a re-run, so the artifact is the last attempt's), and `candidate`
+  downloads that run's artifact after the CI gate. Rejected: packing again in the tag run, whose bytes nobody tested.
+  Pack and consume now packs `@sssb/cdk` too (its packed shape checked, not installed: P12).
+- **The id-token on a candidate's tag is `attest`'s**, in no environment, so npm's trusted publisher (bound to the
+  `npm-publish` environment) refuses it; a candidate's tag never runs `pack` or `publish`. Each run holds the id-token in
+  one job. Rejected: attesting in `prerelease`, which would put the id-token beside `contents: write`.
+- **`prerelease` creates a draft, uploads, downloads every asset to compare sha256s, then publishes** as a prerelease
+  never marked latest; a re-run finishes a draft and confirms a published candidate, and fails rather than replace one
+  whose bytes differ. Rejected: `gh release create` with the assets in one call, which on a failure part-way leaves a
+  visible prerelease missing a tarball while the run is red.
+- **The pre-changeset history is four changesets**, `.changeset/history-since-keel-*.md`, one per section, consumed by
+  the first candidate. Rejected: a seed file the assembler would include once, which needed a change to
+  `scripts/release-notes.mjs` (another session's) and a rule for "once" that changesets already have.
+- **The install lines use `overrides`** in `pnpm-workspace.yaml` as well as each package's dependency, because the packed
+  `@sssb/cdk` depends on `@sssb/tools` at exactly its version, which npm does not have (seen: offline, cdk's tarball
+  installed with tools resolved to its tarball through the override).
+- **The app guide: `sssb doctor` reports a missing copy in this repository** rather than failing, because here the guide
+  is the source and no copy is kept until this repo's `CLAUDE.md` imports one (P13); in an adopter's workspace it fails.
+  Rejected: committing `.claude/sssb-guide.md` now, a second copy of the guide nothing reads yet. The guide's changeset is
+  a `seam` change, `required`, because doctor now fails an adopter who never runs `sssb guide`.
+- **Until JP makes the release app, a merge to `main` with changesets fails at `push`'s token mint**, having written
+  nothing; the changesets stay pending. Rejected: skipping `push` when the app is missing, which would turn a missing
+  release into a green run, the failure the review question names.
+- **What the reviews added (P7).** Both found the flow sound: no path to npm, to a non-candidate version while private,
+  off `main`, or to tarballs other than the tested ones. Closed after them; each is seen failing in a test except
+  three no unit test reaches: `prepare`'s cross-check reading the manifests (`check` refuses a split group first), pack
+  and consume's unpacked-package check (CI runs it), and `overwrite` on the `candidate` artifact (a workflow setting):
+    - `check` refuses a fixed group at more than one version (a package joining mid-cycle at `0.1.0` passed `check` and
+      `prepare`, then stalled `push`), and a pending changeset named like one in `.changeset/pre/` (Changesets would
+      overwrite it); `prepare`'s cross-check reads the manifests, not the plan, whose `oldVersion` Changesets evens out.
+    - `candidate` requires each tarball's file name to be the one `pnpm pack` gives it; pack and consume fails when a
+      `@sssb/*` package is not packed, at PR time rather than after a candidate's tag exists.
+    - `prerelease` treats only "release not found" as no release, re-uploads every tarball into a draft with
+      `--clobber`, and publishes with its own title and notes, so neither a lookup failure, a half-written asset nor a
+      draft someone else made decides what goes out; `candidate`'s artifact overwrites on "Re-run all jobs".
+    - The notes' attestation check names the signing workflow, the tag and the commit (`--signer-workflow`,
+      `--source-ref`, `--source-digest`), not just the repository, which any workflow of it could satisfy.
+    - The prerelease notes are unwrapped (`unwrap`): a release body renders each newline as a line break, seen through
+      GitHub's markdown API in `gfm` mode; with soft breaks joined, the rendered sample had none.
+      Left for P14: leaving pre mode (`.claude/future-tasks/p14-leave-pre-mode.md`).
+
+## The kit's tmp-dir helper under `isolate: false`: the suites register its hook (2026-11-18, `fix/kit-tmp-dir-cleanup`)
+
+Resolves `.claude/future-tasks/resolved/kit-tmp-dir-cleanup-order.md`, the kit's half of
+`.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
+
+- **`conformanceSuite` and `contractSuite` register the file's cleanup hook first.** The kit's helper
+  (`packages/kit/src/testing/tmp-dir.ts`) is not in the package's `exports`, so an adopter reaches it only through those
+  two. Both must already be called at a file's top level, so a hook they register is the file's own, and registered
+  before their own `afterAll` (the contract server's stop, the demo-presets teardown), so it runs after them. The kit's
+  P5 fix registered the hook at the helper's first call instead. Under `isolate: false` that call came from the suites'
+  `beforeAll`, where Vitest drops a hook, so a later file's contract-server directory was left behind. Seen red with
+  the suite's call removed, once for each suite.
+- **Rejected: a kit setup module that the app's Vitest config lists** (`@sssb/kit/testing/tmp-dir-setup`, mirroring
+  `@sssb/tools/testing/tmp-dir-setup`). Every app's unit and contract configs would have to list it, or the tools preset
+  would have to carry a `@sssb/kit` specifier. A string resolved from the app's directory keeps rule 4's letter, that
+  `@sssb/tools` imports no kit module, and breaks its point, that `@sssb/tools` knows nothing of the kit. It would also
+  run a second setup module before every file of every app. The suites registering their own hook needs nothing from
+  the adopter.
+- **A replay that outlives its file keeps its directory, out of the file's cleanup.** When the demo-presets replay
+  outlasts its teardown's wait, the teardown fails and leaves the replay its scratch directory, to be removed when it
+  stops. Vitest still ran the file's cleanup hook after that teardown failed, which deleted the directory under the
+  running replay. The replay recreated it without its marker, so the leak gate could not see it. The old
+  `removeTestTmpDir`, which removed any path, then removed it, hiding all of this; with the new guard the case
+  "when the replay outlasts the wait too" went red. `keepTestTmpDir(dir)` now takes the directory out of the file's
+  cleanup, and `removeTestTmpDir` removes it, with its marker, when the replay stops. Seen red with the call removed.
+- **Limit: one suite call, at the file's top level,** as both suites' docs already say. Under `isolate: false`, a later
+  file that calls a suite inside a `describe` gets that `describe`'s hook. A second call in another `describe` then
+  gets none, so its directory waits for the next file. Nothing in use is removed.
+- **The rest follows `@sssb/tools`' copy**, for the same reasons (its entry above):
+    - a later file with no hook removes only earlier files' directories, never its own, and the helper says so once per
+      worker;
+    - a file's first registration removes what earlier files left;
+    - `removeTestTmpDir` ignores a path it did not make, where the kit's used to remove any path, recursively.
+
+    The two copies stay separate files (rule 4), so the same change lands twice. jscpd does not compare them: its pattern
+    takes `.ts`, and `@sssb/tools`' copy is `.js`.
+
+## Retiring init-app, the adoption probe and the adopter-identity test (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
+
+ADR-0014's Consequences retire all three when `@sssb/create` ships, and its P12 row does it in the same PR as the
+generator. What went, what replaced each, and what was kept:
+
+- **`scripts/init-app.ts`, the root `init-app` script, `tests/tooling/init-app-slug.test.ts`, its `CODEOWNERS` line.**
+  Replaced by `@sssb/create` (`pnpm create @sssb <dir>` / `npm create @sssb <dir>`), which writes a new workspace
+  from `apps/starter` instead of renaming and ejecting inside a fork. The slug refusals the slug test pinned (reserved
+  names, Aurora's database-name rules) are the generator's to carry; `@sssb/cdk`'s `databaseNameFor` and its
+  synth-time refusal stay, since the construct still needs them.
+- **The `adoption-probe` job's steps** (copy the checkout, `init-app acme --eject-showcase --yes`, `pnpm verify`,
+  synth). **The job name is kept**: `integration`'s ruleset requires a check called `adoption-probe`, and
+  dropping the name would block every PR until the ruleset was edited. The new job of that
+  name generates a workspace with the packed `@sssb/create` and runs its own `pnpm verify`, which is what the old
+  probe proved for a fork: that an adopter's first command leaves a green gate. It is pack and consume's second
+  shape (below, "Pack and consume's two shapes and the `adoption-probe` job");
+  `tests/tooling/app-checks-workflow.test.ts` still pins the name.
+- **`tests/docs/adopter-identity.test.ts`.** Dropped, as ADR-0014's table says: the generator writes the owner files
+  from its flags, so there is no maintainer identity in an adopter's tree to scrub. The check that the template's
+  own owner files name the maintainer went with it.
+- **Kept: `tests/docs/doc-set.ts`**, shared with init-app until now. It lost what only the rewriter used (`EXEMPT`
+  and the `generalizeAppCitations` wrapper) and imports `@sssb/tools/doc-paths` by package name, since the reason for
+  the relative import (init-app running in a copy with no `node_modules`) is gone. The gate is unchanged.
+- **Kept: `generalizeAppCitations` in `@sssb/tools/doc-paths`.** It is a published export, so removing it is a
+  release-note decision rather than a cleanup; its tests moved from `tests/docs/doc-set.test.ts` to
+  `tests/tooling/doc-paths-engine.test.ts`, which tests the engine directly. It now has no caller in this repository.
+- **Kept: the doc gate's reference-app rule** (a citation of an absent `apps/showcase` or `apps/starter` resolves).
+  It served forks that took docs by merge; ADR-0014 says it then serves only this repo, and a fork adopted before
+  the switch still needs it.
+- **Future tasks.** `eject-rewrites-prose-into-false-sentences.md` is resolved by retirement (the rewrite it
+  describes no longer exists). `init-app-blank-option.md` became `create-blank-option.md`: a `--blank` option is as
+  much needed on the generator. The rest had their init-app mentions retargeted.
+- **Docs, as far as P12 needs.** `docs/adopting.md`'s fork and `init-app` sections now start from the generator, as
+  built (its usage block is `--help`'s output). The full rewrite, and ADR-0013's supersession, are P15.
+
+## `@sssb/create` (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
+
+`packages/create`, `@sssb/create` with the bin `sssb-create` (what `pnpm create @sssb` and `npm create @sssb` run):
+plain JavaScript, no dependencies, no `@sssb/*` dependency (rule 4), `private: true` until P14 and in the fixed
+group. The choices the P12 row and the design left open, each with what was rejected:
+
+- **The template is the starter's TRACKED files, copied from the working tree, and stamped.** `buildTemplate`
+  (`packages/create/src/template.js`) copies what `git ls-files` lists under `apps/starter`, and six generic root
+  files (`.editorconfig`, `.nvmrc`, `.prettierrc.json`, the two husky hooks, `commitlint.config.mjs`; `ROOT_FILES`,
+  which must be tracked too), each as the working tree has it. Untracked files are left out with one warning naming
+  them; a symlink, a submodule, an unmerged file or a tracked file missing from the working tree is refused with the
+  list; a checkout without git is refused. It writes `template/{meta.json, guide.md, app/, root/}`, a leading `.` in
+  a path segment stored as `_dot_` because npm's packing drops some dotfiles. `meta.json` holds what the generator
+  needs once it is away from the repository: the version, the workflow's repository and commit, `packageManager`,
+  `engines`, the ranges of the root's tools, the `allowBuilds` approvals, `minimumReleaseAge`, the seam specifiers,
+  the framework's cutover rows (less `scope: sssb`), the action pins `app-checks.yml` uses, the gitleaks version
+  `checks.yml` uses, and the dependency names the slug check reads (below). The package's `prepack` builds
+  `template/` and its `postpack` removes it (it is gitignored, and ignored by Prettier and ESLint), so no copy of the
+  starter is ever committed; run from a checkout, with no `template/`, the bin builds one into a temporary
+  directory. **Consequence: a new starter file must be `git add`ed before a local pack or the create tests see it.**
+  Rejected: round 0's deny-list over the working tree (it copied any local file nobody listed, such as an `.npmrc`
+  holding a token, a key, `.vscode/` or a swap file, and dropped symlinks silently);
+  `git ls-files --cached --others --exclude-standard` (still packs a developer's unignored local file, the leak the
+  deny-list had); refusing when
+  untracked files exist (blocks every local test run while a new starter file is unstaged); copying symlinks (what a
+  link points at is outside what git tracks, npm's packing treats links inconsistently, and the starter has none);
+  building from `HEAD` with `git show` (a second copy path the tests, which build from the working tree, would not
+  exercise). Also rejected: the generator reading the seam specifiers from `@sssb/kit` when it runs (rule 4; and it
+  runs before anything is installed).
+- **The workflow pin is the packing commit, and packing checks it is on GitHub and is the template's.** The pin is
+  `git rev-parse HEAD`, asserted to hold `.github/workflows/app-checks.yml`; `--workflow-ref <sha>` overrides it. An
+  adopter's `uses:` resolves only if that commit is on GitHub, so `prepack` (`scripts/build-template.js`) refuses a
+  `HEAD` that no remote-tracking branch contains (`git branch --remotes --contains`, as of the last fetch: no
+  network) of a remote whose path is the package's `repository` (`unpushedPin`). The remote is recognized by its
+  PATH, `safeinsights/sssb` (case-insensitive, `.git` and a trailing `/` optional), in an scp-like URL (any ssh host
+  alias) or one with a scheme (`ssh://git@ssh.github.com:443/…` included); a local path or `file://` is not a
+  network remote. It also refuses template sources that differ from `HEAD` (`uncommittedSources`:
+  `git status --porcelain --untracked-files=all -- apps/starter packages/kit/src/guide.md`, so modified, staged,
+  deleted or untracked), since the template is copied from the working tree and the release it ships in is `HEAD`'s.
+  **`SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings**, for a tarball no workspace will run on GitHub. Pack and
+  consume sets it but on a push to `safeinsights/sssb` (`createPackEnv` in `scripts/pack-and-consume/checks.mjs`),
+  the one run whose tarballs a release candidate attaches. The checkout path (`node packages/create/bin/create.js`)
+  only warns about the pin, on stderr, and does not check the sources: a developer generating while editing the
+  starter is its normal case, and it is how the repository's own tests generate. Rejected: asking GitHub (network
+  at pack time); failing the checkout path too; requiring `github.com` in the URL (misses ssh aliases and
+  ssh-over-443; the known looseness is that a mirror at that path counts, a fork never); turning the checks on for
+  any push (a fork's push to its own `main` would fail: its commit is on no branch of SSSB's remote); refusing only
+  tracked changes (strict is simpler to state, and a pack that needs an untracked file opts out).
+- **The generated workflow is `.github/workflows/checks.yml`**, not the design's `ci.yml`: the starter's
+  `infra/README.md` already says "`.github/workflows/checks.yml` runs checks only", which is then true in both
+  trees. Three jobs: `sssb` (the reusable workflow at the pinned SHA, `permissions: contents: read`,
+  `synth: ./apps/<slug>/infra`, no secrets), `workspace-checks` (knip and jscpd, which `app-checks.yml` does not
+  run) and `secret-scan` (gitleaks as a pinned binary over the whole history, as SSSB's own). Triggers are pushes to
+  `main` and pull requests, with `permissions: {}` at the top. The one check to require is `sssb / all-checks`, as
+  P10 decided; the generated README asks for the other two jobs as well.
+- **The seam package's `exports` is one pattern plus the directory modules**: `./*` to `./*.ts` for the flat
+  modules and each directory module by name (`./db/migrations` to `./db/migrations/index.ts`), computed from the
+  seam specifiers against the template's seam; a specifier with no module fails generation. Rejected: a line per
+  specifier, which would leave a seam module a later kit adds unexported until the adopter edits the map. **Its
+  `type` is the app's own** (the starter declares none, so none is written), as pack and consume already did.
+  Rejected: the design's `type: module`, since a nested `package.json` resets the module type for everything under
+  it and the app's other files are CommonJS-typed (its configs use `__dirname`).
+- **The port service stays `starter`.** The generated app keeps `"sssb": { "port": "starter" }`,
+  `originFor('starter')`, `sssb tick starter` and `sssb dev-tick starter --`. The service names a port band in
+  `@sssb/tools` (`packages/tools/src/ports.js`: an app keeps the slot it was generated with when it is renamed), not
+  the app. A rename is a tools change, out of P12's scope; `tests/tooling/create-generate.test.ts` allows exactly
+  those forms of the word, and `.claude/future-tasks/neutral-app-port-service.md` carries the neutral service.
+- **The identity is renamed, and only the identity**: `APP_SLUG` and `<slug>_session` in `config/app.ts`,
+  `welcome.appName` and `welcome.title` in both catalogs, the root layout's title, the static demo's `<title>`, and
+  the app and infra package names. Each rename must find its text exactly once, so a template that moves its
+  identity fails generation rather than shipping half-renamed. The starter's prose was rewritten at the source
+  instead (D4: the starter is the template): its comments that named the showcase, "the starter" or a
+  `packages/kit/src/…` path now read true in both trees, and the static-shell spec's title lost "starter".
+  Rejected: rewriting prose in the generator, which is brittle and leaves the template false for an adopter reading
+  it.
+- **`--sssb <dir>` writes absolute `file:` paths and a pnpm `overrides` block** in `pnpm-workspace.yaml` mapping
+  every `@sssb/*` package to its tarball, with a comment to remove it on moving to published versions. Without it
+  pnpm asks the registry for `@sssb/tools`, which `@sssb/cdk` depends on at an exact version (P9's addendum). This
+  refines ADR-0014 part 7's "No overrides are used": that holds for published versions, where none is written, and
+  not for tarballs. `--sssb <version>` writes the version as given; the default is `^<the generator's version>`.
+  The `file:` paths in the overrides are quoted as Prettier's YAML printer would (`yamlString` in
+  `packages/create/src/yaml.js`: single quotes with `''`, except a value with `'` and no `"` or `\`, which is
+  double-quoted, so `prettier --check` stays green), and so is a scoped `allowBuilds` key; a control character is
+  refused, and values already held to plain-safe characters (slug, repository, SHAs, versions) stay plain.
+- **`--sssb` must be the generator's own version.** A tarball directory refuses tarballs of mixed versions, naming
+  each version's packages (the fixed group never publishes a mix), and a directory or version flag whose version
+  (`^`/`~` stripped) is not the template's `meta.version` is refused, naming `@sssb/create@<that version>` to run
+  instead. The workspace's `.claude/sssb-guide.md` is stamped with the hash of the guide packed into the generator,
+  and `sssb doctor` fails the first verify when the installed kit's guide differs. Rejected: copying the guide out of
+  the `--sssb` tarballs (a tarball reader in a package with no dependencies, and nothing for the version form). A
+  `^<version>` can still resolve a later patch whose guide differs; keeping a guide change out of a patch is the
+  release process's, not checked here.
+- **The root's `sssb:doctor` is `sssb doctor --app apps/<slug>`.** An adopter's root installs no `@sssb/kit`, and
+  doctor will not start from a directory that does not resolve it; one run still checks every app. Rejected: a
+  bare `sssb doctor` at the root, which works in this repository only because its root resolves the framework.
+- **No Changesets for adopters.** An app workspace publishes nothing, and `.changeset/` and
+  `scripts/release-notes.mjs` are SSSB's release machinery for SSSB's packages. No `.changeset/` and no
+  `@changesets/cli` are written; an adopter who wants a changelog adds Changesets themselves.
+- **`docs/cutover-checklist.md` and `apps/<slug>/DEMO-SIZE.md` are generated.** The checklist is a task list, one
+  ``- [ ] `<id>`: <what>`` per framework row less `scope: sssb`: the starter's `config/params.ts` cites rows by id,
+  and `sssb doctor` reports a workspace that stops mentioning one. A list rather than SSSB's table, so the output is
+  Prettier-clean without re-implementing table alignment. `DEMO-SIZE.md` is written fresh, with the budget at
+  generation and an empty "Changes", because the starter's copy carries SSSB's history and links into
+  `jpslav/keel`; the starter's own copy is untouched.
+- **The workspace carries `.claude/sssb-guide.md`**, since P7's `sssb doctor` fails a workspace without it: the
+  template packs `@sssb/kit`'s `src/guide.md` as `template/guide.md`, and the generator writes the stamped copy byte
+  for byte as `sssb guide` writes it (the test compares against `sssb guide --out`). The stamp's format is duplicated
+  from `@sssb/tools`' `guide` command (rule 4), held by that test. The README says to import it from the adopter's
+  `CLAUDE.md` with `@.claude/sssb-guide.md`, and that `pnpm exec sssb guide` refreshes it after an upgrade.
+- **Not written: `LICENSE`, `CLAUDE.md`, `.github/dependabot.yml`; no `license` field; and no `git init`.** The
+  README says to add a licence. The app's and infra's `package.json` lose the starter's `license`: they are private
+  (never published, so npm does not ask), and `UNLICENSED`, the alternative, would claim a proprietary choice the
+  adopter has not made. The commands arrive with P13's plugin. The generator runs no `git init`, no install, no
+  Prettier and no network; the README and the closing output put `git init` first, before `pnpm install`, so
+  husky's `prepare` finds a repository.
+- **The owner files come from flags.** `--repo owner/name` (validated) fills the advisory links in `SECURITY.md`,
+  `CODE_OF_CONDUCT.md` and the issue-template config; without it they name
+  `PLACEHOLDER_GITHUB_OWNER/PLACEHOLDER_GITHUB_REPO`, init-app's convention. `--owner` (repeatable, `@` optional,
+  `@user` or `@org/team`) fills `CODEOWNERS`; without it, a placeholder under a comment warning that "require review
+  from Code Owners" makes every PR unmergeable on an owner GitHub does not know. The closing output names whichever
+  is still a placeholder. `SECURITY.md` is the adopter's own short policy, pointing at SSSB only as "the repository
+  its packages name in their `package.json`", so no `safeinsights/sssb` survives but the `uses:` line.
+- **The slug rules are `@sssb/cdk`'s database name's.** `--slug`, else `<dir>`'s basename lowercased, refused
+  unless it matches `^[a-z][a-z0-9-]*$`, its database name (dashes to underscores) has at most 63 characters, and
+  that name is not a word Aurora PostgreSQL reserves. The reserved list is a copy of
+  `packages/cdk/src/database-name.js`'s (rule 4: no SSSB dependency), held equal by
+  `tests/tooling/create-args.test.ts`. init-app's other refusals (`kit`, `cdk`, `repo`, `sssb-*`) guarded collisions
+  inside SSSB's repository and do not apply to a fresh workspace.
+- **A slug that names a dependency is refused**, in `generate` (so by the CLI and the API): one where `<slug>`,
+  `<slug>-infra` or `<slug>-workspace` is the unscoped name of a package in pack and consume's lockfile seed
+  (`scripts/pack-and-consume/consumer-lock.yaml`), stamped into `meta.json` as `dependencyNames`. pnpm mistook an app
+  named `ws` for the `ws` package and handed it that package's optional peers. The seed is the generated shape's own
+  resolution (a slight superset: it also holds the pages shape's second app and sibling package), so `ws`, `react`,
+  `next` and `kysely` are refused and this repository's own tooling (`events`, `history`, `open`, `cookies`) is not.
+  Rejected: SSSB's `pnpm-lock.yaml` (it refused names no generated workspace installs); walking the generated
+  importers' tree in the seed (precise, but more code for the handful of names the pages shape adds); a scoped app
+  package (`@<slug>/app`: it changes every `--filter <slug>`, the CLI's identity surface and pack and consume's pins,
+  and only narrows the collision to a scope).
+- **The display name is held to what every file it lands in carries as itself** (`displayName` in
+  `packages/create/src/args.js`, applied by the CLI and by `generate`). It lands in TypeScript and JSON strings, an
+  HTML `<title>`, markdown and the app's catalogs, which next-intl parses as ICU messages. Control characters,
+  U+2028/9 and bidirectional overrides are refused; it is trimmed and each whitespace run made one space; it may hold
+  letters, marks, digits, emoji (with their joiners), spaces and `. , ' ’ " & ( ) ! ? : / + % ; = ~ _ # -`, starting
+  with a letter or digit (a leading `-`, `1.` or `#` would make a markdown line a list or heading); `_` only inside a
+  word, at most one `~` (a pair is strikethrough), no `#` as a word of its own at the end (a heading's closing
+  sequence), no `''` (ICU reads one apostrophe), and no `&` that markdown reads as a character reference: `&#`
+  anywhere, or `&` with letters or digits and a `;` (`R&D`, `Q & A` and `Harbor & O'Neill` stay allowed; `&amp;`,
+  `&copy;`, `R&D;Lab` are refused). At most 60 columns, a wide character counting two, and the static demo's
+  `<title>` line must fit 120. `SECURITY.md`'s sentence was written so the name never starts a markdown line.
+  Rejected: escaping (it would have to be right for markdown, HTML, ICU and TS/JSON at once, and Prettier-stable in
+  each: Prettier rewrites `*x*` to `_x_` and drops needless markdown escapes); collapsing control characters (a
+  newline in a name is a mistake to report); a list of HTML5 entity names (2000+, for names that are only
+  entity-shaped). Pack and consume generates its second shape with `Harbor & O'Neill C# Console; 50% = data_lab ~ v1`,
+  so every allowed special goes through install, typecheck, lint and the unit run.
+- **JSON is written Prettier-shaped without Prettier** (`packages/create/src/json.js`): `package.json` in
+  `JSON.stringify`'s layout (Prettier's `json-stringify` parser), other `.json` with short arrays of plain values on
+  one line within 120 columns. A test runs the repository's Prettier `--check` over a whole generated workspace.
+  `allowBuilds` is read from this repository's `pnpm-workspace.yaml` as data (name to boolean) and written with the
+  generator's own comment, so SSSB's comments about its own platforms stay in SSSB's file.
+- **Generation writes into the target in place, all or nothing, and never removes or replaces an existing target.**
+  The target is created if absent (remembered); the workspace is written into `<target>/.sssb-create-<hex>/`, and at
+  the end its entries are renamed up into the target, after checking nothing else arrived meanwhile and never over
+  an existing entry. A failure removes the stage, the entries already moved up, and each directory this run created,
+  walking up from the target only while they are empty. A target that is a symlink is refused; one holding only
+  `.git`, `.DS_Store` or `lost+found` counts as empty (`LEFT_ALONE` in `generate.js`), so `gh repo clone` of a new
+  repository then `pnpm create @sssb .` works and a Finder `.DS_Store` written mid-run neither refuses nor rolls back;
+  those are never removed. Filesystem errors become `CreateError`s ("could not write the workspace: …", "could not
+  build the template: …"); a bug still shows its stack. Rejected: a sibling stage renamed over the target (it removes
+  the user's directory: `pnpm create @sssb .` loses the shell's cwd, a parent that is not writable fails, the
+  target's mode, owner and ACLs reset, a mount point is `EBUSY`); writing straight into the target (a failure leaves
+  half a workspace mixed with whatever the user adds); ignoring every dotfile (`.gitignore`, `.github` and `.env`
+  are content the workspace would clash with); only `.git` (macOS volumes hit `.DS_Store` routinely).
+- **SIGINT, SIGTERM and SIGHUP are held while the generator works** (`packages/create/src/signals.js`). The work is
+  synchronous, so a signal's default action would end the process part-way and leave it behind: while a generation
+  (or, on the checkout path, the template build into its temporary directory, held from before `mkdtempSync`) is
+  under way, one module-level listener defers the signal; when it is dispatched it undoes everything still held, even
+  work that finished, each undo best-effort, and raises the signal again so the process ends as signalled. Release,
+  and the CLI's "Created" and failure paths, wait two event-loop turns (`signalsSettled`): libuv reads a pending
+  signal only in the poll phase, and when `generate` runs inside a poll callback (`main()` resumes from the prompt's
+  stdin read), the first turn's check phase comes before any poll phase. With one turn the run printed "Created" and
+  exited 0 with the SIGINT dropped; the test (a child generating from `fs.readFile`'s callback) reds that way. A
+  signal that arrives after the work returned is not promised either way. Rejected: keeping a finished workspace when
+  the interrupt arrives during the write (the person asked to stop); a listener per call (Node's MaxListeners
+  warning); a flag set by the handler (it has not run yet: that is the bug); `process.nextTick` or microtasks (never
+  reach the poll phase); `setTimeout(0)` (it can fire in the next turn's timers phase, still before its poll phase);
+  a `process.on('exit')` cleanup (it does not run on a default-action kill); an async template build (a rewrite for
+  a sub-second window).
+- **The generated `pnpm verify` runs what CI runs, but the secret scan**: `concurrently --kill-others-on-fail --group`
+  over `typecheck`, `lint`, `test:coverage`, `knip`, `jscpd`, `check:fences`, `sssb:doctor`, `check:e2e` and `synth`,
+  then `test:contract` alone (embedded Postgres starting on a loaded machine is the step that timed out), `test:e2e` and
+  the static demo's three. `check:fences` is a root script of the workspace's own,
+  `pnpm --filter './apps/*' --fail-if-no-match exec sssb check-fences`, per app as `sssb ci` runs it, and every
+  generated `--filter './apps/*'` script carries `--fail-if-no-match`, so a selector that matches nothing fails.
+  `tests/tooling/create-generate.test.ts` reads `sssb ci`'s source for the scripts its jobs run and the workflow for the
+  workspace's own job, and fails a verify that misses one. Rejected: verify as the `sssb ci <job>` commands themselves
+  (serial, and `sssb ci matrix`/`e2e` are CI's orchestration); a root `check:fences` naming the one app (it misses an
+  app added later).
+- **`infra/` is typechecked by a program of its own, run by the app's `typecheck`.** In the starter (so in both
+  trees): `apps/starter/infra/tsconfig.json` extends the app's, with `include: ["**/*.ts"]`, `types: ["node"]`
+  (TypeScript 6 includes no `@types` by default) and `incremental: false`, and the app's `typecheck` is
+  `next typegen && tsc --noEmit && tsc --noEmit -p infra`. SSSB's `pnpm typecheck` and the generated one both reach it
+  through `pnpm --filter './apps/*' typecheck`, with no root change in either. Rejected: `infra/**` in the app's
+  tsconfig (`next build` would typecheck the CDK's declarations on every build and e2e run); a `typecheck` script in
+  infra's `package.json` (`./apps/*` does not match `apps/*/infra`, so both roots would change).
+- **Small CLI choices.** A bare `--` is ignored (`npm create @sssb dir -- --slug x` hands it through); the closing
+  `cd` line is shell-quoted; `--workflow-ref` reaches the checkout path's template build (no `git rev-parse` then);
+  the checkout path's temporary template is removed however the run ends.
+- **The root's devDependencies are a list in the generator** (`ROOT_DEV_DEPENDENCIES`) at this repository's
+  ranges, captured when the template is built: pack and consume's `root-devdeps-picked` workaround, moved. `vite`
+  and `@vitejs/plugin-react` are not among them: the app has them. The app gains `@sssb/eslint-plugin` and `eslint`.
+- **The generated `knip.json` has three narrow entries**: at the root, `vitest.contract.config.ts` as an entry
+  (knip's Vitest plugin reads `vitest.config.ts` only) and `esbuild` ignored (`SssbApp` bundles with the root's
+  esbuild); in the app, `@sssb/app-config` ignored (the link only the framework resolves) beside the two
+  preset-loaded tools this repository's knip already ignores. Their reasons are comments in
+  `packages/create/src/files.js`; the JSON carries none. It leaves `includeEntryExports` off, as
+  `docs/adopting.md` argues. This repository's `knip.json` gained no entry for `packages/create`.
+
+The `TODO(P12)` markers the previous section left in `docs/adopting.md` are resolved against the built CLI.
+
+## Pack and consume's two shapes and the `adoption-probe` job (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
+
+Pack and consume (`scripts/pack-and-consume.mjs`) now proves the generator as well as the packages, and the
+`adoption-probe` check is its second shape. What it does, and what was rejected:
+
+- **It packs all five `@sssb` packages flat into one `tarballs/` directory**, the directory the generator's `--sssb`
+  takes, checks the packed `@sssb/create` (`createPackageProblems`: no dependency at all, the bin shipped, the
+  template packed whole with none of a checkout's local state in it, JavaScript only under `bin/` and `src/`) and that
+  its `postpack` left no `packages/create/template` behind, and extracts it. Both shapes run THAT generator under
+  plain Node. On a push, `checks.yml` keeps the directory's tarballs as the run's `sssb-tarballs` artifact, so a
+  release candidate attaches `@sssb/create` with the rest (it is in the fixed group). `candidateNotes`
+  (`scripts/release.mjs`) leaves the generator out of the overrides and dependencies it tells an adopter to write and
+  says how to run it instead: a generator is run, never depended on.
+- **Two shapes, two jobs.** `--shape pages` (CI's `pack-and-consume`) generates the workspace (`--slug console`),
+  generates a second app (`--slug ledger`) elsewhere and moves it in, extending the root's three app lists as an
+  adopter adding an app would, and adds the shape's own code (an adapter, a sibling package, the seamless negative
+  fixture, the strict-flag tsconfig) for the script's checks. `--shape generated` (CI's `adoption-probe`) changes not
+  one file: every file the generator wrote is hashed and must be byte-identical at the end (a tool that rewrites one
+  means the generator must write it that way). No flag runs both. Rejected: one job running both (each is its own
+  required check, and they run in parallel).
+- **The generated shape runs the workspace's own gates**: `pnpm verify` (`verifyGateProblems` first: verify must reach a
+  script for every gate `sssb / all-checks` holds, plus knip and jscpd, and no reached script may hold a form that
+  passes with a step failed or not run: `||`, a lone `|`, a newline, `;` outside quotes no other shell reads, a lone
+  `&`, `--if-present`, concurrently's `--success` other than `all`, `echo`, a `#` comment, or a `--filter` without
+  `--fail-if-no-match`); the unit tests through every script that runs them on the way to a green (`heldUnitScripts`:
+  the one verify reaches and the one `sssb ci lint-typecheck-unit` runs, `CI_UNIT_SCRIPTS`, which a test holds to
+  `ci.js`), each held to every conformance test the packed registry names; `pnpm test:contract`, held likewise;
+  `sssb ci lint-typecheck-unit`; and synth, knip and jscpd as steps of their own, as CI runs them
+  (`sssb ci synth --filter <the selector the generated workflow passes>`, `pnpm knip`, `pnpm jscpd`). Rejected: holding
+  only `test:unit` (nothing in verify or CI runs it any more, so a `test:coverage` that excluded the conformance file
+  passed); a shell parser for the gate check (heavy for input the generator writes; plain matches refuse a rare
+  `grep -E 'a|b'`, and a non-pnpm `--filter` is refused without the flag only pnpm takes); catching every no-op
+  (`synth: 'true'` still passes composition, which is why synth runs on its own: CI never runs the root `synth`).
+- **One lockfile seed for both shapes, with two tokens.** `consumer-lock.yaml` is the pages shape's resolution; the
+  generated shape's importers (`.`, `apps/console`, `apps/console/infra`) are a subset, and pnpm keeps the seed's
+  resolution when it drops the rest. The generator writes ABSOLUTE `file:` paths, which pnpm copies verbatim into the
+  lockfile's specifiers and `overrides`, so the seed holds `__PACK_AND_CONSUME_TARBALLS__` for the run's tarball
+  directory and `__PACK_AND_CONSUME_VERSION__` for the group's version (a candidate's tarballs are
+  `sssb-kit-x.y.z-rc.N.tgz`), swapped in on the way in and back by `--update-lockfile`, which fails if any other path
+  of the run's directory is left. Shape 2's "resolution moved" notice counts package versions the seed does not hold
+  (`packagesBeyondSeed`), not lines: dropping importers moves `optional: true` flags. `lockfileProblems` reads the
+  `overrides:` section (each `@sssb/*` to a `file:` tarball, the seam never). Rejected: a second seed for shape 2
+  (another ~8k lines to refresh, for the same resolution).
+- **The workaround register is empty.** P12's six (the stripped in-repo tsconfig, the seam package, the root's
+  tools, `allowBuilds`, the ESLint configs, `dedupePeerDependents`) left with the generator, which writes each. The
+  machinery stays for the next gap.
+- **The `adoption-probe` job** runs `node scripts/pack-and-consume.mjs --shape generated`, with the same install as
+  `pack-and-consume` (the kit's dependencies for its `prepack`, the cdk's `workspace:` link; `@sssb/create`'s
+  `prepack` needs Node and git only) and caches keyed on the same seed under prefixes of its own (the two stores hold
+  different sets). Its name is the one the rulesets already required.
+- **Left for later**: a way to add a second app to a generated workspace (`@sssb/create --add-app` or
+  `sssb add-app`); the pages shape does it by hand today, as an adopter with two apps would, and it is not a workaround
+  because no ADR-0014 step promises it. ADR-0014 part 7's "a sibling package that imports keel and links the seam"
+  is still not in the pages shape (it had none before P12 either).
+
+## The Claude Code plugin, and CLAUDE.md cut to the maintainer half (2026-11-18, ADR-0014 P13, `feat/claude-plugin`)
+
+P13 moves the commands an app author runs out of `.claude/commands/` into a Claude Code plugin that an adopter's
+workspace enables at a pinned commit, makes `@sssb/kit` name the commit it was packed from so `sssb doctor` can hold
+the pins to it, and cuts this repository's `CLAUDE.md` to what holds only here. ADR-0014's addendum of the same date
+says where this differs from part 9. Each decision, and what was rejected:
+
+- **Marketplace `sssb` at the repository root (`.claude-plugin/marketplace.json`), listing one plugin, `sssb`, at
+  `plugins/sssb/`** (relative source `./plugins/sssb`). The enable key is `sssb@sssb`, the commands are
+  `/sssb:<name>` and the agent `sssb:doc-steward`. The generator reads both names from the two manifests
+  (`pluginNames`, `packages/create/src/template.js`) and refuses a marketplace that does not list the plugin, so a
+  rename cannot drift from the settings it writes. Rejected: the plugin at the repository root (`source: "./"`), which
+  makes the whole repository the plugin directory and mixes the maintainer's files into what adopters load.
+- **No `version` in `plugin.json` or the marketplace entry.** Claude Code takes a plugin's version from the manifest's
+  `version`, then the entry's, and only without either from the source (for a relative path in a git-hosted
+  marketplace, the commit SHA); a pinned string keeps every user on the cached copy until its author changes it
+  (Claude Code's plugin docs, "Plugin loading reference", "How Claude Code computes the version"). Left out, raising
+  the pin moves the plugin. The cost: `claude plugin validate --strict` exits 1 on exactly one warning,
+  `version: No version specified`. The gate filters that one line and fails any other warning or error
+  (`tests/tooling/plugin.test.ts`, "claude plugin validate --strict"; an unknown key in `plugin.json` turns both of
+  its rows red). Rejected: the fixed group's semver in `plugin.json`: nothing in the release flow stamps it, and a
+  stale string would silently freeze adopters' plugins across a pin bump.
+- **Which commands move.** Into the plugin: `new-entity`, `new-job`, `new-actor`, `new-notification-kind`,
+  `new-webhook-event`, `new-tour`, `new-preset`, `new-preset-operation`, `new-slice`, `new-port` (an APP-owned port
+  only), `verify`, `pre-pr`, `a11y-review`, `design-review`, and the `doc-steward` agent: each acts on an app and works
+  in a generated workspace. Kept in `.claude/commands/` as the maintainer's: `branch-review` and `sub-review`
+  (generic, not SSSB's to ship), `repo-health` (triages `@sssb/kit/core` and the kit's fakes), `record-fixtures` (the
+  showcase's `llm:record`; a generated app has no LLM fixtures), and **`new-kit-port`**, the framework-port half of
+  the old `/new-port`, renamed so `/new-kit-port` and `/sssb:new-port` are never confused; each sends the other kind
+  of port to the other. Rejected: shipping `record-fixtures` (no such script in a generated app); keeping a project
+  copy of any moved command (two copies drift).
+- **How a command addresses the app and cites SSSB.** "The app" is the root `package.json`'s `sssb.apps` (with
+  several, the one the request names, or ask), and every path is relative to it, else to the workspace root. SSSB's
+  reference app is cited only as a code span `https://github.com/safeinsights/sssb/(blob|tree)/<ref>/apps/showcase/…`,
+  where each command defines `<ref>` as the commit the project's Claude Code settings pin the `sssb` marketplace to (in
+  SSSB's own repository, the local showcase). The plugin and the cited file are then read at one commit, and the gate
+  fails a URL at a branch or a path not in the tree. A generated app's own Items slice is the worked example where it
+  has one. Rejected: `apps/<app>/…` everywhere (wrong for a Pages-shaped workspace, ADR-0014 part 9); a bare `src/…`
+  with no rule; `main` URLs (they drift from the pinned plugin); copying the examples into the plugin (a third copy of
+  the showcase).
+- **The commands are written for the app a generated workspace has**, which lacks the showcase's server Simulator: its
+  only Simulator panel is the static demo's (`DemoShell` with `extraTabs={[]}`), and it has no `/api/simulator/*`
+  routes, no `/api/jobs`, no header bell and no `src/domain`. So `/sssb:new-actor` adds the actor to the static demo
+  and keeps the server host as a section for an app that has one (porting the server Simulator is its own work), and
+  the job, webhook, notification, tour and accessibility commands say what the generated app lacks and where the
+  capability does exist (the static demo's Jobs, Hooks and Snapshots tabs, its bell and profile preferences). An actor
+  registration copies the reference's `as const` shape (the kit exports no actor-definition type), and a tick is
+  picked by id exhaustively. A spec reads the kit's catalog as a file through `require.resolve` of an exported
+  subpath, never an import (`sssb check-e2e` fails any kit import but `@sssb/kit/testing/e2e`). Rejected: inlining the
+  server port into "add an actor" (the showcase's `simulator-glue.tsx` is 867 lines, beside 33 `/api/simulator` and 2 `/api/service` routes); dropping the server guidance.
+- **Adding a package: by hand, never `pnpm add`.** In an installed generated workspace, `pnpm --filter <app> add
+<pkg>` re-resolves `@sssb/kit` without its optional `@sssb/app-config` peer (`sssb doctor` fails "has no seam
+  linked"; typecheck fails inside the kit). The three commands that add one (`new-preset-operation`, `new-port`,
+  `a11y-review`) carry one shared "Adding a package" section, which the gate holds identical: edit the app's
+  `package.json`, `pnpm install`, `pnpm sssb:doctor`; after a `pnpm add` already ran, keep the manifest, restore the
+  lockfile with `git checkout HEAD -- pnpm-lock.yaml`, install, run doctor. The root cause is open as
+  `.claude/future-tasks/pnpm-add-drops-seam-link.md`. Rejected: `git restore pnpm-lock.yaml` (it restores from the
+  index, which may hold the broken lockfile after a `git add`); the clean reinstall (it re-resolves the whole tree); a
+  sentence per command pointing at one of them (a second hop).
+- **Playwright's browser install is filtered to the apps**: `pnpm --filter './apps/*' exec playwright install
+chromium` (or `--filter <app>`) in the commands, the generator's "Next:" lines and README, and `docs/adopting.md`. A
+  generated workspace declares `@playwright/test` in the app, not the root; the root form worked in one workspace only
+  because pnpm hoisted the bin. This repository's root declares it, so this repository's own `README.md` and
+  `CLAUDE.md` keep the root form. Rejected: the root form for adopters (hoisting is not a contract); `pnpm dlx
+playwright` (a version unpinned against `@playwright/test`).
+- **The plugin's gate, `tests/tooling/plugin.test.ts`** (its header lists the conventions): (a) the manifests' shape,
+  which never skips (CI has no `claude`); (b) every reference a command or agent makes resolves in a workspace
+  generated from the live tree: paths, `pnpm` scripts (here as well), `pnpm exec` binaries that a dependency of the
+  package it runs in declares, `sssb` commands, `@sssb/kit` subpaths and the identifiers and props the prose ties to
+  them, rule ids, `/sssb:` commands, SSSB URLs, fenced shell lines and TypeScript imports, and `npx`, `npm`, `yarn`,
+  `pnpm dlx` of SSSB's packages and an un-negated `pnpm add` fail; (c) `claude plugin validate --strict` where the
+  binary is on PATH. A canary of planted rows must each yield exactly its own problem. Rejected: installing `claude`
+  in CI for (c) (a network install of a moving binary into every run, for checks (a) mostly mirrors); a type-checker
+  `Program` for the identifier and props checks (slow); a block-level "a capability word needs a host word" rule (it
+  flagged true sentences).
+- **This repository dogfoods the plugin.** `.claude/settings.json` commits only `enabledPlugins: {"sssb@sssb": true}`,
+  so nothing loads until a maintainer either installs it (`claude plugin marketplace add ./ --scope local`, which
+  writes a `directory` source with the checkout's absolute path to the gitignored `.claude/settings.local.json`, then
+  `claude plugin install sssb@sssb --scope local`, once per checkout) or starts the session with
+  `claude --plugin-dir plugins/sssb`. Checked with Claude Code 2.1.280 in a scratch `CLAUDE_CONFIG_DIR`: the install is
+  a copy in the plugin cache under the commit's SHA (`installed_plugins.json`'s `installPath` and `gitCommitSha`),
+  `claude plugin update` ignores an uncommitted edit and moves to a new commit, and `--plugin-dir` loads the tree as it
+  is (`claude plugin list` shows both `sssb@sssb` and `sssb@inline`). Claude Code's plugin docs say a `--plugin-dir`
+  plugin replaces an installed one of the same name ("Name conflicts"), and describe a local marketplace's
+  relative-path plugin as loaded in place, which 2.1.280 did not do, so `CLAUDE.md` names the version it describes.
+  Rejected: a committed `directory` source with a relative path (undocumented; the CLI resolves `./` to an absolute
+  path before writing it); a `github` source (maintainers would run `main`'s plugin, not their tree's).
+- **The release stamp, `dist/release.json`** (`{ "commit": "<40 hex>" }`), written by the kit's `prepack` after
+  `build-testing-e2e.mjs`, which empties `dist/` first (a test pins the order). It ships under `dist`, which `files`
+  already names. It refuses shipped sources (`src/`, `package.json`) that differ from `HEAD`, staged, unstaged or
+  untracked, read from `git status --porcelain=v1 -z` by position, never by status letter (a `T` once slipped
+  through), under `@sssb/create`'s switch `SSSB_CREATE_UNPUSHED_PIN=1`; it fails outside a git checkout. It does not
+  repeat the generator's unpushed-`HEAD` refusal: the generator's pin, which GitHub must resolve, is the same commit
+  and is refused there. `release.mjs candidate` refuses a kit whose stamp is not the candidate's commit. Rejected: a
+  field in the packed `package.json` (pnpm reads the manifest before `prepack` runs); an `exports` entry (doctor reads
+  the file by path, and the public surface would widen for a file no app imports); the repository in the stamp (the
+  kit's `package.json` `repository` names it); mirroring the unpushed check in the kit (a second copy, or an import
+  from a kit script into `packages/create`); a `"modified": true` flag doctor would then have to explain.
+- **`sssb doctor`'s pin report** (`pinReport`, `packages/tools/src/commands/doctor-checks.js`) replaces "workflow and
+  plugin pins: not checked". SSSB's repository is the installed kit's `package.json` `repository`; its pins are every
+  `uses: <owner>/<name>/.github/workflows/<file>@<ref>` in the root's workflows and every `extraKnownMarketplaces`
+  entry of `.claude/settings.json` from that repository (`github` `repo`, or `git` `url`). It is `ok` only when the kit
+  has a stamp, the workspace has a workflow pin and a marketplace pin, every one is the stamp's commit, and
+  `enabledPlugins` enables some plugin from that marketplace (`true`, or a non-empty array: Claude Code 2.1.280's
+  settings schema describes an "extended format with version constraints"). Otherwise it reports, naming both commits,
+  a branch or missing `ref`, what is enabled instead, or why it cannot judge; it never fails (ADR-0014 part 5). In-repo
+  it is "not checked", decided by doctor's in-repo flag, not by the file's absence (a `dist/` a local pack left behind
+  is not read). Rejected: hardcoding `safeinsights/sssb` (a fork publishing under its own repository would be
+  misjudged); hardcoding the plugin's name (the kit would have to know it, and a rename would break the check
+  quietly); reading `settings.local.json` (a machine's, not the repository's pin).
+- **Doctor's in-repo guide check**: with no `.claude/sssb-guide.md`, `ok` when the root `CLAUDE.md` imports the kit's
+  guide from its source (`@packages/kit/src/guide.md` as a whitespace-separated token; a backticked mention is no
+  import), a report otherwise. Rejected: "holds no copy yet" (this repository never will: the import is the
+  mechanism); failing in-repo (doctor's failures are for adopters' installs).
+- **`@sssb/create` writes `.claude/settings.json` and `CLAUDE.md`.** The settings declare the marketplace as a
+  `github` source of the template's workflow repository at the workflow's pin (`--workflow-ref` moves both) and enable
+  `<plugin>@<marketplace>`. A commit `ref` needs Claude Code 2.1.324 or later (Claude Code's marketplace reference,
+  "Fields by type", `ref`), which the generated README, `docs/adopting.md` and the changeset say, beside
+  `claude plugin install sssb@sssb --scope project` once per clone after trusting the folder (a project's
+  `enabledPlugins` installs nothing). `CLAUDE.md` is a heading, a sentence, the line `@.claude/sssb-guide.md` and a
+  heading for the adopter's own rules, written once. This reverses P12's "not written: `CLAUDE.md`": without it the
+  guide steers no agent until the adopter writes the file, and the plugin's commands assume the guide is loaded. The
+  plugin's files are template sources for the uncommitted check (`TEMPLATE_SOURCES`), so a pack refuses a plugin that
+  differs from the `HEAD` the settings pin. Rejected: leaving `CLAUDE.md` to the README (most adopters would not
+  write it); the app's display name in it (one more Prettier-sensitive place for a name).
+- **Pack and consume's generated shape gains a pin step** (`pinsGenerated` in `scripts/pack-and-consume.mjs`,
+  `generatedPinProblems` in `scripts/pack-and-consume/checks.mjs`): the workflow calls the reusable workflow once at a
+  full SHA, the settings declare exactly one marketplace of that repository at that SHA and enable its plugin, the
+  packed kit's stamp names it, the generated workspace's `sssb doctor` prints the `ok` pin line, and `git cat-file -e`
+  finds the marketplace and plugin manifests at that commit in this checkout. The kit is packed under the generator's
+  switch. So the plugin must be committed before a local run, as the starter must. Rejected: checking the plugin only
+  in the pages shape (the generated shape is the one whose settings are untouched); reading doctor's line from
+  verify's interleaved output.
+- **`CLAUDE.md` cut to the maintainer half.** It opens with `@packages/kit/src/guide.md` (the source, not a copy, so
+  nothing can make it stale), then says nothing the guide says is repeated and an app-facing rule goes into the guide
+  (it ships, so it takes a changeset). The app half left (the seam, vendor SDKs and `process.env` in an app, `getDb`,
+  keyset and migration rules, `authorize`, i18n, router-agnostic screens, hermetic dev, the conformance and e2e
+  rules, knip's narrow entry); the maintainer half of each stayed. **The guide gained the cutover rule and a "dev
+  loop" section** (`.changeset/app-guide-dev-loop.md`, a `minor`, Kind seam, since doctor fails a stale copy):
+  ticking scheduled work, the cron route behind `withWebhookSecret`, per-worktree ports via `pnpm exec sssb port`,
+  and verify, `lint:fix` and conventional commits. Rejected moving: the gate-must-fail and git habits (general
+  engineering), the product name in tests (the generator's concern), ladle (the starter has none); naming the
+  `starter` port band in the guide (the generator's no-survivor test bans it).
+- **This repository's root `package.json` gains `sssb.apps: ["apps/showcase", "apps/starter"]`**, the set doctor
+  already walked, so the commands' "the app" rule is literal here, and `plugins/` in `sssb.docPaths.roots`, so a doc
+  citing a command file is checked. Not added to `include`: the commands' paths are app-relative, and the plugin's
+  gate checks them more strictly.
+- **The changeset gate covers `plugins/` and `.claude-plugin/`** (`.github/scripts/require-changeset.sh`,
+  `tests/tooling/changesets.test.ts`, `.changeset/README.md`): adopters load the plugin from this repository at the
+  pin they raise at a release, so a plugin change reaches them as a shipped file does. Its changeset names
+  `@sssb/create`, the package that writes the pin. Rejected: leaving it ungated (the plugin is no npm package, but it
+  is adopter-visible).
+- **Command names say `/sssb:`** wherever they mean the plugin's: the starter's comments (a generated workspace holds
+  no bare `/<command>`, which `tests/tooling/create-generate.test.ts` checks against the plugin's command list), the
+  kit's shipped comments, the docs, `README.md` and `CONTRIBUTING.md`; a framework port is `/new-kit-port`.
+
+## The seam is a workspace package (2026-11-18, `fix/pnpm-add-seam-link`)
+
+P13 found that `pnpm add` in a generated workspace unlinks the app's seam from its `@sssb/kit`, and worked around it in
+the plugin's commands (its task, cited in P13's entry above, is now
+`.claude/future-tasks/resolved/pnpm-add-drops-seam-link.md`). This fixes it in what `@sssb/create` writes (ADR-0014's addendum of the same date has the
+cause, in pnpm's source). Each decision, and what was rejected:
+
+- **Each app's `src/app-config` is a workspace package named `<slug>-app-config`, declared
+  `"@sssb/app-config": "workspace:<slug>-app-config@*"`**, with `apps/*/src/app-config` in `pnpm-workspace.yaml`'s
+  packages (`packages/create/src/generate.js`, `packages/create/src/files.js`). Tried first in generated workspaces
+  under the pinned pnpm 11.14.0, counting the kit's peer suffix in the lockfile and running `sssb doctor` after each
+  command: `add`, `remove`, `update` (with `--filter`, `-r` and `--latest`), `add -w`, `add` run in the app, and a
+  fresh install all kept it, with one app and with two. Rejected, each tried the same way and each dropping the peer
+  on the first `add`: a `.pnpmfile.cjs` `readPackage` hook re-declaring the peer on the kit;
+  `resolvePeersFromWorkspaceRoot: false`; `dedupePeerDependents: true` (which also breaks part 5's instance per
+  importer); `autoInstallPeers: false`; `dependenciesMeta.<seam>.injected`; pnpm 11.21.0 in `packageManager`.
+  Rejected without trying: a `sssb add` wrapper (authors and agents reach for `pnpm add`, and Renovate or Dependabot
+  never run a wrapper); one seam package named `@sssb/app-config` declared `workspace:*` (it works for one app, but
+  two apps' seams would be two workspace packages of one name).
+- **The name is `<slug>-app-config`, beside `<slug>` and `<slug>-infra`.** The slug check already refuses a slug that
+  names a package the workspace installs; the seam's name is not checked against them, since nothing a workspace
+  installs ends in `-app-config`. `workspace:` resolves only to a workspace package, so this unscoped name is never
+  fetched from a registry; the name the kit's peer declares stays `@sssb/app-config`, in SSSB's scope.
+- **`@sssb/kit`'s manifest does not change**, so P2's dead-registry check of the packed kit is not re-run: the seam
+  stays an optional peer in `peerDependenciesMeta` alone. Its shipped source does: the conformance suite's `seam-map`
+  check (`packages/kit/src/testing/conformance/seam-map.ts`) refused a seam package not named `@sssb/app-config`, which
+  pack and consume's unit step found. It now reads the app's declaration and requires the name a
+  `workspace:<name>@<range>` names, else `@sssb/app-config`. Rejected: dropping the name check (a seam package whose
+  name matches nothing the app declares is a seam pnpm does not link).
+- **`sssb doctor` fails a `link:` seam even while it is linked** (`importerSeamProblems`,
+  `packages/tools/src/commands/doctor-checks.js`), with the four changes in the message. Rejected: reporting it
+  without failing, which leaves an adopter green until their next `pnpm add`, then red with a message about the kit.
+  It also fails an importer whose declared seam is another importer's (`workspace:` makes that one edit away).
+- **The generator's check that no `package.json` depends on a missing workspace package** now reads each
+  `workspace:` specifier's target (`workspace:<name>@<range>` names `<name>`; any other form, the dependency's own
+  key) instead of refusing every `workspace:`, which would refuse the seam.
+- **The generated `knip.json` gives the seam a workspace entry of its own** (`apps/<app>/src/app-config`, every `.ts`
+  an entry), since knip now counts its files as that workspace's: the app's entry pattern for them matched nothing.
+- **Pack and consume's generated shape adds `partialInstallsKeepSeam` after every other step**
+  (`scripts/pack-and-consume.mjs`): `pnpm --filter <app> add ms@2.1.3`, `remove ms`, `update zod`, each followed by
+  `sssb doctor` and `checkSeamLinks`. Last, because each rewrites files the generator wrote, which the step before
+  holds unchanged. `ms` is in the seed already. Seen red with the `link:` seam: "after pnpm add, sssb doctor fails".
+- **P13's workaround is reverted**: the plugin's **Adding a package** sections, the gate's rule failing an un-negated
+  `pnpm add` (and the negation reading only it needed), and the section test. The commands say
+  `pnpm --filter <app> add <pkg>`, as before P13.
+- **Doctor fails a `workspace:` seam whose name is not exactly one workspace package's.** The review asked which pnpm
+  command or setting still unlinks the seam without doctor noticing; it found one: a copy of an app's seam left under
+  its name in a package that takes no kit (`apps/zzz/src/app-config` named `acme-app-config`). pnpm took both without
+  a warning and linked the later one, into the app and its kit alike, so the seam check's two readings agreed and
+  doctor said ok. Rejected: holding every seam to `<importer>/src/app-config` (it would also refuse a seam an adopter
+  keeps elsewhere on purpose, which the names alone do not). Everything else the review reported running (the claim
+  check re-ran `dedupe`, `install --force` and `nodeLinker: hoisted`, with the same result) kept the seam or made
+  doctor fail: `pnpm up -r` with and without `--latest`, `--lockfile-only` and Renovate-style updates, `dedupe`,
+  `rebuild`, `prune`, `patch`, `catalog:`, overrides, `install --force`, pnpm 11.21.0, `shamefullyHoist`,
+  `publicHoistPattern`, the three workspace-protocol settings, renaming an app, and running pnpm inside the seam
+  (kept); `nodeLinker: hoisted`, `injectWorkspacePackages`, `injected`, a filtered install, and a copied second app
+  with the seam's name or dependency left unrenamed (failed). Not run: `nodeLinker: pnp` (doctor's Vitest listing hung
+  there), `pnpm import`, Renovate and Dependabot themselves, and a kit from a registry.
+- **Not covered: `nodeLinker: hoisted`.** One hoisted `@sssb/kit` cannot hold two apps' seams; with two apps doctor
+  fails it ("runs on a seam not its own"), as it did before this change.

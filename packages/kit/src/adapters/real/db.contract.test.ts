@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
-import { startContractServer, type ContractServer } from '../../../../../tests/support/contract-postgres'
+import { startContractServer, type ContractServer } from './contract-postgres'
 import { randomUUID } from 'node:crypto'
 import { migrateToLatest } from '../../db/migrate'
 import { up as grantAppUser } from '../../db/migrations/0015_app_user_grant'
@@ -18,8 +18,11 @@ import { createRealDb } from './db'
  * It needs its own database. The fixture's migrations share 0001–0999 with the contract app's but differ
  * from 1001 up, and two such sets over one database make Kysely report corrupted migrations. So it
  * creates `sssb_contract` on whichever server it is given: CONTRACT_DATABASE_URL's in CI, otherwise an
- * embedded-postgres of its own on the same derived port as the app harness — `vitest.contract.config.ts`
- * runs files one at a time, so the two never hold that port together.
+ * embedded-postgres of its own on CONTRACT_PG_PORT, the same derived port the apps' contract suites use —
+ * `vitest.contract.config.ts` sets it and runs files one at a time, so two never hold that port together.
+ *
+ * The apps' contract runner (`@sssb/kit/testing/contract`) runs the generic passes over each app's tables; this file
+ * keeps what is about the framework: the real adapter's pool, migration 0015 branch by branch, a second owner.
  */
 
 const DATABASE = 'sssb_contract'
@@ -31,7 +34,7 @@ let serverUrl: string
 
 beforeAll(async () => {
     // The server, and `sssb_contract` on it: CONTRACT_DATABASE_URL's in CI, otherwise an embedded-postgres of its own
-    // (tests/support/contract-postgres.ts, which every contract suite shares).
+    // (./contract-postgres.ts, which every contract suite shares).
     server = await startContractServer('sssb-contract')
     serverUrl = server.url
     await server.createDatabase(DATABASE)

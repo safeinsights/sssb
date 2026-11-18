@@ -1,32 +1,13 @@
 import path from 'node:path'
-import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
-import { viteSingleFile } from 'vite-plugin-singlefile'
-import { pruneMantineCss } from '../../scripts/vite-prune-mantine-css'
+import { staticDemoConfig } from '@sssb/tools/vite'
 
 /**
- * Builds the hash-routed static demo shell (src/demo-static) that runs from file://.
- * ALWAYS single-file: Chrome blocks external type="module" scripts on the file:// origin (CORS),
- * but inline module scripts run fine — so everything is inlined into one index.html. Bonus: the
- * demo is one shareable file.
+ * Builds the hash-routed static demo shell (src/demo-static) that runs from file://, as one file (the preset,
+ * @sssb/tools/vite, says why). The showcase adds its PostCSS pipeline (Panda) and its seed package, which the demo
+ * reaches by source.
  */
-export default defineConfig({
-    root: path.resolve(__dirname, 'src/demo-static'),
-    base: './',
-    plugins: [react(), pruneMantineCss(), viteSingleFile()],
-    css: {
-        postcss: __dirname,
-    },
-    resolve: {
-        alias: {
-            '@sssb/app-config': path.resolve(__dirname, 'src/app-config'),
-            '@sssb/kit': path.resolve(__dirname, '../../packages/kit/src'),
-            '@': path.resolve(__dirname, 'src'),
-            '@app/seed': path.resolve(__dirname, '../../packages/seed/src/index.ts'),
-        },
-    },
-    build: {
-        outDir: path.resolve(__dirname, 'dist-demo'),
-        emptyOutDir: true,
-    },
+export default staticDemoConfig({
+    appDir: __dirname,
+    css: { postcss: __dirname },
+    alias: { '@app/seed': path.resolve(__dirname, '../../packages/seed/src/index.ts') },
 })

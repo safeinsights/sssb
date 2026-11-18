@@ -8,17 +8,20 @@
         "apps/showcase": {
             "entry": ["src/demo-static/**/*.{ts,tsx}", "src/app-config/**/*.ts", "scripts/*.ts"],
             "project": ["src/**", "scripts/**"],
-            "ignore": ["src/styles/generated/**"]
+            "ignore": ["src/styles/generated/**"],
+            "ignoreDependencies": ["@vitejs/plugin-react", "vite-plugin-singlefile"]
         },
         "apps/starter": {
             "entry": ["src/demo-static/**/*.{ts,tsx}", "src/app-config/**/*.ts", "src/seed/*.ts"],
-            "project": ["src/**"]
+            "project": ["src/**"],
+            "ignoreDependencies": ["@vitejs/plugin-react", "vite-plugin-singlefile"]
         },
         "packages/seed": {},
         "packages/kit": {
             "ladle": {
                 "entry": ["src/**/*.stories.tsx"]
             },
+            "entry": ["src/testing/e2e.ts"],
             "project": ["src/**", "test-fixture/**"],
             "includeEntryExports": true,
             "ignoreExportsUsedInFile": {
@@ -32,8 +35,8 @@
                 "test-fixture/app-config/db/migrations/*.ts"
             ]
         },
-        "infra": {
-            "entry": ["app.ts"]
+        "packages/tools": {
+            "ignoreDependencies": ["next", "vite", "vitest"]
         }
     },
     "ignore": ["spikes/**"]

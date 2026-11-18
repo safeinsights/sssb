@@ -66,7 +66,7 @@ spike is the worked example.
 carry design detail; the rest is re-sequenced freely as evidence arrives. Order by learning and risk:
 load-bearing certainties first, genuinely uncertain features after the evidence that can reshape them. The map
 is a hypothesis with provenance, and the slices are themselves the validation instrument — it changes when the
-evidence says so, not when someone re-raises an argument. (`.claude/commands/new-slice.md` scaffolds a slice
+evidence says so, not when someone re-raises an argument. (The plugin's `/sssb:new-slice`, `plugins/sssb/commands/new-slice.md`, scaffolds a slice
 the house way.)
 
 ## One-way vs two-way doors — what becomes an ADR ✅
@@ -103,9 +103,9 @@ loop fast enough for this to pay off — for agents most of all.
 **Principle.** Every external dependency (auth, database, object storage, LLM, email, analytics) is reached
 through a thin interface _the app owns_ — a port — with two implementations, real and fake. **Wrap, don't
 stub:** the port is sized to what the app actually needs (a handful of functions), not to the vendor's
-hundreds of calls. Exactly one module imports each vendor SDK, and lint rules (`no-restricted-imports`
-for `import`, `sssb/no-dynamic-vendor-import` for `import()`) plus a CI check make the boundary
-permanent.
+hundreds of calls. Exactly one module imports each vendor SDK, and lint rules (`sssb/no-vendor-import`
+for `import`, `sssb/no-dynamic-vendor-import` for `import()`, both in `@sssb/eslint-plugin`) plus a CI check make
+the boundary permanent.
 
 **Whose port it is decides where it lives ✅.** SSSB's ports and adapters are framework code in
 `packages/kit/src/`. A port for a vendor SSSB has no port for, which only one app calls and which fails
@@ -124,8 +124,9 @@ you to it forever.
 **Tradeoff.** One thin layer of indirection. On a greenfield app it is near-free; retrofitting onto an app
 with vendor calls everywhere is the strangler pattern (introduce the wrapper, forbid new direct imports,
 migrate call sites opportunistically). See ADRs [0003](adr/0003-auth-clerk-headless-custom-ui.md),
-[0006](adr/0006-isomorphic-core.md), [0009](adr/0009-llm-anthropic.md); `.claude/commands/new-port.md`
-scaffolds a port with both adapters.
+[0006](adr/0006-isomorphic-core.md), [0009](adr/0009-llm-anthropic.md); `.claude/commands/new-kit-port.md`
+scaffolds a framework port with both adapters (`/new-kit-port`), and the plugin's `/sssb:new-port`
+(`plugins/sssb/commands/new-port.md`) one the app owns.
 
 ## What the template ships — three kinds of things ✅
 
@@ -278,7 +279,7 @@ demo degrades only where physics forbid — no server means no real HTTP or byte
 means Snapshots cannot SAVE (reset and the demo presets still work: they are scripts, not files) — and every such degrade is noted where it happens. Pure world _logic_ (flags,
 held jobs, advancing state) is never a physics degrade: if it can run in memory, the twin runs it. An empty
 tab in the flagship portable demo would undermine the very proof it exists to make. The budget guard
-(`scripts/check-demo-size.mjs`) keeps parity honest: hand-built twins over vendored libraries, per the
+(`sssb check-demo-size`) keeps parity honest: hand-built twins over vendored libraries, per the
 react-email precedent.
 
 **The simulated world has its own surface: Simulator ✅.** The fakes don't just stub vendors — together they
@@ -423,7 +424,7 @@ one function that either allows the action or throws `ForbiddenError` → 403. T
 (`packages/kit/src/core/abilities.ts`, pure `packages/kit/src/core`, shared verbatim by the server
 and the static demo twin) is deny-by-default and org-scoped: role alone (`canManageOrg`) still gates coarse,
 whole-route decisions via `requireRole`, but resource-level decisions — can THIS user create THIS ticket in THIS
-org — go through the ability layer instead of a rank check. A build-time scan (`authorized-mutations.test.ts`)
+org — go through the ability layer instead of a rank check. A build-time scan (the conformance suite's `authz-mutations` check, which every app runs over its own routes)
 makes skipping the choke point loud: every mutating handler must reach `authorize(...)` on its own path, or sit
 under a justified exemption and pass that exemption's gate, the same discipline `withTenant`'s lint ban on raw `getDb()` gives the tenant boundary. The caller
 need not be a person: `authorize(actor, action, subject)` also judges a **machine** (a service key, or a token
@@ -466,7 +467,7 @@ gate gets bypassed, so guard its speed.
 
 ## Environments — and why there is no standing QA environment 🧭
 
-The intended topology (local pieces exist today; the full cloud shape is the `infra/` CDK draft plus the
+The intended topology (local pieces exist today; the full cloud shape is each `apps/<app>/infra/` CDK draft, built on `packages/cdk`'s `SssbApp`, plus the
 `.github/workflows/` checks):
 
 | Environment          | What it is                           | Data / auth                       | Status |

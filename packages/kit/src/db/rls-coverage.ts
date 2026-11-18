@@ -9,7 +9,7 @@ import type { DB } from './schema'
  * WHY THIS EXISTS. `SECURITY.md` promises that every tenant-scoped table is protected by row-level
  * security. Nothing used to enforce the word "every" — the proof suite was a hand-written list of
  * tables somebody remembered to extend, and a table left off it was invisible. That was demonstrated,
- * not theorised: a tenant-scoped table added exactly the way `/new-entity` instructs, minus its
+ * not theorised: a tenant-scoped table added exactly the way `/sssb:new-entity` instructs, minus its
  * six-line RLS block, passed typecheck, lint, knip and the whole unit suite while permitting a
  * cross-tenant SELECT *and* a cross-tenant INSERT through the sanctioned `db.withTenant()` API.
  *
@@ -38,8 +38,8 @@ import type { DB } from './schema'
  * `FORCE` is checked because it cannot be caught behaviourally: every behavioural proof runs through
  * `runWithTenant`, which does `SET LOCAL ROLE app_user`, and `app_user` is not the table owner — so
  * `FORCE` makes no difference on that path. It protects the OWNER connection, which is what
- * `infra/stack.ts` actually deploys, and measured on real Postgres with a non-superuser owner a table
- * without it hands that connection every tenant's rows while a table with it hands over none.
+ * the SssbApp construct (packages/cdk) actually deploys, and measured on real Postgres with a non-superuser
+ * owner a table without it hands that connection every tenant's rows while a table with it hands over none.
  *
  * It runs inside `runRlsProofs`, so it runs on BOTH engines — pglite in the unit suite and real
  * Postgres in `pnpm test:contract` — against whatever the registered migrations actually created.

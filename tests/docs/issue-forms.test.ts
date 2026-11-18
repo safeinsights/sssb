@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
  * Both forms shipped with `value:` sitting directly on the `- type: markdown` body item instead of
  * under `attributes:`. That is valid YAML and invalid schema, so nothing here noticed: `pnpm verify`
  * never reads `.github/`, and the only test that touched this directory
- * (`adopter-identity.test.ts`) reads `config.yml` for the maintainer handle without parsing the
+ * (the since-retired adopter-identity test) read `config.yml` for the maintainer handle without parsing the
  * forms. GitHub rejects a malformed form at render time — a stranger clicking "New issue" gets a
  * template error instead of the form, which kills the whole structured issue funnel on day one.
  * It is the same class as the workflow that parsed but declared `runner.temp` in a job-level `env:`

@@ -6,7 +6,8 @@ code, 2026-07-31. That task resolved the showcase and left the starter behind wi
 
 ## The gap
 
-`.github/workflows/checks.yml` sets `E2E_BUILD: '1'` once, on the whole `e2e` job — so it lands in the
+`.github/workflows/app-checks.yml` (the reusable workflow `checks.yml` calls) sets `E2E_BUILD: '1'` once, on the
+`e2e` job's run step — so it lands in the
 environment of all three shards, `showcase`, `showcase-destructive` **and** `starter`. Only the showcase
 reads it:
 
@@ -33,7 +34,7 @@ whose whole job is to catch framework assumptions should be the app CI builds.
 ## Shape of the change
 
 - `apps/starter/package.json` gains `build:e2e` and `start:e2e`, copied from the showcase's pair
-  (`E2E_BUILD=1 APP_MODE=simulated next build`, and `scripts/serve-standalone.mjs` for the serve half —
+  (`E2E_BUILD=1 APP_MODE=simulated next build`, and `sssb serve-standalone` for the serve half —
   `next.config.ts` sets `output: 'standalone'`, so plain `next start` does not serve it).
 - `apps/starter/playwright.config.ts` takes the showcase's `E2E_BUILD` branch, including the longer
   `webServer.timeout` a build needs before it can serve.

@@ -129,6 +129,15 @@ describe('the carve-outs still let through what they were made for, in every spe
         expect(fired(findings, VENDOR_STATIC) + fired(findings, VENDOR_DYNAMIC)).toBe(0)
     })
 
+    // An app's deployment is a CDK project beside the app, never on its module graph (ADR-0014, D8): a
+    // custom resource's handler there may call the AWS SDK, and the app's fences do not reach it.
+    it.each(['ts', 'mjs'])("the app's infra (.%s) may import a vendor SDK", async (ext) => {
+        const file = `${APP}/infra/lib/custom-resource.${ext}`
+        const findings = await lint(file, importsVendor(file))
+        expect(fired(findings, VENDOR_STATIC) + fired(findings, VENDOR_DYNAMIC)).toBe(0)
+        expect(fired(await lint(file, loadsVendor(file)), VENDOR_DYNAMIC)).toBe(0)
+    })
+
     describe.each([`${APP}/src/adapters/real/kv`, 'packages/kit/src/adapters/real/kv'])('%s', (zone) => {
         it.each(EXTENSIONS)('.%s may import a vendor SDK and read its own configuration', async (ext) => {
             const file = `${zone}.${ext}`
@@ -191,6 +200,17 @@ describe('the carve-outs still let through what they were made for, in every spe
     })
 
     // Panda's generated styled-system is ignored, and only what Panda 2 writes there: `.js` and `.d.ts`.
+    // Build and test output is ignored at the app's root only (the preset's ignores, and the root config's, are
+    // anchored): the same names deeper in the app are source a route can import.
+    it.each(['coverage', 'test-results', 'playwright-report', 'dist-demo', '.next', '.data'])(
+        'src/%s/ is fenced, though the app-root directory of that name is not',
+        async (dir) => {
+            const file = `${APP}/src/${dir}/kv.ts`
+            expect(fired(await lint(file, readsEnv(file)), PROCESS_ENV)).toBe(1)
+            expect(await isIgnored(`${APP}/${dir}/kv.ts`)).toBe(true)
+        },
+    )
+
     it.each(['css.js', 'css.d.ts'])('generated styles (%s) are not linted', async (name) => {
         expect(await isIgnored(`${APP}/src/styles/generated/css/${name}`)).toBe(true)
     })
@@ -248,6 +268,16 @@ describe('what the effective-config audit found', () => {
             const code = "import { mkdtempSync } from 'node:fs'\nexport const dir = mkdtempSync('x')\n"
             const findings = await lint(`${APP}/${file}`, code)
             expect(findings.filter((f) => f.rule === 'sssb/no-direct-mkdtemp')).toHaveLength(1)
+        },
+    )
+
+    // The apps' tests get the ban from the preset; every other test in the repo, the framework's and the repo's own,
+    // from the root config's block. Without these, switching that block off turned nothing red.
+    it.each(['packages/kit/src/server-lib/kv.test.ts', 'tests/tooling/kv.test.ts', 'packages/kit/test-fixture/kv.ts'])(
+        'a raw mkdtemp in %s is caught',
+        async (file) => {
+            const code = "import { mkdtempSync } from 'node:fs'\nexport const dir = mkdtempSync('x')\n"
+            expect((await lint(file, code)).filter((f) => f.rule === 'sssb/no-direct-mkdtemp')).toHaveLength(1)
         },
     )
 })

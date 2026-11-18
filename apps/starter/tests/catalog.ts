@@ -4,8 +4,8 @@ import path from 'node:path'
 /**
  * This app's own message catalog, read from disk at test time.
  *
- * Specs assert against THIS rather than against a literal like `'Starter'`, because the product name
- * is the one thing an adopter is guaranteed to change (`pnpm init-app`). A spec that hard-codes it
+ * Specs assert against THIS rather than against the product name as a literal, because the product name
+ * is the one thing an adopter is guaranteed to change (`pnpm create @sssb` names it). A spec that hard-codes it
  * turns the rename into a broken gate.
  */
 export function welcome(locale: string): { readonly title: string; readonly [key: string]: string } {

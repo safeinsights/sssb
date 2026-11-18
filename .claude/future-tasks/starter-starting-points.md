@@ -5,7 +5,7 @@
 
 ## What is true (re-measured against the tree)
 
-After `pnpm init-app <slug> --eject-showcase` the adopter keeps `apps/starter`, renamed. It is the minimum
+An adopter's workspace (`pnpm create @sssb`) holds `apps/starter`, renamed. It is the minimum
 an adopter keeps and the framework's falsifier, and its route tree shows it: the sign-in picker, the
 protected dashboard, `api/auth/{dev-signin,org,signout}` and one entity's route. It has none of the wiring
 the showcase uses to reach capabilities SSSB ships screens for:
@@ -23,8 +23,8 @@ and every Snapshots feature are therefore reachable in the starter only through 
 registration seam is there (`apps/starter/src/app-config/presets.ts` and `tours.ts` register nothing today),
 and a server host for it is not.
 
-The consequence lands on the adopter the day after ejecting. A preset or tour written with `/new-preset` or
-`/new-tour` is watchable only in the static demo; `pnpm dev` has no panel to load it from, and no org screen
+The consequence lands on the adopter the day after generating. A preset or tour written with `/sssb:new-preset` or
+`/sssb:new-tour` is watchable only in the static demo; `pnpm dev` has no panel to load it from, and no org screen
 or accept route for an `invite` step to lead into.
 
 ## The question to decide
@@ -58,20 +58,20 @@ Against, and these are the reasons this is a question rather than a task:
 
 1. **Wire it into the starter.** Simplest for the adopter, largest minimum, most duplication.
 2. **Keep the starter minimal and ship a scaffold command** (an `/add-simulator`, `/add-invitations`, in the
-   style of `.claude/commands/new-tour.md`) that writes the wiring into the adopter's app on request. The
+   style of `plugins/sssb/commands/new-tour.md`) that writes the wiring into the adopter's app on request. The
    minimum stays small and the wiring is still theirs, but an agent command is not a gate, and CI cannot
    prove the wiring still compiles unless an adoption-probe leg runs it.
 3. **Promote the wiring into SSSB as re-exportable route handlers**, so the adopter's route file is one line.
    Closest to `route-glue-duplication.md`, merge-friendly, and the least "in the adopter's hands".
 
-Whichever is chosen, the adoption probe in `.github/workflows/checks.yml` is what makes it a gate: eject,
-add the capability, `pnpm verify`.
+Whichever is chosen, the adoption probe in `.github/workflows/checks.yml` (a workspace generated with the packed
+`@sssb/create`, then its `pnpm verify`) is what makes it a gate: generate, add the capability, `pnpm verify`.
 
 ## Related open tasks
 
 - `route-glue-duplication.md` — the same decision from the other side; read first.
 - `self-service-auth-mfa-and-invitations.md` — widens the accept-invite flow into three; whatever the
   starter wires now is what that work has to keep working, so settle ownership of the accept route first.
-- `init-app-blank-option.md` — decides what "the minimum an adopter keeps" is, and a starter that carries
+- `create-blank-option.md` — decides what "the minimum an adopter keeps" is, and a starter that carries
   more wiring has more for `--blank` to sweep.
 - `resolved/demo-size-budget-headroom-thin.md` — the byte cost of anything added to the static demo, and whose budget it is.

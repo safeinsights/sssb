@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { citedPaths, doctrineDocs, resolves } from './doc-set'
+import { citedPaths, doctrineDocs, missingIncludes, resolves } from './doc-set'
 
 /**
  * The docs must not send you somewhere that no longer exists.
@@ -9,15 +9,30 @@ import { citedPaths, doctrineDocs, resolves } from './doc-set'
  * docs said one thing and the tree said another, and nothing caught it. This is the catch: the same
  * discipline `authorized-mutations.test.ts` applies to routes, applied to prose.
  *
- * The doc set, the citation parser and the resolution rule all live in `./doc-set.ts`, shared with
- * `scripts/init-app.ts`. That sharing is the point: adoption REWRITES these citations, and a rewriter
- * working from its own idea of what counts would leave the gate red on the adopter's first command.
+ * The doc set, the citation parser and the resolution rule all live in `@sssb/tools/doc-paths`, read through
+ * `./doc-set.ts`, and `sssb check-doc-paths` runs the same engine, so this test and an adopter's gate cannot
+ * disagree about scope.
  */
 describe('doctrine docs cite paths that exist', () => {
     const docs = doctrineDocs()
 
     it('scans the whole doctrine set', () => {
         expect(docs.length).toBeGreaterThan(20)
+    })
+
+    it('lists no include entry that names nothing, so a typo cannot quietly shrink the set', () => {
+        expect(missingIncludes()).toEqual([])
+    })
+
+    // The app guide `@sssb/kit` ships cites paths inside the reader's app (ADR-0014 P7), so `sssb.docPaths.relativeTo`
+    // has it read against the starter. Were that mapping dropped, its citations would be read against the root, and
+    // were the guide dropped from `include`, nothing would read it at all: both would quietly stop checking it.
+    it('reads the app guide, and reads it against apps/starter', () => {
+        const guide = 'packages/kit/src/guide.md'
+        expect(docs).toContain(guide)
+        const cited = citedPaths(guide).map(({ path }) => path)
+        expect(cited.length).toBeGreaterThan(10)
+        expect(cited.filter((path) => !path.startsWith('apps/starter/'))).toEqual([])
     })
 
     it.each(docs)('%s', (file) => {

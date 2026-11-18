@@ -6,7 +6,7 @@ import { OrgSwitcher, type SwitcherOrg } from '@sssb/kit/components/auth/org-swi
 import { UserMenu, type MenuUser } from '@sssb/kit/components/auth/user-menu'
 
 /**
- * The framework header, wired to this app. Deliberately barer than the showcase's: no notification
+ * The framework header, wired to this app. Deliberately barer than SSSB's reference app's: no notification
  * bell (nothing here produces notifications) and no nav (there is one screen). `appName` is passed
  * because the prop is required: one shared framework catalog cannot name two products, so SSSB's
  * catalog carries no product name and every app supplies its own (see AppHeader).

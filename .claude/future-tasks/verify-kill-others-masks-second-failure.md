@@ -21,7 +21,7 @@ Measured with concurrently 10.0.4 and two commands that both fail:
 
 The cost is a slower loop, not a wrong answer. A session fixes the lint error, reruns, and only then
 sees the unit failure that was already there. Each extra round costs a full `verify`. CI's
-`adoption-probe` job runs `pnpm verify` too, so its log can also show only the first failure.
+`adoption-probe` job runs a generated workspace's `pnpm verify` too, so its log can also show only the first failure.
 
 ## Why the flag is there
 
@@ -38,8 +38,8 @@ Pick one, and write the choice down in `docs/decision-log.md`:
   after the group (e2e, static-demo build, size budget, static-demo e2e) still stops at the first red,
   and should: those steps are expensive, and they run against a tree already known to be broken.
 - **Keep fail-fast as the default and add a full-report mode.** For example, a `verify:all` script,
-  or an env switch that leaves the flag out. `/verify` and `/pre-pr` would use that mode, since they
+  or an env switch that leaves the flag out. `/sssb:verify` and `/sssb:pre-pr` would use that mode, since they
   read the output to fix things.
 
-Either way, put "a SIGTERM'd check is unknown, not passed" in `/verify`'s instructions, so a session
+Either way, put "a SIGTERM'd check is unknown, not passed" in `/sssb:verify`'s instructions, so a session
 reading an old log does not count a killed check as green.

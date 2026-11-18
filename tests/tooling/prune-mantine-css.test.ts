@@ -3,15 +3,10 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import postcss from 'postcss'
 import { describe, expect, it } from 'vitest'
-import {
-    pruneMantineCss,
-    pruneUnreachableRules,
-    requiredHashedClasses,
-    shippedHashedClasses,
-} from '../../scripts/vite-prune-mantine-css'
+import { pruneMantineCss, pruneUnreachableRules, requiredHashedClasses, shippedHashedClasses } from '@sssb/tools/vite'
 
 /**
- * The static demo's stylesheet is pruned against what the demo ships (scripts/vite-prune-mantine-css.ts).
+ * The static demo's stylesheet is pruned against what the demo ships (@sssb/tools' prune-mantine-css.js, in its Vite preset).
  * The one way that goes wrong is a rule removed that WAS reachable — a component unstyled in the demo and
  * nowhere else, which no functional test notices. So these tests pin what is judged and, harder, what is
  * not.

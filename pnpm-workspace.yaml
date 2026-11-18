@@ -1,7 +1,7 @@
 packages:
     - apps/*
     - packages/*
-    - infra
+    - apps/*/infra
     - spikes/*
 
 # pnpm >=10 blocks dependency postinstall scripts by default; allow only what we trust.

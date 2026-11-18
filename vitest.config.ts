@@ -1,76 +1,59 @@
 import { fileURLToPath } from 'node:url'
+import { appTestProject } from '@sssb/tools/vitest'
 import react from '@vitejs/plugin-react'
-import { configDefaults, defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig, type ViteUserConfig } from 'vitest/config'
 
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 
 /**
- * THE APP LIST — the whole of this file's app knowledge; everything below derives from it.
- * `scripts/init-app.ts` rewrites exactly this literal when an adopter renames an app or ejects the
- * showcase, which is why it is spelled out here rather than discovered from `apps/`.
+ * THE APP LIST — the whole of this file's app knowledge; everything below derives from it. This
+ * repository's own two apps; an adopter's workspace gets its own root config from `@sssb/create`.
  *
  * There used to be a second constant here, FRAMEWORK_SUITE_APP, naming the app SSSB's own suite ran
  * under. There is no such app any more: the framework's tests run against the framework's OWN seam
- * (packages/kit/test-fixture — see the `kit` project below), so ejecting the demo cannot take
+ * (packages/kit/test-fixture — see the `kit` project below), so deleting the demo cannot take
  * SSSB's suite down with it.
  */
 const APPS = ['showcase', 'starter'] as const
 
 /**
- * ONE ALIAS SET PER APP — the reason this file has projects at all.
+ * ONE PROJECT PER APP, from the preset every SSSB app uses (@sssb/tools/vitest), the reason this file has projects
+ * at all. `@sssb/app-config/*` is the seam the framework resolves app vocabulary through (ADR-0012), and it is a
+ * BARE SPECIFIER: a single global alias can only ever point at one app. With two apps a shared alias would silently
+ * bind the framework's tests to whichever app happened to be listed first, and the other app's registrations would
+ * never execute. So each app gets its own project, rooted at the app, with its own seam passed explicitly, and each
+ * app's conformance suite (below) runs against that app's seam.
  *
- * `@sssb/app-config/*` is the seam the framework resolves app vocabulary through (ADR-0012), and it is a
- * BARE SPECIFIER: a single global alias can only ever point at one app. With two apps a shared alias
- * would silently bind the framework's tests to whichever app happened to be listed first, and the
- * other app's registrations would never execute. So each app gets its own vitest project with its own
- * aliases, and the framework's seam-conformance tests are included in BOTH.
+ * What this repo adds to the preset: `@sssb/kit` aliased to the framework's source, so Vitest loads the SAME source
+ * files the app's tsconfig `paths` resolve to (ADR-0014 part 1: inside this repo resolution goes through aliases, an
+ * adopter's through the seam link).
  */
-const aliasesFor = (app: string) => ({
-    '@sssb/app-config': at(`./apps/${app}/src/app-config`),
-    // the framework package (ADR-0012) — aliased rather than resolved through its exports map so
-    // vitest loads the SAME source files the app's tsconfig paths resolve to
-    '@sssb/kit': at('./packages/kit/src'),
-    '@': at(`./apps/${app}/src`),
-})
-
 /**
- * The framework tests that must hold for EVERY app, re-run against each app's seam:
- * - the i18n pair proves the namespace partition and en/es parity over that app's MERGED catalog;
- * - the pglite RLS suite proves that app's own tables through SSSB's composed proof runner;
- * - the demo-presets check holds that app's registered presets to its own seed, registries and catalogs.
- *
- * These are the SEAM-CONFORMANCE tests, and running them per app is the point: they are what proves
- * the seam is honest against real apps rather than only against the fixture. The REST of SSSB's suite
- * runs once, in the `kit` project below, against the framework's own fixture seam.
+ * The framework checks that must hold for EVERY app (the authorization scan of its route tree, i18n
+ * partition and parity over its MERGED catalog, the pglite RLS suite over its own tables, migration
+ * order, its demo presets, the seam map) are the CONFORMANCE SUITE, `@sssb/kit/testing` (ADR-0014 P5).
+ * This file does not list them: each app runs the suite from its own tree, `apps/<app>/src/sssb.conformance.test.ts`,
+ * which the app project's own `src/**` include picks up like any other app test, as an adopter's does. Running
+ * them per app is the point: they are what proves the seam is honest against real apps rather than only
+ * against the fixture. The `kit` project below runs the same suite against the framework's own fixture seam
+ * (packages/kit/src/testing/conformance.test.ts), and the REST of SSSB's suite once, against that seam.
  */
-const SEAM_CONFORMANCE_TESTS = [
-    'packages/kit/src/i18n/*.test.ts',
-    'packages/kit/src/db/rls-pglite.test.ts',
-    'packages/kit/src/db/migrate.test.ts',
-    'packages/kit/src/server-lib/demo-presets-seam.test.ts',
-]
 
 // The first test to touch the fake DB cold-migrates + seeds pglite in-process; under full-suite
 // parallel load that can exceed vitest's 5s default and flake the unit job (which, unlike e2e, has no
 // CI retry). 20s gives generous headroom without masking a genuinely hung test.
 const TEST_TIMEOUT_MS = 20_000
 
-const projectFor = (app: string) => ({
-    plugins: [react()],
-    resolve: { alias: aliasesFor(app) },
-    test: {
-        name: app,
-        environment: 'happy-dom',
-        include: [`apps/${app}/src/**/*.test.{ts,tsx}`, ...SEAM_CONFORMANCE_TESTS],
-        setupFiles: [at('./tests/vitest.setup.ts')],
-        // The fake LLM adapter resolves fixtures from the working directory, which for `next dev` is
-        // the app — but this suite runs from the REPO ROOT, so every project points the adapter at its
-        // OWN fixtures (same override shape as APP_DATA_DIR). An app with no fixtures dir simply never
-        // asks for one.
+const projectFor = (app: string) =>
+    appTestProject({
+        appDir: at(`./apps/${app}`),
+        alias: { '@sssb/kit': at('./packages/kit/src') },
+        // The fake LLM adapter resolves fixtures from the working directory, which for `next dev` is the app, but
+        // this suite runs from the REPO ROOT, so every project points the adapter at its OWN fixtures (same
+        // override shape as APP_DATA_DIR). An app with no fixtures dir simply never asks for one.
         env: { APP_FIXTURES_DIR: at(`./apps/${app}/fixtures`) },
         testTimeout: TEST_TIMEOUT_MS,
-    },
-})
+    })
 
 /**
  * THE FRAMEWORK'S OWN PROJECT — SSSB's suite (and any other package's), run against SSSB's own
@@ -78,12 +61,12 @@ const projectFor = (app: string) => ({
  *
  * That fixture is why this project exists and why it names no app: the framework's tests need a seed
  * world, an app table, an app job/webhook/notification kind and a route tree to assert against, and
- * borrowing a host app's meant `pnpm init-app --eject-showcase` left the suite red. The fixture's
+ * borrowing a host app's meant deleting the showcase left the suite red. The fixture's
  * vocabulary is deliberately none of the apps' (`harbor`/`dockets`/`fixture-*`), so a regression back
  * to app coupling fails loudly instead of passing by coincidence.
  *
- * It carries the cross-app scans too: authorized-mutations.test.ts walks EVERY app's route tree from
- * the repo root plus the fixture's, so no app can opt out by existing.
+ * It no longer carries a cross-app scan: each app's route tree is scanned by that app's own conformance
+ * suite (`authz-mutations`), and authorized-mutations.test.ts here scans the fixture's reference tree.
  */
 const kitProject = {
     plugins: [react()],
@@ -108,11 +91,22 @@ const kitProject = {
     },
 }
 
-export default defineConfig({
+export default defineConfig(async (): Promise<ViteUserConfig> => ({
     test: {
         projects: [
-            ...APPS.map(projectFor),
+            ...(await Promise.all(APPS.map(projectFor))),
             kitProject,
+            {
+                // @sssb/cdk's own suite: plain JavaScript, alias-free (the construct resolves @sssb/kit from
+                // each app's directory, never through an alias of this file's), and slow, because it
+                // synthesizes both network shapes for every app with an `infra/` and bundles the migrator.
+                test: {
+                    name: 'cdk',
+                    environment: 'node',
+                    include: ['packages/cdk/src/**/*.test.js'],
+                    testTimeout: 120_000,
+                },
+            },
             {
                 // Repo hygiene, not app scope — and deliberately alias-free, so nothing here can
                 // quietly come to depend on one app being "the" app. Everything under `tests/` is
@@ -143,4 +137,4 @@ export default defineConfig({
             // thresholds intentionally absent — a ratchet (thresholds + autoUpdate) lands after CI baselines
         },
     },
-})
+}))

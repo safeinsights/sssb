@@ -102,3 +102,13 @@ one-app default in its normal form, reached by a supported command rather than b
 The "authorization scan generalized" consequence names `apps/*/src/app/api`. The scan walks each app's whole
 `src/app` and keys its exemptions from `src/app/api` (ADR-0012, addendum of 2026-11-16). The consequence it
 describes, that no app escapes the choke point by existing, holds more strongly than stated.
+
+## Addendum — 2026-11-18: each app's deployment lives in the app
+
+ADR-0014's P9 (its D8) moved the root `infra/` into the apps. The showcase's deployment is `apps/showcase/infra/`, the
+starter has one of its own, `apps/starter/infra/`, and the reusable part is `packages/cdk`, the `SssbApp` construct each
+of them instantiates with `..` as the app's directory and the app's own `config/params.ts`. So `infra/` no longer
+"stays at the root", and the two consequences about it change: nothing at the root names an app or imports one app's
+config, and an app's `infra/` reaches only its own app, by relative path, so `init-app` no longer rewrites it. Moving
+it into a dedicated infrastructure repository is still mechanical. An adopter whose infrastructure spans several apps
+keeps a root `infra/` of their own that composes several `SssbApp` constructs.

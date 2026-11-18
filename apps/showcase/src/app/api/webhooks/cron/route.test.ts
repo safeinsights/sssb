@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '@sssb/tools/testing/tmp-dir'
 import { devWebhookSecret } from '@sssb/kit/adapters/fake/service-auth'
 import { POST } from './route'
 

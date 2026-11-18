@@ -1,23 +1,10 @@
 {
+    // The compiler contract (strict, bundler resolution, react-jsx, dom, skipLibCheck, the ES2022 floor) comes from
+    // the base every SSSB app extends; this program raises `lib` for the repo's own scripts and tests.
+    "extends": "@sssb/tools/tsconfig.base.json",
     "compilerOptions": {
-        "target": "ES2022",
         "lib": ["dom", "dom.iterable", "esnext"],
-        "allowJs": true,
-        "skipLibCheck": true,
-        "strict": true,
-        "noEmit": true,
-        "esModuleInterop": true,
-        "module": "esnext",
-        "moduleResolution": "bundler",
-        "resolveJsonModule": true,
-        "isolatedModules": true,
-        "jsx": "react-jsx",
         "incremental": true,
-        "plugins": [
-            {
-                "name": "next"
-            }
-        ],
         // THE ROOT PROGRAM compiles the repo's shared code — tests/, scripts/, the configs, and the
         // WHOLE of packages/kit (its sources AND its colocated tests). So whatever `@sssb/app-config/*`
         // resolves to here is the seam SSSB's own suite is typechecked against, and pointing it at a
@@ -27,8 +14,8 @@
         // src/app-config, which is what makes apps/starter the framework's falsifier.
         // There is deliberately NO `@/*` here. It is an app's own alias, the ADR-0012 fence bans it
         // inside packages/kit, and nothing else the root program compiles may use it — so mapping it
-        // could only ever point this program at a directory that `--eject-showcase` deletes. Leaving
-        // it out is also one fewer file adoption has to rewrite: no path below names an app.
+        // could only ever point this program at one app's directory, which may be renamed or removed.
+        // Leaving it out also means no path below names an app.
         "paths": {
             "@sssb/app-config/*": ["./packages/kit/test-fixture/app-config/*"],
             "@sssb/kit/*": ["./packages/kit/src/*"]
@@ -43,7 +30,12 @@
         "packages/kit/src/**/*.ts",
         "packages/kit/src/**/*.tsx",
         "packages/kit/test-fixture/**/*.ts",
-        "packages/kit/test-fixture/**/*.tsx"
+        "packages/kit/test-fixture/**/*.tsx",
+        "packages/tools/**/*.js",
+        "packages/tools/**/*.ts",
+        "packages/create/bin/**/*.js",
+        "packages/create/scripts/**/*.js",
+        "packages/create/src/**/*.js"
     ],
-    "exclude": ["node_modules", "apps", "spikes", "infra"]
+    "exclude": ["node_modules", "apps", "spikes"]
 }

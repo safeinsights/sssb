@@ -9,6 +9,6 @@ import type { TourDefinition } from '@sssb/kit/demo-static/tour/contracts'
  * free in BYTES — the shell imports the engine either way, which is ~11KB of this app's single-file
  * demo — because the alternative is making every app wire the engine itself, and the framework's whole
  * bargain here is that an app inherits the simulated world without assembling it. An adopter who wants
- * a walkthrough writes one here (`/new-tour`); apps/showcase's is the worked example.
+ * a walkthrough writes one here (`/sssb:new-tour`); SSSB's reference app's is the worked example.
  */
 export const tours: TourDefinition[] = []

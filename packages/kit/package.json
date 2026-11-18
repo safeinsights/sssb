@@ -14,12 +14,11 @@
         "src",
         "!src/**/*.test.*",
         "!src/**/*.stories.*",
-        "src/i18n/namespaces.test.ts",
-        "src/i18n/messages-parity.test.ts",
-        "src/db/rls-pglite.test.ts",
-        "src/db/migrate.test.ts",
-        "src/server-lib/demo-presets-seam.test.ts"
+        "dist"
     ],
+    "scripts": {
+        "prepack": "node scripts/build-testing-e2e.mjs && node scripts/stamp-release.mjs"
+    },
     "exports": {
         "./package.json": "./package.json",
         "./i18n/messages/en.json": "./src/i18n/messages/en.json",
@@ -96,6 +95,7 @@
         "./core/state-machine": "./src/core/state-machine.ts",
         "./core/webhook-events": "./src/core/webhook-events.ts",
         "./core/webhook-signing": "./src/core/webhook-signing.ts",
+        "./cutover/rows.json": "./src/cutover/rows.json",
         "./db/agreements": "./src/db/agreements.ts",
         "./db/audit": "./src/db/audit.ts",
         "./db/inbound-email": "./src/db/inbound-email.ts",
@@ -124,6 +124,7 @@
         "./email/templates/digest-email": "./src/email/templates/digest-email.tsx",
         "./email/templates/invite-email": "./src/email/templates/invite-email.tsx",
         "./email/templates/notification-email": "./src/email/templates/notification-email.tsx",
+        "./guide.md": "./src/guide.md",
         "./i18n/messages": "./src/i18n/messages.ts",
         "./i18n/request": "./src/i18n/request.ts",
         "./i18n/routing": "./src/i18n/routing.ts",
@@ -153,6 +154,10 @@
         "./service-auth/mailgun": "./src/service-auth/mailgun.ts",
         "./service-auth/verify": "./src/service-auth/verify.ts",
         "./service-auth/webhook": "./src/service-auth/webhook.ts",
+        "./testing": "./src/testing/index.ts",
+        "./testing/checks.json": "./src/testing/checks.json",
+        "./testing/contract": "./src/testing/contract.ts",
+        "./testing/e2e": "./dist/testing/e2e.js",
         "./theme": "./src/theme.ts"
     },
     "dependencies": {
@@ -181,6 +186,7 @@
         "@mantine/core": "^9.7.3",
         "@types/node": "^26.6.5",
         "@types/react": "~19.3.0",
+        "embedded-postgres": "^18.4.0-beta.17",
         "kysely": "^0.29.7",
         "next": "^16.4.6",
         "next-intl": "^4.14.9",
@@ -192,11 +198,16 @@
         "@sssb/app-config": {
             "optional": true
         },
+        "embedded-postgres": {
+            "optional": true
+        },
         "vitest": {
             "optional": true
         }
     },
     "devDependencies": {
+        "embedded-postgres": "18.4.0-beta.17",
+        "esbuild": "^0.28.2",
         "typescript": "~6.0.3",
         "vitest": "^4.1.12"
     }

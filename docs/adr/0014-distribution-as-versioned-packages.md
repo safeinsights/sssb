@@ -864,3 +864,330 @@ address, so no one person's absence locks the names. This changes two things the
 
 Nothing else in the body changed. Publishing still goes through trusted publishing from GitHub Actions with no
 long-lived token (D11), so the shared account's credentials are not part of any release.
+
+## Addendum — 2026-11-18: P9, what the body did not pin down
+
+P9 built `@sssb/cdk` and moved the root `infra/` into each app. Details the body left open, each argued in
+`docs/decision-log.md` (2026-11-18, P9):
+
+- **The construct's props** are `appDir`, `slug`, `params` (it reads `params.database.transport`), `environment`
+  (a name, the app's own policy) and `production` (a boolean). Which environments exist, the context that picks one, the
+  stack, its id and its tags stay in the app's `infra/app.ts`: they are the adopter's policy, not SSSB's.
+- **Logical ids are unchanged.** Each app's `infra/app.ts` gives the construct the id `Default`, which CDK leaves out of
+  every logical id under it, so every resource and output keeps the id it had as a child of the old `AppStack`. Compared
+  on both network shapes: the same ids, and the same properties but for the VPC's `Name` tags (which carry the construct
+  path) and the migrator's asset hash.
+- **The migrator is bundled with the seam alias and no tsconfig.** The old stack passed the app's tsconfig; with the
+  alias that is no longer what decides the seam, and passing it only added `"use strict"` to the wrapped CommonJS
+  modules. Dropping it is the only change in the bundle's contents, and why its asset hash changed.
+- **The version check runs at construction**, when the construct resolves `@sssb/kit` from the app, and fails the
+  synth with both versions named. The environment and bundle checks run as a construct validation, so they read
+  the final rendered template, escape-hatch overrides included. The bundle check is skipped only when the synth does
+  not bundle the stack at all (`cdk deploy --exclusively OtherStack`), the one case in which there is no bundle to read.
+- **`@sssb/cdk` depends on `@sssb/tools`**, for the assembly checks (`@sssb/tools/assembly-checks`) and for rule 4's
+  one resolver (`@sssb/tools/kit`). This refines part 10, which says SSSB's packages carry no dependency on each
+  other. Its reason holds: what part 10 guards against is a release bumping a package through another's **peer**
+  range, which can lift the fixed group to 1.0.0, and this is a plain dependency (`workspace:*`, published as the
+  exact version). Probed with a `minor` and a `patch` changeset on `@sssb/tools`: `pnpm release:check` planned
+  0.2.0 and 0.1.1 for all three packages, nothing at 1.0.0. Rule 4's other half is unchanged: neither depends on
+  `@sssb/kit`.
+
+## Addendum — 2026-11-18: P4, `@sssb/tools`
+
+P4 built `packages/tools` as the plan row says. Where it refined what the body said (each in `docs/decision-log.md`,
+"`@sssb/tools`"):
+
+- **Rule 4's resolver walks `node_modules` instead of calling `require.resolve(…, { paths: [appDir] })`.** pnpm's bin shims (which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the hoisted `.pnpm/node_modules`, Node's resolver falls back to it, and an app with
+  no framework of its own then resolved the hoisted copy. The shared real-path check is unchanged.
+- **`@sssb/tools` is written in JavaScript with hand-written declarations**, not TypeScript built when packed, so its
+  bin and presets run from source inside this repository.
+- **The presets load the tools they configure from the app** (next-intl's plugin, Vite's React plugin,
+  `vite-plugin-singlefile`, jest-dom), so `@sssb/tools` never brings a second copy; its only peers are optional (`next` and `vite` for types, `vitest` for the scratch-directory helper).
+- **The Vite and Vitest presets pass the seam explicitly**, as part 8 says every SSSB builder does. Pack and consume's
+  proof of the seam link now comes from `tsc`, `next build`, the migrator bundle and the negative fixture.
+- **Each app declares its port slot** in its package.json (`"sssb": { "port": … }`); `sssb port` with no argument
+  reads it.
+- **The tick scripts, which part 3's table does not list, moved into `@sssb/tools`** (`sssb tick`, `sssb dev-tick`).
+- **`sssb ci` has the jobs this repository's CI needed first** (`e2e-shards`, `e2e`, `demo-static`); P10 adds the rest.
+- **`sssb guide`** looks for the guide at the published subpath `@sssb/kit/guide.md` and copies it to
+  `.claude/sssb-guide.md`; P7 publishes the guide.
+- **Rule 4's check recognises the framework by its package**: a file is the framework's when its nearest named
+  package.json is `@sssb/kit`'s, wherever it sits, so a copy of the framework's tree outside `node_modules` is caught,
+  which a check on the path missed. Besides the resolver's users, the Vite and Vitest presets run it on every module
+  they load, and the `dev:real` preflight on everything it bundles or leaves external.
+- **The resolver is published as `@sssb/tools/kit`**, so `@sssb/cdk` (P9) runs the same check.
+
+## Addendum — 2026-11-18: P6, the ESLint plugin, as built
+
+P6 put the fences in `packages/eslint-plugin` (`@sssb/eslint-plugin`, JavaScript, `private: true` until P14, in the
+fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are the details it left open.
+
+- **The preset is async**: `...(await sssb.configs.app({ root: import.meta.dirname }))`, because it imports the app's
+  `lint-exceptions.mjs`. Every block it returns carries `basePath` (`root`, or its parent directory when `root` ends in `*`), and
+  `root` must be absolute. This repo's
+  config passes `join(import.meta.dirname, 'apps/*')`: a last segment of `*` means every app in that directory.
+- **Every fence has a rule id, the internal ones too.** Part 4 asked it of the preset's fences; the framework/app
+  fence's and core's declaration halves moved as well (`sssb/no-app-import`, `sssb/no-framework-import-in-core`), so
+  `eslint.config.mjs` sets neither `no-restricted-imports` nor `no-restricted-syntax`. `react/jsx-no-literals` is
+  `sssb/no-jsx-literals`, react's rule with SSSB's options fixed.
+- **An app adds its own adapters' SDKs to the vendor ban in its `package.json`** (`"sssb": { "vendors": [...] }`),
+  which part 4 did not provide for: the recipe for an app-owned adapter told the adopter to edit `vendorSdkPattern`,
+  which now ships in the plugin. A file, not a preset option, so `sssb check-fences` reads the same list; a leading
+  `!` is refused.
+- **`sssb check-fences` compares, and probes.** The comparison is the half part 3 did not name: for every source file
+  in the app, every `sssb/*` rule the preset alone enables at `error` must be enabled at `error` with the same options
+  through the app's config (`calculateConfigForFile` on both). That is what sees a later block narrowing a fence to
+  one directory, a later `ignores`, and a nested config file, none of which a probe at a fixed path sees. The probes,
+  each `lint-exceptions.mjs` entry and its sibling, and every fence finding in the app's own files (at any
+  severity, suppressed by a directive or switched off by an inline config; ESLint reads the directives itself)
+  complete it. The logic is the plugin's (`@sssb/eslint-plugin/check-fences`); the `sssb` command resolves it from
+  the app's directory.
+- **The e2e import ban of part 2 is not in P6.** It needs `@sssb/kit/testing/e2e`, which P5 builds.
+
+## Addendum — 2026-11-18: P5 as built
+
+P5 built the conformance suite, `sssb doctor` and `sssb check-e2e` as the plan row says. Where it decided
+differently from the body, or more precisely (each in `docs/decision-log.md`, the four P5 entries):
+
+- **The contract runner is its own subpath, `@sssb/kit/testing/contract`** (`contractSuite`), registered, opted out
+  and guarded by the same code as the unit suite. `embedded-postgres` is an optional peer, loaded only when
+  `CONTRACT_DATABASE_URL` is unset, and every app's migrations now also run over the RDS Data API through its emulator.
+- **Opt-outs are markers in the listing.** An opted-out check registers one test, `[sssb:opt-out:<id>] <reason>`, so
+  `vitest list` shows the decision; doctor honours a marker, and counts a check's tests, only from the app's own
+  suite files (`src/sssb.conformance.test.ts`, `tests/contract/`), and reports each opt-out with its reason.
+- **The skip guard is a file-level `aroundAll`, not an `afterAll`**, because Vitest abandons a file's remaining
+  `afterAll` hooks at the first that throws, which left the contract server running. Each check's tests run in order
+  (`describe.sequential`) under any adopter config.
+- **One doctor run checks every app of the workspace**, not each app's verify its own; it fails when its walk does not
+  reach the app it runs for. The root's script and each app's are `sssb:doctor`, since `pnpm doctor` is pnpm's own.
+- **"The way CI runs Vitest" became the main-run rule.** Doctor finds files with `vitest list --filesOnly`, which runs
+  no `globalSetup`. The config a bare `vitest` would load for the app (the root's when it runs the app's `src/`
+  tests, else the one Vitest finds walking up from the app, else its defaults) must list every unit check, and some
+  config that runs the app's `tests/contract/` every contract check. Any other config that runs the app's tests
+  without them is REPORTED, not failed, and so is a bare `vitest` from the app's directory, when the root's is the
+  main run, that would not run the suite, even one that runs none of the app's tests.
+- **What doctor cannot see, it reports.** It cannot see which config CI runs or the flags a CI step adds, so it
+  names the other configs, the narrowing flags the package.json scripts pass to vitest, and which script runs each
+  app's contract config (it lists the contract checks and never runs them). A CI step running a config other than
+  the main one can therefore go green without the checks; the report is the guard.
+- **check-e2e asks Playwright which files it loads** (`playwright test --list --reporter=json` per config, which
+  starts no server and needs no browser) and then bundles them, following sibling workspace packages as Playwright
+  does. Where the report falls short: any load error lists nothing, so in an adopter's workspace a spec reaching the
+  kit's TypeScript fails its config, with the kit file named but not the spec; only the first entry of a
+  `globalSetup` array is checked; a matched file holding no test is not.
+- **The seam-free entry's build also scans what esbuild emitted** for any loader (`import()`, `require`,
+  `globalThis`, ...), since esbuild sees only literal specifiers.
+- **The cutover rows carry a `scope` field**; `"scope": "sssb"` (`release-app`) is not looked for in an adopter's
+  checklist.
+
+## Addendum — 2026-11-18: release notes are assembled from the changesets
+
+Part 10 says the notes' "Seam changes" and "Framework migrations" sections are written by hand "until Changesets
+exists", and the P7 row writes all four by hand. Changesets exists, and its changelog does not carry Kind and Action, so the notes are assembled
+instead: `scripts/release-notes.mjs` reads the pending changesets (each filed by its `**Kind.**` into the four
+sections of part 10, which are always present, then "Other changes" when there is one) and writes them with each
+entry's What changed, To adopt and Now deletable. `release.mjs prepare` runs it before `changeset version` deletes the
+files and writes the result to `docs/releases/v<version>.md`, a new file in the release commit that `verify-release`
+accepts at exactly that path, so the notes are in the repository for a fork that merges `main` as well as for the
+release. `--since <tag>` gives a release candidate the entries added since the previous one, and the entries edited
+since under "Corrections to earlier notes"; `--at <release commit>^` regenerates a finished release's notes. What is
+still written by hand for P7: the sections for changes that predate the changesets (everything since 24b0589, the
+rename among it), the tarballs' sha512 and install lines, and creating the GitHub release. P14's first npm release
+would omit that hand-written history unless it is backfilled first. Why a script and not an `@sssb/tools` command,
+and what review changed, is in `docs/decision-log.md` (2026-11-18, `feat/release-notes`).
+
+## Addendum — 2026-11-18: P7, a release candidate is cut by a merge to main
+
+JP (2026-11-18): "I don't want publishing a release to be my call separately from merges to main." So P7's release
+candidate does not come from a hand-pushed tag, as part 10 and the P7 row leave open, but from the release flow P1b
+built. This refines part 10 in five ways; `docs/decision-log.md` (2026-11-18, P7) has each with what was rejected.
+
+- **Changesets' pre mode, with the tag `rc`, is how a candidate is versioned.** Part 10 and P1b said prereleases are
+  GitHub-release tarballs "never Changesets' pre mode"; the first half stands, the second is reversed. While the group is
+  private, `.changeset/pre.json` holds pre mode `rc` and `.changeset/config.json` versions private packages and ignores
+  every package outside `@sssb/*` (`"*"`, `"@app/*"`), so a merge to `main` with changesets versions the group to
+  `0.x.y-rc.N` and `push` tags it. `release.mjs check` fails a PR that takes a private group out of pre mode (a merge
+  would then cut a plain version nothing can publish) or puts a public group into it. P14 leaves pre mode
+  (`changeset pre exit`) with the same change that removes `private`.
+- **Changesets 3 keeps what pre mode consumes.** It moves each consumed changeset to `.changeset/pre/` rather than
+  deleting it, and `pre.json` holds only the mode and the tag. `verify-release`, which installs nothing, recomputes the
+  candidate's number as Changesets does (semver's `inc` on the group's version, then one past its `-rc.N`) and accepts a
+  changeset moved there unchanged, never deleted. `prepare` cross-checks its number against Changesets' before changing
+  anything.
+- **A candidate's tag runs three jobs of its own**, never `pack` or `publish`: `candidate` (the CI gate on the release
+  commit, then the tarballs `checks`' pack-and-consume job packed and tested there, from that run's `sssb-tarballs`
+  artifact, never packed again), `attest` (`actions/attest-build-provenance`, the run's only id-token, in no
+  environment) and `prerelease` (a draft first, every byte checked, then a prerelease never marked latest). Pack and
+  consume packs `@sssb/cdk` too, and checks its packed shape, so the four tarballs come from one place; it does not
+  install it (P12).
+- **The notes are complete without a hand step.** The history since keel's `24b0589` that predates changesets is four
+  changesets (`.changeset/history-since-keel-*.md`, one per section), consumed once, by the first candidate. The
+  prerelease's notes are the release commit's `docs/releases/v<version>.md` plus the install lines (`overrides` in
+  `pnpm-workspace.yaml` and a dependency per package, so `@sssb/cdk`'s exact dependency on `@sssb/tools` resolves to the
+  tarball, npm having no candidate), each tarball's sha512, and how to verify its attestation. This replaces what the
+  previous addendum left to be written by hand for P7.
+- **The app guide ships in `@sssb/kit`** as `@sssb/kit/guide.md` (`packages/kit/src/guide.md`), checked by the doc gate
+  against `apps/starter` (`sssb.docPaths.relativeTo`). `sssb doctor` fails an adopter's app whose copy is missing or
+  stale; in this repository, where the guide is the source and no copy is kept until P13, a missing copy is reported.
+
+What must exist first is JP's: the release app (`pnpm release-app:init`, `docs/runbooks/release-app.md`), before the
+first merge to `main` that carries changesets; until it exists that merge's `push` job fails at minting its token,
+having written nothing.
+
+## Addendum — 2026-11-18: P10, the reusable workflow, as built
+
+`.github/workflows/app-checks.yml`, as part 7 describes, with one exception below: `on: workflow_call`, `contents: read`, no secrets, the
+services, the e2e shard matrix discovered from the apps, the install, every step a `pnpm exec sssb ci <job>`, an
+`apps` input and an optional `synth` job. The details part 7 left open (each in `docs/decision-log.md`, "The reusable
+workflow"):
+
+- **One check to require.** Its `all-checks` job fails unless every other job ran and passed, so an adopter requires
+  `<caller job> / all-checks` rather than a list that a skipped or renamed job could slip out of.
+- **`apps` defaults to the workspace's apps** (P4's `sssb.apps` or `apps/*`), and `synth` is a pnpm `--filter`
+  selector, so this repository's call names no app.
+- **A job with nothing to run fails**, so the workflow states the conventions it relies on: the root's `lint`,
+  `typecheck`, `test:unit` (or `test:coverage`) and `test:contract` scripts, and each app's Playwright config and
+  `test:e2e`, `build:demo-static`, `check:demo-size` and `e2e:demo-static` scripts.
+- **This repository calls it by its local path**, at the commit under test; adopters pin a SHA. Its checks are
+  named `sssb / <job>`, so the rulesets on `main` and `integration` must change to those names when this merges.
+- **The service image is `postgres:16` by tag**, as `checks.yml` had it, not yet by digest as part 7 asks.
+- **`sssb doctor` and `sssb check-e2e` run inside `lint-typecheck-unit`**, after `sssb check-fences`: doctor once
+  (it checks the whole workspace), check-e2e in each app.
+
+## Addendum — 2026-11-18: P12, `@sssb/create`, as built
+
+P12 built `packages/create` as the plan row says, with `init-app` and the adopter-identity test retired in the same
+PR. Where it decided differently from the body, or more precisely (each argued in `docs/decision-log.md`,
+"`@sssb/create`", "Retiring init-app, the adoption probe and the adopter-identity test" and "Pack and consume's two
+shapes and the `adoption-probe` job"):
+
+- **The bin is `sssb-create`**, the name `pnpm create @sssb` and `npm create @sssb` run. The package is plain
+  JavaScript with no dependencies, SSSB's packages included (rule 4), `private: true` until P14.
+- **The template is the files git tracks in `apps/starter`, copied from the working tree**, plus six generic root
+  files and the kit's app guide, stamped with a `meta.json` (the version, the workflow commit, the toolchain, the seam
+  specifiers, the cutover rows, the action pins, the names of the packages a workspace installs). Untracked files are
+  left out; a symlink or submodule is refused. The package's `prepack` writes it to `template/` and its `postpack`
+  removes it, so no copy is committed (D4); run from a checkout, the bin builds it into a temporary directory first.
+  The workflow pin is the packing commit, which must hold `app-checks.yml` and be on GitHub for an adopter's `uses:`
+  to resolve; `--workflow-ref` overrides it. Packing refuses a commit no remote-tracking branch of
+  `safeinsights/sssb` holds, and a starter or app guide that differs from it, unless `SSSB_CREATE_UNPUSHED_PIN=1`
+  (pack and consume's tarballs, but on a push to SSSB's own repository).
+- **Part 7's "No overrides are used" holds for published versions only.** `--sssb <dir>`, a directory of packed
+  tarballs, writes `file:` dependencies and a pnpm `overrides` block mapping every `@sssb/*` package to its tarball,
+  because `@sssb/cdk` depends on `@sssb/tools` at an exact registry version (the P9
+  addendum), which pnpm would otherwise fetch. With a version, the default, no override is written. Either way the
+  version must be the generator's own: the workspace's copy of the app guide is that version's, and `sssb doctor`
+  fails one that is not the installed kit's.
+- **The seam package's `type` is the app's own**, which for the starter is none, not `module`: a nested
+  `package.json` resets the module type of everything under it, and the app's configs are CommonJS-typed. Its
+  `exports` is `./*` for the flat seam modules plus each directory module by name.
+- **The generated app keeps the `starter` port service** (`"sssb": { "port": "starter" }`, `originFor('starter')`,
+  `sssb tick starter`). The service names a port band in `@sssb/tools`, not an app (the P4 addendum: each app
+  declares its slot); the generator renames only the app's identity, and a neutral service is a later
+  `@sssb/tools` change
+  (`.claude/future-tasks/neutral-app-port-service.md`).
+- **The generated workflow is `.github/workflows/checks.yml`**, with the `sssb` job calling the reusable workflow,
+  and `workspace-checks` (knip, jscpd) and `secret-scan` (gitleaks) beside it. The root's `sssb:doctor` is
+  `sssb doctor --app apps/<slug>`, since an adopter's root installs no `@sssb/kit`. The generated `pnpm verify` runs
+  every script those jobs run but the secret scan (the contract tests, the fences and synth included), so a local
+  green is a CI green; each app's `infra/` is typechecked by the app's `typecheck`, through a `tsconfig.json` of its
+  own (in the starter, so in this repository too).
+- **The `adoption-probe` check is kept, under its old name, for the generator.** Part 3's table says pack and
+  consume replaces it, and the Consequences retire it; its init-app steps are gone, but the rulesets require a check
+  called `adoption-probe`, so the name now carries the generated workspace's verify: CI generates a workspace with
+  the packed `@sssb/create` from the packed packages and runs its `pnpm verify`, then its unit and contract runs held
+  to the conformance suite, the reusable workflow's `sssb ci lint-typecheck-unit` and `sssb ci synth`, and its knip
+  and jscpd, with not one generated file changed (pack and consume's `--shape generated`).
+- **With P7, a release candidate attaches five tarballs**, `@sssb/create` among them (it is in the fixed group).
+  Pack and consume packs every one flat into one directory, the one the generator's `--sssb` takes, and that
+  directory is the `sssb-tarballs` artifact `candidate` checks member by member. Its lockfile seed holds a token for
+  the group's version as well as for the run's directory, so a candidate's `x.y.z-rc.N` file names match the seed.
+  The candidate's notes list the generator but leave it out of the overrides and dependencies they tell an adopter to
+  write, and say how to run it against the downloaded tarballs instead.
+- **Also written, beyond the row's list**: `docs/cutover-checklist.md` (a task list of the framework's rows, which
+  `sssb doctor` looks for), a fresh `DEMO-SIZE.md`, and `.claude/sssb-guide.md`, the app guide's stamped copy as
+  `sssb guide` writes it (P7's doctor fails a workspace without it). **Not written**: Changesets (an app workspace
+  publishes nothing), a `LICENSE` or a `license` field, `CLAUDE.md` (the adopter's own, which imports the guide; the
+  plugin is P13's), Dependabot's config, and no `git init`.
+- **Generation is all or nothing, in place.** The workspace is staged inside the target and moved up; an existing
+  target is never removed or replaced, and a failure or a SIGINT, SIGTERM or SIGHUP part-way leaves nothing this run
+  wrote.
+
+## Addendum — 2026-11-18: P13, the plugin, as built
+
+P13 built the plugin and cut this repository's `CLAUDE.md`, as the plan row says. Where it decided differently from
+part 9, or more precisely (each argued in `docs/decision-log.md`, "The Claude Code plugin, and CLAUDE.md cut to the
+maintainer half"):
+
+- **The plugin's shape.** The marketplace is `sssb`, at the repository root (`.claude-plugin/marketplace.json`); it
+  lists one plugin, `sssb`, at `plugins/sssb/`, so a workspace enables `sssb@sssb` and runs its commands as
+  `/sssb:<command>` and its agent as `sssb:doc-steward`. It carries more than part 9 lists: the capability scaffolds,
+  `/sssb:new-slice`, `/sssb:verify`, `/sssb:pre-pr`, `/sssb:a11y-review`, `/sssb:design-review`, and
+  `/sssb:new-port` for a port the APP owns. The maintainer's framework-port command part 9 calls `/new-port` is
+  `/new-kit-port` in `.claude/commands/`, renamed so the two are never confused. The plugin declares no `version`,
+  so Claude Code versions it by commit and raising the pin moves it; `claude plugin validate --strict` then fails on
+  that one warning, which the plugin's gate (`tests/tooling/plugin.test.ts`) tolerates and nothing else.
+- **"The app" is the root `package.json`'s `sssb.apps`**, as part 9's last bullet says, and SSSB's own root now
+  declares it. Commands cite SSSB's reference app only by URL at `<ref>`, the commit the workspace's settings pin the
+  marketplace to, so the plugin and what it cites are read at one commit. They are written for the app a generated
+  workspace has, which has no server Simulator: the static demo is the host they scaffold into.
+- **The pin needs Claude Code 2.1.324 or later.** A commit SHA as a `github` marketplace source's `ref` needs that
+  release (Claude Code's marketplace reference, "Fields by type", `ref`, read on 2026-11-18), and the commit must be
+  on a branch or tag, which `@sssb/create`'s refusal of an unpushed `HEAD` already ensures for the default pin.
+  Enabling a plugin in the project's settings installs nothing: each person runs
+  `claude plugin install sssb@sssb --scope project` once per clone, after trusting the folder.
+- **Doctor's pin report, as built.** Part 5's "reported rather than failed" holds, against a release stamp the kit
+  now carries: `@sssb/kit`'s `prepack` writes `dist/release.json`, the commit it is packed from, and refuses shipped
+  sources that differ from it (under `@sssb/create`'s `SSSB_CREATE_UNPUSHED_PIN`). Part 9 says doctor compares the pin
+  with "the installed keel"; it compares every workflow `uses:` of SSSB's repository and every `.claude/settings.json`
+  marketplace of it with the stamp's commit, and also reports a pinned marketplace no plugin is enabled from. SSSB's
+  repository is read from the kit's `package.json` `repository`, not hardcoded. In this repository the pins are not
+  checked (the kit is source, with no stamp). `release.mjs candidate` refuses a candidate whose kit names another
+  commit, and pack and consume's generated shape proves the workflow pin, the marketplace pin and the stamp are one
+  commit that holds the plugin.
+- **`@sssb/create` writes the `.claude/settings.json` and a `CLAUDE.md`.** The settings pin SSSB's marketplace to the
+  workflow's commit and enable the plugin; the `CLAUDE.md` imports `.claude/sssb-guide.md`. This reverses the P12
+  addendum's "Not written: `CLAUDE.md`".
+- **This repository's `CLAUDE.md` imports the guide from its source** (`@packages/kit/src/guide.md`), not a stamped
+  copy, which nothing can make stale; doctor's in-repo guide check counts that import as `ok`. App-facing rules that
+  lived only in `CLAUDE.md` moved into the guide (the cutover rule and a "dev loop" section), a seam-kind release note
+  because doctor fails a stale copy.
+- **A plugin change takes a changeset.** `plugins/` and `.claude-plugin/` join the paths `changeset-required` gates:
+  adopters load them at the pin they raise at a release.
+
+## Addendum — 2026-11-18: the seam is a workspace package, not a `link:`
+
+Part 1's option C linked each app's seam as `"@sssb/app-config": "link:./src/app-config"`. A fresh `pnpm install`
+links it into the app's `@sssb/kit`, but a partial install for the app, `pnpm add <pkg>`, `pnpm remove <pkg>` or
+`pnpm update <pkg>` (from the root with `--filter`, or in the app's directory), re-resolves the kit without it (a bare
+`pnpm update -r` or `pnpm add -w` kept it): its lockfile snapshot loses the peer, its instance has no seam beside
+it, and `sssb doctor` fails. Option C stands; only the way the app declares its seam changes (`docs/decision-log.md`,
+"The seam is a workspace package"):
+
+- **The seam is a workspace package of the app's own name**, taken under the name the framework imports.
+  `pnpm-workspace.yaml` lists `apps/*/src/app-config`, the seam's `package.json` is named `<slug>-app-config`, and the
+  app declares `"@sssb/app-config": "workspace:<slug>-app-config@*"`. The lockfile records the same resolution as
+  before (`version: link:src/app-config`, and the kit's snapshot `'@sssb/app-config': link:apps/<app>/src/app-config`),
+  so each app still gets an instance of its own, linked to its own seam. The kit's manifest does not change: the seam
+  stays an optional peer declared in `peerDependenciesMeta` alone. `workspace:` resolves only to a package of the
+  workspace, so the unscoped `<slug>-app-config` is never requested from a registry (part 1's reason for the scope
+  holds for the name the kit imports, which is still `@sssb/app-config`).
+- **Why `add` dropped a `link:`** (pnpm 11.14.0's bundled `pnpm.mjs`). On a partial install pnpm re-resolves only some
+  of an importer's dependencies; the others become "top parents" read from its `node_modules` (`getTopParents`),
+  with a name and a version but no linked directory. Peer resolution (`createPkgsByName`) gives such a parent no node
+  (`nodeId: linkedDir`, undefined), so the kit's optional peer records no provider and is dropped. A fresh install resolves every dependency, the `link:`
+  among them, which is why it worked there. A workspace package came through `add`, `remove`, `update`, `update -r`,
+  `update --latest`, `add -w`, `add` run in the app, and a fresh install, with one app and with two, each app keeping
+  its own seam; the settings and hooks that did not help are in the decision log.
+- **`sssb doctor` fails a `link:` seam**, naming the change, though it is linked when doctor runs: the next
+  `pnpm add <pkg>` for the app would unlink it. It also fails an importer whose declared seam is another importer's, and a `workspace:` seam whose
+  name no workspace package has or more than one has: pnpm accepts two packages of one name and links one of them, so
+  a copy of a seam left under its name becomes the app's seam with the kit's link agreeing. Its check of the seam's
+  target reads the importer's `node_modules` link for a `workspace:` seam, as it did for any form but `link:`. The
+  conformance suite's `seam-map` check, which required the seam's `package.json` to be named `@sssb/app-config`, now
+  requires the name the app's `workspace:` declaration names (`@sssb/app-config` for any other form).
+- **Pack and consume's generated shape runs `pnpm add`, `pnpm remove` and `pnpm update` for the app (from the root,
+  `--filter <app>`) after every other step**, each followed by `sssb doctor` and the lockfile's seam check. With the `link:` seam it failed at the first.
+- **The plugin's workaround is gone.** P13's commands told authors to edit `package.json` and run `pnpm install`
+  rather than `pnpm add`, and its gate failed a command that said `pnpm add`; they now say
+  `pnpm --filter <app> add <pkg>`.

@@ -6,7 +6,7 @@ import { AuthRequiredError } from '../ports/errors'
 /**
  * Mailgun inbound-webhook verification — the RECEIVING half of the Mailgun vendor, beside the
  * bearer-secret job verifier (webhook.ts). It is the counterpart of that file: the pure signature math
- * lives in packages/kit/src/core/webhook-signing.ts (verifyMailgunSignature, cross-checked against node:crypto),
+ * lives in packages/kit/src/core/webhook-hmac.ts (verifyMailgunSignature, cross-checked against node:crypto),
  * while the two STATEFUL pieces live here — the signing-key lookup and the token replay guard.
  *
  * SIGNING KEY. Simulated mode reuses the per-checkout dev webhook secret (devWebhookSecret — the same

@@ -33,7 +33,7 @@ import {
  * `sssb/no-dynamic-framework-import-in-core` existed, `import('@app/seed')` in SSSB's server-lib and
  * `export type T = import('@/domain/tickets').Ticket` in SSSB's fixture linted clean. The second is the
  * type-only escape the fixture's fence exists to stop: erased at runtime, resolved by the root tsc, and
- * broken only at `pnpm init-app --eject-showcase`.
+ * broken only once the showcase was deleted.
  *
  * The new rules read the same patterns through the same matchers as no-restricted-imports (eslint.config.mjs,
  * `patternMatcher`), and the parity table below holds them to it, specifier by specifier.
@@ -302,8 +302,8 @@ describe('a path into app code crosses the framework/app fence too', () => {
         const out = [
             `import { b } from ${JSON.stringify(pathFrom(file, 'tests/support/tmp-dir'))}`,
             "import { c } from '../../../apps-config/x'",
-            `export const load = () => import(${JSON.stringify(pathFrom(file, 'scripts/ports.mjs'))})`,
-            `export type T = import(${JSON.stringify(pathFrom(file, 'tests/support/contract-postgres'))}).ContractServer`,
+            `export const load = () => import(${JSON.stringify(pathFrom(file, 'scripts/release.mjs'))})`,
+            `export type T = import(${JSON.stringify(pathFrom(file, 'tests/support/contract-apps'))}).Apps`,
             'export { b, c }',
         ]
         const findings = await lint(file, out.join('\n'))
@@ -335,13 +335,14 @@ describe('a path into app code crosses the framework/app fence too', () => {
             ['a test', '../core/state-machine.test', 1],
             ['a story', '../components/app-header.stories', 1],
             ['a config beside src', '../../tsconfig.strict.json', 1],
-            ['a test the allowlist names back', '../i18n/namespaces.test', 0],
+            // The allowlist named five seam-conformance tests back until ADR-0014 P5 made them the conformance
+            // suite, which is source; a test it once shipped is now a test like any other.
+            ['a test the allowlist used to name back', '../i18n/namespaces.test', 1],
             ['shipped source', '../core/state-machine', 0],
             ['a shipped catalog', '../i18n/messages/en.json', 0],
+            ['the shipped conformance registry', '../testing/checks.json', 0],
             ['a test, with a query', '../core/state-machine.test.ts?raw', 1],
             ['a test, with a hash', '../core/state-machine.test#a', 1],
-            ['a sibling of a suite named back, by its own extension', '../i18n/namespaces.test.tsx', 1],
-            ['a suite named back, by its extension', '../i18n/namespaces.test.ts', 0],
             ["the package's own manifest, which always ships", '../../package.json', 0],
             ['its LICENSE, which always ships', '../../LICENSE', 0],
             ['another file beside src', '../../README.md', 1],
@@ -352,9 +353,9 @@ describe('a path into app code crosses the framework/app fence too', () => {
                 expected,
             )
         })
-        it('from a conformance suite, which ships too', async () => {
-            const code = "import x from '../core/state-machine.test'\nexport { x }\n"
-            expect(fired(await lint('packages/kit/src/i18n/namespaces.test.ts', code), UNSHIPPED_PATH)).toBe(1)
+        it('from the conformance suite, which ships as source', async () => {
+            const code = "import x from '../../core/state-machine.test'\nexport { x }\n"
+            expect(fired(await lint('packages/kit/src/testing/conformance/suite.ts', code), UNSHIPPED_PATH)).toBe(1)
         })
         it.each(['packages/kit/src/db/kv.test.ts', FIXTURE])('not from %s, which does not ship', async (file) => {
             const code = `import x from ${JSON.stringify(pathFrom(file, 'packages/kit/test-fixture/app-config/seed'))}\nexport { x }\n`
@@ -381,16 +382,14 @@ describe('a path into app code crosses the framework/app fence too', () => {
         })
     })
 
-    it('the contract tests are its only exemptions, and only by name', async () => {
+    it('has no exemptions: the contract tests that had one start their server inside the package now', async () => {
         const code = `import { s } from '../../../../../tests/support/contract-postgres'\nexport { s }\n`
         for (const file of [
             'packages/kit/src/adapters/real/db.contract.test.ts',
             'packages/kit/src/adapters/real/rds-data.contract.test.ts',
+            'packages/kit/src/adapters/real/other.contract.test.ts',
         ])
-            expect(fired(await lint(file, code), OUT_OF_PACKAGE_PATH), file).toBe(0)
-        expect(
-            fired(await lint('packages/kit/src/adapters/real/other.contract.test.ts', code), OUT_OF_PACKAGE_PATH),
-        ).toBe(1)
+            expect(fired(await lint(file, code), OUT_OF_PACKAGE_PATH), file).toBe(1)
     })
 
     it('a `..` that is part of a name, not a segment, climbs nowhere', async () => {

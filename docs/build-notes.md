@@ -2063,3 +2063,287 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 - **Prove what a bundle holds from the bundler's own module list.** Next's chunks name modules by their
   `node_modules/.pnpm/...` path; the static demo's list comes from Rollup's `this.getModuleIds()` in a scratch
   plugin; the migrator's from an esbuild metafile.
+
+## `@sssb/cdk` (2026-11-18, ADR-0014 P9)
+
+- **Import aws-cdk-lib as a namespace, never by default.** Under tsx, when a CommonJS app (`infra/app.ts`, in a
+  package with no `"type"`) loads the construct, tsx compiles the ESM construct to CommonJS, and aws-cdk-lib's
+  `module.exports` carries `__esModule`, so a default import is `undefined` (`Cannot destructure property
+'aws_budgets'`). `import * as cdk` works there and under plain Node ESM alike.
+- **An esbuild alias beats the nearest tsconfig's `paths`.** In this repo the files of `packages/kit/src` have no
+  tsconfig of their own, so the one esbuild finds is the root's, whose `@sssb/app-config/*` points at the test
+  fixture. With `--alias:@sssb/app-config=<app>/src/app-config` the bundle names the app's migration index and none
+  of the fixture's, and without it the synth fails on every one of the app's migrations.
+- **A construct validation is where to read what will be deployed.** `node.addValidation` runs inside `app.synth()`
+  after every construct has had its say, so the server's environment is final there; rendering the function's
+  `CfnFunction` through `_toCloudFormation()` includes escape-hatch overrides, which `addEnvironment` bookkeeping does
+  not. The migrator's bundle is already staged then (`<fn>/Code/Stage`'s `absoluteStagedPath`), because asset
+  bundling runs in the constructor.
+- **CDK caches a staged bundle for the rest of the process.** The test that tampers with one calls
+  `AssetStaging.clearAssetHashCache()` afterwards, or a later synth in the same file would be handed the tampered copy.
+- **The migrator bundles locally, never in Docker.** CDK's `NodejsFunction` falls back to bundling in a Docker image
+  when it finds no esbuild, and there it runs from `/` with the project mounted at `/asset-input`: the seam alias,
+  an absolute host path, would name nothing, and the bundle's path comments would no longer be relative to the
+  project root the check computes them from. CDK looks for esbuild with its own `require` first and runs that one as
+  `pnpm exec -- esbuild` (or `npx --no-install`) from the project root; failing that, it runs an `esbuild` on PATH;
+  only then Docker. So the project root's own `node_modules/esbuild` is what matters: a dependency of `@sssb/cdk` is
+  found by CDK's `require` through pnpm's hidden hoist, which stops the fallbacks, and then the `exec` fails
+  (reproduced by P9's second review round). The construct checks the project root instead, and so refuses a project
+  whose only esbuild is a global one, which CDK would accept. Read from aws-cdk-lib 2.277's
+  `aws-lambda-nodejs/lib/bundling.js` and `package-installation.js`; no Docker was run.
+
+## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
+
+- **pnpm's bin shims (`node_modules/.bin/<bin>`, which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the workspace's hoisted `.pnpm/node_modules`**, and Node's resolver
+  falls back to it when a package's own `node_modules` chain has no match. So `createRequire(app).resolve('@sssb/kit/…')`
+  from an app that installs no framework does not fail: it returns the hoisted copy, another app's. A tool that must
+  load THIS app's instance finds it by walking `node_modules` itself (`packages/tools/src/kit.js`). The resolver's test
+  runs with `NODE_PATH` pointed at a hoisted copy, and went red against the `require.resolve` version.
+- **`require.resolve` picks a package's CommonJS build.** Resolving `@testing-library/jest-dom/vitest` that way and
+  handing the path to Vitest's `setupFiles` loaded `dist/vitest.js`, which `require`s Vitest and fails ("Vitest cannot be
+  imported in a CommonJS module"). Vitest resolves a bare setup specifier from the project root with the `import`
+  condition, so the preset passes the specifier.
+- **Plain Node cannot load every package's ES build.** Bundling the `dev:real` preflight as ES with externals: Node
+  refused `@clerk/nextjs`'s ES build (`ERR_UNSUPPORTED_DIR_IMPORT`: it imports directories, written for bundlers), and
+  then `import { Pool } from` `pg`'s CommonJS ("Named export 'Pool' not found"). tsx had hidden both, since it resolves
+  like a bundler. The preflight bundle is CommonJS, and each external is the path of its `require` entry.
+- **A tool that loads `next.config.ts` from elsewhere breaks a working-directory default.** With the preset taking the app's directory from `process.cwd()`, `pnpm knip` reported `./packages/kit/src/i18n/request.ts` as an unresolved import of both apps' `next.config.ts`: the next-intl request path had been computed from the repository root, where knip runs. The apps pass `__dirname`.
+- **The doc-path gate did not notice the scripts moving.** A file citation resolves when its parent directory exists
+  (the recipes cite files you are meant to create), and `scripts/` still exists, so `scripts/ports.mjs` and the rest
+  passed. They were found by grepping for the old paths; a move that leaves its directory behind needs that grep.
+- **knip entries.** `apps/showcase` and `apps/starter` ignore `@vitejs/plugin-react` and `vite-plugin-singlefile`: the
+  Vite and Vitest presets load them from the app's directory at run time, which knip cannot follow, and they must be the
+  app's own copies. `packages/tools` ignores its optional peers `next`, `vite` and `vitest`, which knip reports as
+  "referenced optional peerDependencies": each is needed only by the entry that imports it (the Next preset's types, the
+  Vite preset's types, the scratch-directory helper's `afterAll`), so a package that uses only one helper need not
+  install the others.
+- **A CommonJS bundle has an empty `import.meta`.** Bundling a workspace package that reads a file beside it with
+  `new URL('./data.txt', import.meta.url)` into the CommonJS preflight bundle crashed with `ERR_INVALID_URL`. Rewriting
+  `import.meta.url` as text fixed that and broke a file whose string literal mentioned it (`"see import.meta.url"`
+  became invalid code), and `replaceAll` read `$&` in a path as a pattern. What works is esbuild's own transform with a
+  per-file `define` of `import.meta` as an object: a define replaces expressions only, and covers the destructured form.
+- **Vitest 4 runs every `.ts` file through Vite's plugins, even under `node_modules`.** Its module runner externalizes
+  only `.js`, `.mjs`, `.cjs`, `.node` and `.wasm` files there, so a plugin's `load` hook sees the framework's
+  TypeScript, JSON and CSS from an installed instance, which is what lets the presets' guard check every framework
+  file a test loads.
+- **A Vitest config with an async default needs its return type named.** `defineConfig(async () => ({ … }))` failed
+  `tsc` (no overload matched: the inferred literal is wider than `UserConfig`); `async (): Promise<ViteUserConfig> =>`
+  passes. The config is async because the presets are: they `import()` the app's plugins.
+
+## A rest destructure turned the React Compiler off for a whole component (2026-11-18, `feat/simulator-ticker-control`)
+
+- **Symptom:** after a small change to `apps/showcase/src/app/[locale]/simulator-glue.tsx`, ESLint reported six
+  "Unused eslint-disable directive" warnings for `react-hooks/set-state-in-effect`, at lines nobody had touched.
+- **Cause:** the new code destructured a response with a rest element (`const { error, ...status } = body`). The React
+  Compiler bailed out of the whole component, and the `react-hooks` rules that run on its analysis went silent with it,
+  so every disable for them became "unused". Nothing else said so: typecheck and the rest of lint were green.
+- **Lesson:** a burst of unused `react-hooks/*` disables in a component you changed means the compiler stopped
+  compiling it, not that the code got better. Find the construct by bisecting (`git show HEAD:<file>` piped to
+  `eslint --stdin --stdin-filename <file>` gives the before count) and write it another way.
+
+## Union merge stranded and duplicated an edited line in the decision log (2026-11-18, `docs/fix-log-merge-damage`)
+
+[Union merge for the two append-only records](#union-merge-for-the-two-append-only-records-2026-11-17-chorepost-p2-cleanup)
+named the risk (two edits of one line leave both versions) but not its other forms. What happened: PR #19 edited the
+LAST line of an existing decision-log entry (a path, `.claude/future-tasks/simulator-panel-focus-on-toggle.md` to
+`.claude/future-tasks/resolved/...`) and appended its own entry; PRs #21, #22 and #23 each appended an entry too. Each
+of the last three branches took `integration` in with a plain `git merge`, and `merge=union` resolved it without a
+conflict, three ways wrong:
+
+- **The old version of the edited line came back:** the "Label in Name" entry ended with the pre-rename path again.
+- **The edited line was stranded.** The merge put the new entry ABOVE the edited last line of the earlier entry, so
+  that line ended up under another PR's entry, where it read as that entry's last bullet.
+- **It was duplicated:** #21's and #22's merges each left a copy. #23's builder noticed the same thing in its own
+  merge and fixed it before pushing.
+
+A review of "what did this PR add to the log" sees only additions, and each wrong merge was already in the branch
+being reviewed, so nothing looked wrong. Two builders noticed it by chance, from a deletion in
+`git diff origin/integration -- docs/decision-log.md`.
+
+**After any merge that touches either log, read the log diff before committing or pushing:**
+`git diff origin/integration -- docs/decision-log.md docs/build-notes.md` must be additions only, as one block at the
+end of the file, and nothing in it may be a line another PR wrote. A deletion, a second hunk, or a line you did not
+write is the damage. GitHub's "update branch" button runs a merge too; whether it honours `.gitattributes` is not
+verified, so treat it the same way. The audit that found this counted, for every first-parent merge on
+`integration` that touched either log, the hunks and deletions against its first parent. Everything but the cases
+above was one added block. The exceptions were deliberate: #11 added a note inside the demo budget history, and #18
+and #19 changed paths in earlier entries after their files moved to `resolved/`.
+
+## `@sssb/eslint-plugin` (2026-11-18, ADR-0014 P6, `feat/eslint-plugin`)
+
+- **`pnpm exec` installs when the workspace changed.** pnpm 11 checks the workspace before running a command and
+  installs if a package was added, so a gate-probe loop that runs `pnpm exec vitest` while you create a package
+  directory runs an install in the middle of a probe, and every probe after it errors instead of reporting. Finish the
+  workspace change (and one `pnpm install`) before probing.
+- **Flat config's `basePath` makes a preset work from anywhere.** Every block the app preset returns carries
+  `basePath: <the app's absolute directory>` (its parent, for an `apps/*` root) and app-relative globs (`src/**`), so it means the same thing from the
+  app's own `eslint.config.mjs`, from a workspace root's, and whether ESLint was started in the app or the root. A
+  global-ignores object keeps `basePath` and is still global.
+- **To retire a core rule's setting, reproduce what it matches before changing what it is called.** The fences moved
+  from `no-restricted-imports` to rules of their own with the same matcher (eslint's own `ignore` options, `iu` for a
+  `regex`, the specifier trimmed, `TSImportEqualsDeclaration` visited; that one's specifier is trimmed too, which
+  ESLint's rule does not do) and the same messages, so each `tests/lint`
+  probe kept its fragment and only its rule id changed: a diff of the expectations is a diff of names alone.
+- **A third-party rule can be pinned to SSSB's options by delegation.** `sssb/no-jsx-literals` calls react's
+  `jsx-no-literals` `create()` with `Object.create(context, { options: { value: OPTIONS } })`: every other context
+  property comes through the prototype, and no later config block can change the options, because the rule has none.
+- **What a composed config does to a file is ESLint's answer, not the config's text.** `checkFences` asks
+  `calculateConfigForFile` for every source file, through the app's config and through the preset alone, and compares
+  the `sssb/*` rules. That one comparison sees a rule turned off or down, a later `ignores`, a global ignore and a
+  nested config file that takes over a directory (ESLint 10 looks up the config from each file's directory), none of
+  which a probe at a fixed path would see unless it happened to sit there.
+
+## `release.mjs` runs as a lone file in two release jobs, and its output is a file in a commit (2026-11-18, `feat/release-notes`)
+
+release.yml's `push` job copies `scripts/release.mjs` out of the commit to a temp path (so a patch that rewrote it
+would not be the code that judges it) and `publish` checks out three files (`.nvmrc`, `.changeset/config.json` and
+`scripts/release.mjs`); neither has `node_modules`, and neither has `scripts/release-notes.mjs` beside it. A static `import './release-notes.mjs'` would have failed both with
+`ERR_MODULE_NOT_FOUND`, in the one job that holds the release app's key, after the release was already planned. So the
+notes module is imported inside `check` and `prepare`, and `tests/tooling/release.test.ts` copies `release.mjs` alone
+and runs it. A script run through a symlinked temp directory (macOS's `/var`) also never reaches `main` if it compares
+`process.argv[1]` with `import.meta.url` as plain strings; both scripts compare real paths.
+
+Two things review found in the first version of the notes file, both about what a release commit must pass:
+
+- **Anything `prepare` writes into the tree is checked by `pnpm lint`.** The notes were first written with two blank
+  lines between sections. Prettier flags that, so `checks` would have gone red on the release commit, after its tag
+  was pushed, and `release.mjs wait-for-checks` would then have refused to publish. A test runs the notes through the
+  repository's prettier config (`resolveConfig(file, { editorconfig: true })`: the API, unlike the CLI, ignores
+  `.editorconfig` unless asked, and the 120-column width lives there).
+- **A frontmatter reader that is stricter than the lint breaks a release late.** `verify-release` reads each changeset
+  with its own small reader. When the lint was widened to what Changesets reads (a BOM, `#` comments, a quoted bump)
+  the reader was not, and a changeset the PR checks accepted would have failed in `push`. The reader is now the same
+  grammar and a test feeds both the same forms.
+
+## The contract runner in `@sssb/kit/testing/contract` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+- **The Data API pass catches what the `pg` passes cannot.** Probe: the starter's migration 1001 with its two
+  `ALTER TABLE … ROW LEVEL SECURITY` statements joined into one `sql` call. `contract-owner-pass` and `contract-rls`
+  stayed green (the `pg` driver runs a multi-statement simple query), and both `contract-data-api` tests went red with
+  the emulator's "more than one statement in one call". Before P5 no app's tables met the Data API at all.
+- **Two more gates seen red**: an opt-out typo in an app's contract test fails at collection naming the check ids,
+  and an `it.only` beside `contractSuite` fails the file through the shared skip guard, listing the checks that did
+  not run (a valid opt-out is listed as `[sssb:opt-out:<id>]`).
+- **A seam-reaching module must not be imported at the top of the testing entry.** The repo's scaffold gate imports
+  `contractDatabaseName` from `@sssb/kit/testing/contract` in the alias-free `repo` project, where no seam resolves;
+  the runner therefore loads the migrations, the proofs, the Data API passes and `@sssb/app-config/identity` with
+  `import()` inside its hooks and tests, as the unit suite's db checks already did.
+
+## Vitest and Playwright behaviour the conformance tooling leans on (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+Each measured on Vitest 4.1.12 or Playwright 1.65.1; a shipped test helper runs under the ADOPTER's config, so these
+bite there first.
+
+- **A throwing `afterAll` abandons the file's remaining `afterAll` hooks.** Anything that must run after cleanup goes
+  in an `aroundAll` (teardown after every `afterAll`). Vitest reads `aroundAll`'s second parameter as fixtures and
+  refuses anything but a destructuring pattern, so an unused one is `{}` (with a justified `no-empty-pattern`).
+- **`vi.stubEnv` is undone before every test under `unstubEnvs: true`**; a value that must hold for a whole check is
+  assigned (`setDataRoot`). **`vi.doMock` hands the REAL module to an import made while its factory is still running**,
+  so two concurrent tests importing a mocked module race (`describe.sequential` fixes it).
+- **Under `isolate: false` a module loads once per worker**: a hook it registers at load belongs to the first file,
+  and a client it caches on `globalThis` outlives the file.
+- **`vitest list`**: `--json=<file>` writes the list (`--outputFile` is ignored); a file that throws while collected
+  makes it exit 1 and write nothing; `--filesOnly` runs no `globalSetup`, a full list does. A bare `vitest` walks up
+  to the first `vitest.config.*` or `vite.config.*`, and never reads a `vite.config.*` beside a `vitest.config.*`.
+- **`playwright test --list`** starts no `webServer`, runs no global setup and needs no browser, but one spec that fails
+  to load makes it list nothing. Its JSON report holds only the first entry of a `globalSetup` array; write it with
+  `PLAYWRIGHT_JSON_OUTPUT_FILE`, since a spec's own output shares stdout.
+- **`sssb doctor` found two copies of `next` in the ejected adoption probe**, which nothing had seen: the lockfile
+  held two `next@16.4.6` variants, one per `@opentelemetry/api` (1.9.1 and 1.10.0, `next`'s optional peer, pulled in
+  by different SDKs), and `init-app --eject-showcase` plus `pnpm install --no-frozen-lockfile` gave the app one and
+  the kit the other. Two `next` instances mean two `next/headers` request stores. `pnpm dedupe` left one
+  `@opentelemetry/api` and so one `next`; `pnpm dedupe --check` shows whether a lockfile has drifted back.
+- **`knip.json` names `packages/kit/src/testing/e2e.ts` as an entry of the kit.** Its `exports` target is the compiled
+  `dist/testing/e2e.js`, which exists only in a packed tarball, so knip cannot map the export to the source, and once
+  the showcase (its one importer) is ejected the file reads as unused. An entry, not an `ignore`, so its own imports
+  are still checked.
+- **The pack-and-consume job installs the kit's own dependencies** (`pnpm install --frozen-lockfile --ignore-scripts
+--filter @sssb/kit`) because the kit's `prepack` builds that entry with esbuild and typescript; the root's
+  `prepare` needs the whole repo, hence `--ignore-scripts`.
+
+## The first release candidate (2026-11-18, ADR-0014 P7)
+
+- **Changesets 3's pre mode is not Changesets 2's.** `changeset pre enter rc` writes only `{"mode": "pre", "tag":
+"rc"}`; there are no `initialVersions` or `changesets` lists. `changeset version` moves each consumed changeset to
+  `.changeset/pre/<name>.md` (`@changesets/read` gives it the id `pre/<name>`, and `assembleReleasePlan` skips those in
+  pre mode) and numbers the candidate from the packages' current versions: `semver.inc(version, type)`, then
+  `-rc.<one past the highest -rc.N in the fixed group>`. So `0.1.0` with a minor is `0.2.0-rc.0`, a patch after it
+  `0.2.0-rc.1`, a minor after that `0.2.0-rc.2` (`inc` of a prerelease returns the release it leads to). Read from
+  `@changesets/assemble-release-plan@7.0.0`'s `incrementVersion` and `getPreInfo`, and seen in this repository.
+- **Changesets' `ignore` takes globs, not negations.** `["!@sssb/*"]` ignored nothing; `["*", "@app/*"]` ignores every
+  unscoped package and the seed, and leaves `@sssb/*` (a `*` does not cross the scope's `/`). A changeset naming an
+  ignored package beside an `@sssb/*` one makes `assembleReleasePlan` throw ("mixed changeset"), so `check` reports the
+  name first and skips the plan.
+- **A test of a workflow's shell runs it from the workflow.** `tests/tooling/release-prerelease-job.test.ts` reads the
+  `prerelease` step out of `release.yml` and runs it as GitHub does (`bash --noprofile --norc -eo pipefail`) against a
+  fake `gh` holding the release in a file, so the test cannot drift from the step. Seen failing: with the download check
+  turned into `true`, the "other bytes" and "stray file" cases go red.
+
+## `@sssb/create` and pack and consume's generated shape (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
+
+- **Packing `@sssb/create` needs a pushed, clean `HEAD`.** Its `prepack` refuses a commit no remote-tracking branch of
+  `safeinsights/sssb` holds (as of your last fetch) and an `apps/starter` or `packages/kit/src/guide.md` that differs
+  from it, untracked files included. `SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings, for a tarball nothing will
+  run on GitHub; pack and consume sets it except on a push to `safeinsights/sssb`. And the template is the files git
+  tracks: **`git add` a new starter file** before a local pack or the create tests will see it (a build prints the
+  untracked ones it left out).
+- **A signal held across synchronous work needs two event-loop turns to be dispatched.** libuv reads a pending signal
+  only in the poll phase. Called from a poll callback (a `readline` answer, an `fs.readFile` callback), the next
+  turn's check phase (`setImmediate`) comes before any poll phase, so a one-turn wait released the listener first and
+  the run exited 0 with the Ctrl-C dropped. `signalsSettled()` in `packages/create/src/signals.js` waits two;
+  `process.nextTick`, microtasks and `setTimeout(0)` do not reach a poll phase in time. Seen in a child that generates
+  from `fs.readFile`'s callback: with one turn it exits 0, with two it dies by SIGINT.
+- **TypeScript 6 includes no `@types` package by default.** A program of its own (`apps/starter/infra/tsconfig.json`)
+  needs `types: ["node"]`; without it `tsc -p apps/starter/infra` fails on `node:path` and `__dirname` (6.0.3).
+- **pnpm writes a `file:` specifier into the lockfile as given**, absolute path and all, in the importers and in
+  `overrides`. A committed lockfile seed for a workspace generated with `--sssb <dir>` therefore holds tokens for the
+  tarball directory and the group's version (`scripts/pack-and-consume/checks.mjs`, `SEED_TARBALLS` and
+  `SEED_VERSION`), or it would differ on every machine and every release candidate.
+- **An app package named like a dependency is mistaken for it.** pnpm handed an app named `ws` the `ws` package's
+  optional peers, so the generator refuses a slug that names a package the workspace installs.
+- **npm's packing drops some dotfiles** (`.gitignore`, `.npmrc`), so the template stores a leading `.` in a path
+  segment as `_dot_` and the generator turns it back.
+
+## The Claude Code plugin (2026-11-18, ADR-0014 P13, `feat/claude-plugin`)
+
+- **An installed plugin is a copy at a commit, not your working tree.** With Claude Code 2.1.280,
+  `claude plugin marketplace add ./ --scope local` then `claude plugin install sssb@sssb --scope local` copies
+  `plugins/sssb` into the plugin cache under `HEAD`'s SHA (`installed_plugins.json`: `installPath`
+  `…/plugins/cache/sssb/sssb/<sha12>`, `gitCommitSha`). An uncommitted edit never reaches it:
+  `claude plugin update sssb@sssb --scope local` says "already at the latest version" until you commit, then moves to
+  the new SHA and asks for a restart. To run the tree as it is, start the session with
+  `claude --plugin-dir plugins/sssb` (`claude plugin list` then shows `sssb@sssb` and `sssb@inline`; the docs say the
+  `--plugin-dir` copy wins). Claude Code's docs ("In-place and copied plugins") describe a local marketplace's
+  relative-path plugin loading in place; 2.1.280 did not, so check `installPath` before trusting either. Reproduce
+  with a scratch `CLAUDE_CONFIG_DIR` in a scratch clone, never your own config.
+- **`pnpm add` in a generated workspace drops the kit's seam link.** `pnpm --filter <app> add <pkg>` (pnpm 11.14.0)
+  re-resolves the app's `@sssb/kit` without its optional `@sssb/app-config` peer: the lockfile loses the
+  `(@sssb/app-config@apps+<app>+src+app-config)` suffix, `sssb doctor` fails "has no seam linked" and typecheck fails
+  inside the kit. `pnpm install` and `--force` do not restore it. Edit the app's `package.json` and run
+  `pnpm install` instead; after an add, keep the manifest, `git checkout HEAD -- pnpm-lock.yaml`, and install.
+  `.claude/future-tasks/pnpm-add-drops-seam-link.md` has the repro and the candidate fixes.
+- **`claude plugin validate --strict` fails a plugin that declares no `version`**, on one warning
+  (`version: No version specified. Consider adding a version following semver`), and reports it again from the
+  marketplace (`plugins[0] plugin.json → version: …`). SSSB's plugin leaves `version` out on purpose (a pinned string
+  freezes users on the cached copy), so its gate filters exactly that line; any other warning still fails.
+- **A plugin's commands are instructions, so their facts drift like comments.** A claim check found a command naming
+  the showcase's ticket route as the producer of `ticket.assigned` when the route only calls `applyTicketChanges`
+  (`apps/showcase/src/domain/ticket-changes.ts`), and a job context missing its `llm` port. The plugin's gate proves
+  references exist, not what they do; open the referent.
+
+## `pnpm add` and the seam (2026-11-18, `fix/pnpm-add-seam-link`)
+
+- **Fixed: the P13 note above ("`pnpm add` in a generated workspace drops the kit's seam link") no longer holds** for
+  a workspace `@sssb/create` writes now. Its seam is a workspace package (`workspace:<slug>-app-config@*`), which
+  pnpm's partial installs keep linked; ADR-0014's addendum "the seam is a workspace package" has the cause. (The
+  task that note cites is now `.claude/future-tasks/resolved/pnpm-add-drops-seam-link.md`.)
+- **The cheap probe is the lockfile, not doctor.** `grep -c '(@sssb/app-config@apps+<app>+src+app-config)'
+pnpm-lock.yaml` counts the kit's peer suffix (2 for one app: its importer entry and its snapshot key); it drops to
+  0 the moment pnpm unlinks the seam. Doctor says the same, slower.
+- **pnpm self-switches to `packageManager`**, so a scratch workspace generated by `@sssb/create` runs the pinned pnpm
+  whatever is on PATH; trying another pnpm means editing `packageManager`, not installing one.
+- **To read why pnpm did something, read its bundle.** pnpm 11.14.0 bundles its code into `dist/pnpm.mjs` under its package
+  in pnpm's store (`find ~/Library/pnpm/store -path '*pnpm/<version>*' -name dist`), unminified, with the source
+  module named in a comment above each section (`// ../installing/deps-resolver/lib/index.js`).
+- **A workspace package nested in another (`apps/<app>/src/app-config` inside `apps/<app>`) is a workspace of its own
+  to knip**, which moves its files out of the outer workspace's entry patterns: give it its own entry.

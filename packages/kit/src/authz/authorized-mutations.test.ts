@@ -1,93 +1,58 @@
 import { makeTestTmpDir } from '../testing/tmp-dir'
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-    type Exemption,
-    type Gate,
-    type ScanPolicy,
-    type ScanRoot,
-    exemptionFor,
-    judge,
-    scanRoutes,
-} from './route-scan'
+import { EXEMPT_FILES, EXEMPT_PREFIXES, FRAMEWORK_POLICY as POLICY, isGate, REQUIRED_ALONGSIDE } from './route-policy'
+import { type ScanRoot, exemptionFor, judge, scanRoutes } from './route-scan'
 
 /**
  * Bypass-catcher for the authorization choke point. Subject orgIds are handler-derived, so
  * authorize(...) can't be a route wrapper — it's an explicit call inside each mutating handler. This
  * build-time scan makes "every mutating product route is authorized" a checked invariant rather than
- * a discipline: it walks every route file under each of the roots below and judges EACH exported mutating
- * handler (POST/PUT/PATCH/DELETE) on its own: the handler must reach authorize(...) on its own path, or its
- * route must sit in the justified exemption map AND the handler must pass that exemption's gate. GET-only
- * files never have to authorize.
+ * a discipline: it judges EACH exported mutating handler (POST/PUT/PATCH/DELETE) on its own: the handler
+ * must reach authorize(...) on its own path, or its route must sit in the justified exemption map AND the
+ * handler must pass that exemption's gate. GET-only files never have to authorize.
  *
  * The judging is ./route-scan.ts: it reads the files with the TypeScript compiler's parser and binder, so a
  * string, a comment, a call in another handler, a dead branch or an uncalled function proves nothing (the
  * scan used to match the file's TEXT, and each of those passed; ADR-0012 addendum, 2026-11-17). What it
- * follows and what it refuses is stated at the top of that file. THIS file is the policy: the roots, the
- * exemptions and the gates they rest on.
+ * follows and what it refuses is stated at the top of that file. The POLICY (the exemptions and the gates
+ * they rest on) is ./route-policy.ts, in source, because the conformance suite applies it too.
  */
 
 /**
- * TWO KINDS OF ROOT, and why the second one exists.
+ * WHICH TREES ARE SCANNED, AND WHERE.
  *
  * The scan's original subject is the HOST APPS' route trees (Next.js keeps route files in the app's
- * src/app forever — ADR-0012), resolved from the repo the suite runs in rather than relative to this
- * file. EVERY app under apps/ is scanned against the same rules (ADR-0007 — the apps/ tree): no app
- * may opt out by existing.
+ * src/app forever — ADR-0012). Each app's tree is now scanned by the app ITSELF: the conformance suite's
+ * `authz-mutations` check (`@sssb/kit/testing`, ./app-exemptions.ts `scanApp`), which every app's
+ * `src/sssb.conformance.test.ts` runs over its own `src/app` with the framework's policy plus the app's own
+ * `authz-exemptions.mjs`. So no app opts out by existing, and an adopter's app, whose tree this repo
+ * never sees, is scanned the same way (ADR-0014 part 3).
  *
- * But an apps-only scan makes this FRAMEWORK test depend on a host app for its own subject matter, and
- * most exemptions below were backed only by the demo app — so ejecting the demo turned the exemption
- * map into a pile of stale entries and the walk guard into a failure. The FIXTURE root
- * (packages/kit/test-fixture/api, resolved package-relative so it is found wherever the suite runs)
- * is the framework's own reference tree: one thin, never-served file per invariant this scan asserts.
+ * THIS file scans the framework's own reference tree, `packages/kit/test-fixture/api` (resolved
+ * package-relative so it is found wherever the suite runs): one thin, never-served file per invariant the
+ * scan asserts. "Is this exemption still real?" is a question about that tree, not about whichever apps
+ * happen to be checked out: an adopter who ships no assistant route has not made the "stateless LLM call"
+ * exemption a lie, they have merely stopped using it — and it is the only reading that survives
+ * deleting the showcase. An app's OWN exemptions are measured against the app's tree instead
+ * (./app-exemptions.ts).
  *
- * What that MOVES: "is this exemption still real?" is now a question about the framework's reference
- * tree, not about whichever apps happen to be checked out. That is the honest reading once apps are
- * pluggable — an adopter who ships no assistant route has not made the "stateless LLM call" exemption
- * a lie, they have merely stopped using it — and it is the only reading that survives
- * `pnpm init-app --eject-showcase`. What it does NOT move: every app route is still scanned, and a
- * mutating app handler still has to reach authorize(...) or pass an exemption's gate.
- *
- * The per-root "is really walked" case below is the walk guard: a wrong root finds nothing and fails
- * loudly instead of passing vacuously behind the other root's results.
+ * The "is really walked" case below is the walk guard: a wrong root finds nothing and fails loudly
+ * instead of passing vacuously.
  */
-const REPO_DIR = process.cwd()
-const APPS_DIR = path.resolve(REPO_DIR, 'apps')
 // fileURLToPath on the URL STRING, then path.resolve — NOT `new URL('…', import.meta.url)`: this suite
 // runs in the happy-dom environment, whose global URL does not resolve a relative reference against a
 // `file:` base the way node's does, and `fileURLToPath` then rejects the result as non-file.
 const FIXTURE_API_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../test-fixture/api')
+const REPO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 /**
- * Each root's `exemptDir` differs from its `dir` for an app because Next serves `route.ts` from ANYWHERE
- * under `src/app`, not only under `api/`. Walking `api/` alone left a real hole: a `route.ts` exporting a
- * bare `POST` at `src/app/[locale]/danger/route.ts` was scanned by nothing, and the scan passed while the
- * endpoint answered `200` to an unauthenticated POST.
- *
- * Exemptions stay measured from `api/` so the map below did not have to be rewritten, and a route
- * OUTSIDE `api/` can match no exemption at all: legitimate non-api handlers exist
- * (`sitemap.xml/route.ts`, `robots.txt/route.ts`), so they are scanned rather than banned, but a
- * mutating one has to reach authorize(...) on its own merits.
- *
- * `tsconfig` is the one whose module resolution a re-exported handler is followed with: each app's own
- * (its `@/*` alias), and for the fixture the root one, which is what typechecks it.
+ * `tsconfig` is the one whose module resolution a re-exported handler is followed with: for the fixture
+ * the root one, which is what typechecks it.
  */
 const ROOTS: ScanRoot[] = [
-    ...readdirSync(APPS_DIR, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => ({
-            label: `apps/${entry.name}`,
-            dir: path.join(APPS_DIR, entry.name, 'src/app'),
-            exemptDir: path.join(APPS_DIR, entry.name, 'src/app/api'),
-            // An app without one (a JS app's jsconfig.json, or neither) still gets scanned: relative
-            // re-exports resolve without a config, and an alias that does not resolve is refused, loudly.
-            tsconfig: ['tsconfig.json', 'jsconfig.json']
-                .map((name) => path.join(APPS_DIR, entry.name, name))
-                .find((file) => existsSync(file)),
-        }))
-        .filter((root) => existsSync(root.dir)),
     {
         label: 'packages/kit/test-fixture',
         dir: FIXTURE_API_DIR,
@@ -95,135 +60,6 @@ const ROOTS: ScanRoot[] = [
         tsconfig: path.join(REPO_DIR, 'tsconfig.json'),
     },
 ]
-
-/**
- * Exemption map — paths relative to a ROOT's api dir (an app's src/app/api, or the fixture's api/),
- * each with the reason it needs no per-actor authorize(...) call. Blanket by prefix (whole dirs) or
- * exact by file. Keep this list honest: a new mutating route that isn't genuinely one of these must
- * call authorize(...), not be added here. Every entry is backed by a file in the fixture tree, which
- * is what keeps the staleness checks below meaningful with or without the demo app.
- *
- * EVERY exemption names the gate its reason rests on as `mustMatch`, and the scan checks it on EVERY
- * exempted mutating HANDLER, per verb, so the claim is ENFORCED, not prose: a guarded POST does not carry an
- * open DELETE beside it. `mustMatch` is REQUIRED — a meta-case below fails an entry without one —
- * because a bare exemption is matched by RELATIVE PATH IN EVERY ROOT, including an adopter's app.
- * Without a gate, `profile/route.ts` would exempt any file at that path from authorize(...): an
- * adopter's PUT that updated any user by id would ship un-authorized and the gate would stay green.
- * With one, that handler has to reach `auth.updateProfile(` — a port call that takes no user id and
- * so cannot express "update someone else" — to inherit the exemption.
- *
- * A gate is one of three kinds (./route-scan.ts, `Gate`), and the kind is the entry's statement of what
- * "guarded" means for its reason:
- *
- * - `wrapped-by`: the guard WRAPS the handler, so the handler must BE the call (`export const POST =
- *   withWebhookSecret(…)`). Reaching the guard somewhere inside is not enough.
- * - `calls`: the reason rests on a port call the handler makes, so the handler must reach that call.
- * - `opens-with-simulated-404`: the handler's FIRST statement is `if (!isSimulated) return …`.
- *
- * What a gate does NOT promise: it proves the exempted route is the KIND of route the reason
- * describes, not that the reason's full claim holds. `llm.complete(` proves a handler is the
- * model-calling route; it cannot prove the route persists nothing. The gates are strongest where the
- * reason is mechanical (a simulated-mode 404, a signature wrapper, a self-only port call) and weakest
- * where it is about intent. See ADR-0012 for the trade-off in full.
- */
-const SIMULATED_404: Gate = { kind: 'opens-with-simulated-404' }
-
-// No `service/` entry, deliberately. A service caller used to be exempt here as "org-scoped by
-// construction"; it is now a MACHINE actor (@sssb/kit/core/abilities `MachineActor`) and its mutations call
-// authorize(...) like any other route, so the per-action check replaced the blanket one (ADR-0012
-// addendum, 2026-11-16). The fixture's service/jobs/route.ts is that machine route. What the old entry
-// ALSO guaranteed (that a service route verifies its caller) is kept, below.
-const EXEMPT_PREFIXES: Record<string, Exemption> = {
-    'webhooks/': {
-        reason:
-            'authenticated by a machine caller, not a user session — a shared webhook secret ' +
-            '(withWebhookSecret) or the Mailgun inbound signature (withMailgunSignature) — so no ' +
-            'per-actor ability applies',
-        mustMatch: { kind: 'wrapped-by', callees: ['withWebhookSecret', 'withMailgunSignature'] },
-    },
-    'simulator/': {
-        reason: 'simulated-world surface, simulated-mode-gated (404 in real) — never a product mutation path',
-        mustMatch: SIMULATED_404,
-    },
-}
-
-const EXEMPT_FILES: Record<string, Exemption> = {
-    'profile/route.ts': {
-        reason: 'self-service: the subject is the caller (User.update is self-only), no cross-actor authorization',
-        // The port call that MAKES it self-only: updateProfile takes no user id, so a route that
-        // updates another user by id cannot be written through it and cannot inherit this exemption.
-        mustMatch: { kind: 'calls', callees: ['auth.updateProfile'] },
-    },
-    'assistant/route.ts': {
-        reason:
-            'stateless LLM call — creates no persisted, org-scoped resource to authorize. Any read tool it ' +
-            "exposes stays inside the caller's OWN active-org scope (filtered inside withTenant by the " +
-            'handler-resolved orgId, the same scope as that app’s own list route) — no per-actor product mutation',
-        mustMatch: { kind: 'calls', callees: ['llm.complete', 'llm.stream', 'llm.runToolLoop'] },
-    },
-    'analytics/page-view/route.ts': {
-        reason: 'telemetry beacon — records a page view, mutates no product resource',
-        mustMatch: { kind: 'calls', callees: ['analytics.capture'] },
-    },
-    'auth/org/route.ts': {
-        reason: 'setActiveOrg enforces membership at the auth port (ForbiddenError for non-members)',
-        mustMatch: { kind: 'calls', callees: ['auth.setActiveOrg'] },
-    },
-    'auth/signout/route.ts': {
-        reason: 'session lifecycle (sign-out) — no product resource, runs post-authz',
-        mustMatch: { kind: 'calls', callees: ['auth.signOut'] },
-    },
-    'auth/dev-signin/route.ts': {
-        reason: 'session lifecycle (dev sign-in) — pre-authz by definition, simulated-mode only',
-        mustMatch: SIMULATED_404,
-    },
-    'auth/accept-invite/route.ts': {
-        reason: 'invite acceptance is authorized by possession of the invite token, before any membership exists',
-        mustMatch: { kind: 'calls', callees: ['acceptInvite'] },
-    },
-    'storage-upload/route.ts': {
-        reason:
-            'simulated-mode-only (404 in real) multipart upload endpoint — the local twin of an S3 presigned POST, ' +
-            'authenticated by the server-signed HMAC upload-target fields (like the webhook secret), NOT a user ' +
-            'session; the upload TARGET was already authorized by the app route that minted it',
-        mustMatch: SIMULATED_404,
-    },
-}
-
-/**
- * Gates a mutating handler under a prefix must pass IN ADDITION to reaching authorize(...). Authorizing an
- * actor means something only if the actor came from a verified credential: `authorize(` alone is satisfied
- * just as well by a `{ kind: 'machine', credential: { kind: 'service-key' } … }` literal built from the
- * request. So a service handler must also BE the wrapper call that verifies its caller and BUILDS that
- * actor. Matched by relative path in every root, like the exemptions, and backed by a fixture route.
- */
-const REQUIRED_ALONGSIDE: Record<string, Exemption> = {
-    'service/': {
-        reason:
-            'a service route verifies its caller with withServiceCaller, which builds the machine actor ' +
-            '(ctx.actor) the route should authorize. The gate proves the wrapper is the handler, not that the ' +
-            'actor authorized is the one it built (ADR-0012: a gate proves the KIND of route)',
-        mustMatch: { kind: 'wrapped-by', callees: ['withServiceCaller'] },
-    },
-}
-
-/**
- * What the failure says to a route whose caller is not a session, because that is where an author is
- * most likely to look for an exemption, and since 2026-11-16 there is none to find: `service/` routes
- * used to be exempt, and an adopter's old one fails here on taking the update.
- */
-const NON_SESSION_HINT =
-    'A caller that is not a session authorizes its actor with the three-argument form, ' +
-    'authorize(actor, action, subject): a service key via abilityActorFromService (withServiceCaller passes it as ' +
-    'ctx.actor), a machine the app verifies via machineActor, or a person holding a non-session credential (a ' +
-    'personal API token) via abilityActorFromCredential. The `service/` exemption was retired (ADR-0012 addendum, 2026-11-16).'
-
-const POLICY: ScanPolicy = {
-    exemptPrefixes: EXEMPT_PREFIXES,
-    exemptFiles: EXEMPT_FILES,
-    requiredAlongside: REQUIRED_ALONGSIDE,
-    hint: NON_SESSION_HINT,
-}
 
 describe('every mutating API route is authorized', () => {
     const routes = scanRoutes(ROOTS)
@@ -233,13 +69,9 @@ describe('every mutating API route is authorized', () => {
     const fixtureRels = new Set(fixture.map((route) => route.rel))
 
     it.each(ROOTS.map((root) => root.label))('%s is really walked (guards against a broken walk)', (label) => {
-        // Per root, not in aggregate: a mis-resolved root finds nothing and would otherwise hide
-        // behind the other roots' results, which is exactly the vacuous pass this case exists to
-        // prevent. ROUTE FILES, not mutating ones: an app may legitimately be read-only (a reporting
-        // dashboard, an app mid-build), and demanding a mutation from every app root would fail a
-        // FRAMEWORK test for an app that has done nothing wrong. Non-vacuity of the exemption
-        // machinery is the FIXTURE root's job — the case below — and that root is package-relative,
-        // so it is present in every checkout no matter which apps exist.
+        // Per root: a mis-resolved root finds nothing, which is exactly the vacuous pass this case exists to
+        // prevent. (Each app's own walk guard is the conformance suite's `authz-mutations` check.) The
+        // fixture root is package-relative, so it is present in every checkout no matter which apps exist.
         expect(routes.filter((route) => route.root === label).length, label).toBeGreaterThan(0)
     })
 
@@ -308,7 +140,7 @@ describe('every mutating API route is authorized', () => {
     })
 
     it('has no stale exact exemptions (each is backed by a mutating route in the fixture tree)', () => {
-        // Checked against the FIXTURE, not the apps: see the ROOTS note above. An entry with no
+        // Checked against the FIXTURE, not an app: see the note above ROOTS. An entry with no
         // fixture file behind it is either dead or an exemption nobody is prepared to demonstrate.
         for (const rel of Object.keys(EXEMPT_FILES)) {
             expect(
@@ -338,22 +170,9 @@ describe('every mutating API route is authorized', () => {
     })
 })
 
-/** A runtime check of the `Gate` shape: the map is data, and a type is not present when the suite runs. */
-function isGate(gate: unknown): boolean {
-    if (typeof gate !== 'object' || gate === null || !('kind' in gate)) return false
-    if (gate.kind === 'opens-with-simulated-404') return true
-    if (gate.kind !== 'wrapped-by' && gate.kind !== 'calls') return false
-    return (
-        'callees' in gate &&
-        Array.isArray(gate.callees) &&
-        gate.callees.length > 0 &&
-        gate.callees.every((callee) => typeof callee === 'string' && callee.length > 0)
-    )
-}
-
 /**
  * The route shapes that PASSED the text-matching scan this replaced (ADR-0012 addendum, 2026-11-17), judged
- * against the real policy above. Each was dropped into an app's api tree and run through the old scan, which
+ * against the framework's policy (./route-policy.ts). Each was dropped into an app's api tree and run through the old scan, which
  * passed every row below that now fails, except the comment-only mention, which failed there too. The second and
  * third rows are the two that review found (`.claude/future-tasks/resolved/authz-scan-exemption-matches-text-not-verbs.md`).
  * The rest are the same flaw in the main rule, in the `service/` gate and in the `simulator/` gate, and the last

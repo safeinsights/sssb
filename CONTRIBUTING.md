@@ -64,7 +64,8 @@ in your app instead: `docs/recipes/app-owned-adapter.md`.)
    flow if user-visible.
 
 **Adding a port**: only when the app needs a new capability — size the interface to the app's need,
-never to a vendor's API. `/new-port` (Claude command) scaffolds the layout.
+never to a vendor's API. `/new-kit-port` (a Claude Code command in `.claude/commands/`) scaffolds the layout; a
+port only an app calls is the app's, scaffolded by the plugin's `/sssb:new-port`.
 
 ## Everyday conventions
 
@@ -99,6 +100,6 @@ never to a vendor's API. `/new-port` (Claude command) scaffolds the layout.
 | contract | `pnpm test:contract`   | Real Postgres (embedded locally, service container in CI) |
 | demo     | `pnpm e2e:demo-static` | The built single-file shell from `file://`                |
 
-A test that needs a scratch directory uses `makeTestTmpDir()` (`tests/support/tmp-dir.ts`, re-exporting `packages/kit/src/testing/tmp-dir.ts`): a raw
+A test that needs a scratch directory uses `makeTestTmpDir()` (from `@sssb/tools/testing/tmp-dir`, which `tests/support/tmp-dir.ts` re-exports): a raw
 `mkdtemp` fails lint, and the unit and contract runs fail if a directory made that way is left behind
-(`scripts/check-tmpdir-leak.mjs`).
+(`sssb check-tmpdir-leak`).

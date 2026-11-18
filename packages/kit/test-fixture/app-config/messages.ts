@@ -4,7 +4,7 @@ import type { MessageTree } from '@sssb/kit/i18n/messages'
  * The APP's i18n registration (the seam side of @sssb/kit/i18n/namespaces.ts, ADR-0012). The catalogs are
  * physically split: the framework owns FRAMEWORK_NAMESPACES in `packages/kit/src/i18n/messages/*.json`;
  * this fixture owns APP_NAMESPACES in `../messages/*.json`. Together they partition the merged catalog
- * (disjoint + exhaustive) — which is exactly what @sssb/kit/i18n/namespaces.test.ts checks, and it runs
+ * (disjoint + exhaustive) — which is exactly what the conformance suite's `i18n-partition` check (@sssb/kit/testing) checks, and it runs
  * against this seam as well as against every real app's.
  *
  * `appNotifications` is not decoration: @sssb/kit/core/notifications.ts declares that an APP-registered

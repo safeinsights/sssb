@@ -1,0 +1,93 @@
+{
+    "name": "@sssb/tools",
+    "version": "0.1.0",
+    "private": true,
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/safeinsights/sssb.git",
+        "directory": "packages/tools"
+    },
+    "type": "module",
+    "description": "SSSB's tooling: the sssb CLI, the Next, Vite and Vitest presets, the tsconfig base, and helpers any workspace package may import. Plain JavaScript that Node loads directly; it never depends on @sssb/kit, and reaches it only from the app's own directory (ADR-0014, rule 4).",
+    "bin": {
+        "sssb": "./bin/sssb.js"
+    },
+    "files": [
+        "bin",
+        "src",
+        "tsconfig.base.json",
+        "!src/**/*.test.*"
+    ],
+    "exports": {
+        "./package.json": "./package.json",
+        "./tsconfig.base.json": "./tsconfig.base.json",
+        "./assembly-checks": {
+            "types": "./src/assembly-checks.d.ts",
+            "default": "./src/assembly-checks.js"
+        },
+        "./doc-paths": {
+            "types": "./src/doc-paths.d.ts",
+            "default": "./src/doc-paths.js"
+        },
+        "./kit": {
+            "types": "./src/kit.d.ts",
+            "default": "./src/kit.js"
+        },
+        "./next": {
+            "types": "./src/next.d.ts",
+            "default": "./src/next.js"
+        },
+        "./ports": {
+            "types": "./src/ports.d.ts",
+            "default": "./src/ports.js"
+        },
+        "./testing/tmp-dir": {
+            "types": "./src/testing/tmp-dir.d.ts",
+            "default": "./src/testing/tmp-dir.js"
+        },
+        "./testing/tmp-dir-setup": {
+            "types": "./src/testing/tmp-dir-setup.d.ts",
+            "default": "./src/testing/tmp-dir-setup.js"
+        },
+        "./ticker": {
+            "types": "./src/tick/ticker.d.ts",
+            "default": "./src/tick/ticker.js"
+        },
+        "./ticker-marker": {
+            "types": "./src/tick/ticker-marker.d.ts",
+            "default": "./src/tick/ticker-marker.js"
+        },
+        "./vite": {
+            "types": "./src/vite.d.ts",
+            "default": "./src/vite.js"
+        },
+        "./vitest": {
+            "types": "./src/vitest.d.ts",
+            "default": "./src/vitest.js"
+        }
+    },
+    "engines": {
+        "node": ">=24"
+    },
+    "dependencies": {
+        "esbuild": "^0.28.2",
+        "postcss": "^8.5.31"
+    },
+    "peerDependencies": {
+        "next": "^16.4.6",
+        "vite": "^8.3.5",
+        "vitest": "^4.1.12"
+    },
+    "peerDependenciesMeta": {
+        "next": {
+            "optional": true
+        },
+        "vite": {
+            "optional": true
+        },
+        "vitest": {
+            "optional": true
+        }
+    }
+}

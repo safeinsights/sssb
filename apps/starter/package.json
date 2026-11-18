@@ -5,14 +5,16 @@
     "license": "MIT",
     "description": "The starter app: the minimum an adopter keeps — one entity, one card, and an otherwise empty seam (ADR-0007, ADR-0012).",
     "scripts": {
-        "dev": "NEXT_TELEMETRY_DISABLED=1 APP_MODE=simulated node ../../scripts/dev-tick.mjs starter -- next dev --port \"$(node ../../scripts/print-port.mjs starter)\"",
-        "tick": "node ../../scripts/tick.mjs starter",
+        "dev": "NEXT_TELEMETRY_DISABLED=1 APP_MODE=simulated sssb dev-tick starter -- next dev --port \"$(sssb port)\"",
+        "tick": "sssb tick starter",
         "build": "NEXT_TELEMETRY_DISABLED=1 next build",
-        "start": "next start --port \"$(node ../../scripts/print-port.mjs starter)\"",
-        "typecheck": "next typegen && tsc --noEmit",
+        "start": "next start --port \"$(sssb port)\"",
+        "typecheck": "next typegen && tsc --noEmit && tsc --noEmit -p infra",
+        "sssb:doctor": "sssb doctor",
+        "check:e2e": "sssb check-e2e",
         "test:e2e": "NEXT_TELEMETRY_DISABLED=1 playwright test",
         "build:demo-static": "vite build --config vite.demo.config.ts",
-        "check:demo-size": "node ../../scripts/check-demo-size.mjs 840000",
+        "check:demo-size": "sssb check-demo-size 840000",
         "e2e:demo-static": "playwright test --config playwright.demo.config.ts"
     },
     "dependencies": {
@@ -26,8 +28,13 @@
     },
     "devDependencies": {
         "@playwright/test": "^1.64.1",
+        "@sssb/tools": "workspace:*",
         "@vitejs/plugin-react": "^6.1.2",
+        "embedded-postgres": "18.4.0-beta.17",
         "vite": "^8.3.5",
         "vite-plugin-singlefile": "^2.3.4"
+    },
+    "sssb": {
+        "port": "starter"
     }
 }

@@ -1,13 +1,13 @@
 import { defineConfig, devices } from '@playwright/test'
-import { originFor } from '../../scripts/ports.mjs'
-import { assertNoLiveDevTicker } from '../../scripts/ticker-marker.mjs'
+import { originFor } from '@sssb/tools/ports'
+import { assertNoLiveDevTicker } from '@sssb/tools/ticker-marker'
 
 // A dev server started with `DEV_TICK_SECONDS` set would be ADOPTED by `reuseExistingServer` below and tick under the
-// suite; the ticker leaves a marker while it runs, and this refuses to load past it (scripts/ticker-marker.mjs).
+// suite; the ticker leaves a marker while it runs, and this refuses to load past it (@sssb/tools/ticker-marker).
 assertNoLiveDevTicker()
 
 // Derived, not literal: a linked worktree under .claude/worktrees/ gets its own port, so a second
-// agent session's dev server can never be silently adopted by this one's suite (scripts/ports.mjs).
+// agent session's dev server can never be silently adopted by this one's suite (@sssb/tools/ports).
 // The `pnpm dev` below computes the same number from the same function, so the two cannot disagree.
 const BASE_URL = originFor('showcase')
 
@@ -104,7 +104,7 @@ export default defineConfig({
         command: E2E_BUILD ? 'pnpm run build:e2e && pnpm run start:e2e' : 'pnpm dev',
         url: BASE_URL,
         reuseExistingServer: !process.env.CI,
-        // `pnpm dev` ticks the scheduler on a timer when DEV_TICK_SECONDS is set (scripts/dev-tick.mjs). The e2e suite expects a
+        // `pnpm dev` ticks the scheduler on a timer when DEV_TICK_SECONDS is set (`sssb dev-tick`). The e2e suite expects a
         // scheduler that does nothing until a test asks, so whatever is in the caller's shell, the server it starts is not ticked.
         env: { DEV_TICK_SECONDS: '' },
         // A production build has to compile before it can serve; dev serves immediately and compiles

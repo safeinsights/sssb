@@ -1,5 +1,6 @@
-// The scratch-directory helper lives in the framework's package now (ADR-0014 P3), so that none of
-// @sssb/kit's own tests reaches outside packages/kit for it. The repo's own tests and the apps' tests
-// keep importing it from here until P4 moves it into @sssb/tools; this re-export is the same module, so
-// a test file still gets one cleanup hook, not two.
-export { makeTestTmpDir, makeTestTmpDirAsync } from '../../packages/kit/src/testing/tmp-dir'
+// The scratch-directory helper, for this repository's own tests: @sssb/tools' (ADR-0014 P4), the one any workspace
+// package imports. The framework's own tests use the copy inside packages/kit instead (packages/kit/src/testing),
+// because @sssb/kit depends on no other SSSB package; both write the same marker, so `sssb check-tmpdir-leak` sees
+// either one's leaks (tests/tooling/tmp-dir.test.ts holds the two equal). Only what this repository's tests import is
+// re-exported (knip); `makeTestTmpDirAsync` is @sssb/tools' too.
+export { makeTestTmpDir } from '@sssb/tools/testing/tmp-dir'

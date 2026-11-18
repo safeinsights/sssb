@@ -6,7 +6,7 @@
  * the seam (src/app-config/messages.ts APP_NAMESPACES) and live in the host's `messages/*.json`.
  *
  * FRAMEWORK and APP namespaces are DISJOINT and together partition the merged catalog — enforced by
- * namespaces.test.ts. That partition is PHYSICAL (ADR-0012): two catalogs, deep-merged at
+ * the conformance suite's `i18n-partition` check (../testing/conformance/i18n.ts), in every app. That partition is PHYSICAL (ADR-0012): two catalogs, deep-merged at
  * every load site (./messages.ts).
  *
  * `jobTimeline` resolves the old `jobs` caveat: the status labels the framework's JobTimeline renders

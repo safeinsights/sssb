@@ -1,10 +1,10 @@
 import { rmSync } from 'node:fs'
 import path from 'node:path'
 import { expect, type Locator, type Page, test } from '@playwright/test'
-// The signing module is pure isomorphic TS (no node builtins, no @/adapters), so a relative import
-// transpiles fine under Playwright — the e2e VERIFIES the egress signature the app produced, proving
-// the template teaches both halves of the scheme end to end.
-import { verifyWebhookSignature, WEBHOOK_REPLAY_TOLERANCE_MS } from '@sssb/kit/core/webhook-signing'
+// The e2e VERIFIES the egress signature the app produced, proving the template teaches both halves of the
+// scheme end to end. A spec reaches the kit only through `@sssb/kit/testing/e2e`: Node loads specs, and that
+// entry is the seam-free one SSSB ships compiled (ADR-0014 part 2).
+import { verifyWebhookSignature, WEBHOOK_REPLAY_TOLERANCE_MS } from '@sssb/kit/testing/e2e'
 import { openSimulatorPanel } from '../support/simulator'
 
 /**
