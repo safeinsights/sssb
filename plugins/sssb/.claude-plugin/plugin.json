@@ -1,0 +1,9 @@
+{
+    "name": "sssb",
+    "description": "The commands an app author on SSSB runs: the capability scaffolds that register through the @sssb/app-config seam, an app-owned port, verify, pre-PR review, accessibility and design reviews, and the doc-steward agent.",
+    "author": { "name": "SafeInsights" },
+    "homepage": "https://github.com/safeinsights/sssb",
+    "repository": "https://github.com/safeinsights/sssb",
+    "license": "MIT",
+    "keywords": ["sssb", "scaffold", "multi-tenant", "next.js"]
+}

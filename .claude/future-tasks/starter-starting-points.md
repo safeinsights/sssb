@@ -58,7 +58,7 @@ Against, and these are the reasons this is a question rather than a task:
 
 1. **Wire it into the starter.** Simplest for the adopter, largest minimum, most duplication.
 2. **Keep the starter minimal and ship a scaffold command** (an `/add-simulator`, `/add-invitations`, in the
-   style of `.claude/commands/new-tour.md`) that writes the wiring into the adopter's app on request. The
+   style of `plugins/sssb/commands/new-tour.md`) that writes the wiring into the adopter's app on request. The
    minimum stays small and the wiring is still theirs, but an agent command is not a gate, and CI cannot
    prove the wiring still compiles unless an adoption-probe leg runs it.
 3. **Promote the wiring into SSSB as re-exportable route handlers**, so the adopter's route file is one line.

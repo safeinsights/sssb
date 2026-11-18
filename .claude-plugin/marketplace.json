@@ -1,0 +1,15 @@
+{
+    "name": "sssb",
+    "owner": { "name": "SafeInsights" },
+    "metadata": {
+        "description": "SSSB's Claude Code plugins, served from SSSB's repository. Pin it to a commit in your project's .claude/settings.json."
+    },
+    "plugins": [
+        {
+            "name": "sssb",
+            "source": "./plugins/sssb",
+            "description": "The commands an app author on SSSB runs (capability scaffolds, verify, pre-PR review, accessibility and design reviews) and the doc-steward agent.",
+            "category": "development"
+        }
+    ]
+}

@@ -80,7 +80,7 @@ Scripted surgery on TypeScript source is the fragile part. Two ways to avoid reg
 - **Whole-file replacement from a checked-in blank variant**, which the generator copies over the
   template's files. Robust at run time, but the variants are a third app in disguise: they must typecheck
   and lint against SSSB or they rot.
-- **A `/strip-starter` agent command** in `.claude/commands/` that walks the list above and ends on
+- **A `/sssb:strip-starter` plugin command** (`plugins/sssb/commands/`) that walks the list above and ends on
   `pnpm verify`. Cheap, and consistent with how the scaffolds already work, but an agent recipe is not
   a gate and CI cannot run it.
 
