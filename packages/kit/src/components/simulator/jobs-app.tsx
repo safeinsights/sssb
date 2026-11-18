@@ -1,6 +1,6 @@
 'use client'
 
-import { Box, Group, Stack, Text, UnstyledButton } from '@mantine/core'
+import { Box, Group, NumberInput, Stack, Text, UnstyledButton } from '@mantine/core'
 import { useLocale, useTranslations } from 'next-intl'
 import { useState } from 'react'
 import type { ScheduleSpec } from '../../core/schedules'
@@ -44,6 +44,26 @@ export interface WorldClockLike {
     onReset: () => void | Promise<void>
     /** Drain due schedules at the current world clock without moving it. */
     onRunDue: () => void | Promise<void>
+}
+
+/**
+ * The dev ticker, wired by the real glue only, and only when the dev server answers for it (a simulated `next dev`;
+ * never a production build, the demo, e2e or the static twin, which has no server). `running`..`lastError` are the
+ * ticker's own status (scripts/ticker.mjs); `elsewhere` is a ticker this panel did not start, live on the same world.
+ */
+export interface DevTickerLike {
+    running: boolean
+    /** The interval while running (and the last one used, after a stop). */
+    seconds: number | null
+    ticks: number
+    lastTickAt: string | null
+    lastError: string | null
+    elsewhere: { pid: number; seconds: number } | null
+    minSeconds: number
+    maxSeconds: number
+    defaultSeconds: number
+    onStart: (seconds: number) => void | Promise<void>
+    onStop: () => void | Promise<void>
 }
 
 const MS_PER_HOUR = 3_600_000
@@ -169,6 +189,86 @@ function WorldClock({ clock }: { clock: WorldClockLike }) {
     )
 }
 
+/**
+ * The dev ticker block: ticks the scheduler on real time, as `pnpm tick` does, until stopped. Off until someone
+ * starts it. One Start/Stop button whose label changes, never two buttons swapped, so keyboard focus stays on it; and
+ * `aria-disabled` rather than `disabled` while busy, which would drop that focus to the page.
+ */
+function DevTicker({ ticker }: { ticker: DevTickerLike }) {
+    const t = useTranslations('simulator')
+    const locale = useLocale()
+    const [busy, setBusy] = useState(false)
+    const [seconds, setSeconds] = useState<number | string>(ticker.seconds ?? ticker.defaultSeconds)
+    // Another process's ticker is live on this world: starting a second is refused, so the button says so up front.
+    const blocked = !ticker.running && ticker.elsewhere !== null
+    const inert = busy || blocked
+
+    function toggle() {
+        if (inert) return
+        setBusy(true)
+        const action = ticker.running ? ticker.onStop() : ticker.onStart(Number(seconds))
+        void Promise.resolve(action).finally(() => setBusy(false))
+    }
+
+    let status: string
+    if (ticker.running && ticker.seconds !== null) status = t('tickerRunning', { seconds: ticker.seconds })
+    else if (ticker.elsewhere) status = t('tickerElsewhere', ticker.elsewhere)
+    else status = t('tickerStopped')
+
+    return (
+        <Box style={sectionStyle} data-testid="simulator-ticker">
+            <Text size="xs" fw={700} c="gray.0" mb={4}>
+                {t('tickerTitle')}
+            </Text>
+            <Text size="xs" c="gray.5" mb={6}>
+                {t('tickerHint')}
+            </Text>
+            <Text
+                size="xs"
+                c={ticker.running ? 'teal.4' : ticker.elsewhere ? 'yellow.4' : 'gray.4'}
+                data-testid="simulator-ticker-status"
+            >
+                {status}
+            </Text>
+            {ticker.running ? (
+                <Text size="xs" c="gray.4" data-testid="simulator-ticker-ticks">
+                    {ticker.lastTickAt
+                        ? t('tickerTicks', { count: ticker.ticks, when: formatWhen(ticker.lastTickAt, locale) })
+                        : t('tickerNoTickYet')}
+                </Text>
+            ) : null}
+            {ticker.lastError ? (
+                <Text size="xs" c="red.4" data-testid="simulator-ticker-error">
+                    {t('tickerLastError', { error: ticker.lastError })}
+                </Text>
+            ) : null}
+            <Group gap={6} wrap="nowrap" align="end" mt={8}>
+                <NumberInput
+                    size="xs"
+                    w={150}
+                    data-testid="simulator-ticker-seconds"
+                    label={t('tickerIntervalLabel')}
+                    min={ticker.minSeconds}
+                    max={ticker.maxSeconds}
+                    allowDecimal={false}
+                    allowNegative={false}
+                    value={ticker.running && ticker.seconds !== null ? ticker.seconds : seconds}
+                    onChange={setSeconds}
+                    disabled={ticker.running}
+                />
+                <UnstyledButton
+                    data-testid="simulator-ticker-toggle"
+                    aria-disabled={inert || undefined}
+                    onClick={toggle}
+                    style={{ ...runButtonStyle, opacity: inert ? 0.6 : 1, cursor: inert ? 'not-allowed' : undefined }}
+                >
+                    {ticker.running ? t('tickerStop') : t('tickerStart')}
+                </UnstyledButton>
+            </Group>
+        </Box>
+    )
+}
+
 /** The schedule list: kind, its timing summary, next run, and enabled state, per tenant/org. */
 function Schedules({ schedules }: { schedules: ScheduleRowLike[] }) {
     const t = useTranslations('simulator')
@@ -245,6 +345,7 @@ export function JobsApp({
     onRunPending,
     schedules,
     clock,
+    ticker,
 }: {
     jobs: WorldJobLike[]
     held: boolean
@@ -252,6 +353,8 @@ export function JobsApp({
     /** Scheduled work — the world's schedules and clock. Optional so a host that doesn't wire them still works. */
     schedules?: ScheduleRowLike[]
     clock?: WorldClockLike
+    /** The dev ticker control; absent unless the host's server offers one (see DevTickerLike). */
+    ticker?: DevTickerLike | undefined
 }) {
     const t = useTranslations('simulator')
     const locale = useLocale()
@@ -261,6 +364,7 @@ export function JobsApp({
     return (
         <Stack gap="sm" data-testid="simulator-jobs">
             {clock ? <WorldClock clock={clock} /> : null}
+            {ticker ? <DevTicker ticker={ticker} /> : null}
             {schedules ? <Schedules schedules={schedules} /> : null}
 
             {held || onRunPending ? (
