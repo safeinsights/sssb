@@ -795,7 +795,10 @@ function checkLayout() {
  */
 function checkDeclaredImports() {
     const kit = kitOf(appDir('console')).kit
-    const shipped = filesUnder(kit).map((file) => path.relative(kit, file).split(path.sep).join('/'))
+    // pnpm links the package's dependencies' bins into its own node_modules/.bin on install; that is not shipped.
+    const shipped = filesUnder(kit)
+        .map((file) => path.relative(kit, file).split(path.sep).join('/'))
+        .filter((file) => !file.startsWith('node_modules/'))
     const shippedProblems = shippedFileProblems(shipped)
     if (shippedProblems.length > 0)
         fail(`the packed @sssb/kit ships what its files allowlist should keep out:\n  ${shippedProblems.join('\n  ')}`)
