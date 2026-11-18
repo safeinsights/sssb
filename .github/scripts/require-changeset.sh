@@ -10,8 +10,9 @@
 #   - every `@sssb/*` workspace package under packages/ (read from its package.json, so P4's tools, P6's ESLint
 #     plugin, P9's cdk and P12's create are covered the day they land): all its files except tests, stories and a
 #     `test-fixture` directory. packages/kit is narrower, because its `files` allowlist is: package.json, src minus
-#     tests and stories, plus the seam-conformance tests the allowlist names (the list below; tests/tooling/
-#     changesets.test.ts fails if it drifts from the manifest);
+#     tests and stories, and `dist`, which is built when the package is packed (gitignored, so never in a diff) by
+#     packages/kit/scripts/, which therefore counts (tests/tooling/changesets.test.ts fails if the allowlist gains
+#     an entry this does not know);
 #   - apps/starter: the scaffold an adopter keeps and edits, which becomes @sssb/create's template (P12).
 # Not gated: apps/showcase, packages/seed (`@app/seed`), tests, scripts, docs, infra, the lockfile. A forking adopter
 # receives some of those too; .changeset/README.md lists the known gaps.
@@ -38,8 +39,6 @@ HEAD_REPO="${HEAD_REPO:-}"
 REPO="${REPO:-}"
 SELF=".github/scripts/require-changeset.sh"
 
-# Tests the `files` allowlist of packages/kit/package.json ships anyway.
-KIT_SHIPPED_TESTS='^packages/kit/src/(i18n/namespaces\.test\.ts|i18n/messages-parity\.test\.ts|db/rls-pglite\.test\.ts|db/migrate\.test\.ts|server-lib/demo-presets-seam\.test\.ts)$'
 # `[A-Za-z0-9]+`, not `[^/]+`: a path may hold a newline, which `[^/]` matches and an extension never does.
 NOT_SHIPPED='\.(test|stories)\.[A-Za-z0-9]+$|/test-fixture/'
 
@@ -123,7 +122,7 @@ for f in ${changed[@]+"${changed[@]}"}; do
       if [ "$dir" = kit ]; then
         if [ "$f" = packages/kit/package.json ]; then
           :
-        elif [[ "$f" == packages/kit/src/* ]] && { [[ "$f" =~ $KIT_SHIPPED_TESTS ]] || ! [[ "$f" =~ $NOT_SHIPPED ]]; }; then
+        elif [[ "$f" == packages/kit/src/* || "$f" == packages/kit/scripts/* ]] && ! [[ "$f" =~ $NOT_SHIPPED ]]; then
           :
         else
           continue
