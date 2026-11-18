@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { UNPUSHED_PIN_ENV } from '../../packages/create/src/template.js'
@@ -76,6 +76,25 @@ describe("@sssb/kit's release stamp", () => {
         expect(warned.status, warned.stderr).toBe(0)
         expect(warned.stderr).toMatch(/WARNING .*the shipped sources differ from HEAD/)
         expect(JSON.parse(readFileSync(stamped(kit), 'utf8'))).toEqual({ commit: head })
+    })
+
+    it('refuses whatever status git gives a shipped file: a type change (a file replaced by a symlink), a rename', () => {
+        const { kit } = standIn()
+        rmSync(path.join(kit, 'src/a.ts'))
+        writeFileSync(path.join(kit, '../../outside.ts'), 'export const a = 3\n')
+        symlinkSync('../../../outside.ts', path.join(kit, 'src/a.ts'))
+        const retyped = stamp(kit)
+        expect(retyped.status, retyped.stdout).toBe(1)
+        expect(retyped.stderr).toContain('\n  packages/kit/src/a.ts\n')
+        expect(existsSync(stamped(kit))).toBe(false)
+
+        // A rename's old path follows its entry with no status of its own: the new path is named, nothing else.
+        const renamed = standIn().kit
+        git(renamed, ['mv', 'src/a.ts', 'src/b.ts'])
+        const run = stamp(renamed)
+        expect(run.status).toBe(1)
+        expect(run.stderr).toContain('differ from HEAD (')
+        expect(run.stderr).toMatch(/:\n {2}packages\/kit\/src\/b\.ts\nCommit them first/)
     })
 
     it('is not refused by a change outside what ships', () => {

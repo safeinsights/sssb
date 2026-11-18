@@ -107,7 +107,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting.md`).
 - **`@sssb/kit` stamps the commit it is packed from** into `dist/release.json` (its `prepack`,
   `packages/kit/scripts/stamp-release.mjs`), refusing shipped sources that differ from it under the same switch.
-  `sssb doctor` reports, never fails, a workflow or marketplace pin that is not that commit; `release.mjs candidate`
+  `sssb doctor` reports, never fails, a workflow or marketplace pin that is not that commit, or a pinned marketplace no
+  plugin is enabled from; `release.mjs candidate`
   refuses a candidate whose kit names another. In-repo there is no stamp: the kit is source.
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.
@@ -237,9 +238,15 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `require('…')`, config alias keys, `package.json` names) and write down what must NOT change, then
   grep for survivors and check each one against that list.
 - **Commands.** The app-author ones are SSSB's Claude Code plugin (`plugins/sssb/`, served by this repository's
-  marketplace, `.claude-plugin/marketplace.json`), which this repository enables for itself (`.claude/settings.json`;
-  run `claude plugin marketplace add ./ --scope local` once per checkout, each worktree too, so the working tree's
-  commands are the ones that load) and adopters enable at a pinned commit: `/sssb:verify`, `/sssb:pre-pr`, `/sssb:new-slice`, `/sssb:new-port` (a port
+  marketplace, `.claude-plugin/marketplace.json`), which this repository's `.claude/settings.json` enables as
+  `sssb@sssb` but does not declare, so without one of the two steps below nothing loads: no `/sssb:*` command and no
+  `sssb:doc-steward` agent. **Installed**, once per checkout (each worktree too):
+  `claude plugin marketplace add ./ --scope local`, then `claude plugin install sssb@sssb --scope local`. That is a
+  copy at the commit then checked out (Claude Code 2.1.280 copies it into its plugin cache under that SHA); after
+  committing a change to it, `claude plugin update sssb@sssb --scope local` and a restart load it, and an uncommitted
+  edit never does. **The working tree's**, uncommitted edits included: start the session with
+  `claude --plugin-dir plugins/sssb`, which loads `plugins/sssb` as it is for that session and replaces an installed
+  plugin of the same name (Claude Code's plugin docs, "Name conflicts"; `claude plugin list` still shows both). Adopters enable it at a pinned commit: `/sssb:verify`, `/sssb:pre-pr`, `/sssb:new-slice`, `/sssb:new-port` (a port
   the APP owns), `/sssb:a11y-review`, `/sssb:design-review`, and the capability scaffolds `/sssb:new-entity`,
   `/sssb:new-job`, `/sssb:new-actor`, `/sssb:new-notification-kind`, `/sssb:new-webhook-event`, `/sssb:new-tour`,
   `/sssb:new-preset`, `/sssb:new-preset-operation`; and the `sssb:doc-steward` agent. They address the app through the

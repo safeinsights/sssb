@@ -294,11 +294,20 @@ export function uncommittedSources(repoRoot) {
         '--untracked-files=all',
         '--',
         ...TEMPLATE_SOURCES,
-    ])
-        .split('\0')
-        .filter(Boolean)
-    // A rename's entry is followed by its old path, which has no status of its own.
-    const changed = entries.filter((entry) => /^[ MADRCU?!]{2} /.test(entry)).map((entry) => entry.slice(3))
+    ]).split('\0')
+    // Every entry is `XY <path>`, whatever its status letters (matching them instead would let one git adds, or one left
+    // out, as T, a type change, once was, pass as clean); a rename's or copy's (R or C in either column) is followed by
+    // its old path, an entry with no status of its own. @sssb/kit's stamp-release.mjs reads its status the same way.
+    /** @type {string[]} */
+    const changed = []
+    for (let i = 0; i < entries.length; i++) {
+        const entry = /** @type {string} */ (entries[i])
+        if (entry === '') continue
+        if (entry.length < 4 || entry[2] !== ' ')
+            throw new CreateError(`git status printed ${JSON.stringify(entry)}, not \`XY <path>\``)
+        changed.push(entry.slice(3))
+        if (/[RC]/.test(entry.slice(0, 2))) i++
+    }
     return changed.length === 0
         ? null
         : `the template's sources differ from HEAD, which it pins (commit them, or remove what is untracked):\n  ${changed.join('\n  ')}`

@@ -233,6 +233,23 @@ describe('@sssb/create: the pinned commit must be on GitHub', () => {
         refusedFor('plugins/sssb/new.md')
     })
 
+    it('counts whatever status git gives a source as a difference: a type change (a file replaced by a symlink), a rename', () => {
+        const repo = standIn()
+        const guide = path.join(repo, 'packages/kit/src/guide.md')
+        rmSync(guide)
+        writeFileSync(path.join(repo, 'outside.md'), '# another guide\n')
+        symlinkSync('../../../outside.md', guide)
+        expect(git(repo, ['status', '--porcelain=v1', '--', 'packages/kit/src/guide.md'])).toMatch(/^ T /)
+        expect(uncommittedSources(repo)).toMatch(/:\n {2}packages\/kit\/src\/guide\.md$/)
+        rmSync(guide)
+        git(repo, ['checkout', '--', 'packages/kit/src/guide.md'])
+        expect(uncommittedSources(repo)).toBeNull()
+
+        // A rename's old path follows its entry with no status of its own: the new path is named, nothing else.
+        git(repo, ['mv', 'packages/kit/src/guide.md', 'apps/starter/guide.md'])
+        expect(uncommittedSources(repo)).toMatch(/:\n {2}apps\/starter\/guide\.md$/)
+    })
+
     it(`packing refuses an unpushed pin, unless ${UNPUSHED_PIN_ENV}=1`, () => {
         const repo = standIn()
         git(repo, ['remote', 'add', 'origin', 'https://github.com/safeinsights/sssb'])

@@ -275,6 +275,24 @@ describe('@sssb/create: the generated workspace', () => {
         expect(readme).toContain("the plugin marketplace's `ref` in `.claude/settings.json`")
     })
 
+    it('names each of the plugin’s commands as the workspace’s Claude Code runs it, `/sssb:<command>`', () => {
+        const commands = readdirSync(path.join(REPO, 'plugins/sssb/commands'))
+            .filter((file) => file.endsWith('.md'))
+            .map((file) => file.slice(0, -'.md'.length))
+        expect(commands).toContain('new-preset')
+        // A bare `/<command>` (not a path's last segment, nor already `/sssb:<command>`) is one no session has.
+        const bare = new RegExp(`(?<![\\w.:/-])/(?:${commands.join('|')})(?![\\w-])`)
+        const unprefixed: string[] = []
+        for (const file of filesUnder(ws))
+            read(ws, file)
+                .split('\n')
+                .forEach((line, index) => {
+                    if (bare.test(line)) unprefixed.push(`${file}:${index + 1}: ${line.trim()}`)
+                })
+        expect(unprefixed).toEqual([])
+        expect(read(ws, 'apps/acme/src/app-config/presets.ts')).toContain('`/sssb:new-preset-operation`')
+    })
+
     it('links the seam as a package whose exports map covers every specifier the framework imports', () => {
         const seam = readJson(ws, 'apps/acme/src/app-config/package.json')
         expect(seam.name).toBe('@sssb/app-config')

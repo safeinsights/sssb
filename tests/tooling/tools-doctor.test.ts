@@ -1187,6 +1187,7 @@ describe('pinReport: the workflow and plugin pins against the kit’s release st
             extraKnownMarketplaces: {
                 s: { source: { source: 'git', url: 'https://github.com/SafeInsights/SSSB.git', ref: OTHER } },
             },
+            enabledPlugins: { 'sssb@s': true },
         })
         expect(pinReport({ ...base, settings: { file: '.claude/settings.json', text: git } }).lines).toEqual([
             `.claude/settings.json (marketplace s) pins ${OTHER}, not @sssb/kit's release commit ${SHA}`,
@@ -1211,6 +1212,41 @@ describe('pinReport: the workflow and plugin pins against the kit’s release st
         expect(pinReport({ ...base, workflows: [] }).lines).toEqual([
             'no workflow under .github/workflows calls a reusable workflow of safeinsights/sssb: no workflow pin',
         ])
+    })
+
+    it('reports a pinned marketplace no plugin is enabled from, naming what is enabled instead', () => {
+        const withPlugins = (enabledPlugins: unknown) => ({
+            file: '.claude/settings.json',
+            text: JSON.stringify({ ...JSON.parse(settings(SHA).text), enabledPlugins }),
+        })
+        // Disabled, or enabled only from another marketplace (a local checkout's copy, say): the pin loads nothing.
+        const otherCopy = pinReport({ ...base, settings: withPlugins({ 'sssb@dev': true, 'sssb@sssb': false }) })
+        expect(otherCopy).toEqual({
+            status: 'report',
+            title: `workflow and plugin pins: the pins are @sssb/kit 0.2.0's release commit ${SHA}, but no plugin is enabled from the pinned marketplace (reported, not failed: enable it in this workspace's .claude/settings.json)`,
+            lines: [
+                '.claude/settings.json enables no plugin from marketplace sssb, so the pin loads nothing: its enabledPlugins enable sssb@dev (and set sssb@sssb: false)',
+            ],
+        })
+        for (const enabledPlugins of [undefined, {}, { 'sssb@sssb': 'yes' }])
+            expect(pinReport({ ...base, settings: withPlugins(enabledPlugins) }).lines, String(enabledPlugins)).toEqual(
+                [
+                    expect.stringMatching(
+                        /^\.claude\/settings\.json enables no plugin from marketplace sssb, so the pin loads nothing: its enabledPlugins enable none/,
+                    ),
+                ],
+            )
+        // Any plugin enabled from the pinned marketplace is SSSB's: the kit does not know the plugin's name.
+        expect(pinReport({ ...base, settings: withPlugins({ 'renamed@sssb': true }) }).status).toBe('ok')
+        // Alongside a pin that differs, the title is the pin's; the line still says what is enabled.
+        const both = pinReport({ ...base, workflows: [workflow(OTHER)], settings: withPlugins({}) })
+        expect(both.title).toMatch(/1 pin\(s\) differ/)
+        expect(both.lines).toHaveLength(2)
+        expect(both.lines[1]).toMatch(/enables no plugin from marketplace sssb/)
+        // Without a stamp, the line is shown with the pins found.
+        expect(pinReport({ ...base, stamp: null, settings: withPlugins({}) }).lines.at(-1)).toMatch(
+            /enables no plugin from marketplace sssb/,
+        )
     })
 
     it('says plainly when there is no stamp to compare with: in-repo, an unstamped kit, a stamp naming no commit', () => {

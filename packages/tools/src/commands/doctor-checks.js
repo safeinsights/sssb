@@ -932,11 +932,15 @@ function workflowPins(repository, workflows) {
 
 /**
  * Every marketplace `.claude/settings.json` declares from `repository` (`extraKnownMarketplaces.<name>.source`, a
- * `github` source naming it as `repo`, or a `git` one whose `url` is it), with its `ref`.
+ * `github` source naming it as `repo`, or a `git` one whose `url` is it), with its `ref`; and, when there is one, a
+ * line when no plugin is enabled from any of them. A pinned marketplace loads nothing by itself: only
+ * `enabledPlugins["<plugin>@<marketplace>"]: true` loads a plugin from it. The kit does not know the plugin's name,
+ * and needs not: SSSB's marketplace lists only SSSB's plugins, so any plugin enabled from it is one of them, while
+ * `sssb@<another marketplace>` is a copy from elsewhere (a local checkout's, say), not the pinned one.
  * @param {string} repository `owner/name`, lowercased
  * @param {string} file the settings file, as shown
  * @param {string} text its contents
- * @returns {{ pins: Pin[], error: string | null }}
+ * @returns {{ pins: Pin[], error: string | null, unused: string | null }}
  */
 function marketplacePins(repository, file, text) {
     let settings
@@ -946,10 +950,13 @@ function marketplacePins(repository, file, text) {
         return {
             pins: [],
             error: `${file} is not JSON doctor can read (${error instanceof Error ? error.message : error})`,
+            unused: null,
         }
     }
     /** @type {Pin[]} */
     const pins = []
+    /** @type {string[]} */
+    const names = []
     const marketplaces = settings?.extraKnownMarketplaces
     for (const [name, entry] of Object.entries(typeof marketplaces === 'object' && marketplaces ? marketplaces : {})) {
         const source = entry?.source
@@ -959,13 +966,30 @@ function marketplacePins(repository, file, text) {
                 : source?.source === 'git'
                   ? githubRepositoryOf(source.url)
                   : null
-        if (repo === repository)
+        if (repo === repository) {
+            names.push(name)
             pins.push({
                 where: `${file} (marketplace ${name})`,
                 ref: typeof source.ref === 'string' ? source.ref : null,
             })
+        }
     }
-    return { pins, error: null }
+    const plugins = settings?.enabledPlugins
+    const entries = Object.entries(typeof plugins === 'object' && plugins ? plugins : {})
+    const fromSssb = (/** @type {string} */ key) => names.includes(key.slice(key.lastIndexOf('@') + 1))
+    if (names.length === 0 || entries.some(([key, on]) => on === true && fromSssb(key)))
+        return { pins, error: null, unused: null }
+    const enabled = entries.filter(([, on]) => on === true).map(([key]) => key)
+    const off = entries
+        .filter(([key, on]) => on !== true && fromSssb(key))
+        .map(([key, on]) => `${key}: ${JSON.stringify(on)}`)
+    return {
+        pins,
+        error: null,
+        unused:
+            `${file} enables no plugin from marketplace ${names.join(', ')}, so the pin loads nothing: its enabledPlugins ` +
+            `enable ${enabled.length > 0 ? enabled.join(', ') : 'none'}${off.length > 0 ? ` (and set ${off.join(', ')})` : ''}`,
+    }
 }
 
 /**
@@ -986,7 +1010,8 @@ function stampedCommit(stamp) {
  * plugin's marketplace at, against the release commit the installed `@sssb/kit` stamps into its package
  * (`dist/release.json`). Never a failure: the pins are in the workspace's own files, not installed code, and CI and
  * people not using Claude Code have no plugin. `ok` only when the kit has a stamp, the workspace has both pins, and
- * every one is that commit; otherwise a report naming what is missing or which pin differs, with both commits.
+ * every one is that commit, with a plugin enabled from the pinned marketplace (`enabledPlugins`); otherwise a report
+ * naming what is missing, which pin differs (with both commits), or which plugins are enabled instead.
  * @param {{
  *   inRepo: boolean,
  *   version: string,
@@ -1022,6 +1047,8 @@ export function pinReport({ inRepo, version, stamp, repository, workflows, setti
         lines.push(`no workflow under .github/workflows calls a reusable workflow of ${repository}: no workflow pin`)
     /** @type {Pin[]} */
     let marketplaceFound = []
+    /** @type {string | null} */
+    let unused = null
     if (settings === null)
         lines.push(
             'no .claude/settings.json: no plugin marketplace pin (a workspace whose people do not use Claude Code has no plugin)',
@@ -1032,6 +1059,7 @@ export function pinReport({ inRepo, version, stamp, repository, workflows, setti
         if (read.error !== null) lines.push(read.error)
         else if (read.pins.length === 0)
             lines.push(`${settings.file} declares no marketplace from ${repository}: no plugin marketplace pin`)
+        unused = read.unused
     }
     const found = [...workflowFound, ...marketplaceFound]
 
@@ -1045,7 +1073,11 @@ export function pinReport({ inRepo, version, stamp, repository, workflows, setti
                     ? 'carries no release stamp (dist/release.json): it was packed before ADR-0014 P13 stamped one, or not by its own prepack'
                     : 'has a release stamp (dist/release.json) that names no commit') +
                 ', so there is no release commit to compare the pins with',
-            lines: [...found.map((pin) => `${pin.where} pins ${pin.ref ?? 'no ref'}`), ...lines],
+            lines: [
+                ...found.map((pin) => `${pin.where} pins ${pin.ref ?? 'no ref'}`),
+                ...lines,
+                ...(unused === null ? [] : [unused]),
+            ],
         }
 
     const differing = found.filter((pin) => pin.ref !== commit)
@@ -1055,6 +1087,8 @@ export function pinReport({ inRepo, version, stamp, repository, workflows, setti
                 ? `${pin.where} pins no ref, so it follows ${repository}'s default branch, not @sssb/kit's release commit ${commit}`
                 : `${pin.where} pins ${pin.ref}${COMMIT.test(pin.ref) ? '' : ' (a branch or tag, not a commit)'}, not @sssb/kit's release commit ${commit}`,
         )
+    const pinProblems = lines.length
+    if (unused !== null) lines.push(unused)
     if (lines.length === 0)
         return {
             status: 'ok',
@@ -1065,10 +1099,13 @@ export function pinReport({ inRepo, version, stamp, repository, workflows, setti
         status: 'report',
         title:
             `${label}: ` +
-            (differing.length > 0
-                ? `${differing.length} pin(s) differ from @sssb/kit ${version}'s release commit ${commit}`
-                : `not every pin is there to compare with @sssb/kit ${version}'s release commit ${commit}`) +
-            " (reported, not failed: the pins are in this workspace's own files; raise them to the release commit when you upgrade)",
+            (pinProblems === 0
+                ? `the pins are @sssb/kit ${version}'s release commit ${commit}, but no plugin is enabled from the ` +
+                  "pinned marketplace (reported, not failed: enable it in this workspace's .claude/settings.json)"
+                : (differing.length > 0
+                      ? `${differing.length} pin(s) differ from @sssb/kit ${version}'s release commit ${commit}`
+                      : `not every pin is there to compare with @sssb/kit ${version}'s release commit ${commit}`) +
+                  " (reported, not failed: the pins are in this workspace's own files; raise them to the release commit when you upgrade)"),
         lines,
     }
 }
