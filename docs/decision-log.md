@@ -3193,6 +3193,48 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 - **The pill's badge uses the name's number format** (`useFormatter().number`, as ICU's `#` does: "1,000" in en). The
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
+  `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
+
+## Changesets are required on PRs that change what ships, and carry the release note (2026-11-18, `ci/changeset-required`)
+
+JP asked whether CanopyCMS's way of keeping a changelog up to date could be copied. Its mechanism: every PR that
+changes a published package adds a `.changeset/*.md` that is its changelog entry, in a fixed template ending with a
+"Now deletable" part, and CI fails the PR without one. SSSB already had Changesets but no rule, template or lint.
+
+- **What was taken:** the gate, the template, the explicit "no adopter-visible effect" answer (an empty changeset),
+  and "Now deletable". The template's `**Kind.**` is one of P7's four release-note sections (`seam`, `migration`,
+  `operator`, `scaffold`) or `none`, so the notes can be written from the files by section.
+- **Kind and Action are separate fields.** Canopy keeps "which area" and "must the adopter act" apart; a first
+  version here tied the bump to Kind and left an additive migration or a new optional export with no honest home
+  (ADR-0014 part 10 calls a migration breaking only when it needs operator action). `**Action.** required` is a
+  `minor`; `optional` and `none` may be a `patch`. Part 10's other breaking items (a raised peer floor, a rule that
+  turns app code red) are filed under `seam`, and a change in two sections is two files.
+- **What was not taken:** CanopyCMS's 3,286-line assembly script, its area table and its int-prerelease labels. They
+  serve an npm prerelease channel; SSSB's release candidates are tarballs on a GitHub prerelease (ADR-0014 P7).
+  Assembling the notes from the files waits for `@sssb/tools` to exist to host it, and the stock
+  `@changesets/cli/changelog` ignores Kind and Action, so P7/P14 need a custom changelog function or an assembler
+  (said in `.changeset/README.md`). Rejected alternative: port the script whole.
+- **The gate is path-based, not `changeset status`.** Every package is `private` until P14 and `status` ignores
+  private packages, so it would pass for any change. "Ships" is every `@sssb/*` package under `packages/` (read from
+  its manifest, so P4's tools, P6's plugin, P9's cdk and P12's create are covered the day they land; the kit is
+  narrowed to its `files` allowlist, the seam-conformance tests included, other tests and stories not) and
+  `apps/starter`, the scaffold an adopter copies and the future `@sssb/create` template. `apps/showcase`,
+  `packages/seed`, the lockfile and the kit's `test-fixture` are not shipped. The lockfile counts in CanopyCMS
+  because its worker is an esbuild bundle; SSSB ships source. A test fails when the kit manifest's `files` gains an
+  entry the gate does not know.
+- **Known gap, taken on purpose:** while adoption is a fork, adopters also receive `infra/`, the cutover checklist,
+  the ESLint config, `.gitleaks.toml`, the CI workflows, `scripts/` and the docs. Gating them now would make every
+  P5, P6, P9 and P10 PR carry a changeset for files those steps are moving. Some of them land in packages and the
+  starter, which the gate covers; some land elsewhere (the showcase's `infra/`, a generator's write-once files).
+  The README says to check whether the gate sees a change.
+- **Exemptions:** the release merge (`integration` into `main`, same repository, so a fork's branch of that name is
+  not exempt); Dependabot's PRs unless one changes the kit's `peerDependencies`; a PR opened before the gate reached
+  its base branch (read from git, so no date is written down); and a file a PR carries only because it merged `main`
+  in (ported from CanopyCMS), since the repository does merge `main` back into branches.
+- **The logic is a shell script under `.github/scripts/`, tested by a vitest file** that builds real git repositories
+  (the machine's git config isolated), and the shape lint is `tests/support/changeset-shape.ts` run by the same file.
+  Neither adds a `scripts/` file, a `package.json` script or a `knip.json` entry, because P4 is moving `scripts/`
+  and P4, P5 and P6 own the root manifest. Each moving part of the script was mutated to confirm a case goes red.
   `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
 
 ## A Simulator control for the dev ticker, and focus on panel toggle (2026-11-18, `feat/simulator-ticker-control`)
