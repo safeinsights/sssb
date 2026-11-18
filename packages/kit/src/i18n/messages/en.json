@@ -191,7 +191,7 @@
         "tickerRunning": "Ticking every {seconds, plural, one {# second} other {# seconds}}",
         "tickerElsewhere": "Already ticking every {seconds, plural, one {# second} other {# seconds}}, started outside this panel (pid {pid}, usually DEV_TICK_SECONDS). Stop it there.",
         "tickerNoTickYet": "No tick yet",
-        "tickerTicks": "{count, plural, one {# tick} other {# ticks}}, the last {when}",
+        "tickerTicks": "{count, plural, one {# tick} other {# ticks}}; last: {when}",
         "tickerLastError": "Last tick failed: {error}",
         "tickerIntervalLabel": "Interval (seconds)",
         "tickerStart": "Start ticking",

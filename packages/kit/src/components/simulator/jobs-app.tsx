@@ -243,19 +243,21 @@ function DevTicker({ ticker }: { ticker: DevTickerLike }) {
                 </Text>
             ) : null}
             <Group gap={6} wrap="nowrap" align="end" mt={8}>
-                <NumberInput
-                    size="xs"
-                    w={150}
-                    data-testid="simulator-ticker-seconds"
-                    label={t('tickerIntervalLabel')}
-                    min={ticker.minSeconds}
-                    max={ticker.maxSeconds}
-                    allowDecimal={false}
-                    allowNegative={false}
-                    value={ticker.running && ticker.seconds !== null ? ticker.seconds : seconds}
-                    onChange={setSeconds}
-                    disabled={ticker.running}
-                />
+                {/* While it runs, the status line names the interval; a disabled field would only be harder to read. */}
+                {ticker.running ? null : (
+                    <NumberInput
+                        size="xs"
+                        w={150}
+                        data-testid="simulator-ticker-seconds"
+                        label={t('tickerIntervalLabel')}
+                        min={ticker.minSeconds}
+                        max={ticker.maxSeconds}
+                        allowDecimal={false}
+                        allowNegative={false}
+                        value={seconds}
+                        onChange={setSeconds}
+                    />
+                )}
                 <UnstyledButton
                     data-testid="simulator-ticker-toggle"
                     aria-disabled={inert || undefined}
