@@ -3,10 +3,10 @@ import { ESLint } from 'eslint'
 import { expect } from 'vitest'
 
 /**
- * The lint gates in this directory pin eslint.config.mjs's fences against the repo's REAL config:
- * `new ESLint()` with no override, linting virtual files at the paths the fences are about. Nothing is
- * written to disk, so there is no dead fixture for knip, tsc or jscpd to trip over, and no vendor package
- * has to be installed. `no-restricted-imports` judges the specifier and never resolves it.
+ * The lint gates in this directory pin the fences (@sssb/eslint-plugin's rules, placed by eslint.config.mjs) against
+ * the repo's REAL config: `new ESLint()` with no override, linting virtual files at the paths the fences are about.
+ * Nothing is written to disk, so there is no dead fixture for knip, tsc or jscpd to trip over, and no vendor package
+ * has to be installed. The import fences judge the specifier and never resolve it.
  *
  * The paths sit under `apps/any-app/`, which is neither of this repo's apps, on purpose. Every fence
  * is written `apps/*`, so the app's name is not what is being tested, and a name nobody owns
@@ -36,32 +36,37 @@ export async function lint(relativePath: string, code: string): Promise<Finding[
 
 export const isIgnored = (relativePath: string) => linter().isPathIgnored(path.join(repoRoot, relativePath))
 
-// Each fence is told apart by its rule id AND its message, because several patterns report as
-// `no-restricted-imports` (vendor, app content, @sssb/kit/core's frameworks, two real-adapter forms, SSSB's
-// real adapters, next/font/google), several selectors as `no-restricted-syntax` (process.env, run mode,
-// dynamic real/, a11y), and getDb's three forms as `sssb/no-raw-db-handle`.
+// Each fence is told apart by its rule id AND its message: every fence has a rule id of its own since ADR-0014's P6,
+// but some rules carry several findings (the app-content fence's three patterns, getDb's forms as
+// `sssb/no-raw-db-handle`, the package edge's three), told apart by message.
 export interface Fence {
     rule: string
     fragment: string
 }
-export const VENDOR_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'Vendor SDKs may only be imported' }
+export const VENDOR_STATIC: Fence = { rule: 'sssb/no-vendor-import', fragment: 'Vendor SDKs may only be imported' }
 export const VENDOR_DYNAMIC: Fence = { rule: 'sssb/no-dynamic-vendor-import', fragment: 'is a vendor SDK' }
-export const PROCESS_ENV: Fence = { rule: 'no-restricted-syntax', fragment: 'process.env is read ONLY' }
-export const RUN_MODE: Fence = { rule: 'no-restricted-syntax', fragment: "Run mode is SSSB's" }
+export const PROCESS_ENV: Fence = { rule: 'sssb/no-process-env', fragment: 'process.env is read ONLY' }
+export const RUN_MODE: Fence = { rule: 'sssb/no-run-mode-env', fragment: "Run mode is SSSB's" }
 export const REAL_ADAPTER: Fence = {
-    rule: 'no-restricted-imports',
+    rule: 'sssb/no-real-adapter-import',
     fragment: "Reach the app's real adapters through its registry",
 }
 export const REAL_ADAPTER_INSIDE: Fence = {
-    rule: 'no-restricted-imports',
+    rule: 'sssb/no-static-real-adapter-import',
     fragment: 'real/ is loaded only with import()',
 }
-export const REAL_ADAPTER_DYNAMIC: Fence = { rule: 'no-restricted-syntax', fragment: "Only the app's registry" }
-export const KIT_REAL_ADAPTER: Fence = { rule: 'no-restricted-imports', fragment: "never import SSSB's real adapters" }
-export const NEXT_FONT: Fence = { rule: 'no-restricted-imports', fragment: 'next/font/google phones home' }
-export const JSX_LITERAL: Fence = { rule: 'react/jsx-no-literals', fragment: '' }
+export const REAL_ADAPTER_DYNAMIC: Fence = {
+    rule: 'sssb/no-dynamic-real-adapter-import',
+    fragment: "Only the app's registry",
+}
+export const KIT_REAL_ADAPTER: Fence = {
+    rule: 'sssb/no-kit-real-adapter-import',
+    fragment: "never import SSSB's real adapters",
+}
+export const NEXT_FONT: Fence = { rule: 'sssb/no-next-font-google', fragment: 'next/font/google phones home' }
+export const JSX_LITERAL: Fence = { rule: 'sssb/no-jsx-literals', fragment: '' }
 export const A11Y_LITERAL: Fence = {
-    rule: 'no-restricted-syntax',
+    rule: 'sssb/no-literal-a11y-copy',
     fragment: 'aria-label/placeholder/title/alt carry user-visible copy',
 }
 export const GET_DB: Fence = { rule: 'sssb/no-raw-db-handle', fragment: 'must not use the raw db handle' }
@@ -88,12 +93,12 @@ export const ABSOLUTE_IN_PACKAGE: Fence = {
     fragment: "an adopter's machine does not have",
 }
 export const UNSHIPPED_PATH: Fence = { rule: 'sssb/no-path-out-of-package', fragment: 'leaves out of the tarball' }
-export const BARE_TRAVERSAL_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'a `..` in a package or alias' }
+export const BARE_TRAVERSAL_STATIC: Fence = { rule: 'sssb/no-app-import', fragment: 'a `..` in a package or alias' }
 export const BARE_TRAVERSAL_DYNAMIC: Fence = {
     rule: 'sssb/no-dynamic-app-import',
     fragment: 'a `..` in a package or alias',
 }
-export const NODE_MODULES_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'never through node_modules' }
+export const NODE_MODULES_STATIC: Fence = { rule: 'sssb/no-app-import', fragment: 'never through node_modules' }
 export const NODE_MODULES_DYNAMIC: Fence = {
     rule: 'sssb/no-dynamic-app-import',
     fragment: 'never through node_modules',
@@ -102,11 +107,14 @@ export const JSX_IN_CORE: Fence = {
     rule: 'sssb/no-jsx-in-core',
     fragment: 'JSX compiles to an import of react/jsx-runtime',
 }
-// The framework/app fence and @sssb/kit/core's fence, outside declarations; the declaration halves report as
-// no-restricted-imports with the pattern's own message.
-export const APP_CODE_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'must reach app content only through' }
+// The framework/app fence and @sssb/kit/core's fence: the declaration halves report each pattern's own message, and
+// the declarationless halves say what the specifier is.
+export const APP_CODE_STATIC: Fence = { rule: 'sssb/no-app-import', fragment: 'must reach app content only through' }
 export const APP_CODE_DYNAMIC: Fence = { rule: 'sssb/no-dynamic-app-import', fragment: 'is app content' }
-export const CORE_STATIC: Fence = { rule: 'no-restricted-imports', fragment: '@sssb/kit/core is pure TypeScript' }
+export const CORE_STATIC: Fence = {
+    rule: 'sssb/no-framework-import-in-core',
+    fragment: '@sssb/kit/core is pure TypeScript',
+}
 export const CORE_DYNAMIC: Fence = { rule: 'sssb/no-dynamic-framework-import-in-core', fragment: 'is a framework' }
 
 // The vendor import every gate here uses, statically and with import().

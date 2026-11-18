@@ -12,7 +12,7 @@ import { TMP_DIR_MARKER_SUFFIX } from './tmp-dir-marker.mjs'
  *
  * THE ONLY WAY A TEST MAKES A SCRATCH DIRECTORY. A raw `mkdtemp` in a test file leaves the directory
  * behind on every run; left in place long enough that has filled a developer's temp filesystem past
- * 100GB. `sssb/no-direct-mkdtemp` (eslint.config.mjs) bans the raw call in test files, and
+ * 100GB. `sssb/no-direct-mkdtemp` (@sssb/eslint-plugin) bans the raw call in test files, and
  * `sssb check-tmpdir-leak` fails the run if a directory made here was not removed.
  *
  * Each call creates `<tmpdir>/<prefix>XXXXXX`, writes an EMPTY MARKER FILE beside it

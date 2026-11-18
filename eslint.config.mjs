@@ -1,996 +1,76 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { basename, dirname, join, relative, resolve } from 'node:path'
-import process from 'node:process'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { join } from 'node:path'
 import js from '@eslint/js'
 import nextPlugin from '@next/eslint-plugin-next'
+import sssb from '@sssb/eslint-plugin'
 import prettierConfig from 'eslint-config-prettier'
 import jsxA11y from 'eslint-plugin-jsx-a11y'
 import reactPlugin from 'eslint-plugin-react'
 import reactHooksPlugin from 'eslint-plugin-react-hooks'
 import typescriptEslint from 'typescript-eslint'
 
-// EVERY extension a fence below names. ESLint lints all eight in this repo (its own defaults are .js,
-// .mjs and .cjs, typescript-eslint's recommended config adds .ts, .tsx, .mts and .cts, and the react
-// block below adds .jsx), so a fence that names a DIRECTORY has to hold for each of them. The fences
-// used to say `*.{ts,tsx}`, which let a `.mjs` file in apps/*/src or packages/kit/src import a vendor
-// SDK, read process.env or take the raw db handle with a green `pnpm lint`; nothing in the tree did, and
-// nothing would have said so if something had. Every fence glob takes its extensions from here. The
-// runner-shaped carve-outs do NOT (TEST_FILES and STORY_FILES below, the next.config and instrumentation
-// ones further down): each names what its runner actually picks up, and a file the runner does not pick up
-// keeps every ban.
+// SSSB's OWN LINT CONFIG. The fences are rules of @sssb/eslint-plugin (packages/eslint-plugin, ADR-0014 part 4 and
+// step P6), and this file only says where each holds:
+//  - BOTH APPS get everything an adopter's app gets, `sssb.configs.app({ root })`, with `apps/*` as the root, so
+//    every app-side fence is proved against both apps before an adopter sees it, plus this file's repo-wide blocks
+//    (the base config, `sssb/public-surface`, `sssb/no-direct-mkdtemp` over every test). Each app's own exceptions are
+//    `apps/<app>/lint-exceptions.mjs`, which the preset reads.
+//  - THE FRAMEWORK (packages/kit, its src/ and its test fixture) and the repo's other packages get the same fences
+//    where they apply to them, plus the SSSB-internal ones: the framework/app fence, the package's edge, core's
+//    framework ban, and SSSB's public surface. No preset enables those; they ship in the same plugin object because
+//    flat config refuses two `sssb` plugins for one file (`Cannot redefine plugin "sssb"`), and the preset's blocks
+//    and these both match the apps.
+// No fence is a no-restricted-imports or no-restricted-syntax setting: a later block that sets either rule REPLACES
+// the earlier one for the files it matches (the merge trap), so every fence has a rule id of its own instead.
+//
+// Rules that need this repository's files (the kit's package.json, the repo root) take it as `{ root }` and read it
+// when they run, never when the plugin loads, so the plugin loads in an adopter's config too.
+
+// EVERY extension ESLint lints here, for globs that name a directory (see SRC_EXT in the plugin's patterns.js).
 const SRC_EXT = '{ts,tsx,mts,cts,js,jsx,mjs,cjs}'
-// vitest's include globs (vitest.config.ts) name `*.test.{ts,tsx}` and nothing else, so a `.test.mjs`
-// under src/ is an ordinary module that a route can import, and it stays fenced.
 const TEST_FILES = '**/*.test.{ts,tsx}'
-// Ladle's stories glob (apps/showcase/.ladle/config.mjs), extension for extension.
 const STORY_FILES = '**/*.stories.{js,jsx,ts,tsx}'
-
-// APP-OWNED LINT EXCEPTIONS. A fence that takes named exceptions should not make an adopter edit THIS file:
-// SSSB's own changes to it would then conflict at every upstream merge, and a path written here names the
-// app's directory, which `pnpm init-app` renames without rewriting this file (an exact `apps/<app>/…`
-// exception stops matching after the rename). So each app lists its own in `apps/<app>/lint-exceptions.mjs`,
-// by path relative to the app, and this file reads every app's when it loads. The file's default export maps
-// a rule id to entries of `{ file, reason }`; only the rules in APP_EXCEPTION_RULES take one.
-//
-// Each entry names ONE existing file under the app's src/ and says why. Anything else fails the config load,
-// naming the app's file and the entry: a glob, a directory, a path out of the app, a missing reason, a rule
-// that takes no exceptions, or a file that no longer exists. So an exception cannot quietly widen or outlive the
-// file it names (one that outlives its NEED is still the app's to delete). The path is matched literally (a Next
-// route's `[locale]` is not a glob).
-const APP_EXCEPTION_RULES = ['sssb/no-raw-db-handle']
-const GLOB_SPECIALS = /[*?[\]{}()!+@]/g
-export async function loadAppLintExceptions(root) {
-    const ignoresByRule = Object.fromEntries(APP_EXCEPTION_RULES.map((rule) => [rule, []]))
-    const appsDir = join(root, 'apps')
-    if (!existsSync(appsDir)) return ignoresByRule
-    for (const app of readdirSync(appsDir).sort()) {
-        const source = join(appsDir, app, 'lint-exceptions.mjs')
-        if (!existsSync(source)) continue
-        const fail = (why) => {
-            throw new Error(`apps/${app}/lint-exceptions.mjs: ${why}`)
-        }
-        // Keyed by the file's mtime, so when this config runs again in one process it reads the file as it is
-        // now, not the module it cached the first time. ESLint re-runs a config only when eslint.config.mjs
-        // itself changes, so an editor's lint server still needs a restart to see an edit to lint-exceptions.mjs.
-        const { default: exceptions } = await import(`${pathToFileURL(source).href}?mtime=${statSync(source).mtimeMs}`)
-        if (!exceptions || typeof exceptions !== 'object' || Array.isArray(exceptions)) {
-            fail('its default export must be an object mapping a rule id to its entries')
-        }
-        for (const [rule, entries] of Object.entries(exceptions)) {
-            if (!APP_EXCEPTION_RULES.includes(rule)) {
-                fail(`\`${rule}\` takes no app exceptions (only ${APP_EXCEPTION_RULES.join(', ')} does)`)
-            }
-            if (!Array.isArray(entries)) fail(`\`${rule}\` must map to an array of { file, reason } entries`)
-            for (const entry of entries) {
-                const { file, reason } = entry ?? {}
-                if (typeof file !== 'string' || file.trim() === '') fail(`an entry under \`${rule}\` names no file`)
-                if (/[*?]/.test(file)) fail(`\`${file}\` is a glob: an exception names one file`)
-                if (!file.startsWith('src/') || file.includes('\\') || file.split('/').includes('..')) {
-                    fail(`\`${file}\` must be a path under the app's src/, relative to the app, with / separators`)
-                }
-                const target = join(appsDir, app, file)
-                if (!existsSync(target) || !statSync(target).isFile()) {
-                    fail(`\`${file}\` names no file: an exception names one existing file, never a directory`)
-                }
-                if (typeof reason !== 'string' || reason.trim() === '') fail(`\`${file}\` needs a reason`)
-                ignoresByRule[rule].push(`apps/${app}/${file}`.replace(GLOB_SPECIALS, '\\$&'))
-            }
-        }
-    }
-    return ignoresByRule
-}
-// SSSB_LINT_EXCEPTIONS_ROOT is for tests/lint/app-lint-exceptions.test.ts alone: it points the loader at a
-// scratch tree, so the test can see an app's exception reach the rule without writing into this repo's apps/.
-// It is read only under vitest (which sets VITEST), so a variable left in a shell cannot quietly swap one app's
-// exceptions for another tree's. That is a guard against accidents, not a boundary: whoever sets environment
-// variables for `pnpm lint` can as easily edit this file.
-const appLintExceptions = await loadAppLintExceptions(
-    (process.env.VITEST && process.env.SSSB_LINT_EXCEPTIONS_ROOT) || import.meta.dirname,
-)
-
-// Shared by the boundary blocks below. NOTE: eslint rule config merges by OBJECT KEY — a later
-// block's 'no-restricted-imports' REPLACES an earlier one for matching files. Any block that
-// re-declares the rule must include these vendor patterns again, or the boundary silently
-// disappears for those files (this bit us for @sssb/kit/core).
-const vendorSdkPattern = {
-    group: [
-        '@clerk/*',
-        '@aws-sdk/*',
-        '@anthropic-ai/*',
-        '@sentry/*',
-        'posthog-js',
-        'posthog-js/*',
-        'posthog-node',
-        'mailgun.js',
-        'mailgun.js/*',
-        'pg',
-        'pg/*',
-    ],
-    message:
-        "Vendor SDKs may only be imported inside an adapters directory: packages/kit/src/adapters/ for SSSB's " +
-        'ports, apps/<app>/src/adapters/real/ for a port the app owns (docs/recipes/app-owned-adapter.md). ' +
-        'Code against the port instead (see CONTRIBUTING.md).',
-}
-
-// WHERE a vendor SDK may be imported: SSSB's adapters, and an app's REAL adapters (ADR-0012, addendum
-// 2026-11-16). Named once because two mechanisms enforce the one rule: `no-restricted-imports` sees
-// static imports and re-exports, `sssb/no-dynamic-vendor-import` sees `import()` — and a zone the two
-// spelled differently would be a hole in exactly one of them.
-//
-// The app's zone is `adapters/real/`, NOT all of `adapters/`, on purpose. An app's fake and its
-// registry are what keep `pnpm dev` hermetic, so they get the same bans as the rest of the app: no
-// vendor SDK, no process.env, no static import of real/. The registry therefore cannot read the run mode
-// itself and takes SSSB's `isSimulated` (and with it SSSB's fail-closed production guard), and the fake
-// has nothing to configure. SSSB's own tree has never needed that split — none of its fakes imports a
-// vendor SDK — but it is curated by SSSB's maintainers; an adopter writes this directory without having
-// read the history. (Lint cannot follow an imported value to its source, so a helper somewhere the
-// process.env ban does not reach could still hand the registry its own idea of the mode. The ban covers
-// apps/*/src and apps/*/config, which is where such a helper would naturally go.)
 const KIT_ADAPTERS_GLOB = 'packages/kit/src/adapters/**'
-const APP_ADAPTERS_GLOB = 'apps/*/src/adapters/**'
-const APP_REAL_ADAPTERS_GLOB = 'apps/*/src/adapters/real/**'
-// The files both halves of the vendor ban cover, and the three carve-outs both leave out (the ports-boundary
-// block below says why each carve-out exists). Named once for the same reason as the zones above.
-// `next.config.*` is the four names Next loads its config from (CONFIG_FILES in next's
-// shared/lib/constants), and no other file at the app root.
-const VENDOR_FENCE_FILES = [`apps/*/**/*.${SRC_EXT}`, `packages/*/src/**/*.${SRC_EXT}`]
-// An app's deployment (ADR-0014, D8): a CDK project of its own beside the app, with its own package.json, and
-// never on the app's module graph. It is not app source, so the app's rules do not apply to it.
-const APP_INFRA_GLOB = 'apps/*/infra/**'
-const VENDOR_CARVE_OUTS = ['apps/*/next.config.{ts,mts,js,mjs}', 'apps/*/tests/contract/**', APP_INFRA_GLOB]
-
-// An app's real adapter is reached through the app's adapter registry (apps/<app>/src/adapters/index.ts),
-// the module that picks the fake in simulated mode — the role SSSB's exports map plays for SSSB's own
-// real adapters, which are internals. Matches `@/…/adapters/real` and its ordinary relative spellings
-// (`../adapters/real`, `../../adapters/real`), and nothing that starts with `@sssb/kit/`, so SSSB's three
-// published real-mode components stay importable. It reads the specifier as written: an unnormalized one
-// (`../adapters/fake/../real/kv`) gets past it, as a computed specifier gets past every import rule.
-//
-// STATIC imports only, and deliberately so: `no-restricted-imports` does not see `import()`, and a
-// dynamic import inside an `!isSimulated` branch is exactly how a real-mode-only component is reached —
-// SSSB's own sign-in form is loaded that way by the app's sign-in page.
-const appRealAdapterPattern = {
-    regex: '^(?:@|\\.{1,2})/(?:.*/)?adapters/real(?:/|$)',
-    message:
-        "Reach the app's real adapters through its registry (apps/<app>/src/adapters/index.ts), which serves " +
-        'the fake in simulated mode — a static import loads the vendor in every run mode and skips the fake. ' +
-        'A real-mode-only component is the exception, reached by import() inside an !isSimulated branch the ' +
-        "way SSSB's sign-in form is (docs/recipes/app-owned-adapter.md).",
-}
-// INSIDE the app's adapters directory the rule is stricter: real/ is reached only by `import()`, and the
-// registry's `await import('./real/index')` when !isSimulated is the one place that should do it. A static
-// import from a fake would load the vendor SDK into a simulated `pnpm dev`, and from the registry it would
-// load it in every mode. Matches `./real`, `../real`, `../../adapters/real` and `@/…/adapters/real`.
-// SSSB publishes a few of its own real adapters (the LLM client, the real-mode forms). A fake or the registry
-// importing one statically would load its vendor SDK in simulated mode just the same.
-const kitRealAdapterPattern = {
-    regex: '^@sssb/kit/adapters/real/',
-    message:
-        "An app's registry and fakes never import SSSB's real adapters: that loads the vendor SDK in simulated " +
-        'mode. Reach SSSB through its registry (@sssb/kit/adapters/index) (docs/recipes/app-owned-adapter.md).',
-}
-const appRealAdapterStaticPattern = {
-    regex: '^(?:@/(?:.*/)?adapters|\\.{1,2}(?:/.*)?)/real(?:/|$)',
-    message:
-        "Inside apps/<app>/src/adapters, real/ is loaded only with import() — the registry's " +
-        "`await import('./real/index')` when !isSimulated. A static import loads the vendor SDK in simulated " +
-        'mode too (docs/recipes/app-owned-adapter.md).',
-}
-
-// The framework/app FENCE (ADR-0012). The framework IS a package (packages/kit), so
-// the fence is a package boundary: nothing inside it may reach the host app's code. The app's `@/*`
-// alias still resolves from anywhere in the repo (tsconfig paths are global), so it is banned wholesale
-// here — one pattern instead of a per-directory list — along with the app's seed package. The
-// `@sssb/app-config/*` alias is the one sanctioned door; note it is DELIBERATELY distinct from `@/app-config/*`
-// so the fenced form stays bannable.
-//
-// MERGE TRAP (see the vendorSdkPattern note): a later no-restricted-imports block REPLACES an earlier
-// one for matching files, so every framework block re-lists BOTH vendorSdkPattern AND appCodePatterns.
-//
-// A `regex`, not a `group`: the `@/*` group (gitignore syntax, through the `ignore` package) does not match an
-// empty segment, and an app's tsconfig maps `@/*` to `./src/*`, so `@//domain/tickets` reached app code past it.
-// So `@` followed by ANY slash is the alias, and `@app` then slashes then `seed` is the seed; nothing published is
-// named either way. A fuzz of some 7,000 spellings against TypeScript's resolver found no other alias spelling.
-const appCodePattern = {
-    regex: String.raw`^(@[\\/]|@app[\\/]+seed([\\/]|$))`,
-    message:
-        'Framework code (packages/kit) must reach app content only through the seam — import from the ' +
-        "@sssb/app-config/* alias (apps/*/src/app-config/*), never the app's @/* alias or @app/seed (ADR-0012).",
-}
-// HOW A SPECIFIER CAN REACH APP CODE, every way, and which piece of the fence holds each. Three review rounds
-// each found a new spelling, so the fence is built from this list rather than from the spellings:
-//  1. an alias: `@/…` and `@app/seed…` (appCodePattern);
-//  2. a PATH (`./`, `../`, `/`, `\`, or a `file:` URL): wherever it is spelled to go, it lands somewhere,
-//     symlinks and all (sssbNoPathToAppCodeRule resolves it and asks where);
-//  3. a package or alias specifier that climbs out of itself with `..` (bareTraversalPattern);
-//  4. a specifier through a `node_modules` directory, where pnpm links the apps and the seed among other
-//     workspace packages (nodeModulesPathPattern);
-//  5. an app's package by name: SSSB depends on no app package, so a bare `showcase` resolves to nothing.
-// Out of reach of every import rule, here as everywhere: a computed specifier (`import(name)`), a `data:` URL,
-// whose module can name a file of its own, and a require not called by that name (`createRequire(…)(…)`,
-// `module.require(…)`).
-//
-// A specifier that matches two of these patterns is two findings, in both halves: no-restricted-imports reports
-// every pattern that matches, and so does the declarationless half (matchesPatterns). Nothing is exempted from one
-// pattern because another "already bans it": the traversal ban once exempted `@/…` and `@app/seed…` that way,
-// and missed `@\..\..\apps\…` and then `@//../../apps/…`, two spellings (1)'s group does not match. A double
-// report on a strange specifier costs less than a hole.
-//
-// (3) `@sssb/app-config/../seed` resolves to the app's seed through the one door the fence leaves open, and
-// `@scope/../../apps/…`, `.x/../../apps/…` and `lodash/../../packages/seed/src/index` resolve out of node_modules
-// into app code (TypeScript's resolver does, and Node's `require()` when the specifier spells the file's
-// extension); no package specifier has a reason to say `..`. Banned in any specifier that is not a path (a `./`,
-// `../`, `/` or `\` path, or a `file:` URL, is (2)'s).
-const bareTraversalPattern = {
-    regex: String.raw`^(?!\.{1,2}([\\/]|$))(?![\\/])(?!file:)(.*[\\/])?\.\.([\\/]|$)`,
-    message:
-        'Framework code (packages/kit) must reach app content only through the seam — a `..` in a package or ' +
-        'alias specifier climbs out of it, into app code the seam does not register. Import the module directly ' +
-        '(ADR-0012).',
-}
-// (4) `.pnpm/node_modules/showcase/src/…`, or `../../node_modules/.pnpm/node_modules/@app/seed/…`: a package
-// reached by where pnpm put it rather than by its name. Nothing in SSSB imports through node_modules.
-const nodeModulesPathPattern = {
-    regex: String.raw`(^|[\\/])node_modules([\\/]|$)`,
-    message:
-        'Framework code (packages/kit) must reach app content only through the seam, and imports a package by its ' +
-        'name, never through node_modules: pnpm links every workspace package there, the apps and the seed among ' +
-        'them (ADR-0012).',
-}
-// Together, as the merge-trap note above asks: every block that fences app content lists all three.
-const appCodePatterns = [appCodePattern, bareTraversalPattern, nodeModulesPathPattern]
-// @sssb/kit/core is pure TypeScript (ADR-0006). Named once: the core block bans it in declarations and
-// `sssb/no-dynamic-framework-import-in-core` everywhere else, from this one list.
-const coreFrameworkPattern = {
-    group: ['react', 'react-*', 'next', 'next/*', 'next-intl', 'next-intl/*', '@mantine/*'],
-    message: '@sssb/kit/core is pure TypeScript — no framework imports (ADR-0006).',
-}
-
-// The TENANCY BAN's selectors (ADR-0004), enforced by `sssb/no-raw-db-handle` below, a rule with its own
-// id. They used to be no-restricted-syntax selectors, re-listed in every block that bans getDb, and the merge
-// trap dropped one of them for every route, page and component (a later block's list replaced the earlier
-// one for those files). A rule id of its own cannot be replaced that way, which is also what lets the ban be
-// deny-by-default (see its block).
-// These aim at the ACT — naming `getDb` — rather than one syntactic shape of it, because
-// shape-matching was bypassed twice. They do NOT catch every indirection and cannot: a name built at
-// runtime (`db['get' + 'Db']()`) still walks past them, and no lint rule can chase an arbitrary alias. A
-// key held in a variable is caught where the string is written (getDbStringSelector). The real boundary
-// is RLS in the database; this is a fast, local reminder.
-//
-// The history is why they look like this: a call-expression selector missed `const { getDb } = db`,
-// and adding a destructuring selector still left `db.getDb.bind(db)`, `db['getDb']()` and
-// destructuring in a function PARAMETER. So the MemberExpression form subsumes the original call
-// form, and the ObjectPattern form deliberately carries no `VariableDeclarator >` ancestor, which is
-// what makes a destructured parameter count. A key spelled as a template literal with no expressions
-// (``db[`getDb`]``) or quoted (`const { 'getDb': g } = db`) names it just the same, so both match too.
-//
-// A KEY can name something three ways: an identifier (`.name`, `{ name }`), a string (`['name']`,
-// `{ 'name': x }`), or a template literal with no expressions. Every name these selectors aim at (getDb,
-// `env` on `process` or imported from it, a run-mode variable) is matched in all three: through anyKey, or,
-// for getDb's member access, the dot selector for the identifier and quotedKey for the other two. `path`
-// is the esquery path to the key; `name` is a quoted string or a regex. quotedKey leaves out the
-// identifier because in a computed access an identifier is a VARIABLE (`db[k]`), not the name. The anyKey
-// selectors on `process` keep it, as main's `[property.name="env"]` did, so `process[env]` with `env` a
-// variable is reported too. A key wrapped in a TypeScript assertion is out of these selectors' reach:
-// `process.env['APP_MODE' as const]` passes, and `db['getDb' as const]` is caught only because its string
-// is (getDbStringSelector).
-const quotedKey = (path, name) =>
-    `:matches([${path}.value=${name}], [${path}.expressions.length=0][${path}.quasis.0.value.cooked=${name}])`
-const anyKey = (path, name) =>
-    `:matches([${path}.name=${name}], [${path}.value=${name}], ` +
-    `[${path}.expressions.length=0][${path}.quasis.0.value.cooked=${name}])`
-const getDbSelector = {
-    selector: 'MemberExpression[property.name="getDb"]',
-    message:
-        "App code and SSSB's screens must not use the raw db handle — use db.withTenant() (or a @sssb/kit/db helper) so RLS tenant context is set (ADR-0004).",
-}
-const getDbComputedSelector = {
-    selector: `MemberExpression[computed=true]${quotedKey('property', '"getDb"')}`,
-    message:
-        "Reaching the raw db handle as db['getDb'] bypasses the same rule — use db.withTenant() (or a @sssb/kit/db helper) so RLS tenant context is set (ADR-0004).",
-}
-const getDbDestructureSelector = {
-    selector: `ObjectPattern > Property${anyKey('key', '"getDb"')}`,
-    message:
-        'Destructuring getDb out of the db port bypasses the same rule — use db.withTenant() (or a @sssb/kit/db helper) so RLS tenant context is set (ADR-0004).',
-}
-// The name as a STRING anywhere else: `Reflect.get(db, 'getDb')`, `Object.getOwnPropertyDescriptor(db,
-// 'getDb')`, a key held in a variable (`const k = 'getDb'; db[k]()`). Reaching the handle that way needs the
-// string, so the string is the finding. What is left out:
-//  - a computed member's key: the computed selector above reports it (no double report). A destructured key
-//    is reported by the destructure selector, and is left out with the rest of the keys below.
-//  - a key that DEFINES a member rather than reading one: a quoted key in an object literal, a class (abstract
-//    and accessor members included), or a type (`{ 'getDb': … }`, `'getDb'() {}`,
-//    `interface P { 'getDb'(): unknown }`), as the unquoted key is.
-//  - a TypeScript type position (`Pick<DbPort, 'getDb'>`), which loads nothing.
-//  - in a TEST FILE only, a spy's key (`vi.spyOn(db, 'getDb')`), which is how a route test asserts the raw
-//    handle is never taken. A spy calls through to the original, so anywhere else it IS the raw handle; the
-//    rule checks the file name for this one (sssbNoRawDbHandleRule). RESIDUAL, accepted: in a test the spy calls
-//    through too, so a route test that calls it (`vi.spyOn(db, 'getDb')()`) does take the handle. The ban guards
-//    the code under test; a test that reaches past it is a review matter.
-const getDbStringSelector = {
-    selector:
-        ':matches(Literal[value="getDb"], TemplateLiteral[expressions.length=0][quasis.0.value.cooked="getDb"])' +
-        ':not(MemberExpression[computed=true] > .property)' +
-        ':not(:matches(Property, MethodDefinition, PropertyDefinition, AccessorProperty, TSAbstractMethodDefinition, ' +
-        'TSAbstractPropertyDefinition, TSAbstractAccessorProperty, TSPropertySignature, TSMethodSignature) > .key)' +
-        ':not(TSLiteralType > .literal)',
-    message:
-        "Naming getDb as a string (Reflect.get(db, 'getDb'), a key held in a variable) reaches the same raw handle — use " +
-        'db.withTenant() (or a @sssb/kit/db helper) so RLS tenant context is set (ADR-0004).',
-}
-// Also the import form — `import { env }`, or a default or namespace import, from `process`/`node:process`
-// — which reads the same object under another name (a type-only import, or `import { cwd }`, does not).
-// Nothing in the tree uses it. It closes that one form: re-exporting `env` from `node:process`, or
-// `const { env } = process`, still gets past, as any alias does (`globalThis.process.env` included).
-// `process['env']` is not an alias, it is the same name spelled as a key (anyKey).
-const processEnvSelector = {
-    selector:
-        `:matches(MemberExpression[object.name="process"]${anyKey('property', '"env"')}, ` +
-        'ImportDeclaration[importKind!="type"][source.value=/^(node:)?process$/] > ' +
-        `:matches(ImportSpecifier${anyKey('imported', '"env"')}, ImportDefaultSpecifier, ImportNamespaceSpecifier))`,
-    message:
-        "process.env is read ONLY inside an adapters directory — packages/kit/src/adapters, or an app's own " +
-        'apps/<app>/src/adapters/real (CLAUDE.md) — deployment/service params come from the app ' +
-        'config/params.ts, run mode from @sssb/kit/adapters (isSimulated/isDemoMode). Secret readers are exempted ' +
-        'per-file in eslint.config.mjs.',
-}
-// An app's real adapter may read its OWN configuration from process.env, but never the run mode. That is
-// SSSB's: `appMode`/`isSimulated`/`isDemoMode` from @sssb/kit/adapters/index, whose import also runs the
-// fail-closed production guard. A second reader of APP_MODE can disagree with it (SSSB treats a legacy
-// `APP_MODE=fake` as simulated) and never runs the guard. Matched: the variable read as a key of `process.env`
-// in any of anyKey's three spellings, with `env` itself in any of them too (`process['env'].APP_MODE`), and
-// destructuring in a declaration, an assignment or a parameter default. As with the getDb selectors above,
-// no lint rule chases an alias (`const env = process.env; env.APP_MODE`, or `env` imported from
-// `node:process`).
-const RUN_MODE_ENV = '/^(APP_MODE|DEMO_MODE|E2E_BUILD)$/'
-const runModeEnvMessage =
-    "Run mode is SSSB's — import isSimulated/isDemoMode/appMode from @sssb/kit/adapters/index. An app adapter " +
-    "that reads APP_MODE, DEMO_MODE or E2E_BUILD itself can disagree with SSSB's registry and skips its " +
-    'fail-closed production guard (docs/recipes/app-owned-adapter.md).'
-const runModeEnvSelector = {
-    selector:
-        `MemberExpression[object.object.name="process"]${anyKey('object.property', '"env"')}` +
-        anyKey('property', RUN_MODE_ENV),
-    message: runModeEnvMessage,
-}
-// Destructuring in a declaration, an assignment, or a parameter default — each puts `process.env` on the
-// right of the pattern under a different parent node.
-const runModeEnvDestructureSelector = {
-    selector:
-        `:matches(VariableDeclarator[init.object.name="process"]${anyKey('init.property', '"env"')}, ` +
-        `AssignmentExpression[right.object.name="process"]${anyKey('right.property', '"env"')}, ` +
-        `AssignmentPattern[right.object.name="process"]${anyKey('right.property', '"env"')}) > ObjectPattern > ` +
-        `Property${anyKey('key', RUN_MODE_ENV)}`,
-    message: runModeEnvMessage,
-}
-// Together, so no block can list one without the other: re-listing selectors one by one is how the merge
-// trap once dropped a getDb form for every route (see the tenancy selectors above).
-const runModeEnvSelectors = [runModeEnvSelector, runModeEnvDestructureSelector]
-// Inside an app's adapters directory, only the registry loads real/. A fake, or a second module, doing
-// `await import('../real/kv')` would put the vendor SDK behind code that never asks the run mode. The
-// static form is appRealAdapterStaticPattern (no-restricted-imports); this is the dynamic one.
-const REAL_DIR = '/(^|[/])real([/]|$)/'
-const appRealAdapterDynamicSelector = {
-    selector: `ImportExpression:matches([source.value=${REAL_DIR}], [source.quasis.0.value.cooked=${REAL_DIR}])`,
-    message:
-        "Only the app's registry (apps/<app>/src/adapters/index.ts) loads real/, with import() when " +
-        '!isSimulated. Anywhere else in the adapters directory it would load the vendor SDK without asking the ' +
-        'run mode (docs/recipes/app-owned-adapter.md).',
-}
-// Hermetic dev (CLAUDE.md): next/font/google fetches from Google Fonts at build — banned so pnpm dev
-// never phones home. Self-host via next/font/local instead. Re-listed in every framework no-restricted-
-// imports block (merge trap).
-const nextFontPattern = {
-    group: ['next/font/google', 'next/font/google/*'],
-    message:
-        'next/font/google phones home to Google Fonts at build — banned to keep dev hermetic (CLAUDE.md); use next/font/local.',
-}
-// i18n (ADR-0008): these attributes carry user-visible copy, which react/jsx-no-literals can't see
-// (ignoreProps:true). Route them through next-intl (a t() call), never a string literal. Stories are
-// carved out (they render fixtures, not shipped UI).
-const a11yLiteralSelector = {
-    selector: "JSXAttribute[name.name=/^(aria-label|placeholder|title|alt)$/][value.type='Literal']",
-    message:
-        'aria-label/placeholder/title/alt carry user-visible copy — route them through next-intl (t()), never a string literal (ADR-0008).',
-}
-
-// The framework package (ADR-0012) — hoisted so the boundary blocks below read as one line each
-// instead of a per-directory list. UI_GLOBS is every screen/route file, on BOTH sides of the line: the
-// app's routes and cards plus the framework's screens, which the same UI rules (getDb, process.env,
-// i18n literals, a11y attributes) must keep covering now that they live in the package.
 const FRAMEWORK_FILES_GLOB = `packages/kit/src/**/*.${SRC_EXT}`
 const FRAMEWORK_COMPONENTS_GLOB = `packages/kit/src/components/**/*.${SRC_EXT}`
-const UI_GLOBS = [`apps/*/src/app/**/*.${SRC_EXT}`, `apps/*/src/components/**/*.${SRC_EXT}`, FRAMEWORK_COMPONENTS_GLOB]
-
-// SSSB's OWN app seam (ADR-0012): packages/kit/test-fixture is app-SHAPED code that lives
-// inside the framework package, and it is the seam the root program resolves `@sssb/app-config/*` through.
-// It is NOT under src/, and every glob above says `src/`, so it started life outside every boundary
-// block in this file — the one directory in packages/kit where importing an app's `@/*` alias or
-// `@app/seed` was legal. A type-only import there is erased at runtime and the root tsc resolves `@/*`
-// program-wide, so it would have passed lint, typecheck AND vitest, and broken only at
-// `pnpm init-app --eject-showcase` — the exact failure the fixture exists to remove. It is therefore
-// named explicitly wherever a rule is about a FRAMEWORK invariant. See the fixture blocks below for
-// which rules apply and which deliberately do not.
+const FRAMEWORK_DEMO_STATIC_GLOB = `packages/kit/src/demo-static/**/*.${SRC_EXT}`
+const KIT_ADAPTER_FILES_GLOB = `${KIT_ADAPTERS_GLOB}/*.${SRC_EXT}`
+// Every workspace package's source, the framework's included; packages/seed is the app's seed data.
+const PACKAGE_FILES_GLOB = `packages/*/src/**/*.${SRC_EXT}`
+// SSSB's OWN app seam (ADR-0012): packages/kit/test-fixture is app-SHAPED code inside the framework package, and the
+// seam the root program resolves `@sssb/app-config/*` through. It is NOT under src/, so it is named explicitly
+// wherever a rule is about a FRAMEWORK invariant: it was once the one directory in packages/kit where importing an
+// app's `@/*` alias or `@app/seed` was legal, which passed lint, typecheck and vitest and broke only at
+// `pnpm init-app --eject-showcase`.
 const FIXTURE_FILES_GLOB = `packages/kit/test-fixture/**/*.${SRC_EXT}`
 
-// ---------------------------------------------------------------------------------------------
-// SSSB's PUBLIC SURFACE (ADR-0012).
-//
-// The package `exports` map names the 130 subpaths an app may import (128 modules + the two message
-// catalogs); the other 37 modules under `src/` are internals reachable only by relative import inside
-// packages/kit. Both halves are derived, not remembered — `node -e` over the map and a walk of
-// `src/**` minus `*.test.*`/`*.stories.*`; recount rather than adjust. But the repo ALIASES `@sssb/kit` to source in
-// tsconfig paths, both vitest configs and each app's vite build, and an alias bypasses the exports
-// map entirely — so on its own the map is a comment, not a boundary. This rule is the boundary: it
-// reads the SAME exports map (single source of truth — there is no second list to drift) and fails
-// any `@sssb/kit/<subpath>` specifier the map does not publish.
-//
-// Deliberately NOT expressed as `no-restricted-imports` patterns: that rule's config merges by key,
-// so a later block replaces an earlier one for matching files (the merge trap documented above), and
-// this fence must hold for EVERY file in the repo. Its own rule id can't be clobbered.
-const kitExports = JSON.parse(readFileSync(join(import.meta.dirname, 'packages/kit/package.json'), 'utf8')).exports
-const publicSubpaths = new Set()
-const publicPatterns = []
-for (const [key, target] of Object.entries(kitExports)) {
-    // `null` targets are explicit denials, and `.`/`./package.json` are not module subpaths.
-    if (target === null || key === '.' || key === './package.json') continue
-    const subpath = key.replace(/^\.\//, '')
-    if (subpath.includes('*')) {
-        const [prefix, suffix] = subpath.split('*')
-        publicPatterns.push({ prefix, suffix })
-    } else {
-        publicSubpaths.add(subpath)
-    }
-}
-const isPublicKitSpecifier = (specifier) => {
-    const subpath = specifier.slice('@sssb/kit/'.length)
-    if (publicSubpaths.has(subpath)) return true
-    return publicPatterns.some(
-        ({ prefix, suffix }) =>
-            subpath.length >= prefix.length + suffix.length && subpath.startsWith(prefix) && subpath.endsWith(suffix),
-    )
-}
-
-/** @type {import('eslint').Rule.RuleModule} */
-const sssbPublicSurfaceRule = {
-    meta: {
-        type: 'problem',
-        docs: {
-            description: "Only SSSB's published subpaths (packages/kit/package.json `exports`) may be imported.",
-        },
-        schema: [],
-        messages: {
-            private:
-                "`{{specifier}}` is not part of SSSB's public surface — it is an internal of packages/kit, " +
-                'reachable only by relative import inside the package. Import a published subpath ' +
-                '(packages/kit/package.json `exports`) instead, or promote this module by adding it there ' +
-                'if it is genuinely part of the contract (ADR-0012).',
-        },
-    },
-    create(context) {
-        const check = (node) => {
-            const value = node?.value
-            if (typeof value !== 'string' || !value.startsWith('@sssb/kit/')) return
-            if (isPublicKitSpecifier(value)) return
-            context.report({ node, messageId: 'private', data: { specifier: value } })
-        }
-        return {
-            ImportDeclaration: (node) => check(node.source),
-            ImportExpression: (node) => check(node.source),
-            ExportAllDeclaration: (node) => check(node.source),
-            ExportNamedDeclaration: (node) => check(node.source),
-            'CallExpression[callee.name="require"]': (node) => check(node.arguments[0]),
-            // vitest/jest mock a module by specifier, which resolves exactly like an import.
-            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock|importActual|importMock)$/]':
-                (node) => check(node.arguments[0]),
-        }
-    },
-}
-
-// ---------------------------------------------------------------------------------------------
-// NO RAW mkdtemp IN TESTS. A test that calls `mkdtemp`/`mkdtempSync` itself leaves the directory
-// behind on every run, and enough runs filled a dev machine's temp filesystem past 100GB. Tests make
-// scratch directories through @sssb/tools' helper (the framework's own tests through its copy in
-// packages/kit/src/testing/tmp-dir.ts), which queues the removal. Its own rule id,
-// not a `no-restricted-syntax` selector: that rule's config merges by key, so a later block that
-// re-declares it for overlapping files REPLACES this one without a word (the merge trap above).
-//
-// Deliberately narrow: it matches the call by the NAME it is made under — bare `mkdtempSync(…)`,
-// `fs.mkdtempSync(…)`, `fsp.mkdtemp(…)`, `await mkdtemp(…)` — and not a renamed import
-// (`import { mkdtemp as m }`) or a computed key. No lint rule chases an arbitrary alias; the
-// per-run TMPDIR sweep in `sssb check-tmpdir-leak` is what bounds the damage if one slips by.
-/** @type {import('eslint').Rule.RuleModule} */
-const sssbNoDirectMkdtempRule = {
-    meta: {
-        type: 'problem',
-        docs: {
-            description: 'Tests make scratch directories through @sssb/tools/testing/tmp-dir, never a raw mkdtemp.',
-        },
-        schema: [],
-        messages: {
-            direct:
-                '`{{name}}()` leaves its directory behind on every test run. Use makeTestTmpDir() / ' +
-                'makeTestTmpDirAsync() from @sssb/tools/testing/tmp-dir (in the framework, makeTestTmpDir() from ' +
-                'packages/kit/src/testing/tmp-dir.ts), which removes the directory when the test file finishes — ' +
-                'or, in a Playwright spec, testInfo.outputPath(), which Playwright ' +
-                'clears at the start of every run.',
-        },
-    },
-    create(context) {
-        const report = (node, name) => context.report({ node, messageId: 'direct', data: { name } })
-        return {
-            'CallExpression[callee.type="Identifier"][callee.name=/^mkdtemp(Sync)?$/]': (node) =>
-                report(node, node.callee.name),
-            'CallExpression[callee.type="MemberExpression"][callee.computed=false][callee.property.name=/^mkdtemp(Sync)?$/]':
-                (node) => report(node, node.callee.property.name),
-        }
-    },
-}
-
-// ---------------------------------------------------------------------------------------------
-// NO DYNAMIC VENDOR IMPORT outside an adapters directory. `no-restricted-imports` checks import and
-// export DECLARATIONS only — it never sees `import()` — so until this rule existed,
-// `await import('@aws-sdk/client-s3')` passed `pnpm lint` in an app's domain module, a route, or
-// SSSB's own server-lib, while CLAUDE.md called the vendor boundary lint-enforced. It went unnoticed
-// because nothing in the tree did it; it mattered once app-owned adapters made `await import('./real/…')`
-// the house idiom one directory away. Static imports stay with `no-restricted-imports`
-// (vendorSdkPattern); this rule covers `import()`, `require()` and vitest/jest's `importActual`,
-// `requireActual`, `importMock` and `requireMock` with the SAME list, read from vendorSdkPattern.group,
-// so there is no second list to drift. `createRequire(...)(…)` and `module.require(…)` are out of reach.
-//
-// The specifier must be a literal (or a template with no expressions). A computed one —
-// `import(name)` — is out of reach, as it is for every import rule.
-//
-// A TYPE-position `import('…').T` is an import too: `import type { T } from '…'` is banned by
-// no-restricted-imports, which never sees the inline form. Every rule built here checks it.
-//
-// This rule keeps its OWN reading of the vendor list, unlike the two fences below, which read their groups
-// exactly as no-restricted-imports does. The two disagree at the edges. The static ban matches a bare name
-// at any depth and ignores case, so its `pg` flags a local `./pg` and its `@clerk/*` flags `@CLERK/nextjs`;
-// this rule flags neither (tests/lint/app-owned-adapters.test.ts pins `./pg` as not a vendor). Bringing them together means anchoring
-// the bare names in vendorSdkPattern first, which changes the static ban, so it is left for its own change.
-const isVendorSpecifier = (specifier) =>
-    vendorSdkPattern.group.some((pattern) =>
-        pattern.endsWith('/*')
-            ? specifier.startsWith(pattern.slice(0, -1)) && specifier.length > pattern.length - 1
-            : specifier === pattern || specifier.startsWith(`${pattern}/`),
-    )
-
-// Every import a declaration-only ban cannot see, checked against one predicate: `import()`, `require()`,
-// vitest/jest's `importActual`, `requireActual`, `importMock` and `requireMock`, and a type-position
-// `import('…')` (TSImportType, whose specifier is `source` in the typescript-eslint this repo pins). A rule
-// built here takes no options, so the merge trap has nothing to replace. TypeScript's `import m = require('…')`
-// is NOT one of them: no-restricted-imports sees it (TSImportEqualsDeclaration), so a pattern already bans it,
-// and only sssbNoPathToAppCodeRule, which has no declaration half, adds it.
-//
-// NOT covered: `vi.mock`/`vi.doMock` and jest's. A mock names a module and, given a factory, never loads it;
-// the module under test that imports it is what the declaration and declarationless bans catch.
-// The specifier a node holds: a string literal, or a template literal with no expressions. A computed one is
-// out of every import rule's reach.
-const literalSpecifier = (node) =>
-    node?.type === 'Literal'
-        ? node.value
-        : node?.type === 'TemplateLiteral' && node.expressions.length === 0
-          ? node.quasis[0].value.cooked
-          : undefined
-// Every place a specifier is named outside an import or export declaration, each handed to `check`.
-const declarationlessVisitors = (check) => ({
-    ImportExpression: (node) => check(node.source),
-    TSImportType: (node) => check(node.source),
-    'CallExpression[callee.name="require"]': (node) => check(node.arguments[0]),
-    // A test inside the fence loads the real module with these, exactly as with import().
-    'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(importActual|requireActual|importMock|requireMock)$/]':
-        (node) => check(node.arguments[0]),
-})
-// `what` names the thing the specifier is. `matches` returns the fence's own sentence for each pattern a banned
-// specifier matches (appended to the message, so a finding says which pattern it hit), one finding each, as
-// no-restricted-imports reports them, and nothing for an allowed one.
-/** @returns {import('eslint').Rule.RuleModule} */
-const declarationlessImportBan = ({ description, what, matches }) => ({
-    meta: {
-        type: 'problem',
-        docs: { description },
-        schema: [],
-        messages: {
-            banned:
-                `\`{{specifier}}\` is ${what}, and reaching it with import() or require(), or naming it in a type ` +
-                "import('…'), is still importing it. {{rule}}",
-        },
-    },
-    create(context) {
-        return declarationlessVisitors((node) => {
-            const specifier = literalSpecifier(node)
-            if (typeof specifier !== 'string') return
-            for (const rule of matches(specifier.trim())) {
-                context.report({ node, messageId: 'banned', data: { specifier, rule } })
-            }
-        })
-    },
-})
-
-const vendorDeclarationlessRule =
-    "Vendor SDKs live only in packages/kit/src/adapters/ (SSSB's ports) or apps/<app>/src/adapters/real/ " +
-    '(a port the app owns) — code against the port instead (docs/recipes/app-owned-adapter.md).'
-const sssbNoDynamicVendorImportRule = declarationlessImportBan({
-    description: 'Vendor SDKs are not imported dynamically outside an adapters directory.',
-    what: 'a vendor SDK',
-    matches: (specifier) => (isVendorSpecifier(specifier) ? [vendorDeclarationlessRule] : []),
-})
-
-// THE FRAMEWORK/APP FENCE AND @sssb/kit/core's FENCE, outside declarations. Both are no-restricted-imports groups
-// (appCodePattern, coreFrameworkPattern), so until these rules existed `import('@app/seed')` in SSSB's
-// server-lib and `export type T = import('@/domain/tickets').Ticket` in SSSB's fixture linted clean. The
-// second is the exact type-only escape the fixture's fence exists to stop (see FIXTURE_FILES_GLOB).
-//
-// They match a specifier EXACTLY as no-restricted-imports matches its group: with the `ignore` package,
-// configured as that rule configures it (lib/rules/no-restricted-imports.js: `allowRelativePaths: true`,
-// `ignorecase` since no group here sets caseSensitive, and the specifier trimmed), and loaded from ESLint's own
-// dependencies so the static and declarationless bans cannot read one group two ways. That includes the
-// group syntax's quirks: a bare name matches at any depth, so core's `react` also bans `@x/react` and
-// `./react`, in both. If ESLint ever stops depending on `ignore`, this line throws when the config loads.
-// A `regex` pattern (bareTraversalPattern, nodeModulesPathPattern) is read as that rule reads one too: a RegExp
-// with the `iu` flags.
-const ignore = createRequire(createRequire(import.meta.url).resolve('eslint'))('ignore')
-const patternMatcher = (pattern) => {
-    if (pattern.regex) {
-        const regex = new RegExp(pattern.regex, 'iu')
-        return (specifier) => regex.test(specifier)
-    }
-    const matcher = ignore({ allowRelativePaths: true, ignorecase: true }).add(pattern.group)
-    return (specifier) => matcher.ignores(specifier)
-}
-// The message of every pattern a specifier matches, as no-restricted-imports reports every one.
-const matchesPatterns = (patterns) => {
-    const matchers = patterns.map((pattern) => ({ test: patternMatcher(pattern), message: pattern.message }))
-    return (specifier) => matchers.filter(({ test }) => test(specifier)).map(({ message }) => message)
-}
-const sssbNoDynamicAppImportRule = declarationlessImportBan({
-    description: 'Framework code does not reach app content by import(), require() or a type import().',
-    what: 'app content',
-    matches: matchesPatterns(appCodePatterns),
-})
-const sssbNoDynamicFrameworkImportInCoreRule = declarationlessImportBan({
-    description: '@sssb/kit/core does not reach a framework by import(), require() or a type import().',
-    what: 'a framework',
-    matches: matchesPatterns([coreFrameworkPattern]),
-})
-// THE FENCE BY PATH. A relative or absolute specifier, or a `file:` URL, names a FILE, so what matters is where
-// it lands, not how it is spelled: `../../../../apps/showcase/src/domain/tickets` from SSSB's server-lib, the same
-// with `//` or `\` separators, or `../../../../packages/seed/src/index`. Each names app content with no alias for a
-// pattern to see. This rule resolves the path against the importing file and reports it if it lands in an app (`apps/`) or
-// the app's seed package (`packages/seed/`, which `@app/seed` names). Any other path out of packages/kit is the
-// package-edge rule's finding (sssbNoPathOutOfPackageRule, below), not this one's. Matching ignores case, as macOS's file
-// system does, and follows symlinks: the path is judged by where it really lands, so neither a symlink into app
-// code nor a checkout opened through a symlinked directory (an editor's workspace, say) moves it out of reach.
-// A specifier that is not a path is the pattern fence's (bareTraversalPattern for a `..` in one), and so is a
-// path through node_modules (nodeModulesPathPattern), which this rule leaves alone: one finding, not two.
-// One rule, its own id, for declarations and everything else alike, so the merge trap has nothing to replace.
-const APP_CODE_DIRS = ['apps', 'packages/seed']
-const REPO_ROOT = realpathSync(import.meta.dirname).toLowerCase()
-const throughNodeModules = new RegExp(nodeModulesPathPattern.regex, 'iu')
-// Where `target` really is: symlinks resolved through its deepest existing ancestor, because a specifier names a
-// module without its extension, or one that does not exist yet.
-const realPathOf = (target) => {
-    const missing = []
-    let existing = target
-    while (!existsSync(existing) && dirname(existing) !== existing) {
-        missing.unshift(basename(existing))
-        existing = dirname(existing)
-    }
-    return join(realpathSync(existing), ...missing)
-}
-// The file a path specifier names: a `file:` URL's (Node loads one as the absolute path it names), or a relative
-// or absolute path resolved against the importer. Anything else is not a path.
-const pathTarget = (filename, specifier) => {
-    if (/^file:/i.test(specifier)) {
-        try {
-            return fileURLToPath(specifier)
-        } catch {
-            return undefined // a remote host, an encoded slash or a malformed URL: Node loads no file from it
-        }
-    }
-    if (!/^(\.{1,2}([\\/]|$)|[\\/])/.test(specifier)) return undefined
-    return resolve(dirname(filename), specifier.replaceAll('\\', '/'))
-}
-// Where a path specifier really lands, relative to the repo root and `/`-separated; undefined for a specifier that is
-// not a path, or a path through node_modules (the pattern fence's).
-const landingOfPath = (filename, specifier) => {
-    const target = throughNodeModules.test(specifier) ? undefined : pathTarget(filename, specifier)
-    if (!target) return undefined
-    return relative(REPO_ROOT, realPathOf(target).toLowerCase()).replaceAll('\\', '/')
-}
-const isUnder = (fromRoot, dir) => fromRoot === dir || fromRoot.startsWith(`${dir}/`)
-const appCodeDirOfPath = (filename, specifier) => {
-    const fromRoot = landingOfPath(filename, specifier)
-    if (fromRoot === undefined) return undefined
-    return APP_CODE_DIRS.find((dir) => isUnder(fromRoot, dir))
-}
-// THE PACKAGE'S EDGE (ADR-0014 P3). @sssb/kit is installed from a tarball of packages/kit's `files` alone, so a path
-// to anything else names a file an adopter does not have: until P3, 23 of SSSB's tests and one shipped conformance
-// suite reached the repo's tests/support/tmp-dir.ts that way, and the suite could not run from the tarball. A path
-// is judged where it really lands, exactly as the app-code rule above judges one (case-insensitive, symlinks
-// followed), and a landing in app code is that rule's finding, not this one's. This rule reports, from any file in
-// packages/kit (fixture included):
-//  - a path that lands outside packages/kit;
-//  - an absolute path or a `file:` URL, wherever it lands: it names this checkout, which an adopter's machine has not;
-//  - from a SHIPPED file, a path to a file the tarball leaves out (a test, a story, the fixture, a config), which
-//    exists here, so it typechecks and runs here and fails only once installed.
-// "Shipped" reads packages/kit/package.json's `files`: `src`, minus every test and story, plus the files it names
-// back, and package.json and LICENSE, which ship whatever `files` says. tests/tooling/pack-and-consume.test.ts holds
-// the whole list to exactly `src`, the two negations (every test and every story, any extension) and then
-// CONFORMANCE_SUITES. A `/// <reference path=…>` or
-// relative `types=…` counts as a path too. Its own rule id; the two exemptions are named in the block that applies it.
-const KIT_DIR = 'packages/kit'
-const kitFiles = JSON.parse(readFileSync(join(import.meta.dirname, `${KIT_DIR}/package.json`), 'utf8')).files
-const SCRIPT_EXT = /\.[cm]?[jt]sx?$/
-const reincludedKitFiles = new Set(
-    kitFiles
-        .filter((entry) => !entry.startsWith('!') && entry !== 'src')
-        .map((entry) => `${KIT_DIR}/${entry}`.toLowerCase()),
-)
-// A suite named back is shipped by its exact name, or by its name less the extension when a specifier omits it.
-const isReincluded = (fromRoot) =>
-    reincludedKitFiles.has(fromRoot) ||
-    (!SCRIPT_EXT.test(fromRoot) && [...reincludedKitFiles].some((file) => file.replace(SCRIPT_EXT, '') === fromRoot))
-const TEST_OR_STORY = /\.(test|stories)(\.[cm]?[jt]sx?)?$/
-// npm and pnpm ship a package's own package.json (and its LICENSE) whatever `files` says.
-const ALWAYS_SHIPPED = new Set([`${KIT_DIR}/package.json`, `${KIT_DIR}/license`])
-const isShippedKitFile = (fromRoot) =>
-    ALWAYS_SHIPPED.has(fromRoot) ||
-    (isUnder(fromRoot, `${KIT_DIR}/src`) && (!TEST_OR_STORY.test(fromRoot) || isReincluded(fromRoot)))
-const isAbsoluteSpecifier = (specifier) => /^file:/i.test(specifier) || /^[\\/]/.test(specifier)
-// The message id and landing for a specifier that crosses the package's edge, or undefined when it does not. A
-// relative path's `?query` or `#hash` is dropped first: Vite and Vitest load the file it names (a `file:` URL's are
-// URL syntax, which fileURLToPath reads).
-const packageEdgeFinding = (filename, rawSpecifier) => {
-    const specifier = /^file:/i.test(rawSpecifier) ? rawSpecifier : rawSpecifier.replace(/[?#].*$/, '')
-    const landing = landingOfPath(filename, specifier)
-    if (landing === undefined || APP_CODE_DIRS.some((dir) => isUnder(landing, dir))) return undefined
-    if (!isUnder(landing, KIT_DIR)) return { messageId: 'outside', landing: landing || '.' }
-    if (isAbsoluteSpecifier(specifier)) return { messageId: 'absolute', landing }
-    const importer = relative(REPO_ROOT, realPathOf(filename).toLowerCase()).replaceAll('\\', '/')
-    if (isShippedKitFile(importer) && !isShippedKitFile(landing)) return { messageId: 'unshipped', landing }
-    return undefined
-}
-// A triple-slash `path=` or `types=` reference, in any case and with its attributes in any order; a `types=` that names
-// a package is not a path, and pathTarget leaves it alone.
-const REFERENCE_PATH = /^\/\s*<reference\s[^>]*?\b(?:path|types)\s*=\s*(["'])(.+?)\1/i
-/** @type {import('eslint').Rule.RuleModule} */
-const sssbNoPathOutOfPackageRule = {
-    meta: {
-        type: 'problem',
-        docs: {
-            description: "Framework code reaches only what @sssb/kit's tarball holds, and only by a relative path.",
-        },
-        schema: [],
-        messages: {
-            outside:
-                '`{{specifier}}` leaves packages/kit (it lands in {{landing}}): @sssb/kit is installed from a ' +
-                'tarball of packages/kit alone, so an adopter has nothing there. Move what it needs into the ' +
-                'package (ADR-0014 P3).',
-            absolute:
-                '`{{specifier}}` is an absolute path or a `file:` URL: it names this checkout ({{landing}}), which ' +
-                "an adopter's machine does not have. Use a relative path (ADR-0014 P3).",
-            unshipped:
-                "`{{specifier}}` reaches {{landing}}, which packages/kit/package.json's `files` leaves out of the " +
-                'tarball, from a file that ships: it resolves here and fails once installed. Ship it, or move ' +
-                'what this file needs into shipped source (ADR-0014 P3).',
-        },
-    },
-    create(context) {
-        const report = (loc, specifier) => {
-            const finding = packageEdgeFinding(context.filename, specifier.trim())
-            if (finding)
-                context.report({ ...loc, messageId: finding.messageId, data: { specifier, landing: finding.landing } })
-        }
-        const check = (node) => {
-            const specifier = literalSpecifier(node)
-            if (typeof specifier === 'string') report({ node }, specifier)
-        }
-        return {
-            ImportDeclaration: (node) => check(node.source),
-            ExportNamedDeclaration: (node) => check(node.source),
-            ExportAllDeclaration: (node) => check(node.source),
-            TSExternalModuleReference: (node) => check(node.expression),
-            ...declarationlessVisitors(check),
-            // `/// <reference path="…" />` makes the compiler load a file just as an import does.
-            Program: () => {
-                for (const comment of context.sourceCode.getAllComments()) {
-                    const match = comment.type === 'Line' ? REFERENCE_PATH.exec(comment.value) : null
-                    if (match?.[2]) report({ loc: comment.loc }, match[2])
-                }
-            },
-        }
-    },
-}
-/** @type {import('eslint').Rule.RuleModule} */
-const sssbNoPathToAppCodeRule = {
-    meta: {
-        type: 'problem',
-        docs: { description: 'Framework code does not reach app content by a relative or absolute path.' },
-        schema: [],
-        messages: {
-            path:
-                '`{{specifier}}` is a path into {{dir}}/: app content under another name. Framework code ' +
-                '(packages/kit) reaches app content only through the @sssb/app-config/* seam (ADR-0012).',
-        },
-    },
-    create(context) {
-        const check = (node) => {
-            const specifier = literalSpecifier(node)
-            const dir = typeof specifier === 'string' ? appCodeDirOfPath(context.filename, specifier.trim()) : undefined
-            if (!dir) return
-            context.report({ node, messageId: 'path', data: { specifier, dir } })
-        }
-        return {
-            ImportDeclaration: (node) => check(node.source),
-            ExportNamedDeclaration: (node) => check(node.source),
-            ExportAllDeclaration: (node) => check(node.source),
-            // TypeScript's `import m = require('…')`, which no-restricted-imports sees for the patterns
-            TSExternalModuleReference: (node) => check(node.expression),
-            ...declarationlessVisitors(check),
-        }
-    },
-}
-// JSX in @sssb/kit/core is a framework import nobody writes: with `"jsx": "react-jsx"` (tsconfig.json) every
-// element compiles to an import of `react/jsx-runtime`. Neither half of core's ban can see an import that is
-// not in the source, so the JSX itself is the finding: each outermost element or fragment.
-/** @type {import('eslint').Rule.RuleModule} */
-const sssbNoJsxInCoreRule = {
-    meta: {
-        type: 'problem',
-        docs: { description: '@sssb/kit/core holds no JSX: it compiles to an import of react/jsx-runtime.' },
-        schema: [],
-        messages: {
-            jsx: `JSX compiles to an import of react/jsx-runtime ("jsx": "react-jsx" in tsconfig.json). ${coreFrameworkPattern.message}`,
-        },
-    },
-    create(context) {
-        // Each OUTERMOST element or fragment, so nested JSX is one finding and a disable comment on one
-        // element does not hide another.
-        const report = (node) => {
-            for (let up = node.parent; up; up = up.parent) {
-                if (up.type === 'JSXElement' || up.type === 'JSXFragment') return
-            }
-            context.report({ node, messageId: 'jsx' })
-        }
-        return { JSXElement: report, JSXFragment: report }
-    },
-}
-
-// THE TENANCY BAN (ADR-0004) as a rule of its own: the getDb selectors above, each with its message. See
-// its block for where it holds and the exceptions.
-/** @type {import('eslint').Rule.RuleModule} */
-const sssbNoRawDbHandleRule = {
-    meta: {
-        type: 'problem',
-        docs: { description: "App code and SSSB's screens reach the database through db.withTenant()." },
-        schema: [],
-        messages: {
-            member: getDbSelector.message,
-            computed: getDbComputedSelector.message,
-            destructure: getDbDestructureSelector.message,
-            string: getDbStringSelector.message,
-        },
-    },
-    create(context) {
-        const report = (messageId) => (node) => context.report({ node, messageId })
-        // A spy's key in a test file is the one string left alone outside the selector (see getDbStringSelector).
-        const inTestFile = /\.test\.tsx?$/.test(context.filename)
-        const isSpyKey = (node) =>
-            node.parent?.type === 'CallExpression' &&
-            node.parent.arguments.includes(node) &&
-            node.parent.callee.type === 'MemberExpression' &&
-            /^(vi|jest)$/.test(node.parent.callee.object.name ?? '') &&
-            node.parent.callee.property.name === 'spyOn'
-        return {
-            [getDbSelector.selector]: report('member'),
-            [getDbComputedSelector.selector]: report('computed'),
-            [getDbDestructureSelector.selector]: report('destructure'),
-            [getDbStringSelector.selector]: (node) => {
-                if (inTestFile && isSpyKey(node)) return
-                report('string')(node)
-            },
-        }
-    },
-}
-
-// ONE plugin object, shared by every block that registers `sssb/*` rules. Flat config checks plugin
-// identity across overlapping blocks, so two inline `{ sssb: { rules: … } }` literals matching the
-// same file would be a "Cannot redefine plugin" error the moment a file matched both.
-// ---------------------------------------------------------------------------------------------
-// NO BARE @sssb/kit IN ANY OTHER SSSB PACKAGE (ADR-0014, rule 4). @sssb/tools (and every SSSB package after it but
-// the framework) has no dependency on @sssb/kit, so a bare `@sssb/kit/…` resolved from the package's own location
-// finds whichever copy pnpm hoisted into `.pnpm/node_modules`: in a workspace with two apps, the other app's
-// instance on the other app's seam. ADR-0014's independent review reproduced exactly that. Those packages reach the
-// framework only through the shared resolver (packages/tools/src/kit.js), which resolves from the APP's directory
-// and checks the real path, and whose specifiers are built at run time, never written as a literal. Its own rule
-// id, not a no-restricted-imports group, for the merge trap above. It sees a declaration, `export … from`,
-// import(), a type import('…'), require(), `import x = require(…)`, any `.resolve('…')` call (require.resolve,
-// createRequire(…).resolve, import.meta.resolve), and vitest's loaders: every way the slip can be written with a
-// literal.
-const isBareKitSpecifier = (specifier) => typeof specifier === 'string' && /^@sssb\/kit(\/|$)/.test(specifier.trim())
-/** @type {import('eslint').Rule.RuleModule} */
-const sssbNoBareKitImportRule = {
-    meta: {
-        type: 'problem',
-        docs: { description: 'SSSB packages other than the framework never name @sssb/kit by a bare specifier.' },
-        schema: [],
-        messages: {
-            bare:
-                '`{{specifier}}` names the framework by a bare specifier, which resolves from this package, not from ' +
-                "the app, and can load another app's @sssb/kit (ADR-0014, rule 4). Reach it through the shared resolver " +
-                '(packages/tools/src/kit.js: resolveAppsKit(appDir, subpath)).',
-        },
-    },
-    create(context) {
-        const check = (node) => {
-            const specifier = literalSpecifier(node)
-            if (isBareKitSpecifier(specifier)) context.report({ node, messageId: 'bare', data: { specifier } })
-        }
-        return {
-            ...declarationlessVisitors(check),
-            ImportDeclaration: (node) => check(node.source),
-            ExportAllDeclaration: (node) => check(node.source),
-            ExportNamedDeclaration: (node) => check(node.source),
-            TSImportEqualsDeclaration: (node) => check(node.moduleReference?.expression),
-            'CallExpression[callee.type="MemberExpression"][callee.property.name="resolve"]': (node) =>
-                check(node.arguments[0]),
-            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
-                check(node.arguments[0]),
-        }
-    },
-}
-
-const sssbPlugin = {
-    rules: {
-        'no-bare-kit-import': sssbNoBareKitImportRule,
-        'public-surface': sssbPublicSurfaceRule,
-        'no-direct-mkdtemp': sssbNoDirectMkdtempRule,
-        'no-dynamic-vendor-import': sssbNoDynamicVendorImportRule,
-        'no-dynamic-app-import': sssbNoDynamicAppImportRule,
-        'no-dynamic-framework-import-in-core': sssbNoDynamicFrameworkImportInCoreRule,
-        'no-jsx-in-core': sssbNoJsxInCoreRule,
-        'no-path-to-app-code': sssbNoPathToAppCodeRule,
-        'no-path-out-of-package': sssbNoPathOutOfPackageRule,
-        'no-raw-db-handle': sssbNoRawDbHandleRule,
-    },
-}
+// The anchor the internal rules read when they run.
+const REPO = { root: import.meta.dirname }
 
 /** @type {import('eslint').Linter.Config[]} */
 const eslintConfig = [
     {
+        // The repo's own output, at the repo's root. Each app's build and test output (.next, .data, dist-demo,
+        // coverage, test-results, playwright-report, .ladle/dist, next-env.d.ts) is the preset's to ignore, at the app's
+        // root only: the same names deeper in an app (`src/coverage/`) are source, and fenced.
         ignores: [
             '**/node_modules/**',
-            '**/.next/**',
-            '**/.data/**',
             'out/**',
             'build/**',
             'dist/**',
-            '**/next-env.d.ts',
             '.*',
             '!.ladle',
             '!.ladle/**',
-            '**/.ladle/dist/**',
-            // What Panda 2's codegen writes there (`.js` and `.d.ts`, its default `outExtension`): a
-            // hand-written `.ts`, `.mjs` or any other extension in that directory is fenced like any other
-            // module (`tests/lint/extensions.test.ts`). A hand-written `.js` is not, since it has the
-            // extension of Panda's own output; nothing fences it
-            // (`.claude/future-tasks/generated-styles-mjs-unlinted.md`).
-            'apps/*/src/styles/generated/**/*.{js,d.ts}',
-            '**/test-results/**',
-            '**/playwright-report/**',
-            '**/coverage/**',
+            'coverage/**',
+            'test-results/**',
+            'playwright-report/**',
             'spikes/*/node_modules/**',
-            'apps/*/infra/cdk.out/**',
-            '**/dist-demo/**',
         ],
     },
     js.configs.recommended,
-    ...typescriptEslint.configs.recommended,
+    // The raw plugin's configs, not the `configs` getter, which records this file as a candidate tsconfigRootDir and
+    // makes the parser refuse to guess once another config loads in the same process (see the plugin's app-config.js).
+    ...typescriptEslint.plugin.configs['flat/recommended'],
+    { languageOptions: { parserOptions: { tsconfigRootDir: import.meta.dirname } } },
     {
         files: ['**/*.cjs'],
         languageOptions: {
@@ -1013,12 +93,10 @@ const eslintConfig = [
             },
         },
     },
-    // @sssb/tools is plain JavaScript that Node loads directly (ADR-0014 part 2): a CLI, presets and helpers, with
-    // Node's globals. Every SSSB package but the framework (and the showcase's seed, which is app content) is held to
-    // rule 4's ban: the glob names packages/* and carves out the two, so the next SSSB package is covered before
-    // anyone names it.
+    // @sssb/tools and @sssb/eslint-plugin are plain JavaScript that Node loads directly (ADR-0014 part 2), with Node's
+    // globals.
     {
-        files: ['packages/tools/**/*.{js,mjs}'],
+        files: ['packages/tools/**/*.{js,mjs}', 'packages/eslint-plugin/**/*.{js,mjs}'],
         languageOptions: {
             globals: {
                 process: 'readonly',
@@ -1036,21 +114,22 @@ const eslintConfig = [
             },
         },
     },
+    // NO BARE @sssb/kit IN ANY OTHER SSSB PACKAGE (ADR-0014, rule 4; sssb/no-bare-kit-import). Every SSSB package but
+    // the framework (and the showcase's seed, which is app content) is held to it: the glob names packages/* and
+    // carves out the two, so the next SSSB package is covered before anyone names it.
     {
         files: [`packages/*/**/*.${SRC_EXT}`, 'packages/*/**/*.d.ts'],
         ignores: ['packages/kit/**', 'packages/seed/**'],
-        plugins: { sssb: sssbPlugin },
+        plugins: { sssb },
         rules: { 'sssb/no-bare-kit-import': 'error' },
     },
-    // Kysely migrations are conventionally typed Kysely<any> (schema evolves under them), and
-    // spikes are proof harnesses — relax the any ban there only.
+    // Kysely migrations are conventionally typed Kysely<any> (schema evolves under them), and spikes are proof
+    // harnesses — relax the any ban there only.
     {
         files: ['**/migrations/**/*.ts', 'spikes/**/*.ts'],
         rules: { '@typescript-eslint/no-explicit-any': 'off' },
     },
-    // Every extension, not the four this block used to name: the i18n block below bans literals in `.mjs`
-    // screens too, and `react/jsx-no-literals` cannot be configured for a file this block, which registers
-    // the plugin, does not match (ESLint throws "Could not find plugin").
+    // Every extension: sssb/no-jsx-literals runs react's rule on SSSB's `.mjs` screens too.
     {
         files: [`**/*.${SRC_EXT}`],
         plugins: {
@@ -1066,371 +145,141 @@ const eslintConfig = [
             'react/prop-types': 'off',
         },
         settings: {
-            // Explicit version: eslint-plugin-react's 'detect' path uses context.getFilename,
-            // which ESLint 10 removed. Bump alongside React upgrades.
+            // Explicit version: eslint-plugin-react's 'detect' path uses context.getFilename, which ESLint 10
+            // removed. Bump alongside React upgrades.
             react: { version: '19.2' },
         },
     },
     {
-        files: [`apps/*/src/**/*.${SRC_EXT}`, FRAMEWORK_FILES_GLOB],
+        files: [FRAMEWORK_FILES_GLOB],
         plugins: { '@next/next': nextPlugin },
-        rules: {
-            ...nextPlugin.configs.recommended.rules,
-        },
+        rules: nextPlugin.configs.recommended.rules,
     },
-    // THE TENANCY BAN (ADR-0004), deny-by-default: no module in an app's src/, in SSSB's screens (components/
-    // and demo-static/) or in SSSB's fixture takes the raw db handle, so every tenant-scoped query goes
-    // through withTenant and RLS tenant context is always set. The ban used to NAME directories: routes and
-    // components, then domain/ and jobs/ once they were found outside it. Each list left a door, and a
-    // 'use server' action in src/actions or src/lib served requests with no ban at all. Now a directory
-    // nobody has thought of yet is inside, and what needs the raw client is a named exception, with a reason.
-    //
-    // SSSB's own src/ outside its screens is NOT in the zone. @sssb/kit/db's helpers and SSSB's adapters are what
-    // open withTenant: they are the "@sssb/kit/db helper" the rule's message sends request code to.
-    //
-    // The exceptions, all of them:
-    //  - TESTS, except those of routes, screens and SSSB's fixture (the next block). A test resolving seed
-    //    ids by slug to arrange a case is not a request path, and `fakeDb.getDb()` in an `ids()` helper is
-    //    the pattern the domain/ and jobs/ suites use (apps/showcase/src/domain/db/tickets.test.ts).
-    //  - a module an APP names in its own `apps/<app>/lint-exceptions.mjs`, one file at a time, with a reason
-    //    (see loadAppLintExceptions). No production module in either of SSSB's apps uses the raw client.
-    //
-    // Its own rule id (sssb/no-raw-db-handle), not no-restricted-syntax selectors, so no later block can
-    // replace it for a file: the merge trap dropped the computed form for every route that way once.
+
+    // ---- BOTH APPS: the preset, exactly as an adopter's app takes it --------------------------------------------
+    ...(await sssb.configs.app({ root: join(import.meta.dirname, 'apps/*') })),
+
+    // ---- THE FRAMEWORK and the repo's other packages -------------------------------------------------------------
+    // THE TENANCY BAN (ADR-0004) over SSSB's screens (components/ and demo-static/) and its fixture, whose api/ and
+    // domain/ files are the app-shaped request path this template teaches. SSSB's own src/ outside its screens is
+    // NOT in the zone: @sssb/kit/db's helpers and SSSB's adapters are what open withTenant, the "@sssb/kit/db helper"
+    // the rule's message sends request code to. Tests are exempt, except the screens' and the fixture's (the next
+    // block).
     {
-        files: [
-            `apps/*/src/**/*.${SRC_EXT}`,
-            FRAMEWORK_COMPONENTS_GLOB,
-            `packages/kit/src/demo-static/**/*.${SRC_EXT}`,
-            FIXTURE_FILES_GLOB,
-        ],
-        ignores: [TEST_FILES, ...appLintExceptions['sssb/no-raw-db-handle']],
-        plugins: { sssb: sssbPlugin },
-        rules: { 'sssb/no-raw-db-handle': 'error' },
-    },
-    // ...and the tests that keep the ban: a route's or a screen's test drives the code a request runs, and
-    // SSSB's fixture is app-shaped request code with no tests of its own to exempt. "Screens" are the
-    // components/ and demo-static/ trees on both sides of the line; routes and components kept it before
-    // deny-by-default, and demo-static joined them with it.
-    {
-        files: [
-            'apps/*/src/app',
-            'apps/*/src/components',
-            'apps/*/src/demo-static',
-            'packages/kit/src/components',
-            'packages/kit/src/demo-static',
-            'packages/kit/test-fixture',
-        ].map((dir) => `${dir}/${TEST_FILES}`),
-        plugins: { sssb: sssbPlugin },
-        rules: { 'sssb/no-raw-db-handle': 'error' },
-    },
-    // params centralization (CLAUDE.md): process.env is read ONLY inside SSSB's adapters and an app's own real
-    // adapters — every other module
-    // imports the resolved value (the app's config/params.ts for deployment params; isSimulated/isDemoMode
-    // from @sssb/kit/adapters for run mode). Exempt: adapters, instrumentation (NEXT_PUBLIC needs literal inlining),
-    // the two secret readers, and test files (which set APP_DATA_DIR for isolation). App/component
-    // non-test files get the ban here.
-    {
-        files: UI_GLOBS,
+        files: [FRAMEWORK_COMPONENTS_GLOB, FRAMEWORK_DEMO_STATIC_GLOB, FIXTURE_FILES_GLOB],
         ignores: [TEST_FILES],
-        rules: {
-            'no-restricted-syntax': ['error', processEnvSelector],
-        },
-    },
-    // Targeted a11y-attribute literal ban (ADR-0008): non-test, non-story app/component code. Re-lists
-    // processEnvSelector (merge trap) so this block, being last for a regular component, still enforces it.
-    // Stories render fixtures, not shipped UI, so they are carved out.
-    {
-        files: UI_GLOBS,
-        ignores: [TEST_FILES, STORY_FILES],
-        rules: {
-            'no-restricted-syntax': ['error', processEnvSelector, a11yLiteralSelector],
-        },
+        plugins: { sssb },
+        rules: { 'sssb/no-raw-db-handle': 'error' },
     },
     {
-        // apps/*/config too: params.ts records names and placeholders and never reads the environment, and
-        // without it the directory beside src/ was the obvious place for a helper that hands an app's registry
-        // its own reading of APP_MODE.
-        files: [`apps/*/src/**/*.${SRC_EXT}`, `apps/*/config/**/*.${SRC_EXT}`, FRAMEWORK_FILES_GLOB],
+        files: ['packages/kit/src/components', 'packages/kit/src/demo-static', 'packages/kit/test-fixture'].map(
+            (dir) => `${dir}/${TEST_FILES}`,
+        ),
+        plugins: { sssb },
+        rules: { 'sssb/no-raw-db-handle': 'error' },
+    },
+    // PARAMS CENTRALIZATION: process.env is read only inside SSSB's adapters (and an app's own real adapters). Exempt
+    // besides: the two secret readers, by exact file, and tests. The fixture is on the app side of that line, and has
+    // no tests of its own to exempt.
+    {
+        files: [FRAMEWORK_FILES_GLOB],
         ignores: [
-            'apps/*/src/app/**',
-            'apps/*/src/components/**',
-            'packages/kit/src/components/**',
             KIT_ADAPTERS_GLOB,
-            APP_REAL_ADAPTERS_GLOB,
-            // Next's two instrumentation hooks, under the default pageExtensions Next looks for them with
-            // (neither app sets its own), and no other name: `instrumentation-helpers.ts` is an ordinary
-            // module, as the `*` this used to carry let it pretend not to be.
-            'apps/*/src/instrumentation{,-client}.{ts,tsx,js,jsx}',
             'packages/kit/src/service-auth/webhook.ts',
             'packages/kit/src/service-auth/mailgun.ts',
             TEST_FILES,
         ],
-        rules: {
-            'no-restricted-syntax': ['error', processEnvSelector],
-        },
+        plugins: { sssb },
+        rules: { 'sssb/no-process-env': 'error' },
     },
-    // An app's REAL adapters read their own configuration from process.env, like SSSB's — but not the run
-    // mode (runModeEnvSelector above). Only real/: the app's registry and fakes keep the full ban from the
-    // block above (see APP_REAL_ADAPTERS_GLOB). That block ignores real/, so besides the stories block right
-    // below, this is the only no-restricted-syntax block matching these files and there is nothing to
-    // re-list; the ignore is what keeps that true if the blocks are reordered (as in the ports boundary
-    // below). Tests exempt, as above. The a11y-attribute literal ban rides along because a real-mode-only
-    // component (a vendor widget) lives here and renders copy; SSSB's own adapters get it from the
-    // `packages/kit/src/adapters` block further down.
     {
-        files: [`apps/*/src/adapters/real/**/*.${SRC_EXT}`],
-        ignores: [TEST_FILES],
-        rules: {
-            'no-restricted-syntax': ['error', ...runModeEnvSelectors, a11yLiteralSelector],
-        },
+        files: [FIXTURE_FILES_GLOB],
+        plugins: { sssb },
+        rules: { 'sssb/no-process-env': 'error' },
     },
-    // A story beside a real-mode component renders fixtures, not shipped copy, so it drops the a11y ban as
-    // stories do everywhere else, and keeps the run-mode ban (this block replaces the one above for it).
+    // i18n (ADR-0008) on SSSB's side of the line: its screens, its static demo, and its adapters, which render copy
+    // too (the real sign-in and accept-invite forms). The fixture ships no copy (it has no components tree, and its
+    // route files are scanned by authorized-mutations.test.ts, never served), so neither literal ban applies there.
     {
-        files: [`apps/*/src/adapters/real/${STORY_FILES}`],
-        rules: {
-            'no-restricted-syntax': ['error', ...runModeEnvSelectors],
-        },
-    },
-    // The rest of an app's adapters directory except the registry — its fakes, and any module beside them.
-    // Re-lists processEnvSelector (merge trap: this block replaces the process.env block above for these
-    // files), adds the dynamic half of "only the registry loads real/", and the a11y-attribute literal ban
-    // for a fake that renders copy. Tests fall back to the process.env block above, which exempts them.
-    // The registry is `index.ts` and nothing else, as the recipe names it: an `index.mjs` beside it is one
-    // more module that may not load real/.
-    {
-        files: [`apps/*/src/adapters/**/*.${SRC_EXT}`],
-        ignores: [APP_REAL_ADAPTERS_GLOB, 'apps/*/src/adapters/index.ts', TEST_FILES, STORY_FILES],
-        rules: {
-            'no-restricted-syntax': ['error', processEnvSelector, appRealAdapterDynamicSelector, a11yLiteralSelector],
-        },
-    },
-    // A story beside a fake drops the a11y ban as stories do everywhere, and keeps the other two. It used to
-    // fall back to the process.env block alone, which dropped the dynamic real/ ban with the a11y one: a
-    // fake's story could `import('../real/kv')` and put the vendor SDK in the workshop, though a STATIC
-    // import of the same path was banned there (the no-restricted-imports block below ignores no stories).
-    {
-        files: [`apps/*/src/adapters/${STORY_FILES}`],
-        ignores: [APP_REAL_ADAPTERS_GLOB],
-        rules: {
-            'no-restricted-syntax': ['error', processEnvSelector, appRealAdapterDynamicSelector],
-        },
-    },
-    // SSSB's adapters render copy too (the real sign-in and accept-invite forms), and no other
-    // no-restricted-syntax block matches them. Labels arrive as props today; this keeps it that way.
-    {
-        files: [`${KIT_ADAPTERS_GLOB}/*.${SRC_EXT}`],
+        files: [FRAMEWORK_COMPONENTS_GLOB, KIT_ADAPTER_FILES_GLOB],
         ignores: [TEST_FILES, STORY_FILES],
-        rules: {
-            'no-restricted-syntax': ['error', a11yLiteralSelector],
-        },
-    },
-    // i18n: UI code may not contain hard-coded strings — everything goes through next-intl (ADR-0008).
-    // demo-static is INCLUDED on both sides of the line: the `file://` shell, the tour overlay and each
-    // app's static twin are user-visible UI that ships to whoever is handed dist-demo/index.html, and
-    // they render from the same merged catalog as the server screens. They sat outside this fence until
-    // the framework extraction gave SSSB 640 lines of its own demo UI; both sides already comply, so
-    // covering them costs nothing today and stops the next edit hard-coding a string.
-    //
-    // Every extension (SRC_EXT), not `.tsx` alone: a `.jsx` or `.js` screen renders copy as well, and the
-    // rule only ever fires on JSX, so on a `.ts` file it costs nothing.
-    {
-        files: [
-            `apps/*/src/app/**/*.${SRC_EXT}`,
-            `apps/*/src/components/**/*.${SRC_EXT}`,
-            `apps/*/src/demo-static/**/*.${SRC_EXT}`,
-            `packages/kit/src/components/**/*.${SRC_EXT}`,
-            `packages/kit/src/demo-static/**/*.${SRC_EXT}`,
-            // Real-mode-only components live in adapter directories, on both sides of the line, and render
-            // copy. SSSB's already complied when they were added here.
-            `${KIT_ADAPTERS_GLOB}/*.${SRC_EXT}`,
-            `${APP_ADAPTERS_GLOB}/*.${SRC_EXT}`,
-        ],
-        rules: {
-            'react/jsx-no-literals': ['error', { noStrings: true, ignoreProps: true, allowedStrings: [] }],
-        },
-    },
-    // Ports boundary: vendor SDKs only inside SSSB's adapters (ADR-0003, -0009, -0010, -0011) or an app's
-    // own real adapters (ADR-0012, addendum 2026-11-16); deployment params only via the app's config/params.ts.
-    //
-    // The app glob is `apps/*/**`, NOT `apps/*/src/**`. It was the narrower one, which left 48 files
-    // per app unfenced — including `config/app.ts`, which is ON the runtime module graph
-    // (`src/app-config/identity.ts` re-exports APP_SLUG from it) and `config/params.ts`, which
-    // `next.config.ts` imports. A vendor SDK could be imported there with a green `pnpm lint`, while
-    // CONTRIBUTING.md called this "the one rule that matters most". A fence with a hole in the wall
-    // is worse than no fence, because the claim keeps people from looking.
-    //
-    // The three carve-outs are the only files that legitimately reach a vendor directly, and all three are
-    // outside the request path:
-    //  - `next.config.ts` composes the Sentry BUILD plugin (`withSentryConfig`), which is a bundler
-    //    wrapper, not an SDK call the product makes. ADR-0010 records Sentry as instrumentation
-    //    rather than a port for exactly this reason. The carve-out names all four spellings Next
-    //    loads (VENDOR_CARVE_OUTS); any other root config (playwright, vite, panda, postcss, ladle) is
-    //    fenced like the rest of the app.
-    //  - `tests/contract/**` drives real Postgres through `pg`/`embedded-postgres` on purpose — that
-    //    IS the anti-drift proof, and routing it through a port would prove nothing about the port.
-    //  - `infra/**` is the app's deployment, a CDK project that runs at synth and never on the app's
-    //    module graph (ADR-0014, D8; APP_INFRA_GLOB).
-    //
-    // An app's own adapters directory is carved out too, and fenced by the two blocks right below
-    // instead. Everywhere else in the app this block also bans a STATIC import of the app's real
-    // adapters (appRealAdapterPattern): they are reached through the app's registry.
-    //
-    // The carve-out is about ORDER, not outcome: without it the two blocks below would still win for
-    // that directory, but only because they come later (the merge trap). With it they are the only
-    // no-restricted-imports blocks matching it, and moving a block cannot change what is allowed there.
-    // tests/lint/app-owned-adapters.test.ts pins the outcome; a mutation run showed it cannot see this line.
-    {
-        files: VENDOR_FENCE_FILES,
-        ignores: [KIT_ADAPTERS_GLOB, APP_ADAPTERS_GLOB, ...VENDOR_CARVE_OUTS],
-        rules: {
-            'no-restricted-imports': [
-                'error',
-                { patterns: [vendorSdkPattern, nextFontPattern, appRealAdapterPattern] },
-            ],
-        },
-    },
-    // App-owned adapters (ADR-0012, addendum 2026-11-16) — for a vendor SSSB has no port for, which fails
-    // the universality and new-class tests (docs/development-approach.md) and so belongs to the app, not
-    // to SSSB. The registry (adapters/index.ts) and the fakes keep the vendor ban; only real/ may import a
-    // vendor SDK. Both re-list nextFontPattern (merge trap). The registry and fakes carry the STRICTER
-    // appRealAdapterStaticPattern instead of appRealAdapterPattern: no static import of real/ at all, so the
-    // registry's import() is the only way in.
-    {
-        files: [`${APP_ADAPTERS_GLOB}/*.${SRC_EXT}`],
-        ignores: [APP_REAL_ADAPTERS_GLOB],
-        rules: {
-            'no-restricted-imports': [
-                'error',
-                { patterns: [vendorSdkPattern, nextFontPattern, appRealAdapterStaticPattern, kitRealAdapterPattern] },
-            ],
-        },
+        plugins: { sssb },
+        rules: { 'sssb/no-literal-a11y-copy': 'error' },
     },
     {
-        files: [`${APP_REAL_ADAPTERS_GLOB}/*.${SRC_EXT}`],
-        rules: {
-            'no-restricted-imports': ['error', { patterns: [nextFontPattern] }],
-        },
+        files: [FRAMEWORK_COMPONENTS_GLOB, FRAMEWORK_DEMO_STATIC_GLOB, KIT_ADAPTER_FILES_GLOB],
+        plugins: { sssb },
+        rules: { 'sssb/no-jsx-literals': 'error' },
     },
-    // The dynamic half of the vendor boundary (see sssbNoDynamicVendorImportRule). Its own rule id, so the
-    // merge trap cannot touch it; its scope is every file the static ban covers, minus the same two vendor
-    // zones and the same three carve-outs — the fixture included, as in the framework fence below.
+    // THE PORTS BOUNDARY: vendor SDKs only inside SSSB's adapters (ADR-0003, -0009, -0010, -0011), in every package's
+    // source and the fixture, statically and dynamically; and dev stays hermetic everywhere there.
     {
-        files: [...VENDOR_FENCE_FILES, FIXTURE_FILES_GLOB],
-        ignores: [KIT_ADAPTERS_GLOB, APP_REAL_ADAPTERS_GLOB, ...VENDOR_CARVE_OUTS],
-        plugins: { sssb: sssbPlugin },
-        rules: { 'sssb/no-dynamic-vendor-import': 'error' },
+        files: [PACKAGE_FILES_GLOB, FIXTURE_FILES_GLOB],
+        ignores: [KIT_ADAPTERS_GLOB],
+        plugins: { sssb },
+        rules: { 'sssb/no-vendor-import': 'error', 'sssb/no-dynamic-vendor-import': 'error' },
     },
-    // Framework/app fence (ADR-0012): the framework package may not import app content directly — only
-    // through the @sssb/app-config/* seam. TWO globs: the framework's source tree, and its own test fixture,
-    // which is inside the package and must not be the one door left open (see FIXTURE_FILES_GLOB above).
-    // vendorSdkPattern re-listed (merge trap) so the ports boundary survives here; adapters and core get
-    // their own blocks below and are therefore NOT excluded here — a later block replaces this one for them.
-    // The fixture matches no LATER no-restricted-imports block, so this one block is its whole import
-    // boundary: the app fence, the ports boundary, and the hermetic-dev ban, exactly as for src/.
+    {
+        files: [PACKAGE_FILES_GLOB, FIXTURE_FILES_GLOB],
+        plugins: { sssb },
+        rules: { 'sssb/no-next-font-google': 'error' },
+    },
+    // THE FRAMEWORK/APP FENCE (ADR-0012): the framework package reaches app content only through the
+    // @sssb/app-config/* seam, never by alias, `..`, node_modules or path, in declarations or outside them. TWO globs:
+    // the framework's source tree, and its own test fixture, which is inside the package and must not be the one door
+    // left open.
     {
         files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
+        plugins: { sssb },
         rules: {
-            'no-restricted-imports': ['error', { patterns: [vendorSdkPattern, ...appCodePatterns, nextFontPattern] }],
+            'sssb/no-app-import': 'error',
+            'sssb/no-dynamic-app-import': 'error',
+            'sssb/no-path-to-app-code': ['error', REPO],
         },
     },
-    // ...and the same fence outside declarations (sssbNoDynamicAppImportRule): import(), require(), a test
-    // loader, a type-position import('…'). Same two globs, SSSB's adapters included, as the static fence;
-    // its own rule id, so no block below can replace it.
-    {
-        files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
-        plugins: { sssb: sssbPlugin },
-        rules: { 'sssb/no-dynamic-app-import': 'error', 'sssb/no-path-to-app-code': 'error' },
-    },
-    // THE PACKAGE'S EDGE (sssbNoPathOutOfPackageRule): no framework file, fixture included, reaches outside
-    // packages/kit by path. Two named exemptions, both P5's: the real-Postgres contract tests start their server
-    // through the repo's tests/support/contract-postgres.ts, which reads @sssb/tools/ports and embedded-postgres. P5
-    // moves the contract runner into @sssb/kit/testing; neither file ships (the `files` allowlist keeps tests out).
+    // THE PACKAGE'S EDGE: no framework file, fixture included, reaches outside packages/kit by path. Two named
+    // exemptions, both P5's: the real-Postgres contract tests start their server through the repo's
+    // tests/support/contract-postgres.ts, which reads @sssb/tools/ports and embedded-postgres. P5 moves the contract
+    // runner into @sssb/kit/testing; neither file ships (the `files` allowlist keeps tests out).
     {
         files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
         ignores: [
             'packages/kit/src/adapters/real/db.contract.test.ts',
             'packages/kit/src/adapters/real/rds-data.contract.test.ts',
         ],
-        plugins: { sssb: sssbPlugin },
-        rules: { 'sssb/no-path-out-of-package': 'error' },
+        plugins: { sssb },
+        rules: { 'sssb/no-path-out-of-package': ['error', REPO] },
     },
-    // The fixture's syntax bans, decided one at a time rather than by inheriting the app's set.
-    // APPLIED: getDb (its api/ + domain/ files are the app-shaped request path this template teaches —
-    // tenant access goes through withTenant, ADR-0004; enforced by sssb/no-raw-db-handle, whose blocks name
-    // the fixture) and process.env (only SSSB's adapters and an app's own real adapters read it; the fixture
-    // is on the app side of that line). It has no test files of its own — SSSB's tests live in src/ — so
-    // neither needs a test carve-out.
-    // NOT APPLIED, deliberately: react/jsx-no-literals and the a11y-attribute literal ban (ADR-0008).
-    // Those govern user-visible COPY, and the fixture ships none: it has no components tree, and its
-    // route files are scanned by authorized-mutations.test.ts, never served. Applying them would assert
-    // a catalog obligation over files no user can ever read.
-    {
-        files: [FIXTURE_FILES_GLOB],
-        rules: {
-            'no-restricted-syntax': ['error', processEnvSelector],
-        },
-    },
-    // Adapters are fenced against app content too, but MAY import vendor SDKs (that is their job) — so
-    // this block carries appCodePatterns only (no vendorSdkPattern). The ports-boundary block above ignores
-    // packages/kit/src/adapters, and the framework fence above matches it but comes earlier, so this
-    // block's list is the one that counts there.
-    {
-        files: [`${KIT_ADAPTERS_GLOB}/*.${SRC_EXT}`],
-        rules: {
-            'no-restricted-imports': ['error', { patterns: [...appCodePatterns, nextFontPattern] }],
-        },
-    },
-    // @sssb/kit/core stays framework-free (ADR-0006) AND fenced from app content (ADR-0012) — vendor, app and
-    // font patterns repeated on purpose (merge trap), see the notes above. The font ban was the one this
-    // block forgot; coreFrameworkPattern's `next/*` happened to cover it, with core's message rather than
-    // the font one.
+    // @sssb/kit/core stays framework-free (ADR-0006): no framework import in a declaration or outside one, and no JSX,
+    // which imports react/jsx-runtime without naming it.
     {
         files: [`packages/kit/src/core/**/*.${SRC_EXT}`],
+        plugins: { sssb },
         rules: {
-            'no-restricted-imports': [
-                'error',
-                { patterns: [vendorSdkPattern, ...appCodePatterns, nextFontPattern, coreFrameworkPattern] },
-            ],
+            'sssb/no-framework-import-in-core': 'error',
+            'sssb/no-dynamic-framework-import-in-core': 'error',
+            'sssb/no-jsx-in-core': 'error',
         },
     },
-    // ...and core's framework ban outside declarations (sssbNoDynamicFrameworkImportInCoreRule), plus the JSX
-    // that imports react/jsx-runtime without naming it (sssbNoJsxInCoreRule). The vendor and app halves already
-    // hold there outside declarations: sssb/no-dynamic-vendor-import and sssb/no-dynamic-app-import both cover
-    // packages/kit/src/core.
-    {
-        files: [`packages/kit/src/core/**/*.${SRC_EXT}`],
-        plugins: { sssb: sssbPlugin },
-        rules: { 'sssb/no-dynamic-framework-import-in-core': 'error', 'sssb/no-jsx-in-core': 'error' },
-    },
-    // SSSB's public surface (see sssbPublicSurfaceRule above). Repo-wide on purpose: apps, repo
-    // scripts, infra and the other workspace packages all resolve `@sssb/kit/…` through an alias, so all
-    // of them are consumers the map has to hold for. Inside packages/kit the specifier never
-    // appears (imports there are relative), so this also catches a self-import through the alias.
+    // SSSB's PUBLIC SURFACE (ADR-0012). Repo-wide on purpose: apps, repo scripts, infra and the other workspace
+    // packages all resolve `@sssb/kit/…` through an alias that bypasses the exports map, so all of them are consumers
+    // the map has to hold for. Inside packages/kit the specifier never appears (imports there are relative), so this
+    // also catches a self-import through the alias.
     {
         files: [`**/*.${SRC_EXT}`],
-        plugins: { sssb: sssbPlugin },
-        rules: { 'sssb/public-surface': 'error' },
+        plugins: { sssb },
+        rules: { 'sssb/public-surface': ['error', REPO] },
     },
-    // No raw mkdtemp in tests (see sssbNoDirectMkdtempRule). `**/*.test.{ts,tsx}` covers every unit and
-    // contract test, packages/kit/test-fixture included; `apps/*/tests/**` adds the Playwright specs
-    // and their support files, which are `.spec.ts` or plain helpers and which no leak guard wraps; the
-    // fixture glob is named anyway (FIXTURE_FILES_GLOB, as every framework-invariant gate here does) so
-    // a future non-`.test` helper added there is covered too. The two helpers (packages/kit/src/testing/tmp-dir.ts and
-    // packages/tools/src/testing/tmp-dir.js) are the places the raw call is meant to live; they match neither glob,
-    // and are ignored explicitly so that stays true if either glob is ever widened. `apps/*/tests/**` takes every extension because Playwright's default
-    // testMatch picks up a `.spec.mjs` or `.test.js` there too, and neither app's config narrows it.
+    // No raw mkdtemp in tests, anywhere in the repo (the preset covers the apps' tests/ too). The two helpers
+    // (packages/kit/src/testing/tmp-dir.ts and packages/tools/src/testing/tmp-dir.js) are the places the raw call is
+    // meant to live, ignored explicitly so that stays true if the glob is ever widened.
     {
-        files: [TEST_FILES, `apps/*/tests/**/*.${SRC_EXT}`, FIXTURE_FILES_GLOB],
+        files: [TEST_FILES, FIXTURE_FILES_GLOB],
         ignores: ['packages/kit/src/testing/tmp-dir.ts', 'packages/tools/src/testing/tmp-dir.js'],
-        plugins: { sssb: sssbPlugin },
+        plugins: { sssb },
         rules: { 'sssb/no-direct-mkdtemp': 'error' },
     },
     prettierConfig,
 ]
 
 export default eslintConfig
-
-// For eslint.config.mjs's own rule tests only — flat config reads the default export and nothing else.
-export const sssbNoDirectMkdtempRuleForTests = sssbNoDirectMkdtempRule

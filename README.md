@@ -55,7 +55,7 @@ that erodes on the first busy Friday:
 
 | Rule                                      | What stops you                                                                     |
 | ----------------------------------------- | ---------------------------------------------------------------------------------- |
-| Vendor SDKs only inside adapters          | lint (`no-restricted-imports`, and `sssb/no-dynamic-vendor-import` for `import()`) |
+| Vendor SDKs only inside adapters          | lint (`sssb/no-vendor-import`, and `sssb/no-dynamic-vendor-import` for `import()`) |
 | No untenanted database access in app code | lint bans raw `getDb()` (`sssb/no-raw-db-handle`, deny-by-default)                 |
 | Every mutating route authorizes           | a build-time scan walks the routes and fails any that don't                        |
 | Tenant isolation actually isolates        | one RLS proof suite, run against both the in-process engine and real Postgres      |

@@ -103,9 +103,9 @@ loop fast enough for this to pay off — for agents most of all.
 **Principle.** Every external dependency (auth, database, object storage, LLM, email, analytics) is reached
 through a thin interface _the app owns_ — a port — with two implementations, real and fake. **Wrap, don't
 stub:** the port is sized to what the app actually needs (a handful of functions), not to the vendor's
-hundreds of calls. Exactly one module imports each vendor SDK, and lint rules (`no-restricted-imports`
-for `import`, `sssb/no-dynamic-vendor-import` for `import()`) plus a CI check make the boundary
-permanent.
+hundreds of calls. Exactly one module imports each vendor SDK, and lint rules (`sssb/no-vendor-import`
+for `import`, `sssb/no-dynamic-vendor-import` for `import()`, both in `@sssb/eslint-plugin`) plus a CI check make
+the boundary permanent.
 
 **Whose port it is decides where it lives ✅.** SSSB's ports and adapters are framework code in
 `packages/kit/src/`. A port for a vendor SSSB has no port for, which only one app calls and which fails
