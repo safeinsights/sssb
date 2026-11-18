@@ -81,9 +81,9 @@ scan_grep 'A source-type file holds a NUL byte (UTF-16 or binary data): the bidi
 # quotes non-ASCII and the bytes never arrive.
 #
 # Matched as raw UTF-8 BYTES (U+202A-202E are E2 80 AA-AE, U+2066-2069 are E2 81 A6-A9), not as \x{...}
-# under `perl -CSD`. Decoding makes a path holding an invalid multi-byte sequence a FATAL match error on
-# Perl 5.28 and older, which aborts the scan partway and leaves every later path unexamined; current Perl
-# only warns and carries on. Bytes are kept because they cannot be malformed on any version.
+# under `perl -CSD`. Decoding a path that holds an invalid multi-byte sequence can be a FATAL match error on
+# some Perl versions, which aborts the scan partway and leaves every later path unexamined, and only a
+# warning on others (5.34 only warns). Bytes are kept because they cannot be malformed on any version.
 selftest=$(perl -CO -e 'print chr($_) for (0x202A..0x202E, 0x2066..0x2069)' |
     perl -0 -ne '$n++ while /'"$bidi_bytes"'/g; print $n+0')
 if [ "$selftest" != "9" ]; then

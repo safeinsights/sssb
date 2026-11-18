@@ -3210,8 +3210,9 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   (`./` refs exempt, `docker://` flagged). Every action is already pinned today, so it prevents drift (a job merged
   from a sibling branch, a Dependabot bump to a tag) rather than fixing anything. It does not check
   `jobs.*.container` or `services.*.image` tags, or what a symlink points at.
-- **A bash script and vitest tests, not `scripts/`.** P4 is moving `scripts/`, and P4-P6 (and P9's knip globs) all
-  touch the root `package.json`, the lockfile and `knip.json` (ADR-0014, the paragraph after the step table); neither piece needs a `package.json` script or a knip entry here. The script's
+- **A bash script and vitest tests, not `scripts/`.** P4 is moving `scripts/`, and P4, P5 and P6 all
+  touch the root `package.json`, the lockfile and `knip.json` (ADR-0014, the paragraph after the step table), and P9's
+  row changes `pnpm-workspace.yaml` and the knip globs; neither piece needs a `package.json` script or a knip entry here. The script's
   tests (`tests/tooling/check-bidi.test.ts`) run it against real scratch repositories, including a repository
   that is not one, and a parent `LC_ALL=C`.
 - **Rejected: porting `check-action-pins.mjs` into `scripts/`** with a `package.json` script. It would grep for
