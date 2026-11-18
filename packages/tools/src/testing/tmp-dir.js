@@ -27,13 +27,14 @@
 // AFTER a file's own `afterAll`: a file that closes a database handle living in the directory closes it before the
 // directory is deleted.
 //
-// WITHOUT ISOLATION AND WITHOUT THE SETUP MODULE, a later file has no file-level hook. Its first call in each suite
-// (the file's top level, or a `describe` body, while the file is collected) registers a hook in that suite, which
-// removes that suite's directories and any an earlier file left, and never another suite's of the same file, which may
-// still be in use. Two things are lost that the setup module keeps: a hook registered after the file's own `afterAll`
-// runs before it, and a later file whose first call comes from a hook or a test cannot register one (Vitest drops it),
-// so its directories wait for the next file's hook, and the last file's for none. `removeTestTmpDir` removes one now.
-// tests/tooling/tmp-dir-isolation.test.ts runs each case in a real Vitest.
+// WITHOUT ISOLATION AND WITHOUT THE SETUP MODULE, a later file has no file-level hook, and no hook registered later
+// can be both last in the order and wide enough in scope: one registered from a `describe` belongs to that
+// `describe`, which may finish while another part of the file still uses a directory. So such a file never removes
+// its own directories. Its first call registers a hook that removes those of EARLIER files, which have finished (a
+// worker runs its files one after another): each file's directories go when the next file with a hook finishes, and the
+// last file's are left, for `sssb check-tmpdir-leak` to report. The first such call says so once per worker, naming the
+// setup module. `removeTestTmpDir` removes one now. tests/tooling/tmp-dir-isolation.test.ts runs each case in a real
+// Vitest.
 //
 // The kit keeps its own copy (packages/kit/src/testing/tmp-dir.ts), because the framework depends on no other SSSB
 // package; both write the same marker, which tests/tooling/tmp-dir.test.ts holds equal.
@@ -42,27 +43,18 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, expect } from 'vitest'
-import { getCurrentSuite } from 'vitest/suite'
 import { TMP_DIR_MARKER_SUFFIX } from './tmp-dir-marker.js'
 
-/**
- * Every directory made and not yet removed: the test file it was made in, and the suite whose hook owns it (null when
- * the file has a file-level hook, which removes it with everything else).
- *
- * @type {{ dir: string, file: string, suite: unknown }[]}
- */
+/** Every directory made and not yet removed, with the test file it was made in. @type {{ dir: string, file: string }[]} */
 const created = []
 
 /** Test files with a file-level hook, by path ('' when Vitest names none). @type {Set<string>} */
 const hookedFiles = new Set()
 
-/**
- * Suites given a hook of their own (no file-level hook in their file), with the files they were given one in: Vitest
- * reuses one top-level collector for every file a worker runs, so a suite alone does not name a file's top level.
- *
- * @type {WeakMap<object, Set<string>>}
- */
-const hookedSuites = new WeakMap()
+/** Test files without one that have a hook removing EARLIER files' directories. @type {Set<string>} */
+const sweepingFiles = new Set()
+
+let warned = false
 
 const currentFile = () => expect.getState().testPath ?? ''
 
@@ -102,45 +94,47 @@ export function registerTestTmpDirCleanup() {
 registerTestTmpDirCleanup()
 
 /**
- * Whose hook will remove the next directory: its file's, or, in a file without one, its suite's, registering that hook
- * on the suite's first call. Synchronous, so the async variant calls it before its first `await`, while the suite that
- * made the call is still the current one.
- *
- * @returns {{ file: string, suite: unknown }}
+ * The file the next directory belongs to. In a file without a file-level hook, also registers that file's hook for
+ * earlier files' directories, on its first call. Synchronous, so the async variant calls it before its first `await`,
+ * while the file may still be collected.
  */
-function owner() {
+function claim() {
     const file = currentFile()
-    if (hookedFiles.has(file)) return { file, suite: null }
-    const suite = getCurrentSuite()
-    if (!suite) return { file, suite }
-    const files = hookedSuites.get(suite) ?? new Set()
-    hookedSuites.set(suite, files)
-    if (!files.has(file)) {
-        files.add(file)
+    if (hookedFiles.has(file)) return file
+    if (!warned) {
+        warned = true
+        console.error(
+            `tmp-dir: ${file || 'a test file'} has no cleanup hook of its own: with Vitest's isolate: false, add ` +
+                "'@sssb/tools/testing/tmp-dir-setup' to test.setupFiles (SSSB's appTestProject does). Without it each " +
+                "file's scratch directories are removed only after the next file, and the last file's are left behind.",
+        )
+    }
+    if (!sweepingFiles.has(file)) {
+        sweepingFiles.add(file)
         afterAll(() => {
             // A watch-mode rerun of this file, in this worker, registers again.
-            files.delete(file)
-            removeQueued((entry) => entry.file !== file || entry.suite === suite)
+            sweepingFiles.delete(file)
+            removeQueued((entry) => entry.file !== file)
         })
     }
-    return { file, suite }
+    return file
 }
 
 /** @type {import('./tmp-dir.d.ts').makeTestTmpDir} */
 export function makeTestTmpDir(prefix) {
-    const by = owner()
+    const file = claim()
     const dir = mkdtempSync(path.join(tmpdir(), prefix))
-    created.push({ dir, ...by })
+    created.push({ dir, file })
     writeFileSync(dir + TMP_DIR_MARKER_SUFFIX, '')
     return dir
 }
 
 /** @type {import('./tmp-dir.d.ts').makeTestTmpDirAsync} */
 export async function makeTestTmpDirAsync(prefix) {
-    // The suite current at the call, not after the `await`: by then collection may have moved on.
-    const by = owner()
+    // Before the `await`: a hook can be registered only while the file is collected.
+    const file = claim()
     const dir = await mkdtemp(path.join(tmpdir(), prefix))
-    created.push({ dir, ...by })
+    created.push({ dir, file })
     await writeFile(dir + TMP_DIR_MARKER_SUFFIX, '')
     return dir
 }

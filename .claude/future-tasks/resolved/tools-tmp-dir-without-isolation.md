@@ -4,30 +4,32 @@
 
 ## Resolution
 
-Built differently from the design below, because review found two flaws in that design, which is also the kit's
-(`.claude/future-tasks/kit-tmp-dir-per-suite-cleanup.md`):
+Built differently from the design below. Review found that design, which is also the kit's, removes too early
+(`.claude/future-tasks/kit-tmp-dir-cleanup-order.md`):
 
-- **A hook registered from a `describe` body belongs to that `describe`,** not the file, and removed everything
-  queued, so a file with two `describe` blocks lost the second one's directory when the first finished.
-- **A hook registered at a later file's first call runs before an `afterAll` the file registered earlier,** so the
-  cleanup could delete a directory before the file closed what lives in it.
+- **A hook registered at a later file's first call, from a `describe` body, belongs to that `describe`.** It removed
+  everything queued, so a directory the rest of the file still used was gone when that `describe` finished.
+- **That hook runs before an `afterAll` the file registered earlier,** so the cleanup could precede the file closing
+  what lives in the directory.
 
-What `packages/tools/src/testing/tmp-dir.js` does instead:
+A second attempt registered a hook per suite; it still removed a nested `describe`'s directory before an outer test
+used it. No hook registered at a call can be both last in order and wide enough in scope, so
+`packages/tools/src/testing/tmp-dir.js` does this instead:
 
 - **A setup module, `@sssb/tools/testing/tmp-dir-setup`,** registers the file's hook at its top, before the file's
-  code. Vitest runs a setup file before every file even with `isolate: false` (checked with Vitest 4.1.12: the setup
-  ran once per file and its `afterAll` after the file's own). SSSB's Vitest preset (`@sssb/tools/vitest`) adds it to
-  every app project.
-- **Without the setup module,** a later file's first call in each suite registers a hook in that suite, which removes
-  that suite's directories and those an earlier file left, never another suite's. Vitest reuses one top-level collector
-  for every file in a worker, so the registry is keyed by suite and file. The ordering guarantee needs the setup module.
-- `makeTestTmpDirAsync` claims its suite before its first `await`.
-- `removeTestTmpDir(dir)` is exported, in the `.d.ts` too, and does nothing for a path it did not make.
-- `registerTestTmpDirCleanup()` is what the setup module calls.
+  code. Vitest runs a setup file before every file even with `isolate: false` (checked with Vitest 4.1.12: the setup ran
+  once per file and its `afterAll` after the file's own). `appTestProject` (`@sssb/tools/vitest`) adds it to every app
+  project. It is the supported path under `isolate: false`.
+- **Without it,** a later file never removes its own directories. Its first call registers a hook that removes earlier
+  files', which have finished, so every file's directories are removed except the last file's, which
+  `sssb check-tmpdir-leak` reports. The helper says so once per worker, naming the setup module.
+- `removeTestTmpDir(dir)` is exported (and in the `.d.ts`) and ignores a path it did not make.
+- `registerTestTmpDirCleanup()` is exported for the setup module.
 
-`tests/tooling/tmp-dir-isolation.test.ts` runs a real Vitest per case and finds nothing left in the child's TMPDIR,
-every test in the child passing. It covers `isolate: false` with and without the setup module, isolation, and
-`removeTestTmpDir`. Eight probes, each red in its own case, are listed in the PR.
+`tests/tooling/tmp-dir-isolation.test.ts` runs a real Vitest per case, and every test in the child checks that its
+own directory still exists when it runs. With the setup module, and with isolation, nothing is left. Without it,
+everything is gone except the last file's directories, and the warning is printed. A last case pins the preset's
+`setupFiles`. Nine probes, each red in the cases it should be, are listed in the PR.
 
 **Found by:** review round 2 of ADR-0014 P5 (`feat/conformance-suite`), 2026-11-18, while fixing the kit's copy.
 

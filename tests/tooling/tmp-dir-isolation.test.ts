@@ -3,17 +3,19 @@ import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { appTestProject } from '@sssb/tools/vitest'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
  * @sssb/tools' scratch-directory helper under an ADOPTER'S Vitest, which this repository's own config (isolated files)
  * cannot show: each case writes a scratch project with its own Vitest config and TMPDIR, runs a real `vitest run` in a
- * child process, and reads what the run left in that TMPDIR. Every directory the helper made, and its marker, must be
- * gone, and every test in the child must pass (each checks that its own directory still exists when it runs).
+ * child process, and reads what the run left in that TMPDIR. Every test in the child must pass: each checks that its
+ * own directory still exists when it runs, so a cleanup that runs too early fails it.
  *
  * Without isolation the helper's module loads once per worker, in its first file, so a hook it registers at load is
- * the first file's alone. The setup module (`@sssb/tools/testing/tmp-dir-setup`) registers one per file; without it,
- * the helper registers one per suite on that suite's first call.
+ * the first file's alone. The setup module (`@sssb/tools/testing/tmp-dir-setup`) registers one per file, and the run
+ * ends clean. Without it a later file never removes its own directories, only earlier files', so every file's are
+ * removed but the last one's, and the helper says so.
  */
 const TESTING = path.resolve(import.meta.dirname, '../../packages/tools/src/testing')
 const HELPER = JSON.stringify(path.join(TESTING, 'tmp-dir.js'))
@@ -21,7 +23,9 @@ const SETUP = path.join(TESTING, 'tmp-dir-setup.js')
 const VITEST = path.join(path.dirname(createRequire(import.meta.url).resolve('vitest/package.json')), 'vitest.mjs')
 const CHILD_TIMEOUT = 120_000
 
-const NO_ISOLATION = { isolate: false, maxWorkers: 1, fileParallelism: false }
+/** One worker, one file at a time, so the files run in the order their sizes set (largest first). */
+const ONE_WORKER = { maxWorkers: 1, fileParallelism: false }
+const NO_ISOLATION = { ...ONE_WORKER, isolate: false }
 const WITH_SETUP = { setupFiles: [SETUP] }
 
 /** A scratch project holding the given test files under a Vitest config with the given `test` options. */
@@ -53,13 +57,14 @@ function run({ dir, tmp }: { dir: string; tmp: string }): Promise<{ status: numb
     })
 }
 
-/** Where a test file makes its directory. Each test asserts the directory still exists when it runs. */
+/** Where a test file makes its directory. Each test asserts its directory still exists when it runs. */
 type Call =
     | 'top'
     | 'top-async'
     | 'describe'
     | 'describe-async-then'
     | 'two-describes'
+    | 'nested'
     | 'beforeAll'
     | 'in-test'
     | 'afterAll-before-call'
@@ -70,8 +75,7 @@ const BODIES: Record<Call, (make: string, makeAsync: string) => string> = {
         `const dir = await ${makeAsync}\nit('made', () => expect(existsSync(dir)).toBe(true))\n`,
     describe: (make) =>
         `describe('d', () => {\n    const dir = ${make}\n    it('made', () => expect(existsSync(dir)).toBe(true))\n})\n`,
-    // The call's continuation runs after the describe body has returned: the hook must belong to the suite current AT
-    // the call.
+    // The call's continuation runs after the describe body has returned.
     'describe-async-then': (_, makeAsync) =>
         `describe('d', () => {\n    let dir = ''\n    const made = ${makeAsync}.then((d) => (dir = d))\n` +
         `    it('made', async () => { await made; expect(existsSync(dir)).toBe(true) })\n})\n`,
@@ -79,6 +83,12 @@ const BODIES: Record<Call, (make: string, makeAsync: string) => string> = {
     'two-describes': (make) =>
         `describe('first', () => {\n    const dir = ${make}\n    it('made', () => expect(existsSync(dir)).toBe(true))\n})\n` +
         `describe('second', () => {\n    const dir = ${make}\n    it('still there', () => expect(existsSync(dir)).toBe(true))\n})\n`,
+    // A directory made in an inner describe, used by an outer test that runs after the inner describe has finished.
+    nested: (make) =>
+        `let shared = ''\ndescribe('outer', () => {\n    describe('inner', () => {\n        shared = ${make}\n` +
+        `        it('inner', () => expect(existsSync(shared)).toBe(true))\n    })\n` +
+        `    it('outer, after inner', () => expect(existsSync(shared)).toBe(true))\n` +
+        `    it('made at run time', () => expect(existsSync(${make})).toBe(true))\n})\n`,
     beforeAll: (make) =>
         `let dir = ''\nbeforeAll(() => { dir = ${make} })\nit('made', () => expect(existsSync(dir)).toBe(true))\n`,
     'in-test': (make) => `it('made', () => {\n    const dir = ${make}\n    expect(existsSync(dir)).toBe(true)\n})\n`,
@@ -89,7 +99,7 @@ const BODIES: Record<Call, (make: string, makeAsync: string) => string> = {
 }
 
 /**
- * A test file named `name` that makes its directory as `call` says. Vitest runs larger files first in one worker, so
+ * A test file named `name` that makes its directories as `call` says. Vitest runs larger files first in one worker, so
  * the padding sets the order.
  */
 function file(name: string, call: Call, padding: number): string {
@@ -102,67 +112,76 @@ function file(name: string, call: Call, padding: number): string {
     )
 }
 
-/** Two files that make a directory at top level, then the case's file last. */
-const afterTwo = (last: Call) => ({
+/** a and b make a directory at top level (b's as `middle` says), then c, the case's file, runs last. */
+const three = (last: Call, middle: Call = 'top') => ({
     'a.test.ts': file('a', 'top', 3000),
-    'b.test.ts': file('b', 'top', 2000),
+    'b.test.ts': file('b', middle, 2000),
     'c.test.ts': file('c', last, 1000),
 })
 
-async function expectCleanRun(probe: { dir: string; tmp: string }) {
+/** Runs the project and returns what is left in its TMPDIR, having checked every test passed and c ran last. */
+async function runAll(probe: { dir: string; tmp: string }): Promise<{ left: string[]; output: string }> {
     const { status, output } = await run(probe)
     expect(status, output).toBe(0)
-    expect(output).toMatch(/✓ c\.test\.ts/)
-    expect(readdirSync(probe.tmp), output).toEqual([])
+    const ranLast = output.lastIndexOf('✓ c.test.ts')
+    expect(ranLast, output).toBeGreaterThan(-1)
+    for (const earlier of ['a', 'b']) expect(output.indexOf(`✓ ${earlier}.test.ts`), output).toBeLessThan(ranLast)
+    return { left: readdirSync(probe.tmp), output }
 }
 
 describe("@sssb/tools' scratch directories, in a real run", () => {
-    // A later file's hook removes every earlier file's directories, so a missing registration in an earlier file is
-    // swept up by the next one: each case puts what it pins in the LAST file, where nothing comes after.
-    describe('without isolation, and without the setup module', () => {
-        it.each<[string, Call]>([
-            ['a call in a describe body', 'describe'],
-            ['makeTestTmpDirAsync at top level', 'top-async'],
-            [
-                'makeTestTmpDirAsync in a describe body, its directory used after the body returned',
-                'describe-async-then',
-            ],
-            ["two describes: the first one's cleanup leaves the second's directory alone", 'two-describes'],
-        ])(
-            "every file's directories are removed, not only the first file's: %s",
-            async (_, last) => {
-                await expectCleanRun(project(afterTwo(last), NO_ISOLATION))
-            },
-            CHILD_TIMEOUT,
-        )
-
-        it(
-            "a file whose first call is in a test gets no hook (Vitest drops it), and the next file's top level still gets one, which removes both",
-            async () => {
-                // Every file's top level is the same suite object in one worker, so the hook registry is keyed by file too.
-                const files = {
-                    'a.test.ts': file('a', 'top', 3000),
-                    'b.test.ts': file('b', 'in-test', 2000),
-                    'c.test.ts': file('c', 'top', 1000),
-                }
-                await expectCleanRun(project(files, NO_ISOLATION))
-            },
-            CHILD_TIMEOUT,
-        )
-    })
-
-    describe('without isolation, with the setup module', () => {
+    describe('without isolation, with the setup module: the run ends clean', () => {
         it.each<[string, Call]>([
             ['a first call from a beforeAll', 'beforeAll'],
             [
                 "the file's own afterAll, registered before the first call, runs before the cleanup",
                 'afterAll-before-call',
             ],
-            ["two describes: the first one's cleanup leaves the second's directory alone", 'two-describes'],
+            ["two describes: the first one's end leaves the second's directory alone", 'two-describes'],
+            ['a nested describe, its directory used by an outer test, and a call made at run time', 'nested'],
+            [
+                'makeTestTmpDirAsync in a describe body, its directory used after the body returned',
+                'describe-async-then',
+            ],
         ])(
-            "every file's directories are removed: %s",
+            '%s',
             async (_, last) => {
-                await expectCleanRun(project(afterTwo(last), { ...NO_ISOLATION, ...WITH_SETUP }))
+                const { left, output } = await runAll(project(three(last), { ...NO_ISOLATION, ...WITH_SETUP }))
+                expect(left, output).toEqual([])
+                expect(output).not.toMatch(/has no cleanup hook of its own/)
+            },
+            CHILD_TIMEOUT,
+        )
+    })
+
+    // A later file never removes its own directories here, only earlier files'. Each case ends on the kind of call it
+    // pins, in the LAST file: a missing hook there leaves b's directories behind, and one that removed too much would
+    // fail a test that still uses its directory.
+    describe('without isolation, without the setup module: nothing in use is removed, and only the last file is left', () => {
+        it.each<[string, Call, Call?]>([
+            ['a call in a describe body', 'describe'],
+            ['makeTestTmpDirAsync at top level', 'top-async'],
+            [
+                'makeTestTmpDirAsync in a describe body, its directory used after the body returned',
+                'describe-async-then',
+            ],
+            ["two describes: the first one's end leaves the second's directory alone", 'two-describes'],
+            ['a nested describe, its directory used by an outer test', 'nested'],
+            [
+                "a file whose first call is in a test has no hook, and the next file's removes its directories",
+                'top',
+                'in-test',
+            ],
+        ])(
+            '%s',
+            async (_, last, middle) => {
+                const { left, output } = await runAll(project(three(last, middle), NO_ISOLATION))
+                expect(left.length, output).toBeGreaterThan(0)
+                expect(
+                    left.filter((entry) => !entry.startsWith('probe-c-')),
+                    output,
+                ).toEqual([])
+                expect(output).toMatch(/has no cleanup hook of its own: .*'@sssb\/tools\/testing\/tmp-dir-setup'/)
             },
             CHILD_TIMEOUT,
         )
@@ -171,9 +190,13 @@ describe("@sssb/tools' scratch directories, in a real run", () => {
     it(
         'with isolation (the default): a directory made in a beforeAll is removed too, which is why the hook is registered at load',
         async () => {
-            await expectCleanRun(
-                project({ 'b.test.ts': file('b', 'top', 2000), 'c.test.ts': file('c', 'beforeAll', 1000) }, {}),
-            )
+            const files = {
+                'a.test.ts': file('a', 'top', 3000),
+                'b.test.ts': file('b', 'top', 2000),
+                'c.test.ts': file('c', 'beforeAll', 1000),
+            }
+            const { left, output } = await runAll(project(files, ONE_WORKER))
+            expect(left, output).toEqual([])
         },
         CHILD_TIMEOUT,
     )
@@ -183,6 +206,8 @@ describe("@sssb/tools' scratch directories, in a real run", () => {
         async () => {
             const probe = project(
                 {
+                    'a.test.ts': file('a', 'top', 3000),
+                    'b.test.ts': file('b', 'top', 2000),
                     'c.test.ts':
                         `import { existsSync, mkdtempSync, rmSync } from 'node:fs'\nimport { tmpdir } from 'node:os'\n` +
                         `import path from 'node:path'\nimport { expect, it } from 'vitest'\n` +
@@ -198,12 +223,27 @@ describe("@sssb/tools' scratch directories, in a real run", () => {
                         `    removeTestTmpDir(other)\n` +
                         `    expect(existsSync(other)).toBe(true)\n` +
                         `    rmSync(other, { recursive: true })\n` +
-                        `})\n`,
+                        `})\n//${'x'.repeat(1000)}\n`,
                 },
-                {},
+                ONE_WORKER,
             )
-            await expectCleanRun(probe)
+            const { left, output } = await runAll(probe)
+            expect(left, output).toEqual([])
         },
         CHILD_TIMEOUT,
     )
+})
+
+describe("SSSB's Vitest preset", () => {
+    it('adds the setup module to every app project, before the app’s own setup files', async () => {
+        const config = await appTestProject({
+            appDir: path.resolve(import.meta.dirname, '../../apps/starter'),
+            setupFiles: ['./own-setup.ts'],
+        })
+        expect(config.test?.setupFiles).toEqual([
+            '@testing-library/jest-dom/vitest',
+            '@sssb/tools/testing/tmp-dir-setup',
+            './own-setup.ts',
+        ])
+    })
 })
