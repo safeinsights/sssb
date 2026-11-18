@@ -2140,3 +2140,31 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 - **Lesson:** a burst of unused `react-hooks/*` disables in a component you changed means the compiler stopped
   compiling it, not that the code got better. Find the construct by bisecting (`git show HEAD:<file>` piped to
   `eslint --stdin --stdin-filename <file>` gives the before count) and write it another way.
+
+## Union merge stranded and duplicated an edited line in the decision log (2026-11-18, `docs/fix-log-merge-damage`)
+
+[Union merge for the two append-only records](#union-merge-for-the-two-append-only-records-2026-11-17-chorepost-p2-cleanup)
+named the risk (two edits of one line leave both versions) but not its other forms. What happened: PR #19 edited the
+LAST line of an existing decision-log entry (a path, `.claude/future-tasks/simulator-panel-focus-on-toggle.md` to
+`.claude/future-tasks/resolved/...`) and appended its own entry; PRs #21, #22 and #23 each appended an entry too. Each
+of the last three branches took `integration` in with a plain `git merge`, and `merge=union` resolved it without a
+conflict, three ways wrong:
+
+- **The old version of the edited line came back:** the "Label in Name" entry ended with the pre-rename path again.
+- **The edited line was stranded.** The merge put the new entry ABOVE the edited last line of the earlier entry, so
+  that line ended up under another PR's entry, where it read as that entry's last bullet.
+- **It was duplicated:** #21's and #22's merges each left a copy. #23's builder noticed the same thing in its own
+  merge and fixed it before pushing.
+
+A review of "what did this PR add to the log" sees only additions, and each wrong merge was already in the branch
+being reviewed, so nothing looked wrong. Two builders noticed it by chance, from a deletion in
+`git diff origin/integration -- docs/decision-log.md`.
+
+**After any merge that touches either log, read the log diff before committing or pushing:**
+`git diff origin/integration -- docs/decision-log.md docs/build-notes.md` must be additions only, as one block at the
+end of the file, and nothing in it may be a line another PR wrote. A deletion, a second hunk, or a line you did not
+write is the damage. GitHub's "update branch" button runs a merge too; whether it honours `.gitattributes` is not
+verified, so treat it the same way. The audit that found this counted, for every first-parent merge on
+`integration` that touched either log, the hunks and deletions against its first parent. Everything but the cases
+above was one added block. The exceptions were deliberate: #11 added a note inside the demo budget history, and #18
+and #19 changed paths in earlier entries after their files moved to `resolved/`.
