@@ -110,12 +110,21 @@ export function workspaceApps(root) {
  */
 export function appLabels(root, apps) {
     const base = (/** @type {string} */ app) => path.basename(path.resolve(root, app))
+    const rel = (/** @type {string} */ app) => path.relative(root, path.resolve(root, app)).split(path.sep).join('-')
+    /** @type {Map<string, number>} */
     const counts = new Map()
     for (const app of apps) counts.set(base(app), (counts.get(base(app)) ?? 0) + 1)
-    return new Map(
-        apps.map((app) => [
-            app,
-            counts.get(base(app)) > 1 && app !== '.' ? app.replace(/^\.\//, '').split('/').join('-') : base(app),
-        ]),
-    )
+    /** @type {Map<string, string>} */
+    const labels = new Map()
+    /** @type {Set<string>} */
+    const taken = new Set()
+    for (const app of apps) {
+        const wanted = (counts.get(base(app)) ?? 0) > 1 && rel(app) !== '' ? rel(app) : base(app)
+        // Two spellings can still meet (`a/x/web` and `a-x/web`): the later one gets a number, so a label is unique.
+        let label = wanted
+        for (let n = 2; taken.has(label); n++) label = `${wanted}-${n}`
+        taken.add(label)
+        labels.set(app, label)
+    }
+    return labels
 }

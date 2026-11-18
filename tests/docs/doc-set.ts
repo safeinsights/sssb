@@ -65,3 +65,8 @@ export function resolves(path: string, root = '.'): boolean {
 export function generalizeAppCitations(text: string, isMissing: (path: string) => boolean): string {
     return engine.generalizeAppCitations(text, isMissing, config())
 }
+
+/** The `sssb.docPaths.include` entries that name nothing in the tree. Call with the repo root as the cwd. */
+export function missingIncludes(): string[] {
+    return engine.missingIncludes(root(), config())
+}

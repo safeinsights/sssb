@@ -56,6 +56,15 @@ export function e2eShards(root) {
             shards.push({ name, app, run: base })
         }
     }
+    // Shard names name CI jobs and their report artifacts, so they must be unique: an app's `-destructive` shard could
+    // meet another app labelled that way.
+    /** @type {Set<string>} */
+    const taken = new Set()
+    for (const shard of shards) {
+        const wanted = shard.name
+        for (let n = 2; taken.has(shard.name); n++) shard.name = `${wanted}-${n}`
+        taken.add(shard.name)
+    }
     return shards
 }
 

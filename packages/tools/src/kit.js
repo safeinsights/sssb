@@ -9,7 +9,7 @@
 // got must sit inside the real directory of the `@sssb/kit` that the app itself resolves. The lint rule
 // `sssb/no-bare-kit-import` keeps every other route out of this package's source.
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { builtinModules, createRequire } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { UsageError } from './app.js'
@@ -57,14 +57,20 @@ function owningPackageName(dir) {
     const manifest = path.join(dir, 'package.json')
     /** @type {string | null} */
     let name
+    // A package.json with no `name` (a nested `{ "type": "module" }`) does not make a package: keep walking, or a file
+    // under one inside a framework copy would read as nobody's and pass every guard.
+    /** @type {string | null} */
+    let named = null
     if (existsSync(manifest)) {
         try {
             const parsed = JSON.parse(readFileSync(manifest, 'utf8'))
-            name = typeof parsed?.name === 'string' ? parsed.name : null
+            named = typeof parsed?.name === 'string' ? parsed.name : null
         } catch {
-            name = null
+            named = null
         }
-    } else {
+    }
+    if (named !== null) name = named
+    else {
         const parent = path.dirname(dir)
         name = parent === dir ? null : owningPackageName(parent)
     }
@@ -175,7 +181,9 @@ export function resolveFromApp(appDir, specifier, why) {
         `sssb: ${path.resolve(appDir)} does not install \`${specifier}\`, which ${why}. Add it to the app's devDependencies.`
     // The package must be on the app's own lookup chain. Node's resolver would otherwise fall back to NODE_PATH, which
     // pnpm points at the hoisted store, and hand back a copy installed for another package (see kitDirOf).
-    if (packageDirFrom(appDir, packageNameOf(specifier)) === null) throw new UsageError(missing())
+    // Node's built-ins and package imports (`#x`) are not packages on a lookup chain.
+    const bare = !specifier.startsWith('node:') && !specifier.startsWith('#') && !builtinModules.includes(specifier)
+    if (bare && packageDirFrom(appDir, packageNameOf(specifier)) === null) throw new UsageError(missing())
     try {
         return requireFrom(appDir).resolve(specifier)
     } catch (error) {

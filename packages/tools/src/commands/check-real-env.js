@@ -17,13 +17,24 @@
 // in an adopter's app that is redundant with the seam link, and in SSSB's repository it is the only way, since there
 // the fallback would be the repo's tsconfig mapping to the framework's test fixture (ADR-0014 part 1).
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { takeAppDir, UsageError } from '../app.js'
-import { assertAppsKitFile, assertNoForeignFramework, resolveAppsKit } from '../kit.js'
+import { assertAppsKitFile, assertNoForeignFramework, isFrameworkFile, resolveAppsKit } from '../kit.js'
 
 const NODE_MODULES = `${path.sep}node_modules${path.sep}`
+/**
+ * esbuild's loader for a source file, by its extension.
+ * @param {string} file
+ * @returns {'ts' | 'tsx' | 'js' | 'jsx'}
+ */
+function loaderFor(file) {
+    const ext = path.extname(file).replace(/^\.[cm]?/, '.')
+    return ext === '.tsx' ? 'tsx' : ext === '.ts' ? 'ts' : ext === '.jsx' ? 'jsx' : 'js'
+}
+
 /** The in-memory entry's name, as the metafile lists it. */
 const ENTRY = 'sssb-check-real-env.ts'
 
@@ -77,6 +88,20 @@ export async function run(args) {
                 {
                     name: 'sssb-bundle-only-the-framework-and-the-app',
                     setup(build) {
+                        // The bundle is CommonJS, where `import.meta` is empty, so a bundled file (the framework, the
+                        // app, a workspace package) that finds a file beside it with `new URL('./x', import.meta.url)`
+                        // or `import.meta.dirname` would break or look in the bundle's temp directory. Each one gets
+                        // its own location written in, as it would have when loaded where it sits.
+                        build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, (args) => {
+                            if (args.path.includes(NODE_MODULES) && !isFrameworkFile(args.path)) return undefined
+                            const text = readFileSync(args.path, 'utf8')
+                            if (!text.includes('import.meta')) return undefined
+                            const contents = text
+                                .replaceAll('import.meta.url', JSON.stringify(pathToFileURL(args.path).href))
+                                .replaceAll('import.meta.dirname', JSON.stringify(path.dirname(args.path)))
+                                .replaceAll('import.meta.filename', JSON.stringify(args.path))
+                            return { contents, loader: loaderFor(args.path) }
+                        })
                         build.onResolve({ filter: /^[^./]/ }, async (args) => {
                             if (args.pluginData === 'sssb-inner') return undefined
                             const resolved = await build.resolve(args.path, {
