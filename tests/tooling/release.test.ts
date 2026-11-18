@@ -709,6 +709,25 @@ describe("the prerelease notes' line breaks", () => {
     })
 })
 
+describe("the prerelease notes' line breaks, where joining would change what an adopter copies", () => {
+    const untouched = (text: string) => expect(unwrap(text)).toBe(text)
+
+    it('leaves a fence that holds a shorter fence, and a ~~~ fence that holds backticks, as they were', () => {
+        untouched(['````md', '```ts', 'const a = 1', 'const b = 2', '```', '````'].join('\n'))
+        untouched(['~~~', '```', 'line one', 'line two', '~~~'].join('\n'))
+    })
+
+    it('leaves indented code, hard breaks, HTML, link definitions and setext underlines on their own lines', () => {
+        untouched(['Before:', '', '    code one', '    code two'].join('\n'))
+        untouched(['a hard break  ', 'after it'].join('\n'))
+        untouched(['a backslash break\\', 'after it'].join('\n'))
+        untouched(['<details>', '<summary>More</summary>', 'text', '</details>'].join('\n'))
+        untouched(['[a]: https://example.invalid/a', '[b]: https://example.invalid/b'].join('\n'))
+        untouched(['A setext title', '---'].join('\n'))
+        untouched(['a | table', '--- | ---', 'x | y'].join('\n'))
+    })
+})
+
 describe('a release candidate, end to end, against a local fake tag', () => {
     const TOOLS = (version: string): Pkg => ({ ...KIT(version), dir: 'packages/tools', name: '@sssb/tools' })
     const commit = (root: string, message: string) =>

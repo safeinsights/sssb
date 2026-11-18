@@ -653,28 +653,49 @@ export function candidate(root, version, files) {
 /**
  * Markdown with its soft line breaks joined: a GitHub release's body is rendered as GitHub renders a comment, where
  * every newline inside a paragraph is a hard break, so notes wrapped at a fixed width would show ragged. Joins a line
- * onto the one before when both are text in the same paragraph or list item; leaves code fences, tables, headings,
- * quotes, blank lines and the start of every list item as they are.
+ * onto the one before when both are plain wrapped text in the same paragraph or list item. Leaves alone fenced code (a
+ * fence closes, as CommonMark has it, on a bare line of the same character at least as long), indented code, tables
+ * and any line holding a `|`, headings and setext underlines, quotes, HTML, link definitions, blank lines, the start
+ * of every list item, and a line after a hard break (two trailing spaces or a `\`).
  * @param {string} markdown
  */
 export function unwrap(markdown) {
+    // Conservative by design: a line left unjoined costs one line break in the rendered notes, and a line joined that
+    // should not be can change code an adopter copies, so anything but plain wrapped prose is left alone.
     const out = []
-    let fence = false
-    const starts = /^\s*([-*+] |\d+[.)] |#|\||>|```|~~~)/
+    /** The open fence's character and length (CommonMark: closed by the same character, at least as long). */
+    let fence = null
+    const opener = /^ {0,3}(`{3,}|~{3,})/
+    // a line that starts something, or that must stay on its own line
+    const own = /^\s*([-*+] |\d+[.)] |#|>|<|\[[^\]]*\]:|=+\s*$|-+\s*$)/
     for (const line of markdown.split('\n')) {
-        const isFence = /^\s*(```|~~~)/.test(line)
+        const open = opener.exec(line)?.[1]
+        if (fence) {
+            out.push(line)
+            if (open && open[0] === fence[0] && open.length >= fence.length && line.trim() === open) fence = null
+            continue
+        }
+        if (open) {
+            fence = open
+            out.push(line)
+            continue
+        }
         const prev = out.at(-1)
         const joinable =
-            !fence &&
-            !isFence &&
-            line.trim() !== '' &&
-            !starts.test(line) &&
             prev !== undefined &&
+            line.trim() !== '' &&
             prev.trim() !== '' &&
-            !/^\s*(#|\||```|~~~)/.test(prev)
+            !own.test(line) &&
+            !/^\s*(#|<|\[[^\]]*\]:)/.test(prev) &&
+            !line.includes('|') &&
+            !prev.includes('|') &&
+            // indented code (four spaces or a tab)
+            !/^( {4}|\t)/.test(line) &&
+            !/^( {4}|\t)/.test(prev.replace(/^\s*([-*+]|\d+[.)]) /, '')) &&
+            // a hard break at the end of the line before
+            !/( {2}|\\)$/.test(prev)
         if (joinable) out[out.length - 1] = `${prev.trimEnd()} ${line.trim()}`
         else out.push(line)
-        if (isFence) fence = !fence
     }
     return out.join('\n')
 }
