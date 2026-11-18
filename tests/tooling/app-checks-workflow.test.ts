@@ -288,6 +288,7 @@ describe('the check names the rulesets require', () => {
             /^.*?: (.*)$/.exec(matrix.split('\n').find((line) => line.startsWith(label)) ?? '')?.[1] ?? '[]',
         ) as {
             name: string
+            app: string
         }[]
     const shards = listOf('e2e shards')
     const demos = listOf('static demos')
