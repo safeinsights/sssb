@@ -18,7 +18,7 @@ const plugin = {
 
 // Frozen, with every rule and its meta: an app's config is code, and one that rewrote a rule's `create` on this shared
 // object could unfence its files while every config comparison still matched. A frozen object makes that a TypeError
-// when the config loads.
+// in an ES-module config, and a silent no-op in a sloppy CommonJS one; either way the rule is unchanged.
 for (const rule of Object.values(rules)) {
     Object.freeze(rule.meta)
     Object.freeze(rule)

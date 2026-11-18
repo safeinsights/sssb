@@ -2071,12 +2071,13 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   directory runs an install in the middle of a probe, and every probe after it errors instead of reporting. Finish the
   workspace change (and one `pnpm install`) before probing.
 - **Flat config's `basePath` makes a preset work from anywhere.** Every block the app preset returns carries
-  `basePath: <the app's absolute directory>` and app-relative globs (`src/**`), so it means the same thing from the
+  `basePath: <the app's absolute directory>` (its parent, for an `apps/*` root) and app-relative globs (`src/**`), so it means the same thing from the
   app's own `eslint.config.mjs`, from a workspace root's, and whether ESLint was started in the app or the root. A
   global-ignores object keeps `basePath` and is still global.
 - **To retire a core rule's setting, reproduce what it matches before changing what it is called.** The fences moved
   from `no-restricted-imports` to rules of their own with the same matcher (eslint's own `ignore` options, `iu` for a
-  `regex`, the specifier trimmed, `TSImportEqualsDeclaration` visited) and the same messages, so each `tests/lint`
+  `regex`, the specifier trimmed, `TSImportEqualsDeclaration` visited; that one's specifier is trimmed too, which
+  ESLint's rule does not do) and the same messages, so each `tests/lint`
   probe kept its fragment and only its rule id changed: a diff of the expectations is a diff of names alone.
 - **A third-party rule can be pinned to SSSB's options by delegation.** `sssb/no-jsx-literals` calls react's
   `jsx-no-literals` `create()` with `Object.create(context, { options: { value: OPTIONS } })`: every other context

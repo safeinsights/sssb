@@ -1,10 +1,11 @@
 // HOW AN IMPORT FENCE SEES A SPECIFIER, in both of its halves.
 //
 // The declaration half (declarationImportBan) replaces what no-restricted-imports used to carry, and matches a
-// pattern EXACTLY as that rule does (eslint's lib/rules/no-restricted-imports.js): a `group` through the `ignore`
-// package with `allowRelativePaths: true` and `ignorecase` (no pattern here sets caseSensitive), a `regex` as a
-// RegExp with the `iu` flags, and the specifier trimmed. It visits what that rule visits: import declarations,
-// re-exports with a source, and TypeScript's `import m = require('…')`. That includes the group syntax's quirks:
+// pattern as that rule does (eslint's lib/rules/no-restricted-imports.js): a `group` through the `ignore` package
+// with `allowRelativePaths: true` and `ignorecase` (no pattern here sets caseSensitive), a `regex` as a RegExp with
+// the `iu` flags, and the specifier trimmed. It visits what that rule visits: import declarations, re-exports with a
+// source, and TypeScript's `import m = require('…')`. One difference, a tightening: ESLint trims the specifier of
+// import and export declarations only, and this half trims `import m = require(' x')`'s too. That includes the group syntax's quirks:
 // a bare name matches at any depth, so core's `react` also bans `@x/react` and `./react`, and `pg` bans `./pg`.
 //
 // The declarationless half (declarationlessImportBan) sees what no declaration rule can: `import()`, `require()`,
@@ -16,8 +17,9 @@
 // `module.require(…)`).
 //
 // Both halves report EVERY pattern a specifier matches, one finding each, with that pattern's message, as
-// no-restricted-imports did. Neither takes options, so there is nothing for a later config block to replace
-// short of turning the rule itself off, which `sssb check-fences` sees.
+// no-restricted-imports did. Neither factory takes options. The two vendor rules wrap them and take `{ vendors }`
+// (./rules.js), which a later block could replace; `sssb check-fences` compares those options exactly with the
+// preset's, and every other import fence takes none.
 import ignore from 'ignore'
 
 const patternMatcher = (pattern) => {

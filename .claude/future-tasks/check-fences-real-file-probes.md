@@ -46,8 +46,8 @@ A file whose path the config spares (by name, by parser, by plugin) then fails, 
 
 ## The cost, and why it waits
 
-One more `lintText` per source file. `check-fences` already takes about 6.5s on the showcase (233 files: two config
-calculations and two full lints per file); this adds a third lint, on generated code, so roughly 9–10s there. Pages'
+One more `lintText` per source file. `check-fences` already takes about 5s on the showcase (233 files: two config
+calculations and two full lints per file; measured 2026-11-18); this adds a third lint, on generated code. Pages'
 console is larger. Do it if `check-fences` becomes the gate for an adversarial setting (a third party's app config),
 or if the cost can be cut by probing one file per directory and config (files whose effective config is identical
 share a probe).

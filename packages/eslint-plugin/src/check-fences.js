@@ -17,11 +17,13 @@
 //     or one only the second run reports (an inline `/* eslint sssb/…: off */`) is reported. An app's exceptions
 //     belong in lint-exceptions.mjs, named and reasoned. A directive over code that breaks no fence hides nothing yet.
 //
-// What it cannot see: a config that behaves differently when it detects which tool loaded it, or a parser that
-// borrows another's name (the config is code, and code can be written to deceive); the app's lint command's own
-// flags, except that any fence finding in the app's files is reported here whatever the command does with it; a
-// directory ESLint does not enter (a symlinked one, which is reported instead). Typed linting (parserOptions.project or projectService) cannot parse the
-// probe files, which are not in the app's TypeScript project, and is reported as such.
+// What it cannot see: config code written to deceive (it behaves differently when it detects which tool loaded it,
+// a parser borrows another's name, the preset's blocks are rebound to a look-alike plugin, a module the rules read is
+// rewritten; see .claude/future-tasks/check-fences-real-file-probes.md); the app's lint command's own flags, except
+// that any fence finding in the app's files is reported here whatever the command does with it.
+// Reported instead: a symlinked directory holding a file the preset lints (ESLint does not enter it). Typed linting
+// (parserOptions.project or projectService) cannot parse the probe files, which are not in the app's TypeScript
+// project, and is reported as such.
 import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, relative, resolve } from 'node:path'
@@ -187,7 +189,8 @@ export async function checkFences({ appDir: given, ESLint: passed }) {
             problems.push(`${at(dir)}: a symlinked directory, which ESLint does not enter, so no fence sees its files`)
         }
     }
-    // A config that does not load fails every lint the steps below would run; the problems above already say so.
+    // When the app's config does not load for some file, step 4's lintFiles (every file at once) would throw, and the
+    // problem above already fails the check; the probes are skipped rather than run against a config known to be broken.
     if (unloadable) return { problems, files: fenced.size, probes: 0 }
 
     // 4. what a fence finds in the app's own files, as ESLint itself reads them. Only the rules the preset enables for

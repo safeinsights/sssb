@@ -892,7 +892,8 @@ P6 put the fences in `packages/eslint-plugin` (`@sssb/eslint-plugin`, JavaScript
 fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are the details it left open.
 
 - **The preset is async**: `...(await sssb.configs.app({ root: import.meta.dirname }))`, because it imports the app's
-  `lint-exceptions.mjs`. Every block it returns carries `basePath: root`, and `root` must be absolute. This repo's
+  `lint-exceptions.mjs`. Every block it returns carries `basePath` (`root`, or its parent directory when `root` ends in `*`), and
+  `root` must be absolute. This repo's
   config passes `join(import.meta.dirname, 'apps/*')`: a last segment of `*` means every app in that directory.
 - **Every fence has a rule id, the internal ones too.** Part 4 asked it of the preset's fences; the framework/app
   fence's and core's declaration halves moved as well (`sssb/no-app-import`, `sssb/no-framework-import-in-core`), so
@@ -906,7 +907,8 @@ fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are t
   in the app, every `sssb/*` rule the preset alone enables at `error` must be enabled at `error` with the same options
   through the app's config (`calculateConfigForFile` on both). That is what sees a later block narrowing a fence to
   one directory, a later `ignores`, and a nested config file, none of which a probe at a fixed path sees. The probes,
-  each `lint-exceptions.mjs` entry and its sibling, and a scan for inline disables of a fence (or of every rule)
+  each `lint-exceptions.mjs` entry and its sibling, and every fence finding in the app's own files (at any
+  severity, suppressed by a directive or switched off by an inline config; ESLint reads the directives itself)
   complete it. The logic is the plugin's (`@sssb/eslint-plugin/check-fences`); the `sssb` command resolves it from
   the app's directory.
 - **The e2e import ban of part 2 is not in P6.** It needs `@sssb/kit/testing/e2e`, which P5 builds.

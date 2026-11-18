@@ -3201,9 +3201,10 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   `no-restricted-syntax` selectors are now `sssb/no-vendor-import`, `sssb/no-next-font-google`,
   `sssb/no-real-adapter-import`, `sssb/no-static-real-adapter-import`, `sssb/no-kit-real-adapter-import`,
   `sssb/no-dynamic-real-adapter-import`, `sssb/no-process-env`, `sssb/no-run-mode-env`, `sssb/no-literal-a11y-copy`,
-  and, SSSB-internal, `sssb/no-app-import` and `sssb/no-framework-import-in-core`. The declaration rules match exactly
-  as `no-restricted-imports` did (the `ignore` package with `allowRelativePaths` and `ignorecase`, a `regex` with
-  `iu`, the specifier trimmed, `import m = require()` included) and report each pattern's own message, so every
+  and, SSSB-internal, `sssb/no-app-import` and `sssb/no-framework-import-in-core`. The declaration rules match as
+  `no-restricted-imports` did (the `ignore` package with `allowRelativePaths` and `ignorecase`, a `regex` with `iu`,
+  the specifier trimmed, `import m = require()` included; they also trim that last form's specifier, which ESLint
+  does not, a tightening) and report each pattern's own message, so every
   probe in `tests/lint` kept its message fragment and only its rule id changed. `eslint.config.mjs` no longer sets
   either core rule. The alternative, keeping the core rules for SSSB's own repository and ids only in the preset,
   would have left two readings of each fence.
@@ -3213,7 +3214,8 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 - **`configs.app({ root })` is async**, because it imports the app's `lint-exceptions.mjs` (an ES module, re-read by
   mtime as before). A synchronous factory through `require()` of ESM was the alternative; it cannot re-read an edited
   file in a long-lived lint server. Adopters write `...(await sssb.configs.app({ root: import.meta.dirname }))`.
-- **`root` must be absolute, and every block carries `basePath: root`.** A relative root is refused: it would be
+- **`root` must be absolute, and every block carries `basePath`**: `root` itself, or its parent directory when
+  `root`'s last segment is `*`. A relative root is refused: it would be
   relative to wherever ESLint started (ADR-0014 part 4). A last segment of `*` means every app in that directory;
   this repo's config passes `join(import.meta.dirname, 'apps/*')`, the ADR's `apps/*` anchored.
 - **The internal rules' anchors are a `{ root }` option**, read when the rule runs: `sssb/public-surface` and
@@ -3222,7 +3224,8 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 - **Scope changes, each a tightening or a no-op.** The a11y-copy ban now covers the app's registry
   (`src/adapters/index.ts`), which lost it only because the fakes block ignored the registry for the dynamic real/
   ban. The `next/font/google` ban now covers `next.config.*` and `tests/contract/`, which the vendor block's carve-outs
-  had dropped with it. The static real-adapter pattern no longer applies to `packages/*/src` outside the app: a package
+  had dropped with it. The registry pattern (`appRealAdapterPattern`, now `sssb/no-real-adapter-import`) no longer applies to
+  `packages/*/src`: a package
   has no registry, and in `packages/kit/src` the merge trap had already replaced it with the framework fence's list.
   `SSSB_LINT_EXCEPTIONS_ROOT` is gone: the tests point `configs.app` at a scratch tree directly.
 - **An app adds its own vendors in its `package.json`** (`"sssb": { "vendors": [...] }`, beside P4's `sssb.port`). An
@@ -3322,16 +3325,17 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
   fence?" closed every plain-configuration case they found: a rule turned off or down, narrowed to a directory, an
   `ignores`, a nested config file, a processor or parser for one directory, an app's vendor list negated or swapped,
   inline directives in every form ESLint reads, an `eslint-suppressions.json` (the ESLint CLI applies it, the ESLint
-  class does not, so check-fences now reports every fence finding in the app's own files, at any severity), symlinked
+  class only with `applySuppressions: true`, which check-fences does not pass, so check-fences now reports every fence finding in the app's own files, at any severity), symlinked
   files and directories, and build-output names deeper in `src/`. What is left needs config code written to deceive,
   and each case keys on the probes' public file name: a parser that borrows the real one's `meta`, the preset's blocks
   rewritten to bind `sssb` to a look-alike plugin, a module the rules read rewritten. These are OUT OF SCOPE (manager,
   2026-11-18): a config that is written to deceive can as well delete the preset, and no lint-time check stops that.
   The plugin, its rules, its patterns and react's `create` are frozen or captured anyway, because that was cheap. The
   stronger check, a probe at every real file's path, is `.claude/future-tasks/check-fences-real-file-probes.md`:
-  rejected for now because it adds a third lint per file to a check that already takes about 6.5s on the showcase.
+  rejected for now because it adds a third lint per file to a check that already takes about 5s on the showcase (233
+  files; `sssb check-fences --app apps/showcase`, measured 2026-11-18).
   Also not covered, by nature: flags on the app's lint command (any fence finding is still reported by check-fences,
   whatever the command does with it), and a config that behaves differently when it detects which tool loaded it.
 - **Typed linting cannot pass check-fences yet.** Its probe files are virtual and outside the app's TypeScript
   project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
-  with that reason (a false red, not a hole). Pages lints untyped today.
+  with that reason (a false red, not a hole).

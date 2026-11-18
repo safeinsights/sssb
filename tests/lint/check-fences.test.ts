@@ -400,7 +400,8 @@ describe('the fences as the app lints them, whatever its config or its lint comm
         )
     })
 
-    // probes.js: an app that bans more than the preset is tightening, and check-fences has no business failing it.
+    // probes.js: an app that bans more than the preset is tightening, and check-fences leaves it alone (bar the file a
+    // lint-exceptions.mjs entry names, which must stay exempt).
     it('leaves an app alone that relaxes a tightening of its own', async () => {
         const after = "{ files: ['src/adapters/real/**'], rules: { 'sssb/no-process-env': 'error' } }"
         const source = `// eslint-disable-next-line sssb/no-process-env\n${READS_ENV}`

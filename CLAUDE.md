@@ -78,7 +78,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   with every `sssb/*` rule, internal ones included. **Every fence is a rule with an id of its own**, never a
   `no-restricted-imports` or `no-restricted-syntax` setting, which a later config block REPLACES for the files it
   matches (the merge trap). Both apps get exactly what an adopter's app gets, `configs.app({ root })` (the root
-  `eslint.config.mjs` passes `apps/*`); that file adds only the framework's blocks. A rule that needs this repo's
+  `eslint.config.mjs` passes `apps/*`); that file adds the framework's and the other packages' blocks,
+  plus repo-wide ones that reach the apps too (`sssb/public-surface`, `sssb/no-direct-mkdtemp` over every
+  `*.test.{ts,tsx}`). A rule that needs this repo's
   files takes `{ root }` and reads it when it runs, never when the plugin loads. A new app-side fence goes in the
   preset AND in `packages/eslint-plugin/src/probes.js`, which `sssb check-fences` lints through an app's composed
   config, with an effective-config comparison against the preset for every source file;

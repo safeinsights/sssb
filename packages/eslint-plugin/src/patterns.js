@@ -234,8 +234,8 @@ export const processEnvSelector = {
     message:
         "process.env is read ONLY inside an adapters directory — packages/kit/src/adapters, or an app's own " +
         'apps/<app>/src/adapters/real (CLAUDE.md) — deployment/service params come from the app ' +
-        'config/params.ts, run mode from @sssb/kit/adapters (isSimulated/isDemoMode). Secret readers are exempted ' +
-        'per-file in eslint.config.mjs.',
+        "config/params.ts, run mode from @sssb/kit/adapters (isSimulated/isDemoMode). SSSB's own two secret readers " +
+        "in packages/kit are exempted by file in SSSB's eslint.config.mjs.",
 }
 // An app's real adapter may read its OWN configuration from process.env, but never the run mode. That is SSSB's:
 // `appMode`/`isSimulated`/`isDemoMode` from @sssb/kit/adapters/index, whose import also runs the fail-closed

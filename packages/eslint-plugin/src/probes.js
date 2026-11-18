@@ -1,7 +1,8 @@
 // THE FENCE PROBES `sssb check-fences` lints through an app's real, composed config: one virtual file per zone, at a
 // path relative to the app, whose code every fence the preset applies there must report. Nothing is written to
-// disk. Positive probes only: an app that bans MORE than the preset (a vendor SDK in its own real adapters, say)
-// is tightening a fence, not loosening one, and check-fences has no business failing it.
+// disk. Positive probes, bar one: the file a lint-exceptions.mjs entry names must NOT report (check-fences.js, step
+// 3), since the app declared it exempt. Otherwise an app that bans MORE than the preset (a vendor SDK in its own real
+// adapters, say) is tightening a fence, not loosening one, and check-fences leaves it alone.
 //
 // SSSB's own repository runs the same probes through its root config (tests/lint/check-fences.test.ts), so a probe
 // that stops matching what the preset enforces fails there first.

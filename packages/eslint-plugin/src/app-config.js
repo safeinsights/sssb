@@ -5,8 +5,8 @@
 //     export default [...(await sssb.configs.app({ root: import.meta.dirname })), ...myOwnBlocks]
 //
 // `root` is the app's directory, as an ABSOLUTE path: a relative one would be relative to wherever ESLint was
-// started, so the preset refuses it. Every block it returns carries `basePath: root`, and its globs are relative to
-// the app (`src/**`), so the same preset works from the app's own config, from a workspace-root config that passes
+// started, so the preset refuses it. Every block it returns carries `basePath` (`root` itself, or its parent
+// directory when `root`'s last segment is `*`), and its globs are relative to the app (`src/**`), so the same preset works from the app's own config, from a workspace-root config that passes
 // `join(import.meta.dirname, 'apps/console')`, and whether ESLint runs from the app or from the workspace root. A
 // root whose last segment is `*` (`join(import.meta.dirname, 'apps/*')`) means every app in that directory; SSSB's
 // own repository lints both of its apps that way.
@@ -97,7 +97,7 @@ export async function loadAppLintExceptions(appDir) {
  * @param {string} appDir
  * @returns {string[]}
  */
-export function loadAppVendors(appDir) {
+function loadAppVendors(appDir) {
     const manifest = join(appDir, 'package.json')
     if (!existsSync(manifest)) return []
     const vendors = JSON.parse(readFileSync(manifest, 'utf8')).sssb?.vendors

@@ -3,7 +3,8 @@
 // eslint.config.mjs composes `@sssb/eslint-plugin`'s preset with blocks of its own, and nothing inside a rule can see
 // what a later block did to it. The probes and the comparison are the plugin's (`@sssb/eslint-plugin/check-fences`):
 // every source file's effective config against the preset's, probe files linted through the app's config, each
-// lint-exceptions.mjs entry (the named file exempt, a sibling not), and inline disables of a fence. This command
+// lint-exceptions.mjs entry (the named file exempt, a sibling not), and every fence finding in the app's own files,
+// at any severity, suppressed by a directive or switched off by an inline config (ESLint reads the directives). This command
 // resolves the plugin, and through it ESLint, from the app's own directory, as every tool here resolves what the app
 // installed; @sssb/tools depends on neither.
 import { existsSync } from 'node:fs'

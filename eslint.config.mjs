@@ -10,8 +10,9 @@ import typescriptEslint from 'typescript-eslint'
 
 // SSSB's OWN LINT CONFIG. The fences are rules of @sssb/eslint-plugin (packages/eslint-plugin, ADR-0014 part 4 and
 // step P6), and this file only says where each holds:
-//  - BOTH APPS get exactly what an adopter's app gets, `sssb.configs.app({ root })`, with `apps/*` as the root, so
-//    every app-side fence is proved against both apps before an adopter sees it. Each app's own exceptions are
+//  - BOTH APPS get everything an adopter's app gets, `sssb.configs.app({ root })`, with `apps/*` as the root, so
+//    every app-side fence is proved against both apps before an adopter sees it, plus this file's repo-wide blocks
+//    (the base config, `sssb/public-surface`, `sssb/no-direct-mkdtemp` over every test). Each app's own exceptions are
 //    `apps/<app>/lint-exceptions.mjs`, which the preset reads.
 //  - THE FRAMEWORK (packages/kit, its src/ and its test fixture) and the repo's other packages get the same fences
 //    where they apply to them, plus the SSSB-internal ones: the framework/app fence, the package's edge, core's
