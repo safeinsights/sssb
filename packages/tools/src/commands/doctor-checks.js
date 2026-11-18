@@ -42,11 +42,14 @@ export function packageDirFrom(start, name) {
  *   - `packages` as a block sequence at any one indentation, column 0 included, of plain or quoted scalars, or as a
  *     flow sequence (`[a, 'b']`) on one line or over several (at any column, as YAML allows); comments and blank lines
  *     anywhere;
- *   - `dedupePeerDependents` as an unquoted true or false (anything else, a quoted 'false' too, is not the boolean).
+ *   - `dedupePeerDependents` as an unquoted true or false, on the key's line or alone on the indented line below it
+ *     (anything else, a quoted 'false' too, is not the boolean);
+ *   - a flow collection (any key's) opens only where a value starts with `[` or `{`; a bracket inside a plain scalar
+ *     (`nodeOptions: --foo[bar`) is text.
  *
  * What it throws on, among others: anchors, aliases and tags (an unquoted `!glob` is a tag, an unquoted `*glob` an
- * alias), nested or multi-line items, a scalar where the list belongs, a duplicate key, a top-level flow mapping, an
- * unclosed flow sequence, and a second document.
+ * alias), nested or multi-line items, a scalar where the list belongs, a duplicate key, a top-level flow mapping, a
+ * flow collection of any key still open at the end of the file, and a second document.
  * @param {string} text
  * @returns {{ packages: string[], dedupePeerDependents: boolean | undefined }}
  */
@@ -99,9 +102,14 @@ export function parseWorkspaceYaml(text) {
         const name =
             key[1] ?? (key[2] === undefined ? unescapeDouble(key[3] ?? '', n, fail) : key[2].replaceAll("''", "'"))
         if (entries.has(name)) fail(n, `a second \`${name}\` key`)
-        current = { line: n, value: key[4] ?? '', body: [], depth: flowDepth(key[4] ?? '') }
+        // A flow collection opens only where the value STARTS with `[` or `{`; in a plain scalar (`--foo[bar`) a
+        // bracket is text.
+        const value = key[4] ?? ''
+        current = { line: n, value, body: [], depth: /^[[{]/.test(value) ? flowDepth(value) : 0 }
         entries.set(name, current)
     }
+    if (current !== null && current.depth > 0)
+        fail(current.line, 'a flow collection (`[` or `{`) never closed before the end of the file')
 
     /** @param {string} raw @param {number} line @param {boolean} inFlow */
     const scalar = (raw, line, inFlow) => {
@@ -140,8 +148,17 @@ export function parseWorkspaceYaml(text) {
         else fail(listed.line, `\`packages: ${value}\` (a list belongs there)`)
     }
 
+    // The value on the key's line, or alone on the one indented line below it (`dedupePeerDependents:\n  false`); more
+    // lines make a multi-line scalar, which is no boolean.
     const dedupe = entries.get('dedupePeerDependents')
-    const flag = dedupe && dedupe.body.length === 0 ? stripComment(dedupe.value, dedupe.line, fail) : ''
+    const inline = dedupe ? stripComment(dedupe.value, dedupe.line, fail) : ''
+    const below = dedupe?.body.length === 1 && inline === '' ? dedupe.body[0] : undefined
+    const flag =
+        dedupe && dedupe.body.length === 0
+            ? inline
+            : below && !/^\s*-([ \t]|$)/.test(below.text)
+              ? stripComment(below.text, below.line, fail)
+              : ''
     const dedupePeerDependents = /^(true|True|TRUE)$/.test(flag)
         ? true
         : /^(false|False|FALSE)$/.test(flag)

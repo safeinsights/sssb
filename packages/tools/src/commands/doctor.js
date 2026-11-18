@@ -14,14 +14,16 @@
 //     seam goes through aliases instead, every tsconfig `paths` entry and every Vitest alias that would resolve the
 //     seam for an app must send it into that app's own);
 //   - an @sssb/* package an app resolves at another version than its @sssb/kit;
-//   - a check of the conformance suite that a Vitest config which runs the app's tests does not list: every config at
-//     the workspace root or in the app (`vitest*.config.*`, `vite.config.*`) that runs any of the app's `src/` test
-//     files must list every unit check from the app's own `src/sssb.conformance.test.ts`, every config that runs its
-//     `tests/contract/` files every contract check from them, and some config must run each, unless the app opted out
-//     of the check by name in that same file;
+//   - a check of the conformance suite that would not run, unless the app opted out of it by name in its own suite
+//     file: the MAIN unit run (the config a bare `vitest` would load for the app: the root's when it runs the app's
+//     `src/` tests, else the one Vitest finds walking up from the app, else Vitest's defaults there) must list every
+//     unit check from the app's own `src/sssb.conformance.test.ts`; some config that runs its `tests/contract/` files
+//     must list every contract check from them;
 //   - an app guide copy that is stale against the guide the kit ships (`sssb guide --check`), once the kit ships one.
 //
-// It REPORTS, without failing: each opt-out with its reason; the flags and file filters the root's and the apps'
+// It REPORTS, without failing: every other Vitest config (`vitest*.config.*` at the root or in an app) that runs some of
+// an app's `src/` tests but not its suite, or its `tests/contract/` files without listing every contract check, or that
+// doctor cannot list (any of them CI might run instead); each opt-out with its reason; the flags and file filters the root's and the apps'
 // package.json scripts pass to vitest (doctor proves what each configuration would run, never what a CI step's own
 // command line adds); which script runs each app's contract config (doctor lists the contract checks, it never runs
 // them); `dedupePeerDependents: false` missing from pnpm-workspace.yaml (advice); framework cutover rows the
@@ -51,11 +53,11 @@ import {
 } from './doctor-checks.js'
 import {
     projectsRunning,
+    runKey,
     seamAliases,
-    vitestConfigsFor,
     vitestDefaultConfig,
-    vitestDefaults,
     vitestList,
+    vitestRunsFor,
 } from './doctor-vitest.js'
 
 const SEAM = '@sssb/app-config'
@@ -67,7 +69,18 @@ const RUNNERS = /** @type {const} */ (['unit', 'contract'])
 /** @typedef {import('./doctor-checks.js').SeamRoute} SeamRoute */
 /** @typedef {Map<string, ReturnType<typeof vitestList>>} VitestCache each `vitest list`, by cwd, config and selection */
 /** @typedef {{ run: VitestRun, projects: string[] }} Selected a Vitest run, and the projects in it to list (none: all) */
-/** @typedef {{ unit: Selected[], contract: Selected[], errors: string[], nested: string[] }} Plan */
+/**
+ * @typedef {object} Plan which runs hold an app to which checks (planFor)
+ * @property {Selected | null} main the MAIN unit run: the first run a bare `vitest` would make for the app that runs
+ *   any of its `src/` test files
+ * @property {VitestRun[]} tried the bare runs tried for it, in order
+ * @property {string[]} mainErrors a bare run doctor could not list before it found the main one
+ * @property {{ run: VitestRun, files: number }[]} partial other configs that run some of the app's `src/` test files
+ *   and not its `src/sssb.conformance.test.ts`
+ * @property {Selected[]} contract every config that runs any of the app's `tests/contract/` files
+ * @property {{ run: VitestRun, error: string }[]} unlisted other configs doctor could not list
+ * @property {string[]} nested the workspace packages inside the app, whose files are not the app's
+ */
 
 /** @param {string[]} args */
 export async function run(args) {
@@ -251,8 +264,9 @@ function importers(root, workspace) {
 }
 
 /**
- * In-repo mode's check, over every app of the workspace: every tsconfig `paths` entry and every alias of every Vitest
- * project that runs the app's files (any config, either runner) that would resolve the seam sends it into the app's own.
+ * In-repo mode's check, over every app of the workspace: every tsconfig `paths` entry, and every alias of every Vitest
+ * project that holds the app to checks (its main unit run's, and every contract config's), that would resolve the seam
+ * sends it into the app's own.
  * @param {string} root
  * @param {Workspace} workspace
  * @param {Map<string, Plan>} plans
@@ -274,7 +288,7 @@ async function inRepoAliases(root, workspace, plans) {
         /** @type {Parameters<typeof aliasProblems>[0][number]['projects']} */
         const projects = []
         const seen = new Set()
-        for (const { run, projects: names } of [...plan.unit, ...plan.contract]) {
+        for (const { run, projects: names } of [...(plan.main ? [plan.main] : []), ...plan.contract]) {
             const key = `${run.cwd}\0${run.config ?? ''}\0${names.join('\0')}`
             if (seen.has(key)) continue
             seen.add(key)
@@ -377,7 +391,20 @@ function versions(root, target) {
  * @param {VitestRun} run
  */
 const configName = (root, run) =>
-    run.config ? path.relative(root, run.config) : `Vitest's defaults from ${relativeTo(root)(run.cwd)}`
+    run.config
+        ? path.relative(root, run.config) +
+          (path.dirname(run.config) === run.cwd ? '' : ` from ${relativeTo(root)(run.cwd)}`)
+        : `Vitest's defaults from ${relativeTo(root)(run.cwd)}`
+
+/**
+ * How a `vitest list` is named in doctor's output: where it runs, the config, the projects selected.
+ * @param {string} root
+ * @param {Selected} selected
+ */
+const listName = (root, { run, projects }) =>
+    `vitest list from ${run.cwd === root ? 'the workspace root' : path.relative(root, run.cwd)}` +
+    (run.config ? ` --config ${path.relative(run.cwd, run.config)}` : ", Vitest's defaults") +
+    (projects.length ? `, project ${projects.join(', ')}` : '')
 
 /**
  * A `vitest list`, once per run and selection.
@@ -395,11 +422,19 @@ function listOnce(run, options, cache) {
 }
 
 /**
- * WHICH RUNS HOLD AN APP TO WHICH CHECKS: every candidate config (vitestConfigsFor), asked with `vitest list
- * --filesOnly` what it would run; one that runs any of the app's `src/` test files must list the unit checks, one that
- * runs any of its `tests/contract/` files the contract checks, each with the projects that run them selected. Vitest's
- * defaults from the app count for the unit runner when no config runs its `src/` files and a bare `vitest` there
- * would load none. A config Vitest cannot list is an error: doctor cannot tell what it would run.
+ * WHICH RUNS HOLD AN APP TO WHICH CHECKS, found with `vitest list --filesOnly` alone (it loads each config and globs
+ * its files; it runs no globalSetup and collects no test file):
+ *
+ *   - the MAIN unit run: the first of the runs a bare `vitest` would make for the app (vitestRunsFor's `bare`) that
+ *     runs any of its `src/` test files, with the projects that run them selected. It must list every unit check. A
+ *     bare run doctor cannot list stops the search (doctor cannot tell whether that one is the main run);
+ *   - every OTHER config (root's and app's) that runs some of its `src/` test files but not its
+ *     `src/sssb.conformance.test.ts`: reported, since CI might run it instead of the main one;
+ *   - every config (the main run's too) that runs any of its `tests/contract/` files: one of them must list every
+ *     contract check (Vitest's defaults are no contract config);
+ *   - every other config doctor cannot list: reported.
+ *
+ * Only the main run and the contract configs are then listed in full (conformance), which loads their globalSetup.
  * @param {string} root
  * @param {string} app
  * @param {string[]} nested the workspace packages inside the app, whose files are not the app's
@@ -408,32 +443,61 @@ function listOnce(run, options, cache) {
  */
 function planFor(root, app, nested, cache) {
     /** @type {Plan} */
-    const plan = { unit: [], contract: [], errors: [], nested }
-    /** @param {VitestRun} run @param {readonly ('unit' | 'contract')[]} runners */
-    const consider = (run, runners) => {
-        const files = listOnce(run, { filesOnly: true }, cache)
+    const plan = { main: null, tried: [], mainErrors: [], partial: [], contract: [], unlisted: [], nested }
+    const { bare, configs } = vitestRunsFor(root, app)
+    const filesOf = (/** @type {VitestRun} */ run) => listOnce(run, { filesOnly: true }, cache)
+    /** @param {import('./doctor-vitest.js').ListedFile[]} listed @param {'unit' | 'contract'} area */
+    const inArea = (listed, area) => listed.filter((entry) => areaOf(entry.file, app, nested) === area)
+    /** @param {import('./doctor-vitest.js').ListedFile[]} listed */
+    const select = (listed) => {
+        const projects = projectsRunning(listed, app)
+        return projects.includes('') ? [] : projects
+    }
+
+    for (const run of bare) {
+        plan.tried.push(run)
+        const files = filesOf(run)
         if (!files.ok) {
-            plan.errors.push(`${configName(root, run)}: ${files.error}`)
-            return
+            plan.mainErrors.push(`${configName(root, run)}: ${files.error}`)
+            break
         }
-        for (const runner of runners) {
-            const projects = projectsRunning(
-                files.listed.filter((entry) => areaOf(entry.file, app, nested) === runner),
-                app,
-            )
-            if (projects.length > 0) plan[runner].push({ run, projects: projects.includes('') ? [] : projects })
+        const unit = inArea(files.listed, 'unit')
+        if (unit.length > 0) {
+            plan.main = { run, projects: select(unit) }
+            break
         }
     }
-    for (const run of vitestConfigsFor(root, app)) consider(run, RUNNERS)
-    const defaults = vitestDefaults(app)
-    if (plan.unit.length === 0 && defaults !== null) consider(defaults, ['unit'])
+
+    const main = plan.main?.run
+    const tried = new Set(plan.tried.map(runKey))
+    const suite = path.join(app, 'src', 'sssb.conformance.test.ts')
+    const runs = [...configs, ...(main?.config && !configs.some((r) => runKey(r) === runKey(main)) ? [main] : [])]
+    for (const run of runs) {
+        const isMain = main !== undefined && runKey(run) === runKey(main)
+        const files = filesOf(run)
+        if (!files.ok) {
+            // A bare run tried for the main one already failed the unit check; any other is reported.
+            if (!tried.has(runKey(run))) plan.unlisted.push({ run, error: files.error })
+            continue
+        }
+        const unit = inArea(files.listed, 'unit')
+        if (!isMain && unit.length > 0 && !unit.some((entry) => path.resolve(entry.file) === suite))
+            plan.partial.push({ run, files: new Set(unit.map((entry) => path.resolve(entry.file))).size })
+        const contract = inArea(files.listed, 'contract')
+        if (contract.length > 0) plan.contract.push({ run, projects: select(contract) })
+    }
     return plan
 }
 
 /**
- * THE CONFORMANCE SUITE WOULD RUN: every run that holds the app to a runner's checks (planFor) must list every test of
- * every check of the runner, from the app's own suite files (ownTests), less the checks the app opted out of by name
- * there; and some run must hold it. Each opt-out is reported with its reason.
+ * THE CONFORMANCE SUITE WOULD RUN (the unit runner): the main unit run (planFor) must list every test of every unit
+ * check, from the app's own `src/sssb.conformance.test.ts` (ownTests), less the checks the app opted out of by name
+ * there; no main run, or one doctor cannot list, fails. Every other config that runs some of the app's `src/` tests but
+ * not the suite, and every other config doctor cannot list, is reported: doctor cannot see which config CI runs.
+ *
+ * THE CONTRACT RUNNER'S CHECKS WOULD RUN: some config that runs the app's `tests/contract/` files must list every
+ * contract check; when one does, each other that runs them and does not is reported, and when none does, each fails.
+ * Each opt-out is reported with its reason.
  * @param {string} root
  * @param {string} app
  * @param {'unit' | 'contract'} runner
@@ -453,45 +517,95 @@ function conformance(root, app, runner, plans, cache) {
     }
     /** @type {Result[]} */
     const results = []
-    if (runner === 'unit' && plan.errors.length > 0)
-        results.push({
-            status: 'FAIL',
-            title: `${rel(app)}: a Vitest config doctor cannot list, so it cannot tell whether that config runs the app's tests`,
-            lines: plan.errors,
-        })
-    if (plan[runner].length === 0) {
-        const area = runner === 'unit' ? 'src/' : 'tests/contract/'
+    /** @type {Map<string, string>} */
+    const opted = new Map()
+    /** @param {Selected} selected */
+    const check = (selected) => {
+        const result = listOnce(selected.run, { projects: selected.projects }, cache)
+        const listed = result.ok ? ownTests(result.listed, app, runner, plan.nested) : []
+        const outcome = missingTests(listed, registry, runner)
+        if (result.ok) for (const { id, reason } of outcome.optedOut) opted.set(id, reason)
+        return {
+            ...outcome,
+            selected,
+            where: listName(root, selected),
+            error: result.ok ? null : result.error,
+            passes: result.ok && outcome.missing.length === 0,
+        }
+    }
+    /** @param {ReturnType<typeof check>} c @returns {Result} */
+    const failed = (c) => ({
+        status: 'FAIL',
+        title: `${label}: ${c.missing.length} of its ${c.expected} tests would not run (${c.where})`,
+        lines: [...(c.error === null ? [] : [`${c.where}: ${c.error}`]), ...c.missing.map((n) => `not listed: ${n}`)],
+    })
+    /** @param {ReturnType<typeof check>} c */
+    const passed = (c) =>
+        /** @type {Result} */ ({ status: 'ok', title: `${label}: all ${c.expected} tests listed (${c.where})` })
+
+    if (runner === 'unit') {
+        const mainName = plan.main ? configName(root, plan.main.run) : 'the config a bare `vitest` loads'
+        if (plan.mainErrors.length > 0)
+            results.push({
+                status: 'FAIL',
+                title: `${label}: doctor cannot list the config a bare \`vitest\` would load for ${rel(app)}, so it cannot tell whether that config runs its tests`,
+                lines: plan.mainErrors,
+            })
+        else if (plan.main === null)
+            results.push({
+                status: 'FAIL',
+                title:
+                    `${label}: no config a bare \`vitest\` would load for ${rel(app)} runs a test file of its src/ ` +
+                    `(tried ${plan.tried.map((run) => configName(root, run)).join(', ')}), so nothing holds it to the unit checks`,
+            })
+        else {
+            const c = check(plan.main)
+            results.push(c.passes ? passed(c) : failed(c))
+        }
+        for (const { run, files } of plan.partial)
+            results.push({
+                status: 'report',
+                title:
+                    `${rel(app)}: ${configName(root, run)} runs ${files} of its src/ test files but not ` +
+                    `src/sssb.conformance.test.ts: if CI runs it instead of ${mainName}, the conformance checks do not run`,
+            })
+        for (const { run, error } of plan.unlisted)
+            results.push({
+                status: 'report',
+                title:
+                    `${rel(app)}: doctor cannot list ${configName(root, run)}, so it cannot tell what that config runs; ` +
+                    `it is not the config a bare \`vitest\` loads, so this is no failure, but if CI runs it, doctor has not checked it`,
+                lines: [error],
+            })
+    } else if (plan.contract.length === 0) {
         results.push({
             status: 'FAIL',
             title:
-                `${label}: no Vitest config at the workspace root or in ${rel(app)} runs a test file of its ${area}, ` +
-                `so nothing runs its ${runner} checks`,
+                `${label}: no Vitest config at the workspace root or in ${rel(app)} runs a test file of its ` +
+                'tests/contract/, so nothing runs its contract checks',
         })
-        return results
-    }
-    /** @type {Map<string, string>} */
-    const opted = new Map()
-    for (const { run, projects } of plan[runner]) {
-        const where =
-            `vitest list from ${run.cwd === root ? 'the workspace root' : path.relative(root, run.cwd)}` +
-            (run.config ? ` --config ${path.basename(run.config)}` : '') +
-            (projects.length ? `, project ${projects.join(', ')}` : '')
-        const result = listOnce(run, { projects }, cache)
-        const listed = result.ok ? ownTests(result.listed, app, runner, plan.nested) : []
-        const { missing, optedOut, expected } = missingTests(listed, registry, runner)
-        for (const { id, reason } of optedOut) opted.set(id, reason)
-        results.push(
-            !result.ok || missing.length > 0
-                ? {
-                      status: 'FAIL',
-                      title: `${label}: ${missing.length} of its ${expected} tests would not run (${where})`,
-                      lines: [
-                          ...(result.ok ? [] : [`${where}: ${result.error}`]),
-                          ...missing.map((n) => `not listed: ${n}`),
-                      ],
-                  }
-                : { status: 'ok', title: `${label}: all ${expected} tests listed (${where})` },
-        )
+    } else {
+        const checked = plan.contract.map(check)
+        const passing = checked.filter((c) => c.passes)
+        if (passing.length === 0) results.push(...checked.map(failed))
+        else {
+            const names = passing.map((c) => configName(root, c.selected.run)).join(', ')
+            for (const c of checked)
+                results.push(
+                    c.passes
+                        ? passed(c)
+                        : {
+                              status: 'report',
+                              title:
+                                  `${rel(app)}: ${configName(root, c.selected.run)} runs its tests/contract/ files but ` +
+                                  (c.error === null
+                                      ? `${c.missing.length} of its ${c.expected} contract tests would not run: ` +
+                                        `if CI runs it instead of ${names}, those checks do not run`
+                                      : `doctor cannot list its tests (${c.error}): if CI runs it instead of ` +
+                                        `${names}, doctor has not checked that the contract checks run`),
+                          },
+                )
+        }
     }
     for (const [id, reason] of opted)
         results.push({ status: 'report', title: `${rel(app)}: opted out of ${id}: ${reason || '(no reason given)'}` })

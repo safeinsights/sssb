@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
@@ -21,12 +21,7 @@ import {
     vitestInvocations,
     workspacePackages,
 } from '../../packages/tools/src/commands/doctor-checks.js'
-import {
-    projectsRunning,
-    vitestConfigsFor,
-    vitestDefaultConfig,
-    vitestDefaults,
-} from '../../packages/tools/src/commands/doctor-vitest.js'
+import { projectsRunning, vitestDefaultConfig, vitestRunsFor } from '../../packages/tools/src/commands/doctor-vitest.js'
 import { kitDirOf } from '../../packages/tools/src/kit.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
@@ -103,6 +98,24 @@ describe('parseWorkspaceYaml', () => {
         ['an unclosed flow sequence', 'packages: [apps/*,\n'],
     ])('fails loudly on what it does not understand: %s', (_, yaml) => {
         expect(() => parseWorkspaceYaml(yaml)).toThrow(/pnpm-workspace\.yaml line \d+/)
+    })
+
+    it('opens a flow collection only where a value starts with `[` or `{`, and throws on one never closed', () => {
+        // A bracket inside another key's plain scalar is text, so the packages after it are still read.
+        expect(parseWorkspaceYaml('nodeOptions: --foo[bar\npackages:\n  - apps/*\n').packages).toEqual(['apps/*'])
+        expect(parseWorkspaceYaml('scriptShell: x{y\npackages:\n  - apps/*\n').packages).toEqual(['apps/*'])
+        expect(parseWorkspaceYaml("publicHoistPattern: [\n  '*eslint*',\n]\npackages:\n  - apps/*\n").packages).toEqual(
+            ['apps/*'],
+        )
+        expect(() => parseWorkspaceYaml("packages:\n  - apps/*\noverrides: { a: '1',\n  b: '2'\n")).toThrow(
+            /pnpm-workspace\.yaml line 3: a flow collection/,
+        )
+    })
+
+    it('reads `dedupePeerDependents` from the next indented line too', () => {
+        expect(parseWorkspaceYaml('packages: [a]\ndedupePeerDependents:\n  false\n').dedupePeerDependents).toBe(false)
+        expect(parseWorkspaceYaml('dedupePeerDependents:\n  # why\n  true # yes\n').dedupePeerDependents).toBe(true)
+        expect(parseWorkspaceYaml('dedupePeerDependents:\n  fal\n  se\n').dedupePeerDependents).toBeUndefined()
     })
 })
 
@@ -219,26 +232,38 @@ describe('where doctor runs Vitest, and which projects it selects', () => {
     const app = pkg(path.join(ws, 'apps', 'a'), { name: 'a' })
     write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n')
 
-    it('falls back to Vitest defaults from the app only when a bare `vitest` there would load no config', () => {
-        expect(vitestConfigsFor(ws, app)).toEqual([])
-        expect(vitestDefaults(app)).toEqual({ cwd: app, config: null })
+    it("tries Vitest's defaults from the app for the main run when a bare `vitest` there would load no config", () => {
+        expect(vitestRunsFor(ws, app)).toEqual({ bare: [{ cwd: app, config: null }], configs: [] })
     })
 
-    it('enumerates every vitest*.config.* and vite.config.* at the root and in the app, and no other Vite config', () => {
+    it('tries the bare runs from the root, then from the app; lists every config file, vite.config.* only where Vitest loads it', () => {
         for (const name of ['vitest.config.ts', 'vitest.ci.config.ts', 'vite.config.mjs', 'vite.demo.config.ts'])
             write(path.join(ws, name), 'export default {}\n')
         write(path.join(app, 'vitest.contract.config.mts'), 'export default {}\n')
         write(path.join(app, 'vitest-e2e.config.js'), 'export default {}\n')
-        expect(vitestConfigsFor(ws, app)).toEqual([
-            { cwd: ws, config: path.join(ws, 'vite.config.mjs') },
-            { cwd: ws, config: path.join(ws, 'vitest.ci.config.ts') },
-            { cwd: ws, config: path.join(ws, 'vitest.config.ts') },
-            { cwd: app, config: path.join(app, 'vitest-e2e.config.js') },
-            { cwd: app, config: path.join(app, 'vitest.contract.config.mts') },
-        ])
-        // A bare `vitest` in the app walks up to the root's vitest.config.ts (before vite.config.*), so no defaults run.
+        write(path.join(app, 'vite.config.ts'), 'export default {}\n')
+        // The root's vite.config.mjs sits beside its vitest.config.ts, so Vitest never loads it; the app's vite.config.ts
+        // has no vitest.config.* beside it, so a bare `vitest` in the app loads it.
+        expect(vitestRunsFor(ws, app)).toEqual({
+            bare: [
+                { cwd: ws, config: path.join(ws, 'vitest.config.ts') },
+                { cwd: app, config: path.join(app, 'vite.config.ts') },
+            ],
+            configs: [
+                { cwd: ws, config: path.join(ws, 'vitest.config.ts') },
+                { cwd: ws, config: path.join(ws, 'vitest.ci.config.ts') },
+                { cwd: app, config: path.join(app, 'vite.config.ts') },
+                { cwd: app, config: path.join(app, 'vitest-e2e.config.js') },
+                { cwd: app, config: path.join(app, 'vitest.contract.config.mts') },
+            ],
+        })
+        // Without its own, a bare `vitest` in the app walks up to the root's vitest.config.ts (before vite.config.*).
+        rmSync(path.join(app, 'vite.config.ts'))
         expect(vitestDefaultConfig(app)).toBe(path.join(ws, 'vitest.config.ts'))
-        expect(vitestDefaults(app)).toBeNull()
+        expect(vitestRunsFor(ws, app).bare).toEqual([
+            { cwd: ws, config: path.join(ws, 'vitest.config.ts') },
+            { cwd: app, config: path.join(ws, 'vitest.config.ts') },
+        ])
     })
 
     it('selects the projects that run a file inside the app, and no project that only shares a prefix', () => {
@@ -661,18 +686,158 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
     )
 
     it(
-        "fails a config that runs the app's tests but excludes the suite (vitest.ci.config.ts), beside one that runs it",
+        "reports, and does not fail, a config beside the main one that runs the app's src/ tests but not the suite (vitest.ci.config.ts); fails when no config a bare `vitest` loads runs them",
         async () => {
             const ws = doctorWorkspace('sssb-doctor-e2e-ci-config-', 'packed', ['web'])
+            const ci = path.join(ws, 'vitest.ci.config.ts')
             write(
-                path.join(ws, 'vitest.ci.config.ts'),
+                ci,
                 "import { defineConfig } from 'vitest/config'\nexport default defineConfig({ test: { include: ['apps/*/src/**/*.test.ts'], exclude: ['**/node_modules/**', '**/sssb.*'] } })\n",
+            )
+            const report =
+                /^report +apps\/web: vitest\.ci\.config\.ts runs 1 of its src\/ test files but not src\/sssb\.conformance\.test\.ts: if CI runs it instead of vitest\.config\.mjs, the conformance checks do not run$/m
+            const beside = await doctor(ws, 'apps/web')
+            expect(beside.out).toMatch(report)
+            expect(beside.out).toMatch(/^ok +apps\/web: the conformance suite would run: all 3 tests listed/m)
+            expect(beside.code, beside.out).toBe(0)
+
+            // The root has only the ci config: a bare `vitest` from the app then loads no config at all (Vitest walks up
+            // and finds none), so Vitest's defaults there are the main run; they list the suite, and the ci config is
+            // still a report.
+            rmSync(path.join(ws, 'vitest.config.mjs'))
+            const alone = await doctor(ws, 'apps/web')
+            expect(alone.out).toMatch(
+                /^ok +apps\/web: the conformance suite would run: all 3 tests listed \(vitest list from apps\/web, Vitest's defaults\)$/m,
+            )
+            expect(alone.out).toMatch(/^report +apps\/web: vitest\.ci\.config\.ts runs 1 of its src\/ test files/m)
+            expect(alone.code, alone.out).toBe(0)
+
+            // A root vitest.config.* that runs only packages/: the config a bare `vitest` loads (from the root, and from
+            // the app, by walking up) runs none of the app's src/ tests, so nothing holds it to the suite.
+            write(
+                path.join(ws, 'vitest.config.mjs'),
+                "export default { test: { include: ['packages/**/*.test.ts'] } }\n",
+            )
+            const none = await doctor(ws, 'apps/web')
+            expect(none.out).toMatch(
+                /^FAIL +apps\/web: the conformance suite would run: no config a bare `vitest` would load for apps\/web runs a test file of its src\/ \(tried vitest\.config\.mjs, vitest\.config\.mjs from apps\/web\)/m,
+            )
+            expect(none.out).toMatch(/^report +apps\/web: vitest\.ci\.config\.ts runs 1 of its src\/ test files/m)
+            expect(none.code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        "reports, never runs in full, other configs that run some of the app's src/ tests (browser, integration with a globalSetup)",
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-other-configs-', 'packed', ['web'])
+            const web = path.join(ws, 'apps', 'web')
+            write(
+                path.join(web, 'src', 'button.browser.test.ts'),
+                "import { it } from 'vitest'\nit('renders', () => {})\n",
+            )
+            write(
+                path.join(web, 'vitest.browser.config.ts'),
+                "export default { test: { include: ['src/**/*.browser.test.ts'] } }\n",
+            )
+            write(path.join(web, 'src', 'db.int.test.ts'), "import { it } from 'vitest'\nit('integrates', () => {})\n")
+            write(
+                path.join(web, 'setup.ts'),
+                "import { writeFileSync } from 'node:fs'\nexport default function () { writeFileSync(new URL('./GLOBAL_SETUP_RAN', import.meta.url), 'ran') }\n",
+            )
+            write(
+                path.join(web, 'vitest.integration.config.ts'),
+                "export default { test: { include: ['src/**/*.int.test.ts'], globalSetup: ['./setup.ts'] } }\n",
             )
             const { code, out } = await doctor(ws, 'apps/web')
             expect(out).toMatch(
-                /^FAIL +apps\/web: the conformance suite would run: 3 of its 3 tests would not run \(.*vitest\.ci\.config\.ts/m,
+                /^report +apps\/web: apps\/web\/vitest\.browser\.config\.ts runs 1 of its src\/ test files but not src\/sssb\.conformance\.test\.ts: if CI runs it instead of vitest\.config\.mjs, the conformance checks do not run$/m,
             )
-            expect(code).toBe(1)
+            expect(out).toMatch(
+                /^report +apps\/web: apps\/web\/vitest\.integration\.config\.ts runs 1 of its src\/ test files/m,
+            )
+            expect(code, out).toBe(0)
+            // Discovery is `vitest list --filesOnly`, which loads no globalSetup; only the main and contract configs are
+            // listed in full.
+            expect(existsSync(path.join(web, 'GLOBAL_SETUP_RAN'))).toBe(false)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'reports a config other than the main one that it cannot list, with the error line, not the banner',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-unlistable-', 'packed', ['web'])
+            write(
+                path.join(ws, 'apps', 'web', 'vitest.e2e.config.ts'),
+                "if (!process.env.E2E_BASE_URL) throw new Error('set E2E_BASE_URL')\nexport default { test: { include: ['tests/e2e/**/*.test.ts'] } }\n",
+            )
+            const { code, out } = await doctor(ws, 'apps/web')
+            expect(out).toMatch(
+                /^report +apps\/web: doctor cannot list apps\/web\/vitest\.e2e\.config\.ts, so it cannot tell what that config runs/m,
+            )
+            expect(out).toMatch(/vitest list exited 1: Error: set E2E_BASE_URL/)
+            expect(out).not.toMatch(/Collect Error/)
+            expect(code, out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'holds no build-only vite.config.* beside a vitest.config.* to the suite (Vitest never loads it)',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-vite-build-', 'packed', ['web'])
+            rmSync(path.join(ws, 'vitest.config.mjs'))
+            const web = path.join(ws, 'apps', 'web')
+            // The app's tests need an alias only its vitest.config.ts sets; the vite.config.ts beside it builds.
+            write(path.join(web, 'src', 'lib.ts'), 'export const x = 1\n')
+            write(
+                path.join(web, 'src', 'thing.test.ts'),
+                "import { it } from 'vitest'\nimport { x } from '@/lib'\nit('an app test', () => { void x })\n",
+            )
+            write(
+                path.join(web, 'vitest.config.ts'),
+                "import path from 'node:path'\nexport default { resolve: { alias: { '@': path.join(import.meta.dirname, 'src') } }, test: { include: ['src/**/*.test.ts'] } }\n",
+            )
+            write(path.join(web, 'vite.config.ts'), "export default { build: { outDir: 'dist' } }\n")
+            const { code, out } = await doctor(ws, 'apps/web')
+            expect(out).toMatch(
+                /^ok +apps\/web: the conformance suite would run: all 3 tests listed \(.*vitest\.config\.ts/m,
+            )
+            expect(out).not.toMatch(/vite\.config\.ts/)
+            expect(code, out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'passes the contract checks when one config that runs its tests/contract/ files lists them all, and reports the others',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-contract-others-', 'packed', ['web'])
+            write(
+                path.join(ws, 'apps', 'web', 'tests', 'contract', 'smoke.test.ts'),
+                "import { it } from 'vitest'\nit('smoke', () => {})\n",
+            )
+            write(
+                path.join(ws, 'vitest.smoke.config.mjs'),
+                "export default { test: { include: ['apps/*/tests/contract/smoke.test.ts'] } }\n",
+            )
+            const { code, out } = await doctor(ws, 'apps/web')
+            expect(out).toMatch(
+                /^ok +apps\/web: the contract runner's checks would run: all 1 tests listed \(.*vitest\.contract\.config\.mjs/m,
+            )
+            expect(out).toMatch(
+                /^report +apps\/web: vitest\.smoke\.config\.mjs runs its tests\/contract\/ files but 1 of its 1 contract tests would not run: if CI runs it instead of vitest\.contract\.config\.mjs, those checks do not run$/m,
+            )
+            expect(code, out).toBe(0)
+            // With no config listing them, every config that runs the files fails.
+            rmSync(path.join(ws, 'vitest.contract.config.mjs'))
+            const none = await doctor(ws, 'apps/web')
+            expect(none.out).toMatch(
+                /^FAIL +apps\/web: the contract runner's checks would run: 1 of its 1 tests would not run \(.*vitest\.smoke\.config\.mjs/m,
+            )
+            expect(none.code).toBe(1)
         },
         E2E_TIMEOUT,
     )
