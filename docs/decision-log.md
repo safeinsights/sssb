@@ -3216,9 +3216,9 @@ changes a published package adds a `.changeset/*.md` that is its changelog entry
   entry the gate does not know.
 - **Known gap, taken on purpose:** while adoption is a fork, adopters also receive `infra/`, the cutover checklist,
   the ESLint config, `.gitleaks.toml`, the CI workflows, `scripts/` and the docs. Gating them now would make every
-  P5, P6, P9 and P10 PR carry a changeset for files those steps are moving. Some land in places the gate covers
-  (the ESLint config in P6's plugin); `infra/` (P9's `apps/*/infra`) and the workflows (P10) do not, and
-  `.gitleaks.toml` is in no step. The README says so.
+  P5, P6, P9 and P10 PR carry a changeset for files those steps are moving. Some of them land in packages and the
+  starter, which the gate covers; some land elsewhere (the showcase's `infra/`, a generator's write-once files).
+  The README says to check whether the gate sees a change.
 - **Exemptions:** the release merge (`integration` into `main`, same repository, so a fork's branch of that name is
   not exempt); Dependabot's PRs unless one changes the kit's `peerDependencies`; a PR opened before the gate reached
   its base branch (read from git, so no date is written down); and a file a PR carries only because it merged `main`
