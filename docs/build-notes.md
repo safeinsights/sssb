@@ -1980,3 +1980,57 @@ the panel is the element that carries it.
 - **Timings.** A full local run with a warm pnpm store took 77–88s. On CI, with a cold cache, the script took
   163s inside a 3m12s job: install 22s, the two typechecks 33s, unit tests and conformance 26s, `next build`
   22s, e2e 54s (Playwright's browser and its OS packages included).
+
+## Dependabot does not refresh the pack-and-consume lockfile seed (2026-11-17, `chore/post-p2-cleanup`)
+
+`scripts/pack-and-consume/consumer-lock.yaml` is the lockfile seed the `pack-and-consume` job installs its
+adopter-shaped workspace from. A Dependabot PR bumps `pnpm-lock.yaml` and the manifests, never that file, so after
+one merges the seed is behind until a later PR runs `pnpm pack-and-consume --update-lockfile` and commits what it
+rewrites (`deps/react-19-3` did so by hand). The job stays green meanwhile, by design: pnpm keeps each seeded
+resolution whose specifier still matches and resolves afresh only what moved, so the consumer still installs and
+the framework is still proved against what the ranges allow. What the drift costs is a standing notice and a
+re-resolution on every run: the script compares the seed with what the install resolved and, when they differ,
+prints the line "the consumer's resolution moved from its seed" (a `::notice` annotation on CI;
+`scripts/pack-and-consume.mjs:1040-1043`). The script's own comment already says that a Dependabot PR cannot refresh
+the seed and that this is "a prompt", not a failure (`scripts/pack-and-consume.mjs:1038-1039`). Why a moved range is
+re-resolved and nothing else is: `scripts/pack-and-consume.mjs:622-625`.
+Nothing makes anyone act on it.
+
+Proposed, not built, since either changes how the check behaves:
+
+- **A cheap gate:** fail the job on a pull request from someone other than Dependabot when the seed has drifted, so
+  the first human PR after a Dependabot merge carries the one-line refresh. It reuses the drift count the script
+  already computes. The cost is that an unrelated PR goes red for drift it did not cause, which is what the seed
+  exists to avoid for third-party releases, so it should stay a notice if that matters more.
+- **The Dependabot-side fix:** a workflow on Dependabot's pull requests that runs `pnpm pack-and-consume
+--update-lockfile` and pushes the result to the branch. It needs a token able to push to a Dependabot branch, which
+  is a repository settings decision for JP: a push made with the workflow's default token does not start the checks
+  again, so it takes a personal access token or an app token.
+
+## Union merge for the two append-only records (2026-11-17, `chore/post-p2-cleanup`)
+
+`.gitattributes` gives `docs/decision-log.md` and `docs/build-notes.md` git's built-in `union` merge. Two branches
+that each append an entry at the end of one of them used to stop `git merge` on a conflict, which happened on nearly
+every PR on 2026-11-17; with `merge=union` git keeps the added lines of both sides and does not stop. Probed in a
+scratch repository: two appends to one file conflicted without the attribute and merged with it, and the entries came
+out joined without the blank line that separates them, which `pnpm lint:fix` restores.
+
+The one risk: union keeps both sides' lines wherever they overlap, so two edits of the SAME line leave both versions
+in the file, with no conflict to say so (the probe left `RIGHT` and `LEFT` one above the other). Both files are meant
+to be appended to and never edited, so this should only follow an edit of an existing entry. After a merge that
+touched an entry already in the file, read that entry again before committing.
+
+It applies to merges git performs: `git merge origin/main` on a branch, which is how this repository takes main in.
+Whether GitHub's own merge, for the mergeability check and the merge button, honours the attribute is not verified
+here, so a PR can still show a conflict there that a local merge of `main` resolves.
+
+## Transitive advisories (2026-11-17, `deps/advisories`)
+
+- **`pnpm update -r --depth Infinity <names>` does not always move a transitive dependency.** It refreshed
+  `brace-expansion`, `js-yaml`, `nanoid`, `source-map-js` and `zod`, but left `fast-uri` 3.1.3 and `browserslist`
+  4.28.5 where they were, run twice, with patched versions inside every parent's range. Deleting those packages'
+  `packages:` and `snapshots:` entries from `pnpm-lock.yaml` and running `pnpm install` made pnpm re-resolve them
+  (it reports the lockfile as broken, then fixes it). Check the result with `pnpm install --frozen-lockfile`.
+- **Prove what a bundle holds from the bundler's own module list.** Next's chunks name modules by their
+  `node_modules/.pnpm/...` path; the static demo's list comes from Rollup's `this.getModuleIds()` in a scratch
+  plugin; the migrator's from an esbuild metafile.

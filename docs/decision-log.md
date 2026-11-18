@@ -2933,6 +2933,122 @@ Dependabot's #1.
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
   hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
 
+## A second npm owner is not needed (2026-11-17, `chore/post-p2-cleanup`)
+
+JP's call on 2026-11-17: the `sssb` npm organization and its packages keep `safeinsights-bot` as their only owner,
+and no second owner is added. The account's credentials are shared among the maintainers and its email is a group
+address, so losing one person does not lose the account. That answers the known risk ADR-0014 recorded on
+2026-11-17 ("The npm names have a single owner"), which rested on JP having no personal npm account and said a
+second, human owner would be added once a maintainer had one.
+
+- **ADR-0014 gets a dated addendum, and its body is untouched.** The addendum says the Consequences bullet no
+  longer describes a risk to carry and that the follow-up "add a second, human owner" is dropped.
+- **Nothing that would let someone reach the account is written here or in the ADR**: no credential, address or
+  place where one is kept. Where the credentials live is the maintainers' to know.
+- **Releases do not depend on it.** Publishing runs from GitHub Actions through trusted publishing (D11), so the
+  shared credentials are for administering the names, not for shipping a version.
+
+## The release app, made by a script (2026-11-17, `ci/release-app-setup`)
+
+`release.yml` (P1b) needs a GitHub App whose token pushes the release commit and its tag. JP asked to make it the
+way CanopyCMS makes its App, by GitHub's App-manifest flow from a script, not by hand in settings.
+`pnpm release-app:init` (`scripts/release-app.ts`, `scripts/release-app/`) is that script, with
+`docs/runbooks/release-app.md` and the `release-app` cutover row. Decisions:
+
+- **Borrowed, not shared.** The loopback callback server, the manifest form, the JWT over `node:crypto` and the
+  read-back come from CanopyCMS's `src/cli/init-github-app.ts`, adapted rather than imported: Canopy's is a
+  per-site tool for adopters, and this one has one fixed repository and one fixed destination for the key.
+- **The key goes to `gh secret set` on stdin and nowhere else.** No file, no argv, no output. If `gh` fails, the
+  operator retries while the key is in memory; giving up costs one "Generate a private key" on the App's page.
+  Canopy also offers a key file as a fallback; this does not, so the only file the script writes is the creation
+  form (the manifest, no key), in a private temporary directory it removes. A failed manifest exchange (no answer,
+  or a GitHub error) is retried too, since only this process holds the one-time code.
+- **The client id is a variable, not a secret.** `release.yml` reads `vars.RELEASE_BOT_CLIENT_ID`, and a client id
+  is not secret.
+- **Who the App is, checked before anything trusts it.** The exchange's answer is checked before the key is stored
+  (owned by safeinsights, exactly `contents: write` and `metadata: read`). `bypass` and `verify` take `--app-id` on
+  the command line, so both look that id up in the organisation's installations, with the client id the
+  environment holds, on selected repositories, with exactly those permissions: a typo, or another App's id, never
+  becomes the bypass on `main`.
+- **The token asks for the App's permissions explicitly** (`permission-contents: write` on
+  `create-github-app-token`), so an App widened later mints nothing wider in `release.yml`.
+- **Four rulesets, not two.** A bypass covers every rule in its ruleset. Adding the App to `release tags: v*` as it
+  stood (creation, update, deletion, non-fast-forward) would have let it move and delete release tags, and the App
+  must also bypass the organisation's `require-pr`, which carries deletion and non-fast-forward on `main`. So the
+  rules the App passes and the rules nobody passes are split: `release tags: v*` keeps creation (App bypass), new
+  `release tags: v* immutable` holds the rest (no bypass), and new `main: history` re-states deletion and
+  non-fast-forward on `main` with no bypass. The script creates the no-bypass ones first. `main: required checks`
+  may hold only its checks, or the App would bypass whatever else was added there.
+- **The script never changes an organisation ruleset.** `require-pr` is shared by the org's repositories and needs
+  `admin:org`; the script lists it, and `verify` fails until it lists the App as "Always allow" and no other
+  actor. It also reports any other ruleset the release's push would meet (on `main`, or a tag ruleset that might
+  cover a release tag, judged generously), so `verify` cannot pass while the push would be refused.
+- **The drift guard pins the job that holds the key.** Canopy's guard drives its worker against a recording proxy;
+  the only consumer here is a workflow, so `tests/tooling/release-app-drift.test.ts` parses every workflow file
+  (the `yaml` package, a new root devDependency). It began as rules alone, a deny-by-default reading of the shell in
+  the step holding the token; each review round then found shell forms it let through (`PATH=`, `printf -v`, a
+  step before the mint writing `$GITHUB_ENV`, `container:`, a moving action ref). So the `push` job is pinned by a
+  hash of its parsed form, and any edit to it fails until it is re-reviewed; the rules stay, to say why the pinned
+  job needs exactly the App's permissions and to cover what lies outside that job (triggers, other jobs and
+  workflows, environment names in any case). In-memory mutations of the real workflow show the rules failing.
+- **What the key is worth is written down.** The App bypasses review and checks on `main`, so its key can land a
+  fast-forward commit there (including a merge through the API) and tag it, which starts a publish; it cannot
+  change workflow files. The runbook says so, and names a required reviewer on `npm-publish` as the setting that
+  would still stand between a stolen key and npm. That setting is JP's call and is not made here.
+
+## Transitive dependency advisories, handled by reach (2026-11-17, `deps/advisories`)
+
+JP's call on 2026-11-17: "address the transitive dependencies appropriately with judgement". Before this branch
+`pnpm audit` reported 37 advisory entries (33 distinct GHSA ids; 3 low, 10 moderate, 24 high), 18 of them in the
+`--prod` graph, every one in a transitive dependency. After it, 2 remain, 1 of them in the `--prod` graph. Only
+`pnpm-lock.yaml` changed: no `package.json` range, no `pnpm.overrides` entry.
+
+- **The policy.** An advisory whose package reaches shipped code is fixed whenever a fix exists, preferring a
+  lockfile refresh, then a parent upgrade, then a `pnpm.overrides` entry that names the advisory, why, and when to
+  remove it. "Shipped" means an app's server or client bundle, the migrator Lambda, the static demo, or the
+  `--prod` graph of `@sssb/kit` and the apps, which an adopter installs even when only its build tooling runs
+  it. A dev-only advisory (lint, commit hooks, Ladle, tests) is fixed when a lockfile refresh or a safe patch
+  bump does it, and otherwise accepted and recorded here. An advisory with no patched release is accepted and
+  rechecked when one appears. `minimumReleaseAge` is not bypassed for a fix, and no hold recorded in this log is
+  raised for one.
+- **Reach was measured, not inferred.** None of the twelve affected packages appears in what ships: the
+  showcase's simulated `next build` (its `.next/server` and `.next/static` chunks and its standalone trace), the
+  static demo's Rollup module graph (31 packages: React, Mantine, next-intl's runtime, floating-ui, valibot and
+  their helpers), or an esbuild bundle of the migrator entry with `infra/stack.ts`'s options (kysely and `pg`).
+  The 18 `--prod` entries reached the graph through build tooling: `postcss` and `styled-jsx`'s Babel under
+  `next`, webpack's `schema-utils`/`ajv` under `@sentry/nextjs`'s bundler plugins, `@rollup/plugin-commonjs` and
+  `@sentry/cloudflare`'s `vite` under `@sentry/nextjs`, `@parcel/watcher` under `next-intl`, and `zod` as the
+  `@anthropic-ai/sdk` optional peer that this workspace's `autoInstallPeers` installs. The SDK imports `zod` only
+  in its `helpers/zod` and `helpers/beta/zod` modules, and SSSB imports only the package root
+  (`packages/kit/src/adapters/real/llm.ts:1`); pack and consume's adopter install does not install `zod` at
+  all.
+- **Fixed by refreshing the lockfile inside the parents' existing ranges:** `fast-uri` 3.1.3 → 3.1.9 (12
+  entries), `browserslist` 4.28.5 → 4.29.5 (2; 4.29.6 is younger than the release-age window), `nanoid` 3.3.16
+  → 3.3.20, `source-map-js` 1.2.1 → 1.2.2, `zod` 4.4.3 → 4.6.7, `brace-expansion` 1.1.16 → 1.1.22 and 5.0.8 →
+  5.0.13 (9), `js-yaml` 4.3.0 → 4.3.2 (2), Ladle's `vite` 6.4.3 → 6.4.6 (5), and Ladle's `query-string` 9.4.1 →
+  9.5.1, which is inside Ladle's `^9.1.1` and moves `decode-uri-component` 0.4.1 → 0.5.1 (2).
+- **Accepted: GHSA-fc5q-39xc-vjpf, `picomatch` ReDoS (high, `--prod`).** No patched release exists: 4.0.7 and
+  2.3.2 are the newest of their lines and both are affected. It is reached through file watching and globbing
+  (`@parcel/watcher`, `@rollup/plugin-commonjs`, `vite`, `tinyglobby`). `next-intl`'s plugin requires
+  `@parcel/watcher` when it loads, so any process that evaluates `next.config.ts` loads it, a plain `next start`
+  included; the standalone server does not evaluate it, and its trace holds no `picomatch`. The advisory needs a
+  hostile glob pattern, and every pattern here comes from configuration, never from a request. Recheck when a
+  fixed `picomatch` is published.
+- **Accepted: GHSA-g3hv-75wg-m249, `minimatch` (moderate, dev-only).** `typescript-eslint` 8.72's estree takes
+  `minimatch` `^10.2.2`; the fix is in 11.0.1, which only `typescript-eslint` 8.73.0 takes, published
+  2026-11-16 and still inside the two-day release-age window. ESLint globs are this repository's own. The next
+  `typescript-eslint` refresh clears it; an override forcing a new major onto a transitive dependency was not
+  worth it for a dev-only moderate.
+- **Next's vendored copies are outside `pnpm audit`.** `next/dist/compiled` carries its own `zod`, `nanoid` and
+  `picomatch`, without versions an audit can read. They move only with `next` itself. Next's `picomatch` does run
+  at request time: `/_next/image` matches the requested URL against `images.remotePatterns` and `localPatterns`
+  (`next/dist/shared/lib/match-remote-pattern.js`). Those patterns are configuration, and neither app sets
+  `images`; an adopter who writes an extglob there should check it against GHSA-fc5q-39xc-vjpf.
+- **No standing audit gate on pull requests.** `pnpm audit --prod --audit-level high` is red today on the
+  unfixable `picomatch` entry, and with that one ignored it would still turn every open PR red on the day any new
+  advisory is published, whatever the PR touches. Advisories reach SSSB through Dependabot and through review
+  instead (the Next upgrade advisor is off; see "Next's upgrade advisor is switched off" above).
+
 ## `pnpm tick`, and a dev ticker that is opt-in (2026-11-17, `feat/pnpm-tick`)
 
 JP asked for both on 2026-11-17, with the ticker as an option, and asked whether it should be the default. It is not.

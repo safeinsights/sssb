@@ -31,6 +31,9 @@
 #   - on npmjs.com, per package: a trusted publisher naming `safeinsights/sssb`, `release.yml` and the
 #     environment `npm-publish`, with publishing requiring 2FA and disallowing tokens. npm binds the publisher to
 #     those three and to no ref (docs.npmjs.com/trusted-publishers), which is why the two rules above carry it.
+# `pnpm release-app:init` makes the release app, stores its key and client id, and shows (or with
+# `--apply-bypass` makes) the ruleset changes; docs/runbooks/release-app.md is the procedure. A bypass covers
+# every rule in its ruleset, so it keeps deletion and force-pushes in rulesets the app does not bypass.
 name: release
 
 on:
@@ -164,12 +167,16 @@ jobs:
 
             # The release app's token, from its key in this job's `release` environment. The generic GITHUB_TOKEN
             # would not do: GitHub starts no workflow run for a push made with it, so its tag would never publish.
+            # The token is asked for exactly the App's permissions (scripts/release-app/manifest.ts), so an App
+            # widened later still mints nothing wider here. tests/tooling/release-app-drift.test.ts holds the two
+            # together and pins this job by hash, so any edit to it fails until it is re-reviewed.
             - name: mint the release app's token
               id: app-token
               uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
               with:
                   client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
                   private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+                  permission-contents: write
 
             # The push goes from a fresh repository, ignoring global and system config, with hooks off and the token
             # only in this step, in a header and masked. `--atomic` lands the commit and its tag together or not at
