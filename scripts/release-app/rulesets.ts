@@ -220,8 +220,8 @@ function globToRegExp(pattern: string): RegExp {
  */
 function mayCoverReleaseTags(ruleset: RulesetBody): boolean {
     return (ruleset.conditions?.ref_name?.include ?? []).some((pattern) => {
-        if (pattern === '~ALL') return true
-        const rest = pattern.startsWith('refs/tags/') ? pattern.slice('refs/tags/'.length) : pattern
+        if (!pattern.startsWith('refs/tags/')) return true // ~ALL, refs/**, refs/t*/v*: judged as covering
+        const rest = pattern.slice('refs/tags/'.length)
         return rest === '' || 'v*?['.includes(rest[0])
     })
 }

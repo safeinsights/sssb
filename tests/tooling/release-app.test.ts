@@ -755,9 +755,15 @@ describe('externalGates', () => {
             conditions: { ref_name: { include: ['refs/tags/[v]*'], exclude: ['refs/tags/v*'] } },
             rules: [{ type: 'creation' }],
         }
-        const rulesets = [...liveRulesets(), update, tagGlob]
+        const wide: Ruleset = {
+            ...tagGlob,
+            id: 11,
+            name: 'org refs glob',
+            conditions: { ref_name: { include: ['refs/**'], exclude: [] } },
+        }
+        const rulesets = [...liveRulesets(), update, tagGlob, wide]
         const gates = externalGates(onMain(rulesets), rulesets, APP_ID)
-        expect(gates.org.map((g) => g.name)).toEqual(['require-pr', 'org lock', 'org tag glob'])
+        expect(gates.org.map((g) => g.name)).toEqual(['require-pr', 'org lock', 'org tag glob', 'org refs glob'])
         const notInForce = onMain(liveRulesets()).filter((rule) => rule.type !== 'required_status_checks')
         expect(externalGates(notInForce, liveRulesets(), APP_ID).problems).toEqual([
             `"${MAIN_CHECKS}" is not in force on main: GitHub lists none of its required checks there`,

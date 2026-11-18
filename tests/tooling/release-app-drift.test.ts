@@ -141,9 +141,22 @@ function strings(value: unknown, at: string, out: { at: string; text: string }[]
     return out
 }
 
+/** A job's environment name, lowercased: GitHub matches environment names without regard to case. */
 function environmentOf(job: Job): unknown {
     const env = job.environment
-    return env && typeof env === 'object' && 'name' in env ? (env as { name: unknown }).name : env
+    const name = env && typeof env === 'object' && 'name' in env ? (env as { name: unknown }).name : env
+    return typeof name === 'string' ? name.toLowerCase() : name
+}
+
+/** Whether a `uses:` is the mint action. Owner and repository names resolve without regard to case. */
+function isMint(uses: unknown): boolean {
+    return typeof uses === 'string' && uses.toLowerCase().startsWith(MINT_ACTION)
+}
+
+/** Whether text names the App's key or client id, in any case (secret and variable names ignore case). */
+function namesCredentials(text: string): boolean {
+    const lower = text.toLowerCase()
+    return lower.includes(KEY_SECRET.toLowerCase()) || lower.includes(CLIENT_ID_VARIABLE.toLowerCase())
 }
 
 /**
@@ -377,12 +390,14 @@ function auditOthers(files: { name: string; workflow: Workflow }[]): Finding[] {
         findings.push(...jobShapeFindings(name, workflow))
         if (name === RELEASE_WORKFLOW) continue
         for (const [jobName, job] of Object.entries(workflow?.jobs ?? {})) {
-            if (environmentOf(job) === RELEASE_ENVIRONMENT || /\brelease\b/.test(JSON.stringify(job.environment ?? '')))
+            if (
+                environmentOf(job) === RELEASE_ENVIRONMENT ||
+                /\brelease\b/i.test(JSON.stringify(job.environment ?? ''))
+            )
                 findings.push(`${name}: job ${jobName} runs in the "${RELEASE_ENVIRONMENT}" environment`)
         }
         for (const s of strings(workflow, name)) {
-            if (s.text.includes(KEY_SECRET) || s.text.includes(CLIENT_ID_VARIABLE))
-                findings.push(`${s.at} names the release app's credentials`)
+            if (namesCredentials(s.text)) findings.push(`${s.at} names the release app's credentials`)
         }
     }
     return findings
@@ -401,13 +416,9 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
     const mints: { job: string; index: number; step: Step }[] = []
     for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
         ;(job.steps ?? []).forEach((step, index) => {
-            if (typeof step.uses === 'string' && step.uses.startsWith(MINT_ACTION))
-                mints.push({ job: jobName, index, step })
+            if (isMint(step.uses)) mints.push({ job: jobName, index, step })
         })
-        if (
-            environmentOf(job) === RELEASE_ENVIRONMENT &&
-            !(job.steps ?? []).some((s) => s.uses?.startsWith(MINT_ACTION))
-        )
+        if (environmentOf(job) === RELEASE_ENVIRONMENT && !(job.steps ?? []).some((s) => isMint(s.uses)))
             findings.push(`job ${jobName} runs in the "${RELEASE_ENVIRONMENT}" environment without minting the token`)
     }
     if (mints.length !== 1) findings.push(`expected exactly one ${MINT_ACTION} step, found ${mints.length}`)
@@ -430,8 +441,8 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
         [`${mintPath}.client-id`]: `vars.${CLIENT_ID_VARIABLE}`,
     }
     for (const s of strings(workflow, 'workflow')) {
-        const credentialish = expressions(s.text).filter((e) => /\b(secrets|vars)\b/.test(e))
-        const named = s.text.includes(KEY_SECRET) || s.text.includes(CLIENT_ID_VARIABLE)
+        const credentialish = expressions(s.text).filter((e) => /\b(secrets|vars)\b/i.test(e))
+        const named = namesCredentials(s.text)
         if (credentialish.length === 0 && !named) continue
         const expected = allowed[s.at]
         if (expected === undefined || s.text !== `\${{ ${expected} }}`) {
@@ -460,11 +471,13 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
     // cannot trace (`steps['id']`, `toJSON(steps)`) is red wherever it appears.
     for (const s of strings(workflow, 'workflow')) {
         if (
-            expressions(s.text).some((e) => /\bsteps\s*\[|\(\s*steps\s*\)|\bsteps\s*\)|\bsteps\s*,|\bsteps\s*$/.test(e))
+            expressions(s.text).some((e) =>
+                /\bsteps\s*\[|\(\s*steps\s*\)|\bsteps\s*\)|\bsteps\s*,|\bsteps\s*$/i.test(e),
+            )
         )
             findings.push(`${s.at} reads the steps context in a form this guard cannot trace`)
     }
-    const tokenRef = new RegExp(`steps\\.${mint.step.id}\\.outputs`)
+    const tokenRef = new RegExp(`steps\\.${mint.step.id}\\.outputs`, 'i')
     const consumers = new Set<number>()
     for (const use of strings(workflow, 'workflow').filter((s) => tokenRef.test(s.text))) {
         const match = new RegExp(
@@ -572,9 +585,7 @@ function load(): Workflow {
 }
 
 function pushJob(workflow: Workflow): Job {
-    const found = Object.values(workflow.jobs).find((job) =>
-        (job.steps ?? []).some((step) => step.uses?.startsWith(MINT_ACTION)),
-    )
+    const found = Object.values(workflow.jobs).find((job) => (job.steps ?? []).some((step) => isMint(step.uses)))
     if (!found) throw new Error('no job mints the token')
     return found
 }
@@ -625,6 +636,14 @@ describe('release.yml and the release app agree', () => {
         expect(auditOthers([{ name: 'x.yml', workflow: { jobs: { a: { ...job, environment: named } } } }])).toEqual([
             "x.yml: job a's environment is an expression",
         ])
+        for (const environment of ['RELEASE', 'Release', { name: 'Release' }]) {
+            const leak = { ...job, environment, env: { K: '${{ toJSON(secrets) }}' } }
+            expect(auditOthers([{ name: 'x.yml', workflow: { jobs: { a: leak } } }])).toEqual([
+                'x.yml: job a runs in the "release" environment',
+            ])
+        }
+        const lower = { ...job, env: { K: '${{ secrets.release_bot_private_key }}' } }
+        expect(auditOthers([{ name: 'x.yml', workflow: { jobs: { a: lower } } }])).toHaveLength(1)
         const remote = 'other/repo/.github/workflows/x.yml@v1'
         expect(auditOthers([{ name: 'x.yml', workflow: { jobs: { a: { uses: remote } } } }])).toEqual([
             `x.yml: job a calls a reusable workflow outside this repository (${remote})`,
@@ -856,6 +875,14 @@ describe('the guard goes red when release.yml outgrows the App', () => {
         red((w) => {
             w.env = { PATH: '/evil' }
         }, /workflow-level env/))
+    it('a job in RELEASE, upper case, without the mint', () =>
+        red((w) => {
+            w.jobs.plan.environment = 'RELEASE'
+        }, /job plan runs in the "release" environment without minting/))
+    it('toJSON(SECRETS), upper case', () =>
+        red((w) => {
+            w.jobs.plan.steps?.push({ run: 'true', env: { K: '${{ toJSON(SECRETS) }}' } })
+        }, /jobs\.plan\..*reads secrets or variables/))
     it('a second mint', () =>
         red((w) => {
             w.jobs.pack.steps?.push({ id: 'again', uses: `${MINT_ACTION}v3` })
