@@ -517,7 +517,8 @@ describe('@sssb/create: the generated workspace', () => {
             })
         expect(run('Line\nBreak')).toThrow(CreateError)
         expect(run('*Emph*')).toThrow(/uses "\*"/)
-    })
+        // A generation and a Prettier pass per name: about 10s alone, 23s measured under `pnpm verify`'s parallel load.
+    }, 90_000)
 
     it('refuses a slug that would name a package like a dependency the workspace installs', () => {
         const run = (slug: string) => () =>
