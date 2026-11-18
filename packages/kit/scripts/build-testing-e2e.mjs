@@ -1,7 +1,8 @@
 // Builds `@sssb/kit/testing/e2e` — the one kit entry Node loads directly — into `dist/testing/` (ADR-0014 part 2).
 //
 //   node scripts/build-testing-e2e.mjs        (the package's `prepack` script: `pnpm pack` runs it)
-//   node scripts/build-testing-e2e.mjs --entry <file> --out-dir <dir>   (another entry or output; the guard's tests)
+//   node scripts/build-testing-e2e.mjs --entry <file> --out-dir <dir>   (another entry or output; the guard's tests;
+//                                                                         <dir> must be new or empty, see below)
 //
 // Playwright loads an adopter's e2e specs with Node, and it does not transform files under `node_modules`, so
 // the entry a spec imports must be JavaScript in the packed package: esbuild bundles `src/testing/e2e.ts` into
@@ -20,7 +21,16 @@
 // template-literal specifier is left in the output as one), no `import.meta`, and no reference to a loader or a
 // way to one (`require`, `module`, `globalThis`, `eval`, `Function`, …), since `globalThis['req' + 'uire']` loads
 // a module without ever spelling it. The entry is self-contained or the build fails.
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -47,20 +57,39 @@ const flags = (() => {
 })()
 // The real path, as esbuild reports its inputs (a temp dir under macOS's /var is really /private/var).
 const ENTRY = flags['--entry'] ? path.relative(KIT, realpathSync(flags['--entry'])) : 'src/testing/e2e.ts'
-const OUT_DIR = flags['--out-dir'] ?? path.join(KIT, 'dist')
+const OWN_DIST = path.join(KIT, 'dist')
+const OUT_DIR = flags['--out-dir'] ?? OWN_DIST
 const OUT_FILE = path.join(OUT_DIR, 'testing/e2e.js')
+
+// THE OUTPUT DIRECTORY IS WIPED before the build and on any failure, so only one this build owns is accepted: the
+// package's own `dist/`, a path that does not exist yet, or an empty directory. Anything else (`--out-dir .`, `--out-dir
+// ~`, a directory holding someone's files) is refused before a byte is touched.
+const outDirExisted = existsSync(OUT_DIR)
+if (OUT_DIR !== OWN_DIST && outDirExisted && (!statSync(OUT_DIR).isDirectory() || readdirSync(OUT_DIR).length > 0)) {
+    process.stderr.write(
+        `build-testing-e2e: refusing --out-dir ${OUT_DIR}: it is not empty, and it is not this package's dist ` +
+            `(${OWN_DIST}). The build deletes what its output directory holds; name a new or empty one.\n`,
+    )
+    process.exit(2)
+}
 
 /** Every file the compiled entry may contain, relative to packages/kit. Each must import nothing but these. */
 const ALLOWED = new Set([ENTRY, 'src/core/webhook-hmac.ts'])
 
+/** Empties the output directory; one this run created (or the package's dist) goes entirely. */
+const clean = () => {
+    if (OUT_DIR === OWN_DIST || !outDirExisted) rmSync(OUT_DIR, { recursive: true, force: true })
+    else for (const entry of readdirSync(OUT_DIR)) rmSync(path.join(OUT_DIR, entry), { recursive: true, force: true })
+}
+
 const fail = (/** @type {string} */ message) => {
     // Never leave a half-built entry behind for pack to ship.
-    rmSync(OUT_DIR, { recursive: true, force: true })
+    clean()
     process.stderr.write(`build-testing-e2e: FAILED: ${message}\n`)
     process.exit(1)
 }
 
-rmSync(OUT_DIR, { recursive: true, force: true })
+clean()
 mkdirSync(path.join(OUT_DIR, 'testing'), { recursive: true })
 
 // ---- JavaScript: one self-contained ES module ----

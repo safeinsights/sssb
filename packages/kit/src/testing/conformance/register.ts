@@ -21,8 +21,11 @@ import type { CheckImpl } from './types'
  * the file's own, which Vitest runs in turn and abandons at the first that throws, so a guard that fired there could
  * leave the contract server running and the file's scratch directories on disk, under every `sequence.hooks` order.
  * It runs whenever at least one test in the file runs, so an `it.only` beside the suite, or a `-t` filter that
- * matches part of it, fails the run instead of skipping checks quietly; a check skipped because a hook above it
- * failed (a `beforeAll` of the file or of the check) is reported as that, not as a filter. When EVERY test in the
+ * matches part of it, fails the run instead of skipping checks quietly. Its message names the cause it can tell: a
+ * check skipped because a setup hook failed (a `beforeAll` of the file or of the check, a `beforeEach`) is reported as
+ * that; one that was still to run when the file started and was stopped during it (`--bail`, an interrupted run) as a
+ * cancelled run; only the rest, skipped before the file ran, as a filter, an `.only` or a `.skip`. Each check's
+ * tests run in order (`describe.sequential`), under `sequence.concurrent` too. When EVERY test in the
  * file is skipped no hook runs, and Vitest exits 0: that half is `sssb doctor`'s, which asks `vitest list --json`
  * whether every check would run.
  */
@@ -94,7 +97,11 @@ export function registerChecks<C>(options: {
             )
         }
         const describeName = `[sssb:${check.id}] ${check.title}`
-        describe(describeName, () => {
+        // SEQUENTIAL whatever the adopter's config says: under `sequence.concurrent` two of a check's tests would run
+        // at once, and Vitest's mocker hands an import made while a `vi.doMock` factory is still running the REAL
+        // module (demo-presets' registry mock), besides the checks' shared state (the data root, the fake world).
+        // `describe.sequential` changes no name, so `sssb doctor` reads the same list.
+        describe.sequential(describeName, () => {
             impl.setup?.(context)
             for (const test of check.tests) {
                 const name = `${describeName} > ${test}`
@@ -114,18 +121,32 @@ export function registerChecks<C>(options: {
 
     // eslint-disable-next-line no-empty-pattern -- Vitest reads this parameter as the hook's fixtures and refuses anything but a destructuring pattern; the guard uses none, only the file (the third)
     aroundAll(async (runSuite, {}, file) => {
+        // Which tests were still to run once the file was collected: a filter, an `.only` or a `.skip` has already
+        // marked the rest skipped by now, so a test that was to run and did not was stopped DURING the run.
+        const toRun = new Set<string>()
+        visitTests(file, (name, test) => {
+            if (test.mode === 'run') toRun.add(name)
+        })
         await runSuite()
         const skipped = expected.filter((name) => !ran.has(name))
         if (skipped.length === 0) return
-        const underFailedHook = testsUnderAFailedHook(file)
+        const underFailedHook = testsUnderAFailedSetup(file)
         const blocked = skipped.filter((name) => underFailedHook.has(name))
-        const dropped = skipped.filter((name) => !underFailedHook.has(name))
+        const cancelled = skipped.filter((name) => !underFailedHook.has(name) && toRun.has(name))
+        const dropped = skipped.filter((name) => !underFailedHook.has(name) && !toRun.has(name))
         const suite = runner === 'unit' ? 'conformance suite' : 'contract suite'
         const parts: string[] = []
         if (blocked.length > 0) {
             parts.push(
                 `the SSSB ${suite} did not run ${blocked.length} of its checks because a hook failed (its error is ` +
                     `reported above; fix that and they run):\n  ${blocked.join('\n  ')}`,
+            )
+        }
+        if (cancelled.length > 0) {
+            parts.push(
+                `the SSSB ${suite} did not run ${cancelled.length} of its checks because the run was cancelled ` +
+                    'while this file ran (`--bail` stops the run after a failure, reported above; an interrupted run, or a ' +
+                    `hook that called \`skip()\`, does the same):\n  ${cancelled.join('\n  ')}`,
             )
         }
         if (dropped.length > 0) {
@@ -139,17 +160,38 @@ export function registerChecks<C>(options: {
     })
 }
 
+/** Calls `visit` on every test under `file`, named `<describe> > <test>` as `expected` names them. */
+function visitTests(file: RunnerTask, visit: (name: string, test: RunnerTask) => void): void {
+    const walk = (task: RunnerTask, parent: string | undefined) => {
+        if (task.type === 'suite') {
+            for (const child of task.tasks) walk(child, task === file ? undefined : task.name)
+        } else if (parent !== undefined) {
+            visit(`${parent} > ${task.name}`, task)
+        }
+    }
+    walk(file, undefined)
+}
+
+/** True when a test under `task` (itself, if it is one) began: it has a pass or fail result of its own. */
+function anyTestStarted(task: RunnerTask): boolean {
+    if (task.type === 'suite') return task.tasks.some(anyTestStarted)
+    return task.result?.state === 'pass' || task.result?.state === 'fail'
+}
+
 /**
- * The tests (`<describe> > <test>`, as `expected` names them) under a suite whose result carries an error: a
- * `beforeAll` that threw there skipped every test below it.
+ * The tests (`<describe> > <test>`, as `expected` names them) that a SETUP hook which failed kept from running: one
+ * whose own result carries an error (its `beforeEach` threw), or one under a suite whose result carries an error
+ * while no test under that suite began (its `beforeAll` threw, which skips every test below it). An error on a suite
+ * where tests did begin came after them (an `afterAll`), and it skipped nothing.
  */
-function testsUnderAFailedHook(file: RunnerTask): Set<string> {
+function testsUnderAFailedSetup(file: RunnerTask): Set<string> {
     const names = new Set<string>()
     const visit = (task: RunnerTask, failed: boolean, parent: string | undefined) => {
-        const here = failed || (task.result?.errors?.length ?? 0) > 0
+        const errored = (task.result?.errors?.length ?? 0) > 0
         if (task.type === 'suite') {
+            const here = failed || (errored && !anyTestStarted(task))
             for (const child of task.tasks) visit(child, here, task === file ? undefined : task.name)
-        } else if (here && parent !== undefined) {
+        } else if ((failed || errored) && parent !== undefined) {
             names.add(`${parent} > ${task.name}`)
         }
     }

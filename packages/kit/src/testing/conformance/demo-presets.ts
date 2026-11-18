@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, vi } from 'vitest'
 import { dataRoot, setDataRoot } from '../../adapters/fake/data-dir'
 import type { MessageTree } from '../../i18n/messages'
-import { makeTestTmpDir } from '../tmp-dir'
+import { makeTestTmpDir, removeTestTmpDir } from '../tmp-dir'
 import type { CheckImpl } from './types'
 
 /**
@@ -26,7 +26,8 @@ import type { CheckImpl } from './types'
  * the developer's own dev world: a replay there would reset and reseed it. So `setup` ASSIGNS APP_DATA_DIR for the
  * check's tests (`setDataRoot`), never `vi.stubEnv`, which an adopter's `unstubEnvs: true` undoes before every test,
  * and every test that reaches the adapters first proves the scratch dir is still in effect (`inScratchWorld`),
- * failing rather than replaying anywhere else.
+ * failing rather than replaying anywhere else. Its teardown closes the fake database the replay opened there before
+ * deleting the dir, so a file run after it without isolation opens its own.
  *
  * THE MOCKS. A test file's `vi.mock` is hoisted above its imports; a library's is not, so `setup` registers them
  * with `vi.doMock` while the suite is collected, before any test runs, and every module that reaches them (the
@@ -65,9 +66,12 @@ function mockServerOnlyWorld(): void {
 async function mockedRegistry(): Promise<void> {
     const notMocked = (detail: string) =>
         new Error(
-            "demo-presets: the adapter registry is not the conformance suite's mock (vi.doMock did not take effect), so " +
-                'the replay would run on the real adapters. Something loaded @sssb/kit/adapters/index before the suite ' +
-                `was collected, or the test file runs without isolation. ${detail}`,
+            "demo-presets: the adapter registry is not the conformance suite's mock (registered with vi.doMock while " +
+                'the file was collected), so the replay would run on the real adapters. Vitest hands the REAL module to ' +
+                "an import made while a mock's factory is still running, so another test of this file importing " +
+                '@sssb/kit/adapters/index (or a module that does) at the same moment does this (`it.concurrent`, ' +
+                '`describe.concurrent`: the suite runs its own tests one at a time); so does a `vi.doUnmock` or ' +
+                `\`vi.unmock\` of it. ${detail}`,
         )
     let registry: Record<string, unknown>
     try {
@@ -111,9 +115,18 @@ export const demoPresets: CheckImpl = {
             scratch = makeTestTmpDir('app-demo-presets-seam-')
             previous = setDataRoot(scratch)
         })
-        afterAll(() => {
-            if (scratch !== undefined && dataRoot() === scratch) setDataRoot(previous)
-            scratch = undefined
+        // ONE hook, in this order whatever `sequence.hooks` says: close the database the replay opened in the
+        // scratch world, point the adapters back, then delete the world. Without isolation the next file shares
+        // this one's globals, and a client left cached on `globalThis` would serve it this world; and tmp-dir's own
+        // cleanup belongs to the first file that loaded it, so the check removes its directory itself.
+        afterAll(async () => {
+            try {
+                await (await import('../../adapters/fake/db')).closeFakeDb()
+            } finally {
+                if (scratch !== undefined && dataRoot() === scratch) setDataRoot(previous)
+                if (scratch !== undefined) removeTestTmpDir(scratch)
+                scratch = undefined
+            }
         })
     },
     timeouts: {

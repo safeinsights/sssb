@@ -32,46 +32,99 @@ type ExportsTarget = string | null | { [condition: string]: ExportsTarget } | Ex
 const CONDITIONS: ReadonlySet<string> = new Set(['node', 'import', 'default'])
 
 /**
- * The file a conditional export target names, resolved as Node does (PACKAGE_TARGET_RESOLVE): an object's conditions
- * in its OWN key order, the first that matches and yields something winning, and one whose nested target matches no
- * condition falling through to the next. `undefined` is "nothing matched" (the caller falls through); `null` is an
- * explicit exclusion, which stops the search.
+ * What resolving one target gives: a file (relative to the package), a target Node refuses (`invalid`, why; Node
+ * throws ERR_INVALID_PACKAGE_TARGET), `null` for an explicit exclusion, which stops the search, or `undefined` for
+ * "no condition matched", which the caller falls through.
  */
-function targetFile(target: ExportsTarget | undefined): string | null | undefined {
-    if (typeof target === 'string') return target
+type Resolved = { file: string } | { target: string; invalid: string } | null | undefined
+
+/** True when a path has a `.`, `..` or `node_modules` segment, percent-encoded or not, in any case (Node's rule). */
+function hasInvalidSegment(value: string): boolean {
+    let decoded = value
+    try {
+        decoded = decodeURIComponent(value)
+    } catch {
+        // a malformed escape: judge the raw text
+    }
+    return decoded.split(/[\\/]/).some((segment) => ['.', '..', 'node_modules'].includes(segment.toLowerCase()))
+}
+
+/**
+ * A string target, held to Node's rules (PACKAGE_TARGET_RESOLVE): it must start with `./` (so no bare name, no `../`,
+ * no absolute path or URL), and neither it (past that `./`) nor the pattern's match may have a `.`, `..` or
+ * `node_modules` segment. An empty segment is only deprecated by Node, so it passes here too.
+ */
+function stringTarget(target: string, match: string | undefined): Resolved {
+    if (!target.startsWith('./')) return { target, invalid: 'it does not start with "./"' }
+    if (hasInvalidSegment(target.slice(2))) return { target, invalid: 'it has a ".", ".." or "node_modules" segment' }
+    if (match === undefined) return { file: target }
+    const file = target.replaceAll('*', match)
+    if (hasInvalidSegment(match))
+        return { target: file, invalid: 'its `*` matches a ".", ".." or "node_modules" segment' }
+    return { file }
+}
+
+/**
+ * A conditional export target, resolved as Node does (PACKAGE_TARGET_RESOLVE): an object's conditions in its OWN key
+ * order, the first that matches and yields something winning, and one whose nested target matches no condition
+ * falling through to the next; an array's items in order, an invalid or unmatched one falling through, the first
+ * other result (a `null` included) winning, and the last invalid one reported when nothing else is left.
+ */
+function resolveTarget(target: ExportsTarget | undefined, match: string | undefined): Resolved {
+    if (typeof target === 'string') return stringTarget(target, match)
     if (target === null) return null
     if (target === undefined) return undefined
     if (Array.isArray(target)) {
+        let last: Resolved = null
         for (const item of target) {
-            const file = targetFile(item)
-            if (file !== undefined) return file
+            const resolved = resolveTarget(item, match)
+            if (resolved === undefined) continue
+            if (resolved !== null && 'invalid' in resolved) {
+                last = resolved
+                continue
+            }
+            return resolved
         }
-        return undefined
+        return last
     }
     for (const [condition, value] of Object.entries(target)) {
         if (!CONDITIONS.has(condition)) continue
-        const file = targetFile(value)
-        if (file !== undefined) return file
+        const resolved = resolveTarget(value, match)
+        if (resolved !== undefined) return resolved
     }
     return undefined
 }
 
-/** Node's subpath resolution over one `exports` map: an exact key, else the matching pattern with the longest prefix. */
-function resolveExport(exportsMap: Record<string, ExportsTarget>, subpath: string): string | null {
-    if (Object.hasOwn(exportsMap, subpath)) return targetFile(exportsMap[subpath]) ?? null
-    let best: { key: string; match: string } | undefined
-    for (const key of Object.keys(exportsMap)) {
-        const star = key.indexOf('*')
-        if (star < 0) continue
-        const [before, after] = [key.slice(0, star), key.slice(star + 1)]
-        if (!subpath.startsWith(before) || !subpath.endsWith(after) || subpath.length < key.length - 1) continue
-        if (!best || before.length > best.key.indexOf('*')) {
-            best = { key, match: subpath.slice(before.length, subpath.length - after.length) }
-        }
+/**
+ * Node's PATTERN_KEY_COMPARE, as a sort comparator: the key with the longer prefix before its `*` first, and between
+ * equal prefixes the longer key first.
+ */
+function patternKeyCompare(a: string, b: string): number {
+    const [baseA, baseB] = [a.indexOf('*'), b.indexOf('*')]
+    if (baseA !== baseB) return baseB - baseA
+    return b.length - a.length
+}
+
+/**
+ * Node's subpath resolution over one `exports` map (PACKAGE_IMPORTS_EXPORTS_RESOLVE): an exact key, else the first
+ * pattern key (one `*`, in PATTERN_KEY_COMPARE order) that matches with a NON-EMPTY `*`; whatever that one key's
+ * target resolves to is the answer, as in Node, which never tries a second pattern.
+ */
+function resolveExport(exportsMap: Record<string, ExportsTarget>, subpath: string): Resolved {
+    if (Object.hasOwn(exportsMap, subpath) && !subpath.includes('*')) {
+        return resolveTarget(exportsMap[subpath], undefined)
     }
-    if (!best) return null
-    const file = targetFile(exportsMap[best.key])
-    return file === null || file === undefined ? null : file.replaceAll('*', best.match)
+    const patterns = Object.keys(exportsMap)
+        .filter((key) => key.split('*').length === 2)
+        .sort(patternKeyCompare)
+    for (const key of patterns) {
+        const star = key.indexOf('*')
+        const [base, trailer] = [key.slice(0, star), key.slice(star + 1)]
+        if (!subpath.startsWith(base) || subpath === base) continue
+        if (trailer !== '' && !(subpath.endsWith(trailer) && subpath.length >= key.length)) continue
+        return resolveTarget(exportsMap[key], subpath.slice(base.length, subpath.length - trailer.length))
+    }
+    return null
 }
 
 export const seamMap: CheckImpl = {
@@ -94,14 +147,21 @@ export const seamMap: CheckImpl = {
             else {
                 for (const specifier of seamSpecifiers.specifiers) {
                     const subpath = `.${specifier.slice(SEAM.length)}`
-                    const target = resolveExport(exportsMap, subpath)
-                    if (target === null) {
+                    const resolved = resolveExport(exportsMap, subpath)
+                    if (resolved === null || resolved === undefined) {
                         problems.push(
                             `${specifier}: no \`exports\` entry for ${subpath} that resolves under the conditions ` +
                                 `${[...CONDITIONS].join(', ')}`,
                         )
-                    } else if (!statSync(path.join(seamDir, target), { throwIfNoEntry: false })?.isFile()) {
-                        problems.push(`${specifier}: \`exports\` maps ${subpath} to ${target}, which is not a file`)
+                    } else if ('invalid' in resolved) {
+                        problems.push(
+                            `${specifier}: \`exports\` maps ${subpath} to ${resolved.target}, which Node refuses: ` +
+                                `${resolved.invalid} (ERR_INVALID_PACKAGE_TARGET)`,
+                        )
+                    } else if (!statSync(path.join(seamDir, resolved.file), { throwIfNoEntry: false })?.isFile()) {
+                        problems.push(
+                            `${specifier}: \`exports\` maps ${subpath} to ${resolved.file}, which is not a file`,
+                        )
                     }
                 }
             }

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from './tmp-dir'
@@ -62,5 +62,21 @@ describe('build-testing-e2e', () => {
         expect(output).toMatch(/must be one self-contained module, but what esbuild emitted can still load code/)
         expect(output).toMatch(message)
         expect(existsSync(outDir)).toBe(false)
+    })
+
+    it('refuses an --out-dir that holds anything and is not the package dist, and deletes nothing', () => {
+        const dir = makeTestTmpDir('build-testing-e2e-')
+        writeFileSync(path.join(dir, 'keep.txt'), 'not the build output')
+        const result = spawnSync(process.execPath, [SCRIPT, '--out-dir', dir], { encoding: 'utf8' })
+        expect(result.status, result.stderr).toBe(2)
+        expect(result.stderr).toMatch(/refusing --out-dir .*: it is not empty, and it is not this package's dist/)
+        expect(readdirSync(dir)).toEqual(['keep.txt'])
+    })
+
+    it('builds into an --out-dir that exists and is empty', () => {
+        const dir = makeTestTmpDir('build-testing-e2e-')
+        const result = spawnSync(process.execPath, [SCRIPT, '--out-dir', dir], { encoding: 'utf8' })
+        expect(result.status, result.stderr).toBe(0)
+        expect(existsSync(path.join(dir, 'testing/e2e.js'))).toBe(true)
     })
 })
