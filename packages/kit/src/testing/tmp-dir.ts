@@ -62,6 +62,9 @@ const hookedFiles = new Set<string>()
 /** Test files without one that have a hook removing EARLIER files' directories. */
 const sweepingFiles = new Set<string>()
 
+/** Directories handed out of the file hook's reach by `keepTestTmpDir`, still to be removed by `removeTestTmpDir`. */
+const kept = new Set<string>()
+
 let warned = false
 
 const currentFile = (): string => expect.getState().testPath ?? ''
@@ -156,12 +159,24 @@ export function makeTestTmpDir(prefix: string): string {
 }
 
 /**
+ * Take a directory `makeTestTmpDir` made out of the file's cleanup, for work that outlives the file (the demo-presets
+ * replay a timed-out test left running, ./conformance/demo-presets.ts): no hook removes it, so whatever still uses it
+ * removes it with `removeTestTmpDir` when done, and until then `sssb check-tmpdir-leak` sees it.
+ */
+export function keepTestTmpDir(dir: string): void {
+    const index = created.findIndex((entry) => entry.dir === dir)
+    if (index < 0) return
+    created.splice(index, 1)
+    kept.add(dir)
+}
+
+/**
  * Remove a directory `makeTestTmpDir` made, and its marker, now rather than when the file finishes. Does nothing for a
  * path it did not make, or has already removed: anything else is not a scratch directory.
  */
 export function removeTestTmpDir(dir: string): void {
     const index = created.findIndex((entry) => entry.dir === dir)
-    if (index < 0) return
-    created.splice(index, 1)
+    if (index >= 0) created.splice(index, 1)
+    else if (!kept.delete(dir)) return
     remove(dir)
 }

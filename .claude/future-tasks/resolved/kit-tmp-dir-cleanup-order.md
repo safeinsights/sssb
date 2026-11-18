@@ -23,6 +23,7 @@ The rest of `packages/kit/src/testing/tmp-dir.ts` follows `@sssb/tools`' copy:
   files', and the helper says once per worker that the file has none.
 - A file's first registration removes what earlier files left (a skipped file runs no `afterAll`).
 - `removeTestTmpDir` ignores a path the helper did not make.
+- `keepTestTmpDir(dir)` is new. The demo-presets check calls it when its replay outlives the file, so the file's cleanup no longer deletes the directory under the running replay (Vitest runs that cleanup even after the check's teardown fails). The replay removes the directory when it stops.
 
 `packages/kit/src/testing/conformance/adopter-config.test.ts` runs each case in a real Vitest, in order:
 
@@ -33,7 +34,7 @@ The rest of `packages/kit/src/testing/tmp-dir.ts` follows `@sssb/tools`' copy:
 - isolation;
 - `removeTestTmpDir`.
 
-Ten probes, each red in its own case, are in the PR.
+Eleven probes, each red in its own case, are in the PR.
 
 **Found by:** the Opus reviews of `fix/tools-tmp-dir-isolation`, 2026-11-18, each reproduced in a real Vitest 4.1.12 run.
 

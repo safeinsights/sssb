@@ -4165,6 +4165,16 @@ Resolves `.claude/future-tasks/resolved/kit-tmp-dir-cleanup-order.md`, the kit's
   `@sssb/tools` imports no kit module, and breaks its point, that `@sssb/tools` knows nothing of the kit. It would also
   run a second setup module before every file of every app. The suites registering their own hook needs nothing from
   the adopter.
+- **A replay that outlives its file keeps its directory, out of the file's cleanup.** When the demo-presets replay
+  outlasts its teardown's wait, the teardown fails and leaves the replay its scratch directory, to be removed when it
+  stops. Vitest still ran the file's cleanup hook after that teardown failed, which deleted the directory under the
+  running replay. The replay recreated it without its marker, so the leak gate could not see it. The old
+  `removeTestTmpDir`, which removed any path, then removed it, hiding all of this; with the new guard the case
+  "when the replay outlasts the wait too" went red. `keepTestTmpDir(dir)` now takes the directory out of the file's
+  cleanup, and `removeTestTmpDir` removes it, with its marker, when the replay stops. Seen red with the call removed.
+- **Limit: one suite call, at the file's top level,** as both suites' docs already say. Under `isolate: false`, a later
+  file that calls a suite inside a `describe` gets that `describe`'s hook. A second call in another `describe` then
+  gets none, so its directory waits for the next file. Nothing in use is removed.
 - **The rest follows `@sssb/tools`' copy**, for the same reasons (its entry above):
     - a later file with no hook removes only earlier files' directories, never its own, and the helper says so once per
       worker;
