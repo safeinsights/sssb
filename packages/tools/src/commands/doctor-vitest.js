@@ -1,54 +1,81 @@
 // @ts-check
 // How `sssb doctor` asks Vitest what would actually run (ADR-0014 part 3), instead of reading the config: `vitest
-// list`, run the way CI runs Vitest, and read back as JSON from a file (stdout carries Vite's warnings beside it).
+// list`, run with each config that could run an app's tests, and read back as JSON from a file (stdout carries Vite's
+// warnings beside it). What a CI step adds on its command line is not here to see (doctor reports what its scripts add).
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readJson } from '../app.js'
-import { packageDirFrom } from './doctor-checks.js'
+import { aliasRoutes, packageDirFrom } from './doctor-checks.js'
+
+/** @typedef {import('./doctor-checks.js').SeamRoute} SeamRoute */
 
 const EXTENSIONS = ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs']
 
 /**
- * The config file `<stem>.config.<ext>` in `dir`, or null.
- * @param {string} dir
- * @param {string} stem `vitest` or `vitest.contract`
+ * The file names doctor treats as a Vitest config: every `vitest*.config.*` (`vitest.config.ts`,
+ * `vitest.contract.config.ts`, `vitest.ci.config.ts`, `vitest-e2e.config.mjs`...) and `vite.config.*`, the file Vitest
+ * loads when there is no `vitest.config.*`. Other Vite configs (`vite.demo.config.ts`) are left out: Vitest loads one
+ * only when a command names it, and a Vite build config is not written to run tests.
  */
-function configIn(dir, stem) {
-    for (const ext of EXTENSIONS) {
-        const file = path.join(dir, `${stem}.config.${ext}`)
-        if (existsSync(file)) return file
-    }
-    return null
-}
+const CONFIG_NAME = new RegExp(`^(vitest[\\w.-]*|vite)\\.config\\.(${EXTENSIONS.join('|')})$`)
 
 /** @typedef {{ cwd: string, config: string | null }} VitestRun where and with which config Vitest is run */
 
 /**
- * WHERE CI RUNS VITEST for an app (ADR-0014 part 3): from the workspace root when the root has a Vitest config
- * (`vitest.config.*`, or `vitest.contract.config.*` for the contract runner), as SSSB's repository and Pages do, with
- * the projects that run the app's files selected; otherwise from the app's own directory, with the app's own config
- * of that name if it has one (the unit runner may also run on Vitest's defaults). The root's config is tried first,
- * and the app's is the fallback when the root's runs none of the app's files.
+ * WHERE VITEST COULD RUN AN APP'S TESTS (ADR-0014 part 3): every Vitest config at the workspace root and in the app's
+ * own directory (CONFIG_NAME), each run from its own directory, root first; then the config a bare `vitest` in the
+ * app's directory would load, when it lies elsewhere (vitestDefaultConfig). Doctor cannot know which of them CI runs,
+ * so it asks Vitest what each would run (`vitest list --filesOnly`) and holds every one that runs any of the app's
+ * test files to the checks of those files' runner. When a bare `vitest` in the app's directory would load no config at
+ * all, Vitest's defaults there are the unit runner's fallback (vitestDefaults).
  * @param {string} root
  * @param {string} appDir
- * @param {'unit' | 'contract'} runner
  * @returns {VitestRun[]} the candidates, in order
  */
-export function vitestRunsFor(root, appDir, runner) {
-    const stem = runner === 'unit' ? 'vitest' : 'vitest.contract'
+export function vitestConfigsFor(root, appDir) {
+    const dirs = path.resolve(appDir) === path.resolve(root) ? [root] : [root, appDir]
     /** @type {VitestRun[]} */
-    const runs = []
-    const atRoot = configIn(root, stem)
-    if (atRoot) runs.push({ cwd: root, config: atRoot })
-    const inApp = path.resolve(appDir) === path.resolve(root) ? null : configIn(appDir, stem)
-    if (inApp) runs.push({ cwd: appDir, config: inApp })
-    // Vitest's defaults find the app's tests with no config at all; a contract run needs its own.
-    else if (runner === 'unit' && !atRoot) runs.push({ cwd: appDir, config: null })
+    const runs = dirs.flatMap((dir) =>
+        readdirSync(dir)
+            .filter((name) => CONFIG_NAME.test(name))
+            .sort()
+            .map((name) => ({ cwd: dir, config: path.join(dir, name) })),
+    )
+    const loaded = vitestDefaultConfig(appDir)
+    if (loaded !== null && !runs.some((run) => run.config === loaded)) runs.push({ cwd: appDir, config: loaded })
     return runs
+}
+
+/**
+ * The config a bare `vitest` run in `dir` loads, found as Vitest finds it: walking up from `dir`, the first directory
+ * holding `vitest.config.<ext>` or `vite.config.<ext>` (names in that order, then extensions). Null when there is none.
+ * @param {string} dir
+ * @returns {string | null}
+ */
+export function vitestDefaultConfig(dir) {
+    for (let at = path.resolve(dir); ; at = path.dirname(at)) {
+        for (const stem of ['vitest', 'vite']) {
+            for (const ext of EXTENSIONS) {
+                const file = path.join(at, `${stem}.config.${ext}`)
+                if (existsSync(file)) return file
+            }
+        }
+        if (path.dirname(at) === at) return null
+    }
+}
+
+/**
+ * Vitest's defaults, run from the app's directory, when a bare `vitest` there would load no config at all; null when
+ * it would load one. Only the unit runner falls back to them: a contract run needs a config of its own.
+ * @param {string} appDir
+ * @returns {VitestRun | null}
+ */
+export function vitestDefaults(appDir) {
+    return vitestDefaultConfig(appDir) === null ? { cwd: appDir, config: null } : null
 }
 
 /**
@@ -130,13 +157,15 @@ export function projectsRunning(files, appDir) {
 }
 
 /**
- * Each project's `@sssb/app-config` alias, as Vitest itself resolves the config (in-repo mode's alias check), through
- * the Vitest the run directory installs. Real paths; null for a project without the alias.
+ * Each project's aliases that would match an `@sssb/app-config` specifier, with where each sends it (aliasRoutes), as
+ * Vitest itself resolves the config (in-repo mode's alias check), through the Vitest the run directory installs. An
+ * empty list for a project without such an alias.
  * @param {VitestRun} run
  * @param {readonly string[]} projects
- * @returns {Promise<Map<string, string | null>>}
+ * @param {string} own the app's own seam directory (real path)
+ * @returns {Promise<Map<string, SeamRoute[]>>}
  */
-export async function seamAliases(run, projects) {
+export async function seamAliases(run, projects, own) {
     const vitestNode = createRequire(path.join(run.cwd, 'package.json')).resolve('vitest/node')
     const { createVitest } = await import(pathToFileURL(vitestNode).href)
     // Vite's notice about its future config loader is not doctor's to print (the `vitest list` children set it too).
@@ -150,14 +179,14 @@ export async function seamAliases(run, projects) {
         },
         {},
     )
-    /** @type {Map<string, string | null>} */
+    /** @type {Map<string, SeamRoute[]>} */
     const aliases = new Map()
     try {
         for (const project of vitest.projects) {
+            // Vite hands every project its aliases as one array of { find, replacement }, the object form converted.
             /** @type {{ find: string | RegExp, replacement: string }[]} */
             const list = project.vite.config.resolve.alias
-            const seam = list.find((entry) => entry.find === '@sssb/app-config')
-            aliases.set(project.name, seam && existsSync(seam.replacement) ? realpathSync(seam.replacement) : null)
+            aliases.set(project.name, aliasRoutes(list, own))
         }
     } finally {
         await vitest.close()

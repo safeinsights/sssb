@@ -5,13 +5,16 @@
 // peers, its check registry, its cutover rows) is read as data from the copy the APP resolves (rule 4, ../kit.js).
 import { existsSync, globSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
-import { readJson } from '../app.js'
+import { readJson, UsageError, workspaceApps } from '../app.js'
 
 const KIT = '@sssb/kit'
 const SEAM = '@sssb/app-config'
 
-/** The dependency fields that make a package an importer of a package (a peer only says who must provide it). */
+/** The dependency fields that give a package its own copy of a package (a seam declared as a peer is not its own). */
 const DEPENDENCY_FIELDS = /** @type {const} */ (['dependencies', 'devDependencies', 'optionalDependencies'])
+
+/** The fields that make a package an importer of @sssb/kit: any of them puts an instance on its lookup chain. */
+const IMPORTER_FIELDS = /** @type {const} */ ([...DEPENDENCY_FIELDS, 'peerDependencies'])
 
 /**
  * The directory of package `name` as Node's lookup finds it from `start`: the first `node_modules/<name>` walking up,
@@ -30,55 +33,260 @@ export function packageDirFrom(start, name) {
 
 /**
  * The two settings doctor reads from `pnpm-workspace.yaml`: its `packages` globs and `dedupePeerDependents`. A
- * deliberately small reader (block sequences of plain or quoted scalars, and one top-level scalar), so @sssb/tools
- * takes no YAML dependency; a flow sequence (`packages: [a, b]`) is read too.
+ * deliberately small reader, so @sssb/tools takes no YAML dependency. It reads the subset a pnpm-workspace.yaml uses,
+ * and THROWS, naming the line, on anything else, because a list it misread as empty would make every workspace-wide
+ * check pass over nothing:
+ *
+ *   - top-level `key:` entries, plain or quoted keys; the value of any key but these two is skipped (its indented
+ *     lines, and `- ` items at column 0, which YAML lets a block sequence use under a top-level key);
+ *   - `packages` as a block sequence at any one indentation, column 0 included, of plain or quoted scalars, or as a
+ *     flow sequence (`[a, 'b']`) on one line or over several (at any column, as YAML allows); comments and blank lines
+ *     anywhere;
+ *   - `dedupePeerDependents` as an unquoted true or false (anything else, a quoted 'false' too, is not the boolean).
+ *
+ * What it throws on, among others: anchors, aliases and tags (an unquoted `!glob` is a tag, an unquoted `*glob` an
+ * alias), nested or multi-line items, a scalar where the list belongs, a duplicate key, a top-level flow mapping, an
+ * unclosed flow sequence, and a second document.
  * @param {string} text
  * @returns {{ packages: string[], dedupePeerDependents: boolean | undefined }}
  */
 export function parseWorkspaceYaml(text) {
-    /** @param {string} raw */
-    const scalar = (raw) =>
-        raw
-            .replace(/\s+#.*$/, '')
-            .trim()
-            .replace(/^(['"])(.*)\1$/, '$2')
-    /** @type {string[]} */
-    const packages = []
-    /** @type {boolean | undefined} */
-    let dedupePeerDependents
-    const lines = text.split('\n')
+    /**
+     * @param {number} line
+     * @param {string} what
+     * @returns {never}
+     */
+    const fail = (line, what) => {
+        throw new UsageError(
+            `sssb: pnpm-workspace.yaml line ${line}: ${what}, which sssb's reader of the file does not understand ` +
+                '(it reads a small subset of YAML: see parseWorkspaceYaml in @sssb/tools)',
+        )
+    }
+    /** @typedef {{ line: number, text: string }} Line */
+    /** @typedef {{ line: number, value: string, body: Line[], depth: number }} Entry depth: flow brackets still open */
+    /** @type {Map<string, Entry>} */
+    const entries = new Map()
+    /** @type {Entry | null} */
+    let current = null
+    let ended = false
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i] ?? ''
-        const flow = /^packages:\s*\[(.*)\]\s*(#.*)?$/.exec(line)
-        if (flow) {
-            packages.push(...(flow[1] ?? '').split(',').map(scalar).filter(Boolean))
+        const n = i + 1
+        if (/^\s*(#.*)?$/.test(line)) continue
+        // Inside an open flow collection (`key: [` ...), every line continues it, at column 0 too.
+        if (current !== null && current.depth > 0) {
+            current.body.push({ line: n, text: line })
+            current.depth += flowDepth(line)
             continue
         }
-        if (/^packages:\s*(#.*)?$/.test(line)) {
-            for (i++; i < lines.length; i++) {
-                const item = lines[i] ?? ''
-                if (/^\s*(#.*)?$/.test(item)) continue
-                const entry = /^\s+-\s+(.+)$/.exec(item)
-                if (!entry) {
-                    i--
-                    break
-                }
-                packages.push(scalar(entry[1] ?? ''))
-            }
+        if (ended) fail(n, 'content after the end of the document (`...`)')
+        if (/^---[ \t]*(#.*)?$/.test(line)) {
+            if (entries.size > 0) fail(n, 'a second YAML document')
             continue
         }
-        const dedupe = /^dedupePeerDependents:\s*(.+)$/.exec(line)
-        if (dedupe) {
-            const value = scalar(dedupe[1] ?? '')
-            dedupePeerDependents = value === 'true' ? true : value === 'false' ? false : undefined
+        if (/^\.\.\.[ \t]*(#.*)?$/.test(line)) {
+            ended = true
+            continue
         }
+        if (/^[ \t]/.test(line) || /^-([ \t]|$)/.test(line)) {
+            if (current === null) fail(n, 'an indented line or list item before any key')
+            current.body.push({ line: n, text: line })
+            continue
+        }
+        const key = /^(?:([A-Za-z_][\w.-]*)|'((?:[^']|'')*)'|"((?:[^"\\]|\\.)*)")[ \t]*:(?:[ \t]+(.*))?$/.exec(line)
+        if (!key) fail(n, `\`${line.trim()}\``)
+        const name =
+            key[1] ?? (key[2] === undefined ? unescapeDouble(key[3] ?? '', n, fail) : key[2].replaceAll("''", "'"))
+        if (entries.has(name)) fail(n, `a second \`${name}\` key`)
+        current = { line: n, value: key[4] ?? '', body: [], depth: flowDepth(key[4] ?? '') }
+        entries.set(name, current)
     }
+
+    /** @param {string} raw @param {number} line @param {boolean} inFlow */
+    const scalar = (raw, line, inFlow) => {
+        if (raw.startsWith("'")) {
+            const quoted = /^'((?:[^']|'')*)'$/.exec(raw)
+            if (!quoted) fail(line, `\`${raw}\``)
+            return (quoted[1] ?? '').replaceAll("''", "'")
+        }
+        if (raw.startsWith('"')) {
+            const quoted = /^"((?:[^"\\]|\\.)*)"$/.exec(raw)
+            if (!quoted) fail(line, `\`${raw}\``)
+            return unescapeDouble(quoted[1] ?? '', line, fail)
+        }
+        if (/^[,[\]{}#&*!|>%@`]/.test(raw) || /^[-?:]([ \t]|$)/.test(raw))
+            fail(line, `\`${raw}\` (an anchor, alias, tag, nested collection or block scalar)`)
+        if (/:([ \t]|$)/.test(raw) || (inFlow && /[,[\]{}]/.test(raw))) fail(line, `\`${raw}\``)
+        if (/^(~|null|Null|NULL)$/.test(raw)) fail(line, `\`${raw}\` (a null where a glob belongs)`)
+        return raw
+    }
+
+    /** @type {string[]} */
+    let packages = []
+    const listed = entries.get('packages')
+    if (listed) {
+        const value = stripComment(listed.value, listed.line, fail)
+        if (value === '') packages = blockSequence(listed.body, scalar, fail)
+        else if (value.startsWith('['))
+            packages = flowSequence(
+                [
+                    { line: listed.line, text: value },
+                    ...listed.body.map((b) => ({ line: b.line, text: stripComment(b.text, b.line, fail) })),
+                ],
+                scalar,
+                fail,
+            )
+        else fail(listed.line, `\`packages: ${value}\` (a list belongs there)`)
+    }
+
+    const dedupe = entries.get('dedupePeerDependents')
+    const flag = dedupe && dedupe.body.length === 0 ? stripComment(dedupe.value, dedupe.line, fail) : ''
+    const dedupePeerDependents = /^(true|True|TRUE)$/.test(flag)
+        ? true
+        : /^(false|False|FALSE)$/.test(flag)
+          ? false
+          : undefined
     return { packages, dedupePeerDependents }
 }
 
 /**
+ * How many flow brackets (`[`, `{`) a line opens and leaves open, its quoted text and comment aside. Never throws: it
+ * only decides which lines a flow value spans, and the value's own reader judges them.
+ * @param {string} text
+ */
+function flowDepth(text) {
+    let depth = 0
+    /** @type {string | null} */
+    let quote = null
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i]
+        if (quote !== null) {
+            if (quote === '"' && c === '\\') i++
+            else if (c === quote) quote = null
+        } else if (c === "'" || c === '"') quote = c
+        else if (c === '#' && (i === 0 || /\s/.test(text[i - 1] ?? ''))) break
+        else if (c === '[' || c === '{') depth++
+        else if (c === ']' || c === '}') depth--
+    }
+    return depth
+}
+
+/** @typedef {(line: number, what: string) => never} Fail */
+/** @typedef {(raw: string, line: number, inFlow: boolean) => string} Scalar */
+
+/**
+ * A line with its comment (a `#` at its start or after white space, outside quotes) cut off, trimmed.
+ * @param {string} text
+ * @param {number} line
+ * @param {Fail} fail
+ */
+function stripComment(text, line, fail) {
+    /** @type {string | null} */
+    let quote = null
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i]
+        if (quote === "'") {
+            if (c === "'") {
+                if (text[i + 1] === "'") i++
+                else quote = null
+            }
+        } else if (quote === '"') {
+            if (c === '\\') i++
+            else if (c === '"') quote = null
+        } else if (c === "'" || c === '"') quote = c
+        else if (c === '#' && (i === 0 || /\s/.test(text[i - 1] ?? ''))) return text.slice(0, i).trim()
+    }
+    if (quote !== null) fail(line, 'a quoted string that does not close on its line')
+    return text.trim()
+}
+
+/**
+ * A double-quoted scalar's text, with the escapes a glob needs (`\\`, `\"`, `\/`); any other escape throws.
+ * @param {string} text
+ * @param {number} line
+ * @param {Fail} fail
+ */
+function unescapeDouble(text, line, fail) {
+    return text.replace(/\\(.)/g, (_, c) =>
+        c === '\\' || c === '"' || c === '/' ? c : fail(line, `the escape \\${c}`),
+    )
+}
+
+/**
+ * A block sequence's items: every line `- <scalar>`, all at one indentation.
+ * @param {{ line: number, text: string }[]} body
+ * @param {Scalar} scalar
+ * @param {Fail} fail
+ */
+function blockSequence(body, scalar, fail) {
+    /** @type {number | null} */
+    let indent = null
+    /** @type {string[]} */
+    const items = []
+    for (const { line, text } of body) {
+        const item = /^( *)-(?:[ \t]+(.*))?$/.exec(text)
+        if (!item) fail(line, `\`${text.trim()}\` inside the packages list`)
+        const at = (item[1] ?? '').length
+        if (indent === null) indent = at
+        else if (at !== indent) fail(line, 'a list item at another indentation than the first')
+        const value = stripComment(item[2] ?? '', line, fail)
+        if (value === '') fail(line, 'an empty or nested list item')
+        items.push(scalar(value, line, false))
+    }
+    return items
+}
+
+/**
+ * A flow sequence's items, from its lines (comments already cut): `[` item `,` ... `]`, a trailing comma allowed.
+ * @param {{ line: number, text: string }[]} parts
+ * @param {Scalar} scalar
+ * @param {Fail} fail
+ */
+function flowSequence(parts, scalar, fail) {
+    /** @type {{ text: string, line: number }[]} */
+    const items = []
+    let item = ''
+    let itemLine = parts[0]?.line ?? 1
+    /** @type {string | null} */
+    let quote = null
+    let closed = false
+    for (const [index, { line, text }] of parts.entries()) {
+        for (let i = index === 0 ? 1 : 0; i < text.length; i++) {
+            const c = text[i] ?? ''
+            if (closed) fail(line, `\`${text.slice(i).trim()}\` after the list's closing \`]\``)
+            if (quote !== null) {
+                item += c
+                if (quote === '"' && c === '\\') item += text[++i] ?? ''
+                else if (c === quote) {
+                    if (quote === "'" && text[i + 1] === "'") item += text[++i]
+                    else quote = null
+                }
+            } else if (c === "'" || c === '"') {
+                quote = c
+                item += c
+            } else if (c === ',' || c === ']') {
+                items.push({ text: item.trim(), line: itemLine })
+                item = ''
+                itemLine = line
+                if (c === ']') closed = true
+            } else if (c === '[' || c === '{' || c === '}') fail(line, 'a nested collection in the packages list')
+            else {
+                if (item.trim() === '') itemLine = line
+                item += c
+            }
+        }
+        if (!closed) item += ' '
+    }
+    if (!closed) fail(parts.at(-1)?.line ?? 1, 'a flow sequence never closed with `]`')
+    // `[]` and a trailing comma leave one empty item last; an empty item anywhere else is a stray comma.
+    if (items.at(-1)?.text === '') items.pop()
+    return items.map(({ text, line }) => (text === '' ? fail(line, 'an empty list item') : scalar(text, line, true)))
+}
+
+/**
  * Every package of the workspace at `root` (its `pnpm-workspace.yaml` globs, `!` negations applied), as absolute
- * directories holding a package.json, sorted. The root itself is not in it.
+ * directories holding a package.json, sorted. The root itself is not in it. Throws when the file cannot be read.
  * @param {string} root
  * @returns {string[]}
  */
@@ -105,9 +313,28 @@ export function workspacePackages(root) {
  * package directories. There the seam goes through each app's aliases rather than a link.
  * @param {string} kitDir the real directory of the app's `@sssb/kit` (kitDirOf)
  * @param {string} root the workspace root
+ * @param {readonly string[]} [packages] the workspace's packages, when already walked (workspacePackages)
  */
-export function isInRepoKit(kitDir, root) {
-    return workspacePackages(root).some((dir) => realpathSync(dir) === kitDir)
+export function isInRepoKit(kitDir, root, packages = workspacePackages(root)) {
+    return packages.some((dir) => realpathSync(dir) === kitDir)
+}
+
+/**
+ * WHAT DOCTOR WALKS: the workspace's packages, whether the app's kit is one of them (in-repo mode), every importer of
+ * @sssb/kit, and the APPS, each of which gets every per-app check: in-repo, the apps the workspace's commands fan out
+ * over (`sssb.apps`, or apps/*, as the alias check walks them); otherwise every importer with a seam of its own
+ * (`src/app-config`). All real paths. Throws, as workspacePackages does, when pnpm-workspace.yaml cannot be read.
+ * @param {string} root real path
+ * @param {string} kitDir the real directory of the @sssb/kit doctor's app resolves
+ */
+export function discoverWorkspace(root, kitDir) {
+    const packages = workspacePackages(root)
+    const inRepo = isInRepoKit(kitDir, root, packages)
+    const importers = kitImporters(root, packages)
+    const apps = inRepo
+        ? workspaceApps(root).map((app) => realpathSync(path.join(root, app)))
+        : importers.map(({ dir }) => dir).filter((dir) => existsSync(path.join(dir, 'src', 'app-config')))
+    return { packages, inRepo, importers, apps }
 }
 
 /** @typedef {{ id: string, runner: string, title: string, tests: string[] }} RegisteredCheck */
@@ -128,17 +355,18 @@ function expectedTests(registry, runner) {
 }
 
 /**
- * The checks an app opted out of, as the suite records them in what Vitest lists: a test named
- * `[sssb:opt-out:<id>] <reason>` (at the file's top level, or under a describe).
+ * The checks an app opted out of, with the reason each gives, as the suite records them in what Vitest lists: a test
+ * named `[sssb:opt-out:<id>] <reason>` (at the file's top level, or under a describe).
  * @param {readonly string[]} listed every listed test's full name
- * @returns {Set<string>}
+ * @returns {Map<string, string>} check id -> reason
  */
 function optedOut(listed) {
-    const ids = new Set()
+    /** @type {Map<string, string>} */
+    const ids = new Map()
     for (const name of listed) {
         for (const segment of name.split(' > ')) {
-            const id = /^\[sssb:opt-out:([^\]\s]+)\]/.exec(segment)?.[1]
-            if (id) ids.add(id)
+            const marker = /^\[sssb:opt-out:([^\]\s]+)\]\s*(.*)$/.exec(segment)
+            if (marker?.[1]) ids.set(marker[1], marker[2] ?? '')
         }
     }
     return ids
@@ -147,11 +375,12 @@ function optedOut(listed) {
 /**
  * The tests of one runner's checks that Vitest would NOT run: every expected test that is not in the listing, unless
  * its check is opted out by a listed marker. A marker is honoured only for a check of this runner (the suite refuses
- * any other while collecting, so a stray one changes nothing).
+ * any other while collecting, so a stray one changes nothing). The listing must already be the app's own suite files
+ * (ownTests): a name or a marker from any other file proves nothing.
  * @param {readonly string[]} listed every listed test's full name
  * @param {{ checks: RegisteredCheck[] }} registry
  * @param {'unit' | 'contract'} runner
- * @returns {{ missing: string[], optedOut: string[], expected: number }}
+ * @returns {{ missing: string[], optedOut: { id: string, reason: string }[], expected: number }}
  */
 export function missingTests(listed, registry, runner) {
     const names = new Set(listed)
@@ -160,9 +389,47 @@ export function missingTests(listed, registry, runner) {
     const ids = [...new Set(expected.map((test) => test.id))]
     return {
         missing: expected.filter((test) => !out.has(test.id) && !names.has(test.name)).map((test) => test.name),
-        optedOut: ids.filter((id) => out.has(id)),
+        optedOut: ids.filter((id) => out.has(id)).map((id) => ({ id, reason: out.get(id) ?? '' })),
         expected: expected.filter((test) => !out.has(test.id)).length,
     }
+}
+
+/**
+ * Which of an app's test areas a file is in: `unit` under the app's `src/`, `contract` under its `tests/contract/`,
+ * null anywhere else, and null inside a workspace package nested in the app's directory (a root-level app's apps/*),
+ * whose tests are that package's, not the app's.
+ * @param {string} file
+ * @param {string} appDir
+ * @param {readonly string[]} nested the workspace packages strictly inside `appDir`
+ * @returns {'unit' | 'contract' | null}
+ */
+export function areaOf(file, appDir, nested) {
+    const abs = path.resolve(file)
+    if (nested.some((dir) => abs.startsWith(dir + path.sep))) return null
+    if (abs.startsWith(path.join(appDir, 'src') + path.sep)) return 'unit'
+    if (abs.startsWith(path.join(appDir, 'tests', 'contract') + path.sep)) return 'contract'
+    return null
+}
+
+/**
+ * The names, from a `vitest list` listing, that can prove an app runs a runner's checks or opts out of one: the unit
+ * checks come from the app's own `src/sssb.conformance.test.ts` alone, the contract checks from the files under its own
+ * `tests/contract/`. A check's name or opt-out marker in any other file (another app's, a nested package's, or an
+ * ordinary test that happens to use the name) counts for nothing.
+ * @param {readonly { name: string, file: string }[]} listed
+ * @param {string} appDir
+ * @param {'unit' | 'contract'} runner
+ * @param {readonly string[]} nested the workspace packages strictly inside `appDir`
+ */
+export function ownTests(listed, appDir, runner, nested) {
+    const suite = path.join(appDir, 'src', 'sssb.conformance.test.ts')
+    return listed
+        .filter((test) =>
+            runner === 'unit'
+                ? path.resolve(test.file) === suite && areaOf(test.file, appDir, nested) === 'unit'
+                : areaOf(test.file, appDir, nested) === 'contract',
+        )
+        .map((test) => test.name)
 }
 
 /**
@@ -210,10 +477,11 @@ export function kitPeers(kitDir) {
 /**
  * @param {Record<string, unknown>} manifest
  * @param {string} name
+ * @param {readonly string[]} [fields]
  * @returns {string | undefined}
  */
-function declared(manifest, name) {
-    for (const field of DEPENDENCY_FIELDS) {
+function declared(manifest, name, fields = DEPENDENCY_FIELDS) {
+    for (const field of fields) {
         const deps = /** @type {Record<string, string> | undefined} */ (manifest[field])
         if (deps && typeof deps[name] === 'string') return deps[name]
     }
@@ -228,14 +496,16 @@ function declared(manifest, name) {
 export const seamOfKit = (kitDir) => packageDirFrom(kitDir, SEAM)
 
 /**
- * Every package of the workspace, the root included, that depends on `@sssb/kit` (the framework itself aside).
+ * Every package of the workspace, the root included, that takes `@sssb/kit` in any dependency field (dependencies,
+ * devDependencies, optionalDependencies, peerDependencies), the framework itself aside. Real paths.
  * @param {string} root
+ * @param {readonly string[]} [packages] the workspace's packages, when already walked (workspacePackages)
  * @returns {{ dir: string, manifest: Record<string, unknown> }[]}
  */
-export function kitImporters(root) {
-    return [root, ...workspacePackages(root)]
-        .map((dir) => ({ dir, manifest: readJson(path.join(dir, 'package.json')) }))
-        .filter(({ manifest }) => manifest.name !== KIT && declared(manifest, KIT) !== undefined)
+export function kitImporters(root, packages = workspacePackages(root)) {
+    return [root, ...packages]
+        .map((dir) => ({ dir: realpathSync(dir), manifest: readJson(path.join(dir, 'package.json')) }))
+        .filter(({ manifest }) => manifest.name !== KIT && declared(manifest, KIT, IMPORTER_FIELDS) !== undefined)
 }
 
 /**
@@ -245,15 +515,15 @@ export function kitImporters(root) {
  * doctor runs from. `resolveKit` is the shared resolver's kitDirOf.
  * @param {string} root
  * @param {(dir: string) => string} resolveKit
+ * @param {{ dir: string, manifest: Record<string, unknown> }[]} [found] the importers, when already walked
  * @returns {{ problems: string[], importers: string[] }}
  */
-export function importerSeamProblems(root, resolveKit) {
+export function importerSeamProblems(root, resolveKit, found = kitImporters(root)) {
     /** @type {string[]} */
     const problems = []
     /** @type {string[]} */
     const importers = []
     const rel = (/** @type {string} */ dir) => path.relative(root, dir) || '(the workspace root)'
-    const found = kitImporters(root)
     /** @type {Map<string, string>} each package's own seam (real path) -> the package */
     const seamOwners = new Map()
     for (const { dir, manifest } of found) {
@@ -317,26 +587,104 @@ function ownSeam(dir, spec) {
 }
 
 /**
+ * A path as far as it exists made real, the rest appended: where a target that names a file not (yet) there lands.
+ * A bare specifier (no absolute path) is returned as it is.
+ * @param {string} target
+ */
+export function realish(target) {
+    if (!path.isAbsolute(target)) return target
+    let dir = path.resolve(target)
+    /** @type {string[]} */
+    const rest = []
+    while (!existsSync(dir)) {
+        const parent = path.dirname(dir)
+        if (parent === dir) return target
+        rest.unshift(path.basename(dir))
+        dir = parent
+    }
+    return path.join(realpathSync(dir), ...rest)
+}
+
+/** A subpath no seam has, so a probe through it shows where a wildcard mapping sends any subpath. */
+export const PROBE = '__sssb_doctor_probe__'
+
+/**
+ * The specifiers doctor sends through a Vitest project's aliases to see where each sends the seam: the bare seam, a
+ * subpath no seam has, and one subpath per entry of the app's own seam directory (so an alias for one subpath, such as
+ * a RegExp for `@sssb/app-config/registrations`, is exercised too).
+ * @param {string} own the app's own seam directory
+ */
+function seamProbes(own) {
+    const entries = existsSync(own) ? readdirSync(own).map((name) => name.replace(/\.[^.]+$/, '')) : []
+    return [...new Set([SEAM, `${SEAM}/${PROBE}`, ...entries.map((name) => `${SEAM}/${name}`)])]
+}
+
+/**
+ * Whether a Vite alias's `find` matches a specifier, exactly as Vite decides (a RegExp tests it; a string matches
+ * itself and anything under it).
+ * @param {string | RegExp} find
+ * @param {string} specifier
+ */
+function aliasMatches(find, specifier) {
+    if (find instanceof RegExp) return new RegExp(find.source, find.flags.replace('g', '')).test(specifier)
+    return specifier === find || specifier.startsWith(find.endsWith('/') ? find : `${find}/`)
+}
+
+/** @typedef {{ find: string, to: string, resolved: string[] }} SeamRoute where one alias or `paths` entry sends the seam: `to` as written, `resolved` the real path each probe specifier lands on (a bare specifier as it is) */
+
+/**
+ * Every entry of a Vitest project's resolved alias list (Vite's array form; the object form arrives as one) that
+ * would match any `@sssb/app-config` specifier, a string or a RegExp `find` alike, with where it sends each probe.
+ * Every matching entry counts, not only the first that wins today, since a reordered list would bring a later one in.
+ * @param {readonly { find: string | RegExp, replacement: string }[]} entries
+ * @param {string} own the app's own seam directory (real path)
+ * @returns {SeamRoute[]}
+ */
+export function aliasRoutes(entries, own) {
+    const probes = seamProbes(own)
+    /** @type {SeamRoute[]} */
+    const routes = []
+    for (const { find, replacement } of entries) {
+        const matched = probes.filter((probe) => aliasMatches(find, probe))
+        if (matched.length === 0) continue
+        routes.push({
+            find: String(find),
+            to: replacement,
+            resolved: matched.map((probe) =>
+                realish(
+                    find instanceof RegExp ? probe.replace(find, replacement) : replacement + probe.slice(find.length),
+                ),
+            ),
+        })
+    }
+    return routes
+}
+
+/**
  * IN-REPO MODE's replacement for the per-importer seam check: inside SSSB's repository the seam goes through aliases,
- * so each app's tsconfig `paths['@sssb/app-config/*']` and the `@sssb/app-config` alias of each Vitest project that
- * runs its files must point at THAT app's own `src/app-config`.
- * @param {{ app: string, own: string, tsconfig: string | null, projects: { config: string, project: string, seam: string | null }[] }[]} apps
- *   `own`, `tsconfig` and each `seam` are real paths (`tsconfig` is where `paths` sends the seam, null when it maps none)
+ * so every tsconfig `paths` key that is or starts with `@sssb/app-config` (every one of its targets), and every alias of
+ * each Vitest project that runs the app's files and would match an `@sssb/app-config` specifier, must send the seam
+ * into THAT app's own `src/app-config`.
+ * @param {{ app: string, own: string, tsconfig: SeamRoute[], projects: { config: string, project: string, routes: SeamRoute[] }[] }[]} apps
+ *   `own` and every `resolved` path are real paths shown the same way (relative to the workspace root)
  * @returns {string[]}
  */
 export function aliasProblems(apps) {
     /** @type {string[]} */
     const problems = []
     for (const { app, own, tsconfig, projects } of apps) {
-        if (tsconfig === null) problems.push(`${app}: its tsconfig maps no ${SEAM}/* path`)
-        else if (tsconfig !== own)
-            problems.push(`${app}: its tsconfig sends ${SEAM}/* to ${tsconfig}, not its own ${own}`)
+        const inside = (/** @type {SeamRoute} */ route) =>
+            route.resolved.every((target) => target === own || target.startsWith(own + path.sep))
+        if (tsconfig.length === 0) problems.push(`${app}: its tsconfig maps no ${SEAM} path`)
+        for (const route of tsconfig.filter((r) => !inside(r)))
+            problems.push(`${app}: its tsconfig sends ${route.find} to ${route.to}, not its own ${own}`)
         if (projects.length === 0) problems.push(`${app}: no Vitest project runs its files, so none aliases its seam`)
-        for (const { config, project, seam } of projects) {
-            if (seam === null) problems.push(`${app}: Vitest project ${project} (${config}) has no ${SEAM} alias`)
-            else if (seam !== own)
+        for (const { config, project, routes } of projects) {
+            const name = project === '' ? 'the root project' : `project ${project}`
+            if (routes.length === 0) problems.push(`${app}: Vitest ${name} (${config}) has no ${SEAM} alias`)
+            for (const route of routes.filter((r) => !inside(r)))
                 problems.push(
-                    `${app}: Vitest project ${project} (${config}) aliases ${SEAM} to ${seam}, not its own ${own}`,
+                    `${app}: Vitest ${name} (${config}) aliases ${route.find} to ${route.to}, not its own ${own}`,
                 )
         }
     }
@@ -380,6 +728,131 @@ export function versionProblems(packages) {
     return [...packages]
         .filter(([name, version]) => name !== KIT && version !== kit)
         .map(([name, version]) => `${name} ${version ?? '(no version)'} is not @sssb/kit's ${kit}`)
+}
+
+/** Vitest flags that take a value as the next word (so that word is no file filter). */
+const VALUE_FLAGS = new Set([
+    '--config',
+    '-c',
+    '--project',
+    '--exclude',
+    '-t',
+    '--testNamePattern',
+    '--shard',
+    '--reporter',
+    '--outputFile',
+    '--root',
+    '-r',
+    '--dir',
+    '--environment',
+    '--pool',
+    '--maxWorkers',
+    '--mode',
+    '--testTimeout',
+    '--hookTimeout',
+    '--retry',
+    '--bail',
+])
+
+/** Vitest flags that can run fewer tests than the configuration would. */
+const NARROWING_FLAGS = new Set([
+    '--project',
+    '--exclude',
+    '-t',
+    '--testNamePattern',
+    '--changed',
+    '--related',
+    '--shard',
+    '--typecheck.only',
+    '--dir',
+])
+
+/** Vitest subcommands that run the configuration's files (`related` narrows them, and is reported). */
+const SUBCOMMANDS = new Set(['run', 'watch', 'dev', 'list', 'bench'])
+
+/** @typedef {{ script: string, config: string | null, narrowing: string[] }} VitestInvocation */
+
+/**
+ * Every place a package.json's scripts run Vitest, with the `--config` each names and every flag or positional file
+ * filter that can narrow what the configuration would run. Read from the script text alone: a shell's words (quotes
+ * honoured) split at `&&`, `||`, `;` and `|`, a quoted word holding a whole command (`sh -c '...'`) read again, the
+ * `vitest` word found by name or path (`vitest`, `node_modules/vitest/vitest.mjs`). A script that runs another
+ * script is not followed.
+ * @param {Record<string, unknown>} scripts
+ * @returns {VitestInvocation[]}
+ */
+export function vitestInvocations(scripts) {
+    /** @type {VitestInvocation[]} */
+    const found = []
+    /** @param {string} script @param {string} command */
+    const scan = (script, command) => {
+        for (const segment of shellSegments(command)) {
+            for (const word of segment.filter((w) => /\s/.test(w))) scan(script, word)
+            const at = segment.findIndex((word) => /(^|\/)vitest(\.m?js)?$/.test(word))
+            if (at < 0) continue
+            const args = segment.slice(at + 1)
+            /** @type {string | null} */
+            let config = null
+            /** @type {string[]} */
+            const narrowing = []
+            let i = 0
+            if (SUBCOMMANDS.has(args[0] ?? '')) i = 1
+            else if (args[0] === 'related') {
+                narrowing.push('related')
+                i = 1
+            }
+            for (; i < args.length; i++) {
+                const arg = args[i] ?? ''
+                if (!arg.startsWith('-')) {
+                    narrowing.push(arg)
+                    continue
+                }
+                const eq = arg.indexOf('=')
+                const name = eq < 0 ? arg : arg.slice(0, eq)
+                let value = eq < 0 ? undefined : arg.slice(eq + 1)
+                const separate = value === undefined && VALUE_FLAGS.has(name)
+                if (separate) value = args[++i]
+                if (name === '--config' || name === '-c') config = value ?? null
+                if (NARROWING_FLAGS.has(name)) narrowing.push(separate ? `${name} ${value ?? ''}`.trim() : arg)
+            }
+            found.push({ script, config, narrowing })
+        }
+    }
+    for (const [script, command] of Object.entries(scripts)) if (typeof command === 'string') scan(script, command)
+    return found
+}
+
+/**
+ * A shell command's words, quotes removed, split into the commands that `&&`, `||`, `;`, `|` and `&` separate.
+ * @param {string} command
+ * @returns {string[][]}
+ */
+function shellSegments(command) {
+    /** @type {string[][]} */
+    const segments = [[]]
+    /** @type {string | null} */
+    let word = null
+    /** @type {string | null} */
+    let quote = null
+    const end = () => {
+        if (word !== null) segments.at(-1)?.push(word)
+        word = null
+    }
+    for (const c of command) {
+        if (quote !== null) {
+            if (c === quote) quote = null
+            else word += c
+        } else if (c === "'" || c === '"') {
+            quote = c
+            word ??= ''
+        } else if (/\s/.test(c)) end()
+        else if (';&|'.includes(c)) {
+            end()
+            if ((segments.at(-1)?.length ?? 0) > 0) segments.push([])
+        } else word = (word ?? '') + c
+    }
+    end()
+    return segments.filter((segment) => segment.length > 0)
 }
 
 /**

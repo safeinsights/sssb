@@ -1,41 +1,73 @@
 // @ts-check
-// `sssb doctor [--app <dir>]`: the checks that an app's installed SSSB is the one it was built and tested as (ADR-0014
-// part 5), and that SSSB's conformance suite would actually run (part 3). It fails, naming every problem, on:
+// `sssb doctor [--app <dir>]`: the checks that a workspace's installed SSSB is the one it was built and tested as
+// (ADR-0014 part 5), and that SSSB's conformance suite would actually run (part 3). ONE RUN CHECKS THE WHOLE
+// WORKSPACE: it walks pnpm-workspace.yaml for every importer of @sssb/kit and every APP (in-repo, the apps the
+// workspace's commands fan out over, `sssb.apps` or apps/*; otherwise every importer with a seam of its own,
+// `src/app-config`), and gives each app the per-app checks, the one it runs for (`--app`, or the working directory)
+// among them. It fails, naming every problem, on:
 //
-//   - two copies of a singleton: a peer of @sssb/kit found from the kit's directory and from the app's must be ONE
+//   - a workspace walk that cannot read pnpm-workspace.yaml, or that does not reach the app doctor runs for;
+//   - two copies of a singleton: a peer of @sssb/kit found from the kit's directory and from an app's must be ONE
 //     real directory (the `readlink -f` check build-notes tells a dependency PR to run by hand);
 //   - an importer of @sssb/kit, anywhere in the workspace, without its own seam: it must declare its
 //     `@sssb/app-config` link, and the instance it resolves must have that very seam linked (in-repo mode, where the
-//     seam goes through aliases instead, each app's tsconfig `paths` and Vitest projects must alias its own);
-//   - an @sssb/* package the app resolves at another version than its @sssb/kit;
-//   - a check of the conformance suite (unit, and the contract runner) that `vitest list`, run the way CI runs
-//     Vitest, does not list, unless the app opted out of it by name;
+//     seam goes through aliases instead, every tsconfig `paths` entry and every Vitest alias that would resolve the
+//     seam for an app must send it into that app's own);
+//   - an @sssb/* package an app resolves at another version than its @sssb/kit;
+//   - a check of the conformance suite that a Vitest config which runs the app's tests does not list: every config at
+//     the workspace root or in the app (`vitest*.config.*`, `vite.config.*`) that runs any of the app's `src/` test
+//     files must list every unit check from the app's own `src/sssb.conformance.test.ts`, every config that runs its
+//     `tests/contract/` files every contract check from them, and some config must run each, unless the app opted out
+//     of the check by name in that same file;
 //   - an app guide copy that is stale against the guide the kit ships (`sssb guide --check`), once the kit ships one.
 //
-// It REPORTS, without failing: `dedupePeerDependents: false` missing from pnpm-workspace.yaml (advice), framework
-// cutover rows the workspace's checklist never mentions, and the workflow and plugin pins it cannot check yet.
+// It REPORTS, without failing: each opt-out with its reason; the flags and file filters the root's and the apps'
+// package.json scripts pass to vitest (doctor proves what each configuration would run, never what a CI step's own
+// command line adds); which script runs each app's contract config (doctor lists the contract checks, it never runs
+// them); `dedupePeerDependents: false` missing from pnpm-workspace.yaml (advice); framework cutover rows the
+// workspace's checklist never mentions; and the workflow and plugin pins it cannot check yet.
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { readJson, takeAppDir, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
+import { readJson, takeAppDir, UsageError, workspaceRootOf } from '../app.js'
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '../kit.js'
 import {
     aliasProblems,
+    areaOf,
     cutoverReport,
+    discoverWorkspace,
     importerSeamProblems,
-    isInRepoKit,
-    kitImporters,
     kitPeers,
     missingTests,
+    ownTests,
     packageDirFrom,
     parseWorkspaceYaml,
+    PROBE,
+    realish,
     singletonProblems,
     sssbPackagesOf,
     versionProblems,
+    vitestInvocations,
 } from './doctor-checks.js'
-import { projectsRunning, seamAliases, vitestList, vitestRunsFor } from './doctor-vitest.js'
+import {
+    projectsRunning,
+    seamAliases,
+    vitestConfigsFor,
+    vitestDefaultConfig,
+    vitestDefaults,
+    vitestList,
+} from './doctor-vitest.js'
+
+const SEAM = '@sssb/app-config'
+const RUNNERS = /** @type {const} */ (['unit', 'contract'])
 
 /** @typedef {{ status: 'ok' | 'FAIL' | 'report' | 'advice', title: string, lines?: string[] }} Result */
+/** @typedef {ReturnType<typeof discoverWorkspace>} Workspace */
+/** @typedef {import('./doctor-vitest.js').VitestRun} VitestRun */
+/** @typedef {import('./doctor-checks.js').SeamRoute} SeamRoute */
+/** @typedef {Map<string, ReturnType<typeof vitestList>>} VitestCache each `vitest list`, by cwd, config and selection */
+/** @typedef {{ run: VitestRun, projects: string[] }} Selected a Vitest run, and the projects in it to list (none: all) */
+/** @typedef {{ unit: Selected[], contract: Selected[], errors: string[], nested: string[] }} Plan */
 
 /** @param {string[]} args */
 export async function run(args) {
@@ -44,10 +76,26 @@ export async function run(args) {
     const root = realpathSync(workspaceRootOf(appDir))
     const kitDir = kitDirOf(appDir)
     const version = kitVersionOf(appDir)
-    const inRepo = isInRepoKit(kitDir, root)
-    const rel = (/** @type {string} */ dir) => path.relative(root, dir) || '.'
+    const rel = relativeTo(root)
+    const heading = `sssb doctor: ${rel(appDir)}, @sssb/kit ${version} at ${rel(kitDir)}`
+
+    /** @type {Workspace} */
+    let workspace
+    try {
+        workspace = discoverWorkspace(root, kitDir)
+    } catch (error) {
+        if (!(error instanceof UsageError)) throw error
+        console.log(heading)
+        return print([
+            {
+                status: 'FAIL',
+                title: `workspace walk: ${error.message.replace(/^sssb: /, '')}. Nothing else is checked until doctor can walk the workspace`,
+            },
+        ])
+    }
+    const { inRepo, apps } = workspace
     console.log(
-        `sssb doctor: ${rel(appDir)}, @sssb/kit ${version} at ${rel(kitDir)}` +
+        heading +
             (inRepo
                 ? ' (in-repo mode: the kit is a package of this workspace, so the seam goes through aliases, not a link)'
                 : ''),
@@ -55,14 +103,20 @@ export async function run(args) {
 
     /** @type {VitestCache} */
     const cache = new Map()
+    /** @type {Map<string, Plan>} */
+    const plans = new Map()
+    for (const app of apps) plans.set(app, planFor(root, app, nestedIn(workspace.packages, app), cache))
+    const targets = [...new Set([appDir, ...apps])]
+
     /** @type {Result[]} */
     const results = [
-        singletons(appDir, kitDir),
-        inRepo ? await inRepoAliases(root, cache) : importers(root),
-        versions(appDir),
-        conformance(root, appDir, 'unit', cache),
-        conformance(root, appDir, 'contract', cache),
-        await guide(appDir),
+        walk(root, appDir, workspace),
+        ...targets.map((target) => singletons(root, target)),
+        inRepo ? await inRepoAliases(root, workspace, plans) : importers(root, workspace),
+        ...targets.map((target) => versions(root, target)),
+        ...apps.flatMap((app) => RUNNERS.flatMap((runner) => conformance(root, app, runner, plans, cache))),
+        ...commandLines(root, appDir, apps, plans),
+        ...(await guides(root, apps)),
         {
             status: 'report',
             title:
@@ -73,7 +127,17 @@ export async function run(args) {
         dedupeAdvice(root, inRepo),
         cutover(root, appDir),
     ]
+    return print(results)
+}
 
+/** @param {string} root */
+const relativeTo = (root) => (/** @type {string} */ dir) => path.relative(root, dir) || '(the workspace root)'
+
+/**
+ * @param {Result[]} results
+ * @returns {number} the exit code
+ */
+function print(results) {
     let problems = 0
     for (const { status, title, lines = [] } of results) {
         console.log(`${status.padEnd(7)} ${title}`)
@@ -94,33 +158,90 @@ const verdict = (title, problems, notes = []) =>
     problems.length > 0 ? { status: 'FAIL', title, lines: problems } : { status: 'ok', title, lines: notes }
 
 /**
+ * The workspace packages strictly inside `app` (a root-level app's apps/*), real paths.
+ * @param {readonly string[]} packages
+ * @param {string} app
+ */
+const nestedIn = (packages, app) =>
+    packages.map((dir) => realpathSync(dir)).filter((dir) => dir !== app && dir.startsWith(app + path.sep))
+
+/**
+ * THE WALK REACHES THE APP: what every workspace-wide check below covers is what the walk found, so an app it missed
+ * (a pnpm-workspace.yaml glob that does not cover it, a manifest that does not declare @sssb/kit) would pass every
+ * one of them unexamined. Doctor's own app must be among the importers, and, when it has a seam, among the apps.
+ * @param {string} root
  * @param {string} appDir
- * @param {string} kitDir
+ * @param {Workspace} workspace
  * @returns {Result}
  */
-function singletons(appDir, kitDir) {
+function walk(root, appDir, workspace) {
+    const rel = relativeTo(root)
+    const importerDirs = workspace.importers.map(({ dir }) => dir)
+    const importers = importerDirs.map(rel).join(', ') || 'none'
+    const apps = workspace.apps.map(rel).join(', ') || 'none'
+    /** @type {string[]} */
+    const problems = []
+    if (!importerDirs.includes(appDir))
+        problems.push(
+            `${rel(appDir)} is not among the importers of @sssb/kit the walk found (${importers}): check pnpm-workspace.yaml's ` +
+                `packages globs, and that ${rel(appDir)}'s package.json declares @sssb/kit`,
+        )
+    if (existsSync(path.join(appDir, 'src', 'app-config')) && !workspace.apps.includes(appDir))
+        problems.push(
+            `${rel(appDir)} has a seam (src/app-config) but is not among the apps the walk found (${apps})` +
+                (workspace.inRepo ? ": in-repo, the apps are the root package.json's sssb.apps, or apps/*" : ''),
+        )
+    return problems.length > 0
+        ? {
+              status: 'FAIL',
+              title: `workspace walk: it does not reach ${rel(appDir)}, the app doctor runs for, so the checks below do not cover it`,
+              lines: problems,
+          }
+        : {
+              status: 'ok',
+              title: `workspace walk: ${workspace.packages.length} package(s) from pnpm-workspace.yaml; importers of @sssb/kit: ${importers}; apps: ${apps}`,
+          }
+}
+
+/**
+ * @param {string} root
+ * @param {string} target
+ * @returns {Result}
+ */
+function singletons(root, target) {
+    const name = relativeTo(root)(target)
+    let kitDir
+    try {
+        kitDir = kitDirOf(target)
+    } catch (error) {
+        return { status: 'FAIL', title: `${name}: one copy of each singleton`, lines: [messageOf(error)] }
+    }
     const { peers, optional } = kitPeers(kitDir)
     const { problems, notes, same } = singletonProblems({
         peers,
         optional,
-        fromKit: (name) => packageDirFrom(kitDir, name),
-        fromApp: (name) => packageDirFrom(appDir, name),
+        fromKit: (peer) => packageDirFrom(/** @type {string} */ (kitDir), peer),
+        fromApp: (peer) => packageDirFrom(target, peer),
     })
     return verdict(
         problems.length > 0
-            ? 'one copy of each singleton: the app and @sssb/kit do not share every peer'
-            : `one copy of each singleton: ${same.join(', ')}`,
+            ? `${name}: one copy of each singleton: it and its @sssb/kit do not share every peer`
+            : `${name}: one copy of each singleton: ${same.join(', ') || 'no peer'}`,
         problems,
         notes,
     )
 }
 
+/** @param {unknown} error */
+const messageOf = (error) => (error instanceof Error ? error.message : String(error))
+
 /**
  * @param {string} root
+ * @param {Workspace} workspace
  * @returns {Result}
  */
-function importers(root) {
-    const { problems, importers: found } = importerSeamProblems(root, kitDirOf)
+function importers(root, workspace) {
+    const { problems, importers: found } = importerSeamProblems(root, kitDirOf, workspace.importers)
     return verdict(
         problems.length > 0
             ? 'one SSSB per importer, with its own seam: an importer of @sssb/kit runs on a seam not its own'
@@ -130,50 +251,51 @@ function importers(root) {
 }
 
 /**
- * In-repo mode's check, over every app of the workspace (`sssb.apps`, or apps/*): the seam each app's tsconfig and
- * Vitest projects alias is its own.
+ * In-repo mode's check, over every app of the workspace: every tsconfig `paths` entry and every alias of every Vitest
+ * project that runs the app's files (any config, either runner) that would resolve the seam sends it into the app's own.
  * @param {string} root
- * @param {VitestCache} cache
+ * @param {Workspace} workspace
+ * @param {Map<string, Plan>} plans
  * @returns {Promise<Result>}
  */
-async function inRepoAliases(root, cache) {
-    /** Real paths, shown relative to the workspace root (so equal paths stay equal). */
-    const shown = (/** @type {string} */ file) => path.relative(root, file) || '.'
+async function inRepoAliases(root, workspace, plans) {
+    /** Paths shown relative to the workspace root (so equal real paths stay equal); a bare specifier as it is. */
+    const shown = (/** @type {string} */ file) => (path.isAbsolute(file) ? path.relative(root, file) || '.' : file)
+    const show = (/** @type {SeamRoute} */ route) => ({
+        find: route.find,
+        to: shown(route.to),
+        resolved: route.resolved.map(shown),
+    })
     /** @type {Parameters<typeof aliasProblems>[0]} */
     const apps = []
-    /** @type {string[]} */
-    const problems = []
-    for (const app of workspaceApps(root)) {
-        const appDir = path.join(root, app)
-        const own = path.join(appDir, 'src', 'app-config')
+    for (const appDir of workspace.apps) {
+        const plan = /** @type {Plan} */ (plans.get(appDir))
+        const own = realish(path.join(appDir, 'src', 'app-config'))
         /** @type {Parameters<typeof aliasProblems>[0][number]['projects']} */
         const projects = []
-        for (const runner of /** @type {const} */ (['unit', 'contract'])) {
-            const selected = selectRun(root, appDir, runner, cache)
-            if ('error' in selected) {
-                problems.push(`${app}: ${selected.error}`)
-                continue
-            }
-            const aliases = await seamAliases(selected.run, selected.projects)
-            const config = path.relative(root, selected.run.config ?? selected.run.cwd)
-            for (const [project, seam] of aliases) projects.push({ config, project, seam: seam && shown(seam) })
+        const seen = new Set()
+        for (const { run, projects: names } of [...plan.unit, ...plan.contract]) {
+            const key = `${run.cwd}\0${run.config ?? ''}\0${names.join('\0')}`
+            if (seen.has(key)) continue
+            seen.add(key)
+            const config = configName(root, run)
+            for (const [project, routes] of await seamAliases(run, names, own))
+                projects.push({ config, project, routes: routes.map(show) })
         }
-        const tsconfig = tsconfigSeam(appDir)
         apps.push({
-            app,
-            own: shown(existsSync(own) ? realpathSync(own) : own),
-            tsconfig: tsconfig === null ? null : shown(tsconfig),
+            app: relativeTo(root)(appDir),
+            own: shown(own),
+            tsconfig: tsconfigRoutes(appDir).map(show),
             projects,
         })
     }
-    problems.push(...aliasProblems(apps))
+    const problems = aliasProblems(apps)
     // The other importers have no seam of their own to alias: in-repo, each is compiled within a program that names one
     // (the root's is the framework's own, on its test fixture; the showcase's seed is compiled within the showcase).
-    const appDirs = new Set(apps.map((a) => path.join(root, a.app)))
-    const others = kitImporters(root)
+    const others = workspace.importers
         .map(({ dir }) => dir)
-        .filter((dir) => !appDirs.has(dir))
-        .map((dir) => path.relative(root, dir) || '(the workspace root)')
+        .filter((dir) => !workspace.apps.includes(dir))
+        .map(relativeTo(root))
     return verdict(
         problems.length > 0
             ? "in-repo mode: an app's aliases send @sssb/app-config somewhere other than its own src/app-config"
@@ -190,13 +312,16 @@ async function inRepoAliases(root, cache) {
 }
 
 /**
- * Where the app's tsconfig sends `@sssb/app-config/*`, as TypeScript itself reads the file (its `extends` and
- * `baseUrl` honoured), through the compiler the app installs. Null when it maps no such path.
+ * Every place the app's tsconfig sends the seam, as TypeScript itself reads the file (its `extends` and `baseUrl`
+ * honoured), through the compiler the app installs: each target of each `paths` key that is or starts with
+ * `@sssb/app-config`, with where a subpath lands through it (a `*` filled in with a probe name). Empty when it maps no
+ * such path.
  * @param {string} appDir
+ * @returns {SeamRoute[]}
  */
-function tsconfigSeam(appDir) {
+function tsconfigRoutes(appDir) {
     const file = path.join(appDir, 'tsconfig.json')
-    if (!existsSync(file)) return null
+    if (!existsSync(file)) return []
     /** @type {typeof import('typescript')} */
     let ts
     try {
@@ -214,132 +339,252 @@ function tsconfigSeam(appDir) {
             onUnRecoverableConfigFileDiagnostic: () => {},
         },
     )
-    const target = parsed?.options.paths?.['@sssb/app-config/*']?.[0]
-    if (!parsed || target === undefined) return null
+    if (!parsed) return []
     const options = /** @type {{ baseUrl?: string, pathsBasePath?: string }} */ (parsed.options)
-    const resolved = path.resolve(options.baseUrl ?? options.pathsBasePath ?? appDir, target.replace(/\/\*$/, ''))
-    return existsSync(resolved) ? realpathSync(resolved) : resolved
+    const base = options.baseUrl ?? options.pathsBasePath ?? appDir
+    /** @type {SeamRoute[]} */
+    const routes = []
+    for (const [key, targets] of Object.entries(parsed.options.paths ?? {})) {
+        if (!key.startsWith(SEAM)) continue
+        for (const target of targets) {
+            const to = path.resolve(base, target)
+            routes.push({ find: key, to, resolved: [realish(key.includes('*') ? to.replace('*', PROBE) : to)] })
+        }
+    }
+    return routes
 }
 
 /**
- * @param {string} appDir
+ * @param {string} root
+ * @param {string} target
  * @returns {Result}
  */
-function versions(appDir) {
-    const packages = sssbPackagesOf(appDir)
+function versions(root, target) {
+    const name = relativeTo(root)(target)
+    const packages = sssbPackagesOf(target)
     const problems = versionProblems(packages)
     return verdict(
         problems.length > 0
-            ? 'versions in step: an @sssb package is not the version of @sssb/kit'
-            : `versions in step: ${[...packages].map(([name, v]) => `${name} ${v}`).join(', ')}`,
+            ? `${name}: versions in step: an @sssb package is not the version of @sssb/kit`
+            : `${name}: versions in step: ${[...packages].map(([pkg, v]) => `${pkg} ${v}`).join(', ')}`,
         problems,
     )
 }
 
-/** @typedef {import('./doctor-vitest.js').VitestRun} VitestRun */
-/** @typedef {Map<string, ReturnType<typeof vitestList>>} VitestCache each run's --filesOnly listing, by cwd and config */
+/**
+ * How a run is named in doctor's output.
+ * @param {string} root
+ * @param {VitestRun} run
+ */
+const configName = (root, run) =>
+    run.config ? path.relative(root, run.config) : `Vitest's defaults from ${relativeTo(root)(run.cwd)}`
 
 /**
- * The Vitest run that would execute the app's tests for a runner, and the projects in it that run the app's files.
- * @param {string} root
- * @param {string} appDir
- * @param {'unit' | 'contract'} runner
+ * A `vitest list`, once per run and selection.
+ * @param {VitestRun} run
+ * @param {{ filesOnly?: boolean, projects?: readonly string[] }} options
  * @param {VitestCache} cache
- * @returns {{ run: VitestRun, projects: string[] } | { error: string }}
  */
-function selectRun(root, appDir, runner, cache) {
-    const candidates = vitestRunsFor(root, appDir, runner)
-    const stem = runner === 'unit' ? 'vitest.config.*' : 'vitest.contract.config.*'
-    if (candidates.length === 0) {
-        return {
-            error:
-                `no ${stem} in the workspace root or in ${path.relative(root, appDir) || '.'}, so nothing runs the ` +
-                `${runner} checks`,
-        }
-    }
-    const tried = []
-    for (const run of candidates) {
-        const key = `${run.cwd}\0${run.config ?? ''}`
-        const files = cache.get(key) ?? vitestList(run, { filesOnly: true })
-        cache.set(key, files)
-        const where = path.relative(root, run.config ?? run.cwd) || '.'
-        if (!files.ok) return { error: `${where}: ${files.error}` }
-        const projects = projectsRunning(files.listed, appDir)
-        if (projects.length > 0) return { run, projects: projects.includes('') ? [] : projects }
-        tried.push(where)
-    }
-    return {
-        error: `no Vitest project in ${tried.join(' or ')} runs a test file of ${path.relative(root, appDir) || '.'}`,
-    }
+function listOnce(run, options, cache) {
+    const key = [run.cwd, run.config ?? '', options.filesOnly ? 'files' : 'tests', ...(options.projects ?? [])].join(
+        '\0',
+    )
+    const listed = cache.get(key) ?? vitestList(run, options)
+    cache.set(key, listed)
+    return listed
 }
 
 /**
- * THE CONFORMANCE SUITE WOULD RUN: `vitest list`, run where CI runs Vitest, must list every test of every check of
- * the runner, less the checks the app opted out of by name.
+ * WHICH RUNS HOLD AN APP TO WHICH CHECKS: every candidate config (vitestConfigsFor), asked with `vitest list
+ * --filesOnly` what it would run; one that runs any of the app's `src/` test files must list the unit checks, one that
+ * runs any of its `tests/contract/` files the contract checks, each with the projects that run them selected. Vitest's
+ * defaults from the app count for the unit runner when no config runs its `src/` files and a bare `vitest` there
+ * would load none. A config Vitest cannot list is an error: doctor cannot tell what it would run.
  * @param {string} root
- * @param {string} appDir
- * @param {'unit' | 'contract'} runner
+ * @param {string} app
+ * @param {string[]} nested the workspace packages inside the app, whose files are not the app's
  * @param {VitestCache} cache
- * @returns {Result}
+ * @returns {Plan}
  */
-function conformance(root, appDir, runner, cache) {
-    const label = runner === 'unit' ? 'the conformance suite would run' : "the contract runner's checks would run"
+function planFor(root, app, nested, cache) {
+    /** @type {Plan} */
+    const plan = { unit: [], contract: [], errors: [], nested }
+    /** @param {VitestRun} run @param {readonly ('unit' | 'contract')[]} runners */
+    const consider = (run, runners) => {
+        const files = listOnce(run, { filesOnly: true }, cache)
+        if (!files.ok) {
+            plan.errors.push(`${configName(root, run)}: ${files.error}`)
+            return
+        }
+        for (const runner of runners) {
+            const projects = projectsRunning(
+                files.listed.filter((entry) => areaOf(entry.file, app, nested) === runner),
+                app,
+            )
+            if (projects.length > 0) plan[runner].push({ run, projects: projects.includes('') ? [] : projects })
+        }
+    }
+    for (const run of vitestConfigsFor(root, app)) consider(run, RUNNERS)
+    const defaults = vitestDefaults(app)
+    if (plan.unit.length === 0 && defaults !== null) consider(defaults, ['unit'])
+    return plan
+}
+
+/**
+ * THE CONFORMANCE SUITE WOULD RUN: every run that holds the app to a runner's checks (planFor) must list every test of
+ * every check of the runner, from the app's own suite files (ownTests), less the checks the app opted out of by name
+ * there; and some run must hold it. Each opt-out is reported with its reason.
+ * @param {string} root
+ * @param {string} app
+ * @param {'unit' | 'contract'} runner
+ * @param {Map<string, Plan>} plans
+ * @param {VitestCache} cache
+ * @returns {Result[]}
+ */
+function conformance(root, app, runner, plans, cache) {
+    const rel = relativeTo(root)
+    const label = `${rel(app)}: ${runner === 'unit' ? 'the conformance suite would run' : "the contract runner's checks would run"}`
+    const plan = /** @type {Plan} */ (plans.get(app))
     let registry
     try {
-        registry = readJson(resolveAppsKit(appDir, 'testing/checks.json'))
+        registry = readJson(resolveAppsKit(app, 'testing/checks.json'))
     } catch (error) {
-        return { status: 'FAIL', title: label, lines: [error instanceof Error ? error.message : String(error)] }
+        return [{ status: 'FAIL', title: label, lines: [messageOf(error)] }]
     }
-    const selected = selectRun(root, appDir, runner, cache)
-    /** @type {string[]} */
-    let listed = []
-    let where = ''
-    /** @type {string | null} */
-    let failure = null
-    if ('error' in selected) failure = selected.error
-    else {
-        const { run, projects } = selected
-        where =
-            `vitest list from ${path.relative(root, run.cwd) || 'the workspace root'}` +
+    /** @type {Result[]} */
+    const results = []
+    if (runner === 'unit' && plan.errors.length > 0)
+        results.push({
+            status: 'FAIL',
+            title: `${rel(app)}: a Vitest config doctor cannot list, so it cannot tell whether that config runs the app's tests`,
+            lines: plan.errors,
+        })
+    if (plan[runner].length === 0) {
+        const area = runner === 'unit' ? 'src/' : 'tests/contract/'
+        results.push({
+            status: 'FAIL',
+            title:
+                `${label}: no Vitest config at the workspace root or in ${rel(app)} runs a test file of its ${area}, ` +
+                `so nothing runs its ${runner} checks`,
+        })
+        return results
+    }
+    /** @type {Map<string, string>} */
+    const opted = new Map()
+    for (const { run, projects } of plan[runner]) {
+        const where =
+            `vitest list from ${run.cwd === root ? 'the workspace root' : path.relative(root, run.cwd)}` +
             (run.config ? ` --config ${path.basename(run.config)}` : '') +
             (projects.length ? `, project ${projects.join(', ')}` : '')
-        const result = vitestList(run, { projects })
-        if (!result.ok) failure = `${where}: ${result.error}`
-        else {
-            const inside = appDir + path.sep
-            listed = result.listed.filter((test) => path.resolve(test.file).startsWith(inside)).map((test) => test.name)
-        }
+        const result = listOnce(run, { projects }, cache)
+        const listed = result.ok ? ownTests(result.listed, app, runner, plan.nested) : []
+        const { missing, optedOut, expected } = missingTests(listed, registry, runner)
+        for (const { id, reason } of optedOut) opted.set(id, reason)
+        results.push(
+            !result.ok || missing.length > 0
+                ? {
+                      status: 'FAIL',
+                      title: `${label}: ${missing.length} of its ${expected} tests would not run (${where})`,
+                      lines: [
+                          ...(result.ok ? [] : [`${where}: ${result.error}`]),
+                          ...missing.map((n) => `not listed: ${n}`),
+                      ],
+                  }
+                : { status: 'ok', title: `${label}: all ${expected} tests listed (${where})` },
+        )
     }
-    const { missing, optedOut, expected } = missingTests(listed, registry, runner)
-    if (failure !== null || missing.length > 0) {
-        return {
-            status: 'FAIL',
-            title: `${label}: ${missing.length} of its ${expected} tests would not run${where ? ` (${where})` : ''}`,
-            lines: [...(failure === null ? [] : [failure]), ...missing.map((name) => `not listed: ${name}`)],
-        }
-    }
-    return {
-        status: 'ok',
-        title: `${label}: all ${expected} tests listed (${where})`,
-        lines: optedOut.map((id) => `opted out by name: ${id}`),
-    }
+    for (const [id, reason] of opted)
+        results.push({ status: 'report', title: `${rel(app)}: opted out of ${id}: ${reason || '(no reason given)'}` })
+    return results
 }
 
 /**
- * The app guide (`sssb guide --check`), once the framework ships one.
+ * WHAT DOCTOR CANNOT SEE: the command line a CI step runs Vitest with. Doctor proves what each configuration would
+ * run; a flag or a file filter on the command (`-t`, `--project`, `--shard`, a path...) can run fewer. It reads the
+ * root's and the apps' package.json scripts and reports every such flag they pass, and, since it lists the contract
+ * checks and never runs them, which script runs each app's contract config, or that none does.
+ * @param {string} root
  * @param {string} appDir
- * @returns {Promise<Result>}
+ * @param {string[]} apps
+ * @param {Map<string, Plan>} plans
+ * @returns {Result[]}
  */
-async function guide(appDir) {
-    try {
-        resolveAppsKit(appDir, 'guide.md')
-    } catch {
-        return { status: 'report', title: 'app guide: not checked: this @sssb/kit ships no guide (it arrives at P7)' }
+function commandLines(root, appDir, apps, plans) {
+    const rel = relativeTo(root)
+    const dirs = [...new Set([root, appDir, ...apps])]
+    const owner = (/** @type {string} */ dir) => (dir === root ? 'root' : rel(dir))
+    const invocations = dirs.flatMap((dir) =>
+        vitestInvocations(readJson(path.join(dir, 'package.json')).scripts ?? {}).map((call) => ({ ...call, dir })),
+    )
+    const narrowed = invocations.filter((call) => call.narrowing.length > 0)
+    /** @type {Result[]} */
+    const results = [
+        {
+            status: 'report',
+            title:
+                "CI's command line: doctor proves what each Vitest configuration would run, not what a CI step's own " +
+                'flags make of it; the flags and file filters the package.json scripts pass to vitest:',
+            lines:
+                narrowed.length > 0
+                    ? narrowed.map((call) => `${owner(call.dir)} script ${call.script}: ${call.narrowing.join(', ')}`)
+                    : [
+                          `none (scripts of ${dirs.map(owner).join(', ')}; a flag a CI step adds itself is not here to see)`,
+                      ],
+        },
+    ]
+    /** @type {string[]} */
+    const lines = []
+    for (const app of apps) {
+        const plan = /** @type {Plan} */ (plans.get(app))
+        const configs = [...new Set(plan.contract.map(({ run }) => run.config).filter((c) => c !== null))]
+        for (const config of configs) {
+            const callers = invocations.filter(
+                (call) =>
+                    (call.config ? path.resolve(call.dir, call.config) : vitestDefaultConfig(call.dir)) === config,
+            )
+            const name = path.relative(root, config)
+            lines.push(
+                callers.length > 0
+                    ? `${rel(app)}: ${callers.map((call) => `${owner(call.dir)} script ${call.script}`).join(', ')} runs ${name}`
+                    : `${rel(app)}: no script of the root's or ${rel(app)}'s package.json runs ${name}; CI must run it itself`,
+            )
+        }
     }
-    const status = await (await import('./guide.js')).run(['--app', appDir, '--check'])
-    return status === 0
-        ? { status: 'ok', title: "app guide: the repository's copy matches the kit's" }
-        : { status: 'FAIL', title: "app guide: the repository's copy is not the kit's (see above)" }
+    if (lines.length > 0)
+        results.push({
+            status: 'report',
+            title: "contract checks: doctor lists them and never runs them, so CI must run each app's contract config:",
+            lines,
+        })
+    return results
+}
+
+/**
+ * The app guide (`sssb guide --check`) of every app, once the framework ships one.
+ * @param {string} root
+ * @param {string[]} apps
+ * @returns {Promise<Result[]>}
+ */
+async function guides(root, apps) {
+    /** @type {Result[]} */
+    const results = []
+    for (const app of apps) {
+        try {
+            resolveAppsKit(app, 'guide.md')
+        } catch {
+            const title = 'app guide: not checked: this @sssb/kit ships no guide (it arrives at P7)'
+            if (!results.some((r) => r.title === title)) results.push({ status: 'report', title })
+            continue
+        }
+        const name = relativeTo(root)(app)
+        const status = await (await import('./guide.js')).run(['--app', app, '--check'])
+        results.push(
+            status === 0
+                ? { status: 'ok', title: `${name}: app guide: the repository's copy matches the kit's` }
+                : { status: 'FAIL', title: `${name}: app guide: the repository's copy is not the kit's (see above)` },
+        )
+    }
+    return results
 }
 
 /**

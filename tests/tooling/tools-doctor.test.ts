@@ -1,20 +1,32 @@
-import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import {
     aliasProblems,
+    aliasRoutes,
     cutoverReport,
     importerSeamProblems,
     isInRepoKit,
+    kitImporters,
     missingTests,
     packageDirFrom,
+    ownTests,
     parseWorkspaceYaml,
+    PROBE,
     singletonProblems,
     sssbPackagesOf,
     versionProblems,
+    vitestInvocations,
     workspacePackages,
 } from '../../packages/tools/src/commands/doctor-checks.js'
-import { projectsRunning, vitestRunsFor } from '../../packages/tools/src/commands/doctor-vitest.js'
+import {
+    projectsRunning,
+    vitestConfigsFor,
+    vitestDefaultConfig,
+    vitestDefaults,
+} from '../../packages/tools/src/commands/doctor-vitest.js'
 import { kitDirOf } from '../../packages/tools/src/kit.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
@@ -66,6 +78,45 @@ describe('parseWorkspaceYaml', () => {
             dedupePeerDependents: undefined,
         })
     })
+
+    it('reads block entries at column 0 and a flow sequence over several lines', () => {
+        expect(parseWorkspaceYaml('packages:\n- apps/*\n- "packages/*"\nallowBuilds:\n  esbuild: true\n')).toEqual({
+            packages: ['apps/*', 'packages/*'],
+            dedupePeerDependents: undefined,
+        })
+        expect(parseWorkspaceYaml("packages: [\n    apps/*, # the apps\n    'packages/*',\n]\n").packages).toEqual([
+            'apps/*',
+            'packages/*',
+        ])
+        // A quoted `false` is a string in YAML, not the setting.
+        expect(parseWorkspaceYaml("dedupePeerDependents: 'false'\n").dedupePeerDependents).toBeUndefined()
+    })
+
+    it.each([
+        ['an anchor', 'packages: &globs\n  - apps/*\n'],
+        ['a scalar, not a list', 'packages: apps/*\n'],
+        ['an unquoted `!` (a YAML tag)', 'packages:\n  - !packages/legacy\n'],
+        ['a nested list', 'packages:\n  - - apps/*\n'],
+        ['a plain scalar continued on the next line', 'packages:\n  - apps/*\n    more\n'],
+        ['a top-level flow mapping', '{ packages: [apps/*] }\n'],
+        ['a second `packages`', 'packages: [a]\npackages: [b]\n'],
+        ['an unclosed flow sequence', 'packages: [apps/*,\n'],
+    ])('fails loudly on what it does not understand: %s', (_, yaml) => {
+        expect(() => parseWorkspaceYaml(yaml)).toThrow(/pnpm-workspace\.yaml line \d+/)
+    })
+})
+
+describe('kitImporters', () => {
+    it('counts a package that takes @sssb/kit as a peer or an optional dependency', () => {
+        const ws = realpathSync(makeTestTmpDir('sssb-doctor-importers-'))
+        write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n')
+        pkg(ws, { name: 'root', private: true })
+        pkg(path.join(ws, 'packages', 'peer'), { name: 'peer', peerDependencies: { '@sssb/kit': '*' } })
+        pkg(path.join(ws, 'packages', 'optional'), { name: 'optional', optionalDependencies: { '@sssb/kit': '*' } })
+        pkg(path.join(ws, 'packages', 'dev'), { name: 'dev', devDependencies: { '@sssb/kit': '*' } })
+        pkg(path.join(ws, 'packages', 'none'), { name: 'none' })
+        expect(kitImporters(ws).map(({ dir }) => path.basename(dir))).toEqual(['dev', 'optional', 'peer'])
+    })
 })
 
 describe('missingTests, over a `vitest list --json` sample', () => {
@@ -92,16 +143,74 @@ describe('missingTests, over a `vitest list --json` sample', () => {
     it('names each expected test that is not listed, and honours an opt-out marker for its own runner only', () => {
         expect(missingTests(sample, registry, 'unit')).toEqual({
             missing: ['[sssb:alpha] the alpha check > two', '[sssb:gamma] the gamma check > four'],
-            optedOut: ['beta'],
+            optedOut: [{ id: 'beta', reason: 'the app has no beta' }],
             expected: 3,
         })
         // The delta marker opts the contract check out when the CONTRACT listing carries it.
-        expect(missingTests(sample, registry, 'contract')).toEqual({ missing: [], optedOut: ['delta'], expected: 0 })
+        expect(missingTests(sample, registry, 'contract')).toEqual({
+            missing: [],
+            optedOut: [{ id: 'delta', reason: 'a contract opt-out in the unit listing' }],
+            expected: 0,
+        })
     })
 
     it('finds an opt-out marker under a describe too, and an empty listing misses everything', () => {
-        expect(missingTests(['wrapper > [sssb:opt-out:alpha] why'], registry, 'unit').optedOut).toEqual(['alpha'])
+        expect(missingTests(['wrapper > [sssb:opt-out:alpha] why'], registry, 'unit').optedOut).toEqual([
+            { id: 'alpha', reason: 'why' },
+        ])
         expect(missingTests([], registry, 'unit').missing).toHaveLength(4)
+    })
+})
+
+describe('ownTests: the names that can prove an app runs its checks', () => {
+    const app = '/ws'
+    const listed = [
+        { name: '[sssb:alpha] the alpha check > one', file: '/ws/src/sssb.conformance.test.ts' },
+        { name: '[sssb:opt-out:beta] forged', file: '/ws/src/other.test.ts' },
+        { name: '[sssb:alpha] the alpha check > two', file: '/ws/apps/x/src/sssb.conformance.test.ts' },
+        { name: '[sssb:delta] the delta check > five', file: '/ws/tests/contract/rls.test.ts' },
+        { name: '[sssb:delta] the delta check > six', file: '/ws/apps/x/tests/contract/rls.test.ts' },
+        { name: '[sssb:delta] the delta check > seven', file: '/ws/tests/e2e/rls.test.ts' },
+    ]
+
+    it("takes the unit names from the app's own src/sssb.conformance.test.ts alone, and contract names from its tests/contract", () => {
+        expect(ownTests(listed, app, 'unit', ['/ws/apps/x'])).toEqual(['[sssb:alpha] the alpha check > one'])
+        expect(ownTests(listed, app, 'contract', ['/ws/apps/x'])).toEqual(['[sssb:delta] the delta check > five'])
+    })
+})
+
+describe('vitestInvocations: what package.json scripts pass to vitest', () => {
+    it('names every narrowing flag and file filter, and the config each run names', () => {
+        expect(
+            vitestInvocations({
+                plain: 'sssb check-tmpdir-leak vitest run',
+                contract: 'vitest run --config vitest.contract.config.ts --coverage',
+                narrowed:
+                    "vitest run -t 'smoke test' --project=web --exclude '**/slow/**' --shard 1/3 --changed --typecheck.only src/a",
+                chained: 'pnpm build && NODE_ENV=test node_modules/vitest/vitest.mjs related src/x.ts',
+                wrapped: `sh -c "vitest --dir apps -c ci.config.ts"`,
+                other: 'eslint .',
+                notAString: 1,
+            }),
+        ).toEqual([
+            { script: 'plain', config: null, narrowing: [] },
+            { script: 'contract', config: 'vitest.contract.config.ts', narrowing: [] },
+            {
+                script: 'narrowed',
+                config: null,
+                narrowing: [
+                    '-t smoke test',
+                    '--project=web',
+                    '--exclude **/slow/**',
+                    '--shard 1/3',
+                    '--changed',
+                    '--typecheck.only',
+                    'src/a',
+                ],
+            },
+            { script: 'chained', config: null, narrowing: ['related', 'src/x.ts'] },
+            { script: 'wrapped', config: 'ci.config.ts', narrowing: ['--dir apps'] },
+        ])
     })
 })
 
@@ -110,18 +219,26 @@ describe('where doctor runs Vitest, and which projects it selects', () => {
     const app = pkg(path.join(ws, 'apps', 'a'), { name: 'a' })
     write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n')
 
-    it('runs the unit suite on Vitest defaults from the app when nothing configures it, and finds no contract run', () => {
-        expect(vitestRunsFor(ws, app, 'unit')).toEqual([{ cwd: app, config: null }])
-        expect(vitestRunsFor(ws, app, 'contract')).toEqual([])
+    it('falls back to Vitest defaults from the app only when a bare `vitest` there would load no config', () => {
+        expect(vitestConfigsFor(ws, app)).toEqual([])
+        expect(vitestDefaults(app)).toEqual({ cwd: app, config: null })
     })
 
-    it("prefers the workspace root's config, keeping the app's own as the fallback", () => {
-        write(path.join(ws, 'vitest.config.ts'), 'export default {}\n')
+    it('enumerates every vitest*.config.* and vite.config.* at the root and in the app, and no other Vite config', () => {
+        for (const name of ['vitest.config.ts', 'vitest.ci.config.ts', 'vite.config.mjs', 'vite.demo.config.ts'])
+            write(path.join(ws, name), 'export default {}\n')
         write(path.join(app, 'vitest.contract.config.mts'), 'export default {}\n')
-        expect(vitestRunsFor(ws, app, 'unit')).toEqual([{ cwd: ws, config: path.join(ws, 'vitest.config.ts') }])
-        expect(vitestRunsFor(ws, app, 'contract')).toEqual([
+        write(path.join(app, 'vitest-e2e.config.js'), 'export default {}\n')
+        expect(vitestConfigsFor(ws, app)).toEqual([
+            { cwd: ws, config: path.join(ws, 'vite.config.mjs') },
+            { cwd: ws, config: path.join(ws, 'vitest.ci.config.ts') },
+            { cwd: ws, config: path.join(ws, 'vitest.config.ts') },
+            { cwd: app, config: path.join(app, 'vitest-e2e.config.js') },
             { cwd: app, config: path.join(app, 'vitest.contract.config.mts') },
         ])
+        // A bare `vitest` in the app walks up to the root's vitest.config.ts (before vite.config.*), so no defaults run.
+        expect(vitestDefaultConfig(app)).toBe(path.join(ws, 'vitest.config.ts'))
+        expect(vitestDefaults(app)).toBeNull()
     })
 
     it('selects the projects that run a file inside the app, and no project that only shares a prefix', () => {
@@ -269,15 +386,22 @@ describe('in-repo mode', () => {
     })
 
     it("fails an app whose tsconfig or Vitest project aliases another app's seam, or none", () => {
-        const own = '/ws/apps/a/src/app-config'
-        const other = '/ws/apps/b/src/app-config'
+        const own = 'apps/a/src/app-config'
+        const other = 'apps/b/src/app-config'
+        const route = (find: string, to: string, ...resolved: string[]) => ({ find, to, resolved })
         expect(
             aliasProblems([
                 {
                     app: 'apps/a',
                     own,
-                    tsconfig: own,
-                    projects: [{ config: 'vitest.config.ts', project: 'a', seam: own }],
+                    tsconfig: [route('@sssb/app-config/*', `${own}/*`, `${own}/probe`)],
+                    projects: [
+                        {
+                            config: 'vitest.config.ts',
+                            project: 'a',
+                            routes: [route('@sssb/app-config', own, own, `${own}/probe`)],
+                        },
+                    ],
                 },
             ]),
         ).toEqual([])
@@ -286,21 +410,71 @@ describe('in-repo mode', () => {
                 {
                     app: 'apps/a',
                     own,
-                    tsconfig: other,
+                    // A second target, and a key for the bare seam, are each held to the app's own.
+                    tsconfig: [
+                        route('@sssb/app-config/*', `${own}/*`, `${own}/probe`),
+                        route('@sssb/app-config/*', `${other}/*`, `${other}/probe`),
+                        route('@sssb/app-config', 'apps/a/src', 'apps/a/src'),
+                    ],
                     projects: [
-                        { config: 'vitest.config.ts', project: 'a', seam: null },
-                        { config: 'vitest.contract.config.ts', project: 'a', seam: other },
+                        { config: 'vitest.config.ts', project: 'a', routes: [] },
+                        {
+                            config: 'vitest.contract.config.ts',
+                            project: '',
+                            routes: [route('/^@sssb\\/app-config\\/(.*)$/', `${other}/$1`, `${other}/probe`)],
+                        },
                     ],
                 },
-                { app: 'apps/c', own: '/ws/apps/c/src/app-config', tsconfig: null, projects: [] },
+                // An app-config look-alike (`apps/a/src/app-configs`) is not inside the seam.
+                {
+                    app: 'apps/c',
+                    own: 'apps/c/src/app-config',
+                    tsconfig: [],
+                    projects: [
+                        {
+                            config: 'vitest.config.ts',
+                            project: 'c',
+                            routes: [route('@sssb', 'apps/c/src', 'apps/c/src/app-configs/probe')],
+                        },
+                    ],
+                },
+                { app: 'apps/d', own: 'apps/d/src/app-config', tsconfig: [], projects: [] },
             ]),
         ).toEqual([
-            `apps/a: its tsconfig sends @sssb/app-config/* to ${other}, not its own ${own}`,
+            `apps/a: its tsconfig sends @sssb/app-config/* to ${other}/*, not its own ${own}`,
+            `apps/a: its tsconfig sends @sssb/app-config to apps/a/src, not its own ${own}`,
             'apps/a: Vitest project a (vitest.config.ts) has no @sssb/app-config alias',
-            `apps/a: Vitest project a (vitest.contract.config.ts) aliases @sssb/app-config to ${other}, not its own ${own}`,
-            'apps/c: its tsconfig maps no @sssb/app-config/* path',
-            'apps/c: no Vitest project runs its files, so none aliases its seam',
+            `apps/a: Vitest the root project (vitest.contract.config.ts) aliases /^@sssb\\/app-config\\/(.*)$/ to ${other}/$1, not its own ${own}`,
+            'apps/c: its tsconfig maps no @sssb/app-config path',
+            'apps/c: Vitest project c (vitest.config.ts) aliases @sssb to apps/c/src, not its own apps/c/src/app-config',
+            'apps/d: its tsconfig maps no @sssb/app-config path',
+            'apps/d: no Vitest project runs its files, so none aliases its seam',
         ])
+    })
+
+    it('reads every alias that would match a seam specifier, string or RegExp, as Vite would apply it', () => {
+        const ws = realpathSync(makeTestTmpDir('sssb-doctor-alias-routes-'))
+        const own = pkg(path.join(ws, 'apps', 'a', 'src', 'app-config'), { name: '@sssb/app-config' })
+        write(path.join(own, 'registrations.ts'), '')
+        const other = path.join(ws, 'apps', 'b', 'src', 'app-config')
+        const routes = aliasRoutes(
+            [
+                { find: '@sssb/kit', replacement: path.join(ws, 'packages', 'kit', 'src') },
+                { find: '@sssb/app-config', replacement: own },
+                { find: /^@sssb\/app-config\/registrations$/, replacement: path.join(other, 'registrations.ts') },
+                { find: '@sssb', replacement: path.join(ws, 'packages') },
+                { find: /^\/?@vite\/env/, replacement: '/@fs/env' },
+            ],
+            own,
+        )
+        expect(routes.map((r) => r.find)).toEqual([
+            '@sssb/app-config',
+            '/^@sssb\\/app-config\\/registrations$/',
+            '@sssb',
+        ])
+        expect(routes[0]?.resolved).toContain(path.join(own, PROBE))
+        expect(routes[1]?.resolved).toEqual([path.join(other, 'registrations.ts')])
+        expect(routes[2]?.resolved).toContain(path.join(ws, 'packages', 'app-config'))
     })
 })
 
@@ -319,6 +493,304 @@ describe('versions in step', () => {
         ])
         expect(versionProblems(found)).toEqual(["@sssb/tools 0.1.0 is not @sssb/kit's 0.2.0"])
     })
+})
+
+/**
+ * `sssb doctor` run end to end, as a child process, over a workspace built on disk: a stand-in @sssb/kit that
+ * publishes a three-check registry, apps whose test files name the checks the way the suite registers them, and the
+ * real Vitest and TypeScript linked in. Each case is a layout a review found doctor passing when it must not.
+ */
+const REPO = path.resolve(import.meta.dirname, '..', '..')
+const SSSB = path.join(REPO, 'packages', 'tools', 'bin', 'sssb.js')
+const REGISTRY = {
+    checks: [
+        { id: 'alpha', runner: 'unit', title: 'the alpha check', tests: ['one', 'two'] },
+        { id: 'beta', runner: 'unit', title: 'the beta check', tests: ['three'] },
+        { id: 'delta', runner: 'contract', title: 'the delta check', tests: ['five'] },
+    ],
+}
+const KIT_MANIFEST = {
+    name: '@sssb/kit',
+    version: '0.1.0',
+    exports: { './package.json': './package.json', './testing/checks.json': './checks.json' },
+}
+
+/** A test file that registers `runner`'s checks as the suite names them, the `optOut` ids as the suite's marker. */
+function suiteFile(runner: 'unit' | 'contract', optOut: Record<string, string> = {}, only?: string[]) {
+    const lines = ["import { describe, it } from 'vitest'"]
+    for (const check of REGISTRY.checks.filter((c) => c.runner === runner && (!only || only.includes(c.id)))) {
+        const reason = optOut[check.id]
+        if (reason) lines.push(`it(${JSON.stringify(`[sssb:opt-out:${check.id}] ${reason}`)}, () => {})`)
+        else {
+            lines.push(`describe(${JSON.stringify(`[sssb:${check.id}] ${check.title}`)}, () => {`)
+            for (const test of check.tests) lines.push(`    it(${JSON.stringify(test)}, () => {})`)
+            lines.push('})')
+        }
+    }
+    return lines.join('\n') + '\n'
+}
+
+const UNIT_CONFIG = `import { readdirSync } from 'node:fs'
+import path from 'node:path'
+const at = (...p) => path.join(import.meta.dirname, ...p)
+export default {
+    test: {
+        projects: readdirSync(at('apps')).map((app) => ({
+            resolve: { alias: { '@sssb/app-config': at('apps', app, 'src', 'app-config') } },
+            test: { name: app, root: at('apps', app), include: ['src/**/*.test.ts'] },
+        })),
+    },
+}
+`
+const CONTRACT_CONFIG = `import { readdirSync } from 'node:fs'
+import path from 'node:path'
+const at = (...p) => path.join(import.meta.dirname, ...p)
+export default {
+    test: {
+        projects: readdirSync(at('apps')).map((app) => ({
+            resolve: { alias: { '@sssb/app-config': at('apps', app, 'src', 'app-config') } },
+            test: { name: app, include: [\`apps/\${app}/tests/contract/**/*.test.ts\`] },
+        })),
+    },
+}
+`
+
+type Mode = 'in-repo' | 'packed'
+
+/** The stand-in framework at `dir`. */
+function kitAt(dir: string) {
+    pkg(dir, KIT_MANIFEST)
+    json(path.join(dir, 'checks.json'), REGISTRY)
+    return dir
+}
+
+/**
+ * An app at `dir` (relative to `ws`): its own seam, a tsconfig that maps it, the unit suite in
+ * `src/sssb.conformance.test.ts` (unless `conformance` is false), one other unit test, and the contract suite. In-repo,
+ * its @sssb/kit is the workspace's packages/kit; packed, an instance of its own whose seam link is the app's.
+ */
+function addApp(ws: string, dir: string, mode: Mode, { conformance = true } = {}) {
+    const app = path.join(ws, dir)
+    pkg(app, {
+        ...(dir === '.' ? { name: 'ws', private: true } : { name: path.basename(dir) }),
+        dependencies: {
+            '@sssb/kit': mode === 'in-repo' ? 'workspace:*' : 'file:kit.tgz',
+            '@sssb/app-config': 'link:./src/app-config',
+        },
+    })
+    const seam = pkg(path.join(app, 'src', 'app-config'), { name: '@sssb/app-config' })
+    write(path.join(seam, 'index.ts'), 'export const seam = true\n')
+    json(path.join(app, 'tsconfig.json'), {
+        compilerOptions: { paths: { '@sssb/app-config/*': ['./src/app-config/*'] } },
+    })
+    if (conformance) write(path.join(app, 'src', 'sssb.conformance.test.ts'), suiteFile('unit'))
+    write(path.join(app, 'src', 'thing.test.ts'), "import { it } from 'vitest'\nit('an app test', () => {})\n")
+    write(path.join(app, 'tests', 'contract', 'rls.test.ts'), suiteFile('contract'))
+    let kit = path.join(ws, 'packages', 'kit')
+    if (mode === 'packed') {
+        const home = path.join(ws, 'store', dir === '.' ? 'root' : path.basename(dir), 'node_modules')
+        kit = kitAt(path.join(home, '@sssb', 'kit'))
+        link(path.join(home, '@sssb', 'app-config'), seam)
+    }
+    link(path.join(app, 'node_modules', '@sssb', 'kit'), kit)
+    link(path.join(app, 'node_modules', '@sssb', 'app-config'), seam)
+    return app
+}
+
+/** A workspace of `apps` under apps/, with root configs that give each app a unit and a contract project. */
+function doctorWorkspace(prefix: string, mode: Mode, apps: string[] = ['a', 'b']) {
+    const ws = realpathSync(makeTestTmpDir(prefix))
+    write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n    - apps/*\n    - packages/*\n')
+    pkg(ws, {
+        name: 'ws',
+        private: true,
+        scripts: { 'test:unit': 'vitest run', 'test:contract': 'vitest run --config vitest.contract.config.mjs' },
+    })
+    link(path.join(ws, 'node_modules', 'vitest'), realpathSync(path.join(REPO, 'node_modules', 'vitest')))
+    link(path.join(ws, 'node_modules', 'typescript'), realpathSync(path.join(REPO, 'node_modules', 'typescript')))
+    if (mode === 'in-repo') kitAt(path.join(ws, 'packages', 'kit'))
+    for (const app of apps) addApp(ws, `apps/${app}`, mode)
+    write(path.join(ws, 'vitest.config.mjs'), UNIT_CONFIG)
+    write(path.join(ws, 'vitest.contract.config.mjs'), CONTRACT_CONFIG)
+    return ws
+}
+
+/** `sssb doctor --app <app>`, run as a child process from the workspace root, out of this Vitest's environment. */
+async function doctor(ws: string, app: string) {
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.startsWith('VITEST')) delete env[key]
+    const run = promisify(execFile)
+    try {
+        const { stdout, stderr } = await run(process.execPath, [SSSB, 'doctor', '--app', path.join(ws, app)], {
+            cwd: ws,
+            env,
+            maxBuffer: 16 * 1024 * 1024,
+        })
+        return { code: 0, out: `${stdout}${stderr}` }
+    } catch (error) {
+        const failed = error as { code?: number; stdout?: string; stderr?: string }
+        return { code: failed.code ?? -1, out: `${failed.stdout ?? ''}${failed.stderr ?? ''}` }
+    }
+}
+
+const E2E_TIMEOUT = 120_000
+
+describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
+    it(
+        'passes a conforming workspace, reporting each opt-out with its reason, the scripts that narrow a vitest run, and the contract script',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-ok-', 'in-repo')
+            write(
+                path.join(ws, 'apps', 'a', 'src', 'sssb.conformance.test.ts'),
+                suiteFile('unit', { beta: 'a has no beta' }),
+            )
+            const manifest = JSON.parse(readFileSync(path.join(ws, 'package.json'), 'utf8'))
+            manifest.scripts['test:ci'] = "vitest run -t 'smoke' --shard=1/2 apps/a"
+            json(path.join(ws, 'package.json'), manifest)
+            const { code, out } = await doctor(ws, 'apps/a')
+            expect(out).toMatch(/^report +apps\/a: opted out of beta: a has no beta$/m)
+            expect(out).toMatch(/^ok +apps\/b: the conformance suite would run/m)
+            expect(out).toMatch(/doctor proves what each Vitest configuration would run, not what/)
+            expect(out).toMatch(/test:ci: .*-t smoke.*--shard=1\/2.*apps\/a/)
+            expect(out).toMatch(
+                /^report +.*contract.*\n(.*\n)*.*root script test:contract runs vitest\.contract\.config\.mjs/m,
+            )
+            expect(code, out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        "fails a config that runs the app's tests but excludes the suite (vitest.ci.config.ts), beside one that runs it",
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-ci-config-', 'packed', ['web'])
+            write(
+                path.join(ws, 'vitest.ci.config.ts'),
+                "import { defineConfig } from 'vitest/config'\nexport default defineConfig({ test: { include: ['apps/*/src/**/*.test.ts'], exclude: ['**/node_modules/**', '**/sssb.*'] } })\n",
+            )
+            const { code, out } = await doctor(ws, 'apps/web')
+            expect(out).toMatch(
+                /^FAIL +apps\/web: the conformance suite would run: 3 of its 3 tests would not run \(.*vitest\.ci\.config\.ts/m,
+            )
+            expect(code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        "honours an opt-out marker only from the app's own src/sssb.conformance.test.ts",
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-forged-', 'packed', ['web'])
+            const src = path.join(ws, 'apps', 'web', 'src')
+            write(path.join(src, 'sssb.conformance.test.ts'), suiteFile('unit', {}, ['alpha']))
+            write(path.join(src, 'thing.test.ts'), suiteFile('unit', { beta: 'forged elsewhere' }, ['beta']))
+            const { code, out } = await doctor(ws, 'apps/web')
+            expect(out).toMatch(/not listed: \[sssb:beta\] the beta check > three/)
+            expect(code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        "fails a tsconfig target or a Vitest alias (RegExp, array form) that sends the seam to another app's",
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-aliases-', 'in-repo')
+            const a = path.join(ws, 'apps', 'a')
+            json(path.join(a, 'tsconfig.json'), {
+                compilerOptions: {
+                    paths: { '@sssb/app-config/*': ['./src/app-config/*', '../b/src/app-config/*'] },
+                },
+            })
+            write(
+                path.join(ws, 'vitest.config.mjs'),
+                UNIT_CONFIG.replace(
+                    "resolve: { alias: { '@sssb/app-config': at('apps', app, 'src', 'app-config') } }",
+                    "resolve: { alias: [{ find: /^@sssb\\/app-config\\/(.*)$/, replacement: at('apps', 'b', 'src', 'app-config') + '/$1' }, { find: '@sssb/app-config', replacement: at('apps', app, 'src', 'app-config') }] }",
+                ),
+            )
+            const { code, out } = await doctor(ws, 'apps/a')
+            expect(out).toMatch(/apps\/a: its tsconfig sends @sssb\/app-config\/\* to apps\/b\/src\/app-config/)
+            expect(out).toMatch(
+                /apps\/a: Vitest project a \(vitest\.config\.mjs\) aliases .*app-config.* to apps\/b\/src\/app-config/,
+            )
+            expect(code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'checks the conformance listing of every app in the workspace, not only the one it runs for',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-every-app-', 'packed')
+            addApp(ws, 'apps/c', 'packed', { conformance: false })
+            const { code, out } = await doctor(ws, 'apps/a')
+            expect(out).toMatch(/^FAIL +apps\/c: the conformance suite would run/m)
+            expect(code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        "does not count a nested app's tests for an app at the workspace root",
+        async () => {
+            const ws = realpathSync(makeTestTmpDir('sssb-doctor-e2e-nested-'))
+            write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n    - apps/*\n')
+            link(path.join(ws, 'node_modules', 'vitest'), realpathSync(path.join(REPO, 'node_modules', 'vitest')))
+            addApp(ws, '.', 'packed', { conformance: false })
+            rmSync(path.join(ws, 'tests'), { recursive: true })
+            addApp(ws, 'apps/x', 'packed')
+            write(
+                path.join(ws, 'vitest.config.mjs'),
+                "export default { test: { include: ['**/src/**/*.test.ts'], exclude: ['**/node_modules/**'] } }\n",
+            )
+            write(
+                path.join(ws, 'vitest.contract.config.mjs'),
+                "export default { test: { include: ['**/tests/contract/**/*.test.ts'], exclude: ['**/node_modules/**'] } }\n",
+            )
+            const { code, out } = await doctor(ws, '.')
+            expect(out).toMatch(/^FAIL +\(the workspace root\): the conformance suite would run/m)
+            expect(out).toMatch(/^FAIL +\(the workspace root\): the contract runner's checks would run/m)
+            expect(code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'reads column-0 `packages` entries, so a seamless importer there is named',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-col0-', 'packed')
+            write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n- apps/*\n- packages/*\n')
+            const seamless = pkg(path.join(ws, 'packages', 'seamless'), {
+                name: 'seamless',
+                dependencies: { '@sssb/kit': 'file:kit.tgz' },
+            })
+            link(
+                path.join(seamless, 'node_modules', '@sssb', 'kit'),
+                realpathSync(path.join(ws, 'apps', 'a', 'node_modules', '@sssb', 'kit')),
+            )
+            const { code, out } = await doctor(ws, 'apps/a')
+            expect(out).toMatch(/packages\/seamless: takes @sssb\/kit but declares no seam link/)
+            expect(code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'fails when the workspace walk does not reach the app it runs for, or cannot read pnpm-workspace.yaml',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-walk-', 'packed')
+            write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n    - packages/*\n')
+            const missed = await doctor(ws, 'apps/a')
+            expect(missed.out).toMatch(/^FAIL +.*apps\/a.*/m)
+            expect(missed.out).toMatch(/apps\/a is not among the importers/)
+            expect(missed.code).toBe(1)
+            write(path.join(ws, 'pnpm-workspace.yaml'), 'packages: &globs\n    - apps/*\n')
+            const unread = await doctor(ws, 'apps/a')
+            expect(unread.out).toMatch(/^FAIL +workspace walk: .*pnpm-workspace\.yaml line 1/m)
+            expect(unread.code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
 })
 
 describe('cutoverReport', () => {

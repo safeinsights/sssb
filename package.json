@@ -28,7 +28,7 @@
         "test:e2e": "pnpm --filter './apps/*' --workspace-concurrency=1 test:e2e",
         "knip": "knip",
         "jscpd": "jscpd",
-        "sssb:doctor": "pnpm --filter './apps/*' --workspace-concurrency=1 sssb:doctor",
+        "sssb:doctor": "sssb doctor",
         "check:e2e": "pnpm --filter './apps/*' check:e2e",
         "verify": "concurrently --kill-others-on-fail --group 'pnpm:typecheck' 'pnpm:lint' 'pnpm:test:unit' 'pnpm:knip' 'pnpm:sssb:doctor' 'pnpm:check:e2e' && pnpm test:e2e && pnpm build:demo-static && pnpm check:demo-size && pnpm e2e:demo-static",
         "ladle": "pnpm --filter showcase ladle",
