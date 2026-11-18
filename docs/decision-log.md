@@ -2933,6 +2933,14 @@ Dependabot's #1.
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
   hold are still `.claude/future-tasks/resolved/label-in-name-axe-4-14.md`.
 
+## Copyright assigned to Rice University (2026-11-17, `chore/copyright-rice`)
+
+ADR-0014's D3: JP Slavinsky assigns SSSB's copyright (keel's, before the rename) to Rice University, and the licence
+stays MIT. This change records the assignment: `LICENSE` now reads "Copyright (c) 2026 Rice
+University". JP opens and merges the PR that records it, with a commit he authored. `tests/docs/adopter-identity.test.ts` checks that an adopted
+tree keeps the notice verbatim, as MIT requires, so it now expects Rice University. ADR approver lines keep JP's
+name: they record who decided. This lands before P7, whose release-candidate tarballs carry the `LICENSE`.
+
 ## A second npm owner is not needed (2026-11-17, `chore/post-p2-cleanup`)
 
 JP's call on 2026-11-17: the `sssb` npm organization and its packages keep `safeinsights-bot` as their only owner,
