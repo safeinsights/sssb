@@ -20,7 +20,7 @@ import { makeTestTmpDirAsync } from './tmp-dir'
  *  - CONTRACT_DATABASE_URL set (CI): that server, which several suites share, each in its own database. The URL
  *    must be a SUPERUSER's, to a database that already exists (`postgres`).
  *  - unset (a developer's machine): an embedded-postgres of the suite's own, on the port derived per checkout
- *    (scripts/ports.mjs `contractPg`), stopped when the suite ends. `vitest.contract.config.ts` runs files one at
+ *    (`contractPg` in @sssb/tools/ports), stopped when the suite ends. `vitest.contract.config.ts` runs files one at
  *    a time, so two never hold that port together.
  */
 

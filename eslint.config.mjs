@@ -1340,7 +1340,7 @@ const eslintConfig = [
     },
     // THE PACKAGE'S EDGE (sssbNoPathOutOfPackageRule): no framework file, fixture included, reaches outside
     // packages/kit by path. Two named exemptions, both P5's: the real-Postgres contract tests start their server
-    // through the repo's tests/support/contract-postgres.ts, which reads scripts/ports.mjs and embedded-postgres. P5
+    // through the repo's tests/support/contract-postgres.ts, which reads @sssb/tools/ports and embedded-postgres. P5
     // moves the contract runner into @sssb/kit/testing; neither file ships (the `files` allowlist keeps tests out).
     {
         files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],

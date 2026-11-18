@@ -278,7 +278,7 @@ demo degrades only where physics forbid — no server means no real HTTP or byte
 means Snapshots cannot SAVE (reset and the demo presets still work: they are scripts, not files) — and every such degrade is noted where it happens. Pure world _logic_ (flags,
 held jobs, advancing state) is never a physics degrade: if it can run in memory, the twin runs it. An empty
 tab in the flagship portable demo would undermine the very proof it exists to make. The budget guard
-(`scripts/check-demo-size.mjs`) keeps parity honest: hand-built twins over vendored libraries, per the
+(`sssb check-demo-size`) keeps parity honest: hand-built twins over vendored libraries, per the
 react-email precedent.
 
 **The simulated world has its own surface: Simulator ✅.** The fakes don't just stub vendors — together they

@@ -302,7 +302,7 @@ describe('a path into app code crosses the framework/app fence too', () => {
         const out = [
             `import { b } from ${JSON.stringify(pathFrom(file, 'tests/support/tmp-dir'))}`,
             "import { c } from '../../../apps-config/x'",
-            `export const load = () => import(${JSON.stringify(pathFrom(file, 'scripts/ports.mjs'))})`,
+            `export const load = () => import(${JSON.stringify(pathFrom(file, 'scripts/release.mjs'))})`,
             `export type T = import(${JSON.stringify(pathFrom(file, 'tests/support/contract-postgres'))}).ContractServer`,
             'export { b, c }',
         ]
