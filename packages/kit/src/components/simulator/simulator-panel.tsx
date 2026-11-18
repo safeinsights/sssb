@@ -437,16 +437,12 @@ export function SimulatorPanel({
                     boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
                 }}
             >
-                {/* Named by its content, never an aria-label (WCAG 2.5.3 Label in Name): the hidden line
-                    starts with what the pill shows, "Simulator" then the unread count, and says what it
-                    does. The visible pieces are hidden from assistive tech so they aren't read twice.
-                    axe 4.14 joins the label and the badge into one word ("Simulator1"), which no
-                    aria-label can contain; a content name is not compared. The badge uses the same
-                    locale number format as the hidden line's `#`, so the digits a voice user sees match. */}
-                <VisuallyHidden>
-                    {totalUnread > 0 ? t('pillUnreadName', { count: totalUnread }) : t('pillName')}
-                </VisuallyHidden>
-                <Text size="sm" fw={600} c="gray.0" aria-hidden>
+                {/* Named by its content, never an aria-label (WCAG 2.5.3 Label in Name): the visible
+                    "Simulator", then a visually hidden "3 unread emails, open the panel". The badge is
+                    aria-hidden because the hidden line says its count with a unit; both use the same
+                    locale number format, so the digits a voice user sees are the ones in the name. axe
+                    4.14 reads label and badge as one word ("Simulator3"), which no aria-label contains. */}
+                <Text size="sm" fw={600} c="gray.0">
                     {t('pillLabel')}
                 </Text>
                 {totalUnread > 0 ? (
@@ -460,6 +456,9 @@ export function SimulatorPanel({
                         {format.number(totalUnread)}
                     </Text>
                 ) : null}
+                <VisuallyHidden>
+                    {totalUnread > 0 ? t('pillUnreadSuffix', { count: totalUnread }) : t('pillSuffix')}
+                </VisuallyHidden>
             </UnstyledButton>
         </>
     ) : null

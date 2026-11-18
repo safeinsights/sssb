@@ -30,7 +30,7 @@
     },
     "org": {
         "switchLabel": "Switch team",
-        "switchTriggerLabel": "{name}, switch team",
+        "switchTriggerSuffix": ", switch team",
         "title": "{org}",
         "membersHeading": "Members",
         "pendingHeading": "Pending invitations",
@@ -77,8 +77,8 @@
     },
     "simulator": {
         "pillLabel": "Simulator",
-        "pillName": "Simulator, open the panel",
-        "pillUnreadName": "Simulator {count, plural, one {# unread email} other {# unread emails}}, open the panel",
+        "pillSuffix": ", open the panel",
+        "pillUnreadSuffix": "{count, plural, one {# unread email} other {# unread emails}}, open the panel",
         "panelTitle": "Simulator",
         "peopleTab": "People",
         "mailTab": "Mail",

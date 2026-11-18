@@ -34,11 +34,11 @@ export function OrgSwitcher({
     return (
         <Menu position="bottom-end" width={264} withinPortal>
             <Menu.Target>
-                {/* Named by its content, never an aria-label (WCAG 2.5.3 Label in Name). The visible row
-                    reads "initials + team name"; the initials are decorative, so the row is hidden from
-                    assistive tech and a visually hidden line gives the name: the team name, then what the
-                    button does. axe 4.14 compares an aria-label with the on-screen text, initials
-                    included, which no sensible label can match; a content name is not compared. */}
+                {/* Named by its content, never an aria-label (WCAG 2.5.3 Label in Name): the name is the
+                    team name the button shows, then a visually hidden ", switch team". The avatar's
+                    initials are aria-hidden (PreviewRow): they are a symbol, like a "B" on a Bold
+                    button, not the label. An aria-label would have to repeat them, since axe 4.14
+                    compares one with every word on screen. */}
                 <UnstyledButton
                     data-testid="org-switcher"
                     style={{
@@ -48,11 +48,11 @@ export function OrgSwitcher({
                         border: '1px solid var(--mantine-color-gray-3)',
                     }}
                 >
-                    <VisuallyHidden>{t('switchTriggerLabel', { name: active.name })}</VisuallyHidden>
-                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }} aria-hidden>
+                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
                         <PreviewRow name={active.name} title={active.name} size="sm" />
                         <ChevronDownIcon />
                     </Group>
+                    <VisuallyHidden>{t('switchTriggerSuffix')}</VisuallyHidden>
                 </UnstyledButton>
             </Menu.Target>
             <Menu.Dropdown>

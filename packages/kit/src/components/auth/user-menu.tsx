@@ -30,12 +30,13 @@ export function UserMenu({
     return (
         <Menu position="bottom-end" width={260}>
             <Menu.Target>
-                {/* The trigger shows only initials, which name nobody. They are hidden from assistive
-                    tech, and a visually hidden line names the button with the user's full name instead.
-                    Named by its content, never an aria-label: axe 4.14's Label in Name check (WCAG 2.5.3)
-                    compares an aria-label with the on-screen initials, which no sensible label can match. */}
+                {/* The trigger shows only initials. They are a symbol, like a "B" on a Bold button, not a
+                    label (WCAG 2.5.3's carve-out), so they are aria-hidden and a visually hidden line names
+                    the button with the user's full name (the email when the name is blank). Named by its
+                    content, never an aria-label: axe 4.14 compares an aria-label with the on-screen
+                    initials. A checker that compares the computed name instead may still flag this. */}
                 <UnstyledButton data-testid="user-menu">
-                    <VisuallyHidden>{t('userMenuLabel', { name: user.name })}</VisuallyHidden>
+                    <VisuallyHidden>{t('userMenuLabel', { name: user.name.trim() || user.email })}</VisuallyHidden>
                     <Avatar
                         name={user.name}
                         aria-hidden
