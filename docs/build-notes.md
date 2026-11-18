@@ -2023,3 +2023,14 @@ touched an entry already in the file, read that entry again before committing.
 It applies to merges git performs: `git merge origin/main` on a branch, which is how this repository takes main in.
 Whether GitHub's own merge, for the mergeability check and the merge button, honours the attribute is not verified
 here, so a PR can still show a conflict there that a local merge of `main` resolves.
+
+## Transitive advisories (2026-11-17, `deps/advisories`)
+
+- **`pnpm update -r --depth Infinity <names>` does not always move a transitive dependency.** It refreshed
+  `brace-expansion`, `js-yaml`, `nanoid`, `source-map-js` and `zod`, but left `fast-uri` 3.1.3 and `browserslist`
+  4.28.5 where they were, run twice, with patched versions inside every parent's range. Deleting those packages'
+  `packages:` and `snapshots:` entries from `pnpm-lock.yaml` and running `pnpm install` made pnpm re-resolve them
+  (it reports the lockfile as broken, then fixes it). Check the result with `pnpm install --frozen-lockfile`.
+- **Prove what a bundle holds from the bundler's own module list.** Next's chunks name modules by their
+  `node_modules/.pnpm/...` path; the static demo's list comes from Rollup's `this.getModuleIds()` in a scratch
+  plugin; the migrator's from an esbuild metafile.
