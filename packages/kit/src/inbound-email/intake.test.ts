@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { DEMO_INBOUND_DOMAIN, formatInboundRecipient } from '../core/inbound-email'
 
 // Point fake-adapter state at a throwaway dir BEFORE importing pglite-backed modules (the webhooks.test

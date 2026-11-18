@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { DbPort } from '../ports/db'
 import type { AuditDetail, AuditEventInput } from './audit'
 import { orgIdForSlug } from './org-lookup'

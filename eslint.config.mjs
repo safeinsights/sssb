@@ -490,7 +490,7 @@ const sssbPublicSurfaceRule = {
 // ---------------------------------------------------------------------------------------------
 // NO RAW mkdtemp IN TESTS. A test that calls `mkdtemp`/`mkdtempSync` itself leaves the directory
 // behind on every run, and enough runs filled a dev machine's temp filesystem past 100GB. Tests make
-// scratch directories through tests/support/tmp-dir.ts, which queues the removal. Its own rule id,
+// scratch directories through packages/kit/src/testing/tmp-dir.ts, which queues the removal. Its own rule id,
 // not a `no-restricted-syntax` selector: that rule's config merges by key, so a later block that
 // re-declares it for overlapping files REPLACES this one without a word (the merge trap above).
 //
@@ -502,12 +502,15 @@ const sssbPublicSurfaceRule = {
 const sssbNoDirectMkdtempRule = {
     meta: {
         type: 'problem',
-        docs: { description: 'Tests make scratch directories through tests/support/tmp-dir.ts, never a raw mkdtemp.' },
+        docs: {
+            description:
+                'Tests make scratch directories through packages/kit/src/testing/tmp-dir.ts, never a raw mkdtemp.',
+        },
         schema: [],
         messages: {
             direct:
                 '`{{name}}()` leaves its directory behind on every test run. Use makeTestTmpDir() / ' +
-                'makeTestTmpDirAsync() from tests/support/tmp-dir.ts, which removes the directory when the ' +
+                'makeTestTmpDirAsync() from packages/kit/src/testing/tmp-dir.ts, which removes the directory when the ' +
                 'test file finishes — or, in a Playwright spec, testInfo.outputPath(), which Playwright ' +
                 'clears at the start of every run.',
         },
@@ -1206,13 +1209,13 @@ const eslintConfig = [
     // contract test, packages/kit/test-fixture included; `apps/*/tests/**` adds the Playwright specs
     // and their support files, which are `.spec.ts` or plain helpers and which no leak guard wraps; the
     // fixture glob is named anyway (FIXTURE_FILES_GLOB, as every framework-invariant gate here does) so
-    // a future non-`.test` helper added there is covered too. tests/support/tmp-dir.ts is the one place the raw call is
+    // a future non-`.test` helper added there is covered too. packages/kit/src/testing/tmp-dir.ts is the one place the raw call is
     // meant to live — it matches neither glob, and is ignored explicitly so that stays true if either
     // glob is ever widened. `apps/*/tests/**` takes every extension because Playwright's default
     // testMatch picks up a `.spec.mjs` or `.test.js` there too, and neither app's config narrows it.
     {
         files: [TEST_FILES, `apps/*/tests/**/*.${SRC_EXT}`, FIXTURE_FILES_GLOB],
-        ignores: ['tests/support/tmp-dir.ts'],
+        ignores: ['packages/kit/src/testing/tmp-dir.ts'],
         plugins: { sssb: sssbPlugin },
         rules: { 'sssb/no-direct-mkdtemp': 'error' },
     },

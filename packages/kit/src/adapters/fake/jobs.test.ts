@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../../testing/tmp-dir'
 
 // Point all fake-adapter state at a throwaway dir BEFORE importing the adapters.
 const tmp = makeTestTmpDir('app-jobs-fake-')

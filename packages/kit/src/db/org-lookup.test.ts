@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { orgIdentityForSlug, orgIdForSlug } from './org-lookup'
 import { tenantIdForSlug } from './tenant-lookup'
 

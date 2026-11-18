@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { Membership } from '../ports/auth'
 
 // Mock the defer seam: it imports '@/adapters' (server-only), and the deferred channels (email/sms)

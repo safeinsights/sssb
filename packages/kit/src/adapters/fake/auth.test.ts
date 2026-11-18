@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../../testing/tmp-dir'
 import { APP_SLUG } from '@sssb/app-config/identity'
 
 // No fake-auth unit tests existed before Simulator slice 1 — devSignIn/session both round-trip

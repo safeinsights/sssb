@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { DEMO_INBOUND_DOMAIN, formatInboundRecipient } from '../core/inbound-email'
 
 // The intake records on its `inbound-email.received` row exactly the credential the HANDLER reports, and

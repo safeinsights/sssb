@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../../testing/tmp-dir'
 
 // Point all fake-adapter state at a throwaway dir BEFORE importing the module (fake-adapters.test.ts /
 // simulator.test.ts pattern). closeFakeDb() no-ops here since these tests never spin up pglite —

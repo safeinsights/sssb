@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { JobsPort, SubmittedJob } from '../ports/jobs'
 
 // The registry is the one thing `runScheduledTick` takes from '../adapters/index' (a real import trips

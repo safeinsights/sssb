@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 
 // The server replay of a demo preset, against SSSB's OWN seam: the fixture registers `busy-harbor`
 // (packages/kit/test-fixture/app-config/presets.ts), one operation of every kind plus a viewpoint, and

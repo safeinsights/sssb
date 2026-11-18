@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { ScheduleSpec } from '../core/schedules'
 import type { JobsPort, SubmittedJob } from '../ports/jobs'
 

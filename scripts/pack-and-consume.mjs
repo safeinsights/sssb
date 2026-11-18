@@ -616,8 +616,10 @@ minimumReleaseAge: 2880
     applyWorkaround('check-demo-size-copied')
     cpSync(path.join(REPO, 'scripts/check-demo-size.mjs'), path.join(WS, 'scripts/check-demo-size.mjs'))
     applyWorkaround('tmp-dir-helper-copied')
-    cpSync(path.join(REPO, 'tests/support/tmp-dir.ts'), path.join(WS, 'tests/support/tmp-dir.ts'))
-    cpSync(path.join(REPO, 'tests/support/tmp-dir-marker.mjs'), path.join(WS, 'tests/support/tmp-dir-marker.mjs'))
+    // The helper itself lives in the framework's package (P3); this repo's tests/support/tmp-dir.ts only
+    // re-exports it by a path into packages/kit, which the consumer does not have.
+    for (const file of ['tmp-dir.ts', 'tmp-dir-marker.mjs'])
+        cpSync(path.join(REPO, 'packages/kit/src/testing', file), path.join(WS, 'tests/support', file))
 
     // The committed lockfile seed, as an adopter commits theirs: pnpm keeps every resolution in it whose
     // specifier still matches and resolves only what changed (the tarball, whose file name changes with a

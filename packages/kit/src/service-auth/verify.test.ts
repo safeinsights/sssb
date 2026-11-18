@@ -1,6 +1,6 @@
 import { exportSPKI, generateKeyPair, SignJWT } from 'jose'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { fakeDb } from '../adapters/fake/db'
 import { AuthRequiredError } from '../ports/errors'
 import { SERVICE_JWT_AUDIENCE, verifyServiceCaller } from './verify'

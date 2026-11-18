@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { devWebhookSecret } from '../adapters/fake/service-auth'
 import { mailgunSignature } from '../core/webhook-signing'
 import { AuthRequiredError } from '../ports/errors'

@@ -43,7 +43,7 @@ export const WORKAROUNDS = {
     },
     'tmp-dir-helper-copied': {
         removedBy: 'P4',
-        what: "tests/support/tmp-dir.ts and its marker module are copied into the consumer, because the starter's cron route test imports them by a repo-relative path (P4: makeTestTmpDir from @sssb/tools)",
+        what: "the scratch-directory helper and its marker module (packages/kit/src/testing) are copied into the consumer's tests/support, because the starter's cron route test imports them by a repo-relative path (P4: makeTestTmpDir from @sssb/tools)",
     },
     'vitest-config-written': {
         removedBy: 'P4',
