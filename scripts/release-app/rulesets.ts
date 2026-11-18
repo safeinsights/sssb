@@ -29,7 +29,7 @@ const DEFAULT_BRANCH = '~DEFAULT_BRANCH'
 const RELEASE_TAGS = 'refs/tags/v*'
 
 type Rule = { type: string; parameters?: unknown }
-export type BypassActor = { actor_id: number | null; actor_type: string; bypass_mode: string }
+type BypassActor = { actor_id: number | null; actor_type: string; bypass_mode: string }
 type RulesetBody = {
     name: string
     target: 'branch' | 'tag'
@@ -131,7 +131,15 @@ export function planBypass(rulesets: Ruleset[], appId: number): BypassPlan {
         if (!include.includes(DEFAULT_BRANCH) && !include.includes('refs/heads/main')) {
             problems.push(`"${MAIN_CHECKS}" does not cover main (its include is ${JSON.stringify(include)})`)
         }
-        // Only the bypass list and enforcement change; its rules are the checks and stay as they are.
+        // Only the bypass list and enforcement change; its rules are the checks and stay as they are. Anything
+        // else here (a pull-request or signature rule added later) would be bypassed with them, silently.
+        const types = (checks.rules ?? []).map((rule) => rule.type)
+        if (types.length !== 1 || types[0] !== 'required_status_checks') {
+            problems.push(
+                `"${MAIN_CHECKS}" carries ${JSON.stringify(types)}; the App would bypass all of it. Expected only ` +
+                    'required_status_checks: move the rest to a ruleset the App does not bypass',
+            )
+        }
         want(checks, { ...body(checks), enforcement: 'active', bypass_actors: bypass }, updates)
     }
 
@@ -171,32 +179,102 @@ export function planBypass(rulesets: Ruleset[], appId: number): BypassPlan {
 /** One rule as `GET /repos/{o}/{r}/rules/branches/{branch}` returns it. */
 export type ActiveRule = { type: string; ruleset_source_type: string; ruleset_source: string; ruleset_id: number }
 
+/** Rule types that cannot refuse a fast-forward push of a branch or the creation of a tag. */
+const HARMLESS_TO_A_PUSH = new Set(['deletion', 'non_fast_forward', 'update'])
+
+/** An organisation ruleset the App's push meets, which only an org owner can change. */
+type OrgGate = {
+    id: number
+    name: string
+    types: string[]
+    /** `always` or `exempt`: the push passes. `wrong-mode`: listed, but only for pull requests. */
+    app: 'listed' | 'missing' | 'wrong-mode'
+    /** Every other bypass actor: each can do what the App can on this ruleset's refs. */
+    others: BypassActor[]
+}
+
+export type Gates = { org: OrgGate[]; problems: string[] }
+
+function globToRegExp(pattern: string): RegExp {
+    const source = pattern
+        .split('**')
+        .map((part) =>
+            part
+                .split('*')
+                .map((literal) => literal.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+                .join('[^/]*'),
+        )
+        .join('.*')
+    return new RegExp(`^${source}$`)
+}
+
+function covers(ruleset: RulesetBody, ref: string): boolean {
+    const { include = [], exclude = [] } = ruleset.conditions?.ref_name ?? {}
+    const hit = (pattern: string) =>
+        pattern === '~ALL' ||
+        (pattern === DEFAULT_BRANCH && ref === 'refs/heads/main') ||
+        globToRegExp(pattern).test(ref)
+    return include.some(hit) && !exclude.some(hit)
+}
+
 /**
- * The organisation rulesets that would refuse the App's push to `main`, and whether each already lists the
- * App as a bypass. Every org ruleset with a rule on `main` is listed: deletion and non-fast-forward alone
- * would not stop a plain push, but this does not try to judge which rule types a given org ruleset carries
- * now and later. `bypassOf` reads a ruleset's bypass list (null when it cannot).
+ * Every ruleset outside the four `planBypass` manages that could refuse the release's push: anything active on
+ * `main` (read from the rules GitHub says apply there) and any tag ruleset covering a release tag. An
+ * organisation ruleset is an org owner's step and is reported with its bypass list; another repository ruleset
+ * is a problem, since the App would be refused by it and this tool does not manage it. `rulesets` holds every
+ * ruleset that applies to the repository, the organisation's included, with details; one missing from it is
+ * reported as unreadable.
  */
-export function orgRulesetsToBypass(
-    activeOnMain: ActiveRule[],
-    bypassOf: Map<number, BypassActor[] | null>,
-    appId: number,
-): { id: number; source: string; types: string[]; hasApp: boolean | null }[] {
-    const byId = new Map<number, { id: number; source: string; types: string[] }>()
-    for (const rule of activeOnMain) {
-        if (rule.ruleset_source_type !== 'Organization') continue
-        const entry = byId.get(rule.ruleset_id) ?? { id: rule.ruleset_id, source: rule.ruleset_source, types: [] }
-        entry.types.push(rule.type)
-        byId.set(rule.ruleset_id, entry)
+export function externalGates(activeOnMain: ActiveRule[], rulesets: Ruleset[], appId: number): Gates {
+    const managed = new Set([MAIN_CHECKS, MAIN_HISTORY, TAGS_CREATE, TAGS_IMMUTABLE])
+    const byId = new Map(rulesets.map((ruleset) => [ruleset.id, ruleset]))
+    const problems: string[] = []
+    const org: OrgGate[] = []
+    const seen = new Set<number>()
+
+    const judge = (ruleset: Ruleset, types: string[]) => {
+        if (seen.has(ruleset.id)) return
+        seen.add(ruleset.id)
+        if (ruleset.source_type === 'Repository' && managed.has(ruleset.name)) return
+        if (types.every((type) => HARMLESS_TO_A_PUSH.has(type))) return
+        if (ruleset.source_type !== 'Organization') {
+            problems.push(
+                `repository ruleset "${ruleset.name}" (${ruleset.id}, ${types.join(', ')}) also applies to the release's ` +
+                    'push, and this tool does not manage it',
+            )
+            return
+        }
+        const actors = ruleset.bypass_actors ?? []
+        const mine = actors.filter((actor) => actor.actor_type === 'Integration' && actor.actor_id === appId)
+        org.push({
+            id: ruleset.id,
+            name: ruleset.name,
+            types,
+            app: mine.some((actor) => actor.bypass_mode === 'always' || actor.bypass_mode === 'exempt')
+                ? 'listed'
+                : mine.length > 0
+                  ? 'wrong-mode'
+                  : 'missing',
+            others: actors.filter((actor) => !(actor.actor_type === 'Integration' && actor.actor_id === appId)),
+        })
     }
-    return [...byId.values()].map((entry) => {
-        const actors = bypassOf.get(entry.id)
-        const hasApp =
-            actors === undefined || actors === null
-                ? null
-                : actors.some((actor) => actor.actor_type === 'Integration' && actor.actor_id === appId)
-        return { ...entry, hasApp }
-    })
+
+    const typesOnMain = new Map<number, string[]>()
+    for (const rule of activeOnMain)
+        typesOnMain.set(rule.ruleset_id, [...(typesOnMain.get(rule.ruleset_id) ?? []), rule.type])
+    for (const [id, types] of typesOnMain) {
+        const ruleset = byId.get(id)
+        if (!ruleset) problems.push(`could not read ruleset ${id}, which applies to main`)
+        else judge(ruleset, types)
+    }
+    for (const ruleset of rulesets) {
+        if (ruleset.target === 'tag' && covers(ruleset, 'refs/tags/v0.1.0'))
+            judge(
+                ruleset,
+                (ruleset.rules ?? []).map((rule) => rule.type),
+            )
+    }
+    return { org, problems }
 }
 
 /** A readable rendering of one change, for the terminal. */

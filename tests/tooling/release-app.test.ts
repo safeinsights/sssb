@@ -30,7 +30,7 @@ import {
     MAIN_HISTORY,
     TAGS_CREATE,
     TAGS_IMMUTABLE,
-    orgRulesetsToBypass,
+    externalGates,
     planBypass,
     type Ruleset,
 } from '../../scripts/release-app/rulesets'
@@ -94,8 +94,69 @@ function liveRulesets(): Ruleset[] {
 
 type Call = { args: string[]; input?: string }
 
+/** The organisation's installations as `gh api orgs/safeinsights/installations` lists them. */
+const INSTALLATIONS = [
+    {
+        id: 99,
+        app_id: APP_ID,
+        app_slug: 'safeinsights-sssb-release',
+        client_id: CLIENT_ID,
+        repository_selection: 'selected',
+        suspended_at: null,
+        account: { login: 'safeinsights' },
+        permissions: { ...RELEASE_APP_PERMISSIONS },
+    },
+    {
+        id: 98,
+        app_id: 4038189,
+        app_slug: 'other-bot',
+        client_id: 'Iv23other',
+        repository_selection: 'selected',
+        suspended_at: null,
+        account: { login: 'safeinsights' },
+        permissions: { contents: 'write', metadata: 'read' },
+    },
+]
+
+/**
+ * What GitHub stores and serves back for a ruleset body: its own key order, extra fields, `exclude` before
+ * `include`, and the rules in another order. So a plan that converges here does not converge only because the
+ * fake stores what it was sent.
+ */
+function asGitHubStores(body: Ruleset, id: number): Ruleset {
+    return {
+        id,
+        source_type: 'Repository',
+        source: 'safeinsights/sssb',
+        node_id: `RRS_${id}`,
+        current_user_can_bypass: 'never',
+        _links: { self: { href: `https://api.github.com/${REPO}/rulesets/${id}` } },
+        created_at: '2026-11-17T00:00:00Z',
+        bypass_actors: body.bypass_actors.map((a) => ({
+            bypass_mode: a.bypass_mode,
+            actor_type: a.actor_type,
+            actor_id: a.actor_id,
+        })),
+        rules: [...body.rules].reverse(),
+        conditions: {
+            ref_name: { exclude: body.conditions.ref_name.exclude, include: body.conditions.ref_name.include },
+        },
+        enforcement: body.enforcement,
+        target: body.target,
+        name: body.name,
+    } as Ruleset
+}
+
 /** A fake `gh` over an in-memory repository. Records every call with its stdin. */
-function fakeGh(options: { secret?: boolean; variable?: string; admin?: boolean; failSecretSet?: number } = {}) {
+function fakeGh(
+    options: {
+        secret?: boolean
+        variable?: string
+        admin?: boolean
+        failSecretSet?: number
+        installations?: Record<string, unknown>[]
+    } = {},
+) {
     const state = {
         rulesets: new Map(liveRulesets().map((r) => [r.id, structuredClone(r)])),
         secrets: options.secret ? ['RELEASE_BOT_PRIVATE_KEY'] : ([] as string[]),
@@ -123,12 +184,12 @@ function fakeGh(options: { secret?: boolean; variable?: string; admin?: boolean;
             const body = JSON.parse(input ?? '{}') as Ruleset
             if (method === 'POST' && apiPath === `${REPO}/rulesets`) {
                 const id = state.nextId++
-                state.rulesets.set(id, { ...body, id, source_type: 'Repository' })
+                state.rulesets.set(id, asGitHubStores(body, id))
                 return ok({ id })
             }
             const id = Number(apiPath.split('/').pop())
             if (method === 'PUT' && state.rulesets.has(id)) {
-                state.rulesets.set(id, { ...body, id, source_type: 'Repository' })
+                state.rulesets.set(id, asGitHubStores(body, id))
                 return ok({ id })
             }
             return { code: 1, stdout: '', stderr: `unexpected ${method} ${apiPath}` }
@@ -137,6 +198,8 @@ function fakeGh(options: { secret?: boolean; variable?: string; admin?: boolean;
         if (apiPath === 'user') return ok({ login: 'jpslav' })
         if (apiPath === REPO) return ok({ permissions: { admin: options.admin ?? true } })
         if (apiPath === 'user/memberships/orgs/safeinsights') return ok({ role: 'admin' })
+        if (apiPath === 'orgs/safeinsights/installations')
+            return ok({ total_count: 2, installations: options.installations ?? INSTALLATIONS })
         if (apiPath === `${REPO}/environments/release`)
             return ok({
                 can_admins_bypass: false,
@@ -331,7 +394,8 @@ describe('release-app create', () => {
         expect(h.text()).toContain(`CREATE ruleset "${MAIN_HISTORY}"`)
         expect(h.text()).toContain('Not applied. Re-run with --apply')
         expect(h.gh.calls.some((c) => c.args[1] === '-X')).toBe(false)
-        expect(h.text()).toContain('ruleset 7484436 from safeinsights')
+        expect(h.text()).toContain('"require-pr" (7484436: deletion, non_fast_forward, pull_request)')
+        expect(h.text()).toContain('also lets Integration 4038189 (always) bypass it')
         // The form's private directory is gone.
         expect(readdirSync(h.tmpRoot)).toEqual([])
     })
@@ -457,6 +521,23 @@ describe('release-app create', () => {
         expect(h.text()).not.toContain(keyBody)
     })
 
+    it('retries a failed manifest exchange while the code is still good', async () => {
+        let first = true
+        const flaky = fakeFetch()
+        const real = flaky.fetchFn
+        const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+            if (first && String(input).includes('/conversions')) {
+                first = false
+                return new Response('bad gateway', { status: 502 })
+            }
+            return real(input, init)
+        }) as typeof fetch
+        const h = harness({ fetch: { ...flaky, fetchFn } })
+        expect(await createCommand(h.deps, { applyBypass: false }), h.text()).toBe(0)
+        expect(h.text()).toContain('The manifest exchange failed (HTTP 502)')
+        expect(h.gh.calls.filter((c) => c.args[0] === 'secret')).toHaveLength(1)
+    })
+
     it('stops cleanly when the operator gives up on the key', async () => {
         const h = harness({ gh: fakeGh({ failSecretSet: 5 }), answers: ['give up'] })
         expect(await createCommand(h.deps, { applyBypass: false })).toBe(1)
@@ -487,7 +568,7 @@ describe('release-app verify and bypass', () => {
         const apply = harness({ gh, answers: ['apply'] })
         expect(await bypassCommand(apply.deps, { appId: APP_ID, apply: true })).toBe(1) // the org step is still by hand
         const org = gh.state.rulesets.get(7484436)
-        org?.bypass_actors.push({ actor_id: APP_ID, actor_type: 'Integration', bypass_mode: 'always' })
+        if (org) org.bypass_actors = [{ actor_id: APP_ID, actor_type: 'Integration', bypass_mode: 'always' }]
 
         const h = harness({ gh })
         const before = gh.calls.length
@@ -507,6 +588,23 @@ describe('release-app verify and bypass', () => {
         expect(await verifyCommand(h.deps, { appId: APP_ID })).toBe(1)
         expect(h.text()).toContain('has no secret RELEASE_BOT_PRIVATE_KEY')
         expect(h.http.calls).toEqual([])
+    })
+
+    it('bypass refuses an App id that is not the release app, before planning anything', async () => {
+        for (const appId of [4038189, 12345]) {
+            const h = harness({ gh: fakeGh({ secret: true, variable: CLIENT_ID }), answers: ['apply'] })
+            expect(await bypassCommand(h.deps, { appId, apply: true })).toBe(1)
+            expect(h.text()).toContain('is not shown to be the release app')
+            expect(h.gh.calls.some((c) => c.args[1] === '-X')).toBe(false)
+            expect(h.gh.calls.some((c) => c.args[1]?.includes('/rulesets'))).toBe(false)
+        }
+    })
+
+    it('verify without the key fails on an App that is installed on all repositories', async () => {
+        const wide = INSTALLATIONS.map((i) => (i.app_id === APP_ID ? { ...i, repository_selection: 'all' } : i))
+        const h = harness({ gh: fakeGh({ secret: true, variable: CLIENT_ID, installations: wide }) })
+        expect(await verifyCommand(h.deps, { appId: APP_ID })).toBe(1)
+        expect(h.text()).toContain('is installed on "all" repositories')
     })
 
     it('bypass --apply needs a terminal', async () => {
@@ -577,26 +675,81 @@ describe('planBypass', () => {
         expect(planBypass(liveRulesets(), 0).problems[0]).toMatch(/positive integer/)
     })
 
-    it('reports the organisation rulesets on main and whether they list the App', () => {
-        const rules = [
-            {
-                type: 'pull_request',
-                ruleset_id: 7,
-                ruleset_source_type: 'Organization',
-                ruleset_source: 'safeinsights',
-            },
-            { type: 'deletion', ruleset_id: 7, ruleset_source_type: 'Organization', ruleset_source: 'safeinsights' },
-            {
-                type: 'required_status_checks',
-                ruleset_id: 8,
-                ruleset_source_type: 'Repository',
-                ruleset_source: 'safeinsights/sssb',
-            },
-        ]
-        expect(orgRulesetsToBypass(rules, new Map([[7, []]]), APP_ID)).toEqual([
-            { id: 7, source: 'safeinsights', types: ['pull_request', 'deletion'], hasApp: false },
+    it('refuses to bypass a main ruleset that carries more than the checks', () => {
+        const rulesets = liveRulesets()
+        rulesets[1].rules.push({ type: 'pull_request' })
+        expect(planBypass(rulesets, APP_ID).problems[0]).toMatch(/the App would bypass all of it/)
+    })
+})
+
+describe('externalGates', () => {
+    const onMain = (rulesets: Ruleset[]) =>
+        rulesets
+            .filter((r) => r.target === 'branch')
+            .flatMap((r) =>
+                r.rules.map((rule) => ({
+                    type: rule.type,
+                    ruleset_id: r.id,
+                    ruleset_source_type: r.source_type,
+                    ruleset_source: 'x',
+                })),
+            )
+
+    it('reports the org ruleset on main, whether it lists the App always, and who else bypasses it', () => {
+        const rulesets = liveRulesets()
+        expect(externalGates(onMain(rulesets), rulesets, APP_ID)).toEqual({
+            org: [
+                {
+                    id: 7484436,
+                    name: 'require-pr',
+                    types: ['deletion', 'non_fast_forward', 'pull_request'],
+                    app: 'missing',
+                    others: [{ actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' }],
+                },
+            ],
+            problems: [],
+        })
+        rulesets[0].bypass_actors = [{ actor_id: APP_ID, actor_type: 'Integration', bypass_mode: 'pull_request' }]
+        expect(externalGates(onMain(rulesets), rulesets, APP_ID).org[0]).toMatchObject({
+            app: 'wrong-mode',
+            others: [],
+        })
+        rulesets[0].bypass_actors = [{ actor_id: APP_ID, actor_type: 'Integration', bypass_mode: 'always' }]
+        expect(externalGates(onMain(rulesets), rulesets, APP_ID).org[0].app).toBe('listed')
+    })
+
+    it('flags another repository ruleset on main, and any tag ruleset covering a release tag', () => {
+        const extra: Ruleset = { ...liveRulesets()[1], id: 5, name: 'main: reviews', rules: [{ type: 'pull_request' }] }
+        const orgTags: Ruleset = {
+            ...liveRulesets()[2],
+            id: 6,
+            name: 'org tags',
+            source_type: 'Organization',
+            conditions: { ref_name: { include: ['~ALL'], exclude: [] } },
+            rules: [{ type: 'creation' }],
+        }
+        const rulesets = [...liveRulesets(), extra, orgTags]
+        const gates = externalGates(onMain(rulesets), rulesets, APP_ID)
+        expect(gates.problems).toEqual([
+            'repository ruleset "main: reviews" (5, pull_request) also applies to the release\'s push, and this tool does not manage it',
         ])
-        expect(orgRulesetsToBypass(rules, new Map([[7, null]]), APP_ID)[0].hasApp).toBeNull()
+        expect(gates.org.map((g) => [g.name, g.app])).toEqual([
+            ['require-pr', 'missing'],
+            ['org tags', 'missing'],
+        ])
+    })
+
+    it('ignores rulesets that cannot refuse the push, and tag rulesets that miss v tags', () => {
+        const history: Ruleset = { ...liveRulesets()[0], id: 7, name: 'org history', rules: [{ type: 'deletion' }] }
+        const otherTags: Ruleset = {
+            ...liveRulesets()[2],
+            id: 8,
+            name: 'build tags',
+            source_type: 'Organization',
+            conditions: { ref_name: { include: ['refs/tags/build-*'], exclude: [] } },
+        }
+        const rulesets = [history, otherTags]
+        expect(externalGates(onMain(rulesets), rulesets, APP_ID)).toEqual({ org: [], problems: [] })
     })
 })
 

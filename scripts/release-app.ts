@@ -38,6 +38,9 @@ function lineReader(): (question: string) => Promise<string | null> {
         for (const next of waiting.splice(0)) next(null)
     })
     return (question) => {
+        // Lines typed before the question was asked answer nothing: a stray Enter during the browser wait must
+        // not answer "Press Enter once it is installed".
+        queued.length = 0
         process.stdout.write(`${question}\n> `)
         if (queued.length > 0) return Promise.resolve(queued.shift() ?? null)
         if (closed) return Promise.resolve(null)

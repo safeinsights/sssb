@@ -40,14 +40,7 @@ import {
     resultPage,
     type InstallationSummary,
 } from './manifest'
-import {
-    describeChange,
-    orgRulesetsToBypass,
-    planBypass,
-    type ActiveRule,
-    type BypassActor,
-    type Ruleset,
-} from './rulesets'
+import { describeChange, externalGates, planBypass, type ActiveRule, type Ruleset } from './rulesets'
 import { appJwt, errorMessage, ghJson, githubRequest, redact, type FetchFn, type GhRunner } from './github'
 
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
@@ -155,7 +148,7 @@ type CreatedApp = {
  * The manifest exchange: the one call that returns the private key. Only the fields this needs are lifted
  * out; the answer also carries `client_secret` and `webhook_secret`, which are never kept or printed.
  */
-async function convertManifest(fetchFn: FetchFn, code: string): Promise<CreatedApp | null> {
+async function convertManifest(fetchFn: FetchFn, code: string): Promise<{ app: CreatedApp | null; status: number }> {
     const response = await githubRequest<{
         id?: unknown
         slug?: unknown
@@ -164,11 +157,11 @@ async function convertManifest(fetchFn: FetchFn, code: string): Promise<CreatedA
         owner?: { login?: unknown }
         permissions?: unknown
     }>(fetchFn, `/app-manifests/${encodeURIComponent(code)}/conversions`, { method: 'POST' })
-    if (!response.ok || !response.body) return null
+    if (!response.ok || !response.body) return { app: null, status: response.status }
     const { id, slug, client_id: clientId, pem, owner, permissions } = response.body
     if (typeof id !== 'number' || typeof slug !== 'string' || typeof clientId !== 'string' || typeof pem !== 'string')
-        return null
-    return {
+        return { app: null, status: response.status }
+    const app = {
         id,
         slug,
         clientId,
@@ -176,6 +169,7 @@ async function convertManifest(fetchFn: FetchFn, code: string): Promise<CreatedA
         owner: typeof owner?.login === 'string' ? owner.login : null,
         permissions: isStringRecord(permissions) ? permissions : {},
     }
+    return { app, status: response.status }
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {
@@ -417,12 +411,12 @@ function report(io: Io, findings: string[]): void {
     for (const finding of findings) io.err(`    ✗ ${finding}`)
 }
 
+/** Every ruleset that applies to the repository, the organisation's included, each read in full. */
 async function readRulesets(gh: GhRunner): Promise<{ rulesets: Ruleset[] | null; error: string }> {
-    const list = await ghJson<{ id: number; source_type?: string }[]>(gh, `repos/${REPO}/rulesets?per_page=100`)
+    const list = await ghJson<{ id: number }[]>(gh, `repos/${REPO}/rulesets?per_page=100&includes_parents=true`)
     if (!list.value) return { rulesets: null, error: list.error }
     const rulesets: Ruleset[] = []
     for (const entry of list.value) {
-        if (entry.source_type !== 'Repository') continue
         const detail = await ghJson<Ruleset>(gh, `repos/${REPO}/rulesets/${entry.id}`)
         if (!detail.value) return { rulesets: null, error: detail.error }
         rulesets.push(detail.value)
@@ -430,17 +424,49 @@ async function readRulesets(gh: GhRunner): Promise<{ rulesets: Ruleset[] | null;
     return { rulesets, error: '' }
 }
 
-/** The organisation rulesets that must list the App, and whether they do. */
-async function orgSteps(gh: GhRunner, appId: number) {
-    const active = await ghJson<ActiveRule[]>(gh, `repos/${REPO}/rules/branches/main?per_page=100`)
-    if (!active.value) return { steps: null, error: active.error }
-    const bypassOf = new Map<number, BypassActor[] | null>()
-    for (const rule of active.value) {
-        if (rule.ruleset_source_type !== 'Organization' || bypassOf.has(rule.ruleset_id)) continue
-        const detail = await ghJson<{ bypass_actors?: BypassActor[] }>(gh, `repos/${REPO}/rulesets/${rule.ruleset_id}`)
-        bypassOf.set(rule.ruleset_id, detail.value?.bypass_actors ?? null)
+type OrgInstallation = {
+    id?: number
+    app_id?: number
+    app_slug?: string
+    client_id?: string
+    repository_selection?: string
+    suspended_at?: string | null
+    account?: { login?: string }
+    permissions?: Record<string, string>
+}
+
+/**
+ * Whether `appId` is the release app, judged with the operator's own `gh` (no key needed): installed once in
+ * the organisation, on selected repositories, with exactly the App's permissions, and with the client id
+ * stored in the `release` environment. `bypass` and `verify` take the id on the command line, and a typo or
+ * another App's id must not become the bypass on main.
+ */
+async function identifyApp(gh: GhRunner, appId: number, clientId: string | null): Promise<string[]> {
+    const listed = await ghJson<{ installations?: OrgInstallation[] }>(
+        gh,
+        `orgs/${RELEASE_REPO.owner}/installations?per_page=100`,
+    )
+    if (!listed.value) return [`could not list ${RELEASE_REPO.owner}'s App installations: ${listed.error}`]
+    const mine = (listed.value.installations ?? []).filter((installation) => installation.app_id === appId)
+    if (mine.length !== 1) {
+        return [
+            `App ${appId} has ${mine.length} installations in ${RELEASE_REPO.owner}; the release app has exactly one`,
+        ]
     }
-    return { steps: orgRulesetsToBypass(active.value, bypassOf, appId), error: '' }
+    const [installation] = mine
+    const findings: string[] = []
+    if (clientId === null) findings.push(`there is no ${CLIENT_ID_VARIABLE} to tell which App is the release app`)
+    else if (installation.client_id !== clientId)
+        findings.push(
+            `App ${appId} (${installation.app_slug}) is not the App whose client id is in ${CLIENT_ID_VARIABLE}`,
+        )
+    if (installation.suspended_at) findings.push(`App ${appId}'s installation is suspended`)
+    if (installation.repository_selection !== 'selected')
+        findings.push(
+            `App ${appId} is installed on ${JSON.stringify(installation.repository_selection ?? null)} repositories, not selected ones`,
+        )
+    findings.push(...permissionFindings(installation.permissions ?? {}).map((f) => `App ${appId}'s installation: ${f}`))
+    return findings
 }
 
 /**
@@ -482,9 +508,8 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
                     io.err(`  ✗ ${args.slice(0, 4).join(' ')} failed: ${redact(result.stderr.trim())}. Stopped here.`)
                     return false
                 }
-                io.out(
-                    `  ✓ ${change.kind === 'create' ? 'created' : 'updated'} "${change.kind === 'create' ? change.body.name : change.before.name}"`,
-                )
+                const name = change.kind === 'create' ? change.body.name : change.before.name
+                io.out(`  ✓ ${change.kind === 'create' ? 'created' : 'updated'} "${name}"`)
             }
             const after = await readRulesets(gh)
             const replanned = after.rulesets ? planBypass(after.rulesets, appId) : null
@@ -494,32 +519,45 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
         }
     }
 
-    const org = await orgSteps(gh, appId)
-    if (!org.steps) {
-        io.err(`\nCould not read the rules that apply to main: ${org.error}`)
+    // Everything else the push meets, read after any change above.
+    const rulesets = (await readRulesets(gh)).rulesets
+    const active = await ghJson<ActiveRule[]>(gh, `repos/${REPO}/rules/branches/main?per_page=100`)
+    if (!rulesets || !active.value) {
+        io.err(`\nCould not read the rules that apply to main: ${active.error || 'rulesets unreadable'}`)
         return false
     }
-    const missing = org.steps.filter((step) => step.hasApp !== true)
-    for (const step of org.steps.filter((s) => s.hasApp === true)) {
-        io.out(`  ✓ organisation ruleset ${step.id} (${step.types.join(', ')}) lists App ${appId} as a bypass`)
+    const gates = externalGates(active.value, rulesets, appId)
+    report(io, gates.problems)
+    for (const gate of gates.org.filter((g) => g.app === 'listed')) {
+        io.out(`  ✓ organisation ruleset "${gate.name}" (${gate.id}) lets App ${appId} bypass it always`)
     }
+    const missing = gates.org.filter((gate) => gate.app !== 'listed')
     if (missing.length > 0) {
         io.out(
-            `\nOrganisation rulesets on main that the App must bypass. This tool does not change them: they are\n` +
-                `shared by every repository in ${RELEASE_REPO.owner} and need admin:org. For each, an org owner opens\n` +
-                `https://github.com/organizations/${RELEASE_REPO.owner}/settings/rules/<id>, adds the App under\n` +
-                '"Bypass list" as "Always allow", and changes nothing else. The App is installed on this repository\n' +
-                "only, so the bypass reaches no other repository; the repository's `main: history` ruleset keeps\n" +
-                'deletion and force-pushes closed to it.\n',
+            `\nOrganisation rulesets the App must bypass. This tool does not change them: they are shared by\n` +
+                `every repository in ${RELEASE_REPO.owner} and need admin:org. Do this only AFTER the repository's\n` +
+                '`main: history` ruleset exists (the plan above), or for that window the App could delete or force-push\n' +
+                `main. For each, an org owner opens https://github.com/organizations/${RELEASE_REPO.owner}/settings/rules/<id>,\n` +
+                'adds the App under "Bypass list" as "Always allow" (not "For pull requests only"), and changes\n' +
+                'nothing else.\n',
         )
-        for (const step of missing) {
+        for (const gate of missing) {
             io.out(
-                `  - ruleset ${step.id} from ${step.source} (${step.types.join(', ')})` +
-                    (step.hasApp === null ? ': could not read its bypass list' : ''),
+                `  - "${gate.name}" (${gate.id}: ${gate.types.join(', ')})` +
+                    (gate.app === 'wrong-mode' ? ': the App is listed, but not as "Always allow"' : ''),
             )
         }
     }
-    return repoDone && missing.length === 0
+    // release.yml assumes nothing else can push to main or create a release tag past these rules.
+    const crowded = gates.org.filter((gate) => gate.others.length > 0)
+    for (const gate of crowded) {
+        io.err(
+            `    ✗ organisation ruleset "${gate.name}" (${gate.id}) also lets ${gate.others
+                .map((a) => `${a.actor_type} ${a.actor_id ?? ''} (${a.bypass_mode})`.replace(' ()', ''))
+                .join(', ')} bypass it; the release app must be the only one`,
+        )
+    }
+    return repoDone && missing.length === 0 && crowded.length === 0 && gates.problems.length === 0
 }
 
 export type CreateOptions = { name?: string; applyBypass: boolean }
@@ -596,11 +634,21 @@ export async function createCommand(deps: Deps, options: CreateOptions): Promise
             return 1
         }
 
-        const created = await convertManifest(deps.fetch, code)
+        // The code stays redeemable for an hour, and only this process holds it, so a network failure or a
+        // GitHub error is retried here rather than handing the operator a manual key.
+        let exchange = await convertManifest(deps.fetch, code)
+        while (!exchange.app && (exchange.status === 0 || exchange.status >= 500)) {
+            io.err(`\n  The manifest exchange failed (HTTP ${exchange.status || 'none: no answer'}).`)
+            const answer = await io.ask('  Press Enter to try again, or type "give up".')
+            if (answer === null || answer.trim().toLowerCase() === 'give up') break
+            exchange = await convertManifest(deps.fetch, code)
+        }
+        const created = exchange.app
         if (!created) {
             io.err(
                 '\nThe manifest exchange failed, so this never received the key. Do NOT simply re-run: that would\n' +
-                    '  register a second App. Use the recovery note above, or delete the App and start again.',
+                    '  register a second App. Delete the App and start again (safest: the one-time code is in this\n' +
+                    "  browser's history until it expires), or use the recovery note above.",
             )
             return 1
         }
@@ -649,8 +697,10 @@ export async function createCommand(deps: Deps, options: CreateOptions): Promise
         if (!stored) io.err(`    ✗ the environment does not hold both ${KEY_SECRET} and ${CLIENT_ID_VARIABLE} as set`)
         const readback = await readBack(deps, String(created.id), created.pem, created.clientId)
 
+        const identity = readback.ok ? await identifyApp(deps.gh, created.id, created.clientId) : []
+        report(io, identity)
         let bypassed = false
-        if (readback.ok) {
+        if (readback.ok && identity.length === 0) {
             bypassed = await bypassPhase(deps, created.id, options.applyBypass)
         } else {
             io.err('\nThe ruleset bypass is not offered until the installation reads back clean. Fix it, then run:')
@@ -661,7 +711,7 @@ export async function createCommand(deps: Deps, options: CreateOptions): Promise
             `\nApp id ${created.id}, slug ${created.slug}. Re-check any time, changing nothing:\n` +
                 `  pnpm release-app verify --app-id ${created.id}`,
         )
-        if (readback.ok && !bypassed) {
+        if (readback.ok && identity.length === 0 && !bypassed) {
             io.out(
                 '\nThe App is made, stored and installed. Still to do: the ruleset steps above (re-run them with\n' +
                     `  \`pnpm release-app bypass --app-id ${created.id} --apply\`), then \`verify\` until it passes.`,
@@ -670,7 +720,7 @@ export async function createCommand(deps: Deps, options: CreateOptions): Promise
         // The exit code is about what `create` made: the App, its key and client id, and its installation.
         // The rulesets are reported above and `verify` is the check that holds them; the organisation's half is
         // always a hand step, so counting it here would fail every first run.
-        return stored && clientIdStored && readback.ok ? 0 : 1
+        return stored && clientIdStored && readback.ok && identity.length === 0 ? 0 : 1
     } finally {
         callback.close()
         if (formDir) await rm(formDir, { recursive: true, force: true }).catch(() => {})
@@ -696,6 +746,12 @@ export async function verifyCommand(deps: Deps, options: VerifyOptions): Promise
         io.out(`  ✓ environment "${RELEASE_ENVIRONMENT}": main only, admins not exempt, key and client id present`)
     report(io, findings)
 
+    const identity = await identifyApp(gh, options.appId, credentials.variable)
+    if (identity.length === 0)
+        io.out(
+            `  ✓ App ${options.appId} is the release app: one installation, selected repositories, exactly its permissions`,
+        )
+    report(io, identity)
     let readbackOk = true
     if (options.privateKey) {
         readbackOk = (await readBack(deps, String(options.appId), options.privateKey, credentials.variable)).ok
@@ -703,7 +759,7 @@ export async function verifyCommand(deps: Deps, options: VerifyOptions): Promise
         io.out('  (no --key-stdin: the App and its installation were not read back)')
     }
     const bypassed = await bypassPhase(deps, options.appId, false)
-    const ok = findings.length === 0 && readbackOk && bypassed
+    const ok = findings.length === 0 && identity.length === 0 && readbackOk && bypassed
     io.out(ok ? '\nAll checks passed. Nothing was changed.' : '\nNot ready to release. See above. Nothing was changed.')
     return ok ? 0 : 1
 }
@@ -712,6 +768,13 @@ export async function verifyCommand(deps: Deps, options: VerifyOptions): Promise
 export async function bypassCommand(deps: Deps, options: { appId: number; apply: boolean }): Promise<number> {
     if (options.apply && !deps.isTTY) {
         deps.io.err('`release-app bypass --apply` asks for confirmation, so it needs an interactive terminal.')
+        return 1
+    }
+    const credentials = await readCredentials(deps.gh)
+    const identity = await identifyApp(deps.gh, options.appId, credentials.variable)
+    if (identity.length > 0) {
+        deps.io.err(`App ${options.appId} is not shown to be the release app, so no ruleset change is planned:`)
+        report(deps.io, identity)
         return 1
     }
     return (await bypassPhase(deps, options.appId, options.apply)) ? 0 : 1
