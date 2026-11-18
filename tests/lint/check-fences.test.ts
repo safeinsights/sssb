@@ -115,6 +115,16 @@ describe('an app config that composes the preset with blocks of its own', () => 
         expect(problems.join('\n')).toMatch(/__sssb_fence_probe__\.ts: sssb\/no-raw-db-handle does not report beside/)
     })
 
+    // The exception's other half: a later block that re-enables the ban over all of src/ makes the entry a dead letter,
+    // and the module it names fails lint for doing what the entry says it may.
+    it('fails when a lint-exceptions.mjs entry no longer exempts its file', async () => {
+        const after = "{ files: ['src/**'], rules: { 'sssb/no-raw-db-handle': 'error' } }"
+        const problems = await problemsOf(scratchApp(after))
+        expect(problems).toContain(
+            'src/domain/maintenance.ts: lint-exceptions.mjs names it, and sssb/no-raw-db-handle still reports',
+        )
+    })
+
     it.each([
         ['an eslint-disable naming a fence', '/* eslint-disable sssb/no-vendor-import */\n'],
         ['an eslint-disable-next-line naming a fence', '// eslint-disable-next-line sssb/no-process-env -- why\n'],
