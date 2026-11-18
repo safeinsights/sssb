@@ -124,7 +124,7 @@ describe('lockfileProblems', () => {
         ])
     })
 
-    it("accepts the generator's overrides of each @sssb package to its tarball, and fails one to anything else", () => {
+    it("accepts an adopter's overrides of an @sssb package to a local tarball, and fails one to anything else", () => {
         const overridden = GOOD_LOCKFILE.replace(
             'importers:\n',
             "overrides:\n  '@sssb/kit': file:/run/tarballs/sssb-kit-0.1.0.tgz\n\nimporters:\n",
@@ -610,7 +610,7 @@ describe('the lockfile seed', () => {
     })
 
     // A release candidate's tarballs are named for its prerelease version: the seed must still name the files the
-    // generator wrote, or every specifier and override misses and pnpm re-resolves the workspace.
+    // generator wrote, or every specifier (and any override) misses and pnpm re-resolves the workspace.
     it("names the tarballs a release candidate packs, at the candidate's version, in specifiers, overrides and keys", () => {
         const seed = seedFromLockfile(workspaceLock, run)
         const rc = lockfileFromSeed(seed, { tarballs: '/elsewhere/tarballs', version: '0.2.0-rc.3' })
@@ -870,7 +870,7 @@ describe('lockfileMoves', () => {
         expect(lockfileMoves(WITH_TOOLS, bumped)).toEqual({ added: 0, removed: 0 })
     })
 
-    it("ignores @sssb/cdk's entries, and the generator's overrides of every @sssb package, the same way", () => {
+    it("ignores @sssb/cdk's entries, and an adopter's overrides of @sssb packages, the same way", () => {
         const entry = TOOLS_ENTRY.replaceAll('sssb/tools', 'sssb/cdk')
             .replaceAll('sssb-tools-', 'sssb-cdk-')
             .replace('sha512-tools', 'sha512-cdk')

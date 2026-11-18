@@ -1197,8 +1197,8 @@ it, and `sssb doctor` fails. Option C stands; only the way the app declares its 
 The P9 addendum made `@sssb/cdk` depend on `@sssb/tools` at the exact version, refining rule 4 and part 10. Pages,
 switching to v0.2.0-rc.1, found that a release candidate installed by URL could not resolve it under pnpm 11: with the
 notes' `overrides` mapping it to its URL, pnpm refused it as an exotic subdependency (`ERR_PNPM_EXOTIC_SUBDEP`,
-`blockExoticSubdeps` being on by default), and without them it looked for `@sssb/tools` on npm, which holds only a
-`0.0.0` placeholder. Both reproduced here with the packed tarballs served over a local URL. So
+`blockExoticSubdeps` being on by default), and without them it looked for `@sssb/tools` on npm, which holds only
+placeholders (`0.0.0`, `0.0.0-stage`) and no release candidate. Both reproduced here with the packed tarballs served over a local URL. So
 (`docs/decision-log.md`, "`@sssb/tools` is a peer of `@sssb/cdk`"):
 
 - **`@sssb/cdk` takes `@sssb/tools` as a peer** (`workspace:*`, packed as the exact version; required, not optional),
@@ -1210,12 +1210,13 @@ notes' `overrides` mapping it to its URL, pnpm refused it as an exotic subdepend
 - **Part 10's reason for avoiding peers between SSSB packages does not apply under Changesets 3.** Measured with
   `@changesets/cli` 3.0.3 on scratch copies of the manifests: a `minor` (or `patch`) changeset on `@sssb/tools` moved
   `@sssb/cdk` with the fixed group to 0.3.0 (0.2.1), never to 1.0.0, whether cdk took tools as a `workspace:*` peer,
-  a `^0.2.0` peer the bump leaves out of range, or a dependency; with the fixed group removed, cdk took a patch in all
-  three; in pre mode, `release:check` planned `0.2.0-rc.2` for the set. Part 10's backstop (CI fails a release plan at
+  a `^0.2.0` peer, or a dependency; with the fixed group removed, a `minor` gave cdk only a patch (0.2.1) in all three,
+  the `^0.2.0` peer it leaves out of range included, never a major; in pre mode, `release:check` planned `0.2.0-rc.2` for the set. Part 10's backstop (CI fails a release plan at
   1.0.0 or above) stays.
 - **The install lines a release candidate's notes print** (`release.mjs` `candidateNotes`) drop `overrides`: each
   package that uses one depends on it by URL, and one that uses `@sssb/cdk` also on `@sssb/tools`. `@sssb/create`'s
   `--sssb <dir>` drops its `overrides` block for the same reason, which supersedes the P12 addendum's "Part 7's 'No
   overrides are used' holds for published versions only": it now holds for tarballs too.
 - **Pack and consume's pages shape installs the notes' recipe** (`notesRecipe`): the notes `candidateNotes` renders
-  for the packed tarballs, their JSON of URLs taken verbatim, served from a local server, with pnpm's defaults.
+  for the packed tarballs, their JSON of URLs taken verbatim, served from a local server, with pnpm's defaults but for
+  the generated workspace's `minimumReleaseAge` guard, installed with `--ignore-scripts`.

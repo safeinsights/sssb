@@ -19,8 +19,8 @@ lines and `pnpm create @sssb --sssb <dir>` no longer write `overrides`, and the 
 
 **To adopt.** In every package that depends on `@sssb/cdk` (each app's `infra/package.json`), add `@sssb/tools` at the
 same release (the same tarball URL, or `file:` path, as your other packages use for it). Then delete the `@sssb/*`
-entries from `overrides` in `pnpm-workspace.yaml` (the whole block if nothing else is in it) and the
-`blockExoticSubdeps: false` setting, run `pnpm install`, and commit the lockfile.
+entries from `overrides` in `pnpm-workspace.yaml` (the whole block if nothing else is in it) and any
+`blockExoticSubdeps: false` you set for SSSB's tarballs, run `pnpm install`, and commit the lockfile.
 
 **Now deletable.** A `blockExoticSubdeps: false` setting kept only for SSSB's tarballs, and `overrides` that map
 `@sssb/*` packages to their tarballs.

@@ -246,14 +246,17 @@ describe('the synth assertions fail', () => {
         )
     })
 
-    // @sssb/tools is cdk's peer, so pnpm only warns when the copy beside it is another release.
-    it('when the @sssb/tools beside it is not its version, and not when it is (this repository)', () => {
+    // @sssb/tools is cdk's peer, so pnpm only warns when the copy beside it is another release. SssbApp's own refusal is
+    // sssb-app-tools-version.test.js.
+    it('names both versions when @sssb/tools is not its own version, and nothing when they match', () => {
         expect(toolsVersionProblem('0.0.0-other', '0.2.0-rc.2')).toBe(
             "SssbApp: this @sssb/cdk is 0.2.0-rc.2, but the @sssb/tools beside it is 0.0.0-other. SSSB's packages are " +
                 'released in lockstep: depend on @sssb/tools 0.2.0-rc.2 in the package that takes @sssb/cdk (its peer), ' +
                 'then run pnpm install.',
         )
-        expect(toolsVersionProblem(OWN_VERSION)).toBeNull()
+        // This repository's @sssb/tools, beside this @sssb/cdk: one release.
+        const tools = JSON.parse(readFileSync(path.join(REPO, 'packages/tools/package.json'), 'utf8')).version
+        expect(toolsVersionProblem(tools)).toBeNull()
     })
 
     it("when the app's @sssb/kit is not the construct's version", () => {
