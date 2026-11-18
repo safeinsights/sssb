@@ -437,6 +437,22 @@ type OrgInstallation = {
 }
 
 /**
+ * Whether the installation list still agrees with a vouch that App `appId` cannot reach this repository: the App is
+ * installed in the organisation exactly once, on selected repositories, and not suspended. Which repositories are
+ * selected is not shown to this tool, so that part stays the vouch's; what can drift without anyone noticing (the
+ * App moved to all repositories, installed twice) is caught here. Returns what no longer holds, or null.
+ */
+function vouchProblem(appId: number, installations: OrgInstallation[]): string | null {
+    const its = installations.filter((installation) => installation.app_id === appId)
+    if (its.length !== 1) return `App ${appId} has ${its.length} installations in ${RELEASE_REPO.owner}, not one`
+    const [installation] = its
+    if (installation.repository_selection !== 'selected')
+        return `App ${appId} is installed on ${JSON.stringify(installation.repository_selection ?? null)} repositories`
+    if (installation.suspended_at) return `App ${appId}'s installation is suspended`
+    return null
+}
+
+/**
  * Whether `appId` is the release app, judged with the operator's own `gh` (no key needed): installed once in
  * the organisation, on selected repositories, with exactly the App's permissions, and with the client id
  * stored in the `release` environment. `bypass` and `verify` take the id on the command line, and a typo or
@@ -549,7 +565,35 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
             )
         }
     }
-    // release.yml assumes nothing else can push to main or create a release tag past these rules.
+    // release.yml assumes nothing else can push to main or create a release tag past these rules. An actor a person has
+    // vouched cannot reach this repository (VOUCHED_ORG_BYPASSES in rulesets.ts) passes while the organisation's
+    // installation list still agrees, and is reported with who said so and why; once it does not, it fails.
+    const vouchedActors = gates.org.flatMap((gate) => gate.vouched.map((entry) => ({ gate, ...entry })))
+    let vouchesHold = true
+    if (vouchedActors.length > 0) {
+        const listed = await ghJson<{ installations?: OrgInstallation[] }>(
+            gh,
+            `orgs/${RELEASE_REPO.owner}/installations?per_page=100`,
+        )
+        for (const { gate, actor, vouch } of vouchedActors) {
+            const who = `${actor.actor_type} ${actor.actor_id} (${actor.bypass_mode}) on organisation ruleset "${gate.name}" (${gate.id})`
+            const problem = listed.value
+                ? vouchProblem(vouch.actorId, listed.value.installations ?? [])
+                : `could not list ${RELEASE_REPO.owner}'s App installations: ${listed.error}`
+            if (problem === null) {
+                io.out(
+                    `  ✓ ${who}: vouched for as unable to reach ${REPO}: ${vouch.name}, ${vouch.reason} ` +
+                        `(${vouch.vouchedBy}, ${vouch.on})`,
+                )
+            } else {
+                vouchesHold = false
+                io.err(
+                    `    ✗ ${who} is vouched for (${vouch.name}, ${vouch.vouchedBy}, ${vouch.on}), but ${problem}: ` +
+                        're-check the claim, then update or remove its entry in VOUCHED_ORG_BYPASSES',
+                )
+            }
+        }
+    }
     const crowded = gates.org.filter((gate) => gate.others.length > 0)
     for (const gate of crowded) {
         io.err(
@@ -558,7 +602,7 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
                 .join(', ')} bypass it; the release app must be the only one`,
         )
     }
-    return repoDone && missing.length === 0 && crowded.length === 0 && gates.problems.length === 0
+    return repoDone && missing.length === 0 && crowded.length === 0 && vouchesHold && gates.problems.length === 0
 }
 
 export type CreateOptions = { name?: string; applyBypass: boolean }

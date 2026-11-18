@@ -122,8 +122,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 
 - **`pnpm verify`** here runs typecheck + lint + unit + knip + `sssb doctor` + `sssb check-e2e` in parallel, then e2e,
   static-demo build, demo size budget, static-demo e2e. E2E needs Playwright chromium installed
-  once: `pnpm exec playwright install chromium`. **`sssb doctor`** (`pnpm sssb:doctor`: one run from the root checks
-  every app; never `pnpm doctor`, which is pnpm's own) fails unless the config a bare `vitest` would load for each app
+  once: `pnpm exec playwright install chromium`. **`sssb doctor`** (`pnpm sssb:doctor`, or `pnpm exec sssb doctor` from the root: one run checks
+  every app, starting from the first when the root takes no `@sssb/kit`; never `pnpm doctor`, which is pnpm's own) fails unless the config a bare `vitest` would load for each app
   lists every unit conformance test, and some config running its `apps/<app>/tests/contract/` lists every contract
   one, less named opt-outs; and on a pnpm `nodeLinker` other than `isolated` or a leftover `.pnp.cjs` (first, alone: nothing else is checked), a
   second copy of a kit peer, an @sssb package out of step, a workspace walk that

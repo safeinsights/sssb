@@ -4759,3 +4759,54 @@ Decisions, each with what was rejected:
   (`0.0015`, rounded); doctor end to end on configs that never load waits out one 3 s limit and reports the other
   listings as not listed. Seen red, one guard at a time: each of these fails without its guard; with no limit at all the test
   never returns, and ignoring the variable it fails only after the 120 s default limit.
+
+## `sssb doctor` works from the root with no `--app`, rather than every instruction learning `--app` (2026-11-18, `fix/doctor-from-root`)
+
+Found by the seam-link session: the files `@sssb/create` generates, its README among them, tell people to run
+`pnpm exec sssb doctor`, which failed at a generated workspace's root ("does not resolve @sssb/kit"), because that root
+takes no framework and doctor resolved the kit from the working directory. The root script `sssb:doctor` worked only
+because the generator wrote `sssb doctor --app apps/<slug>` into it.
+
+- **Chosen: the short form works.** With no `--app`, doctor starts from the working directory when it resolves
+  `@sssb/kit` (an app, or this repository's root, as before). At a workspace root that does not, it starts from the
+  workspace's first app (`sssb.apps`, else `apps/*`) and says so in its first line. Doctor already ran ONE time for the
+  whole workspace once given any app, so the start does not change what it finds, with one addition: when doctor chose
+  the start itself, its workspace walk must also reach every app the workspace names, because the walk only had to reach
+  the one doctor runs for, and `--app <an app the walk drops>` fails where the bare form would have passed. An explicit `--app` is never replaced, and a root with no apps refuses, saying what to pass. People and
+  agents type the short form, so the short form has to be the one that works.
+- **Rejected: change every instruction to `--app apps/<name>`.** That is a longer command to remember, every doc, guide
+  line and generated comment would carry an app name that is wrong for the next workspace, and the next person to write
+  `pnpm exec sssb doctor` in a README repeats the bug.
+- **The generated root script is now `sssb doctor`**, with the `--app` form still valid for workspaces generated
+  before. `docs/adopting.md`, `CLAUDE.md` and the generator's comment said why `--app` was there and no longer do.
+- **Pinned where it matters:** end-to-end tests run doctor as a child process from the root of a workspace laid out on
+  disk (packed and in-repo), from an app, with an explicit `--app`, with `sssb.apps` reordering the first app, from a
+  root with no apps and outside a workspace; and pack-and-consume runs the bare form from the real generated
+  workspace's root before it reads doctor's pin report. A changeset (`@sssb/tools`, `@sssb/create`, scaffold, optional).
+
+## A vouched-for bypass actor on an organisation ruleset passes `release-app verify` (2026-11-18, `fix/release-app-verify-org-bypass`)
+
+JP created the release app (App 5820735), and `pnpm release-app verify --app-id 5820735` failed on one thing: the
+organisation ruleset `require-pr` (7484436) also lets App 4038189, canopycms-release-bot, bypass it always, and
+`release.yml` assumes the release app is the only actor that can push to `main` past it. JP says that App is installed
+on `safeinsights/canopycms` only, so it cannot reach this repository. The API shows only part of that: the
+organisation's installation list (which `verify` already reads with the operator's own token) says the App is
+installed once, on selected repositories, but which repositories are selected needs a token this tool does not have.
+
+- **A checked-in list, not a flag.** `VOUCHED_ORG_BYPASSES` in `scripts/release-app/rulesets.ts` names each actor a
+  person has vouched for: the organisation ruleset's id, the actor's type and id, its name, a one-line reason, who
+  vouched and the date. `verify` and `bypass` report each as a ✓ with that reason, and anything else on an
+  organisation ruleset the release meets still fails. A command-line flag was rejected: it would widen the check for
+  whatever it named, a typo included, with no record of who decided or why.
+- **Exact matches only, and Apps only.** An entry covers one App (`Integration` and its id) on one ruleset; the same
+  App on another ruleset, another actor type with the same id, or a neighbouring id is not covered. An organisation
+  admin, a team or a role cannot be vouched for: "cannot reach this repository" is never true of one.
+- **The vouch holds only while the installation list agrees.** `verify` and `bypass` read the organisation's
+  installations and accept the vouch only while the App is installed exactly once, on selected repositories, and not
+  suspended; otherwise it is a ✗ that says what changed. So the drift nobody would notice (the App moved to all
+  repositories, a second installation) turns the check red; the part the tool cannot see (which repositories are
+  selected) stays the person's word. The review of this change found the tool already read that list, which the
+  first version of this entry said it could not.
+- **The first entry:** Integration 4038189 on `require-pr`, canopycms-release-bot, installed on
+  `safeinsights/canopycms` only, vouched for by JP on 2026-11-18. It has to be re-vouched or removed if that App is
+  ever installed on more repositories.

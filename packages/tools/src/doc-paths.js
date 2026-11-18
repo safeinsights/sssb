@@ -78,6 +78,26 @@ function collectDocs(root, rel, config, out) {
 }
 
 /**
+ * `text` without its leading and trailing characters that are in `chars`. A loop, not `/^x+|x+$/` or `/x+$/`: a
+ * backtracking regex anchored at the end retries from every position of a long run of `x` that is followed by
+ * anything else, so it takes time quadratic in the run's length, and the text here comes from the docs and the
+ * configuration a caller hands in.
+ * @param {string} text
+ * @param {string} chars
+ * @param {{ start?: boolean }} [options] `start: false` trims the end only
+ */
+function trimChars(text, chars, { start = true } = {}) {
+    let from = 0
+    let to = text.length
+    if (start) while (from < to && chars.includes(/** @type {string} */ (text[from]))) from++
+    while (to > from && chars.includes(/** @type {string} */ (text[to - 1]))) to--
+    return text.slice(from, to)
+}
+
+/** `text` without its trailing slashes. @param {string} text */
+const trimTrailingSlashes = (text) => trimChars(text, '/', { start: false })
+
+/**
  * The root-level entries are listed rather than globbed because a repo root accumulates markdown that is NOT
  * doctrine (a stray NOTES.md should not become a build gate). SECURITY.md earns its place in SSSB by citing the
  * code that backs its claims, an RLS proof suite, a fail-closed guard.
@@ -93,7 +113,7 @@ export function docFiles(root, config) {
     /** @type {string[]} */
     const out = []
     for (const entry of config.include) {
-        const rel = entry.replace(/\/+$/, '')
+        const rel = trimTrailingSlashes(entry)
         if (config.exempt.some((exempt) => rel.startsWith(exempt))) continue
         const abs = path.join(root, rel)
         if (!existsSync(abs)) continue
@@ -111,7 +131,7 @@ export function docFiles(root, config) {
  */
 export function missingIncludes(root, config) {
     return config.include
-        .map((entry) => entry.replace(/\/+$/, ''))
+        .map(trimTrailingSlashes)
         .filter((rel) => !config.exempt.some((exempt) => rel.startsWith(exempt)) && !existsSync(path.join(root, rel)))
 }
 
@@ -133,10 +153,12 @@ function pathTokens(raw, roots) {
     return raw
         .split(/\s+/)
         .map((token) =>
-            token
-                .replace(/^['"]+|['"]+$/g, '') // `pnpm --filter './apps/*'`
-                .replace(/^\.\//, '') // ./apps/... is the same path as apps/...
-                .replace(/[,;)]+$/, ''),
+            trimChars(
+                trimChars(token, `'"`) // `pnpm --filter './apps/*'`
+                    .replace(/^\.\//, ''), // ./apps/... is the same path as apps/...
+                ',;)',
+                { start: false },
+            ),
         )
         .filter((token) => roots.some((root) => token.startsWith(root)))
 }
@@ -159,7 +181,7 @@ export function citationsIn(text, config) {
                 // `messages/{en,es}.json` names two files, neither of them spelled that way.
                 const stop = ['*', '<', '{'].map((char) => located.indexOf(char)).filter((i) => i >= 0)
                 const stripped = stop.length ? located.slice(0, Math.min(...stop)) : located
-                const cited = stripped.replace(/\/+$/, '')
+                const cited = trimTrailingSlashes(stripped)
                 if (!cited) continue
                 if (cited.split('/').some((segment) => buildOutputs.includes(segment))) continue
                 found.push({ path: cited, raw, line: index + 1 })
@@ -180,8 +202,9 @@ export function citationsIn(text, config) {
  */
 export function citedPaths(file, config, root) {
     const found = citationsIn(readFileSync(path.resolve(root, file), 'utf8'), config)
-    const base = config.relativeTo?.[file.replace(/^\.\//, '')]?.replace(/\/+$/, '')
-    if (base === undefined) return found
+    const relative = config.relativeTo?.[file.replace(/^\.\//, '')]
+    if (relative === undefined) return found
+    const base = trimTrailingSlashes(relative)
     return found.map((citation) => ({ ...citation, path: path.posix.join(base, citation.path) }))
 }
 

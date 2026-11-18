@@ -42,7 +42,9 @@ import { SRC_EXT, STORY_FILES, TEST_FILES } from './patterns.js'
 // that outlives its NEED is still the app's to delete). The path is matched literally (a Next route's `[locale]` is
 // not a glob).
 const APP_EXCEPTION_RULES = ['sssb/no-raw-db-handle']
-const GLOB_SPECIALS = /[*?[\]{}()!+@#]/g
+// The backslash is a glob special too: it escapes the character after it, so a literal one must be escaped itself,
+// or a name holding one would match a different path (a directory read from disk may have one on POSIX).
+const GLOB_SPECIALS = /[\\*?[\]{}()!+@#]/g
 
 /**
  * One app's exceptions, as `ignores` entries relative to the app (glob specials escaped), by rule id.

@@ -573,6 +573,18 @@ describe('in-repo mode', () => {
     const app = pkg(path.join(ws, 'apps', 'a'), { name: 'a' })
     link(path.join(app, 'node_modules', '@sssb', 'kit'), kit)
 
+    it('reads workspace globs with trailing slashes as the globs without them', () => {
+        const slashed = realpathSync(makeTestTmpDir('sssb-doctor-slashes-'))
+        write(
+            path.join(slashed, 'pnpm-workspace.yaml'),
+            `packages:\n  - 'apps/*///'\n  - 'packages/*/'\n  - '!packages/old${'/'.repeat(5_000)}'\n`,
+        )
+        const slashedKit = pkg(path.join(slashed, 'packages', 'kit'), { name: '@sssb/kit', version: '0.1.0' })
+        pkg(path.join(slashed, 'packages', 'old'), { name: 'old' })
+        const slashedApp = pkg(path.join(slashed, 'apps', 'a'), { name: 'a' })
+        expect(workspacePackages(slashed)).toEqual([slashedApp, slashedKit])
+    })
+
     it("is decided by where the app's kit really is: a package of the workspace, not a store copy", () => {
         expect(workspacePackages(ws)).toEqual([app, kit])
         expect(isInRepoKit(kitDirOf(app), ws)).toBe(true)
@@ -834,6 +846,24 @@ async function doctor(ws: string, app: string, extraEnv: Record<string, string> 
     }
 }
 
+/** `sssb doctor <args>`, run as a child process from `cwd`, out of this Vitest's environment. */
+async function doctorIn(cwd: string, args: string[] = []) {
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.startsWith('VITEST')) delete env[key]
+    const run = promisify(execFile)
+    try {
+        const { stdout, stderr } = await run(process.execPath, [SSSB, 'doctor', ...args], {
+            cwd,
+            env,
+            maxBuffer: 16 * 1024 * 1024,
+        })
+        return { code: 0, out: `${stdout}${stderr}` }
+    } catch (error) {
+        const failed = error as { code?: number; stdout?: string; stderr?: string }
+        return { code: failed.code ?? -1, out: `${failed.stdout ?? ''}${failed.stderr ?? ''}` }
+    }
+}
+
 const E2E_TIMEOUT = 120_000
 
 describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
@@ -1084,6 +1114,29 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
             write(path.join(src, 'thing.test.ts'), suiteFile('unit', { beta: 'forged elsewhere' }, ['beta']))
             const { code, out } = await doctor(ws, 'apps/web')
             expect(out).toMatch(/not listed: \[sssb:beta\] the beta check > three/)
+            expect(code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'follows a tsconfig target as TypeScript does: only its first * is the match, a second is a literal *',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-stars-', 'in-repo')
+            const a = path.join(ws, 'apps', 'a')
+            const b = path.join(ws, 'apps', 'b')
+            json(path.join(a, 'tsconfig.json'), {
+                compilerOptions: { paths: { '@sssb/app-config/*': ['./src/app-config/*/*'] } },
+            })
+            // TypeScript's resolver fills the FIRST star and leaves the second as a literal `*` (`replaceFirstStar`),
+            // and only rejects such a target when it builds a program (TS5062). Where the probe lands through the
+            // first star is a real directory holding a link literally named `*` to another app's seam, so TypeScript
+            // would resolve this app's seam into app b's, and doctor must say so.
+            const probeDir = path.join(a, 'src', 'app-config', '__sssb_doctor_probe__')
+            mkdirSync(probeDir, { recursive: true })
+            link(path.join(probeDir, '*'), path.join(b, 'src', 'app-config'))
+            const { code, out } = await doctor(ws, 'apps/a')
+            expect(out).toMatch(/apps\/a: its tsconfig sends/)
             expect(code).toBe(1)
         },
         E2E_TIMEOUT,
@@ -1512,4 +1565,173 @@ describe('pinReport: the workflow and plugin pins against the kit’s release st
         expect(githubRepositoryOf({ url: 'https://gitlab.com/o/r' })).toBeNull()
         expect(githubRepositoryOf(undefined)).toBeNull()
     })
+})
+
+/**
+ * The short form, `sssb doctor` with no `--app`, is what the generated files and READMEs tell people to
+ * type (`pnpm exec sssb doctor`), and people type it at the workspace root. A generated workspace's root takes no
+ * @sssb/kit, so it used to fail there ("does not resolve @sssb/kit"). One run checks every app, so it now starts from
+ * the workspace's first app.
+ */
+describe.concurrent('sssb doctor with no --app, from the root of a workspace whose root takes no @sssb/kit', () => {
+    for (const mode of ['packed', 'in-repo'] as const) {
+        it(
+            `${mode}: starts from the first app, says so, and checks every app`,
+            async () => {
+                const ws = doctorWorkspace(`sssb-doctor-root-${mode}-`, mode)
+                const { code, out } = await doctorIn(ws)
+                expect(out).toMatch(
+                    /^sssb doctor: no --app, and the working directory .* takes no @sssb\/kit: starting from apps\/a\./m,
+                )
+                expect(out).toMatch(/^sssb doctor: apps\/a, @sssb\/kit 0\.1\.0/m)
+                // the whole workspace, not only the app it started from
+                expect(out).toMatch(/^ok +apps\/b: one copy of each singleton/m)
+                expect(out).toMatch(/^ok +apps\/b: the conformance suite would run/m)
+                expect(code, out).toBe(0)
+            },
+            E2E_TIMEOUT,
+        )
+    }
+
+    it(
+        'finds what `--app` finds: the same workspace, a defect in the second app, fails from the root as it does with --app',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-defect-', 'packed')
+            // apps/b has no suite: the check that would catch it names apps/b, however doctor was started.
+            rmSync(path.join(ws, 'apps', 'b', 'src', 'sssb.conformance.test.ts'))
+            const fromRoot = await doctorIn(ws)
+            const withApp = await doctor(ws, 'apps/a')
+            expect(fromRoot.code, fromRoot.out).toBe(1)
+            expect(withApp.code, withApp.out).toBe(1)
+            expect(fromRoot.out).toMatch(/FAIL +apps\/b:/)
+            expect(withApp.out).toMatch(/FAIL +apps\/b:/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'starts from the first app `sssb.apps` lists, not the alphabetical one',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-listed-', 'packed')
+            const manifest = JSON.parse(readFileSync(path.join(ws, 'package.json'), 'utf8'))
+            manifest.sssb = { apps: ['apps/b', 'apps/a'] }
+            json(path.join(ws, 'package.json'), manifest)
+            const { code, out } = await doctorIn(ws)
+            expect(out).toMatch(/starting from apps\/b\./)
+            expect(out).toMatch(/^ok +apps\/a: one copy of each singleton/m)
+            expect(code, out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'from an app directory it is unchanged: that app, no note',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-fromapp-', 'packed')
+            const { code, out } = await doctorIn(path.join(ws, 'apps', 'b'))
+            expect(out).toMatch(/^sssb doctor: apps\/b, @sssb\/kit/m)
+            expect(out).not.toMatch(/no --app/)
+            expect(code, out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'at a workspace root with no apps and no @sssb/kit it refuses, saying why and what to pass',
+        async () => {
+            const ws = realpathSync(makeTestTmpDir('sssb-doctor-root-empty-'))
+            write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n    - packages/*\n')
+            pkg(ws, { name: 'ws', private: true })
+            const { code, out } = await doctorIn(ws)
+            expect(code).toBe(1)
+            expect(out).toMatch(/is a workspace root that takes no @sssb\/kit and has no apps .* pass --app <dir>/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'outside any workspace, or in a directory with no package.json, the usual refusal',
+        async () => {
+            const dir = realpathSync(makeTestTmpDir('sssb-doctor-root-none-'))
+            const { code, out } = await doctorIn(dir)
+            expect(code).toBe(1)
+            expect(out).toMatch(
+                /not a package \(no package\.json\): run this from an app's directory or pass --app <dir>/,
+            )
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'a workspace root that resolves @sssb/kit is the app itself: no default, no note',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-resolves-', 'in-repo')
+            // this root is an importer of the kit, as the repository's own root is
+            link(path.join(ws, 'node_modules', '@sssb', 'kit'), path.join(ws, 'packages', 'kit'))
+            const { out } = await doctorIn(ws)
+            expect(out).toMatch(/^sssb doctor: \(the workspace root\), @sssb\/kit/m)
+            expect(out).not.toMatch(/no --app/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'a directory inside an app (no package.json of its own), or a workspace root with none, is refused, not defaulted',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-inside-', 'packed')
+            mkdirSync(path.join(ws, 'apps', 'a', 'src', 'deep'), { recursive: true })
+            const inside = await doctorIn(path.join(ws, 'apps', 'a', 'src', 'deep'))
+            expect(inside.code).toBe(1)
+            expect(inside.out).toMatch(/not a package \(no package\.json\)/)
+            const bare = realpathSync(makeTestTmpDir('sssb-doctor-root-nopkg-'))
+            write(path.join(bare, 'pnpm-workspace.yaml'), 'packages:\n    - apps/*\n')
+            const noPackage = await doctorIn(bare)
+            expect(noPackage.code).toBe(1)
+            expect(noPackage.out).toMatch(/not a package \(no package\.json\)/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'says why it picked the first app even when that app is the one that fails (it resolves no @sssb/kit)',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-firstbad-', 'packed')
+            rmSync(path.join(ws, 'apps', 'a', 'node_modules', '@sssb', 'kit'))
+            const { code, out } = await doctorIn(ws)
+            expect(code).toBe(1)
+            expect(out).toMatch(/starting from apps\/a\.[\s\S]*apps\/a does not resolve @sssb\/kit/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'fails when the walk drops an app the workspace names, as `--app <that app>` would, instead of passing from the first',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-dropped-', 'packed')
+            // pnpm-workspace.yaml no longer lists apps/b: the walk reaches a, not b, though apps/b exists and names a seam
+            write(
+                path.join(ws, 'pnpm-workspace.yaml'),
+                'packages:\n    - apps/a\n    - apps/a/src/app-config\n    - packages/*\n',
+            )
+            const fromRoot = await doctorIn(ws)
+            const withApp = await doctor(ws, 'apps/b')
+            expect(withApp.code, withApp.out).toBe(1)
+            expect(fromRoot.code, fromRoot.out).toBe(1)
+            expect(fromRoot.out).toMatch(/FAIL +workspace walk: it does not reach every app the workspace names/)
+            expect(fromRoot.out).toMatch(/apps\/b is named by the workspace/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'an explicit --app is never replaced by the default',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-explicit-', 'packed')
+            const { code, out } = await doctorIn(ws, ['--app', 'apps/b'])
+            expect(out).toMatch(/^sssb doctor: apps\/b, @sssb\/kit/m)
+            expect(out).not.toMatch(/no --app/)
+            expect(code, out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
 })

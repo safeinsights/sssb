@@ -660,7 +660,7 @@ describe('verifyGateProblems', () => {
         'test:e2e': `pnpm ${apps} test:e2e`,
         knip: 'knip',
         jscpd: 'jscpd',
-        'sssb:doctor': 'sssb doctor --app apps/console',
+        'sssb:doctor': 'sssb doctor',
         'check:e2e': `pnpm ${apps} check:e2e`,
         'check-fences': `pnpm ${apps} exec sssb check-fences`,
         'build:demo-static': `pnpm ${apps} build:demo-static`,
@@ -689,7 +689,7 @@ describe('verifyGateProblems', () => {
                     .verify!.replaceAll(`'pnpm:${name}'`, '')
                     .replaceAll(`pnpm run ${name} `, 'true ')
                 dropped.verify = dropped.verify.replace(
-                    new RegExp(`pnpm ${name.replace(/[.:]/g, '\\$&')}( |$)`),
+                    new RegExp(`pnpm ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`),
                     'true$1',
                 )
                 dropped.checks = dropped.checks!.replaceAll(`'pnpm:${name}'`, '')

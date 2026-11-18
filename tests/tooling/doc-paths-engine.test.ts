@@ -7,6 +7,7 @@ import {
     readDocPathsConfig,
     resolves,
     citationsIn,
+    citedPaths,
     generalizeAppCitations,
     type DocPathsConfig,
     missingIncludes,
@@ -215,6 +216,76 @@ describe('citationsIn', () => {
         const found = citationsIn('`cp apps/a/x.ts apps/a/y.ts`', config)
         expect(found.map((c) => c.path)).toEqual(['apps/a/x.ts', 'apps/a/y.ts'])
         expect(new Set(found.map((c) => c.raw)).size).toBe(1)
+    })
+
+    it('trims what the old regexes trimmed: trailing slashes, quotes, and `,;)`', () => {
+        const paths = (text: string) => citationsIn(text, config).map((c) => c.path)
+        expect(paths('`docs/`')).toEqual(['docs'])
+        expect(paths('`docs///`')).toEqual(['docs'])
+        expect(paths("`pnpm --filter './apps/x/' `")).toEqual(['apps/x'])
+        expect(paths('`pnpm "\'apps/x\'"`')).toEqual(['apps/x'])
+        expect(paths('`see apps/x),` `see apps/y;)`')).toEqual(['apps/x', 'apps/y'])
+        expect(paths('`pnpm ./apps/x/y.ts,`')).toEqual(['apps/x/y.ts'])
+    })
+})
+
+// A long run of one character followed by anything else made the old `/\/+$/`, `/['"]+$/` and `/[,;)]+$/` retry from
+// every position of the run: quadratic, and the text is a doc's or a configuration's. 50 000 took the old code about
+// four seconds EACH; the loop trims take a millisecond.
+describe('a long run of a trimmed character stays linear', () => {
+    const N = 50_000
+    const BUDGET_MS = 500
+    const timed = <T>(work: () => T): { result: T; ms: number } => {
+        const start = performance.now()
+        const result = work()
+        return { result, ms: performance.now() - start }
+    }
+
+    it('slashes in a citation', () => {
+        const { result, ms } = timed(() => citationsIn(`\`apps/${'/'.repeat(N)}x\``, config))
+        expect(ms).toBeLessThan(BUDGET_MS)
+        expect(result.map((c) => c.path)).toEqual([`apps${'/'.repeat(N + 1)}x`])
+    })
+
+    it('quotes inside a token of a command', () => {
+        const { result, ms } = timed(() => citationsIn(`\`pnpm apps/x${'"'.repeat(N)}x\``, config))
+        expect(ms).toBeLessThan(BUDGET_MS)
+        expect(result).toHaveLength(1)
+    })
+
+    it('`,;)` inside a token of a command', () => {
+        const { result, ms } = timed(() => citationsIn(`\`pnpm apps/x${','.repeat(N)}x\``, config))
+        expect(ms).toBeLessThan(BUDGET_MS)
+        expect(result).toHaveLength(1)
+    })
+
+    it('slashes in an include entry', () => {
+        const root = workspace({ 'docs/a.md': '' })
+        const entry = `docs${'/'.repeat(N)}x`
+        const long: DocPathsConfig = { ...config, include: [entry] }
+        const files = timed(() => docFiles(root, long))
+        const missing = timed(() => missingIncludes(root, long))
+        expect(files.ms).toBeLessThan(BUDGET_MS)
+        expect(missing.ms).toBeLessThan(BUDGET_MS)
+        expect(files.result).toEqual([])
+        expect(missing.result).toEqual([entry])
+        // and an ordinary trailing slash still names the directory
+        expect(missingIncludes(root, { ...config, include: ['docs/', 'gone//'] })).toEqual(['gone'])
+    })
+
+    it('slashes in a relativeTo directory', () => {
+        const base = `apps${'/'.repeat(N)}x`
+        const root = workspace({ 'docs/guide.md': '`src/a.ts`\n' })
+        const { result, ms } = timed(() =>
+            citedPaths('docs/guide.md', { ...config, relativeTo: { 'docs/guide.md': base } }, root),
+        )
+        expect(ms).toBeLessThan(BUDGET_MS)
+        expect(result.map((c) => c.path)).toEqual([`apps/x/src/a.ts`])
+        expect(
+            citedPaths('docs/guide.md', { ...config, relativeTo: { 'docs/guide.md': 'apps/starter/' } }, root).map(
+                (c) => c.path,
+            ),
+        ).toEqual(['apps/starter/src/a.ts'])
     })
 })
 

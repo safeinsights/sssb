@@ -67,8 +67,9 @@ export function rootPackageJson(c) {
             'test:e2e': `pnpm ${apps} --workspace-concurrency=1 test:e2e`,
             knip: 'knip',
             jscpd: 'jscpd',
-            // One run checks every app of the workspace; it starts from an app, because the root takes no @sssb/kit.
-            'sssb:doctor': `sssb doctor --app ${app(c)}`,
+            // One run checks every app of the workspace. The root takes no @sssb/kit, so with no `--app` doctor starts from
+            // the workspace's first app (`sssb.apps` below): `pnpm exec sssb doctor` works from here, as the docs say.
+            'sssb:doctor': 'sssb doctor',
             // Each app's lint fences as its own config composes them (SSSB's reusable workflow runs this per app).
             'check:fences': `pnpm ${apps} exec sssb check-fences`,
             'check:e2e': `pnpm ${apps} check:e2e`,
