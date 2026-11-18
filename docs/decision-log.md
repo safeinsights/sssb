@@ -3763,8 +3763,8 @@ map, the cutover rows as data) was set before the work; these are the calls it d
   a `types`-only entry fails. Rejected: adding a bundler's conditions (`module`, `browser`), which belong to one
   environment and cannot stand in for Node, tsx and migration scripts.
 - **`seam-map` matches `module-sync`, and resolves an `exports` array as Node does.** Measured against Node's own
-  resolver (`import.meta.resolve` on fixture packages, 12 cases, on Node 24.19 and 22.23: 0 mismatches, 5 before
-  this change). Node matches `module-sync` by default for an ES import, so
+  resolver: each array and condition case in `packages/kit/src/testing/conformance/seam-map.test.ts` gives what Node
+  24.19's `import.meta.resolve` gives for a fixture package holding the same map. Node matches `module-sync` by default for an ES import, so
   `{"module-sync": "./ms.js", "default": "./ok.js"}` loads `ms.js`; the conditions are now `node`, `import`,
   `module-sync`, `default`. In an array a `null` item does NOT stop the search: Node goes on to the next item and keeps the null only as the answer if no later item
   gives a file. An array whose items all match no condition is unmatched, so the condition holding it falls through to
@@ -3828,7 +3828,7 @@ as it stands after three rounds of review (ADR-0014's addendum "P5 as built" lis
 - **`pnpm-workspace.yaml` is read by a small reader that throws on what it does not understand**, naming the line
   (in `packages` or `dedupePeerDependents`: anchors, aliases, tags such as an unquoted `!glob`, nested items; anywhere:
   a duplicate key, a second document, a flow collection still open at the end; any other key's value is skipped
-  unread, `parseWorkspaceYaml` in `packages/tools/src/commands/doctor-checks.js:34`), and a file it cannot read is a
+  unread, `parseWorkspaceYaml` in `packages/tools/src/commands/doctor-checks.js:58`), and a file it cannot read is a
   FAIL that stops the run. Rejected: the `yaml`
   package, which `packages/tools` reaches only through the root's hoisting; and a reader that returns what it can,
   which is how the empty list happened.
