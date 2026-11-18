@@ -90,6 +90,8 @@ jobs:
                   HEAD_REF: ${{ github.head_ref }}
                   CREATED_AT: ${{ github.event.pull_request.created_at }}
                   ACTOR: ${{ github.event.pull_request.user.login }}
+                  HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+                  REPO: ${{ github.repository }}
               run: bash .github/scripts/require-changeset.sh
 
     # The anti-drift job: the SAME migrations + RLS proof suite that unit tests run on pglite,

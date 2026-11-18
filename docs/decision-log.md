@@ -3196,19 +3196,32 @@ changes a published package adds a `.changeset/*.md` that is its changelog entry
 - **What was taken:** the gate, the template, the explicit "no adopter-visible effect" answer (an empty changeset),
   and "Now deletable". The template's `**Kind.**` is one of P7's four release-note sections (`seam`, `migration`,
   `operator`, `scaffold`) or `none`, so the notes can be written from the files by section.
-- **What was not:** CanopyCMS's 3,286-line assembly script, its area table and its int-prerelease labels. They serve
-  an npm prerelease channel; SSSB's release candidates are tarballs on a GitHub prerelease (ADR-0014 P7). Assembling
-  the notes from the files waits for `@sssb/tools` to exist to host it. Rejected alternative: port the script whole.
+- **Kind and Action are separate fields.** Canopy keeps "which area" and "must the adopter act" apart; a first
+  version here tied the bump to Kind and left an additive migration or a new optional export with no honest home
+  (ADR-0014 part 10 calls a migration breaking only when it needs operator action). `**Action.** required` is a
+  `minor`; `optional` and `none` may be a `patch`. Part 10's other breaking items (a raised peer floor, a rule that
+  turns app code red) are filed under `seam`, and a change in two sections is two files.
+- **What was not taken:** CanopyCMS's 3,286-line assembly script, its area table and its int-prerelease labels. They
+  serve an npm prerelease channel; SSSB's release candidates are tarballs on a GitHub prerelease (ADR-0014 P7).
+  Assembling the notes from the files waits for `@sssb/tools` to exist to host it, and the stock
+  `@changesets/cli/changelog` ignores Kind and Action, so P7/P14 need a custom changelog function or an assembler
+  (said in `.changeset/README.md`). Rejected alternative: port the script whole.
 - **The gate is path-based, not `changeset status`.** Every package is `private` until P14 and `status` ignores
-  private packages, so it would pass for any change. "Ships" is `packages/kit/package.json`, what the kit's `files`
-  allowlist ships (the seam-conformance tests included, other tests and stories not) and `apps/starter`, the scaffold
-  an adopter copies. `apps/showcase`, `packages/seed`, the lockfile and the kit's `test-fixture` are not shipped. The
-  lockfile counts in CanopyCMS because its worker is an esbuild bundle; SSSB ships source. A test pins the script's
-  list of shipped tests to the manifest's.
-- **Exemptions:** Dependabot's PRs (it cannot write one; a bump to the kit's dependencies still reaches adopters, so
-  a human adding a changeset on it is welcome), the release merge from `integration`, and a PR opened before the gate
-  reached its base branch (read from git, so no date is written down).
-- **The logic is a shell script under `.github/scripts/`, tested by a vitest file** that builds real git repositories,
-  and the shape lint is `tests/support/changeset-shape.ts` run by the same file. Neither adds a `scripts/` file, a
-  `package.json` script or a `knip.json` entry, because P4 is moving `scripts/` and P4, P5 and P6 own the root
-  manifest.
+  private packages, so it would pass for any change. "Ships" is every `@sssb/*` package under `packages/` (read from
+  its manifest, so P4's tools, P6's plugin, P9's cdk and P12's create are covered the day they land; the kit is
+  narrowed to its `files` allowlist, the seam-conformance tests included, other tests and stories not) and
+  `apps/starter`, the scaffold an adopter copies and the future `@sssb/create` template. `apps/showcase`,
+  `packages/seed`, the lockfile and the kit's `test-fixture` are not shipped. The lockfile counts in CanopyCMS
+  because its worker is an esbuild bundle; SSSB ships source. A test fails when the kit manifest's `files` gains an
+  entry the gate does not know.
+- **Known gap, taken on purpose:** while adoption is a fork, adopters also receive `infra/`, the cutover checklist,
+  the ESLint config, `.gitleaks.toml` and the CI workflows. Gating them now would make every P6 and P9 PR carry a
+  changeset for files those steps are moving into packages, where the gate then covers them. The README says so.
+- **Exemptions:** the release merge (`integration` into `main`, same repository, so a fork's branch of that name is
+  not exempt); Dependabot's PRs unless one changes the kit's `peerDependencies`; a PR opened before the gate reached
+  its base branch (read from git, so no date is written down); and a file a PR carries only because it merged `main`
+  in (ported from CanopyCMS), since the repository does merge `main` back into branches.
+- **The logic is a shell script under `.github/scripts/`, tested by a vitest file** that builds real git repositories
+  (the machine's git config isolated), and the shape lint is `tests/support/changeset-shape.ts` run by the same file.
+  Neither adds a `scripts/` file, a `package.json` script or a `knip.json` entry, because P4 is moving `scripts/`
+  and P4, P5 and P6 own the root manifest. Each moving part of the script was mutated to confirm a case goes red.
