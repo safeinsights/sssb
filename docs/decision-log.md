@@ -3803,7 +3803,7 @@ map, the cutover rows as data) was set before the work; these are the calls it d
   scratch dir (`removeTestTmpDir`), in one hook so the order holds; and `tmp-dir.ts` registers a hook for each later
   file whose first call comes while it is collected. Rejected: `process.on('exit')` (pool teardown may not fire it)
   and pushing into Vitest's runner hooks (internals, in a shipped file). `@sssb/tools/testing/tmp-dir` has the same
-  single-hook flaw, left for `.claude/future-tasks/tools-tmp-dir-without-isolation.md`.
+  single-hook flaw, left for `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
 - **The demo-presets check's teardown waits for a replay that outlived its test.** A Vitest timeout fails the test
   but cannot stop its body: the replay ran on into `afterAll`, which closed the db and restored APP_DATA_DIR, and the
   replay then wrote `auth/`, `pglite/` and `simulator/` into the working directory's `.data` (reproduced: a probe that
