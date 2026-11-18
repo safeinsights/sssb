@@ -22,7 +22,26 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
-    lint-typecheck-unit:
+    # SSSB's checks for both apps, through the REUSABLE WORKFLOW an adopter's own CI calls (app-checks.yml, ADR-0014
+    # P10), so every app-side job is proved here before an adopter runs it: lint, typecheck and unit tests with
+    # `sssb check-fences` and `sssb check-e2e` in each app and one `sssb doctor` run, the contract tests on real Postgres, the e2e shards, each app's static demo, each
+    # app's CDK synth, and `all-checks`, which fails unless every one of them ran and passed. Called by its local path,
+    # so it runs at the commit under test; an adopter pins it by commit SHA. No `apps` input: the workspace's apps are
+    # discovered (every apps/<name>), so `pnpm init-app`'s rename and eject need no edit here. Its checks are named
+    # `sssb / <job>`: GitHub prefixes a called workflow's jobs with the caller's job name.
+    # tests/tooling/app-checks-workflow.test.ts holds this call to that shape.
+    sssb:
+        uses: ./.github/workflows/app-checks.yml
+        permissions:
+            contents: read
+        with:
+            synth: ./apps/*/infra
+
+    # What only this repository checks, beside the app checks: the bidi-character scan, dead code (knip), duplication
+    # (jscpd) and the spike's own suite. Each app's infra/ and spikes/ sit outside the root TS program and jscpd;
+    # docs/provenance.md cites the spike as the harness that de-risked ADR-0004 before anything was built on it, which
+    # makes it doc-load-bearing with no other guard.
+    repo-checks:
         runs-on: ubuntu-latest
         permissions:
             contents: read
@@ -35,30 +54,8 @@ jobs:
                   node-version-file: .nvmrc
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
-            - run: pnpm lint
-            - run: pnpm typecheck
-            - run: pnpm test:coverage
-            - name: coverage summary
-              run: node -e "const s=require('./coverage/coverage-summary.json').total; console.log('| metric | % |\n|---|---|', ...Object.entries(s).map(([k,v])=>'\n| '+k+' | '+v.pct+' |'))" >> "$GITHUB_STEP_SUMMARY"
             - run: pnpm knip
-            # ADR-0014 parts 2, 3 and 5, one doctor run over every app: one copy of each singleton, each app on its
-            # own seam, the @sssb packages in step, every unit check listed by `vitest list` under the config a bare
-            # `vitest` loads for the app and every contract check under some config (which config CI runs is only
-            # reported); and, per app, no e2e spec reaching the kit other than through @sssb/kit/testing/e2e.
-            - run: pnpm sssb:doctor
-            - run: pnpm check:e2e
             - run: pnpm jscpd
-            # Each app's infra/ and spikes/ sit outside the root TS program and jscpd, and each one STATES a
-            # verification bar: apps/<app>/infra/README.md calls `synth` its bar, and infra is the one tree
-            # whose paths have already rotted unnoticed once; docs/provenance.md cites the spike as the
-            # harness that de-risked ADR-0004 before anything was built on it, which makes it
-            # doc-load-bearing with no guard. Both are fast and fully offline. The synth runs once per app
-            # (ADR-0014, P9), and with it the SssbApp construct's assertions for that app (the full list heads
-            # packages/cdk/src/sssb-app.js), among them its @sssb/kit at the construct's version, the
-            # fail-closed environment, and its own migrations in the migrator bundle (jpslav/keel#54). Both
-            # network shapes of every app, and the way in, are checked by packages/cdk's own test, which
-            # `test:coverage` above runs.
-            - run: pnpm --filter './apps/*/infra' --fail-if-no-match synth
             - run: pnpm --filter spike-kysely-pglite test
 
     # ADR-0014 part 10: on 0.x a breaking change is a `minor`, because Changesets turns a `major` into 1.0.0 and
@@ -104,158 +101,6 @@ jobs:
                   HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
                   REPO: ${{ github.repository }}
               run: bash .github/scripts/require-changeset.sh
-
-    # The anti-drift job: the SAME migrations + RLS proof suite that unit tests run on pglite,
-    # against real Postgres (locally that's embedded-postgres; here a service container). One server, and a
-    # database of its own for every app under apps/ (discovered, so an ejected app is covered) and for SSSB's
-    # fixture: two migration sets cannot share a database (packages/kit/src/adapters/real/contract-postgres.ts).
-    contract:
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-        services:
-            postgres:
-                image: postgres:16
-                env:
-                    POSTGRES_PASSWORD: postgres
-                ports:
-                    - 5432:5432
-                options: >-
-                    --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s
-                    --health-retries 10
-        steps:
-            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-              with:
-                  node-version-file: .nvmrc
-                  cache: pnpm
-            - run: pnpm install --frozen-lockfile
-            - run: pnpm test:contract
-              env:
-                  CONTRACT_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-
-    # The matrix below is DISCOVERED from apps/*, not hand-listed, because `pnpm init-app` renames or
-    # deletes app directories (docs/adopting.md) and never touches this file — a hard-coded shard list
-    # would name apps that no longer exist the moment an adopter ejects the showcase. This job needs no
-    # dependencies, so it runs before `pnpm install` even starts on the shards below.
-    e2e-shards:
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-        outputs:
-            matrix: ${{ steps.discover.outputs.matrix }}
-        steps:
-            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - name: discover e2e shards from the workspace's apps
-              id: discover
-              # One shard per app running its own `test:e2e` script, UNLESS the app declares a Playwright
-              # project literally named `destructive`, in which case it splits into two shards instead of one
-              # (see the `e2e` job comment for why). The logic is `sssb ci e2e-shards` (@sssb/tools), which
-              # needs nothing installed, so it runs straight from the package's source before any install.
-              run: node packages/tools/bin/sssb.js ci e2e-shards
-
-    # SHARDED, because parallelism is only safe where the worlds are separate.
-    #
-    # Every Playwright worker inside one shard drives one dev server holding one `.data`, so specs
-    # mutate each other — measured, the flake rate rises monotonically with `workers`
-    # (.claude/future-tasks/e2e-shared-world-blocks-parallelism.md), which is why the configs pin
-    # `workers: 1` and why simply raising it here would trade CI time for CI flakes. Separate RUNNERS
-    # have separate worlds, so splitting the suite across jobs buys the parallelism safely: wall clock
-    # becomes the slowest shard instead of their sum. (The matrix is discovered, so the shard COUNT is
-    # whatever apps/* holds — two today for the showcase, one for the starter.)
-    #
-    # The destructive project keeps `--workers=1 --no-deps`: its nine specs still share one world with
-    # EACH OTHER. `--no-deps` is what lets it run without the chromium project, which the old
-    # single-job ordering used to provide.
-    e2e:
-        name: e2e (${{ matrix.shard.name }})
-        needs: e2e-shards
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-        strategy:
-            # One red shard should not hide the others — a flake in destructive still leaves the
-            # chromium result on the PR.
-            fail-fast: false
-            matrix:
-                shard: ${{ fromJson(needs.e2e-shards.outputs.matrix) }}
-        steps:
-            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-              with:
-                  node-version-file: .nvmrc
-                  cache: pnpm
-            - run: pnpm install --frozen-lockfile
-            # Browsers are ~150MB and were re-downloaded on every run. Keyed on the lockfile because
-            # that is what pins the Playwright version the browser build must match.
-            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-              id: playwright-cache
-              with:
-                  path: ~/.cache/ms-playwright
-                  key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-            - run: pnpm exec playwright install --with-deps chromium
-              if: steps.playwright-cache.outputs.cache-hit != 'true'
-            # A cache hit restores the browsers but not the OS packages they link against.
-            - run: pnpm exec playwright install-deps chromium
-              if: steps.playwright-cache.outputs.cache-hit == 'true'
-            - run: ${{ matrix.shard.run }}
-              env:
-                  NEXT_TELEMETRY_DISABLED: '1'
-                  # Run against a PRODUCTION build rather than `next dev`. CI is cold every time, so it
-                  # pays a full on-demand compile for every route it touches — measured at ~3x local.
-                  # Building once up front removes that: locally the destructive project went 132s → 57s
-                  # on the same 14 tests. It also means CI finally exercises `next build`, which nothing
-                  # else here does. `packages/kit/src/adapters/index.ts` fails closed unless this is
-                  # set explicitly; `production-guard.test.ts` proves it still closes without it.
-                  E2E_BUILD: '1'
-            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-              if: failure()
-              with:
-                  # Per shard, or every shard races for one artifact name and only one survives.
-                  name: playwright-report-${{ matrix.shard.name }}
-                  path: apps/*/playwright-report/
-                  retention-days: 7
-
-    # Its own job: these specs drive the built shell straight from file:// with no server at all, so
-    # they need the vite build and nothing else — they used to queue behind the whole server suite.
-    demo-static:
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-        steps:
-            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-              with:
-                  node-version-file: .nvmrc
-                  cache: pnpm
-            - run: pnpm install --frozen-lockfile
-            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-              id: playwright-cache
-              with:
-                  path: ~/.cache/ms-playwright
-                  key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-            - run: pnpm exec playwright install --with-deps chromium
-              if: steps.playwright-cache.outputs.cache-hit != 'true'
-            - run: pnpm exec playwright install-deps chromium
-              if: steps.playwright-cache.outputs.cache-hit == 'true'
-            # Every app's static demo: build, its own size budget, then its e2e (`sssb ci demo-static`).
-            - run: pnpm exec sssb ci demo-static
-            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-              if: failure()
-              with:
-                  name: playwright-report-demo-static
-                  path: apps/*/playwright-report/
-                  retention-days: 7
-            # Every app's artifact — the glob must not name one app, or adding an app silently drops
-            # it from CI's evidence.
-            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-              with:
-                  name: static-demo
-                  path: apps/*/dist-demo/index.html
-                  retention-days: 14
 
     # Adoption is advertised as one command (docs/adopting.md) and had no automated coverage at all —
     # this proves `pnpm init-app` actually works, end to end, on the harshest path it supports
