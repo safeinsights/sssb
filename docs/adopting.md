@@ -268,9 +268,13 @@ the starter survives.
 ### What ejecting the showcase costs
 
 `apps/starter` already owns the two things that are not the demo and that were once the showcase's alone: the **RLS
-contract suite** (`apps/<app>/tests/contract/`, which runs SSSB's composed proof suite on real Postgres, in a database
-of the app's own, by a non-superuser owner as Aurora's master user is (twice: on a fresh server, and where `app_user`
-already exists) and by a superuser: the anti-drift gate CI depends on) and **`apps/<app>/config/params.ts`**. So ejecting rescues nothing and deletes no gate:
+contract suite** (`apps/<app>/tests/contract/rls-contract.test.ts`, one call of `contractSuite` from
+`@sssb/kit/testing/contract`, which runs SSSB's composed proof suite on real Postgres, in a database of the app's own,
+by a non-superuser owner as Aurora's master user is (twice: on a fresh server, and where `app_user` already exists),
+by a superuser, and over the RDS Data API transport through its emulator: the anti-drift gate CI depends on; a check is
+left out only by a named `optOut`, as in the conformance suite) and **`apps/<app>/config/params.ts`**. Run locally, the
+suite starts its own Postgres with `embedded-postgres`, which the starter carries as a devDependency (an optional peer
+of `@sssb/kit`); with `CONTRACT_DATABASE_URL` set it uses that server instead. So ejecting rescues nothing and deletes no gate:
 `pnpm test:contract` runs your app's suite, and `tests/tooling/app-scaffold.test.ts` fails if an app registers
 migrations without one, or the apps' params carry different keys (`infra/` reads one app's, and needs the same keys
 from whichever it is pointed at).
@@ -309,6 +313,19 @@ check out takes a named opt-out with a reason (the check ids are in `@sssb/kit/t
 fails the run, and so does a check that is skipped without one. That is what stops the fixture becoming the only world
 the framework is ever proved against.
 
+Two `sssb` commands guard that suite and the install around it, and `pnpm verify` and CI run both for every app
+(`pnpm sssb:doctor`, `pnpm check:e2e`; each app's own scripts are `sssb:doctor` and `check:e2e`, because `pnpm doctor`
+is pnpm's own command). **`sssb doctor`** asks `vitest list` what would actually run, from the workspace root the way CI
+runs Vitest, and fails naming every conformance test (unit, and the contract runner's) that would not, unless its check
+is opted out by name; so an `.only`, a `testNamePattern` or a config that stops picking the file up is red before it
+silently drops a check. It also fails a second copy of any peer `@sssb/kit` declares (React, Next, Kysely...), an
+importer of the framework anywhere in the workspace that does not run on its own seam, and an `@sssb/*` package out of
+step with the framework's version, and it reports framework cutover rows your `docs/cutover-checklist.md` never
+mentions. Inside SSSB's own repository it says "in-repo mode" and checks each app's seam aliases instead of links.
+**`sssb check-e2e`** bundles every file your Playwright configs load and fails, naming spec and framework file, if a
+spec reaches the framework other than through `@sssb/kit/testing/e2e`, the one entry Node can load; reaching it
+through your own domain module counts.
+
 ## Layout
 
 ```
@@ -329,9 +346,9 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 ### What you may import from SSSB
 
-`packages/kit/package.json`'s `exports` map is the contract: it lists the 132 subpaths your app may
+`packages/kit/package.json`'s `exports` map is the contract: it lists the 137 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 58 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 61 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import

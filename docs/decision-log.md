@@ -3371,3 +3371,90 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
   from each app, and the sibling package `gate` uses `@sssb/tools`' helper with no framework installed.
 - **knip** cannot see what a preset loads from the app or what `@sssb/tools` imports from its optional peers; the
   narrow entries are in `docs/build-notes.md`.
+
+## The contract runner ships in `@sssb/kit/testing` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+- **`contractSuite` from `@sssb/kit/testing/contract`** replaces the repo's `tests/support/contract-suite.ts` and
+  `contract-postgres.ts`. Each app's `tests/contract/rls-contract.test.ts` is one call,
+  `contractSuite({ port: portFor('contractPg'), optOut: {} })`; the database defaults to `contractDatabaseName` of the
+  seam's `APP_SLUG` (`database` overrides it). Its checks are the `contract` checks of `checks.json`
+  (`contract-owner-pass`, `contract-rls`, `contract-data-api`), registered, opted out and guarded against skipping by the
+  same code as the unit suite's (`packages/kit/src/testing/conformance/register.ts`), in the old order: owner pass
+  twice, then the superuser proofs. New: `contract-data-api` runs the app's migrations and proofs, and the owner pass,
+  over the RDS Data API transport through the emulator, in `<slug>_contract_data_api`, made empty first so the
+  migrations really run through the dialect. Before, only SSSB's fixture met the Data API.
+- **The server half is `packages/kit/src/adapters/real/contract-postgres.ts`** (and the Data API passes
+  `contract-data-api.ts` beside it), because it drives `pg` and only an adapters directory may import a vendor SDK; the
+  testing module imports it, and loads everything that reaches the seam lazily, so `contractDatabaseName` imports with no
+  seam (the repo's scaffold gate uses it). No lint exemption was widened; the package-edge rule lost its two named
+  exemptions (the kit's own contract tests no longer reach `tests/support`). The emulator ships, as before, under `src`;
+  it gets no `exports` subpath because nothing outside the runner needs it.
+- **`embedded-postgres` is an OPTIONAL peer of `@sssb/kit`**, imported with `import()` only when
+  `CONTRACT_DATABASE_URL` is unset, with an error naming the package when it is missing. It is also the kit's
+  devDependency, and both apps' (so the template, and pack and consume's consumer, carry it); the root's, and the root's
+  `pg` and `@types/pg`, went (knip). Rejected: a plain dependency, which would put Postgres binaries in every adopter's
+  production install for a test-only path; an adopter whose CI brings its own server needs none of it. Like `vitest`,
+  it is optional at run time, not to the type checker: an app that keeps `tests/contract` keeps the package.
+- **The port is the caller's**: `port` (the apps pass `portFor('contractPg')` from `@sssb/tools/ports`), else
+  `CONTRACT_PG_PORT`, else a refusal that says which to set. The framework takes no `@sssb/tools` (rule 4), so the kit's
+  own contract tests get `CONTRACT_PG_PORT` from `vitest.contract.config.ts`. Rejected: importing `scripts/ports.mjs`
+  or `@sssb/tools/ports` from the kit. Scratch directories are the kit's `makeTestTmpDir` (its copy has no async
+  variant, and none is needed).
+- **Pack and consume runs it.** `contract-test-dropped` is gone: the consumer apps keep `tests/contract`, the workspace
+  gets a `vitest.contract.config.ts` built from the preset as an adopter would write one, and a step runs it on
+  embedded Postgres on a free port (CONTRACT_DATABASE_URL blanked) and holds each app to every `contract` test of the
+  packed `checks.json` (`expectedConformanceTests(registry, 'contract')`, `conformanceProblems`). No service was added
+  to the workflow.
+
+## `sssb doctor` and `sssb check-e2e` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+ADR-0014 part 5 names doctor's three checks and part 3 its `vitest list`; part 2 names check-e2e. What they left open:
+
+- **Doctor reads `vitest list --json=<file>`, never stdout.** Vitest 4 writes the list to the file when `--json` is given a
+  path (`--outputFile` is ignored by `list`), so Vite's warnings on stdout cannot corrupt it. When a test file throws
+  while it is collected (an opt-out typo), Vitest exits 1 and writes NO file; doctor then names the error line and every
+  expected test as not listed. Rejected: parsing stdout between brackets.
+- **Which Vitest run, and which projects.** The root's `vitest.config.*` (or `vitest.contract.config.*`) when the root
+  has one, else the app's own (the unit runner may also run on Vitest's defaults from the app); the root's is tried
+  first and the app's is the fallback when the root's runs none of the app's files. The projects are found by asking
+  Vitest (`vitest list --filesOnly`) which projects run a file inside the app, not by assuming the project is named after
+  the app: in this repo the contract projects are rooted at the repo, not the app. Only tests in the app's own files
+  count. No contract config at all fails (every SSSB app has migrations, so it has contract checks to run).
+- **Opt-out markers** are read from any segment of a listed name (`[sssb:opt-out:<id>]`), and honoured only for a check
+  of the runner being checked.
+- **Optional peers** (`vitest`, `embedded-postgres`): neither side has it is a note (not installed); only the kit finds
+  it is a note (not the app's to share); only the app finds it fails, because the kit would load another copy or none.
+  A required peer the app cannot find fails. Peers are compared as real package DIRECTORIES found by walking
+  `node_modules` up from each side, never NODE_PATH (the shared resolver's reason).
+- **In-repo mode is detected, not configured**: the kit the app resolves is in-repo when its real directory is one of
+  the workspace's package directories (from `pnpm-workspace.yaml`'s globs). There the per-importer seam check is
+  replaced by an alias check over every app (`sssb.apps`, else `apps/*`): the app's tsconfig `paths['@sssb/app-config/*']`,
+  read by the app's own TypeScript (so `extends` and `baseUrl` count), and the `@sssb/app-config` alias of every Vitest
+  project, unit and contract, that runs the app's files, read through Vitest's node API (`createVitest`), must be the
+  app's own `src/app-config`. The other importers (the root, `packages/seed`) are named as not checked: in-repo each
+  compiles within a program that names a seam. Rejected: a flag or environment variable, which an adopter could set.
+- **The per-importer walk includes the workspace ROOT** (pnpm treats it as an importer). The seam an instance runs on
+  is `@sssb/app-config` as Node's lookup finds it from the kit's own directory, and doctor names whose seam that is.
+- **Versions in step** cover every `@sssb/*` the app resolves (nearest `node_modules/@sssb` first), the seam left out.
+  The workflow-SHA and plugin-pin comparisons print "not checked" with the reason: nothing to compare yet (no release
+  stamp, no reusable workflow until P10, no plugin until P13). Doctor runs `sssb guide --check` once the kit ships a
+  guide (`guide.js` already promised it), and reports that it does not until then.
+- **SSSB-only cutover rows**: a row whose "What it is" begins "SSSB's own repository only" (`release-app`) is not looked
+  for in an adopter's checklist, and doctor says it skipped it. Rejected for now: a `scope` field in `rows.json`, which
+  is a kit change and would be the sturdier marker; the prefix is held by `tests/docs/cutover-rows.test.ts`'s equality
+  with the doc.
+- **The scripts are `sssb:doctor` and `check:e2e`, not `doctor`**: `pnpm doctor` is pnpm's own command and shadows a
+  script of that name (measured: the root's `pnpm doctor` ran pnpm's environment check and exited 0).
+  `pnpm sssb:doctor` runs the apps one at a time, so the two reports do not interleave.
+- **check-e2e reads the Playwright configs, it does not run them** (they are code: they read ports and refuse to load
+  while a ticking dev server's marker is live). The files: each `playwright*.config.*`, its string `globalSetup` and
+  `globalTeardown`, and every script under each `testDir` it names (support modules included), or Playwright's default
+  match from the config's directory when it names none. Each is bundled by esbuild with the app's tsconfig; a bare
+  specifier is bundled only when it is the kit, the seam, or resolves into the app's own files (its `@/` alias), every
+  other package stays external. The allowed set is computed by bundling `@sssb/kit/testing/e2e` alone from the app:
+  in-repo its source closure, from a tarball the compiled file only (and the compiled entry reaching another kit file
+  fails). A failure names the file, the kit file where it ENTERS the kit, and the import chain to it.
+- **Pack and consume adds the negative fixture after the verify, with a second install**: doctor walks every package,
+  so with `packages/seamless` installed from the start the verify's doctor could not be green. The consumer's lockfile
+  seed still lists the seamless importer until it is refreshed (`--update-lockfile`); until then the run prints the
+  "resolution moved" notice, which is a prompt, not a failure.

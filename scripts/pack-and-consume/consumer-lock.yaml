@@ -61,7 +61,7 @@ importers:
         version: link:src/app-config
       '@sssb/kit':
         specifier: file:../../../tarballs/kit/sssb-kit-0.1.0.tgz
-        version: file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))
+        version: file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))
       kysely:
         specifier: ^0.29.7
         version: 0.29.9
@@ -87,6 +87,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.1.2
         version: 6.3.0(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+      embedded-postgres:
+        specifier: 18.4.0-beta.17
+        version: 18.4.0-beta.17
       vite:
         specifier: ^8.3.5
         version: 8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)
@@ -104,7 +107,7 @@ importers:
         version: link:src/app-config
       '@sssb/kit':
         specifier: file:../../../tarballs/kit/sssb-kit-0.1.0.tgz
-        version: file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))
+        version: file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))
       kysely:
         specifier: ^0.29.7
         version: 0.29.9
@@ -130,6 +133,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.1.2
         version: 6.3.0(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+      embedded-postgres:
+        specifier: 18.4.0-beta.17
+        version: 18.4.0-beta.17
       vite:
         specifier: ^8.3.5
         version: 8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)
@@ -147,7 +153,7 @@ importers:
     dependencies:
       '@sssb/kit':
         specifier: file:../../../tarballs/kit/sssb-kit-0.1.0.tgz
-        version: file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@types/react@19.3.0)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))
+        version: file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))
 
 packages:
 
@@ -309,6 +315,54 @@ packages:
 
   '@eloqnt/format-po@0.1.2':
     resolution: {integrity: sha512-bohkA1SmJ9rJQG+tNsY8gWrdSo+pJazdjI+dTW+Wt2eg+UuwejXuYOkZDVcWRBCt6MH1dhHo0UuDau0jUmu/+Q==}
+
+  '@embedded-postgres/darwin-arm64@18.4.0-beta.17':
+    resolution: {integrity: sha512-Kg1ZMNFzkVIJs3g4V2UYEc5X005km9rGinxFBH8R1sOU2Rblvz4pt2Uf93Pu8Rk273Ue9HIdrbMPpgUqwjUi0Q==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@embedded-postgres/darwin-x64@18.4.0-beta.17':
+    resolution: {integrity: sha512-4tShSYWMxUQTSWoQAdLnHISvRj6L9gTch9/31ASJPg6wgyN64LDRwMcOINEWybM7N0ropJ3nTYhFT3UX1bKY5Q==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@embedded-postgres/linux-arm64@18.4.0-beta.17':
+    resolution: {integrity: sha512-TIzjtGnDGSD/LbdW0OWCEcbI+YVT0WKSfSr20TCkkP4UR8zeKe+QCZbO0/CM4hS9EWyZ4cDebjRvpRc3iMi6wg==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@embedded-postgres/linux-arm@18.4.0-beta.17':
+    resolution: {integrity: sha512-VuD1nFasN7yG57zpJcp6MBXM0nXqGfb8GBQV+f1FGJ17+VMNYLIFLhFp99UlY4xnWG74FQC4NPYw8eCwSTJ6qg==}
+    engines: {node: '>=16'}
+    cpu: [arm]
+    os: [linux]
+
+  '@embedded-postgres/linux-ia32@18.4.0-beta.17':
+    resolution: {integrity: sha512-aSRe4kknqRHuedtpo/rDIaqa8r9VrKIgW9p5FkJyIFqUUkIkxRqND1dg8xrDRREcSUXRJKS0x+j/AuxflgYIfg==}
+    engines: {node: '>=16'}
+    cpu: [ia32]
+    os: [linux]
+
+  '@embedded-postgres/linux-ppc64@18.4.0-beta.17':
+    resolution: {integrity: sha512-zO2RRUFdKRPplrdhmglG39VXJZzDXu3P3ONAG1sFPhGh89vbk24Btd5P7uOmQLIpWehzL0s+UqUWoeE/ZUKvgw==}
+    engines: {node: '>=16'}
+    cpu: [ppc64]
+    os: [linux]
+
+  '@embedded-postgres/linux-x64@18.4.0-beta.17':
+    resolution: {integrity: sha512-jVw/MdDtIX/vICH/DKIe6/mHpiCggdx6QVyza4vt/NbcZFsL0KhwglF6F1Koqx3gRBZ9XtN+vi63EsqSyqOSxA==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [linux]
+
+  '@embedded-postgres/windows-x64@18.4.0-beta.17':
+    resolution: {integrity: sha512-AwRerliA4IGWyW5jWBvHt5vidVUSB0QQW9Tt2y7ScnmifnCb/awfxZr4BkBSTv+gNt8Djcddqs+xSF5Z6/CkTg==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [win32]
 
   '@emnapi/core@2.0.0-beta.2':
     resolution: {integrity: sha512-MzCVoWtcg4Pm2B3je5mMvYMvj3MmBKw+fU7vbsJc9/iT8ip6/eYIHo/Dsm/mr+wsHB6SEyJDuxB09Yy6r/8+4A==}
@@ -1563,13 +1617,14 @@ packages:
     engines: {node: '>=18.0.0'}
 
   '@sssb/kit@file:../tarballs/kit/sssb-kit-0.1.0.tgz':
-    resolution: {integrity: sha512-IZAiWcHRI5Pb6nW5YQBdHNwtMBmVBYx1AFxo68LEowB0C5NkMpvDPUovMXX4WXP7NUHlvVwnqoH2X/5KP1R9WA==, tarball: file:../tarballs/kit/sssb-kit-0.1.0.tgz}
+    resolution: {integrity: sha512-7AQFlIcvhhyRcw/Xivo2FujnGtUAwYM2BmxPbT6h2hwIHJe/T0JKU7H6aLQ9H6ZZsTTjkPDgt4h22IZG7sQowA==, tarball: file:../tarballs/kit/sssb-kit-0.1.0.tgz}
     version: 0.1.0
     peerDependencies:
       '@mantine/core': ^9.7.3
       '@sssb/app-config': '*'
       '@types/node': ^26.6.5
       '@types/react': ~19.3.0
+      embedded-postgres: ^18.4.0-beta.17
       kysely: ^0.29.7
       next: ^16.4.6
       next-intl: ^4.14.9
@@ -1579,11 +1634,13 @@ packages:
     peerDependenciesMeta:
       '@sssb/app-config':
         optional: true
+      embedded-postgres:
+        optional: true
       vitest:
         optional: true
 
   '@sssb/tools@file:../tarballs/tools/sssb-tools-0.1.0.tgz':
-    resolution: {integrity: sha512-ilgRGDHzJJiN8y2x7tZyFuVnfbHr/ilFlZ5iNY95yvu0bk0eku7GmduNYxJdt3SEU9bchxTffr4QXjXVZQsN/g==, tarball: file:../tarballs/tools/sssb-tools-0.1.0.tgz}
+    resolution: {integrity: sha512-Ud7NWZ6HRLEzzJAfOkPCXeXxKONsINkxECuPnJD3WpnopdMu3LRAyJEnFu+eGXWTCWcuSQ5MM2MMU62K58CHZw==, tarball: file:../tarballs/tools/sssb-tools-0.1.0.tgz}
     version: 0.1.0
     engines: {node: '>=24'}
     hasBin: true
@@ -1821,6 +1878,10 @@ packages:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
 
+  async-exit-hook@2.0.1:
+    resolution: {integrity: sha512-NW2cX8m1Q7KPA7a5M2ULQeZ2wR5qI5PAbw5L0UOMxdioVk9PMZ0h1TmyZEkPYrCvYjDlFICusOu1dlEKAAeXBw==}
+    engines: {node: '>=0.12.0'}
+
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
 
@@ -1946,6 +2007,10 @@ packages:
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
     engines: {node: '>= 0.4'}
+
+  embedded-postgres@18.4.0-beta.17:
+    resolution: {integrity: sha512-ORT/A1YiO6ecpRHpyIIBgyCR/8ASqqYZuFw11aX9PkqTX3FUM5+9sNOXY1mGIixxsm2TWSIA5WghJEk7A5ZxVw==}
+    engines: {node: '>=16'}
 
   entities@4.5.0:
     resolution: {integrity: sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw==}
@@ -3072,6 +3137,30 @@ snapshots:
       '@eloqnt/config': 0.1.2
       po-parser: 2.2.0
 
+  '@embedded-postgres/darwin-arm64@18.4.0-beta.17':
+    optional: true
+
+  '@embedded-postgres/darwin-x64@18.4.0-beta.17':
+    optional: true
+
+  '@embedded-postgres/linux-arm64@18.4.0-beta.17':
+    optional: true
+
+  '@embedded-postgres/linux-arm@18.4.0-beta.17':
+    optional: true
+
+  '@embedded-postgres/linux-ia32@18.4.0-beta.17':
+    optional: true
+
+  '@embedded-postgres/linux-ppc64@18.4.0-beta.17':
+    optional: true
+
+  '@embedded-postgres/linux-x64@18.4.0-beta.17':
+    optional: true
+
+  '@embedded-postgres/windows-x64@18.4.0-beta.17':
+    optional: true
+
   '@emnapi/core@2.0.0-beta.2':
     dependencies:
       '@emnapi/wasi-threads': 2.2.0
@@ -3962,7 +4051,7 @@ snapshots:
     dependencies:
       tslib: 2.9.1
 
-  '@sssb/kit@file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))':
+  '@sssb/kit@file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))':
     dependencies:
       '@anthropic-ai/sdk': 1.8.0
       '@aws-sdk/client-codebuild': 3.1169.0
@@ -3994,6 +4083,7 @@ snapshots:
       valibot: 1.5.0(typescript@6.0.3)
     optionalDependencies:
       '@sssb/app-config': link:apps/console/src/app-config
+      embedded-postgres: 18.4.0-beta.17
       vitest: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
     transitivePeerDependencies:
       - '@cloudflare/workers-types'
@@ -4009,7 +4099,7 @@ snapshots:
       - wrangler
       - zod
 
-  '@sssb/kit@file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))':
+  '@sssb/kit@file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))':
     dependencies:
       '@anthropic-ai/sdk': 1.8.0
       '@aws-sdk/client-codebuild': 3.1169.0
@@ -4041,6 +4131,7 @@ snapshots:
       valibot: 1.5.0(typescript@6.0.3)
     optionalDependencies:
       '@sssb/app-config': link:apps/ledger/src/app-config
+      embedded-postgres: 18.4.0-beta.17
       vitest: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
     transitivePeerDependencies:
       - '@cloudflare/workers-types'
@@ -4056,7 +4147,7 @@ snapshots:
       - wrangler
       - zod
 
-  '@sssb/kit@file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@types/react@19.3.0)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))':
+  '@sssb/kit@file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))':
     dependencies:
       '@anthropic-ai/sdk': 1.8.0
       '@aws-sdk/client-codebuild': 3.1169.0
@@ -4087,6 +4178,7 @@ snapshots:
       typescript: 6.0.3
       valibot: 1.5.0(typescript@6.0.3)
     optionalDependencies:
+      embedded-postgres: 18.4.0-beta.17
       vitest: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
     transitivePeerDependencies:
       - '@cloudflare/workers-types'
@@ -4309,6 +4401,8 @@ snapshots:
 
   assertion-error@2.0.1: {}
 
+  async-exit-hook@2.0.1: {}
+
   asynckit@0.4.0: {}
 
   axios@1.21.1:
@@ -4409,6 +4503,22 @@ snapshots:
       call-bind-apply-helpers: 1.0.2
       es-errors: 1.3.0
       gopd: 1.2.0
+
+  embedded-postgres@18.4.0-beta.17:
+    dependencies:
+      async-exit-hook: 2.0.1
+      pg: 8.23.1
+    optionalDependencies:
+      '@embedded-postgres/darwin-arm64': 18.4.0-beta.17
+      '@embedded-postgres/darwin-x64': 18.4.0-beta.17
+      '@embedded-postgres/linux-arm': 18.4.0-beta.17
+      '@embedded-postgres/linux-arm64': 18.4.0-beta.17
+      '@embedded-postgres/linux-ia32': 18.4.0-beta.17
+      '@embedded-postgres/linux-ppc64': 18.4.0-beta.17
+      '@embedded-postgres/linux-x64': 18.4.0-beta.17
+      '@embedded-postgres/windows-x64': 18.4.0-beta.17
+    transitivePeerDependencies:
+      - pg-native
 
   entities@4.5.0: {}
 

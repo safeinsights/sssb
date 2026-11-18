@@ -32,15 +32,16 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `packages/seed`, a `..` in any package or alias specifier, and any specifier through `node_modules`, by
   `import()` and in a type `import('…')` as well as in a declaration; the `@sssb/app-config/*` alias is the only
   channel back. `sssb/no-path-out-of-package` also bars any path out of `packages/kit`, an absolute path or `file:`
-  URL even into it, and a shipped file's path to one the `files` allowlist leaves out (two real-Postgres contract
-  tests are the named exceptions). **The framework must compile under `packages/kit/tsconfig.strict.json`**
+  URL even into it, and a shipped file's path to one the `files` allowlist leaves out, with no exceptions.
+  **The framework must compile under `packages/kit/tsconfig.strict.json`**
   (the strict-flag set at the ES2022 lib floor; `pnpm typecheck` runs it), because adopters compile the shipped
   `.ts` under their own options. **`@sssb/kit`'s `files` allowlist in its `package.json` decides what ships**
   (tests and stories out; the conformance suite ships as source, `@sssb/kit/testing`); a new file that must ship, or a new import of a
   package the source needs, goes in the manifest — pack and consume checks the tarball. A package the app must
   share one copy of is a peer: `react`, `next`, `next-intl`, `@mantine/core`, `kysely` (the app's migrations get
   the framework's `Kysely`), the compiler and the global types an adopter's program shares (`typescript`,
-  `@types/react`, `@types/node`), and `vitest`, optional, for the shipped tests; anything else, `@types/pg`
+  `@types/react`, `@types/node`), `vitest`, optional, for the shipped tests, and `embedded-postgres`, optional, for the
+  contract runner's local server; anything else, `@types/pg`
   included, is a dependency (`docs/decision-log.md`, "Package hygiene").
 - **The kit's OWN tests run against its own app seam, never an app's** — `packages/kit/test-fixture`
   (outside `packages/kit/src` because that tree is what `@sssb/kit/*` resolves to and what ships; the
@@ -55,7 +56,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   `pnpm init-app --eject-showcase` with a red gate.
-- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 136 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 137 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it);
   the rest of the package is internal and reachable only by relative import inside it. Lint-enforced
   (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
@@ -99,9 +100,13 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 
 - Formatting is `.editorconfig` + Prettier — run `pnpm lint:fix`, never hand-format.
 - Conventional commits: lowercase subject, ≤100 chars (commitlint hook enforces).
-- Before finishing any change: `pnpm verify` (typecheck + lint + unit + knip in parallel, then e2e,
-  static-demo build, demo size budget, static-demo e2e). E2E needs Playwright chromium installed once:
-  `pnpm exec playwright install chromium`.
+- Before finishing any change: `pnpm verify` (typecheck + lint + unit + knip + `sssb doctor` + `sssb check-e2e` in
+  parallel, then e2e, static-demo build, demo size budget, static-demo e2e). E2E needs Playwright chromium installed
+  once: `pnpm exec playwright install chromium`. **`sssb doctor`** (`pnpm sssb:doctor`, per app; never `pnpm doctor`,
+  which is pnpm's own) fails unless `vitest list` lists every conformance test, unit and contract, less named opt-outs,
+  and on a second copy of a kit peer, an @sssb package out of step, or (in this repo, "in-repo mode") an app whose
+  tsconfig or Vitest project aliases another app's seam. **`sssb check-e2e`** fails a Playwright spec that reaches the
+  kit other than through `@sssb/kit/testing/e2e`, directly or through an app module.
 - `pnpm verify` does NOT run `test:contract`, jscpd, coverage, gitleaks or pack and consume — CI runs those
   (`.github/workflows/checks.yml`). **Pack and consume** (`pnpm pack-and-consume`, ADR-0014 P2) packs
   `@sssb/kit` and runs an adopter-shaped workspace's verify against the tarball, outside this repo; a change
@@ -111,8 +116,10 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   with `pnpm pack-and-consume --update-lockfile` and commit `scripts/pack-and-consume/consumer-lock.yaml`.
   **Any migration/db change: run `pnpm test:contract` yourself** (the
   same RLS proofs on real Postgres, for EVERY app AND SSSB's fixture seam, each in its own
-  database — SSSB's twice, once through the `pg` driver and once through the RDS Data API driver and its
-  emulator, each also as a non-superuser owner, `packages/kit/src/db/owner-pass.ts`); after
+  database, each twice: once through the `pg` driver and once through the RDS Data API driver and its
+  emulator, each also as a non-superuser owner, `packages/kit/src/db/owner-pass.ts`. An app's are the contract
+  runner's, `contractSuite` from `@sssb/kit/testing/contract`, called from `apps/<app>/tests/contract/`, with the
+  conformance suite's opt-outs and skip guard; SSSB's fixture keeps its own in `packages/kit/src/adapters/real`); after
   renumbering/renaming a migration, wipe local `.data` first.
   **Also wipe `apps/*/.data` after changing `packages/seed`** — the app seeder is guarded by "does this
   world have any rows yet", so new seed rows are invisible on an existing world and only CI sees them.

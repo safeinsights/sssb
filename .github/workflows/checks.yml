@@ -40,6 +40,11 @@ jobs:
             - name: coverage summary
               run: node -e "const s=require('./coverage/coverage-summary.json').total; console.log('| metric | % |\n|---|---|', ...Object.entries(s).map(([k,v])=>'\n| '+k+' | '+v.pct+' |'))" >> "$GITHUB_STEP_SUMMARY"
             - run: pnpm knip
+            # ADR-0014 parts 2, 3 and 5, per app: one copy of each singleton, each app on its own seam, the @sssb
+            # packages in step, every conformance check listed by `vitest list` (unit and contract); and no e2e spec
+            # reaching the kit other than through @sssb/kit/testing/e2e.
+            - run: pnpm sssb:doctor
+            - run: pnpm check:e2e
             - run: pnpm jscpd
             # infra/ and spikes/ sit outside the root TS program, knip and jscpd, so ESLint was the
             # only gate reaching either — and each one STATES a verification bar that nothing ran.
@@ -72,7 +77,7 @@ jobs:
     # The anti-drift job: the SAME migrations + RLS proof suite that unit tests run on pglite,
     # against real Postgres (locally that's embedded-postgres; here a service container). One server, and a
     # database of its own for every app under apps/ (discovered, so an ejected app is covered) and for SSSB's
-    # fixture: two migration sets cannot share a database (tests/support/contract-postgres.ts).
+    # fixture: two migration sets cannot share a database (packages/kit/src/adapters/real/contract-postgres.ts).
     contract:
         runs-on: ubuntu-latest
         permissions:

@@ -11,16 +11,19 @@
 //
 // The workspace, laid out like the first adopter's (safeinsights/pages):
 //   apps/console   the full verify: typecheck at the ES2022 floor and with the strict-flag set on, unit
-//                  tests with the conformance suite (@sssb/kit/testing) run from the tarball, the
-//                  migrator bundle, `next build`, e2e, the static demo, its size and its e2e. It owns an
+//                  tests with the conformance suite (@sssb/kit/testing) run from the tarball, its contract
+//                  suite (@sssb/kit/testing/contract) on embedded Postgres, the migrator bundle, `next build`,
+//                  e2e, the static demo, its size and its e2e. It owns an
 //                  adapter (src/adapters/real/), and a seam module that imports through its `@/` alias.
 //   apps/ledger    a second app with a different seam (its own slug and an extra migration, imported
-//                  through `@/`): typecheck, unit + conformance, and the migrator bundle, which must
+//                  through `@/`): typecheck, unit + conformance, contract, and the migrator bundle, which must
 //                  hold its own migrations and not the console's.
 //   packages/gate  a sibling package that does not use the framework at all, only @sssb/tools' scratch-directory
 //                  helper (ADR-0014 part 3: the helpers that touch no seam are any workspace package's).
 //   packages/seamless  the NEGATIVE fixture: it takes @sssb/kit without linking a seam, and must fail
-//                  loudly rather than run on another app's seam (ADR-0014 part 5).
+//                  loudly rather than run on another app's seam (ADR-0014 part 5). It joins the workspace only
+//                  after the verify (a second install), because `sssb doctor` walks every package: the verify's
+//                  doctor runs green without it, and with it doctor must NAME it.
 //
 // Today's gaps between that and what an adopter should need are named workarounds
 // (scripts/pack-and-consume/workarounds.mjs), each tied to the step that removes it.
@@ -314,10 +317,8 @@ function scaffoldApp({ app, slug, tarball, toolsTarball }) {
         `export const APP_SLUG = '${slug}'`,
     )
 
-    // The real-Postgres contract test runs through this repo's tests/support harness, which no package
-    // ships yet. It is not part of this job's verify (CI's contract job runs it for both apps in-repo).
-    applyWorkaround('contract-test-dropped')
-    rmSync(path.join(dir, 'tests/contract'), { recursive: true })
+    // tests/contract stays: the starter's contract test calls @sssb/kit/testing/contract, which the tarball ships, and
+    // the `contract tests` step runs it as an adopter would (vitest.contract.config.ts below).
 
     // The WHOLE public surface, in the app's type program. A consumer typechecks only the framework
     // modules it reaches, and the starter reaches a fraction of them; an adopter may import any published
@@ -629,21 +630,7 @@ test("@sssb/tools' scratch-directory helper works in a package that has no @sssb
 `,
     )
 
-    // THE NEGATIVE FIXTURE: an importer of @sssb/kit that links no seam.
-    writeJson(path.join(WS, 'packages/seamless/package.json'), {
-        name: 'seamless',
-        private: true,
-        type: 'module',
-        dependencies: { '@sssb/kit': `file:${path.relative(path.join(WS, 'packages/seamless'), tarball)}` },
-    })
-    write(
-        path.join(WS, 'packages/seamless/src/main.ts'),
-        `import { WEBHOOK_SIGNATURE_HEADER } from '@sssb/kit/core/webhook-signing'
-
-// With no seam of its own this must not load. If it prints, it ran on another app's seam.
-console.log(WEBHOOK_SIGNATURE_HEADER)
-`,
-    )
+    // The negative fixture (packages/seamless) is not written here: it joins after the verify (addSeamless).
 
     // Vitest from the workspace root, as Pages runs it: a project per app from @sssb/tools' preset, which passes
     // each app's own seam explicitly, as every SSSB builder does (the migrator bundle below, tsc and next build
@@ -670,6 +657,30 @@ export default defineConfig(
                 { test: { name: 'gate', root: at('./packages/gate'), environment: 'node' } },
             ],
         },
+    }),
+)
+`,
+    )
+
+    // The contract config, as an adopter would write one: the same preset project per app, narrowed to the app's
+    // tests/contract (each calls @sssb/kit/testing/contract), in Node, one file at a time because every app's embedded
+    // Postgres takes the one port. The unit config above never reaches tests/contract.
+    write(
+        path.join(WS, 'vitest.contract.config.ts'),
+        `import { fileURLToPath } from 'node:url'
+import { appTestProject } from '@sssb/tools/vitest'
+import { defineConfig, type ViteUserConfig } from 'vitest/config'
+
+const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
+
+const contract = async (name: string) => {
+    const project = await appTestProject({ appDir: at(\`./apps/\${name}\`) })
+    return { ...project, test: { ...project.test, environment: 'node', include: ['tests/contract/**/*.test.ts'] } }
+}
+
+export default defineConfig(
+    async (): Promise<ViteUserConfig> => ({
+        test: { fileParallelism: false, projects: [await contract('console'), await contract('ledger')] },
     }),
 )
 `,
@@ -897,6 +908,46 @@ function unitTests() {
     console.log(`conformance: all ${expected.length} checks' tests ran and passed in each app, from @sssb/kit/testing`)
 }
 
+/**
+ * Each app's contract suite (`tests/contract`, which calls `@sssb/kit/testing/contract`) RUN from the tarball, under
+ * the consumer's own contract config, on an embedded Postgres of its own (`embedded-postgres`, the starter's
+ * devDependency and the framework's optional peer) on a free port; CONTRACT_DATABASE_URL is blanked so a developer's
+ * server is never used. Held, like the unit suite, to every contract test the PACKED registry names.
+ */
+function contractTests() {
+    mkdirSync(REPORTS, { recursive: true })
+    const report = path.join(REPORTS, 'vitest-contract.json')
+    rmSync(report, { force: true })
+    run(
+        'pnpm',
+        [
+            'exec',
+            'vitest',
+            'run',
+            '--config',
+            'vitest.contract.config.ts',
+            '--reporter=default',
+            '--reporter=json',
+            `--outputFile.json=${report}`,
+        ],
+        { cwd: WS, env: consumerEnv({ CONTRACT_PG_PORT: String(contractPort), CONTRACT_DATABASE_URL: '' }) },
+    )
+    /** @type {Record<string, string>} */
+    const contractFiles = {}
+    for (const app of ['console', 'ledger'])
+        contractFiles[app] = path.join(appDir(app), 'tests/contract/rls-contract.test.ts')
+    const expected = expectedConformanceTests(
+        readJson(path.join(kitOf(appDir('console')).kit, 'src/testing/checks.json')),
+        'contract',
+    )
+    const problems = conformanceProblems(readJson(report), contractFiles, expected)
+    if (problems.length > 0)
+        fail(`the contract suite did not run and pass in full from the tarball:\n  ${problems.join('\n  ')}`)
+    console.log(
+        `contract: all ${expected.length} contract tests ran and passed in each app on embedded Postgres, from @sssb/kit/testing/contract`,
+    )
+}
+
 function migratorBundles() {
     for (const [app, own] of Object.entries(OWN_MIGRATIONS)) {
         const out = path.join(REPORTS, `migrator-${app}.mjs`)
@@ -952,7 +1003,56 @@ function staticDemo() {
     run('pnpm', ['run', 'e2e:demo-static'], { cwd: appDir('console') })
 }
 
+/**
+ * `sssb doctor` and `sssb check-e2e` in each app, as its verify runs them (ADR-0014 part 7): from the tarball, so
+ * doctor must NOT find itself in in-repo mode here, and it walks a workspace whose every importer links its own seam.
+ */
+function doctorAndCheckE2e() {
+    for (const app of ['console', 'ledger']) {
+        const doctor = run('pnpm', ['run', 'sssb:doctor'], { cwd: appDir(app), capture: true })
+        console.log(doctor.stdout)
+        if (doctor.stdout.includes('in-repo mode'))
+            fail(`${app}: sssb doctor took the tarball's kit for this repo's own`)
+        run('pnpm', ['run', 'check:e2e'], { cwd: appDir(app) })
+    }
+}
+
+/** THE NEGATIVE FIXTURE: an importer of @sssb/kit that links no seam, joining the workspace after the verify. */
+function addSeamless() {
+    writeJson(path.join(WS, 'packages/seamless/package.json'), {
+        name: 'seamless',
+        private: true,
+        type: 'module',
+        dependencies: { '@sssb/kit': `file:${path.relative(path.join(WS, 'packages/seamless'), tarball)}` },
+    })
+    write(
+        path.join(WS, 'packages/seamless/src/main.ts'),
+        `import { WEBHOOK_SIGNATURE_HEADER } from '@sssb/kit/core/webhook-signing'
+
+// With no seam of its own this must not load. If it prints, it ran on another app's seam.
+console.log(WEBHOOK_SIGNATURE_HEADER)
+`,
+    )
+    run('pnpm', ['install', '--no-frozen-lockfile'], { cwd: WS })
+}
+
 function negativeFixture() {
+    addSeamless()
+    // Doctor, run from an APP, walks the whole workspace and names the importer that slipped (ADR-0014 part 5).
+    const doctor = run('pnpm', ['exec', 'sssb', 'doctor'], {
+        cwd: appDir('console'),
+        capture: true,
+        allowFailure: true,
+    })
+    const named = doctor.stdout
+        .split('\n')
+        .find((line) => /^\s+- packages\/seamless: takes @sssb\/kit but declares no seam link/.test(line))
+    if (doctor.status !== 1 || named === undefined) {
+        console.error(`${doctor.stdout}\n${doctor.stderr}`)
+        fail(`sssb doctor did not name the seamless importer (exit ${doctor.status})`)
+    }
+    console.log(`sssb doctor named the seamless importer, from apps/console:\n  ${named.trim()}`)
+
     const result = run('pnpm', ['exec', 'tsx', 'src/main.ts'], {
         cwd: path.join(WS, 'packages/seamless'),
         capture: true,
@@ -1008,6 +1108,8 @@ function e2eEntryUnderNode() {
 
 const started = Date.now()
 const port = await freePort()
+// The consumer's contract suites' embedded Postgres: a free port, never the per-checkout one this repo's own uses.
+const contractPort = await freePort()
 console.log(`pack and consume: ${BASE}`)
 
 /** @type {string} */
@@ -1093,8 +1195,10 @@ step('the packed package ships and imports only what it declares', checkDeclared
 step('typecheck at the ES2022 floor', typecheck)
 step('typecheck with the strict-flag set', typecheckStrict)
 step('unit tests and the conformance suite, from the workspace root', unitTests)
+step('contract tests on embedded Postgres, from the workspace root', contractTests)
 step('migrator bundles, with no alias and no tsconfig', migratorBundles)
-step('negative fixture: an importer with no seam', negativeFixture)
+step('sssb doctor and sssb check-e2e, in each app', doctorAndCheckE2e)
+step('negative fixture: an importer with no seam, which sssb doctor names', negativeFixture)
 step('the compiled e2e entry loads under plain Node, with no seam', e2eEntryUnderNode)
 step('the dev:real preflight, through esbuild from each app', realEnvPreflight)
 if (SKIP_BUILD_AND_E2E) {

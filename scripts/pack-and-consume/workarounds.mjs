@@ -25,10 +25,6 @@ export const WORKAROUNDS = {
         removedBy: 'P12',
         what: "the workspace root's devDependencies (typescript, vitest, esbuild, tsx, the @types and the rest) are picked by hand, at this repo's ranges (P12: @sssb/create writes them)",
     },
-    'contract-test-dropped': {
-        removedBy: 'P5',
-        what: "each app's tests/contract is deleted from the copy: the real-Postgres contract test runs through this repo's tests/support harness (P5: the conformance suite's contract runner)",
-    },
     'allow-builds-copied': {
         removedBy: 'P12',
         what: "the consumer's pnpm-workspace.yaml takes allowBuilds from this repo's, so a build script a kit dependency newly needs is approved here before an adopter would have to (P12: @sssb/create writes allowBuilds)",

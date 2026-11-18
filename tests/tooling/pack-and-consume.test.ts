@@ -176,6 +176,10 @@ describe('conformanceProblems', () => {
         ])
     })
 
+    it("names the contract runner's tests, and no unit one, when asked for them", () => {
+        expect(expectedConformanceTests(registry, 'contract')).toEqual(['[sssb:contract-rls] rls > proofs'])
+    })
+
     it("accepts an app's conformance file that ran and passed every check", () => {
         expect(conformanceProblems({ testResults: ran('passed') }, files, expected)).toEqual([])
     })
@@ -229,9 +233,9 @@ describe('the workaround register', () => {
 
     it('holds no workaround a step that has landed was to remove', () => {
         // P3 removed its four (types-pg, undeclared-typescript, demo-presets-seam-skipped,
-        // strict-flags-kit-baseline). P5 removed conformance-by-include; contract-test-dropped is P5's too, and
-        // goes with the contract runner. Raise this as each later step lands.
-        const landed = new Set(['P1', 'P1b', 'P2', 'P3'])
+        // strict-flags-kit-baseline). P5 removed conformance-by-include, and contract-test-dropped with the contract
+        // runner. Raise this as each later step lands.
+        const landed = new Set(['P1', 'P1b', 'P2', 'P3', 'P5'])
         for (const [id, workaround] of Object.entries(WORKAROUNDS))
             expect(landed.has(workaround.removedBy), id).toBe(false)
     })

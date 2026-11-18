@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { contractDatabaseName } from './contract-postgres'
+import { contractDatabaseName } from '@sssb/kit/testing/contract'
 
 /**
  * What every app in `apps/*` must carry to be a template an adopter can keep, checked the same way for all of them:
@@ -20,9 +20,10 @@ export interface AppFacts {
     paramsSource: string | null
     /** Whether the app registers migrations of its own. */
     hasMigrations: boolean
-    /** The app's `tests/contract/*.test.ts` files that call `defineContractSuite`. */
+    /** The app's `tests/contract/*.test.ts` files that call `contractSuite`. */
     contractSuites: string[]
-    /** The database its contract suite uses (`contractDatabaseName` of its `config/app.ts` slug), or null with no slug. */
+    /** The database its contract suite uses (`contractDatabaseName` of its `config/app.ts` slug, which the seam's
+     *  `identity` re-exports and the runner reads), or null with no slug. */
     contractDatabase: string | null
     /** Whether its `src/sssb.conformance.test.ts` calls `conformanceSuite` (ADR-0014 P5). */
     runsConformanceSuite: boolean
@@ -35,9 +36,9 @@ const FRAMEWORK_DATABASE_PREFIX = 'sssb_'
 /** A source without its comments, so a mention of a call in one is not a call. */
 const withoutComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-/** Whether a source CALLS `defineContractSuite(`: a mention in a comment is not a call. */
-export function callsDefineContractSuite(source: string): boolean {
-    return withoutComments(source).includes('defineContractSuite(')
+/** Whether a source CALLS `contractSuite(` (`@sssb/kit/testing/contract`): a mention in a comment is not a call. */
+export function callsContractSuite(source: string): boolean {
+    return /\bcontractSuite\(/.test(withoutComments(source))
 }
 
 /** Whether a source CALLS `conformanceSuite(`: a mention in a comment is not a call. */
@@ -127,7 +128,7 @@ export function scaffoldProblems(apps: readonly AppFacts[], rows: ReadonlySet<st
         }
         if (app.hasMigrations && app.contractSuites.length === 0) {
             problems.push(
-                `apps/${app.name}: registers migrations but has no contract suite (a tests/contract/*.test.ts calling defineContractSuite), ` +
+                `apps/${app.name}: registers migrations but has no contract suite (a tests/contract/*.test.ts calling contractSuite from @sssb/kit/testing/contract), ` +
                     'so its own tables never meet real Postgres',
             )
         }
@@ -161,8 +162,7 @@ export async function readAppFacts(repoRoot: string, name: string): Promise<AppF
         contractSuites: existsSync(contract)
             ? readdirSync(contract).filter(
                   (file) =>
-                      file.endsWith('.test.ts') &&
-                      callsDefineContractSuite(readFileSync(path.join(contract, file), 'utf8')),
+                      file.endsWith('.test.ts') && callsContractSuite(readFileSync(path.join(contract, file), 'utf8')),
               )
             : [],
         contractDatabase: typeof slug === 'string' ? contractDatabaseName(slug) : null,

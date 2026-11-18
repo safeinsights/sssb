@@ -303,7 +303,7 @@ describe('a path into app code crosses the framework/app fence too', () => {
             `import { b } from ${JSON.stringify(pathFrom(file, 'tests/support/tmp-dir'))}`,
             "import { c } from '../../../apps-config/x'",
             `export const load = () => import(${JSON.stringify(pathFrom(file, 'scripts/release.mjs'))})`,
-            `export type T = import(${JSON.stringify(pathFrom(file, 'tests/support/contract-postgres'))}).ContractServer`,
+            `export type T = import(${JSON.stringify(pathFrom(file, 'tests/support/contract-apps'))}).Apps`,
             'export { b, c }',
         ]
         const findings = await lint(file, out.join('\n'))
@@ -382,16 +382,14 @@ describe('a path into app code crosses the framework/app fence too', () => {
         })
     })
 
-    it('the contract tests are its only exemptions, and only by name', async () => {
+    it('has no exemptions: the contract tests that had one start their server inside the package now', async () => {
         const code = `import { s } from '../../../../../tests/support/contract-postgres'\nexport { s }\n`
         for (const file of [
             'packages/kit/src/adapters/real/db.contract.test.ts',
             'packages/kit/src/adapters/real/rds-data.contract.test.ts',
+            'packages/kit/src/adapters/real/other.contract.test.ts',
         ])
-            expect(fired(await lint(file, code), OUT_OF_PACKAGE_PATH), file).toBe(0)
-        expect(
-            fired(await lint('packages/kit/src/adapters/real/other.contract.test.ts', code), OUT_OF_PACKAGE_PATH),
-        ).toBe(1)
+            expect(fired(await lint(file, code), OUT_OF_PACKAGE_PATH), file).toBe(1)
     })
 
     it('a `..` that is part of a name, not a segment, climbs nowhere', async () => {

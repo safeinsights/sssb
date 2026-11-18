@@ -2094,3 +2094,17 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 - **A Vitest config with an async default needs its return type named.** `defineConfig(async () => ({ … }))` failed
   `tsc` (no overload matched: the inferred literal is wider than `UserConfig`); `async (): Promise<ViteUserConfig> =>`
   passes. The config is async because the presets are: they `import()` the app's plugins.
+
+## The contract runner in `@sssb/kit/testing/contract` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+- **The Data API pass catches what the `pg` passes cannot.** Probe: the starter's migration 1001 with its two
+  `ALTER TABLE … ROW LEVEL SECURITY` statements joined into one `sql` call. `contract-owner-pass` and `contract-rls`
+  stayed green (the `pg` driver runs a multi-statement simple query), and both `contract-data-api` tests went red with
+  the emulator's "more than one statement in one call". Before P5 no app's tables met the Data API at all.
+- **Two more gates seen red**: an opt-out typo in an app's contract test fails at collection naming the check ids,
+  and an `it.only` beside `contractSuite` fails the file through the shared skip guard, listing the checks that did
+  not run (a valid opt-out is listed as `[sssb:opt-out:<id>]`).
+- **A seam-reaching module must not be imported at the top of the testing entry.** The repo's scaffold gate imports
+  `contractDatabaseName` from `@sssb/kit/testing/contract` in the alias-free `repo` project, where no seam resolves;
+  the runner therefore loads the migrations, the proofs, the Data API passes and `@sssb/app-config/identity` with
+  `import()` inside its hooks and tests, as the unit suite's db checks already did.

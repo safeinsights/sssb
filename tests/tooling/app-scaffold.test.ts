@@ -3,11 +3,11 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { contractApps } from '../support/contract-apps'
-import { contractDatabaseName } from '../support/contract-postgres'
+import { contractDatabaseName } from '@sssb/kit/testing/contract'
 import {
     appNames,
     callsConformanceSuite,
-    callsDefineContractSuite,
+    callsContractSuite,
     citedCutoverRows,
     cutoverRows,
     leafPaths,
@@ -155,12 +155,12 @@ describe('scaffoldProblems fails when two suites would share a database, or take
 })
 
 describe('the helpers behind it', () => {
-    it('callsDefineContractSuite counts a call and not a mention in a comment', () => {
-        expect(callsDefineContractSuite("defineContractSuite({ database: 'x' })")).toBe(true)
-        expect(
-            callsDefineContractSuite('// defineContractSuite(...) is what it calls\n/* defineContractSuite( */'),
-        ).toBe(false)
-        expect(callsDefineContractSuite('/**\n * defineContractSuite(\n */\nexport {}')).toBe(false)
+    it('callsContractSuite counts a call and not a mention in a comment', () => {
+        expect(callsContractSuite('contractSuite({ optOut: {} })')).toBe(true)
+        expect(callsContractSuite('// contractSuite(...) is what it calls\n/* contractSuite( */')).toBe(false)
+        expect(callsContractSuite('/**\n * contractSuite(\n */\nexport {}')).toBe(false)
+        // The retired harness's name is not a call of the runner.
+        expect(callsContractSuite("defineContractSuite({ database: 'x' })")).toBe(false)
     })
 
     it('callsConformanceSuite counts a call and not a mention in a comment', () => {

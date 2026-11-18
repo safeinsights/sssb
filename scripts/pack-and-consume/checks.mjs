@@ -167,13 +167,15 @@ export function tscErrors(output) {
 }
 
 /**
- * The full name of every test the conformance suite registers for an app with no opt-outs, as `vitest list` and the
- * suite itself spell it (`[sssb:<id>] <title> > <test>`), from the packed `@sssb/kit/testing/checks.json`.
+ * The full name of every test one runner registers for an app with no opt-outs, as `vitest list` and the suite itself
+ * spell it (`[sssb:<id>] <title> > <test>`), from the packed `@sssb/kit/testing/checks.json`: the conformance suite's
+ * (`unit`, the default) or the contract runner's (`contract`, `@sssb/kit/testing/contract`).
  * @param {{ checks: { id: string, runner: string, title: string, tests: string[] }[] }} registry
+ * @param {'unit' | 'contract'} [runner]
  */
-export function expectedConformanceTests(registry) {
+export function expectedConformanceTests(registry, runner = 'unit') {
     return registry.checks
-        .filter((check) => check.runner === 'unit')
+        .filter((check) => check.runner === runner)
         .flatMap((check) => check.tests.map((test) => `[sssb:${check.id}] ${check.title} > ${test}`))
 }
 
