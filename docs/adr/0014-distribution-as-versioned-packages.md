@@ -1191,3 +1191,10 @@ it, and `sssb doctor` fails. Option C stands; only the way the app declares its 
 - **The plugin's workaround is gone.** P13's commands told authors to edit `package.json` and run `pnpm install`
   rather than `pnpm add`, and its gate failed a command that said `pnpm add`; they now say
   `pnpm --filter <app> add <pkg>`.
+
+## Addendum — 2026-11-18: keep the gitleaks entry for keel's `webhook.test.ts`
+
+Step 2 of part 11 ("Pages' migration from fork to dependency") listed the `.gitleaks.toml` allowlist entry for keel's
+`packages/keel/src/service-auth/webhook.test.ts` among what to delete. It stays: the entry is history-only once the
+directory is gone, and the secret scan reads the whole history, where the file's placeholder secret still is. rc.2's
+notes carry the correction (`docs/decision-log.md`, "The real S3 storage adapter is published as a factory").

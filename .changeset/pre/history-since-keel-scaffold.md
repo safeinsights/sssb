@@ -37,9 +37,11 @@ ticks it on a timer (opt-in); the app's `playwright.config.ts` starts its web se
 
 #### `.gitleaks.toml` (jpslav/keel#60)
 
-Remove the allowlist entry for `packages/keel/src/service-auth/webhook\.test\.ts` with the directory. Give any entry
-of the app's own that pairs `paths` with `regexes` `condition = "AND"`: without it, gitleaks combines them with OR
-and exempts every finding in those paths.
+Keep the allowlist entry for `packages/keel/src/service-auth/webhook\.test\.ts` when the directory goes, and mark it
+as covering history only: CI's gitleaks scans the whole history, not the tree, and the commits that hold that file
+still carry its placeholder secret. (Corrected in v0.2.0-rc.2; v0.2.0-rc.0's notes said to remove the entry.) Give
+any entry of the app's own that pairs `paths` with `regexes` `condition = "AND"`: without it, gitleaks combines them
+with OR and exempts every finding in those paths.
 
 #### The `LICENSE` line (safeinsights/sssb#14)
 
