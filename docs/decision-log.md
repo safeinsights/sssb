@@ -4003,3 +4003,28 @@ as it stands after three rounds of review (ADR-0014's addendum "P5 as built" lis
   through an app module) check-e2e must exit 1, failing `playwright.config.ts` as unlistable and naming
   `@sssb/kit:src/core/webhook-signing.ts`. Rejected: adding the spec to `apps/starter` itself, whose one e2e spec is
   its tenancy claim.
+
+## `@sssb/tools/testing/tmp-dir` under `isolate: false`: a setup module, and a hook per suite (2026-11-18, `fix/tools-tmp-dir-isolation`)
+
+Resolves `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
+
+- **The design the task gave, and the kit's copy has, was not enough.** Registering a hook at a later file's first call
+  (the kit's fix in P5) stopped the leak, but review reproduced two new failures in a real Vitest run: a hook registered
+  from a `describe` body belongs to that `describe` and removed everything queued, so a second `describe`'s directory
+  went when the first finished; and a hook registered at the first call runs before any `afterAll` the file registered
+  earlier, so the cleanup could precede the file closing what lives in the directory. The kit's copy is unchanged here
+  and has both: `.claude/future-tasks/kit-tmp-dir-per-suite-cleanup.md`.
+- **A setup module carries the file's hook.** Vitest runs a setup file before every test file even with
+  `isolate: false`, and an `afterAll` it registers runs after the file's own (checked with Vitest 4.1.12, three files
+  in one worker). `@sssb/tools/testing/tmp-dir-setup` calls `registerTestTmpDirCleanup()`; `appTestProject` adds it to
+  every app project, so an app on the preset needs nothing. Rejected: asking adopters to import the helper first in
+  every file (a later file's import is a cache hit, which registers nothing).
+- **Without it, a hook per suite.** A later file's first call in a suite registers a hook in that suite, removing its
+  own directories and those of earlier files (a worker runs files one after another), never another suite's of the
+  same file. The registry is keyed by suite and file, because Vitest reuses one top-level collector for every file a
+  worker runs (seen: a later file's top-level call found the suite already hooked and registered nothing). Each hook
+  clears its entry when it runs, for a watch-mode rerun. `getCurrentSuite` is from `vitest/suite`, Vitest's documented
+  entry for extending the runner, not its internals.
+- **`removeTestTmpDir` removes only what the helper made.** The kit's removes any path it is given, recursively.
+- **A new `exports` subpath, so the changeset is a `seam` entry,** optional: an app on the preset gets the setup module,
+  and another project with `isolate: false` adds it to `setupFiles`.

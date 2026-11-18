@@ -46,6 +46,10 @@
             "types": "./src/testing/tmp-dir.d.ts",
             "default": "./src/testing/tmp-dir.js"
         },
+        "./testing/tmp-dir-setup": {
+            "types": "./src/testing/tmp-dir-setup.d.ts",
+            "default": "./src/testing/tmp-dir-setup.js"
+        },
         "./ticker": {
             "types": "./src/tick/ticker.d.ts",
             "default": "./src/tick/ticker.js"

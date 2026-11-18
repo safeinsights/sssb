@@ -46,7 +46,8 @@ export async function appTestProject({ appDir, name, include = [], alias = {}, e
             root,
             environment: 'happy-dom',
             include: ['src/**/*.test.{ts,tsx}', ...include],
-            setupFiles: ['@testing-library/jest-dom/vitest', ...setupFiles],
+            // The scratch-directory helper's per-file cleanup, which `isolate: false` needs (./testing/tmp-dir-setup.js).
+            setupFiles: ['@testing-library/jest-dom/vitest', '@sssb/tools/testing/tmp-dir-setup', ...setupFiles],
             testTimeout: testTimeout ?? TEST_TIMEOUT_MS,
             ...(env === undefined ? {} : { env }),
         },
