@@ -63,6 +63,7 @@
         "@manypkg/get-packages": "3.1.0",
         "@next/eslint-plugin-next": "^16.4.6",
         "@playwright/test": "^1.64.1",
+        "@sssb/tools": "workspace:*",
         "@testing-library/jest-dom": "^7.0.1",
         "@types/node": "^26.6.5",
         "@types/pg": "^8.23.1",
@@ -93,5 +94,44 @@
         "vite": "^8.3.5",
         "vitest": "^4.1.12",
         "yaml": "2.9.1"
+    },
+    "sssb": {
+        "docPaths": {
+            "roots": [
+                "apps/",
+                "src/",
+                "packages/",
+                "docs/",
+                "tests/",
+                "scripts/",
+                "config/",
+                "infra/",
+                "fixtures/",
+                "messages/",
+                ".claude/",
+                ".github/",
+                "spikes/"
+            ],
+            "include": [
+                "docs",
+                ".claude",
+                "README.md",
+                "CLAUDE.md",
+                "CONTRIBUTING.md",
+                "SECURITY.md",
+                "CODE_OF_CONDUCT.md"
+            ],
+            "exempt": [
+                "docs/adr/",
+                "docs/build-notes.md",
+                "docs/decision-log.md",
+                ".claude/future-tasks/resolved/",
+                ".claude/worktrees/"
+            ],
+            "referenceApps": [
+                "showcase",
+                "starter"
+            ]
+        }
     }
 }

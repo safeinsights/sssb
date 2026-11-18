@@ -43,7 +43,9 @@
         "packages/kit/src/**/*.ts",
         "packages/kit/src/**/*.tsx",
         "packages/kit/test-fixture/**/*.ts",
-        "packages/kit/test-fixture/**/*.tsx"
+        "packages/kit/test-fixture/**/*.tsx",
+        "packages/tools/**/*.js",
+        "packages/tools/**/*.ts"
     ],
     "exclude": ["node_modules", "apps", "spikes", "infra"]
 }
