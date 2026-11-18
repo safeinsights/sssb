@@ -980,6 +980,22 @@ differently from the body, or more precisely (each in `docs/decision-log.md`, th
 - **The cutover rows carry a `scope` field**; `"scope": "sssb"` (`release-app`) is not looked for in an adopter's
   checklist.
 
+## Addendum — 2026-11-18: release notes are assembled from the changesets
+
+Part 10 says the notes' "Seam changes" and "Framework migrations" sections are written by hand "until Changesets
+exists", and the P7 row writes all four by hand. Changesets exists, and its changelog does not carry Kind and Action, so the notes are assembled
+instead: `scripts/release-notes.mjs` reads the pending changesets (each filed by its `**Kind.**` into the four
+sections of part 10, which are always present, then "Other changes" when there is one) and writes them with each
+entry's What changed, To adopt and Now deletable. `release.mjs prepare` runs it before `changeset version` deletes the
+files and writes the result to `docs/releases/v<version>.md`, a new file in the release commit that `verify-release`
+accepts at exactly that path, so the notes are in the repository for a fork that merges `main` as well as for the
+release. `--since <tag>` gives a release candidate the entries added since the previous one, and the entries edited
+since under "Corrections to earlier notes"; `--at <release commit>^` regenerates a finished release's notes. What is
+still written by hand for P7: the sections for changes that predate the changesets (everything since 24b0589, the
+rename among it), the tarballs' sha512 and install lines, and creating the GitHub release. P14's first npm release
+would omit that hand-written history unless it is backfilled first. Why a script and not an `@sssb/tools` command,
+and what review changed, is in `docs/decision-log.md` (2026-11-18, `feat/release-notes`).
+
 ## Addendum — 2026-11-18: P10, the reusable workflow, as built
 
 `.github/workflows/app-checks.yml`, as part 7 describes, with one exception below: `on: workflow_call`, `contents: read`, no secrets, the

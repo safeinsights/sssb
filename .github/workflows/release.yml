@@ -91,7 +91,10 @@ jobs:
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
             - run: pnpm install --frozen-lockfile --ignore-scripts
 
-            # scripts/release.mjs prepare: the 0.x checks, the plan, and `changeset version` in the working tree.
+            # scripts/release.mjs prepare: the 0.x checks, the plan, the release notes (assembled from the pending
+            # changesets by scripts/release-notes.mjs and written to docs/releases/v<version>.md, a new file in the
+            # release commit) and `changeset version` in the working tree. A changeset that cannot be read as a
+            # release-note entry stops it before anything is changed.
             # Until P14 it answers `release: false` on every push, and the run ends here.
             - name: prepare the release
               id: prepare
@@ -107,6 +110,7 @@ jobs:
                       echo "version=$version" >> "$GITHUB_OUTPUT"
                       git add -A
                       git diff --cached --binary HEAD > "$RUNNER_TEMP/release.patch"
+                      cat "$(jq -r '.notes' <<<"$result")" >> "$GITHUB_STEP_SUMMARY"
                   else
                       echo "Nothing to release: $(jq -r '.reason' <<<"$result")" >> "$GITHUB_STEP_SUMMARY"
                   fi
