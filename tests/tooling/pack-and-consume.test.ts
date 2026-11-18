@@ -660,7 +660,7 @@ describe('verifyGateProblems', () => {
         'test:e2e': `pnpm ${apps} test:e2e`,
         knip: 'knip',
         jscpd: 'jscpd',
-        'sssb:doctor': 'sssb doctor --app apps/console',
+        'sssb:doctor': 'sssb doctor',
         'check:e2e': `pnpm ${apps} check:e2e`,
         'check-fences': `pnpm ${apps} exec sssb check-fences`,
         'build:demo-static': `pnpm ${apps} build:demo-static`,

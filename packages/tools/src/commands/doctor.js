@@ -126,15 +126,16 @@ export async function run(args) {
     const appDir = realpathSync(chosen.dir)
     if (args.length > 0) throw new UsageError(`sssb doctor: unknown argument ${args[0]} (usage: doctor [--app <dir>])`)
     const root = realpathSync(workspaceRootOf(appDir))
-    const kitDir = kitDirOf(appDir)
-    const version = kitVersionOf(appDir)
     const rel = relativeTo(root)
-    const heading = `sssb doctor: ${rel(appDir)}, @sssb/kit ${version} at ${rel(kitDir)}`
+    // Said before anything can fail on the app it chose, so a failure there is read with the reason it was picked.
     if (chosen.defaulted) {
         console.log(
             `sssb doctor: no --app, and the working directory (${root}) takes no @sssb/kit: starting from ${rel(appDir)}. One run checks every app of the workspace.`,
         )
     }
+    const kitDir = kitDirOf(appDir)
+    const version = kitVersionOf(appDir)
+    const heading = `sssb doctor: ${rel(appDir)}, @sssb/kit ${version} at ${rel(kitDir)}`
 
     /** @type {Workspace} */
     let workspace
