@@ -77,6 +77,11 @@ export const GET_DB_STRING: Fence = { rule: 'sssb/no-raw-db-handle', fragment: '
 // A path into app code is one rule, for every form; a `..` in a package or alias specifier is a pattern, so it
 // reports through the same two rules as the app's aliases.
 export const APP_CODE_PATH: Fence = { rule: 'sssb/no-path-to-app-code', fragment: 'app content under another name' }
+// Any other path out of packages/kit (ADR-0014 P3): the package is a tarball of that directory alone.
+export const OUT_OF_PACKAGE_PATH: Fence = {
+    rule: 'sssb/no-path-out-of-package',
+    fragment: 'an adopter has nothing there',
+}
 export const BARE_TRAVERSAL_STATIC: Fence = { rule: 'no-restricted-imports', fragment: 'a `..` in a package or alias' }
 export const BARE_TRAVERSAL_DYNAMIC: Fence = {
     rule: 'sssb/no-dynamic-app-import',

@@ -657,8 +657,8 @@ const sssbNoDynamicFrameworkImportInCoreRule = declarationlessImportBan({
 // it lands, not how it is spelled: `../../../../apps/showcase/src/domain/tickets` from SSSB's server-lib, the same
 // with `//` or `\` separators, or `../../../../packages/seed/src/index`. Each names app content with no alias for a
 // pattern to see. This rule resolves the path against the importing file and reports it if it lands in an app (`apps/`) or
-// the app's seed package (`packages/seed/`, which `@app/seed` names). Every other path out of packages/kit stays
-// open: SSSB's tests reach the repo's `tests/support/` helpers that way. Matching ignores case, as macOS's file
+// the app's seed package (`packages/seed/`, which `@app/seed` names). Any other path out of packages/kit is the
+// package-edge rule's finding (sssbNoPathOutOfPackageRule, below), not this one's. Matching ignores case, as macOS's file
 // system does, and follows symlinks: the path is judged by where it really lands, so neither a symlink into app
 // code nor a checkout opened through a symlinked directory (an editor's workspace, say) moves it out of reach.
 // A specifier that is not a path is the pattern fence's (bareTraversalPattern for a `..` in one), and so is a
@@ -691,11 +691,61 @@ const pathTarget = (filename, specifier) => {
     if (!/^(\.{1,2}([\\/]|$)|[\\/])/.test(specifier)) return undefined
     return resolve(dirname(filename), specifier.replaceAll('\\', '/'))
 }
-const appCodeDirOfPath = (filename, specifier) => {
+// Where a path specifier really lands, relative to the repo root and `/`-separated; undefined for a specifier that is
+// not a path, or a path through node_modules (the pattern fence's).
+const landingOfPath = (filename, specifier) => {
     const target = throughNodeModules.test(specifier) ? undefined : pathTarget(filename, specifier)
     if (!target) return undefined
-    const fromRoot = relative(REPO_ROOT, realPathOf(target).toLowerCase()).replaceAll('\\', '/')
-    return APP_CODE_DIRS.find((dir) => fromRoot === dir || fromRoot.startsWith(`${dir}/`))
+    return relative(REPO_ROOT, realPathOf(target).toLowerCase()).replaceAll('\\', '/')
+}
+const isUnder = (fromRoot, dir) => fromRoot === dir || fromRoot.startsWith(`${dir}/`)
+const appCodeDirOfPath = (filename, specifier) => {
+    const fromRoot = landingOfPath(filename, specifier)
+    if (fromRoot === undefined) return undefined
+    return APP_CODE_DIRS.find((dir) => isUnder(fromRoot, dir))
+}
+// THE PACKAGE'S EDGE (ADR-0014 P3). @sssb/kit is installed from a tarball of packages/kit alone, so a path out of
+// it names a file an adopter does not have: until P3, 23 of SSSB's tests and one shipped conformance suite reached
+// the repo's tests/support/tmp-dir.ts that way, and the suite could not run from the tarball. This rule reports a
+// relative or absolute path, or a `file:` URL, from packages/kit that lands anywhere outside it, judged exactly as
+// the app-code rule above judges one (case-insensitive, symlinks followed). A landing in app code is that rule's
+// finding, not this one's, so a path into apps/ is reported once. Its own rule id; the two exemptions are named in
+// the block that applies it.
+const KIT_DIR = 'packages/kit'
+const outsideKitLanding = (filename, specifier) => {
+    const fromRoot = landingOfPath(filename, specifier)
+    if (fromRoot === undefined || isUnder(fromRoot, KIT_DIR)) return undefined
+    return APP_CODE_DIRS.some((dir) => isUnder(fromRoot, dir)) ? undefined : fromRoot
+}
+/** @type {import('eslint').Rule.RuleModule} */
+const sssbNoPathOutOfPackageRule = {
+    meta: {
+        type: 'problem',
+        docs: { description: 'Framework code does not reach outside packages/kit by a relative or absolute path.' },
+        schema: [],
+        messages: {
+            path:
+                '`{{specifier}}` leaves packages/kit (it lands in {{landing}}): @sssb/kit is installed from a ' +
+                'tarball of packages/kit alone, so an adopter has nothing there. Move what it needs into the ' +
+                'package (ADR-0014 P3).',
+        },
+    },
+    create(context) {
+        const check = (node) => {
+            const specifier = literalSpecifier(node)
+            const landing =
+                typeof specifier === 'string' ? outsideKitLanding(context.filename, specifier.trim()) : undefined
+            if (landing === undefined) return
+            context.report({ node, messageId: 'path', data: { specifier, landing: landing || '.' } })
+        }
+        return {
+            ImportDeclaration: (node) => check(node.source),
+            ExportNamedDeclaration: (node) => check(node.source),
+            ExportAllDeclaration: (node) => check(node.source),
+            TSExternalModuleReference: (node) => check(node.expression),
+            ...declarationlessVisitors(check),
+        }
+    },
 }
 /** @type {import('eslint').Rule.RuleModule} */
 const sssbNoPathToAppCodeRule = {
@@ -801,6 +851,7 @@ const sssbPlugin = {
         'no-dynamic-framework-import-in-core': sssbNoDynamicFrameworkImportInCoreRule,
         'no-jsx-in-core': sssbNoJsxInCoreRule,
         'no-path-to-app-code': sssbNoPathToAppCodeRule,
+        'no-path-out-of-package': sssbNoPathOutOfPackageRule,
         'no-raw-db-handle': sssbNoRawDbHandleRule,
     },
 }
@@ -1147,6 +1198,19 @@ const eslintConfig = [
         files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
         plugins: { sssb: sssbPlugin },
         rules: { 'sssb/no-dynamic-app-import': 'error', 'sssb/no-path-to-app-code': 'error' },
+    },
+    // THE PACKAGE'S EDGE (sssbNoPathOutOfPackageRule): no framework file, fixture included, reaches outside
+    // packages/kit by path. Two named exemptions, both P5's: the real-Postgres contract tests start their server
+    // through the repo's tests/support/contract-postgres.ts, which reads scripts/ports.mjs and embedded-postgres. P5
+    // moves the contract runner into @sssb/kit/testing; neither file ships (the `files` allowlist keeps tests out).
+    {
+        files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
+        ignores: [
+            'packages/kit/src/adapters/real/db.contract.test.ts',
+            'packages/kit/src/adapters/real/rds-data.contract.test.ts',
+        ],
+        plugins: { sssb: sssbPlugin },
+        rules: { 'sssb/no-path-out-of-package': 'error' },
     },
     // The fixture's syntax bans, decided one at a time rather than by inheriting the app's set.
     // APPLIED: getDb (its api/ + domain/ files are the app-shaped request path this template teaches —
