@@ -8,6 +8,7 @@ import * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import { failClosedEnvironmentProblems, migratorBundleProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '@sssb/tools/kit'
+import { databaseNameFor, SLUG } from './database-name.js'
 
 const { aws_budgets, aws_cloudfront, aws_cloudfront_origins, aws_cloudwatch, aws_ec2, aws_lambda } = cdk
 const { aws_lambda_nodejs, aws_rds, aws_s3 } = cdk
@@ -202,6 +203,8 @@ function stagedBundle(fn) {
     return { code: file === undefined ? undefined : readFileSync(file, 'utf8'), problems }
 }
 
+export { databaseNameFor } from './database-name.js'
+
 /**
  * An SSSB app's deployment (ADR-0001, ADR-0014 part 8): the Next standalone server in one Lambda behind the
  * AWS Lambda Web Adapter, its Function URL behind CloudFront with static assets from S3, the framework's
@@ -252,9 +255,11 @@ export class SssbApp extends Construct {
         // compare them, and the entry comes back from the resolver as a real path.
         const appDir = realpathSync(path.resolve(props.appDir))
         const slug = props.slug
-        if (!/^[a-z][a-z0-9-]*$/.test(slug ?? '')) {
+        if (!SLUG.test(slug ?? '')) {
             throw new Error(`SssbApp: slug must be lowercase letters, digits and dashes (got "${String(slug)}")`)
         }
+        // The database the migrator migrates and the server reads, named from the slug (databaseNameFor).
+        const databaseName = databaseNameFor(slug)
         // The slug names the database the migrator migrates and the server reads, so it must be this app's: a
         // root infra/ composing several apps could otherwise pair one app's directory with another's slug.
         const declared = declaredSlug(appDir)
@@ -316,7 +321,7 @@ export class SssbApp extends Construct {
             // The HTTPS endpoint the data-api transport calls. Left unset for pg, which needs no second way
             // in — unset rather than `false`, so the pg cluster synthesizes exactly as it did before.
             ...(dataApi && { enableDataApi: true }),
-            defaultDatabaseName: slug,
+            defaultDatabaseName: databaseName,
             storageEncrypted: true,
             removalPolicy,
         })
@@ -350,7 +355,7 @@ export class SssbApp extends Construct {
                   DATABASE_TRANSPORT: 'data-api',
                   DATABASE_CLUSTER_ARN: db.clusterArn,
                   DATABASE_SECRET_ARN: secret.secretArn,
-                  DATABASE_NAME: slug,
+                  DATABASE_NAME: databaseName,
               }
             : {
                   DATABASE_TRANSPORT: 'pg',
@@ -359,7 +364,7 @@ export class SssbApp extends Construct {
                   // (env-var exposure vs runtime secret fetch).
                   DATABASE_URL: `postgres://${secret.secretValueFromJson('username').unsafeUnwrap()}:${secret
                       .secretValueFromJson('password')
-                      .unsafeUnwrap()}@${db.clusterEndpoint.socketAddress}/${slug}`,
+                      .unsafeUnwrap()}@${db.clusterEndpoint.socketAddress}/${databaseName}`,
               }
 
         // pg: read the secret and open the database port to the function's security group. data-api: the
@@ -428,7 +433,11 @@ export class SssbApp extends Construct {
             ...lambdaNetwork,
             // pg: the handler builds its own connection string from the secret. data-api: the same
             // variables as the server (the handler follows DATABASE_TRANSPORT too).
-            environment: dataApi ? databaseEnv : { DATABASE_TRANSPORT: 'pg', DB_SECRET_ARN: secret.secretArn },
+            // On pg it gets the database's name too: the framework's handler prefers it to the secret's `dbname`,
+            // which the synthesized secret does not carry (only the cluster's secret attachment would add it, at deploy).
+            environment: dataApi
+                ? databaseEnv
+                : { DATABASE_TRANSPORT: 'pg', DB_SECRET_ARN: secret.secretArn, DATABASE_NAME: databaseName },
             bundling: {
                 format: aws_lambda_nodejs.OutputFormat.ESM,
                 // pg's optional native/cloudflare shims must stay external or esbuild chokes
