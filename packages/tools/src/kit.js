@@ -105,7 +105,7 @@ export function assertNoForeignFramework(appDir, file) {
  * app's directory, which is where Node's own lookup finds it. Throws, naming the app, when there is none.
  *
  * WALKED, NOT `require.resolve`d: Node's resolver falls back to NODE_PATH when the app's own chain has no match, and
- * `pnpm exec` and `pnpm run` set NODE_PATH to the workspace's hoisted `.pnpm/node_modules`. So for an app that
+ * pnpm's bin shims (which `pnpm exec <bin>` and package scripts run) set NODE_PATH to the workspace's hoisted `.pnpm/node_modules`. So for an app that
  * installs no framework, `require.resolve('@sssb/kit/…')` would quietly return the hoisted copy, another app's
  * instance: the slip rule 4 exists to prevent. The walk never consults NODE_PATH or the global folders.
  *
@@ -183,7 +183,7 @@ export function resolveFromApp(appDir, specifier, why) {
             ? `sssb: ${path.resolve(appDir)} cannot resolve \`${specifier}\`, which ${why}: check the \`imports\` of the app's package.json.`
             : `sssb: ${path.resolve(appDir)} does not install \`${specifier}\`, which ${why}. Add it to the app's devDependencies.`
     // The package must be on the app's own lookup chain. Node's resolver would otherwise fall back to NODE_PATH, which
-    // pnpm points at the hoisted store, and hand back a copy installed for another package (see kitDirOf).
+    // pnpm's bin shims point at the hoisted store, and hand back a copy installed for another package (see kitDirOf).
     // Node's built-ins and package imports (`#x`) are not packages on a lookup chain.
     const bare = !specifier.startsWith('node:') && !specifier.startsWith('#') && !builtinModules.includes(specifier)
     if (bare && packageDirFrom(appDir, packageNameOf(specifier)) === null) throw new UsageError(missing())

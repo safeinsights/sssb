@@ -77,7 +77,7 @@ describe('resolveAppsKit', () => {
     })
 
     it('says the app does not resolve @sssb/kit when nothing installs it, even with NODE_PATH at a hoisted copy', () => {
-        // `pnpm exec` and `pnpm run` set NODE_PATH to pnpm's hoisted `.pnpm/node_modules`, which Node's resolver honours
+        // pnpm's bin shims (which `pnpm exec <bin>` and package scripts run) set NODE_PATH to pnpm's hoisted `.pnpm/node_modules`, which Node's resolver honours
         // as a last resort. Resolved that way, an app with no framework of its own would get the hoisted one: another
         // app's instance. So the child runs with NODE_PATH pointing straight at a hoisted copy, and must still refuse.
         const script = [

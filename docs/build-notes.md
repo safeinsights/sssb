@@ -2066,7 +2066,7 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 
-- **`pnpm exec` and `pnpm run` set `NODE_PATH` to the workspace's hoisted `.pnpm/node_modules`**, and Node's resolver
+- **pnpm's bin shims (`node_modules/.bin/<bin>`, which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the workspace's hoisted `.pnpm/node_modules`**, and Node's resolver
   falls back to it when a package's own `node_modules` chain has no match. So `createRequire(app).resolve('@sssb/kit/…')`
   from an app that installs no framework does not fail: it returns the hoisted copy, another app's. A tool that must
   load THIS app's instance finds it by walking `node_modules` itself (`packages/tools/src/kit.js`). The resolver's test
@@ -2079,9 +2079,7 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   refused `@clerk/nextjs`'s ES build (`ERR_UNSUPPORTED_DIR_IMPORT`: it imports directories, written for bundlers), and
   then `import { Pool } from` `pg`'s CommonJS ("Named export 'Pool' not found"). tsx had hidden both, since it resolves
   like a bundler. The preflight bundle is CommonJS, and each external is the path of its `require` entry.
-- **A tool that loads `next.config.ts` from elsewhere breaks a working-directory default.** knip evaluates each app's
-  Next config from the repository root, so a preset that took the app's directory from `process.cwd()` computed the
-  next-intl request path relative to the root, and knip reported it unresolved. The apps pass `__dirname`.
+- **A tool that loads `next.config.ts` from elsewhere breaks a working-directory default.** With the preset taking the app's directory from `process.cwd()`, `pnpm knip` reported `./packages/kit/src/i18n/request.ts` as an unresolved import of both apps' `next.config.ts`: the next-intl request path had been computed from the repository root, where knip runs. The apps pass `__dirname`.
 - **The doc-path gate did not notice the scripts moving.** A file citation resolves when its parent directory exists
   (the recipes cite files you are meant to create), and `scripts/` still exists, so `scripts/ports.mjs` and the rest
   passed. They were found by grepping for the old paths; a move that leaves its directory behind needs that grep.

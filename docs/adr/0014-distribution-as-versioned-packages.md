@@ -870,13 +870,12 @@ long-lived token (D11), so the shared account's credentials are not part of any 
 P4 built `packages/tools` as the plan row says. Where it refined what the body said (each in `docs/decision-log.md`,
 "`@sssb/tools`"):
 
-- **Rule 4's resolver walks `node_modules` instead of calling `require.resolve(…, { paths: [appDir] })`.** `pnpm exec`
-  and `pnpm run` set `NODE_PATH` to the hoisted `.pnpm/node_modules`, Node's resolver falls back to it, and an app with
+- **Rule 4's resolver walks `node_modules` instead of calling `require.resolve(…, { paths: [appDir] })`.** pnpm's bin shims (which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the hoisted `.pnpm/node_modules`, Node's resolver falls back to it, and an app with
   no framework of its own then resolved the hoisted copy. The shared real-path check is unchanged.
 - **`@sssb/tools` is written in JavaScript with hand-written declarations**, not TypeScript built when packed, so its
   bin and presets run from source inside this repository.
 - **The presets load the tools they configure from the app** (next-intl's plugin, Vite's React plugin,
-  `vite-plugin-singlefile`, jest-dom), so `@sssb/tools` has no runtime peer to keep in step.
+  `vite-plugin-singlefile`, jest-dom), so `@sssb/tools` never brings a second copy; its only peers are optional (`next` and `vite` for types, `vitest` for the scratch-directory helper).
 - **The Vite and Vitest presets pass the seam explicitly**, as part 8 says every SSSB builder does. Pack and consume's
   proof of the seam link now comes from `tsc`, `next build`, the migrator bundle and the negative fixture.
 - **Each app declares its port slot** in its package.json (`"sssb": { "port": … }`); `sssb port` with no argument
