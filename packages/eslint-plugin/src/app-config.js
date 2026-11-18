@@ -151,6 +151,14 @@ function resolveRoot(root) {
     return { basePath: parent, prefix: '*/', apps }
 }
 
+/**
+ * `dir` as a glob Next's `settings.next.rootDir` matches to exactly that directory. Next replaces every backslash with
+ * a slash before fast-glob reads it, so a backslash escape becomes a path separator; a one-character class (`[(]`)
+ * survives. `!` stays as it is: `[!]` would be a negated class, and a `!` past the start of a pattern is literal.
+ * @param {string} dir
+ */
+const nextRootDir = (dir) => dir.replace(/[*?{}()+@#[\]]/g, (char) => `[${char}]`)
+
 // Next loads its config from these four names and no other (CONFIG_FILES in next's shared/lib/constants).
 const NEXT_CONFIG = 'next.config.{ts,mts,js,mjs}'
 // The files that legitimately reach a vendor directly, under an app prefix: Next's config, the contract tests, and the
@@ -243,6 +251,11 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             files: files('src'),
             plugins: { '@next/next': nextPlugin },
             rules: nextPlugin.configs.recommended.rules,
+            // Where Next's rules look for each app's `app/` and `pages/` (`no-html-link-for-pages`): the apps, not the
+            // directory ESLint runs from, which from the workspace root has neither, and warns "Pages directory cannot
+            // be found". Each is a glob to Next (fast-glob), which turns every backslash into a slash first, so a
+            // special character in a path is escaped as a one-character class instead (nextRootDir).
+            settings: { next: { rootDir: apps.map((app) => nextRootDir(app.dir)) } },
         }),
 
         // ---- the fences ----------------------------------------------------------------------------------------
@@ -348,13 +361,23 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             plugins: sssb,
             rules: { 'sssb/no-real-adapter-import': 'error' },
         }),
+        // SSSB's real adapters load their vendor SDK, so they are reached only by import(), deny-by-default over every
+        // file of the app, tests and stories included: a module outside src/ (a `lib/`, a test helper, a script) could
+        // otherwise re-export one into src/ with every check green. Ignored where the vendor ban is: the app's own real
+        // adapters, which may build on one as they import a vendor, and the three carve-outs.
+        at('kit-real-adapters-by-import', {
+            files: files(''),
+            ignores: [`${src('adapters/real')}/**`, ...carveOuts(P)],
+            plugins: sssb,
+            rules: { 'sssb/no-kit-real-adapter-import': 'error' },
+        }),
         // Inside it, the registry and the fakes: no static import of real/ (the registry's import() is the only way
-        // in), and none of SSSB's real adapters.
+        // in).
         at('registry-and-fakes', {
             files: files('src/adapters'),
             ignores: [`${src('adapters/real')}/**`],
             plugins: sssb,
-            rules: { 'sssb/no-static-real-adapter-import': 'error', 'sssb/no-kit-real-adapter-import': 'error' },
+            rules: { 'sssb/no-static-real-adapter-import': 'error' },
         }),
         // ...and only the registry loads real/ dynamically. The registry is `index.ts` and nothing else, as the
         // recipe names it: an `index.mjs` beside it is one more module that may not load real/. Stories keep it: a

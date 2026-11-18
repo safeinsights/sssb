@@ -62,7 +62,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   deleting the showcase with a red gate.
-- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 138 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 139 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it). Lint-enforced
   (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
   publish it; add the `exports` line deliberately, and never widen the map to silence the rule.
@@ -155,7 +155,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `pnpm pack-and-consume --update-lockfile` and commit `scripts/pack-and-consume/consumer-lock.yaml`.
   **Any migration/db change: `pnpm test:contract` here runs the same RLS proofs** for EVERY app AND SSSB's fixture
   seam, each in its own database, each twice: once through the `pg` driver and once through the RDS Data API driver
-  and its emulator, each also as a non-superuser owner, `packages/kit/src/db/owner-pass.ts`. An app's are the contract
+  and its emulator, each also as a non-superuser owner, `packages/kit/src/db/owner-pass.ts`, which grants a later owner
+  ADMIN on `app_user` and on the roles the seam names in `appRoles` (the fixture's
+  `packages/kit/test-fixture/app-config/db/migrations/1004_fixture_docket_clerk.ts` is the case). An app's are the contract
   runner's, `contractSuite` from `@sssb/kit/testing/contract`, called from `apps/<app>/tests/contract/`, with the
   conformance suite's opt-outs and skip guard; SSSB's fixture keeps its own in `packages/kit/src/adapters/real`.
   **Also wipe `apps/*/.data` after changing `packages/seed`** — the app seeder is guarded by "does this

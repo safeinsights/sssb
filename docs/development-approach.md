@@ -113,7 +113,7 @@ the tests in the next section, belongs to that app: `apps/<app>/src/ports/` for 
 `apps/<app>/src/adapters/` for its registry, fake and real adapter, with the vendor SDK confined to
 `adapters/real/`. The fence is the same one, drawn twice: the app's registry and fake are as vendor-free
 and `process.env`-free as the rest of the app, the registry takes the run mode from SSSB's `isSimulated`,
-and nothing else in the app imports a real adapter statically. `docs/recipes/app-owned-adapter.md` is the
+and nothing else on the app's request path imports a real adapter statically, its own or SSSB's. `docs/recipes/app-owned-adapter.md` is the
 how-to. The reason it is not "add it to SSSB" is ADR-0013: an adopter does not edit `packages/kit`, and
 a port SSSB would never accept upstream would otherwise be a merge conflict in their fork forever.
 

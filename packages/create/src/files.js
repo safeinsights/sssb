@@ -26,7 +26,6 @@ const VERIFY =
  *   owners: string[],
  *   meta: import('./template.js').TemplateMeta,
  *   sssbSpec: (pkg: string) => string,
- *   tarballs: Record<string, string> | null,
  *   workflowRef: string,
  * }} Context
  */
@@ -120,16 +119,6 @@ export function pnpmWorkspace(c) {
             `minimumReleaseAge: ${c.meta.minimumReleaseAge}`,
             'minimumReleaseAgeExclude:',
             "    - '@sssb/*'",
-        )
-    }
-    if (c.tarballs) {
-        lines.push(
-            '',
-            '# Every @sssb package from its packed tarball (`--sssb <dir>`), including where one SSSB package depends on',
-            '# another (@sssb/cdk on @sssb/tools), which would otherwise be looked for in the registry. Remove this block',
-            '# when you move to published versions.',
-            'overrides:',
-            ...Object.entries(c.tarballs).map(([pkg, file]) => `    '@sssb/${pkg}': ${yamlString(`file:${file}`)}`),
         )
     }
     return `${lines.join('\n')}\n`

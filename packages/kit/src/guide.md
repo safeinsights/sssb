@@ -18,7 +18,11 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - Vendor SDKs (`@clerk/*`, `@aws-sdk/*`, `@anthropic-ai/*`, `@sentry/*`, `posthog-*`, `mailgun.js`, `pg`) are
   imported only in an app's real adapters, `adapters/real/` (and in what runs outside the request path: `next.config.*`
   for the Sentry build plugin, the contract tests in `tests/contract/`, the deployment in `infra/`). Everything else
-  codes against a port: `@sssb/kit/ports/*`, or a port the app owns.
+  codes against a port: `@sssb/kit/ports/*`, or a port the app owns. SSSB's own real adapters
+  (`@sssb/kit/adapters/real/*`) load their SDK too, so every module of the app outside `adapters/real/` (which may
+  build on one) and the vendor carve-outs above, tests, stories and scripts included, reaches one only with `import()`
+  when `!isSimulated`, never by an import declaration (re-exports included; a type-only `import type` or
+  `export type`, which loads nothing, is allowed).
 - A vendor SSSB has no port for gets a port the app owns, under `src`: the port module (`ports/<name>.ts`), a registry
   (`adapters/index.ts`) that takes the run mode from SSSB's `isSimulated` (`@sssb/kit/adapters/index`) and loads the
   real adapter only with `import()`, a fake, and the real adapter in `adapters/real/`, the one directory that imports
@@ -45,6 +49,20 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - App migrations live in `src/app-config/db/migrations/`, numbered 1001 and up (0001–0999 are the framework's), and
   are listed in `src/app-config/db/migrations/index.ts`. A new tenant table copies the RLS pattern of
   `src/app-config/db/migrations/1001_items.ts`, and its isolation proofs go in `src/app-config/db/rls-proofs.ts`.
+- A role is cluster-wide, so a migration that creates one of the app's own creates it only where it does not exist
+  yet: a `DO` block that runs `CREATE ROLE reviewer NOLOGIN` only when
+  `NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'reviewer')`. Keep it an ordinary role, before and after every
+  migration: NOLOGIN, never CREATEDB, CREATEROLE, SUPERUSER, BYPASSRLS or REPLICATION, granted no privilege on a server
+  parameter (`GRANT ... ON PARAMETER`), the owner of no database or tablespace, and a member of no role (at any depth)
+  but `app_user` and the app's other named roles (`GRANT reviewer TO app_user` is fine;
+  `GRANT pg_read_all_data TO reviewer` is not). Leave the framework's `app_user` ordinary too, since every later owner
+  gets ADMIN on it as well: never change its attributes, give it no parameter privilege, database or tablespace, and grant it only
+  the app's named roles, never a `pg_*` one. Name your role in `appRoles`, exported beside `appMigrations` from
+  `src/app-config/db/migrations/index.ts`: `export const appRoles = ['reviewer'] as const`. The contract tests' owner
+  pass grants a later database owner ADMIN on exactly those roles and `app_user`, as Aurora's master user holds on a
+  role it created, and refuses a role that is not ordinary; the conformance suite's `app-roles` check fails a role the
+  migrations create and `appRoles` does not name, a name they do not create, and a named role or `app_user` they leave
+  more than ordinary. Never name `app_user` or a `pg_*` or `rds_*` role.
 - After any migration or database change, run the contract tests on real Postgres (`pnpm test:contract` from the
   workspace root). After renumbering or renaming a migration, wipe
   the local `.data` first.

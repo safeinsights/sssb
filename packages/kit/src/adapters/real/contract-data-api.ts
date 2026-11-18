@@ -42,7 +42,8 @@ export async function proveRlsThroughDataApi(server: ContractServer, database: s
 /**
  * The owner pass (../../db/owner-pass.ts), with every connection it opens made through the dialect, to an emulator
  * logged in as that login: on Aurora the secret IS the login. Only `admin` is plain `pg`: it creates the owner, grants
- * it the creator's membership where `app_user` already exists, and tears everything down. None of that is what is
+ * it the creator's membership where `app_user` (and any role the app names in `appRoles`) already exists, and tears
+ * everything down. None of that is what is
  * being proven. Then: the owner's migrations went the Data API's way (ONE transaction, opening with the
  * transaction-scoped lock, every statement on that one id, ending in a commit, all through the owner's emulator), and
  * its role switch inside withTenant did too (the one-statement setup, inside a transaction).
