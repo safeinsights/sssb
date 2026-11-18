@@ -25,7 +25,7 @@ export declare function assertAppsKitFile(appDir: string, file: string): string
 export declare function resolveAppsKit(appDir: string, subpath: string): string
 
 /**
- * Whether `file` is framework source: its nearest package.json is named `@sssb/kit`, wherever it sits (an installed
+ * Whether `file` is framework source: its nearest named package.json is `@sssb/kit`'s, wherever it sits (an installed
  * instance, a workspace link, or a copy of the framework's tree reached by a relative path).
  */
 export declare function isFrameworkFile(file: string): boolean

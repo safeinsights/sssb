@@ -3272,6 +3272,25 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
   from each app, and the sibling package `gate` uses `@sssb/tools`' helper with no framework installed.
 - **knip** cannot see what a preset loads from the app or what `@sssb/tools` imports from its optional peers; the
   narrow entries are in `docs/build-notes.md`.
+- **What review changed** (two rounds and a diff review, Opus and Fable). Framework source is now recognised by its
+  package, not its path: a file is the framework's when its nearest named package.json is `@sssb/kit`'s
+  (`isFrameworkFile`), which also catches a copy of the framework's tree reached by a relative path. The `dev:real`
+  preflight bundles every file outside `node_modules` (a workspace package the seam imports included, so its own
+  `@sssb/kit` imports are checked rather than loaded natively past the check) and runs the identity check on every
+  bundled input and every external. Each bundled file that uses `import.meta` is first transformed with `import.meta`
+  defined as an object holding its own location, since a CommonJS bundle has none. The Vite and Vitest presets add a
+  guard plugin that runs the same check on every module they load, so a workspace package bringing a framework
+  instance of its own fails there too, instead of running beside the app's on the app's seam. `resolveFromApp` walks
+  `node_modules` as `kitDirOf` does. The doc-path gate, and this repository's `tests/docs/doc-paths.test.ts`, fail an
+  `include` entry that names nothing. Labels for shards and launch configurations are unique; `sssb tick` and
+  `sssb dev-tick` take `--app`.
+- **The resolver is published as `@sssb/tools/kit`** (`kitDirOf`, `kitVersionOf`, `assertAppsKitFile`,
+  `resolveAppsKit`, `isFrameworkFile`, `assertNoForeignFramework`, `resolveFromApp`, `importFromApp`), at P9's
+  request: `@sssb/cdk`'s construct runs the same check rather than a second copy. P9 records the dependency that
+  takes on `@sssb/tools`.
+- **Port slots stay a closed list** (`showcase`, `starter`, `ladle`, `contractPg`), as `scripts/ports.mjs` had them, so
+  two apps of an adopter's own made from the starter share one; the independent review found it, and
+  `.claude/future-tasks/port-slots-for-adopter-apps.md` designs a slot an app declares itself.
   `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
 
 ## A Simulator control for the dev ticker, and focus on panel toggle (2026-11-18, `feat/simulator-ticker-control`)

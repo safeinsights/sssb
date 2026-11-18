@@ -28,7 +28,7 @@ export const DEFAULT_TIMEOUT_SECONDS = 60
 const MIN_TIMEOUT_SECONDS = 0.1
 const MAX_TIMEOUT_SECONDS = 3600
 
-const USAGE = `usage: pnpm tick [--url <origin>] [--timeout <seconds>]
+const USAGE = `usage: pnpm tick [--url <origin>] [--timeout <seconds>]   (sssb tick also takes --app <dir>)
        (per app: pnpm tick = showcase, pnpm tick:starter = starter; direct: sssb tick <${TICK_APPS.join('|')}> ...)
 
   --url <origin>       the dev server's origin, loopback only (default: this checkout's port for the app)

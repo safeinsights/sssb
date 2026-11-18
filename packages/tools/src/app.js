@@ -103,7 +103,8 @@ export function workspaceApps(root) {
 /**
  * A short, unique label for each app directory (relative to `root`), for names a person reads: CI shard and job
  * names, the browser pane's configurations. The directory's own name (`showcase`), or, when two apps share one, the
- * whole relative path with `/` as `-` (`services-web`). An app at the root is named by the root's directory.
+ * whole relative path with `/` as `-` (`services-web`). An app at the root is named by the root's directory. Two
+ * spellings that still meet (`a/x/web`, `a-x/web`) are told apart by a number on the later one (`a-x-web-2`).
  * @param {string} root
  * @param {string[]} apps
  * @returns {Map<string, string>}

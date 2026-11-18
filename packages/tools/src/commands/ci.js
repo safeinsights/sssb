@@ -4,7 +4,7 @@
 // checks.yml already does.
 //
 //   sssb ci e2e-shards                         print the e2e shard matrix (and write it to $GITHUB_OUTPUT)
-//   sssb ci e2e --app <dir> [--project <p>]    run one shard
+//   sssb ci e2e [--app <dir>] [--project <p>]  run one shard (the app in the working directory by default)
 //   sssb ci demo-static [--app <dir>]          build each app's static demo, check its size, run its e2e
 //
 // `e2e-shards` imports nothing outside Node, so it runs before `pnpm install`.

@@ -43,11 +43,12 @@ const packageNameOf = (specifier) =>
         .slice(0, specifier.startsWith('@') ? 2 : 1)
         .join('/')
 
-/** @type {Map<string, string | null>} the `name` of each directory's nearest package.json */
+/** @type {Map<string, string | null>} the `name` of each directory's nearest named package.json */
 const owningNames = new Map()
 
 /**
- * The `name` in the nearest package.json at or above `dir`, or null.
+ * The `name` in the nearest package.json at or above `dir` that has one (a nameless `{ "type": "module" }` is not a
+ * package), or null.
  * @param {string} dir
  * @returns {string | null}
  */
@@ -79,7 +80,7 @@ function owningPackageName(dir) {
 }
 
 /**
- * Whether `file` is framework source: its nearest package.json is named `@sssb/kit`, wherever it sits (an installed
+ * Whether `file` is framework source: its nearest named package.json is `@sssb/kit`'s, wherever it sits (an installed
  * instance, a workspace link, or a copy of the framework's tree reached by a relative path). Recognised by the
  * package, not by an `@sssb/kit` segment in the path, which a copy outside node_modules does not have.
  *
@@ -178,7 +179,9 @@ export function resolveAppsKit(appDir, subpath) {
  */
 export function resolveFromApp(appDir, specifier, why) {
     const missing = () =>
-        `sssb: ${path.resolve(appDir)} does not install \`${specifier}\`, which ${why}. Add it to the app's devDependencies.`
+        specifier.startsWith('#')
+            ? `sssb: ${path.resolve(appDir)} cannot resolve \`${specifier}\`, which ${why}: check the \`imports\` of the app's package.json.`
+            : `sssb: ${path.resolve(appDir)} does not install \`${specifier}\`, which ${why}. Add it to the app's devDependencies.`
     // The package must be on the app's own lookup chain. Node's resolver would otherwise fall back to NODE_PATH, which
     // pnpm points at the hoisted store, and hand back a copy installed for another package (see kitDirOf).
     // Node's built-ins and package imports (`#x`) are not packages on a lookup chain.

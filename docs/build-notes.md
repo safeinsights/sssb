@@ -2091,6 +2091,15 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   "referenced optional peerDependencies": each is needed only by the entry that imports it (the Next preset's types, the
   Vite preset's types, the scratch-directory helper's `afterAll`), so a package that uses only one helper need not
   install the others.
+- **A CommonJS bundle has an empty `import.meta`.** Bundling a workspace package that reads a file beside it with
+  `new URL('./data.txt', import.meta.url)` into the CommonJS preflight bundle crashed with `ERR_INVALID_URL`. Rewriting
+  `import.meta.url` as text fixed that and broke a file whose string literal mentioned it (`"see import.meta.url"`
+  became invalid code), and `replaceAll` read `$&` in a path as a pattern. What works is esbuild's own transform with a
+  per-file `define` of `import.meta` as an object: a define replaces expressions only, and covers the destructured form.
+- **Vitest 4 runs every `.ts` file through Vite's plugins, even under `node_modules`.** Its module runner externalizes
+  only `.js`, `.mjs`, `.cjs`, `.node` and `.wasm` files there, so a plugin's `load` hook sees the framework's
+  TypeScript, JSON and CSS from an installed instance, which is what lets the presets' guard check every framework
+  file a test loads.
 - **A Vitest config with an async default needs its return type named.** `defineConfig(async () => ({ … }))` failed
   `tsc` (no overload matched: the inferred literal is wider than `UserConfig`); `async (): Promise<ViteUserConfig> =>`
   passes. The config is async because the presets are: they `import()` the app's plugins.
