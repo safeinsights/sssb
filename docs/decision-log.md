@@ -4850,3 +4850,36 @@ installed once, on selected repositories, but which repositories are selected ne
 - **The first entry:** Integration 4038189 on `require-pr`, canopycms-release-bot, installed on
   `safeinsights/canopycms` only, vouched for by JP on 2026-11-18. It has to be re-vouched or removed if that App is
   ever installed on more repositories.
+
+## `@sssb/tools` is a peer of `@sssb/cdk`, and Next's lint knows the apps (2026-11-18, `fix/cdk-tools-peer`)
+
+Pages' switch to v0.2.0-rc.1 found two packaging problems (its items 1 and 5). ADR-0014's addendum of the same date
+records the first. Decisions, each with what was rejected:
+
+- **`@sssb/tools` is a peer of `@sssb/cdk`, not a dependency** (`packages/cdk/package.json`). Reproduced first with
+  the packed tarballs served over a local URL, installed as the rc.1 notes say (pnpm 11.14.0): with the notes'
+  `overrides`, `ERR_PNPM_EXOTIC_SUBDEP`; without them, pnpm asked npm for `@sssb/tools` and found only `0.0.0`. With the
+  peer and no `overrides`, the install resolved and cdk's peer was the package's own `@sssb/tools`. Rejected:
+  documenting `blockExoticSubdeps: false` (it turns off a supply-chain guard for every dependency of the workspace, to
+  admit one); keeping the dependency and `overrides` (the error above); publishing release candidates to a registry
+  (npm publishing waits for P14, and it would not fix the tarball recipe `@sssb/create --sssb` writes).
+- **Each app's `infra/` declares `@sssb/tools`** beside `@sssb/cdk` (`apps/starter/infra/package.json`,
+  `apps/showcase/infra/package.json`), so the peer is met by a dependency of the package itself rather than by pnpm's
+  `resolvePeersFromWorkspaceRoot` finding the root's copy, or `autoInstallPeers` asking the registry.
+- **The peer cannot lift the fixed group to 1.0.0** (part 10's reason for keeping peers out): measured with
+  `@changesets/cli` 3.0.3, a `minor` on `@sssb/tools` versions the set to 0.3.0 from 0.2.0 and to `rc.2` in pre mode;
+  a peer range the bump leaves out of range (`^0.2.0`) gave cdk a patch. The release plan's 1.0.0 backstop stays.
+- **No `overrides`, anywhere** (`release.mjs` `candidateNotes`, `@sssb/create`'s `--sssb`): nothing needs one now.
+- **The packed cdk's check** (`cdkPackProblems`, `scripts/pack-and-consume/checks.mjs`) requires `@sssb/tools` as a
+  required peer at exactly cdk's version, and fails it as a dependency.
+- **Pack and consume proves the notes' recipe** (`notesRecipe`, the pages shape): `candidateNotes` rendered for the
+  packed tarballs, its JSON block taken verbatim into a workspace package, the URLs pointed at a local server (a child
+  process, stopped when the step ends or the run exits), the generated workspace's `allowBuilds` kept (as an
+  adopter's workspace has them) and nothing else set. Rejected: rewriting the whole pages shape to install by URL (the
+  shape's `file:` installs and committed seed would need a URL token, for no more coverage of the recipe).
+- **Next's lint gets each app as its root dir** (`settings.next.rootDir` on the preset's `next` block,
+  `packages/eslint-plugin/src/app-config.js`). `@next/next/no-html-link-for-pages` looked for `pages/` and `app/`
+  under the directory ESLint ran from, so from a workspace root it printed "Pages directory cannot be found" on every
+  run (exit 0), and found no app to check links against. The preset already knows the apps (`resolveRoot`); each is
+  passed glob-escaped, since Next reads them with fast-glob. Rejected: switching the rule off (it then checks nothing
+  anywhere); an option adopters set (the preset has the answer).
