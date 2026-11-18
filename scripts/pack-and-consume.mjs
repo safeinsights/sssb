@@ -1,5 +1,5 @@
 // PACK AND CONSUME (ADR-0014 part 7, rule 5, step P2): proves the framework the way an adopter gets
-// it. Packs @sssb/kit and @sssb/tools, builds an adopter-shaped pnpm workspace OUTSIDE this repository from copies
+// it. Packs @sssb/kit, @sssb/tools and @sssb/eslint-plugin, builds an adopter-shaped pnpm workspace OUTSIDE this repository from copies
 // of apps/starter, installs the TARBALLS there (never `workspace:`), and runs that workspace's verify.
 //
 //   pnpm pack-and-consume [--dir <path>] [--skip-build-and-e2e]
@@ -14,6 +14,8 @@
 //                  tests with the framework's seam-conformance suites run from the tarball, the
 //                  migrator bundle, `next build`, e2e, the static demo, its size and its e2e. It owns an
 //                  adapter (src/adapters/real/), and a seam module that imports through its `@/` alias.
+//                  Each app lints with its own eslint.config.mjs (the plugin's preset), from the workspace root
+//                  and from the app, and passes `sssb check-fences`; the console has a lint-exceptions.mjs entry.
 //   apps/ledger    a second app with a different seam (its own slug and an extra migration, imported
 //                  through `@/`): typecheck, unit + conformance, and the migrator bundle, which must
 //                  hold its own migrations and not the console's.
@@ -54,6 +56,8 @@ import {
     lockfileProblems,
     seamPeerProblems,
     shippedFileProblems,
+    pluginManifestProblems,
+    pluginShippedFileProblems,
     toolsManifestProblems,
     toolsShippedFileProblems,
     tscErrors,
@@ -261,9 +265,9 @@ function copyTracked(from, to) {
 /**
  * One app, copied from apps/starter and turned into what an adopter's app looks like: the framework and the tools
  * from their tarballs, the seam as a linked package, and no alias, path or include that reaches into this repo.
- * @param {{ app: string, slug: string, tarball: string, toolsTarball: string }} options
+ * @param {{ app: string, slug: string, tarball: string, toolsTarball: string, pluginTarball: string }} options
  */
-function scaffoldApp({ app, slug, tarball, toolsTarball }) {
+function scaffoldApp({ app, slug, tarball, toolsTarball, pluginTarball }) {
     const dir = path.join(WS, 'apps', app)
     copyTracked('apps/starter', dir)
 
@@ -274,7 +278,20 @@ function scaffoldApp({ app, slug, tarball, toolsTarball }) {
     manifest.dependencies['@sssb/app-config'] = 'link:./src/app-config'
     if (!manifest.devDependencies?.['@sssb/tools']) fail('apps/starter does not take @sssb/tools as a devDependency')
     manifest.devDependencies['@sssb/tools'] = `file:${path.relative(dir, toolsTarball)}`
+    // The lint fences, as an adopter's app takes them: the plugin from its tarball, ESLint beside it, and the app's own
+    // eslint.config.mjs composing the preset (ADR-0014 part 4). ESLint 10 uses each file's nearest config, so the app's
+    // files get it whether ESLint runs here or from the workspace root.
+    applyWorkaround('eslint-configs-written')
+    manifest.devDependencies['@sssb/eslint-plugin'] = `file:${path.relative(dir, pluginTarball)}`
+    manifest.devDependencies.eslint = rangeOf('eslint')
     writeJson(path.join(dir, 'package.json'), manifest)
+    write(
+        path.join(dir, 'eslint.config.mjs'),
+        `import sssb from '@sssb/eslint-plugin'
+
+export default [...(await sssb.configs.app({ root: import.meta.dirname }))]
+`,
+    )
 
     // The seam package (ADR-0014 part 1, option C). Its exports cover every seam module the framework
     // imports: the flat `.ts` modules by pattern, the one directory module by name. The app's own module
@@ -358,6 +375,24 @@ const FOREIGN_MIGRATIONS = {
 
 /** The console: an app-owned adapter, and a seam module that imports through the app's `@/` alias. */
 function shapeConsole(/** @type {string} */ dir) {
+    // An app-owned lint exception (#51's lint-exceptions.mjs), as safeinsights/pages has one: the module it names may
+    // take the raw db handle, and `sssb check-fences` proves a sibling beside it may not.
+    write(
+        path.join(dir, 'src/domain/maintenance.ts'),
+        `import type { DbPort } from '@sssb/kit/ports/db'
+
+/** Runs as the system across every tenant, so it takes the raw handle: lint-exceptions.mjs names it. */
+export const systemHandle = (db: DbPort) => db.getDb()
+`,
+    )
+    write(
+        path.join(dir, 'lint-exceptions.mjs'),
+        `export default {
+    'sssb/no-raw-db-handle': [{ file: 'src/domain/maintenance.ts', reason: 'runs as the system across every tenant' }],
+}
+`,
+    )
+
     const manifest = readJson(path.join(dir, 'package.json'))
     manifest.dependencies['@aws-sdk/client-s3'] = readJson(path.join(REPO, 'packages/kit/package.json')).dependencies[
         '@aws-sdk/client-s3'
@@ -513,7 +548,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 }
 
 /** Builds the whole workspace under WS. */
-function scaffold(/** @type {string} */ tarball, /** @type {string} */ toolsTarball) {
+function scaffold(
+    /** @type {string} */ tarball,
+    /** @type {string} */ toolsTarball,
+    /** @type {string} */ pluginTarball,
+) {
     rmSync(WS, { recursive: true, force: true })
     mkdirSync(WS, { recursive: true })
 
@@ -532,11 +571,14 @@ function scaffold(/** @type {string} */ tarball, /** @type {string} */ toolsTarb
                 '@types/react',
                 '@types/react-dom',
                 '@vitejs/plugin-react',
+                '@eslint/js',
                 'esbuild',
+                'eslint',
                 'happy-dom',
                 'postcss',
                 'tsx',
                 'typescript',
+                'typescript-eslint',
                 'vite',
                 'vitest',
             ].map((name) => [name, rangeOf(name)]),
@@ -546,6 +588,29 @@ function scaffold(/** @type {string} */ tarball, /** @type {string} */ toolsTarb
     const rootManifest = readJson(path.join(WS, 'package.json'))
     rootManifest.devDependencies['@sssb/tools'] = `file:${path.relative(WS, toolsTarball)}`
     writeJson(path.join(WS, 'package.json'), rootManifest)
+
+    // The workspace root's own lint config, for what no app's config covers: the root's files and packages/*. Each
+    // app's own eslint.config.mjs lints the app's files, wherever ESLint is started (ESLint 10 takes each file's nearest
+    // config). The raw typescript-eslint configs and an explicit tsconfigRootDir, because typescript-eslint's
+    // \`configs\` getter records each config file that reads it and its parser refuses to guess between two.
+    write(
+        path.join(WS, 'eslint.config.mjs'),
+        `import js from '@eslint/js'
+import tseslint from 'typescript-eslint'
+
+export default [
+    { ignores: ['**/node_modules/**', '**/.next/**', '**/dist-demo/**'] },
+    js.configs.recommended,
+    ...tseslint.plugin.configs['flat/recommended'],
+    {
+        languageOptions: {
+            parserOptions: { tsconfigRootDir: import.meta.dirname },
+            globals: { process: 'readonly', console: 'readonly' },
+        },
+    },
+]
+`,
+    )
 
     // allowBuilds as this repo grants them; the rest is what an adopter's workspace sets (ADR-0014 part 5).
     applyWorkaround('allow-builds-copied')
@@ -580,8 +645,8 @@ minimumReleaseAge: 2880
         cpSync(LOCK_SEED, path.join(WS, 'pnpm-lock.yaml'))
     }
 
-    shapeConsole(scaffoldApp({ app: 'console', slug: 'console', tarball, toolsTarball }))
-    shapeLedger(scaffoldApp({ app: 'ledger', slug: 'ledger', tarball, toolsTarball }))
+    shapeConsole(scaffoldApp({ app: 'console', slug: 'console', tarball, toolsTarball, pluginTarball }))
+    shapeLedger(scaffoldApp({ app: 'ledger', slug: 'ledger', tarball, toolsTarball, pluginTarball }))
 
     // A sibling package that does not use the framework (Pages' packages/gate), only @sssb/tools' helper.
     writeJson(path.join(WS, 'packages/gate/package.json'), {
@@ -959,6 +1024,42 @@ function staticDemo() {
     run('pnpm', ['run', 'e2e:demo-static'], { cwd: appDir('console') })
 }
 
+/**
+ * The lint fences, the way an adopter runs them (ADR-0014 part 4): `eslint .` from the workspace root, where ESLint 10
+ * lints each app's files with the app's own config, and from each app; then `sssb check-fences` in each app, which
+ * compares every source file's effective config with the preset's and probes each fence and the console's
+ * lint-exceptions.mjs entry. Last, a fence is seen to REPORT from the root: a vendor import written into the console's
+ * domain, linted from the workspace root, must come back as sssb/no-vendor-import.
+ */
+function lint() {
+    run('pnpm', ['exec', 'eslint', '.'], { cwd: WS })
+    for (const app of ['console', 'ledger']) {
+        run('pnpm', ['exec', 'eslint', '.'], { cwd: appDir(app) })
+        run('pnpm', ['exec', 'sssb', 'check-fences'], { cwd: appDir(app) })
+    }
+    const probe = path.join(appDir('console'), 'src/domain/fence-probe.ts')
+    write(probe, "import { S3Client } from '@aws-sdk/client-s3'\nexport const client = S3Client\n")
+    try {
+        const linted = run('pnpm', ['exec', 'eslint', '--format', 'json', path.relative(WS, probe)], {
+            cwd: WS,
+            capture: true,
+            allowFailure: true,
+        })
+        const [result] = JSON.parse(linted.stdout)
+        const rules = (result?.messages ?? []).map((/** @type {{ ruleId: string }} */ m) => m.ruleId)
+        if (!rules.includes('sssb/no-vendor-import')) {
+            fail(
+                `linted from the workspace root, the console's vendor import was not reported (got: ${rules.join(', ') || 'nothing'})`,
+            )
+        }
+        console.log(
+            "from the workspace root, the console's own config reported its vendor import (sssb/no-vendor-import)",
+        )
+    } finally {
+        rmSync(probe, { force: true })
+    }
+}
+
 function negativeFixture() {
     const result = run('pnpm', ['exec', 'tsx', 'src/main.ts'], {
         cwd: path.join(WS, 'packages/seamless'),
@@ -1013,7 +1114,9 @@ const packedManifest = (file) =>
 
 /** @type {string} */
 let toolsTarball = ''
-step('pack @sssb/kit and @sssb/tools', () => {
+/** @type {string} */
+let pluginTarball = ''
+step('pack @sssb/kit, @sssb/tools and @sssb/eslint-plugin', () => {
     rmSync(TARBALLS, { recursive: true, force: true })
     tarball = pack('packages/kit')
     const manifest = packedManifest(tarball)
@@ -1036,8 +1139,24 @@ step('pack @sssb/kit and @sssb/tools', () => {
     console.log(
         `${path.basename(toolsTarball)}: ${files.length} files, ${Math.round(statSync(toolsTarball).size / 1024)} KB; JavaScript and declarations only, no SSSB dependency`,
     )
+
+    // @sssb/eslint-plugin: JavaScript ESLint loads directly, with no dependency on any SSSB package, and ESLint a peer.
+    pluginTarball = pack('packages/eslint-plugin')
+    const pluginFiles = run('tar', ['-tzf', pluginTarball], { cwd: BASE, capture: true })
+        .stdout.split('\n')
+        .filter(Boolean)
+        .map((file) => file.replace(/^package\//, ''))
+    const pluginProblems = [
+        ...pluginManifestProblems(packedManifest(pluginTarball)),
+        ...pluginShippedFileProblems(pluginFiles),
+    ]
+    if (pluginProblems.length > 0)
+        fail(`the packed @sssb/eslint-plugin is not what it must be:\n  ${pluginProblems.join('\n  ')}`)
+    console.log(
+        `${path.basename(pluginTarball)}: ${pluginFiles.length} files, ${Math.round(statSync(pluginTarball).size / 1024)} KB; JavaScript and declarations only, no SSSB dependency`,
+    )
 })
-step('scaffold the consumer workspace', () => scaffold(tarball, toolsTarball))
+step('scaffold the consumer workspace', () => scaffold(tarball, toolsTarball, pluginTarball))
 step('install the tarball', () => {
     run('pnpm', ['install', '--no-frozen-lockfile'], { cwd: WS })
     const lock = path.join(WS, 'pnpm-lock.yaml')
@@ -1052,6 +1171,7 @@ step('install the tarball', () => {
     for (const [name, file] of [
         ['@sssb/kit', tarball],
         ['@sssb/tools', toolsTarball],
+        ['@sssb/eslint-plugin', pluginTarball],
     ]) {
         const packed = `sha512-${createHash('sha512').update(readFileSync(file)).digest('base64')}`
         const locked = tarballIntegrities(lockText, name)
@@ -1077,6 +1197,7 @@ step('unit tests and seam conformance, from the workspace root', unitTests)
 step('migrator bundles, with no alias and no tsconfig', migratorBundles)
 step('negative fixture: an importer with no seam', negativeFixture)
 step('the dev:real preflight, through esbuild from each app', realEnvPreflight)
+step('lint from the workspace root and from each app, and sssb check-fences', lint)
 if (SKIP_BUILD_AND_E2E) {
     console.log('\n--skip-build-and-e2e: next build, e2e and the static demo were NOT run')
 } else {
