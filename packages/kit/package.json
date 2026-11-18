@@ -161,7 +161,7 @@
         "@sentry/nextjs": "^11.12.0",
         "jose": "^6.2.13",
         "kysely": "^0.29.7",
-        "mailgun.js": "^13.3.0",
+        "mailgun.js": "^14.1.1",
         "pg": "^8.23.1",
         "posthog-node": "^5.56.4",
         "server-only": "^0.0.1",
