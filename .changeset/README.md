@@ -15,6 +15,9 @@ CI's `changeset-required` job fails a PR that changes what ships to adopters and
   the day it lands), less tests, stories and a `test-fixture` directory. For `packages/kit` that is exactly what its
   `files` allowlist ships: `package.json`, `src` less tests and stories, and `dist`, built when the package is packed by `packages/kit/scripts/`, which the gate counts in its place.
 - **`apps/starter`**, the scaffold an adopter keeps and edits, which becomes `@sssb/create`'s template (ADR-0014 P12).
+- **`plugins/` and `.claude-plugin/`**, the Claude Code plugin and its marketplace (ADR-0014 P13), which an adopter's
+  Claude Code loads from this repository at the commit their `.claude/settings.json` pins. Name `@sssb/create` in
+  the changeset: the plugin is no npm package, and the generator is what writes that pin.
 
 Not gated: `apps/showcase`, `packages/seed` (the showcase's world, `@app/seed`), tests, scripts, docs and the
 lockfile. **Known gaps:** while adoption is still a fork that takes updates by merge (ADR-0013), a forking adopter

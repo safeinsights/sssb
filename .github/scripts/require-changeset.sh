@@ -13,7 +13,9 @@
 #     tests and stories, and `dist`, which is built when the package is packed (gitignored, so never in a diff) by
 #     packages/kit/scripts/, which therefore counts (tests/tooling/changesets.test.ts fails if the allowlist gains
 #     an entry this does not know);
-#   - apps/starter: the scaffold an adopter keeps and edits, which becomes @sssb/create's template (P12).
+#   - apps/starter: the scaffold an adopter keeps and edits, which becomes @sssb/create's template (P12);
+#   - plugins/ and .claude-plugin/: the Claude Code plugin and its marketplace, which an adopter's Claude Code loads
+#     from this repository at the commit their `.claude/settings.json` pins (P13).
 # Not gated: apps/showcase, packages/seed (`@app/seed`), tests, scripts, docs, infra, the lockfile. A forking adopter
 # receives some of those too; .changeset/README.md lists the known gaps.
 #
@@ -132,6 +134,9 @@ for f in ${changed[@]+"${changed[@]}"}; do
       fi
       ;;
     apps/starter/*) ;;
+    # The Claude Code plugin and its marketplace (P13): an adopter's Claude Code loads them from this repository at the
+    # commit their `.claude/settings.json` pins, so a change reaches them when they raise the pin at a release.
+    plugins/*|.claude-plugin/*) ;;
     *) continue ;;
   esac
   from_main "$f" && continue
