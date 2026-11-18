@@ -22,6 +22,8 @@ import { takeAppDir, UsageError } from '../app.js'
 import { assertAppsKitFile, kitDirOf, resolveAppsKit } from '../kit.js'
 
 const KIT_SEGMENT = `${path.sep}@sssb${path.sep}kit${path.sep}`
+/** The in-memory entry's name, as the metafile lists it. */
+const ENTRY = 'sssb-check-real-env.ts'
 
 /** @param {string[]} args */
 export async function run(args) {
@@ -37,7 +39,7 @@ export async function run(args) {
     const { build } = await import('esbuild')
     const outDir = mkdtempSync(path.join(tmpdir(), 'sssb-check-real-env-'))
     try {
-        const outfile = path.join(outDir, 'preflight.mjs')
+        const outfile = path.join(outDir, 'preflight.cjs')
         const tsconfig = path.join(appDir, 'tsconfig.json')
         const result = await build({
             stdin: {
@@ -56,13 +58,15 @@ export async function run(args) {
                     '}',
                 ].join('\n'),
                 resolveDir: appDir,
-                sourcefile: 'sssb-check-real-env.ts',
+                sourcefile: ENTRY,
                 loader: 'ts',
             },
             absWorkingDir: appDir,
             bundle: true,
             platform: 'node',
-            format: 'esm',
+            // CommonJS, so every external is a require() with esbuild's interop: the packages left external are
+            // loaded by their CommonJS builds where they have one (below), and Node 24 requires an ES-only one.
+            format: 'cjs',
             target: 'node22',
             outfile,
             metafile: true,
@@ -89,7 +93,19 @@ export async function run(args) {
                             const real = realpathSync(resolved.path)
                             const ownSource =
                                 real.startsWith(appSource) && !real.includes(`${path.sep}node_modules${path.sep}`)
-                            return ownSource ? { path: real } : { path: real, external: true }
+                            if (ownSource) return { path: real }
+                            // An external package is loaded by plain Node, so it gets the entry Node can load: the
+                            // `require` build where the package has one. Some packages' ES builds are written for
+                            // bundlers only (@clerk/nextjs's imports directories, which Node refuses), and a CommonJS
+                            // build resolves its own dependencies with Node's resolver from where it sits.
+                            const required = await build.resolve(args.path, {
+                                kind: 'require-call',
+                                importer: args.importer,
+                                resolveDir: args.resolveDir,
+                                pluginData: 'sssb-inner',
+                            })
+                            const loadable = required.errors.length === 0 && !required.external ? required.path : real
+                            return { path: realpathSync(loadable), external: true }
                         })
                     },
                 },
@@ -98,7 +114,7 @@ export async function run(args) {
         // Every bundled input that is framework code is the app's own instance: nothing reached another copy by a
         // relative path or an alias the plugin above never saw.
         for (const input of Object.keys(result.metafile.inputs)) {
-            if (input.startsWith('<stdin>')) continue
+            if (input === ENTRY) continue
             const real = realpathSync(path.resolve(appDir, input))
             if (real.includes(KIT_SEGMENT) || real.startsWith(kitDir + path.sep)) assertAppsKitFile(appDir, real)
         }
