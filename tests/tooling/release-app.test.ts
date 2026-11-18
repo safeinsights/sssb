@@ -397,7 +397,9 @@ describe('release-app create', () => {
         expect(h.text()).toContain('Not applied. Re-run with --apply')
         expect(h.gh.calls.some((c) => c.args[1] === '-X')).toBe(false)
         expect(h.text()).toContain('"require-pr" (7484436: deletion, non_fast_forward, pull_request)')
-        expect(h.text()).toContain('also lets Integration 4038189 (always) bypass it')
+        expect(h.text()).toContain(
+            'Integration 4038189 (always) on organisation ruleset "require-pr" (7484436): vouched for as unable to reach',
+        )
         // The form's private directory is gone.
         expect(readdirSync(h.tmpRoot)).toEqual([])
     })
@@ -580,9 +582,14 @@ describe('release-app verify and bypass', () => {
     })
 
     // The live organisation ruleset also lists canopycms-release-bot. It cannot reach this repository (JP vouched, in
-    // VOUCHED_ORG_BYPASSES), so it passes and is reported with its reason; an actor nobody vouched for still fails.
-    const withOrgActors = async (others: { actor_id: number; actor_type: string; bypass_mode: string }[]) => {
-        const gh = fakeGh({ secret: true, variable: CLIENT_ID })
+    // VOUCHED_ORG_BYPASSES), so it passes and is reported with its reason while the installation list agrees; an actor
+    // nobody vouched for still fails, and so does the vouched one once its installation widens.
+    const BOT = { actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' }
+    const withOrgActors = async (
+        others: { actor_id: number; actor_type: string; bypass_mode: string }[],
+        installations?: Record<string, unknown>[],
+    ) => {
+        const gh = fakeGh({ secret: true, variable: CLIENT_ID, ...(installations ? { installations } : {}) })
         const apply = harness({ gh, answers: ['apply'] })
         await bypassCommand(apply.deps, { appId: APP_ID, apply: true })
         const org = gh.state.rulesets.get(7484436)
@@ -590,30 +597,50 @@ describe('release-app verify and bypass', () => {
         const h = harness({ gh })
         return { code: await verifyCommand(h.deps, { appId: APP_ID, privateKey: PEM }), text: h.text() }
     }
+    const VOUCHED_LINE =
+        '✓ Integration 4038189 (always) on organisation ruleset "require-pr" (7484436): vouched for as unable to reach ' +
+        'safeinsights/sssb: canopycms-release-bot, installed on safeinsights/canopycms only, so it cannot push to ' +
+        'safeinsights/sssb (JP, 2026-11-18)'
 
     it('verify passes beside an organisation bypass actor someone vouched for, and says who and why', async () => {
-        const { code, text } = await withOrgActors([
-            { actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' },
-        ])
+        const { code, text } = await withOrgActors([BOT])
         expect(code, text).toBe(0)
-        expect(text).toContain(
-            '✓ organisation ruleset "require-pr" (7484436) also lets Integration 4038189 (always) bypass it, vouched for: ' +
-                'canopycms-release-bot, installed on safeinsights/canopycms only, so it cannot push to safeinsights/sssb ' +
-                '(JP, 2026-11-18)',
-        )
+        expect(text).toContain(VOUCHED_LINE)
         expect(text).not.toContain('✗')
     })
 
     it('verify still fails an organisation bypass actor nobody vouched for, beside one who is', async () => {
-        const { code, text } = await withOrgActors([
-            { actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' },
-            { actor_id: 4038190, actor_type: 'Integration', bypass_mode: 'always' },
-        ])
+        const { code, text } = await withOrgActors([BOT, { ...BOT, actor_id: 4038190 }])
         expect(code).toBe(1)
-        expect(text).toContain('vouched for: canopycms-release-bot')
+        expect(text).toContain(VOUCHED_LINE)
         expect(text).toContain(
             '✗ organisation ruleset "require-pr" (7484436) also lets Integration 4038190 (always) bypass it; the release app must be the only one',
         )
+    })
+
+    it.each([
+        ['installed on all repositories', { repository_selection: 'all' }, 'is installed on "all" repositories'],
+        ['suspended', { suspended_at: '2026-11-18T00:00:00Z' }, 'installation is suspended'],
+    ])('verify fails a vouched-for App once it is %s', async (_what, change, expected) => {
+        const installations = INSTALLATIONS.map((i) => (i.app_id === 4038189 ? { ...i, ...change } : i))
+        const { code, text } = await withOrgActors([BOT], installations)
+        expect(code).toBe(1)
+        expect(text).not.toContain(VOUCHED_LINE)
+        expect(text).toContain(
+            '✗ Integration 4038189 (always) on organisation ruleset "require-pr" (7484436) is vouched for',
+        )
+        expect(text).toContain(expected)
+    })
+
+    it('verify fails a vouched-for App with no installation, or two', async () => {
+        for (const installations of [
+            INSTALLATIONS.filter((i) => i.app_id !== 4038189),
+            [...INSTALLATIONS, { ...INSTALLATIONS[1], id: 97 }],
+        ]) {
+            const { code, text } = await withOrgActors([BOT], installations)
+            expect(code).toBe(1)
+            expect(text).toMatch(/App 4038189 has [02] installations in safeinsights, not one/)
+        }
     })
 
     it("verify fails on a client id that is not the App's", async () => {
@@ -847,7 +874,8 @@ describe('vouched organisation bypass actors', () => {
     it.each(VOUCHED_ORG_BYPASSES)('$name on ruleset $ruleset says who vouched, when, and why', (entry) => {
         expect(Number.isInteger(entry.ruleset) && entry.ruleset > 0).toBe(true)
         expect(Number.isInteger(entry.actorId) && entry.actorId > 0).toBe(true)
-        expect(['Integration', 'Team', 'RepositoryRole', 'OrganizationAdmin', 'DeployKey']).toContain(entry.actorType)
+        // Only an App: "cannot reach this repository" is never true of an organisation admin, a team or a role.
+        expect(entry.actorType).toBe('Integration')
         expect(entry.name.trim()).not.toBe('')
         expect(entry.reason.trim()).not.toBe('')
         expect(entry.vouchedBy.trim()).not.toBe('')

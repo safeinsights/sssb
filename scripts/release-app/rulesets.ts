@@ -34,18 +34,21 @@ type BypassActor = { actor_id: number | null; actor_type: string; bypass_mode: s
 
 /**
  * A bypass actor on an ORGANISATION ruleset that a person has vouched cannot use it on this repository, so the
- * release app is still, in effect, the only one. The API cannot show it: whether an App is installed on this
- * repository needs `admin:org` to list the organisation's installations, which this tool never asks for. So the
- * claim is checked in here, by name, with who made it and when, and `verify` and `bypass` report it as a ✓ with its
- * reason. It matches one actor on one ruleset exactly (type, id and ruleset id); anything else that bypasses an
- * organisation ruleset the release meets still fails. Re-vouch, or remove the entry, when the claim stops being true:
- * an App installed on more repositories later, say.
+ * release app is still, in effect, the only one. Only an App can be vouched for: "cannot reach this repository" is
+ * never true of an organisation admin, a team or a role. The API shows part of the claim and not the rest: the
+ * organisation's installation list (which `verify` already reads) says whether the App is installed once, on
+ * selected repositories, and not suspended, but which repositories are selected needs a token this tool does not
+ * have. So the claim is checked in here, by name, with who made it and when; `verify` and `bypass` report it as a ✓
+ * with its reason only while the installation list still agrees, and as a ✗ once it does not (the App moved to all
+ * repositories, a second installation, or none). It matches one actor on one ruleset exactly (id and ruleset id);
+ * anything else that bypasses an organisation ruleset the release meets still fails. Re-vouch, or remove the entry,
+ * when the claim stops being true.
  */
 export type VouchedBypass = {
     /** The organisation ruleset's id. */
     ruleset: number
-    /** GitHub's `actor_type` (`Integration` for an App) and `actor_id`. */
-    actorType: string
+    /** GitHub's `actor_type` and `actor_id`: an App, by its App id. */
+    actorType: 'Integration'
     actorId: number
     /** What the actor is, for a person reading the report. */
     name: string
