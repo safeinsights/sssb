@@ -7,6 +7,7 @@ import type { EmailPort } from '../ports/email'
 import type { JobsPort } from '../ports/jobs'
 import type { LlmPort } from '../ports/llm'
 import type { StoragePort } from '../ports/storage'
+import { simulatedDevServer } from './dev-server'
 import { fakeAnalytics } from './fake/analytics'
 import { fakeAuth } from './fake/auth'
 import { fakeDb } from './fake/db'
@@ -54,6 +55,18 @@ export const isDemoMode = process.env['DEMO_MODE'] === '1'
  * `.claude/future-tasks/resolved/e2e-against-production-build.md`.
  */
 const isE2eBuild = process.env['E2E_BUILD'] === '1'
+
+/**
+ * A developer's own `next dev` of a simulated world, and nothing else (./dev-server.ts says why each condition is
+ * there): what a dev-only Simulator affordance asks before it exists. False in real mode, in every production build
+ * (deployed, demo, e2e) and under Vitest.
+ */
+export const isSimulatedDevServer = simulatedDevServer({
+    isSimulated,
+    nodeEnv: process.env.NODE_ENV,
+    isDemoMode,
+    isE2eBuild,
+})
 
 // Fail CLOSED: a production build must never silently serve fake auth
 // because APP_MODE was forgotten. The guard is about ACCIDENTS, so every way past it is an explicit,

@@ -11,6 +11,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { appLabels } from '../../packages/tools/src/app.js'
 import { TMP_DIR_MARKER_SUFFIX } from '../../packages/tools/src/testing/tmp-dir-marker.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
@@ -366,5 +367,64 @@ describe('sssb check-tmpdir-leak', () => {
         const result = sssb(cwd, ['check-tmpdir-leak'])
         expect(result.status).toBe(1)
         expect(result.stderr).toContain('usage: sssb check-tmpdir-leak')
+    })
+})
+
+describe('appLabels', () => {
+    it('names each app by its directory, the path with dashes when two share a name, and `.` by the root', () => {
+        const root = path.join('/ws', 'my-repo')
+        expect([...appLabels(root, ['apps/showcase', 'apps/starter'])]).toEqual([
+            ['apps/showcase', 'showcase'],
+            ['apps/starter', 'starter'],
+        ])
+        expect([...appLabels(root, ['apps/web', 'services/web', 'apps/api'])]).toEqual([
+            ['apps/web', 'apps-web'],
+            ['services/web', 'services-web'],
+            ['apps/api', 'api'],
+        ])
+        expect([...appLabels(root, ['.'])]).toEqual([['.', 'my-repo']])
+    })
+
+    it('gives `ci e2e-shards` unique names for two apps that share a basename', () => {
+        const root = workspace('labels', { sssb: { apps: ['apps/web', 'services/web'] } })
+        for (const dir of ['apps/web', 'services/web']) {
+            app(root, dir, { name: dir.replace('/', '-') })
+            write(path.join(root, dir, 'playwright.config.ts'), 'export default {}\n')
+        }
+        const result = sssb(root, ['ci', 'e2e-shards'])
+        expect(result.status).toBe(0)
+        const line = result.stdout.split('\n').find((l) => l.startsWith('computed matrix: '))!
+        const names = JSON.parse(line.slice('computed matrix: '.length)).map((shard: { name: string }) => shard.name)
+        expect(names).toEqual(['apps-web', 'services-web'])
+    })
+})
+
+describe('sssb tick and dev-tick with --app', () => {
+    it('`tick --app <dir>` takes the slot from the app’s declared port, so it gets as far as reaching for the server', () => {
+        const root = workspace('tick-app')
+        const dir = app(root, 'apps/web', { name: 'web', sssb: { port: 'starter' } })
+
+        const result = sssb(root, ['tick', '--app', dir, '--url', 'http://127.0.0.1:1', '--timeout', '2'])
+
+        expect(result.stderr).toContain('tick: request to http://127.0.0.1:1')
+        expect(result.status).toBe(1)
+    })
+
+    it('`dev-tick --app <dir> -- <cmd>` runs the command in the app’s directory and returns its status', () => {
+        const root = workspace('devtick-app')
+        const dir = app(root, 'apps/web', { name: 'web', sssb: { port: 'starter' } })
+
+        const result = sssb(root, [
+            'dev-tick',
+            '--app',
+            dir,
+            '--',
+            process.execPath,
+            '-e',
+            'console.log(process.cwd()); process.exit(3)',
+        ])
+
+        expect(result.status).toBe(3)
+        expect(result.stdout.split('\n').map((l) => l.trim())).toContain(realpathSync(dir))
     })
 })

@@ -11,7 +11,7 @@
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { readJson, takeAppDir, takeOption, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
+import { appLabels, readJson, takeAppDir, takeOption, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
 
 const PLAYWRIGHT_CONFIGS = [
     'playwright.config.ts',
@@ -42,10 +42,12 @@ function sh(cwd, command) {
 export function e2eShards(root) {
     /** @type {{ name: string, app: string, run: string }[]} */
     const shards = []
-    for (const app of workspaceApps(root)) {
+    const apps = workspaceApps(root)
+    const labels = appLabels(root, apps)
+    for (const app of apps) {
         const config = PLAYWRIGHT_CONFIGS.map((name) => path.join(root, app, name)).find((file) => existsSync(file))
         if (!config) continue
-        const name = path.basename(app)
+        const name = labels.get(app) ?? app
         const base = `pnpm exec sssb ci e2e --app ${app}`
         if (/name:\s*['"]destructive['"]/.test(readFileSync(config, 'utf8'))) {
             shards.push({ name, app, run: `${base} --project chromium` })

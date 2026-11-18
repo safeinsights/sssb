@@ -2,7 +2,15 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { assertAppsKitFile, kitDirOf, kitVersionOf, resolveAppsKit } from '../../packages/tools/src/kit.js'
+import {
+    assertAppsKitFile,
+    assertNoForeignFramework,
+    isFrameworkFile,
+    kitDirOf,
+    kitVersionOf,
+    resolveAppsKit,
+    resolveFromApp,
+} from '../../packages/tools/src/kit.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
@@ -143,5 +151,71 @@ describe('assertAppsKitFile', () => {
         expect(assertAppsKitFile(app, errorsOf(elsewhere))).toBe(errorsOf(elsewhere))
         // ...and still refuses a different kit.
         expect(() => assertAppsKitFile(app, errorsOf(kitA))).toThrow('is not part of the @sssb/kit')
+    })
+})
+
+/** A plain COPY of the framework's tree outside node_modules, reached by a relative path in real life. */
+const kitCopy = path.join(WS, 'vendor', 'kit')
+writeKit(kitCopy, 'copy')
+const kitchen = path.join(WS, 'packages', 'kitchen')
+writeFile(path.join(kitchen, 'package.json'), JSON.stringify({ name: '@sssb/kitchen' }))
+writeFile(path.join(kitchen, 'src', 'x.ts'), '')
+const appFile = path.join(appA, 'src', 'thing.ts')
+writeFile(appFile, '')
+
+describe('isFrameworkFile', () => {
+    it('is true for a file whose nearest package.json is @sssb/kit, in node_modules or in a plain copy', () => {
+        expect(isFrameworkFile(errorsOf(kitA))).toBe(true)
+        expect(isFrameworkFile(errorsOf(kitCopy))).toBe(true)
+    })
+
+    it('is false for an app file and for a package merely named like the kit', () => {
+        expect(isFrameworkFile(appFile)).toBe(false)
+        expect(isFrameworkFile(path.join(kitchen, 'src', 'x.ts'))).toBe(false)
+    })
+})
+
+describe('assertNoForeignFramework', () => {
+    it('passes the app’s own kit file and files that are not framework source', () => {
+        expect(() => assertNoForeignFramework(appA, errorsOf(kitA))).not.toThrow()
+        expect(() => assertNoForeignFramework(appA, appFile)).not.toThrow()
+        expect(() => assertNoForeignFramework(appA, path.join(kitchen, 'src', 'x.ts'))).not.toThrow()
+    })
+
+    it('throws for another installed copy and for a plain copy of the framework tree', () => {
+        expect(() => assertNoForeignFramework(appA, errorsOf(kitB))).toThrow('is not part of the @sssb/kit')
+        expect(() => assertNoForeignFramework(appA, errorsOf(kitCopy))).toThrow('is not part of the @sssb/kit')
+    })
+})
+
+describe('resolveFromApp', () => {
+    const plugin = (dir: string) => {
+        writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'x-plugin', main: 'index.js' }))
+        writeFile(path.join(dir, 'index.js'), 'module.exports = 1\n')
+        return realpathSync(path.join(dir, 'index.js'))
+    }
+
+    it('refuses a package the app does not install, even when NODE_PATH holds a copy', () => {
+        const hoisted = realpathSync(makeTestTmpDir('sssb-tools-nodepath-'))
+        plugin(path.join(hoisted, 'x-plugin'))
+        const script = [
+            `import { resolveFromApp } from ${JSON.stringify(KIT_JS)}`,
+            `try { console.log(resolveFromApp(${JSON.stringify(lonely)}, 'x-plugin', 'tests need')) } catch (e) { console.log(e.message) }`,
+        ].join('\n')
+        const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+            encoding: 'utf8',
+            env: { ...process.env, NODE_PATH: hoisted },
+        })
+        expect(result.stdout).toContain('does not install `x-plugin`')
+    })
+
+    it('resolves a package in the app’s own node_modules or an ancestor’s', () => {
+        const own = plugin(path.join(appA, 'node_modules', 'x-plugin'))
+        expect(resolveFromApp(appA, 'x-plugin', 'tests need')).toBe(own)
+
+        const outer = realpathSync(makeTestTmpDir('sssb-tools-ancestor-'))
+        const inherited = plugin(path.join(outer, 'node_modules', 'x-plugin'))
+        writeFile(path.join(outer, 'deep', 'app', 'package.json'), JSON.stringify({ name: 'deep' }))
+        expect(resolveFromApp(path.join(outer, 'deep', 'app'), 'x-plugin', 'tests need')).toBe(inherited)
     })
 })
