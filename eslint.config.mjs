@@ -715,8 +715,10 @@ const appCodeDirOfPath = (filename, specifier) => {
 //  - from a SHIPPED file, a path to a file the tarball leaves out (a test, a story, the fixture, a config), which
 //    exists here, so it typechecks and runs here and fails only once installed.
 // "Shipped" reads packages/kit/package.json's `files`: `src`, minus every test and story, plus the files it names
-// back (tests/tooling/pack-and-consume.test.ts pins that shape). `/// <reference path>` counts as a path too. Its own
-// rule id; the two exemptions are named in the block that applies it.
+// back, and package.json and LICENSE, which ship whatever `files` says. tests/tooling/pack-and-consume.test.ts holds
+// the whole list to exactly `src`, the two negations (every test and every story, any extension) and then
+// CONFORMANCE_SUITES. A `/// <reference path=…>` or
+// relative `types=…` counts as a path too. Its own rule id; the two exemptions are named in the block that applies it.
 const KIT_DIR = 'packages/kit'
 const kitFiles = JSON.parse(readFileSync(join(import.meta.dirname, `${KIT_DIR}/package.json`), 'utf8')).files
 const SCRIPT_EXT = /\.[cm]?[jt]sx?$/

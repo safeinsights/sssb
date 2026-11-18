@@ -12,9 +12,8 @@
     "description": "SSSB — the framework half of this template: ports/adapters, RLS tenancy, authz, jobs, service auth, i18n and the Simulator harness. Apps extend it through the @sssb/app-config/* seam (ADR-0012).",
     "files": [
         "src",
-        "!src/**/*.test.ts",
-        "!src/**/*.test.tsx",
-        "!src/**/*.stories.tsx",
+        "!src/**/*.test.*",
+        "!src/**/*.stories.*",
         "src/i18n/namespaces.test.ts",
         "src/i18n/messages-parity.test.ts",
         "src/db/rls-pglite.test.ts",

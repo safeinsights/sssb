@@ -343,6 +343,8 @@ describe('a path into app code crosses the framework/app fence too', () => {
             ['a sibling of a suite named back, by its own extension', '../i18n/namespaces.test.tsx', 1],
             ['a suite named back, by its extension', '../i18n/namespaces.test.ts', 0],
             ["the package's own manifest, which always ships", '../../package.json', 0],
+            ['its LICENSE, which always ships', '../../LICENSE', 0],
+            ['another file beside src', '../../README.md', 1],
         ] as const
         it.each(reaches)('from shipped source, %s', async (_what, to, expected) => {
             expect(fired(await lint(shipped, `import x from '${to}'\nexport { x }\n`), UNSHIPPED_PATH)).toBe(expected)

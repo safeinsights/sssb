@@ -244,11 +244,11 @@ describe('shippedFileProblems', () => {
         const manifest = JSON.parse(
             readFileSync(path.resolve(import.meta.dirname, '../../packages/kit/package.json'), 'utf8'),
         ) as { files: string[] }
-        const negated = manifest.files.filter((entry) => entry.startsWith('!'))
-        const reincluded = manifest.files.slice(Math.max(...negated.map((entry) => manifest.files.indexOf(entry))) + 1)
-        expect(manifest.files[0]).toBe('src')
-        expect(negated).toEqual(['!src/**/*.test.ts', '!src/**/*.test.tsx', '!src/**/*.stories.tsx'])
-        expect([...reincluded].sort()).toEqual([...CONFORMANCE_SUITES].sort())
+        // Exactly: `src`, the two negations, then the suites named back, and nothing else anywhere in the list.
+        const [first, ...rest] = manifest.files
+        expect(first).toBe('src')
+        expect(rest.slice(0, 2)).toEqual(['!src/**/*.test.*', '!src/**/*.stories.*'])
+        expect([...rest.slice(2)].sort()).toEqual([...CONFORMANCE_SUITES].sort())
     })
 })
 
