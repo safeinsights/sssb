@@ -3194,3 +3194,22 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
   `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
+
+## Trojan Source scan and an action-pin gate, borrowed from CanopyCMS (2026-11-18, `ci/ci-hygiene`)
+
+- **A Trojan Source scan** (`.github/scripts/check-bidi.sh`, the first step after checkout in `checks.yml`, before
+  any install). It fails when a tracked file's contents or name holds one of the nine bidirectional reordering
+  codepoints (U+202A-202E, U+2066-2069), which let a reviewer read one program while the compiler builds another.
+  It is CanopyCMS's step, kept fail-closed: the locale is pinned, because `git grep -P` dies with exit 128 outside
+  a UTF-8 locale; the exit status is read with `case`, because `if git grep; then` reads 128 as "nothing found";
+  `pipefail` covers the filename pipeline; and the filename byte pattern is self-tested against all nine.
+- **An action SHA-pin gate** (`tests/tooling/action-pins.test.ts`, finder in `tests/support/action-pins.ts`). It
+  parses every workflow and local composite action and fails on a `uses:` that is not a full 40-hex SHA
+  (`./` refs exempt, `docker://` flagged). Every action is already pinned today, so it prevents drift (a job merged
+  from a sibling branch, a Dependabot bump to a tag) rather than fixing anything.
+- **A bash script and vitest tests, not `scripts/`.** P4 is moving `scripts/`, and P4, P5 and P6 own the root
+  `package.json` and `knip.json`; neither piece needs a `package.json` script or a knip entry here. The script's
+  tests (`tests/tooling/check-bidi.test.ts`) run it against real scratch repositories, including a repository
+  that is not one, and a parent `LC_ALL=C`.
+- **Rejected: porting `check-action-pins.mjs` into `scripts/`** with a `package.json` script. It would grep for
+  `uses:` rather than parse, and would touch the files other work owns.
