@@ -3186,3 +3186,39 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
   `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
+
+## `@sssb/cdk` and per-app infra (2026-11-18, ADR-0014 P9, `feat/sssb-cdk`)
+
+- **`SssbApp` is a construct with five props** (`appDir`, `slug`, `params`, `environment`, `production`). Rejected:
+  reading the `environment` context inside the construct, as the old stack did. Which environments exist is the app's
+  policy (Pages has its own), so `infra/app.ts` reads and checks the context and hands the construct a name and a
+  boolean.
+- **The construct's id is `Default`** in both apps, so logical ids stay as they were (ADR-0014, addendum 2026-11-18).
+  Rejected: a descriptive id such as `App`, which would have renamed every resource and made the first deploy after P9
+  replace the database and the VPC.
+- **The seam reaches esbuild as an alias alone; the app's tsconfig is no longer passed.** Rejected: passing both. Seen
+  failing without the alias: the bundle then names neither the app's migration registry nor any of its four migrations,
+  and the synth fails on each.
+- **Kit resolution and the assembly checks come from `@sssb/tools`** (P4's `kitDirOf`, `resolveAppsKit`,
+  `migratorBundleProblems`, `failClosedEnvironmentProblems`, the grant and Data API checks), copied into
+  `packages/cdk/src/_p4/` until P4 lands. Rejected: a second resolver in `@sssb/cdk`, which would split rule 4's one
+  shared check in two. `@sssb/tools` is asked to publish its resolver as `./kit`.
+- **`check-shapes` became `packages/cdk/src/sssb-app.test.js`, a Vitest project of its own (`cdk`)**, which discovers
+  every `apps/*/infra` and synthesizes both shapes for each. It reads `DATABASE_ENV` from the `@sssb/kit` each app
+  resolves (by file, since it is not a published subpath), so it keeps the runtime and the infra from drifting on a
+  name. `init-app` reserves the slug `cdk` with `kit`, since a project of that name would collide.
+- **Each app's infra is outside the app's vendor fence** (`APP_INFRA_GLOB`), as ADR-0014 part 8 asked: a CDK custom
+  resource there may call the AWS SDK. Pinned in `tests/lint/extensions.test.ts`, and seen failing without the
+  carve-out.
+- **`@sssb/cdk` typechecks under the strict set except `exactOptionalPropertyTypes`**, which aws-cdk-lib's own
+  declarations are not written for (five errors, every one between two of CDK's own types: `Vpc` against `IVpc`,
+  `Bucket` against `IBucket`, and the props objects that carry them). It ships JavaScript and a declaration
+  file, so an adopter's flags never reach its sources.
+- **`init-app` renames the app's infra package** (`<slug>-infra`) with the app, and refuses a slug that names one.
+  Nothing else in an app's `infra/` names the app, so nothing else is rewritten.
+- **CI synthesizes with `--fail-if-no-match`**, because `pnpm --filter` with no match exits 0: a tree whose apps all
+  lost their `infra/` would otherwise pass the synth step having run nothing.
+- **Pack and consume copies `apps/starter/infra` but does not install or synthesize it**: the consumer's workspace lists
+  `apps/*` and `packages/*`, and `@sssb/cdk` is not packed. The construct's synth assertions are what catch a wrong
+  kit or a wrong seam in a consumer; proving that from tarballs is P12's, when the generator ships the starter's
+  `infra/`.

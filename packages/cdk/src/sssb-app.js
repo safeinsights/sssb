@@ -2,17 +2,12 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import * as cdkNamespace from 'aws-cdk-lib'
+// A namespace import, never a default one: aws-cdk-lib is CommonJS, and a loader that compiles this file to
+// CommonJS (tsx, under an app whose infra has no `"type": "module"`) hands it `module.exports` with no `default`.
+import * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import { failClosedEnvironmentProblems, migratorBundleProblems } from './_p4/assembly-checks.js'
 import { kitDirOf, resolveAppsKit } from './_p4/kit.js'
-
-// aws-cdk-lib is CommonJS that defines its submodules lazily, which Node's CJS lexer does not see: imported
-// from ESM, they are only on `default`. A loader that compiles this file to CommonJS (tsx under a CJS app)
-// hands over `module.exports` itself, with no `default`. Take whichever this load got.
-const cdk = /** @type {typeof cdkNamespace} */ (
-    /** @type {{ default?: typeof cdkNamespace }} */ (cdkNamespace).default ?? cdkNamespace
-)
 
 const { aws_budgets, aws_cloudfront, aws_cloudfront_origins, aws_cloudwatch, aws_ec2, aws_lambda } = cdk
 const { aws_lambda_nodejs, aws_rds, aws_s3 } = cdk
@@ -118,7 +113,7 @@ function resolveMigrator(appDir) {
 /**
  * A function's final environment as it will be deployed: the rendered CloudFormation, escape-hatch overrides
  * included, with every token the stack can resolve resolved.
- * @param {cdkNamespace.aws_lambda.Function} fn
+ * @param {cdk.aws_lambda.Function} fn
  * @returns {Record<string, unknown>}
  */
 function finalEnvironment(fn) {
@@ -135,7 +130,7 @@ function finalEnvironment(fn) {
 
 /**
  * The code esbuild staged for a NodejsFunction during this synth, or `undefined` when there is none.
- * @param {cdkNamespace.aws_lambda.Function} fn
+ * @param {cdk.aws_lambda.Function} fn
  * @returns {string | undefined}
  */
 function stagedBundle(fn) {
@@ -241,7 +236,7 @@ export class SssbApp extends Construct {
             storageEncrypted: true,
             removalPolicy,
         })
-        const secret = /** @type {cdkNamespace.aws_secretsmanager.ISecret} */ (db.secret)
+        const secret = /** @type {cdk.aws_secretsmanager.ISecret} */ (db.secret)
 
         // ---- buckets ----------------------------------------------------------------------
         // CDN-served build assets — written by the deploy pipeline only.
@@ -286,7 +281,7 @@ export class SssbApp extends Construct {
         // pg: read the secret and open the database port to the function's security group. data-api: the
         // RDS Data API actions on THIS cluster and read on its secret, nothing else; IAM is the whole
         // boundary on that path, so it is scoped to the one cluster (cutover row `data-api-access`).
-        /** @param {cdkNamespace.aws_lambda.Function} fn */
+        /** @param {cdk.aws_lambda.Function} fn */
         const grantDatabase = (fn) => {
             if (dataApi) {
                 db.grantDataApiAccess(fn)

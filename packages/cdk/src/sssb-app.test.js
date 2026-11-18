@@ -7,17 +7,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import * as cdkNamespace from 'aws-cdk-lib'
+import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../../../tests/support/tmp-dir'
 import { dataApiShapeProblems, lambdaBundles, lambdaFunction, secretGrantProblems } from './_p4/assembly-checks.js'
 import { kitDirOf } from './_p4/kit.js'
 import { SssbApp } from './index.js'
-
-const cdk = /** @type {typeof cdkNamespace} */ (
-    /** @type {{ default?: typeof cdkNamespace }} */ (cdkNamespace).default ?? cdkNamespace
-)
 
 /** @typedef {import('./_p4/assembly-checks.d.ts').Resources} Resources */
 /** @typedef {'pg' | 'data-api'} Transport */
@@ -135,7 +131,7 @@ describe('the synth assertions fail', () => {
         expect(withServer((app) => app.server.addEnvironment('DEMO_MODE', '1'))).toThrow(/DEMO_MODE is set/)
         expect(
             withServer((app) => {
-                const cfn = /** @type {cdkNamespace.CfnResource} */ (app.server.node.defaultChild)
+                const cfn = /** @type {cdk.CfnResource} */ (app.server.node.defaultChild)
                 cfn.addPropertyOverride('Environment.Variables.E2E_BUILD', '0')
             }),
         ).toThrow(/E2E_BUILD is set/)
@@ -147,7 +143,7 @@ describe('the synth assertions fail', () => {
         )
         expect(
             withServer((app) => {
-                const cfn = /** @type {cdkNamespace.CfnResource} */ (app.server.node.defaultChild)
+                const cfn = /** @type {cdk.CfnResource} */ (app.server.node.defaultChild)
                 cfn.addPropertyDeletionOverride('Environment')
             }),
         ).toThrow(/APP_MODE is undefined/)

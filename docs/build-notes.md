@@ -2063,3 +2063,21 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 - **Prove what a bundle holds from the bundler's own module list.** Next's chunks name modules by their
   `node_modules/.pnpm/...` path; the static demo's list comes from Rollup's `this.getModuleIds()` in a scratch
   plugin; the migrator's from an esbuild metafile.
+
+## `@sssb/cdk` (2026-11-18, ADR-0014 P9)
+
+- **Import aws-cdk-lib as a namespace, never by default.** Under tsx, when a CommonJS app (`infra/app.ts`, in a
+  package with no `"type"`) loads the construct, tsx compiles the ESM construct to CommonJS, and aws-cdk-lib's
+  `module.exports` carries `__esModule`, so a default import is `undefined` (`Cannot destructure property
+'aws_budgets'`). `import * as cdk` works there and under plain Node ESM alike.
+- **An esbuild alias beats the nearest tsconfig's `paths`.** In this repo the files of `packages/kit/src` have no
+  tsconfig of their own, so the one esbuild finds is the root's, whose `@sssb/app-config/*` points at the test
+  fixture. With `--alias:@sssb/app-config=<app>/src/app-config` the bundle names the app's migration index and none
+  of the fixture's, and without it the synth fails on every one of the app's migrations.
+- **A construct validation is where to read what will be deployed.** `node.addValidation` runs inside `app.synth()`
+  after every construct has had its say, so the server's environment is final there; rendering the function's
+  `CfnFunction` through `_toCloudFormation()` includes escape-hatch overrides, which `addEnvironment` bookkeeping does
+  not. The migrator's bundle is already staged then (`<fn>/Code/Stage`'s `absoluteStagedPath`), because asset
+  bundling runs in the constructor.
+- **CDK caches a staged bundle for the rest of the process.** The test that tampers with one calls
+  `AssetStaging.clearAssetHashCache()` afterwards, or a later synth in the same file would be handed the tampered copy.

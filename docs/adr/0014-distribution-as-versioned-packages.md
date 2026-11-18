@@ -864,3 +864,25 @@ address, so no one person's absence locks the names. This changes two things the
 
 Nothing else in the body changed. Publishing still goes through trusted publishing from GitHub Actions with no
 long-lived token (D11), so the shared account's credentials are not part of any release.
+
+## Addendum — 2026-11-18: P9, what the body did not pin down
+
+P9 built `@sssb/cdk` and moved the root `infra/` into each app. Details the body left open, each argued in
+`docs/decision-log.md` (2026-11-18, P9):
+
+- **The construct's props** are `appDir`, `slug`, `params` (it reads `params.database.transport`), `environment`
+  (a name, the app's own policy) and `production` (a boolean). Which environments exist, the context that picks one, the
+  stack, its id and its tags stay in the app's `infra/app.ts`: they are the adopter's policy, not SSSB's.
+- **Logical ids are unchanged.** Each app's `infra/app.ts` gives the construct the id `Default`, which CDK leaves out of
+  every logical id under it, so every resource and output keeps the id it had as a child of the old `AppStack`. Compared
+  on both network shapes: the same ids, and the same properties but for the VPC's `Name` tags (which carry the construct
+  path) and the migrator's asset hash.
+- **The migrator is bundled with the seam alias and no tsconfig.** The old stack passed the app's tsconfig; with the
+  alias that is no longer what decides the seam, and passing it only added `"use strict"` to the wrapped CommonJS
+  modules. Dropping it is the only change in the bundle's contents, and why its asset hash changed.
+- **The version check runs at construction**, when the construct resolves `@sssb/kit` from the app, and fails the
+  synth with both versions named. The environment and bundle checks run as a construct validation, so they read
+  the final rendered template, escape-hatch overrides included. The bundle check is skipped only when the synth does
+  not bundle the stack at all (`cdk deploy OtherStack`), the one case in which there is no bundle to read.
+- **Until P4 merges**, `packages/cdk/src/_p4/` holds a copy of `@sssb/tools`'s assembly checks and its kit resolver;
+  the PR that brings P4 in deletes it in favour of `@sssb/tools`.

@@ -939,3 +939,14 @@ Nothing else in this ADR changed. The seam is still plain modules, imported dire
 one module per capability, and inside this repository it still resolves through each app's own alias (now keyed
 `@sssb/app-config`), with the root tsconfig pointing it at the framework's test fixture. `@sssb/kit` declares the
 seam as an optional peer, the form an adopter's linked seam will take (ADR-0014, part 1).
+
+## Addendum (2026-11-18): the deployment is the app's, and the migrator is resolved from it
+
+ADR-0014's P9 moved the root `infra/` into each app (`apps/<app>/infra/`), so the repo scaffold no longer holds a
+deployment that belongs to neither side of the line. The reusable part, the `SssbApp` construct, is `@sssb/cdk`
+(`packages/cdk`), which does not depend on `@sssb/kit`. The second construction-time call site this ADR named, the
+stack bundling the migrator from a file path in `packages/kit`, is gone: the construct resolves
+`@sssb/kit/adapters/real/migrate-handler` from the app's directory, passes the app's seam to esbuild explicitly
+(`--alias:@sssb/app-config=<app>/src/app-config`), and fails `cdk synth` unless the bundle carries the app's own
+migrations. Each app's `infra/` is a CDK project, not app source: the app's vendor fence does not reach it
+(`APP_INFRA_GLOB` in `eslint.config.mjs`), and nothing typechecks it but its synth.
