@@ -510,14 +510,14 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
             const pkg = JSON.parse(readProbe(`apps/${SLUG}/package.json`, probe)) as {
                 scripts?: Record<string, string>
             }
-            return /check-demo-size\.mjs\s+(\d+)\s*$/.exec(pkg.scripts?.['check:demo-size'] ?? '')?.[1]
+            return /\bsssb check-demo-size\s+(\d+)\s*$/.exec(pkg.scripts?.['check:demo-size'] ?? '')?.[1]
         }
 
         it("names the number the app's own package.json passes", () => {
             const budget = budgetOf(ejected)
             expect(
                 budget,
-                'the starter no longer passes check-demo-size.mjs a number: rewrite the bullet',
+                'the starter no longer passes sssb check-demo-size a number: rewrite the bullet',
             ).toBeDefined()
             expect(flat(ejected.output)).toContain(
                 `apps/${SLUG}/package.json's check:demo-size passes the static demo's byte budget, ${budget}.`,
@@ -530,7 +530,7 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
                     `apps/${SLUG}/DEMO-SIZE.md says what the number was set for, and is where you record each change and why.`,
                 )
                 expect(flat(probe.output)).toContain(
-                    "scripts/check-demo-size.mjs is SSSB's, and an upstream merge will change it: re-set the number in package.json, never in the script.",
+                    "The command, `sssb check-demo-size`, is SSSB's (@sssb/tools): re-set the number in package.json.",
                 )
             }
         })
@@ -539,18 +539,13 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
             const note = readProbe('apps/' + SLUG + '/DEMO-SIZE.md')
             expect(note).toContain('## Changes')
             expect(note).toContain("SSSB's history for the starter")
-            expect(note).toContain('scripts/check-demo-size.mjs')
+            expect(note).toContain('sssb check-demo-size')
         })
 
-        it('leaves scripts/check-demo-size.mjs exactly as the template has it, whichever way it is called', () => {
-            // SSSB's file: an upstream merge changes it, so adoption must not.
-            const template = readFileSync(path.join(ROOT, 'scripts/check-demo-size.mjs'), 'utf8')
-            expect(readProbe('scripts/check-demo-size.mjs', ejected)).toBe(template)
-            expect(readProbe('scripts/check-demo-size.mjs', named)).toBe(template)
-        })
-
-        it('points at a script that has what it promises: a WHEN IT GOES RED section', () => {
-            expect(readProbe('scripts/check-demo-size.mjs')).toContain('WHEN IT GOES RED')
+        it('points at a command that has what it promises: a WHEN IT GOES RED section', () => {
+            expect(readFileSync(path.join(ROOT, 'packages/tools/src/commands/check-demo-size.js'), 'utf8')).toContain(
+                'WHEN IT GOES RED',
+            )
         })
 
         it("states a renamed showcase's own number, and does not point at a DEMO-SIZE.md it has not got", () => {
@@ -560,13 +555,13 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
             const showcase = JSON.parse(readFileSync(path.join(pristineDir, 'apps/showcase/package.json'), 'utf8')) as {
                 scripts: Record<string, string>
             }
-            const budget = /check-demo-size\.mjs\s+(\d+)\s*$/.exec(showcase.scripts['check:demo-size'] ?? '')?.[1]
+            const budget = /\bsssb check-demo-size\s+(\d+)\s*$/.exec(showcase.scripts['check:demo-size'] ?? '')?.[1]
             expect(budget, "the showcase's check:demo-size no longer passes a number").toBeDefined()
             expect(flat(result.stdout)).toContain(
                 `apps/demo/package.json's check:demo-size passes the static demo's byte budget, ${budget}.`,
             )
             expect(flat(result.stdout)).not.toContain('DEMO-SIZE.md')
-            expect(flat(result.stdout)).toContain('re-set the number in package.json, never in the script')
+            expect(flat(result.stdout)).toContain('re-set the number in package.json.')
         })
 
         it('says nothing, rather than guess, when the script is not the shape the template ships', () => {
@@ -574,9 +569,9 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
             // more shell, an underscored number the script would reject, no number at all (which the script
             // now refuses), and no script.
             for (const [label, script] of [
-                ['a number then more shell', 'node ../../scripts/check-demo-size.mjs 820000 && echo ok'],
-                ['an underscored number', 'node ../../scripts/check-demo-size.mjs 820_000'],
-                ['no number', 'node ../../scripts/check-demo-size.mjs'],
+                ['a number then more shell', 'sssb check-demo-size 820000 && echo ok'],
+                ['an underscored number', 'sssb check-demo-size 820_000'],
+                ['no number', 'sssb check-demo-size'],
                 ['no script', undefined],
             ] as const) {
                 const dir = makeTestTmpDir('sssb-adopter-identity-budget-')
@@ -600,7 +595,7 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
             expect(result.status, result.stderr).toBe(0)
             expect(flat(result.stdout)).toContain('The demo size budget')
             expect(flat(result.stdout)).not.toContain('DEMO-SIZE.md')
-            expect(flat(result.stdout)).toContain('re-set the number in package.json, never in the script')
+            expect(flat(result.stdout)).toContain('re-set the number in package.json.')
         })
     })
 

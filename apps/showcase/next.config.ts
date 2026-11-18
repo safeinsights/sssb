@@ -1,40 +1,20 @@
 import { withSentryConfig } from '@sentry/nextjs/config'
-import type { NextConfig } from 'next'
-import createNextIntlPlugin from 'next-intl/plugin'
+import { withSssb } from '@sssb/tools/next'
 import { params } from './config/params'
 
-// The request config moved into the framework package (ADR-0012), so the plugin is pointed at it
-// explicitly — next-intl's default lookup only knows ./src/i18n/request.ts.
-const withNextIntl = createNextIntlPlugin('../../packages/kit/src/i18n/request.ts')
-
-const nextConfig: NextConfig = {
-    // The deployed artifact is this same standalone server in a Lambda (ADR-0001).
-    output: 'standalone',
+// What every SSSB app needs (the framework transpiled, next-intl pointed at the framework's request config, the
+// standalone output, the native server packages external, a hermetic `next dev`) comes from the preset.
+const nextConfig = withSssb({
     typedRoutes: true,
-    transpilePackages: ['@app/seed', '@sssb/kit'],
-    // Native/WASM server deps stay external so their runtime file loading keeps working.
-    serverExternalPackages: ['@electric-sql/pglite', 'pg'],
-    // Without this, `next dev` writes an AGENTS.md into the app whenever it detects an AI coding agent,
-    // and an agent's `pnpm verify` leaves it untracked. SSSB's agent guide is the root CLAUDE.md
-    // (decision-log, 2026-11-16). Option defined in
-    // node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/agentRules.md
-    agentRules: false,
-    experimental: {
-        // Off because `pnpm dev` must make no network calls (CLAUDE.md). By default every `next dev`
-        // outside CI queries npm's advisory feed for the installed next (so does `next build` run by an
-        // agent or at a prompting terminal), and an agent's run stops when an advisory matches
-        // (build-notes, 2026-11-16). Option defined in
-        // node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/agentUpgrade.md
-        agentUpgrade: false,
-    },
-}
+    transpilePackages: ['@app/seed'],
+})
 
 // Sentry wraps the build ONLY when a DSN exists (cutover row `errors`) — hermetic builds make
 // zero network calls and skip sourcemap upload entirely.
 export default process.env.NEXT_PUBLIC_SENTRY_DSN
-    ? withSentryConfig(withNextIntl(nextConfig), {
+    ? withSentryConfig(nextConfig, {
           org: params.sentry.org,
           project: params.sentry.project,
           silent: true,
       })
-    : withNextIntl(nextConfig)
+    : nextConfig

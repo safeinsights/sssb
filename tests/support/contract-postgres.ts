@@ -3,7 +3,7 @@ import { Kysely, PostgresDialect, sql } from 'kysely'
 import { Pool } from 'pg'
 import type { Login } from '@sssb/kit/db/owner-pass'
 import type { DB } from '@sssb/kit/db/schema'
-import { portFor } from '../../scripts/ports.mjs'
+import { portFor } from '@sssb/tools/ports'
 import { makeTestTmpDirAsync } from './tmp-dir'
 
 /**

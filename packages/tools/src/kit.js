@@ -11,6 +11,7 @@
 import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const KIT = '@sssb/kit'
 
@@ -99,4 +100,16 @@ export function resolveFromApp(appDir, specifier, why) {
             { cause: error },
         )
     }
+}
+
+/**
+ * Loads a package the APP installs (see resolveFromApp) and returns its module namespace. A CommonJS package's
+ * `module.exports` arrives as `default`, and its named exports as Node's CJS lexer finds them.
+ * @param {string} appDir
+ * @param {string} specifier
+ * @param {string} why
+ * @returns {Promise<Record<string, unknown>>}
+ */
+export async function importFromApp(appDir, specifier, why) {
+    return await import(pathToFileURL(resolveFromApp(appDir, specifier, why)).href)
 }

@@ -52,8 +52,7 @@ export async function run(args) {
         cpSync(path.join(root, 'public'), path.join(serverDir, 'public'), { recursive: true })
     }
 
-    const port =
-        process.env['PORT'] ?? String(portFor(/** @type {import('../ports.d.ts').PortService} */ (service)))
+    const port = process.env['PORT'] ?? String(portFor(/** @type {import('../ports.d.ts').PortService} */ (service)))
 
     // PIN THE WORLD TO THE APP, not to the build output. The fake adapters resolve `.data` relative to the working
     // directory, and this child's is `serverDir`, somewhere inside `.next/standalone/…`. Left alone it writes its

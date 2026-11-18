@@ -87,7 +87,8 @@ export async function run(args) {
                                 return { path: assertAppsKitFile(appDir, resolved.path) }
                             }
                             const real = realpathSync(resolved.path)
-                            const ownSource = real.startsWith(appSource) && !real.includes(`${path.sep}node_modules${path.sep}`)
+                            const ownSource =
+                                real.startsWith(appSource) && !real.includes(`${path.sep}node_modules${path.sep}`)
                             return ownSource ? { path: real } : { path: real, external: true }
                         })
                     },

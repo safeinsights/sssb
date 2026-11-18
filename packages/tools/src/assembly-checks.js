@@ -155,7 +155,7 @@ function unreadablePolicies(all) {
     return Object.entries(all)
         .filter(([, r]) => r.Type === 'AWS::IAM::Role')
         .flatMap(([id, r]) =>
-            /** @type {unknown[] | undefined} */ ((r.Properties?.ManagedPolicyArns) ?? [])
+            /** @type {unknown[] | undefined} */ (r.Properties?.ManagedPolicyArns ?? [])
                 .filter((arn) => {
                     const text = JSON.stringify(arn)
                     const ref = /** @type {{ Ref?: string }} */ (arn).Ref
@@ -252,7 +252,7 @@ export function dataApiShapeProblems(resources) {
                 dbGroups.includes(JSON.stringify(r.Properties?.GroupId ?? null))) ||
             (r.Type === 'AWS::EC2::SecurityGroup' &&
                 dbGroups.includes(`"${id}"`) &&
-                /** @type {unknown[] | undefined} */ ((r.Properties?.SecurityGroupIngress) ?? []).length > 0),
+                /** @type {unknown[] | undefined} */ (r.Properties?.SecurityGroupIngress ?? []).length > 0),
     )
     if (ingress.length > 0) problems.push('the database security group admits no inbound traffic')
     return problems

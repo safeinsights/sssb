@@ -18,7 +18,8 @@ export function workspaceRootOf(start) {
     for (;;) {
         if (existsSync(path.join(dir, 'pnpm-workspace.yaml'))) return dir
         const parent = path.dirname(dir)
-        if (parent === dir) throw new UsageError(`sssb: no pnpm-workspace.yaml above ${start}: run this inside a workspace`)
+        if (parent === dir)
+            throw new UsageError(`sssb: no pnpm-workspace.yaml above ${start}: run this inside a workspace`)
         dir = parent
     }
 }

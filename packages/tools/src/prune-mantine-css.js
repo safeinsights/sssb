@@ -1,5 +1,5 @@
-import postcss, { type AtRule } from 'postcss'
-import type { Plugin } from 'vite'
+// @ts-check
+import postcss from 'postcss'
 
 /**
  * Drops the stylesheet rules the single-file static demo can never match, so the demo carries the CSS of
@@ -45,12 +45,15 @@ const IDENT = /[\w-]/
  * The hashed classes a selector REQUIRES — those written outside every `(...)` and `[...]`. `.m_a .m_b > i`
  * yields both; `.m_a:not(.m_b)` yields only `m_a`; `[data-x='.m_c']` yields none.
  */
-export function requiredHashedClasses(selector: string): string[] {
-    const required: string[] = []
+/** @type {import('./vite.d.ts').requiredHashedClasses} */
+export function requiredHashedClasses(selector) {
+    /** @type {string[]} */
+    const required = []
     let depth = 0
-    let quote: string | null = null
+    /** @type {string | null} */
+    let quote = null
     for (let i = 0; i < selector.length; i++) {
-        const char = selector[i]!
+        const char = /** @type {string} */ (selector[i])
         if (quote) {
             if (char === '\\') i++
             else if (char === quote) quote = null
@@ -62,7 +65,7 @@ export function requiredHashedClasses(selector: string): string[] {
         else if (char === ')' || char === ']') depth = Math.max(0, depth - 1)
         else if (char === '.' && depth === 0) {
             let end = i + 1
-            while (end < selector.length && IDENT.test(selector[end]!)) end++
+            while (end < selector.length && IDENT.test(/** @type {string} */ (selector[end]))) end++
             const name = selector.slice(i + 1, end)
             if (HASHED_CLASS.test(name)) required.push(name)
             i = end - 1
@@ -71,16 +74,9 @@ export function requiredHashedClasses(selector: string): string[] {
     return required
 }
 
-export interface PruneResult {
-    css: string
-    /** Rules removed because a hashed class they need ships nowhere. */
-    removedRules: number
-    /** Rules left, counting every one nested in an at-rule. */
-    keptRules: number
-}
-
 /** The hashed class names written in `shipped` — the JavaScript and HTML the stylesheet is shipped with. */
-export function shippedHashedClasses(shipped: string): Set<string> {
+/** @type {import('./vite.d.ts').shippedHashedClasses} */
+export function shippedHashedClasses(shipped) {
     return new Set(shipped.match(HASHED_CLASS_ANYWHERE))
 }
 
@@ -88,19 +84,21 @@ export function shippedHashedClasses(shipped: string): Set<string> {
  * Removes every rule of `css` that needs a hashed class not in `shipped`. Pure; throws on CSS postcss
  * cannot parse (a stylesheet that broken is not one to guess about).
  */
-export function pruneUnreachableRules(css: string, shipped: ReadonlySet<string>): PruneResult {
+/** @type {import('./vite.d.ts').pruneUnreachableRules} */
+export function pruneUnreachableRules(css, shipped) {
     const root = postcss.parse(css)
     let removedRules = 0
     let keptRules = 0
     // The at-rules a removed rule sat in: only these can have been emptied BY THIS PASS.
-    const touched = new Set<AtRule>()
+    /** @type {Set<import('postcss').AtRule>} */
+    const touched = new Set()
     root.walkRules((rule) => {
         const unreachable = rule.selectors.every((selector) =>
             requiredHashedClasses(selector).some((name) => !shipped.has(name)),
         )
         if (unreachable) {
             for (let parent = rule.parent; parent?.type === 'atrule'; parent = parent.parent) {
-                touched.add(parent as AtRule)
+                touched.add(/** @type {import('postcss').AtRule} */ (parent))
             }
             rule.remove()
             removedRules++
@@ -121,7 +119,8 @@ export function pruneUnreachableRules(css: string, shipped: ReadonlySet<string>)
     return { css: root.toString(), removedRules, keptRules }
 }
 
-function textOf(source: string | Uint8Array): string {
+/** @param {string | Uint8Array} source */
+function textOf(source) {
     return typeof source === 'string' ? source : new TextDecoder().decode(source)
 }
 
@@ -135,8 +134,10 @@ function textOf(source: string | Uint8Array): string {
  * stylesheet into the page in its own `generateBundle` — plugins of one phase run in array order, so the
  * inlined copy is then the pruned one. A bundle with no stylesheet at this point is an error, never a quiet
  * no-op: a demo always has one, and a plugin that silently stops working is how 130 KB comes back.
+ *
+ * @type {import('./vite.d.ts').pruneMantineCss}
  */
-export function pruneMantineCss(): Plugin {
+export function pruneMantineCss() {
     return {
         name: 'sssb:prune-mantine-css',
         apply: 'build',

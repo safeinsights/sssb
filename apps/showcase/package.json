@@ -5,22 +5,22 @@
     "license": "MIT",
     "description": "The showcase app: the demo product that exercises every SSSB capability (ADR-0007).",
     "scripts": {
-        "dev": "NEXT_TELEMETRY_DISABLED=1 APP_MODE=simulated node ../../scripts/dev-tick.mjs showcase -- next dev --port \"$(node ../../scripts/print-port.mjs showcase)\"",
+        "dev": "NEXT_TELEMETRY_DISABLED=1 APP_MODE=simulated node ../../scripts/dev-tick.mjs showcase -- next dev --port \"$(sssb port)\"",
         "tick": "node ../../scripts/tick.mjs showcase",
-        "dev:real": "APP_MODE=real tsx ../../scripts/check-real-env.ts && NEXT_TELEMETRY_DISABLED=1 APP_MODE=real next dev --port \"$(node ../../scripts/print-port.mjs showcase)\"",
+        "dev:real": "APP_MODE=real sssb check-real-env && NEXT_TELEMETRY_DISABLED=1 APP_MODE=real next dev --port \"$(sssb port)\"",
         "llm:record": "tsx scripts/llm-record.ts",
         "build": "NEXT_TELEMETRY_DISABLED=1 next build",
-        "start": "next start --port \"$(node ../../scripts/print-port.mjs showcase)\"",
+        "start": "next start --port \"$(sssb port)\"",
         "panda:codegen": "panda codegen",
         "typecheck": "next typegen && tsc --noEmit",
         "test:e2e": "NEXT_TELEMETRY_DISABLED=1 playwright test --project=chromium && NEXT_TELEMETRY_DISABLED=1 playwright test --project=destructive --workers=1 --no-deps",
-        "ladle": "PANDA_LOG_LEVEL=silent ladle serve --port \"$(node ../../scripts/print-port.mjs ladle)\"",
+        "ladle": "PANDA_LOG_LEVEL=silent ladle serve --port \"$(sssb port ladle)\"",
         "build:e2e": "NEXT_TELEMETRY_DISABLED=1 E2E_BUILD=1 APP_MODE=simulated next build",
-        "start:e2e": "E2E_BUILD=1 APP_MODE=simulated node ../../scripts/serve-standalone.mjs",
+        "start:e2e": "E2E_BUILD=1 APP_MODE=simulated sssb serve-standalone",
         "build:demo": "NEXT_TELEMETRY_DISABLED=1 DEMO_MODE=1 APP_MODE=simulated next build",
-        "start:demo": "DEMO_MODE=1 APP_MODE=simulated node ../../scripts/serve-standalone.mjs",
+        "start:demo": "DEMO_MODE=1 APP_MODE=simulated sssb serve-standalone",
         "build:demo-static": "vite build --config vite.demo.config.ts",
-        "check:demo-size": "node ../../scripts/check-demo-size.mjs 860000",
+        "check:demo-size": "sssb check-demo-size 860000",
         "e2e:demo-static": "playwright test --config playwright.demo.config.ts"
     },
     "dependencies": {
@@ -41,10 +41,14 @@
         "@ladle/react": "^5.1.1",
         "@pandacss/dev": "^2.5.0",
         "@playwright/test": "^1.64.1",
+        "@sssb/tools": "workspace:*",
         "@vitejs/plugin-react": "^6.1.2",
         "postcss": "^8.5.31",
         "vite": "^8.3.5",
         "vite-plugin-singlefile": "^2.3.4",
         "vitest": "^4.1.12"
+    },
+    "sssb": {
+        "port": "showcase"
     }
 }

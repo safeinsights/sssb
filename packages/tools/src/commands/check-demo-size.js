@@ -29,7 +29,7 @@ import { takeAppDir, UsageError } from '../app.js'
 const THIN_HEADROOM = 0.02
 
 const WHEN_RED =
-    'First find what grew: build the previous commit and compare dist-demo/index.html, or bundle with a recorder ' +
+    'WHEN IT GOES RED: first find what grew: build the previous commit and compare dist-demo/index.html, or bundle with a recorder ' +
     "plugin that prints each module's renderedLength. Fix an incidental cause (a new dependency, a seam registry " +
     'imported into the bundle, a base64 asset); raise the budget only for a feature.'
 
@@ -44,7 +44,9 @@ export async function run(args) {
     }
     const budget = Number(args[0])
     if (!Number.isFinite(budget) || budget <= 0) {
-        throw new UsageError(`sssb check-demo-size: the budget must be a positive number of bytes, got ${args[0]}`)
+        throw new UsageError(
+            `sssb check-demo-size: the budget argument must be a positive number of bytes, got ${args[0]}`,
+        )
     }
     const file = path.join(appDir, 'dist-demo', 'index.html')
     let size
@@ -54,7 +56,7 @@ export async function run(args) {
         throw new UsageError(`sssb check-demo-size: no ${file}: build the static demo first`)
     }
     if (size > budget) {
-        console.error(`${file} is ${size} bytes: ${size - budget} over the ${budget} byte budget.`)
+        console.error(`${file} is ${size} bytes — ${size - budget} over the ${budget} byte budget.`)
         console.error(
             "That number is this app's own: the argument of `check:demo-size` in its package.json. " +
                 `${WHEN_RED} If the growth is intentional, raise the budget in its own commit and say what grew ` +
@@ -65,7 +67,7 @@ export async function run(args) {
     const headroom = budget - size
     // Rounded DOWN, so a headroom under THIN_HEADROOM never prints as the threshold itself ("2.0%" beside a warning).
     const percent = (Math.floor((headroom * 1000) / budget) / 10).toFixed(1)
-    console.log(`${file}: ${size} / ${budget} bytes: OK (${headroom} bytes, ${percent}% headroom)`)
+    console.log(`${file}: ${size} / ${budget} bytes — OK (${headroom} bytes, ${percent}% headroom)`)
     if (headroom / budget < THIN_HEADROOM) {
         const message =
             `only ${headroom} bytes (${percent}%) of headroom left under the ${budget} byte budget: the next feature ` +

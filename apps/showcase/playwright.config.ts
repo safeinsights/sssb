@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
-import { originFor } from '../../scripts/ports.mjs'
+import { originFor } from '@sssb/tools/ports'
 import { assertNoLiveDevTicker } from '../../scripts/ticker-marker.mjs'
 
 // A dev server started with `DEV_TICK_SECONDS` set would be ADOPTED by `reuseExistingServer` below and tick under the
