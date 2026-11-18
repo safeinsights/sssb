@@ -129,7 +129,7 @@ function resolveMigrator(appDir) {
     const projectRoot = path.dirname(lockFile)
     // esbuild runs from the project root and CDK refuses an entry outside it; say why, rather than CDK's error.
     const relativeEntry = path.relative(projectRoot, entry)
-    if (relativeEntry.startsWith('..') || path.isAbsolute(relativeEntry)) {
+    if (relativeEntry === '..' || relativeEntry.startsWith(`..${path.sep}`) || path.isAbsolute(relativeEntry)) {
         throw new Error(
             `SssbApp: the @sssb/kit ${appDir} resolves (${kitDir}) is outside the project root ${projectRoot}, ` +
                 'where the migrator is bundled from. Install the framework into the project rather than linking a ' +
@@ -193,7 +193,8 @@ function stagedBundle(fn) {
     const staged = JSON.stringify(stack.resolve({ S3Bucket: asset.s3BucketName, S3Key: asset.s3ObjectKey }))
     const deployed = renderedProperties(fn).Code
     const problems =
-        JSON.stringify({ S3Bucket: deployed?.S3Bucket, S3Key: deployed?.S3Key }) === staged
+        // The whole `Code`: an override that adds `ZipFile` or `ImageUri` beside the staged key is caught too.
+        JSON.stringify(deployed) === staged
             ? []
             : [`it deploys ${JSON.stringify(deployed)}, not the bundle this synth staged (${staged})`]
     return { code: file === undefined ? undefined : readFileSync(file, 'utf8'), problems }
