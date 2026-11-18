@@ -536,9 +536,10 @@ export function kitImporters(root, packages = workspacePackages(root)) {
  * @param {string} root
  * @param {(dir: string) => string} resolveKit
  * @param {{ dir: string, manifest: Record<string, unknown> }[]} [found] the importers, when already walked
+ * @param {readonly string[]} [packages] the workspace's packages, when already walked (workspacePackages)
  * @returns {{ problems: string[], importers: string[] }}
  */
-export function importerSeamProblems(root, resolveKit, found = kitImporters(root)) {
+export function importerSeamProblems(root, resolveKit, found = kitImporters(root), packages = workspacePackages(root)) {
     /** @type {string[]} */
     const problems = []
     /** @type {string[]} */
@@ -588,6 +589,24 @@ export function importerSeamProblems(root, resolveKit, found = kitImporters(root
                 `${rel(dir)}: declares ${SEAM} as ${link}, which is ${seamOwners.get(own)}'s seam ${path.relative(root, own)}, not one of its own`,
             )
         }
+        if (link?.startsWith('workspace:')) {
+            // pnpm takes two workspace packages of one name without a word and links the one it reaches last, so a
+            // copy of the seam left under its name (a copied app, a stray directory) silently becomes the app's seam,
+            // and the kit's link agrees with the app's: only the names show it.
+            const name = /^(@?[^@]+)@/.exec(link.slice('workspace:'.length))?.[1] ?? SEAM
+            const holders = [root, ...packages].filter((pkg) => {
+                const file = path.join(pkg, 'package.json')
+                return existsSync(file) && readJson(file).name === name
+            })
+            if (holders.length !== 1) {
+                const where = holders.map((pkg) => path.relative(root, pkg) || '(the workspace root)').join(', ')
+                problems.push(
+                    holders.length === 0
+                        ? `${rel(dir)}: declares ${SEAM} as ${link}, but no workspace package is named ${name}`
+                        : `${rel(dir)}: declares ${SEAM} as ${link}, but ${holders.length} workspace packages are named ${name} (${where}), and pnpm links one of them: rename the copies`,
+                )
+            }
+        }
         if (link?.startsWith('link:') && own !== null) {
             // Linked today, unlinked by the next partial install: pnpm keeps a `link:` dependency as the provider of
             // @sssb/kit's peer only when it resolves every dependency (a fresh install), never on `add`, `remove` or
@@ -595,7 +614,7 @@ export function importerSeamProblems(root, resolveKit, found = kitImporters(root
             const name = `${typeof manifest.name === 'string' ? manifest.name : path.basename(dir)}-app-config`
             problems.push(
                 `${rel(dir)}: declares ${SEAM} as ${link}, which the next \`pnpm add\`, \`remove\` or \`update\` unlinks from its @sssb/kit. ` +
-                    `Make the seam a workspace package: list ${path.relative(root, own)} in pnpm-workspace.yaml's packages, name it ${name} in its package.json, ` +
+                    `Make the seam a workspace package: list ${path.relative(root, path.join(dir, 'src', 'app-config'))} in pnpm-workspace.yaml's packages, name it ${name} in its package.json, ` +
                     `declare "${SEAM}": "workspace:${name}@*", and run pnpm install`,
             )
         }

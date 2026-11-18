@@ -1179,7 +1179,9 @@ it, and `sssb doctor` fails. Option C stands; only the way the app declares its 
   `update --latest`, `add -w`, `add` run in the app, and a fresh install, with one app and with two, each app keeping
   its own seam; the settings and hooks that did not help are in the decision log.
 - **`sssb doctor` fails a `link:` seam**, naming the change, though it is linked when doctor runs: the next `pnpm add`
-  would unlink it. It also fails an importer whose declared seam is another importer's. Its check of the seam's
+  would unlink it. It also fails an importer whose declared seam is another importer's, and a `workspace:` seam whose
+  name no workspace package has or more than one has: pnpm accepts two packages of one name and links one of them, so
+  a copy of a seam left under its name becomes the app's seam with the kit's link agreeing. Its check of the seam's
   target reads the importer's `node_modules` link for a `workspace:` seam, as it did for any form but `link:`. The
   conformance suite's `seam-map` check, which required the seam's `package.json` to be named `@sssb/app-config`, now
   requires the name the app's `workspace:` declaration names (`@sssb/app-config` for any other form).

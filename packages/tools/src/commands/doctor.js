@@ -258,7 +258,7 @@ const messageOf = (error) => (error instanceof Error ? error.message : String(er
  * @returns {Result}
  */
 function importers(root, workspace) {
-    const { problems, importers: found } = importerSeamProblems(root, kitDirOf, workspace.importers)
+    const { problems, importers: found } = importerSeamProblems(root, kitDirOf, workspace.importers, workspace.packages)
     return verdict(
         problems.length > 0
             ? 'one SSSB per importer, with its own seam: an importer of @sssb/kit runs on a seam not its own'

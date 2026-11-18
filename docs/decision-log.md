@@ -4693,5 +4693,20 @@ cause, in pnpm's source). Each decision, and what was rejected:
 - **P13's workaround is reverted**: the plugin's **Adding a package** sections, the gate's rule failing an un-negated
   `pnpm add` (and the negation reading only it needed), and the section test. The commands say
   `pnpm --filter <app> add <pkg>`, as before P13.
+- **Doctor fails a `workspace:` seam whose name is not exactly one workspace package's.** The review asked which pnpm
+  command or setting still unlinks the seam without doctor noticing; it found one: a copy of an app's seam left under
+  its name in a package that takes no kit (`apps/zzz/src/app-config` named `acme-app-config`). pnpm took both without
+  a warning and linked the later one, into the app and its kit alike, so the seam check's two readings agreed and
+  doctor said ok. Rejected: holding every seam to `<importer>/src/app-config` (it would also refuse a seam an adopter
+  keeps elsewhere on purpose, which the names alone do not). Everything else the review ran kept the seam or made
+  doctor fail: `pnpm up -r` with and without `--latest`, `--lockfile-only` and Renovate-style updates, `dedupe`,
+  `rebuild`, `prune`, `patch`, `catalog:`, overrides, `install --force`, pnpm 11.21.0, `shamefullyHoist`,
+  `publicHoistPattern`, the three workspace-protocol settings, renaming an app, and running pnpm inside the seam
+  (kept); `nodeLinker: hoisted`, `injectWorkspacePackages`, `injected`, a filtered install, and a copied second app
+  with the seam's name or dependency left unrenamed (failed). Not run: `nodeLinker: pnp` (doctor's Vitest listing hung
+  there), `pnpm import`, Renovate and Dependabot themselves, and a kit from a registry. One oddity, left as is: with
+  `linkWorkspacePackages` and `preferWorkspacePackages` true and `saveWorkspaceProtocol: rolling`, `pnpm up -r`
+  rewrote the seam's spec to `workspace:<slug>-app-config@^undefined` (the seam has no `version`); it still installed
+  with the seam linked.
 - **Not covered: `nodeLinker: hoisted`.** One hoisted `@sssb/kit` cannot hold two apps' seams; with two apps doctor
   fails it ("runs on a seam not its own"), as it did before this change.

@@ -413,6 +413,21 @@ describe('one SSSB per importer, with its own seam', () => {
         ])
     })
 
+    it('fails a seam whose name another workspace package also has, or none does: pnpm links one of them', () => {
+        const ws = seamWorkspace('sssb-doctor-seams-dup-', 'none')
+        // A copy of the console's seam left under its name, in a package that takes no kit: pnpm links the last one.
+        pkg(path.join(ws, 'packages', 'stray'), { name: 'console-app-config' })
+        expect(importerSeamProblems(ws, kitDirOf).problems).toEqual([
+            'apps/console: declares @sssb/app-config as workspace:console-app-config@*, but 2 workspace packages are named console-app-config (apps/console/src/app-config, packages/stray), and pnpm links one of them: rename the copies',
+        ])
+        // The seams outside the workspace's globs: no package of that name.
+        write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n    - apps/*\n')
+        expect(importerSeamProblems(ws, kitDirOf).problems).toEqual([
+            'apps/console: declares @sssb/app-config as workspace:console-app-config@*, but no workspace package is named console-app-config',
+            'apps/ledger: declares @sssb/app-config as workspace:ledger-app-config@*, but no workspace package is named ledger-app-config',
+        ])
+    })
+
     // Both directions: the app named is the borrower, whichever of the two the walk reaches first.
     it.each([
         ['ledger', 'console'],
