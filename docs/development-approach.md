@@ -466,7 +466,7 @@ gate gets bypassed, so guard its speed.
 
 ## Environments — and why there is no standing QA environment 🧭
 
-The intended topology (local pieces exist today; the full cloud shape is the `infra/` CDK draft plus the
+The intended topology (local pieces exist today; the full cloud shape is each `apps/<app>/infra/` CDK draft, built on `packages/cdk`'s `SssbApp`, plus the
 `.github/workflows/` checks):
 
 | Environment          | What it is                           | Data / auth                       | Status |

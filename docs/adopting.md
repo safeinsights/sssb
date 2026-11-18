@@ -40,7 +40,9 @@ Three kinds of thing live in this repo (see
   other eleven modules register nothing — is **the one you keep**. It is also the framework's second
   consumer, which is what makes the framework/app line falsifiable rather than merely asserted:
   anything SSSB reaches for that only exists because the showcase supplies it fails to compile there.
-- **The repo scaffold**: the verify gate, lint fences, CI, docs doctrine, infra draft. You keep it.
+- **The repo scaffold**: the verify gate, lint fences, CI, docs doctrine. You keep it. The infra draft is
+  no longer part of it: each app carries its own, `apps/<app>/infra/`, a stack holding SSSB's `SssbApp`
+  construct (`packages/cdk`), so the starter you keep arrives with a deployment of its own.
   One rule in it reaches your own tests: a test that needs a scratch directory calls
   `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `@sssb/tools/testing/tmp-dir` (`tests/support/tmp-dir.ts` re-exports it), never `mkdtemp` (lint
   bans it), and `test:unit`, `test:coverage` and `test:contract` run through
@@ -114,7 +116,7 @@ files that name the app's directory:
 | `apps/<app>/src/demo-static/index.html`                                                | the static demo's `<title>`                                                                      |
 | `package.json` (root)                                                                  | `name` (`<slug>-workspace`), `description`, `--filter` scripts                                   |
 | `knip.json`, `vitest.config.ts`                                                        | the workspace key; the app list (`APPS`)                                                         |
-| `infra/*.ts`                                                                           | the single app each one names                                                                    |
+| `apps/<app>/infra/package.json`                                                        | `name` (`<slug>-infra`); nothing else there names the app, which it reaches by `..`              |
 | `apps/<app>/` itself                                                                   | the directory, renamed last                                                                      |
 | `docs/`, `.claude/`, README, CLAUDE, CONTRIBUTING                                      | every backticked `apps/<app>/…` citation the path gate checks                                    |
 | `CODEOWNERS`, `SECURITY.md`, `.github/ISSUE_TEMPLATE/config.yml`, `CODE_OF_CONDUCT.md` | the maintainer's handle and links → `PLACEHOLDER_GITHUB_OWNER` and `--repo` (or its placeholder) |
@@ -272,8 +274,8 @@ contract suite** (`apps/<app>/tests/contract/`, which runs SSSB's composed proof
 of the app's own, by a non-superuser owner as Aurora's master user is (twice: on a fresh server, and where `app_user`
 already exists) and by a superuser: the anti-drift gate CI depends on) and **`apps/<app>/config/params.ts`**. So ejecting rescues nothing and deletes no gate:
 `pnpm test:contract` runs your app's suite, and `tests/tooling/app-scaffold.test.ts` fails if an app registers
-migrations without one, or the apps' params carry different keys (`infra/` reads one app's, and needs the same keys
-from whichever it is pointed at).
+migrations without one, or the apps' params carry different keys (each `apps/<app>/infra/` hands its own to the same
+`SssbApp` construct, which reads the same keys from every app).
 
 Five root scripts are dropped, because the starter does not ship the capabilities behind them:
 `dev:real`, `llm:record`, `ladle`, `build:demo`, `start:demo`. They come back with the thing they
@@ -337,11 +339,12 @@ really is part of the contract and merely has no importer yet, that is an SSSB c
 (ADR-0013, "Sending an SSSB fix back upstream") and take it back by merge, because in your fork the map is a
 conflict on every later update.
 
-Two call sites reach SSSB by file path instead of by subpath, because their tools need a file rather
-than a module specifier, and they are the two to remember if you move things: each app's
-`next.config.ts` points next-intl at `packages/kit/src/i18n/request.ts`, and `infra/stack.ts` bundles
-the migrator Lambda from `packages/kit/src/adapters/real/migrate-handler.ts`. Nothing typechecks
-`infra/`.
+One call site reaches SSSB by file path instead of by subpath, because its tool needs a file rather
+than a module specifier, and it is the one to remember if you move things: each app's
+`next.config.ts` points next-intl at `packages/kit/src/i18n/request.ts`. The migrator Lambda used to be the
+second; the `SssbApp` construct (`packages/cdk`) now resolves it as `@sssb/kit/adapters/real/migrate-handler`
+from the app's own directory, and passes the app's seam to esbuild explicitly. Nothing typechecks
+`apps/<app>/infra/`; its `synth` is its check.
 
 ### When a lint fence must let one of your modules through
 
@@ -515,7 +518,7 @@ rather than restated. Read it once for the level of detail each row deserves bef
 `packages/kit/src/db/migrations/0015_app_user_grant.ts` lets the migrating role switch to `app_user`
 with `GRANT … WITH SET TRUE`, checked by `pg_has_role(…, 'SET')`. Both arrived in Postgres 16, so on an
 older server that migration cannot run. Everything SSSB targets already meets it: the Aurora cluster in
-`infra/stack.ts` (16.10), CI's contract job (`postgres:16` in `.github/workflows/checks.yml`), pglite
+`packages/cdk/src/sssb-app.js` (16.10), CI's contract job (`postgres:16` in `.github/workflows/checks.yml`), pglite
 (18.6) and the embedded Postgres that a local `pnpm test:contract` starts (18.4).
 
 ## Staying current with SSSB

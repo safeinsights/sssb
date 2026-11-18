@@ -129,6 +129,15 @@ describe('the carve-outs still let through what they were made for, in every spe
         expect(fired(findings, VENDOR_STATIC) + fired(findings, VENDOR_DYNAMIC)).toBe(0)
     })
 
+    // An app's deployment is a CDK project beside the app, never on its module graph (ADR-0014, D8): a
+    // custom resource's handler there may call the AWS SDK, and the app's fences do not reach it.
+    it.each(['ts', 'mjs'])("the app's infra (.%s) may import a vendor SDK", async (ext) => {
+        const file = `${APP}/infra/lib/custom-resource.${ext}`
+        const findings = await lint(file, importsVendor(file))
+        expect(fired(findings, VENDOR_STATIC) + fired(findings, VENDOR_DYNAMIC)).toBe(0)
+        expect(fired(await lint(file, loadsVendor(file)), VENDOR_DYNAMIC)).toBe(0)
+    })
+
     describe.each([`${APP}/src/adapters/real/kv`, 'packages/kit/src/adapters/real/kv'])('%s', (zone) => {
         it.each(EXTENSIONS)('.%s may import a vendor SDK and read its own configuration', async (ext) => {
             const file = `${zone}.${ext}`

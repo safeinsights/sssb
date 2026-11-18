@@ -64,7 +64,6 @@ const eslintConfig = [
             'test-results/**',
             'playwright-report/**',
             'spikes/*/node_modules/**',
-            'infra/cdk.out/**',
         ],
     },
     js.configs.recommended,

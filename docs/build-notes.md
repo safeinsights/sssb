@@ -2088,6 +2088,34 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   nested config file that takes over a directory (ESLint 10 looks up the config from each file's directory), none of
   which a probe at a fixed path would see unless it happened to sit there.
 
+## `@sssb/cdk` (2026-11-18, ADR-0014 P9)
+
+- **Import aws-cdk-lib as a namespace, never by default.** Under tsx, when a CommonJS app (`infra/app.ts`, in a
+  package with no `"type"`) loads the construct, tsx compiles the ESM construct to CommonJS, and aws-cdk-lib's
+  `module.exports` carries `__esModule`, so a default import is `undefined` (`Cannot destructure property
+'aws_budgets'`). `import * as cdk` works there and under plain Node ESM alike.
+- **An esbuild alias beats the nearest tsconfig's `paths`.** In this repo the files of `packages/kit/src` have no
+  tsconfig of their own, so the one esbuild finds is the root's, whose `@sssb/app-config/*` points at the test
+  fixture. With `--alias:@sssb/app-config=<app>/src/app-config` the bundle names the app's migration index and none
+  of the fixture's, and without it the synth fails on every one of the app's migrations.
+- **A construct validation is where to read what will be deployed.** `node.addValidation` runs inside `app.synth()`
+  after every construct has had its say, so the server's environment is final there; rendering the function's
+  `CfnFunction` through `_toCloudFormation()` includes escape-hatch overrides, which `addEnvironment` bookkeeping does
+  not. The migrator's bundle is already staged then (`<fn>/Code/Stage`'s `absoluteStagedPath`), because asset
+  bundling runs in the constructor.
+- **CDK caches a staged bundle for the rest of the process.** The test that tampers with one calls
+  `AssetStaging.clearAssetHashCache()` afterwards, or a later synth in the same file would be handed the tampered copy.
+- **The migrator bundles locally, never in Docker.** CDK's `NodejsFunction` falls back to bundling in a Docker image
+  when it finds no esbuild, and there it runs from `/` with the project mounted at `/asset-input`: the seam alias,
+  an absolute host path, would name nothing, and the bundle's path comments would no longer be relative to the
+  project root the check computes them from. CDK looks for esbuild with its own `require` first and runs that one as
+  `pnpm exec -- esbuild` (or `npx --no-install`) from the project root; failing that, it runs an `esbuild` on PATH;
+  only then Docker. So the project root's own `node_modules/esbuild` is what matters: a dependency of `@sssb/cdk` is
+  found by CDK's `require` through pnpm's hidden hoist, which stops the fallbacks, and then the `exec` fails
+  (reproduced by P9's second review round). The construct checks the project root instead, and so refuses a project
+  whose only esbuild is a global one, which CDK would accept. Read from aws-cdk-lib 2.277's
+  `aws-lambda-nodejs/lib/bundling.js` and `package-installation.js`; no Docker was run.
+
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 
 - **pnpm's bin shims (`node_modules/.bin/<bin>`, which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the workspace's hoisted `.pnpm/node_modules`**, and Node's resolver

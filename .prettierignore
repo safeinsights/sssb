@@ -13,7 +13,7 @@ LICENSE
 **/next-env.d.ts
 **/.ladle/dist/
 
-infra/cdk.out/
+apps/*/infra/cdk.out/
 dist-demo/
 
 # linked git worktrees from agent sessions — not this checkout's content

@@ -38,8 +38,8 @@ import type { DB } from './schema'
  * `FORCE` is checked because it cannot be caught behaviourally: every behavioural proof runs through
  * `runWithTenant`, which does `SET LOCAL ROLE app_user`, and `app_user` is not the table owner — so
  * `FORCE` makes no difference on that path. It protects the OWNER connection, which is what
- * `infra/stack.ts` actually deploys, and measured on real Postgres with a non-superuser owner a table
- * without it hands that connection every tenant's rows while a table with it hands over none.
+ * the SssbApp construct (packages/cdk) actually deploys, and measured on real Postgres with a non-superuser
+ * owner a table without it hands that connection every tenant's rows while a table with it hands over none.
  *
  * It runs inside `runRlsProofs`, so it runs on BOTH engines — pglite in the unit suite and real
  * Postgres in `pnpm test:contract` — against whatever the registered migrations actually created.

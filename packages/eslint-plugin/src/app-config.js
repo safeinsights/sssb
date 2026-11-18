@@ -151,6 +151,9 @@ function resolveRoot(root) {
 
 // Next loads its config from these four names and no other (CONFIG_FILES in next's shared/lib/constants).
 const NEXT_CONFIG = 'next.config.{ts,mts,js,mjs}'
+// The files that legitimately reach a vendor directly, under an app prefix: Next's config, the contract tests, and the
+// app's deployment (`infra/`, a CDK project of its own beside the app, never on its module graph; ADR-0014, D8).
+const carveOuts = (prefix) => [`${prefix}${NEXT_CONFIG}`, `${prefix}tests/contract/**`, `${prefix}infra/**`]
 
 /**
  * @param {import('eslint').ESLint.Plugin} plugin the one plugin object (./index.js)
@@ -194,6 +197,7 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
                 `${P}test-results/**`,
                 `${P}playwright-report/**`,
                 `${P}coverage/**`,
+                `${P}infra/cdk.out/**`,
                 // What Panda 2's codegen writes there (`.js` and `.d.ts`, its default `outExtension`): a hand-written
                 // `.ts`, `.mjs` or any other extension in that directory is fenced like any other module. A
                 // hand-written `.js` is not, since it has the extension of Panda's own output.
@@ -297,10 +301,11 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
         }),
         // THE PORTS BOUNDARY: vendor SDKs only in the app's real adapters (ADR-0012, addendum 2026-11-16), in every
         // file of the app, not only src/: `config/app.ts` is on the runtime module graph and `config/params.ts` is
-        // imported by `next.config.ts`. The two carve-outs are the only files that legitimately reach a vendor
-        // directly, and both are outside the request path: `next.config.*` composes the Sentry BUILD plugin
+        // imported by `next.config.ts`. The three carve-outs (carveOuts) are the only files that legitimately reach a
+        // vendor directly, and all three are outside the request path: `next.config.*` composes the Sentry BUILD plugin
         // (`withSentryConfig`), a bundler wrapper rather than an SDK call (ADR-0010); `tests/contract/**` drives real
-        // Postgres through `pg` on purpose, which IS the anti-drift proof. The registry and fakes are NOT carved out:
+        // Postgres through `pg` on purpose, which IS the anti-drift proof; `infra/**` is the app's deployment, a CDK
+        // project that runs at synth. The registry and fakes are NOT carved out:
         // they are what keep `pnpm dev` hermetic, so they keep the ban.
         //
         // SSSB's list holds for every app, an app directory not yet created included. An app that names its own vendors
@@ -308,7 +313,7 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
         // a later block's options replace an earlier one's for the files both match.
         at('vendor', {
             files: files(''),
-            ignores: [`${src('adapters/real')}/**`, `${P}${NEXT_CONFIG}`, `${P}tests/contract/**`],
+            ignores: [`${src('adapters/real')}/**`, ...carveOuts(P)],
             plugins: sssb,
             rules: { 'sssb/no-vendor-import': 'error', 'sssb/no-dynamic-vendor-import': 'error' },
         }),
@@ -320,19 +325,24 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             return [
                 at(`vendor/${A ? A.slice(0, -1) : 'app'}`, {
                     files: [`${A}**/*.${SRC_EXT}`],
-                    ignores: [`${A}src/adapters/real/**`, `${A}${NEXT_CONFIG}`, `${A}tests/contract/**`],
+                    ignores: [`${A}src/adapters/real/**`, ...carveOuts(A)],
                     plugins: sssb,
                     rules: { 'sssb/no-vendor-import': ban, 'sssb/no-dynamic-vendor-import': ban },
                 }),
             ]
         }),
-        // Hermetic dev, everywhere in the app.
-        at('next-font', { files: files(''), plugins: sssb, rules: { 'sssb/no-next-font-google': 'error' } }),
-        // Outside the adapters directory, the app's real adapters are reached through its registry. The same two
+        // Hermetic dev, everywhere in the app but its deployment, which is not app source.
+        at('next-font', {
+            files: files(''),
+            ignores: [`${P}infra/**`],
+            plugins: sssb,
+            rules: { 'sssb/no-next-font-google': 'error' },
+        }),
+        // Outside the adapters directory, the app's real adapters are reached through its registry. The same three
         // carve-outs as the vendor ban.
         at('real-adapters-via-registry', {
             files: files(''),
-            ignores: [`${src('adapters')}/**`, `${P}${NEXT_CONFIG}`, `${P}tests/contract/**`],
+            ignores: [`${src('adapters')}/**`, ...carveOuts(P)],
             plugins: sssb,
             rules: { 'sssb/no-real-adapter-import': 'error' },
         }),

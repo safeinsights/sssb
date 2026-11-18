@@ -46,9 +46,9 @@ apps/<app>/src/adapters/real/<name>.ts   the real adapter: the only place the ve
 Unit tests (`*.test.ts`) may read `process.env`, as they already may everywhere in the app. The
 `process.env` ban also covers `apps/<app>/config/`, so `params.ts` records values and names and never
 reads the environment. The vendor ban also covers the rest of `apps/<app>/` (`apps/<app>/config/`,
-`apps/<app>/tests/`, `apps/<app>/scripts/`), minus the two carve-outs the preset names:
-`apps/<app>/next.config.*` (the `.ts`, `.mts`, `.js` and `.mjs` names Next loads it from) and
-`apps/<app>/tests/contract/`. The registry and fakes also may not import SSSB's own published real adapters
+`apps/<app>/tests/`, `apps/<app>/scripts/`), minus the three carve-outs the preset names:
+`apps/<app>/next.config.*` (the `.ts`, `.mts`, `.js` and `.mjs` names Next loads it from),
+`apps/<app>/tests/contract/`, and `apps/<app>/infra/`, the app's deployment. The registry and fakes also may not import SSSB's own published real adapters
 (`@sssb/kit/adapters/real/*`) statically.
 
 Every row holds whatever the file's extension: `.mjs`, `.cjs`, `.js`, `.jsx`, `.mts` and `.cts` are fenced

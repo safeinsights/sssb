@@ -16,8 +16,9 @@ export type DatabaseTransport = (typeof DATABASE_TRANSPORTS)[number]
 
 /**
  * The database variables each transport requires, each mapped to its cutover row. `assertRealEnv`
- * (./index.ts) checks them at boot, and `infra/check-shapes.ts` checks the deployment sets them, by
- * importing this — so the runtime and the infra draft cannot drift apart on a name.
+ * (./index.ts) checks them at boot, and @sssb/cdk's test (packages/cdk/src/sssb-app.test.js) checks that every
+ * app's deployment sets them, by importing this from the framework that app resolves — so the runtime and the
+ * infra draft cannot drift apart on a name.
  */
 export const DATABASE_ENV: Record<DatabaseTransport, Record<string, string>> = {
     pg: { DATABASE_URL: 'cloud-accounts' },
