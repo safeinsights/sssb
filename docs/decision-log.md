@@ -3237,6 +3237,84 @@ changes a published package adds a `.changeset/*.md` that is its changelog entry
   and P4, P5 and P6 own the root manifest. Each moving part of the script was mutated to confirm a case goes red.
   `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
 
+## `@sssb/cdk` and per-app infra (2026-11-18, ADR-0014 P9, `feat/sssb-cdk`)
+
+- **`SssbApp` is a construct with five props** (`appDir`, `slug`, `params`, `environment`, `production`). Rejected:
+  reading the `environment` context inside the construct, as the old stack did. Which environments exist is the app's
+  policy (Pages has its own), so `infra/app.ts` reads and checks the context and hands the construct a name and a
+  boolean.
+- **The construct's id is `Default`** in both apps, so logical ids stay as they were (ADR-0014, addendum 2026-11-18).
+  Rejected: a descriptive id such as `App`, which would have renamed every resource and made the first deploy after P9
+  replace the database and the VPC.
+- **The seam reaches esbuild as an alias alone; the app's tsconfig is no longer passed.** Rejected: passing both. Seen
+  failing without the alias: the bundle then names neither the app's migration registry nor any of its four migrations,
+  and the synth fails on each.
+- **Kit resolution and the assembly checks come from `@sssb/tools`** (`@sssb/tools/kit`'s `kitDirOf`,
+  `kitVersionOf` and `resolveAppsKit`, which P4 published for this; `@sssb/tools/assembly-checks`): `@sssb/cdk`
+  depends on `@sssb/tools`, a plain dependency. Rejected: a resolver of `@sssb/cdk`'s own, which would split rule 4's
+  one shared check in two, and a peer dependency, the form ADR-0014 part 10 warns can lift the fixed group to 1.0.0.
+  Part 10 says the packages carry no dependency on each other; the probe it calls for, a `minor` and then a `patch`
+  changeset on `@sssb/tools` through `pnpm release:check`, planned the same step for all three packages and nothing
+  at 1.0.0 (ADR-0014, addendum 2026-11-18, P9). P4's resolver walks `node_modules` from the app rather than calling
+  `require.resolve`, which matters here: the construct runs under `pnpm exec`, which sets `NODE_PATH` to the
+  hoisted store.
+- **`check-shapes` became `packages/cdk/src/sssb-app.test.js`, a Vitest project of its own (`cdk`)**, which discovers
+  every `apps/*/infra` and synthesizes both shapes for each. It reads `DATABASE_ENV` from the `@sssb/kit` each app
+  resolves (by file, since it is not a published subpath), so it keeps the runtime and the infra from drifting on a
+  name. `init-app` reserves the slug `cdk` with `kit`, since a project of that name would collide.
+- **Each app's infra is outside the app's vendor fence** (`APP_INFRA_GLOB`), as ADR-0014 part 8 asked: a CDK custom
+  resource there may call the AWS SDK. Pinned in `tests/lint/extensions.test.ts`, and seen failing without the
+  carve-out.
+- **`@sssb/cdk` typechecks under every flag of the framework's strict set but `exactOptionalPropertyTypes`**
+  (`packages/cdk/tsconfig.json` against `packages/kit/tsconfig.strict.json`), which aws-cdk-lib's own declarations
+  fail: six errors, every one between two of CDK's own types (`Vpc` against `IVpc`, `Bucket` against `IBucket`,
+  `DefaultStackSynthesizer` against `IStackSynthesizer`, and the props objects that carry them). It ships
+  JavaScript and a declaration file, so an adopter's flags never reach its sources.
+- **`init-app` renames the app's infra package** (`<slug>-infra`) with the app, and refuses a slug that names one.
+  Nothing else in an app's `infra/` names the app, so nothing else is rewritten.
+- **CI synthesizes with `--fail-if-no-match`**, because `pnpm --filter` with no match exits 0: a tree whose apps all
+  lost their `infra/` would otherwise pass the synth step having run nothing.
+- **Pack and consume copies `apps/starter/infra` but does not install or synthesize it**: the consumer's workspace lists
+  `apps/*` and `packages/*`, and `@sssb/cdk` is not packed. The construct's synth assertions are what catch a wrong
+  kit or a wrong seam in a consumer; proving that from tarballs is P12's, when the generator ships the starter's
+  `infra/`.
+- **What the reviews added, each seen failing in `packages/cdk/src/sssb-app.test.js`.** The independent review asked
+  whether a stack could run with fake adapters, the wrong app's migrations or another app's seam while every check
+  passed, and found no accidental route; the code review found no HIGH. The construct now also refuses: a `slug`
+  other than the `APP_SLUG` the app's `config/app.ts` declares (a root `infra/` composing several apps could pair one
+  app's directory with another's slug); an app whose linked `@sssb/app-config` is not its own `src/app-config`; a
+  migrator whose deployed `Code` is not the bundle this synth staged (an escape-hatch override); a migrator
+  environment carrying `DEMO_MODE` or `E2E_BUILD`; and a `production` that is not a boolean, which in JavaScript
+  silently gave the destructive non-production defaults. The migration names it expects are the index's literal keys,
+  comments left out; an index with migration files beside it and no literal key, whose computed keys made the check
+  expect nothing, is refused (seen, in a scratch app). Round 1's first answer, also expecting every migration file's
+  name, was rejected in round 2: a migration registered under a key other than its file name, or a draft file not
+  registered yet, would fail the synth for nothing.
+- **Local bundling only, and the construct checks for it.** It refuses a project root (the lock file's directory)
+  with no `node_modules/esbuild`, and a framework installed outside that root, each with a message saying what to
+  change (`docs/build-notes.md`, P9). Rejected: an alias relative to the working directory, which in Docker is `/`,
+  not the project root, and which `NodejsFunction` does not let a caller change; and round 1's first answer, an
+  `esbuild` dependency of `@sssb/cdk`, which round 2 showed is not what CDK runs.
+- **The deployed migrator's `Code` is compared with the asset's own bucket and key, as the synthesizer assigned
+  them**, not with `<asset hash>.zip`, which round 2 showed fails under a synthesizer's `bucketPrefix` and under the
+  legacy synthesizer. A stack with `bucketPrefix: 'apps/'` synthesizes in the test.
+- **Accepted, not closed:**
+    - App source can still import from `apps/<app>/infra`, which the vendor fence no longer covers; the
+      `tests/contract` carve-out has the same shape. No import pattern bans it without also banning an app's own
+      module that happens to be called `infra`.
+    - The VPC's `Name` tags carry the construct path (`…/Default/Vpc`), so they change in place on the first deploy
+      after P9.
+    - What synth cannot see (the server's uploaded zip, a synth with validation off, changes after synth, a seam
+      index that brings in another app's registry, re-exported by an app with no migration files of its own or
+      spread beside a literal key) is
+      `.claude/future-tasks/deployed-artifact-identity.md`.
+    - A project whose only esbuild is a global one is refused, though CDK would bundle with it locally.
+    - The migration-key regex reads text: a `//` or `/*` inside a key's string can hide later keys from the check
+      (it then fails closed if none is left), and a comment directly after a quote can count a key that is not
+      there (a false alarm, never a pass).
+- **Found, not this branch's:** `defaultDatabaseName` is the slug, and `init-app` accepts dashes, which an Aurora
+  database name cannot hold. A follow-up.
+
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 
 P4 of ADR-0014: the `sssb` CLI, the helpers any workspace package imports, the Next, Vite and Vitest presets and the

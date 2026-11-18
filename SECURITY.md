@@ -45,7 +45,7 @@ the interesting reports are about that shape being wrong:
     previously passed every gate while permitting cross-tenant reads and writes.
 
     **A precondition this template cannot check for you.** RLS — including `FORCE` — is bypassed
-    outright by a role holding `SUPERUSER` or `BYPASSRLS`. `infra/stack.ts` wires `DATABASE_URL` to the
+    outright by a role holding `SUPERUSER` or `BYPASSRLS`. The `SssbApp` construct (`packages/cdk/src/sssb-app.js`) wires `DATABASE_URL` to the
     database's master credentials, so on that path the application connects as the table owner and
     `FORCE` is what stands between it and every tenant's rows. Confirm the role you deploy with has
     neither attribute — `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user` —
@@ -94,8 +94,9 @@ It is gated by **mode, not by role**, and the mode is fail-closed:
 - A production build (`NODE_ENV=production`) that would use fake adapters **throws on boot** rather
   than serving them (`packages/kit/src/adapters/index.ts`). A deployment must set `APP_MODE=real`.
 - The only ways past that guard are `DEMO_MODE=1` and `E2E_BUILD=1`. Both are explicit opt-ins that
-  cannot be triggered by forgetting something, and `production-guard.test.ts` additionally asserts that
-  no environment in `infra/stack.ts` carries either flag.
+  cannot be triggered by forgetting something, and the `SssbApp` construct fails `cdk synth` unless the
+  server's final environment pins `APP_MODE=real` and carries neither flag
+  (`packages/cdk/src/sssb-app.test.js` sees it fail).
 
 **In scope:** any way to reach a simulator route, or fake adapters generally, in a build that has not
 explicitly opted in. That is a real vulnerability and we want to hear about it.

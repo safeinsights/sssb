@@ -34,5 +34,5 @@
         "packages/tools/**/*.js",
         "packages/tools/**/*.ts"
     ],
-    "exclude": ["node_modules", "apps", "spikes", "infra"]
+    "exclude": ["node_modules", "apps", "spikes"]
 }
