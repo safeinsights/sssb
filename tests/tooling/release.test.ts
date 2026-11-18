@@ -236,6 +236,18 @@ describe('release prepare (the plan job)', () => {
         expect(status).toMatch(/\?\? docs\//)
     })
 
+    it("judges a changeset the way `check` does: the packages and bumps are the plan's business, not the notes'", async () => {
+        // `none` is a bump Changesets accepts and files no release for; the shape lint alone would refuse it.
+        const root = workspace(
+            [KIT('0.1.0', false), APP],
+            { feature: ['"@sssb/kit": minor'], quiet: ['"@sssb/kit": none'] },
+            { git: true },
+        )
+        const npm = registry({ '/%40sssb%2Fkit': { status: 200, body: { 'dist-tags': { latest: '0.0.0' } } } })
+        expect((await check(root)).problems).toEqual([])
+        expect(await prepare(root, { fetchImpl: npm })).toMatchObject({ release: true, version: '0.2.0' })
+    })
+
     it('stops before changing anything when a changeset is not a readable entry', async () => {
         const root = workspace([KIT('0.1.0', false), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
         writeFileSync(path.join(root, '.changeset', 'feature.md'), "---\n'@sssb/kit': minor\n---\n\nwords\n")

@@ -532,10 +532,15 @@ describe('what the lint accepts must read the same in the notes', () => {
         expect(() => readChangesets(r.dir, { since: '-R' })).toThrow(/not a revision: -R/)
         expect(() => readChangesets(r.dir, { at: '-r' })).toThrow(/not a revision: -r/)
         expect(main(['--since', '-R'], r.dir)).toBe(1)
+        // and a value that is a flag is a missing value, whatever the flag
+        expect(main(['--version', '-v1'], r.dir)).toBe(1)
+        expect(main(['--out', '-x'], r.dir)).toBe(1)
     })
 
     it('says what git said when a revision does not exist', () => {
         const r = repo({ 'a.md': SEAM('A') })
-        expect(() => readChangesets(r.dir, { at: 'nope' })).toThrow(/git ls-tree failed: .*nope/)
+        expect(() => readChangesets(r.dir, { at: 'nope' })).toThrow(
+            /git ls-tree failed: fatal: Not a valid object name nope/,
+        )
     })
 })
