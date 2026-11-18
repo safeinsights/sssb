@@ -60,7 +60,7 @@ const COMMANDS = {
     },
     ci: {
         load: () => import('../src/commands/ci.js'),
-        summary: "a CI job's logic: e2e-shards, e2e, demo-static",
+        summary: "a CI job's logic: lint-typecheck-unit, contract, matrix, e2e-shards, e2e, demo-static, synth",
     },
 }
 

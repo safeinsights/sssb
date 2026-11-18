@@ -18,7 +18,8 @@
 // workspace's apps (the root package.json's `sssb.apps`, or every `apps/<name>` package). A job that finds nothing to
 // run FAILS rather than passing empty: a check that ran nothing is not a green check.
 //
-// `e2e-shards` and `matrix` import nothing outside Node, so they run before `pnpm install`.
+// `e2e-shards` and `matrix` import nothing outside Node, so they can run before `pnpm install`, from the package's
+// source; app-checks.yml's `discover` installs first because it runs `pnpm exec`.
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -55,9 +56,10 @@ function sh(cwd, command) {
 
 /**
  * The apps a job covers, relative to the workspace root: `--apps`'s list when given, each of which must be a package,
- * or the workspace's apps. A listed app is normalised (`./apps/a/` is `apps/a`) and named once. A workspace app the
- * list leaves out is named in a warning (a GitHub Actions annotation on CI): the caller chose the list, and a list
- * that went stale when an app was added is the way an app goes unchecked with every check green.
+ * or the workspace's apps. A listed app is normalised (`./apps/a/` is `apps/a`) and named once. An app the list leaves
+ * out (`--apps`, or the root's `sssb.apps` when there is no `--apps`), among the workspace's apps and every
+ * `apps/<name>` package, is named in a warning (a GitHub Actions annotation on CI): the caller chose the list, and a
+ * list that went stale when an app was added is the way an app goes unchecked with every check green.
  * @param {string} root
  * @param {string | undefined} listed
  * @param {{ warn?: boolean }} [options] `warn: false` for a job that covers the same apps as one that warns
@@ -217,10 +219,6 @@ export async function run(args) {
                 `sssb ci matrix: ${noDemo.join(', ')} has no build:demo-static script, so its static demo would not be checked`,
             )
         }
-        if (shards.length === 0)
-            throw new UsageError(`sssb ci matrix: no app among ${apps.join(', ')} has a Playwright config`)
-        if (demos.length === 0)
-            throw new UsageError(`sssb ci matrix: no app among ${apps.join(', ')} has a build:demo-static script`)
         console.log(`e2e shards: ${JSON.stringify(shards)}`)
         console.log(`static demos: ${JSON.stringify(demos)}`)
         output(`e2e=${JSON.stringify(shards)}`)

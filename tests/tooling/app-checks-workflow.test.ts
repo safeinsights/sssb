@@ -323,7 +323,8 @@ describe('the check names the rulesets require', () => {
     })
 
     // In SSSB's own tree the per-app names are pinned literally too: the rulesets require them by name, and a renamed
-    // Playwright project or app would otherwise change them with this test still green.
+    // Playwright project would otherwise change them with this test still green. (A renamed app skips this case, as the
+    // adoption probe's tree must; the ruleset change is then the adopter's.)
     it("are, in SSSB's own tree, the five the rulesets name", () => {
         const apps = readdirSync(path.join(ROOT, 'apps'))
             .filter((app) => existsSync(path.join(ROOT, 'apps', app, 'package.json')))

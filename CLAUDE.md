@@ -118,10 +118,10 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `pnpm exec playwright install chromium`.
 - `pnpm verify` does NOT run `test:contract`, jscpd, coverage, gitleaks or pack and consume — CI runs those
   (`.github/workflows/checks.yml`). **CI's app checks are the reusable workflow an adopter calls**
-  (`.github/workflows/app-checks.yml`, ADR-0014 P10): `checks.yml`'s `sssb` job calls it by its local path, so
-  its checks are named `sssb / <job>` (`sssb / all-checks` fails unless every one ran and passed), and each step
-  is one `pnpm exec sssb ci <job>`. A job renamed or added there changes a required check's name: the rulesets on
-  `main` and `integration` require them by name, and `tests/tooling/app-checks-workflow.test.ts` pins the list. **Pack and consume** (`pnpm pack-and-consume`, ADR-0014 P2) packs
+  (`.github/workflows/app-checks.yml`, ADR-0014 P10): `checks.yml`'s `sssb` job calls it (by its local path), so
+  its checks are named `sssb / <job>` (`sssb / all-checks` fails unless every one ran and passed), and each job's
+  work is one `pnpm exec sssb ci <job>`. A job renamed or added there changes a required check's name: the rulesets
+  on `main` and `integration` require them by name, and `tests/tooling/app-checks-workflow.test.ts` pins the names. **Pack and consume** (`pnpm pack-and-consume`, ADR-0014 P2) packs
   `@sssb/kit` and runs an adopter-shaped workspace's verify against the tarball, outside this repo; a change
   to what the package ships, its manifest or the starter shows there first. Its gaps are named workarounds in
   `scripts/pack-and-consume/workarounds.mjs`, each removed by a later ADR-0014 step: never patch the consumer

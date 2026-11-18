@@ -3628,7 +3628,8 @@ init-app my-app` in a copy of the repository followed by its real `cdk synth` (`
   synth selector that matches no package is an error, not a quiet pass. So the workflow assumes a few conventions,
   which it says at its top: a pnpm workspace at the repository's root, depending on `@sssb/tools`, whose root defines
   `lint`, `typecheck`, `test:unit` (or `test:coverage`, which is run instead when present) and `test:contract`, and
-  apps that each have a Playwright config and a `build:demo-static` script. `@sssb/create` (P12) writes them.
+  apps that each have a Playwright config and a `test:e2e` script (and a `chromium` project beside a `destructive`
+  one), and the scripts `build:demo-static`, `check:demo-size` and `e2e:demo-static`. `@sssb/create` (P12) writes them.
 - **`apps` is optional and defaults to the workspace's apps** (the root's `sssb.apps`, or every `apps/<name>`, P4's
   rule). This repository passes none, so `pnpm init-app`'s rename and eject need no edit to `checks.yml`. A listed app
   must be a package inside the workspace.
@@ -3642,9 +3643,12 @@ init-app my-app` in a copy of the repository followed by its real `cdk synth` (`
   `sssb / e2e (showcase-destructive)`, `sssb / e2e (starter)`, `sssb / demo-static (showcase)`,
   `sssb / demo-static (starter)`, `sssb / synth` and `sssb / all-checks`. The old `e2e-shards` is `sssb / discover`,
   and the old single `demo-static` is one job per app. What only this repository checks (the bidi scan, knip, jscpd,
-  the spike) is a new job, `repo-checks`. `tests/tooling/app-checks-workflow.test.ts` pins the full list, so a
-  rename goes red here before a ruleset blocks every PR.
+  the spike) is a new job, `repo-checks`. `tests/tooling/app-checks-workflow.test.ts` pins the fixed names, and
+  in SSSB's own tree the five per-app names, so a renamed job or Playwright project goes red here before a ruleset
+  blocks every PR (a renamed app skips the per-app pin).
 - **`release.yml` is unchanged.** Its gate (`scripts/release.mjs wait-for-checks`) reads the conclusion of
-  `checks.yml`'s push run, and a called workflow's jobs are part of that run and of its conclusion.
+  `checks.yml`'s push run, and a called workflow's jobs are part of that run and of its conclusion
+  (docs.github.com, "Reusing workflow configurations": the called workflow's jobs run in
+  the caller's workflow run; PR 28's runs show them there).
 - **`sssb doctor` and `sssb check-e2e` (P5) are not in it yet.** P5 is still building them; they join
   `lint-typecheck-unit` (or a job of their own) when it lands.

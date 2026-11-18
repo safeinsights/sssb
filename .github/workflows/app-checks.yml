@@ -12,12 +12,14 @@
 # and requires the check `sssb / all-checks` (the caller's job name, then this workflow's job), which fails unless
 # every job below ran and passed. SSSB's own checks.yml calls it the same way, by its local path.
 #
-# Orchestration only. Every step's logic is a `pnpm exec sssb ci <job>` command (@sssb/tools), so it comes from the
-# caller's lockfile and cannot drift from the packages the app installed. It takes no secrets, and a caller must not
+# Orchestration only. Every job's work is one `pnpm exec sssb ci <job>` command (@sssb/tools), so it comes from the
+# caller's lockfile and cannot drift from the packages the app installed; the other steps are setup, the coverage
+# summary and all-checks' verdict. It takes no secrets, and a caller must not
 # pass `secrets: inherit`: nothing here needs one, and none of its jobs may write. It assumes only what its inputs and
 # the workspace say: a pnpm workspace at the repository's root whose root package.json depends on @sssb/tools and
-# defines `lint`, `typecheck`, `test:unit` (or `test:coverage`) and `test:contract`; and apps that each have a
-# Playwright config and a `build:demo-static` script. A job that finds nothing to run fails, never passes empty.
+# defines `lint`, `typecheck`, `test:unit` (or `test:coverage`) and `test:contract`; and apps that each have a Playwright config and a `test:e2e` script (and a `chromium` project beside a `destructive` one),
+# and the scripts `build:demo-static`, `check:demo-size` and `e2e:demo-static`. A job
+# that finds nothing to run fails, never passes empty, and so does one that would leave an app out.
 name: sssb app checks
 
 on:
@@ -46,7 +48,8 @@ permissions:
     contents: read
 
 jobs:
-    # The workspace's lint, typecheck and unit tests (the conformance suite runs among them), then `sssb check-fences`
+    # The workspace's lint, typecheck and unit tests (in this repository the framework's seam-conformance suites run
+    # among them; P5's conformance suite joins when it lands), then `sssb check-fences`
     # in each app: the fences as the app's own config composes them.
     lint-typecheck-unit:
         runs-on: ubuntu-latest
@@ -99,8 +102,9 @@ jobs:
                   CONTRACT_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
     # The e2e shards and the static-demo apps, DISCOVERED from the apps (`sssb ci matrix`), never hand-listed: an app
-    # that is renamed or added needs no edit here. It fails when either list is empty, because an empty matrix would
-    # fail its job without saying why.
+    # that is renamed or added needs no edit here. It fails when the workspace has no apps or any app lacks a Playwright
+    # config or a `build:demo-static` script, so no app drops out of either matrix and neither is ever empty (an empty
+    # matrix would fail its job without saying why).
     discover:
         runs-on: ubuntu-latest
         timeout-minutes: 15
@@ -125,7 +129,7 @@ jobs:
 
     # SHARDED, because parallelism is only safe where the worlds are separate: every Playwright worker in one shard
     # drives one server holding one `.data`, and separate runners have separate worlds. An app whose Playwright config
-    # declares a `destructive` project gets two shards (`sssb ci e2e-shards` says how).
+    # declares a `destructive` project gets two shards (`e2eShards` in @sssb/tools' `ci.js` says how).
     e2e:
         name: e2e (${{ matrix.shard.name }})
         needs: discover
