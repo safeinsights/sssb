@@ -37,6 +37,8 @@
         "test:contract": "node scripts/check-tmpdir-leak.mjs vitest run --config vitest.contract.config.ts",
         "changeset": "changeset",
         "release:check": "node scripts/release.mjs check",
+        "release-app": "tsx scripts/release-app.ts",
+        "release-app:init": "tsx scripts/release-app.ts create",
         "pack-and-consume": "node scripts/pack-and-consume.mjs"
     },
     "dependencies": {
@@ -87,6 +89,7 @@
         "typescript": "~6.0.3",
         "typescript-eslint": "^8.72.0",
         "vite": "^8.3.5",
-        "vitest": "^4.1.12"
+        "vitest": "^4.1.12",
+        "yaml": "2.9.1"
     }
 }
