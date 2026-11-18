@@ -1,19 +1,19 @@
 {
-    "name": "infra",
+    "name": "showcase-infra",
     "version": "0.1.0",
     "private": true,
     "license": "MIT",
-    "description": "CDK app (Lambda Web Adapter pattern, ADR-0001). A draft you take over at cutover.",
+    "description": "This app's deployment: SSSB's SssbApp construct in a stack of its own (ADR-0001, ADR-0014 D8). A draft you take over at cutover.",
     "scripts": {
-        "synth": "cdk synth --quiet && pnpm exec tsx check-shapes.ts",
+        "synth": "cdk synth --quiet",
         "diff": "cdk diff"
     },
     "dependencies": {
+        "@sssb/cdk": "workspace:*",
         "aws-cdk-lib": "^2.274.0",
         "constructs": "^10.8.1"
     },
     "devDependencies": {
-        "@sssb/tools": "workspace:*",
         "aws-cdk": "^2.1146.0"
     }
 }

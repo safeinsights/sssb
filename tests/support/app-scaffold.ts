@@ -89,7 +89,7 @@ export function scaffoldProblems(apps: readonly AppFacts[], rows: ReadonlySet<st
             if (missing.length > 0) {
                 problems.push(
                     `apps/${app.name}: config/params.ts lacks ${missing.join(', ')}, which apps/${reference.name}'s has ` +
-                        '(infra reads the same keys whichever app it is pointed at)',
+                        '(each app’s infra hands its params to the same SssbApp construct)',
                 )
             }
             if (extra.length > 0) {

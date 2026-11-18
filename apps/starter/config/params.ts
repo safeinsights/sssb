@@ -5,7 +5,7 @@
  * when. Fields ending in `Name` are the names of secrets (env var / Secrets Manager entry) — secret
  * VALUES never live in the repo.
  *
- * WHAT IS LINT-ENFORCED (eslint.config.mjs `processEnvSelector`): `process.env` is read ONLY
+ * WHAT IS LINT-ENFORCED (`sssb/no-process-env`, @sssb/eslint-plugin): `process.env` is read ONLY
  * inside packages/kit/src/adapters and an app's own real adapters (apps/<app>/src/adapters/real, which
  * may not read the run mode) — every other module imports the resolved value (this file for
  * deployment/service params; `isSimulated`/`isDemoMode` from @sssb/kit/adapters for run mode). Exemptions:
@@ -32,7 +32,7 @@ export const params = {
         certificateArn: 'PLACEHOLDER_ACM_CERTIFICATE_ARN',
     },
     database: {
-        // cutover: data-api — how the app reaches Postgres; infra/stack.ts builds the matching network shape
+        // cutover: data-api — how the app reaches Postgres; infra/ (SssbApp) builds the matching network shape
         // and sets DATABASE_TRANSPORT from it.
         // 'pg' (the default): node-postgres from a Lambda inside the database's VPC. 'data-api' (opt-in):
         // the RDS Data API from a Lambda outside any VPC, with no NAT (ADR-0002, addendum 2026-11-16).

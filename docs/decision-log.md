@@ -3193,49 +3193,85 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 - **The pill's badge uses the name's number format** (`useFormatter().number`, as ICU's `#` does: "1,000" in en). The
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
-  `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
-
-## Changesets are required on PRs that change what ships, and carry the release note (2026-11-18, `ci/changeset-required`)
-
-JP asked whether CanopyCMS's way of keeping a changelog up to date could be copied. Its mechanism: every PR that
-changes a published package adds a `.changeset/*.md` that is its changelog entry, in a fixed template ending with a
-"Now deletable" part, and CI fails the PR without one. SSSB already had Changesets but no rule, template or lint.
-
-- **What was taken:** the gate, the template, the explicit "no adopter-visible effect" answer (an empty changeset),
-  and "Now deletable". The template's `**Kind.**` is one of P7's four release-note sections (`seam`, `migration`,
-  `operator`, `scaffold`) or `none`, so the notes can be written from the files by section.
-- **Kind and Action are separate fields.** Canopy keeps "which area" and "must the adopter act" apart; a first
-  version here tied the bump to Kind and left an additive migration or a new optional export with no honest home
-  (ADR-0014 part 10 calls a migration breaking only when it needs operator action). `**Action.** required` is a
-  `minor`; `optional` and `none` may be a `patch`. Part 10's other breaking items (a raised peer floor, a rule that
-  turns app code red) are filed under `seam`, and a change in two sections is two files.
-- **What was not taken:** CanopyCMS's 3,286-line assembly script, its area table and its int-prerelease labels. They
-  serve an npm prerelease channel; SSSB's release candidates are tarballs on a GitHub prerelease (ADR-0014 P7).
-  Assembling the notes from the files waits for `@sssb/tools` to exist to host it, and the stock
-  `@changesets/cli/changelog` ignores Kind and Action, so P7/P14 need a custom changelog function or an assembler
-  (said in `.changeset/README.md`). Rejected alternative: port the script whole.
-- **The gate is path-based, not `changeset status`.** Every package is `private` until P14 and `status` ignores
-  private packages, so it would pass for any change. "Ships" is every `@sssb/*` package under `packages/` (read from
-  its manifest, so P4's tools, P6's plugin, P9's cdk and P12's create are covered the day they land; the kit is
-  narrowed to its `files` allowlist, the seam-conformance tests included, other tests and stories not) and
-  `apps/starter`, the scaffold an adopter copies and the future `@sssb/create` template. `apps/showcase`,
-  `packages/seed`, the lockfile and the kit's `test-fixture` are not shipped. The lockfile counts in CanopyCMS
-  because its worker is an esbuild bundle; SSSB ships source. A test fails when the kit manifest's `files` gains an
-  entry the gate does not know.
-- **Known gap, taken on purpose:** while adoption is a fork, adopters also receive `infra/`, the cutover checklist,
-  the ESLint config, `.gitleaks.toml`, the CI workflows, `scripts/` and the docs. Gating them now would make every
-  P5, P6, P9 and P10 PR carry a changeset for files those steps are moving. Some of them land in packages and the
-  starter, which the gate covers; some land elsewhere (the showcase's `infra/`, a generator's write-once files).
-  The README says to check whether the gate sees a change.
-- **Exemptions:** the release merge (`integration` into `main`, same repository, so a fork's branch of that name is
-  not exempt); Dependabot's PRs unless one changes the kit's `peerDependencies`; a PR opened before the gate reached
-  its base branch (read from git, so no date is written down); and a file a PR carries only because it merged `main`
-  in (ported from CanopyCMS), since the repository does merge `main` back into branches.
-- **The logic is a shell script under `.github/scripts/`, tested by a vitest file** that builds real git repositories
-  (the machine's git config isolated), and the shape lint is `tests/support/changeset-shape.ts` run by the same file.
-  Neither adds a `scripts/` file, a `package.json` script or a `knip.json` entry, because P4 is moving `scripts/`
-  and P4, P5 and P6 own the root manifest. Each moving part of the script was mutated to confirm a case goes red.
   `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
+
+## `@sssb/cdk` and per-app infra (2026-11-18, ADR-0014 P9, `feat/sssb-cdk`)
+
+- **`SssbApp` is a construct with five props** (`appDir`, `slug`, `params`, `environment`, `production`). Rejected:
+  reading the `environment` context inside the construct, as the old stack did. Which environments exist is the app's
+  policy (Pages has its own), so `infra/app.ts` reads and checks the context and hands the construct a name and a
+  boolean.
+- **The construct's id is `Default`** in both apps, so logical ids stay as they were (ADR-0014, addendum 2026-11-18).
+  Rejected: a descriptive id such as `App`, which would have renamed every resource and made the first deploy after P9
+  replace the database and the VPC.
+- **The seam reaches esbuild as an alias alone; the app's tsconfig is no longer passed.** Rejected: passing both. Seen
+  failing without the alias: the bundle then names neither the app's migration registry nor any of its four migrations,
+  and the synth fails on each.
+- **Kit resolution and the assembly checks come from `@sssb/tools`** (`@sssb/tools/kit`'s `kitDirOf`,
+  `kitVersionOf` and `resolveAppsKit`, which P4 published for this; `@sssb/tools/assembly-checks`): `@sssb/cdk`
+  depends on `@sssb/tools`, a plain dependency. Rejected: a resolver of `@sssb/cdk`'s own, which would split rule 4's
+  one shared check in two, and a peer dependency, the form ADR-0014 part 10 warns can lift the fixed group to 1.0.0.
+  Part 10 says the packages carry no dependency on each other; the probe it calls for, a `minor` and then a `patch`
+  changeset on `@sssb/tools` through `pnpm release:check`, planned the same step for all three packages and nothing
+  at 1.0.0 (ADR-0014, addendum 2026-11-18, P9). P4's resolver walks `node_modules` from the app rather than calling
+  `require.resolve`, which matters here: the construct runs under `pnpm exec`, which sets `NODE_PATH` to the
+  hoisted store.
+- **`check-shapes` became `packages/cdk/src/sssb-app.test.js`, a Vitest project of its own (`cdk`)**, which discovers
+  every `apps/*/infra` and synthesizes both shapes for each. It reads `DATABASE_ENV` from the `@sssb/kit` each app
+  resolves (by file, since it is not a published subpath), so it keeps the runtime and the infra from drifting on a
+  name. `init-app` reserves the slug `cdk` with `kit`, since a project of that name would collide.
+- **Each app's infra is outside the app's vendor fence** (`APP_INFRA_GLOB`), as ADR-0014 part 8 asked: a CDK custom
+  resource there may call the AWS SDK. Pinned in `tests/lint/extensions.test.ts`, and seen failing without the
+  carve-out.
+- **`@sssb/cdk` typechecks under every flag of the framework's strict set but `exactOptionalPropertyTypes`**
+  (`packages/cdk/tsconfig.json` against `packages/kit/tsconfig.strict.json`), which aws-cdk-lib's own declarations
+  fail: six errors, every one between two of CDK's own types (`Vpc` against `IVpc`, `Bucket` against `IBucket`,
+  `DefaultStackSynthesizer` against `IStackSynthesizer`, and the props objects that carry them). It ships
+  JavaScript and a declaration file, so an adopter's flags never reach its sources.
+- **`init-app` renames the app's infra package** (`<slug>-infra`) with the app, and refuses a slug that names one.
+  Nothing else in an app's `infra/` names the app, so nothing else is rewritten.
+- **CI synthesizes with `--fail-if-no-match`**, because `pnpm --filter` with no match exits 0: a tree whose apps all
+  lost their `infra/` would otherwise pass the synth step having run nothing.
+- **Pack and consume copies `apps/starter/infra` but does not install or synthesize it**: the consumer's workspace lists
+  `apps/*` and `packages/*`, and `@sssb/cdk` is not packed. The construct's synth assertions are what catch a wrong
+  kit or a wrong seam in a consumer; proving that from tarballs is P12's, when the generator ships the starter's
+  `infra/`.
+- **What the reviews added, each seen failing in `packages/cdk/src/sssb-app.test.js`.** The independent review asked
+  whether a stack could run with fake adapters, the wrong app's migrations or another app's seam while every check
+  passed, and found no accidental route; the code review found no HIGH. The construct now also refuses: a `slug`
+  other than the `APP_SLUG` the app's `config/app.ts` declares (a root `infra/` composing several apps could pair one
+  app's directory with another's slug); an app whose linked `@sssb/app-config` is not its own `src/app-config`; a
+  migrator whose deployed `Code` is not the bundle this synth staged (an escape-hatch override); a migrator
+  environment carrying `DEMO_MODE` or `E2E_BUILD`; and a `production` that is not a boolean, which in JavaScript
+  silently gave the destructive non-production defaults. The migration names it expects are the index's literal keys,
+  comments left out; an index with migration files beside it and no literal key, whose computed keys made the check
+  expect nothing, is refused (seen, in a scratch app). Round 1's first answer, also expecting every migration file's
+  name, was rejected in round 2: a migration registered under a key other than its file name, or a draft file not
+  registered yet, would fail the synth for nothing.
+- **Local bundling only, and the construct checks for it.** It refuses a project root (the lock file's directory)
+  with no `node_modules/esbuild`, and a framework installed outside that root, each with a message saying what to
+  change (`docs/build-notes.md`, P9). Rejected: an alias relative to the working directory, which in Docker is `/`,
+  not the project root, and which `NodejsFunction` does not let a caller change; and round 1's first answer, an
+  `esbuild` dependency of `@sssb/cdk`, which round 2 showed is not what CDK runs.
+- **The deployed migrator's `Code` is compared with the asset's own bucket and key, as the synthesizer assigned
+  them**, not with `<asset hash>.zip`, which round 2 showed fails under a synthesizer's `bucketPrefix` and under the
+  legacy synthesizer. A stack with `bucketPrefix: 'apps/'` synthesizes in the test.
+- **Accepted, not closed:**
+    - App source can still import from `apps/<app>/infra`, which the vendor fence no longer covers; the
+      `tests/contract` carve-out has the same shape. No import pattern bans it without also banning an app's own
+      module that happens to be called `infra`.
+    - The VPC's `Name` tags carry the construct path (`…/Default/Vpc`), so they change in place on the first deploy
+      after P9.
+    - What synth cannot see (the server's uploaded zip, a synth with validation off, changes after synth, a seam
+      index that brings in another app's registry, re-exported by an app with no migration files of its own or
+      spread beside a literal key) is
+      `.claude/future-tasks/deployed-artifact-identity.md`.
+    - A project whose only esbuild is a global one is refused, though CDK would bundle with it locally.
+    - The migration-key regex reads text: a `//` or `/*` inside a key's string can hide later keys from the check
+      (it then fails closed if none is left), and a comment directly after a quote can count a key that is not
+      there (a false alarm, never a pass).
+- **Found, not this branch's:** `defaultDatabaseName` is the slug, and `init-app` accepts dashes, which an Aurora
+  database name cannot hold. A follow-up.
 
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 
@@ -3403,6 +3439,47 @@ JP asked on 2026-11-17 whether the Simulator could start the ticking clock from 
   its 860,000-byte budget. A `TextInput` of type number took the bundle to 840,890 bytes, under budget again; the route
   validates the value either way.
 
+## Changesets are required on PRs that change what ships, and carry the release note (2026-11-18, `ci/changeset-required`)
+
+JP asked whether CanopyCMS's way of keeping a changelog up to date could be copied. Its mechanism: every PR that
+changes a published package adds a `.changeset/*.md` that is its changelog entry, in a fixed template ending with a
+"Now deletable" part, and CI fails the PR without one. SSSB already had Changesets but no rule, template or lint.
+
+- **What was taken:** the gate, the template, the explicit "no adopter-visible effect" answer (an empty changeset),
+  and "Now deletable". The template's `**Kind.**` is one of P7's four release-note sections (`seam`, `migration`,
+  `operator`, `scaffold`) or `none`, so the notes can be written from the files by section.
+- **Kind and Action are separate fields.** Canopy keeps "which area" and "must the adopter act" apart; a first
+  version here tied the bump to Kind and left an additive migration or a new optional export with no honest home
+  (ADR-0014 part 10 calls a migration breaking only when it needs operator action). `**Action.** required` is a
+  `minor`; `optional` and `none` may be a `patch`. Part 10's other breaking items (a raised peer floor, a rule that
+  turns app code red) are filed under `seam`, and a change in two sections is two files.
+- **What was not taken:** CanopyCMS's 3,286-line assembly script, its area table and its int-prerelease labels. They
+  serve an npm prerelease channel; SSSB's release candidates are tarballs on a GitHub prerelease (ADR-0014 P7).
+  Assembling the notes from the files waits for `@sssb/tools` to exist to host it, and the stock
+  `@changesets/cli/changelog` ignores Kind and Action, so P7/P14 need a custom changelog function or an assembler
+  (said in `.changeset/README.md`). Rejected alternative: port the script whole.
+- **The gate is path-based, not `changeset status`.** Every package is `private` until P14 and `status` ignores
+  private packages, so it would pass for any change. "Ships" is every `@sssb/*` package under `packages/` (read from
+  its manifest, so P4's tools, P6's plugin, P9's cdk and P12's create are covered the day they land; the kit is
+  narrowed to its `files` allowlist, the seam-conformance tests included, other tests and stories not) and
+  `apps/starter`, the scaffold an adopter copies and the future `@sssb/create` template. `apps/showcase`,
+  `packages/seed`, the lockfile and the kit's `test-fixture` are not shipped. The lockfile counts in CanopyCMS
+  because its worker is an esbuild bundle; SSSB ships source. A test fails when the kit manifest's `files` gains an
+  entry the gate does not know.
+- **Known gap, taken on purpose:** while adoption is a fork, adopters also receive `infra/`, the cutover checklist,
+  the ESLint config, `.gitleaks.toml`, the CI workflows, `scripts/` and the docs. Gating them now would make every
+  P5, P6, P9 and P10 PR carry a changeset for files those steps are moving. Some of them land in packages and the
+  starter, which the gate covers; some land elsewhere (the showcase's `infra/`, a generator's write-once files).
+  The README says to check whether the gate sees a change.
+- **Exemptions:** the release merge (`integration` into `main`, same repository, so a fork's branch of that name is
+  not exempt); Dependabot's PRs unless one changes the kit's `peerDependencies`; a PR opened before the gate reached
+  its base branch (read from git, so no date is written down); and a file a PR carries only because it merged `main`
+  in (ported from CanopyCMS), since the repository does merge `main` back into branches.
+- **The logic is a shell script under `.github/scripts/`, tested by a vitest file** that builds real git repositories
+  (the machine's git config isolated), and the shape lint is `tests/support/changeset-shape.ts` run by the same file.
+  Neither adds a `scripts/` file, a `package.json` script or a `knip.json` entry, because P4 is moving `scripts/`
+  and P4, P5 and P6 own the root manifest. Each moving part of the script was mutated to confirm a case goes red.
+
 ## Doc agents: one steward, plus a line-delta rule and a reading map (2026-11-18, `docs/doc-hygiene`)
 
 JP asked what is worth borrowing from CanopyCMS's documentation setup. Two things, and not the rest.
@@ -3420,7 +3497,6 @@ JP asked what is worth borrowing from CanopyCMS's documentation setup. Two thing
 - **Not taken: `CODEBASE_GUIDE.md` and its codebase-guide agents.** A file-by-file map of the code is a second copy to
   keep true. The agent instructions do have a planned home (ADR-0014's P4 `sssb guide`, content from P7, which
   copies the app guide into an adopter's repo), but a file map like `CODEBASE_GUIDE.md` is deliberately not planned.
-  `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
 
 ## Trojan Source scan and an action-pin gate, borrowed from CanopyCMS (2026-11-18, `ci/ci-hygiene`)
 
@@ -3444,6 +3520,96 @@ JP asked what is worth borrowing from CanopyCMS's documentation setup. Two thing
   that is not one, and a parent `LC_ALL=C`.
 - **Rejected: porting `check-action-pins.mjs` into `scripts/`** with a `package.json` script. It would grep for
   `uses:` rather than parse, and would touch the files other work owns.
+
+## The database is named from the slug with dashes as underscores (2026-11-18, `fix/aurora-db-name`)
+
+`@sssb/cdk`'s entry above left this as a follow-up: `SssbApp` named the deployed database by the app's slug, `pnpm
+init-app` accepts dashes in a slug, and Aurora PostgreSQL's database names take letters, numbers and underscores only,
+so `pnpm init-app my-app` gave a stack that synthesized and failed at deploy.
+
+- **Derived, not refused.** Dashes are ordinary in a slug, so the construct names the database
+  `databaseNameFor(slug)`: the slug with each dash as an underscore (`packages/cdk/src/database-name.js`). A slug has no
+  underscore of its own, so two slugs never share a name, and a slug with no dash names the same database as before:
+  the showcase's and the starter's templates are unchanged but for one variable on the migrator.
+- **Every place the name is used takes it from there**: the cluster's `defaultDatabaseName`, the server's
+  `DATABASE_NAME` (data-api) or the path of its `DATABASE_URL` (pg), and the migrator's `DATABASE_NAME`, on both
+  transports now. On pg the migrator used to take the name from the secret's `dbname`, which the synthesized secret
+  does not carry (only the cluster's secret attachment would add it, at deploy); the framework's handler now prefers
+  `DATABASE_NAME`. The contract test databases already folded dashes (`contractDatabaseName`), and nothing in
+  `packages/kit/src/db` or an app's `config/params.ts` turns the slug into a database or role name.
+- **Refused where the name cannot be made**: a slug over 63 characters, or one whose name the engine reserves (its
+  reserved key words, `postgres`, `rdsadmin`, `template0`, `template1`), throws at synth, and `pnpm init-app` refuses it
+  where the slug is chosen, importing the same function.
+- **Proved** by a test that synthesizes a dashed-slug app on both transports (red with the old naming), by `pnpm
+init-app my-app` in a copy of the repository followed by its real `cdk synth` (`DatabaseName: my_app`), and by
+  `init-app` refusing `user`, `select`, `rdsadmin` and a 64-character slug (each red without the check).
+
+## `@sssb/eslint-plugin`: the fences as one plugin (2026-11-18, ADR-0014 P6, `feat/eslint-plugin`)
+
+- **Every fence is a rule with an id of its own.** The fences that were `no-restricted-imports` patterns or
+  `no-restricted-syntax` selectors are now `sssb/no-vendor-import`, `sssb/no-next-font-google`,
+  `sssb/no-real-adapter-import`, `sssb/no-static-real-adapter-import`, `sssb/no-kit-real-adapter-import`,
+  `sssb/no-dynamic-real-adapter-import`, `sssb/no-process-env`, `sssb/no-run-mode-env`, `sssb/no-literal-a11y-copy`,
+  and, SSSB-internal, `sssb/no-app-import` and `sssb/no-framework-import-in-core`. The declaration rules match as
+  `no-restricted-imports` did (the `ignore` package with `allowRelativePaths` and `ignorecase`, a `regex` with `iu`,
+  the specifier trimmed, `import m = require()` included; they also trim that last form's specifier, which ESLint
+  does not, a tightening) and report each pattern's own message, so every
+  probe in `tests/lint` kept its message fragment and only its rule id changed. `eslint.config.mjs` no longer sets
+  either core rule. The alternative, keeping the core rules for SSSB's own repository and ids only in the preset,
+  would have left two readings of each fence.
+- **`react/jsx-no-literals` became `sssb/no-jsx-literals`**: react's rule, run with SSSB's options fixed and no
+  options of its own. The alternative, leaving `react/jsx-no-literals` in the preset, let an adopter's block that
+  configures that rule for its own reasons replace SSSB's options for every file it matched.
+- **`configs.app({ root })` is async**, because it imports the app's `lint-exceptions.mjs` (an ES module, re-read by
+  mtime as before). A synchronous factory through `require()` of ESM was the alternative; it cannot re-read an edited
+  file in a long-lived lint server. Adopters write `...(await sssb.configs.app({ root: import.meta.dirname }))`.
+- **`root` must be absolute, and every block carries `basePath`**: `root` itself, or its parent directory when
+  `root`'s last segment is `*`. A relative root is refused: it would be
+  relative to wherever ESLint started (ADR-0014 part 4). A last segment of `*` means every app in that directory;
+  this repo's config passes `join(import.meta.dirname, 'apps/*')`, the ADR's `apps/*` anchored.
+- **The internal rules' anchors are a `{ root }` option**, read when the rule runs: `sssb/public-surface` and
+  `sssb/no-path-out-of-package` read `packages/kit/package.json` under it, and both path rules resolve landings
+  against it. Nothing in the plugin reads a file when it loads but its own `package.json` (for `meta.version`).
+- **Scope changes, each a tightening or a no-op.** The a11y-copy ban now covers the app's registry
+  (`src/adapters/index.ts`), which lost it only because the fakes block ignored the registry for the dynamic real/
+  ban. The `next/font/google` ban now covers `next.config.*` and `tests/contract/`, which the vendor block's carve-outs
+  had dropped with it. The registry pattern (`appRealAdapterPattern`, now `sssb/no-real-adapter-import`) no longer applies to
+  `packages/*/src`: a package
+  has no registry, and in `packages/kit/src` the merge trap had already replaced it with the framework fence's list.
+  `SSSB_LINT_EXCEPTIONS_ROOT` is gone: the tests point `configs.app` at a scratch tree directly.
+- **An app adds its own vendors in its `package.json`** (`"sssb": { "vendors": [...] }`, beside P4's `sssb.port`). An
+  app-owned adapter's SDK used to go into `vendorSdkPattern` in a fork's `eslint.config.mjs`; once the list ships in
+  the plugin, an adopter cannot edit it. The first cut was a `configs.app({ root, vendors })` option, and round 1 of
+  review (both reviewers) found it could narrow SSSB's list: `ignore` reads a leading `!` as a negation, and
+  check-fences skipped the vendor rules' options, so a later block could also swap the app's list for one directory.
+  Now the list is a file check-fences reads too, the options are compared exactly, and a leading `!` is refused in
+  the package.json and in the rules' schema. The alternative, keeping the option and teaching check-fences a superset
+  test, still needed check-fences to know the app's list, which only a file gives it.
+- **What the plugin depends on.** `eslint` is a peer; the base config's plugins (`@eslint/js`, `typescript-eslint`,
+  `eslint-plugin-react`, `-react-hooks`, `-jsx-a11y`, `@next/eslint-plugin-next`, `eslint-config-prettier`) and
+  `ignore` are dependencies, so `configs.app` needs nothing else installed. An adopter's own block that binds one of
+  those plugins to another copy gets ESLint's loud `Cannot redefine plugin`, never a silent change.
+- **The e2e import ban (ADR-0014 part 2) waits for P5.** The spec it allows, `@sssb/kit/testing/e2e`, does not exist
+  yet, and `apps/showcase/tests/e2e/destructive/simulator-webhooks.spec.ts` imports `@sssb/kit/core/webhook-signing`.
+- **What `sssb check-fences` defends against: an adopter's config weakening a fence by ACCIDENT.** Three review rounds
+  and an independent reviewer (Fable) on "can a config composed after the preset silently switch off or narrow a
+  fence?" closed every plain-configuration case they found: a rule turned off or down, narrowed to a directory, an
+  `ignores`, a nested config file, a processor or parser for one directory, an app's vendor list negated or swapped,
+  inline directives in every form ESLint reads, an `eslint-suppressions.json` (the ESLint CLI applies it, the ESLint
+  class only with `applySuppressions: true`, which check-fences does not pass, so check-fences now reports every fence finding in the app's own files, at any severity), symlinked
+  files and directories, and build-output names deeper in `src/`. What is left needs config code written to deceive,
+  and each case keys on the probes' public file name: a parser that borrows the real one's `meta`, the preset's blocks
+  rewritten to bind `sssb` to a look-alike plugin, a module the rules read rewritten. These are OUT OF SCOPE (manager,
+  2026-11-18): a config that is written to deceive can as well delete the preset, and no lint-time check stops that.
+  The plugin, its rules, its patterns and react's `create` are frozen or captured anyway, because that was cheap. The
+  stronger check, a probe at every real file's path, is `.claude/future-tasks/check-fences-real-file-probes.md`:
+  rejected for now because it adds a third lint per file to a check that already takes about 5s on the showcase (233
+  files; `sssb check-fences --app apps/showcase`, measured 2026-11-18).
+  Also not covered, by nature: flags on the app's lint command (any fence finding is still reported by check-fences,
+  whatever the command does with it), and a config that behaves differently when it detects which tool loaded it.
+- **Typed linting cannot pass check-fences yet.** Its probe files are virtual and outside the app's TypeScript
+  project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
+  with that reason (a false red, not a hole).
 
 ## `@sssb/kit/testing/e2e`: compiled when packed, source in the repo (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
 

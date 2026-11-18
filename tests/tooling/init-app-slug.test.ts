@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -32,7 +32,29 @@ function projectNames(): string[] {
     return [...names].sort()
 }
 
+/**
+ * The package names of the apps' deployments (`apps/<app>/infra`), read from the tree the suite runs in: in the
+ * adoption probe's renamed and ejected tree there is no `showcase-infra`, and the survivor's is `<slug>-infra`.
+ */
+function infraPackageNames(): string[] {
+    return readdirSync(path.join(ROOT, 'apps'))
+        .map((app) => path.join(ROOT, 'apps', app, 'infra/package.json'))
+        .filter((file) => existsSync(file))
+        .map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { name: string }).name)
+        .sort()
+}
+
 describe('init-app slug refusals', () => {
+    it('reads the infra package names it is about to check, so an empty list cannot pass for success', () => {
+        expect(infraPackageNames().length).toBeGreaterThan(0)
+    })
+
+    it.each(infraPackageNames())('refuses "%s", the name of an app\'s infra package', (slug) => {
+        const result = initApp(slug)
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain(`"${slug}"`)
+    })
+
     it('reads the project names it is about to check, so an empty list cannot pass for success', () => {
         expect(projectNames()).toEqual(expect.arrayContaining(['kit', 'repo']))
     })
@@ -43,10 +65,23 @@ describe('init-app slug refusals', () => {
         expect(result.stderr).toMatch(/reserved/)
     })
 
-    it.each(['repo', 'infra', 'sssb', 'spike-kysely-pglite'])('refuses "%s"', (slug) => {
+    it.each(['repo', 'sssb', 'spike-kysely-pglite'])('refuses "%s"', (slug) => {
         const result = initApp(slug)
         expect(result.status).toBe(1)
         expect(result.stderr).toContain(`"${slug}"`)
+    })
+
+    // The deployed database is named from the slug (`databaseNameFor`, packages/cdk/src/database-name.js), and Aurora
+    // refuses a name over 63 characters or one its engine reserves, so init-app refuses those slugs up front.
+    it.each(['user', 'select', 'rdsadmin', 'a'.repeat(64)])('refuses "%s", which cannot name the database', (slug) => {
+        const result = initApp(slug)
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain("cannot name the app's database")
+    })
+
+    it('takes a dashed slug, whose database name is the slug with underscores', () => {
+        const result = initApp('acme-corp')
+        expect(result.status, result.stderr).toBe(0)
     })
 
     it('still takes an ordinary slug (the positive control: a refusal test that cannot fail proves nothing)', () => {

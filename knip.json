@@ -34,9 +34,6 @@
                 "test-fixture/app-config/db/migrations/*.ts"
             ]
         },
-        "infra": {
-            "entry": ["app.ts"]
-        },
         "packages/tools": {
             "ignoreDependencies": ["next", "vite", "vitest"]
         }

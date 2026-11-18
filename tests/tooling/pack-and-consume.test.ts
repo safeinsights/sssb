@@ -10,6 +10,8 @@ import {
     expectedConformanceTests,
     lockfileMoves,
     lockfileProblems,
+    pluginManifestProblems,
+    pluginShippedFileProblems,
     seamPeerProblems,
     shippedFileProblems,
     tarballIntegrities,
@@ -405,6 +407,49 @@ describe('toolsShippedFileProblems', () => {
     })
 })
 
+describe('pluginManifestProblems', () => {
+    const good = {
+        name: '@sssb/eslint-plugin',
+        dependencies: { ignore: '^5.3.2', 'typescript-eslint': '^8.72.0' },
+        peerDependencies: { eslint: '^10.13.0' },
+    }
+    it('passes the shape @sssb/eslint-plugin must have', () => {
+        expect(pluginManifestProblems(good)).toEqual([])
+    })
+    it('fails any dependency on an SSSB package, in every field (rule 4)', () => {
+        for (const field of ['dependencies', 'optionalDependencies', 'peerDependenciesMeta']) {
+            expect(pluginManifestProblems({ ...good, [field]: { '@sssb/kit': '0.1.0' } }), field).toEqual([
+                `${field} names @sssb/kit: @sssb/eslint-plugin depends on no SSSB package`,
+            ])
+        }
+    })
+    it('fails ESLint as anything but a peer, and a wrong name', () => {
+        expect(pluginManifestProblems({ ...good, peerDependencies: {} })).toEqual([
+            "eslint is not a peer: the plugin must run inside the app's own ESLint",
+        ])
+        expect(pluginManifestProblems({ ...good, name: '@sssb/tools' })).toHaveLength(1)
+    })
+})
+
+describe('pluginShippedFileProblems', () => {
+    const good = ['package.json', 'src/index.js', 'src/index.d.ts', 'src/check-fences.js', 'src/rules.js']
+    it('passes JavaScript and declarations', () => {
+        expect(pluginShippedFileProblems(good)).toEqual([])
+    })
+    it('fails TypeScript source, a test, a stray file and a missing entry', () => {
+        expect(pluginShippedFileProblems([...good, 'src/x.ts'])).toEqual([
+            'src/x.ts: neither JavaScript nor a declaration file',
+        ])
+        expect(pluginShippedFileProblems([...good, 'src/rules.test.js'])).toEqual([
+            'src/rules.test.js: a test file is shipped',
+        ])
+        expect(pluginShippedFileProblems([...good, 'tests/x.js'])).toEqual(['tests/x.js: outside src/'])
+        expect(pluginShippedFileProblems(good.filter((f) => f !== 'src/check-fences.js'))).toEqual([
+            "src/check-fences.js: an export's entry is not shipped",
+        ])
+    })
+})
+
 describe('lockfileMoves', () => {
     it("ignores the framework's own entries, which change with every build and release", () => {
         const bumped = GOOD_LOCKFILE.replaceAll('sssb-kit-0.1.0', 'sssb-kit-0.2.0')
@@ -416,6 +461,17 @@ describe('lockfileMoves', () => {
     it("ignores @sssb/tools' entries the same way", () => {
         const bumped = WITH_TOOLS.replaceAll('sssb-tools-0.1.0', 'sssb-tools-0.2.0').replace('sha512-tools', 'sha512-x')
         expect(lockfileMoves(WITH_TOOLS, bumped)).toEqual({ added: 0, removed: 0 })
+    })
+
+    it("ignores @sssb/eslint-plugin's entries the same way", () => {
+        const entry = TOOLS_ENTRY.replaceAll('sssb/tools', 'sssb/eslint-plugin')
+            .replaceAll('sssb-tools-', 'sssb-eslint-plugin-')
+            .replace('sha512-tools', 'sha512-plugin')
+        const withPlugin = GOOD_LOCKFILE.replace('snapshots:\n', `${entry}snapshots:\n`)
+        const bumped = withPlugin
+            .replaceAll('sssb-eslint-plugin-0.1.0', 'sssb-eslint-plugin-0.2.0')
+            .replace('sha512-plugin', 'sha512-x')
+        expect(lockfileMoves(withPlugin, bumped)).toEqual({ added: 0, removed: 0 })
     })
 
     it('counts any other line that moved, including one that duplicates a line elsewhere', () => {

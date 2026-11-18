@@ -98,6 +98,17 @@ export default defineConfig(async (): Promise<ViteUserConfig> => ({
             ...(await Promise.all(APPS.map(projectFor))),
             kitProject,
             {
+                // @sssb/cdk's own suite: plain JavaScript, alias-free (the construct resolves @sssb/kit from
+                // each app's directory, never through an alias of this file's), and slow, because it
+                // synthesizes both network shapes for every app with an `infra/` and bundles the migrator.
+                test: {
+                    name: 'cdk',
+                    environment: 'node',
+                    include: ['packages/cdk/src/**/*.test.js'],
+                    testTimeout: 120_000,
+                },
+            },
+            {
                 // Repo hygiene, not app scope — and deliberately alias-free, so nothing here can
                 // quietly come to depend on one app being "the" app. Everything under `tests/` is
                 // repo-scoped by construction (app tests are colocated in `apps/*/src`), so this

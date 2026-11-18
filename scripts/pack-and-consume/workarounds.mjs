@@ -29,6 +29,10 @@ export const WORKAROUNDS = {
         removedBy: 'P12',
         what: "the consumer's pnpm-workspace.yaml takes allowBuilds from this repo's, so a build script a kit dependency newly needs is approved here before an adopter would have to (P12: @sssb/create writes allowBuilds)",
     },
+    'eslint-configs-written': {
+        removedBy: 'P12',
+        what: "each app's eslint.config.mjs (the @sssb/eslint-plugin preset), the console's lint-exceptions.mjs and the workspace root's eslint.config.mjs are written by the script, and eslint is added to each app's devDependencies (P12: @sssb/create writes them; the starter in this repo is linted by the repo's root config)",
+    },
     'dedupe-peer-dependents-written': {
         removedBy: 'P12',
         what: "the consumer's pnpm-workspace.yaml sets dedupePeerDependents: false, so each importer of @sssb/kit gets an instance with its own seam (ADR-0014 part 5); an adopter's workspace has it only if they set it (P12: @sssb/create writes it; P5's sssb doctor advises when it is missing)",

@@ -17,11 +17,12 @@ CI's `changeset-required` job fails a PR that changes what ships to adopters and
 
 Not gated: `apps/showcase`, `packages/seed` (the showcase's world, `@app/seed`), tests, scripts, docs and the
 lockfile. **Known gaps:** while adoption is still a fork that takes updates by merge (ADR-0013), a forking adopter
-receives those too, and also `infra/`, `docs/cutover-checklist.md`, the ESLint config, `.gitleaks.toml` and the CI
-workflows; a change to any of them is not gated. Write a changeset for it anyway when it is an "Operator actions" or
-"Scaffold changes" item. ADR-0014's later steps move some of them into packages and the starter, which the gate
-covers, and some elsewhere (a showcase-only `infra/`, a generator's write-once files); until each step lands, check
-whether the gate sees your change.
+receives those too, and also `docs/cutover-checklist.md`, the ESLint config, `.gitleaks.toml` and the CI workflows;
+a change to any of them is not gated. Write a changeset for it anyway when it is an "Operator actions" or "Scaffold
+changes" item. Each app's deployment is in the app since ADR-0014's P9, so `apps/starter/infra/` is gated with the
+starter and `packages/cdk` as a package, while `apps/showcase/infra/` is not. ADR-0014's later steps move more of
+these into packages and the starter, which the gate covers, and some elsewhere (a generator's write-once files);
+until each step lands, check whether the gate sees your change.
 
 Exempt: a PR from `integration` into `main` in this repository (the release merge); Dependabot's PRs, unless one
 changes the kit's `peerDependencies` (a raised peer floor is breaking); a PR opened before the gate reached its base

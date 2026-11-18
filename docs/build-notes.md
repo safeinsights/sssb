@@ -2064,6 +2064,34 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   `node_modules/.pnpm/...` path; the static demo's list comes from Rollup's `this.getModuleIds()` in a scratch
   plugin; the migrator's from an esbuild metafile.
 
+## `@sssb/cdk` (2026-11-18, ADR-0014 P9)
+
+- **Import aws-cdk-lib as a namespace, never by default.** Under tsx, when a CommonJS app (`infra/app.ts`, in a
+  package with no `"type"`) loads the construct, tsx compiles the ESM construct to CommonJS, and aws-cdk-lib's
+  `module.exports` carries `__esModule`, so a default import is `undefined` (`Cannot destructure property
+'aws_budgets'`). `import * as cdk` works there and under plain Node ESM alike.
+- **An esbuild alias beats the nearest tsconfig's `paths`.** In this repo the files of `packages/kit/src` have no
+  tsconfig of their own, so the one esbuild finds is the root's, whose `@sssb/app-config/*` points at the test
+  fixture. With `--alias:@sssb/app-config=<app>/src/app-config` the bundle names the app's migration index and none
+  of the fixture's, and without it the synth fails on every one of the app's migrations.
+- **A construct validation is where to read what will be deployed.** `node.addValidation` runs inside `app.synth()`
+  after every construct has had its say, so the server's environment is final there; rendering the function's
+  `CfnFunction` through `_toCloudFormation()` includes escape-hatch overrides, which `addEnvironment` bookkeeping does
+  not. The migrator's bundle is already staged then (`<fn>/Code/Stage`'s `absoluteStagedPath`), because asset
+  bundling runs in the constructor.
+- **CDK caches a staged bundle for the rest of the process.** The test that tampers with one calls
+  `AssetStaging.clearAssetHashCache()` afterwards, or a later synth in the same file would be handed the tampered copy.
+- **The migrator bundles locally, never in Docker.** CDK's `NodejsFunction` falls back to bundling in a Docker image
+  when it finds no esbuild, and there it runs from `/` with the project mounted at `/asset-input`: the seam alias,
+  an absolute host path, would name nothing, and the bundle's path comments would no longer be relative to the
+  project root the check computes them from. CDK looks for esbuild with its own `require` first and runs that one as
+  `pnpm exec -- esbuild` (or `npx --no-install`) from the project root; failing that, it runs an `esbuild` on PATH;
+  only then Docker. So the project root's own `node_modules/esbuild` is what matters: a dependency of `@sssb/cdk` is
+  found by CDK's `require` through pnpm's hidden hoist, which stops the fallbacks, and then the `exec` fails
+  (reproduced by P9's second review round). The construct checks the project root instead, and so refuses a project
+  whose only esbuild is a global one, which CDK would accept. Read from aws-cdk-lib 2.277's
+  `aws-lambda-nodejs/lib/bundling.js` and `package-installation.js`; no Docker was run.
+
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 
 - **pnpm's bin shims (`node_modules/.bin/<bin>`, which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the workspace's hoisted `.pnpm/node_modules`**, and Node's resolver
@@ -2102,6 +2130,69 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   `tsc` (no overload matched: the inferred literal is wider than `UserConfig`); `async (): Promise<ViteUserConfig> =>`
   passes. The config is async because the presets are: they `import()` the app's plugins.
 
+## A rest destructure turned the React Compiler off for a whole component (2026-11-18, `feat/simulator-ticker-control`)
+
+- **Symptom:** after a small change to `apps/showcase/src/app/[locale]/simulator-glue.tsx`, ESLint reported six
+  "Unused eslint-disable directive" warnings for `react-hooks/set-state-in-effect`, at lines nobody had touched.
+- **Cause:** the new code destructured a response with a rest element (`const { error, ...status } = body`). The React
+  Compiler bailed out of the whole component, and the `react-hooks` rules that run on its analysis went silent with it,
+  so every disable for them became "unused". Nothing else said so: typecheck and the rest of lint were green.
+- **Lesson:** a burst of unused `react-hooks/*` disables in a component you changed means the compiler stopped
+  compiling it, not that the code got better. Find the construct by bisecting (`git show HEAD:<file>` piped to
+  `eslint --stdin --stdin-filename <file>` gives the before count) and write it another way.
+
+## Union merge stranded and duplicated an edited line in the decision log (2026-11-18, `docs/fix-log-merge-damage`)
+
+[Union merge for the two append-only records](#union-merge-for-the-two-append-only-records-2026-11-17-chorepost-p2-cleanup)
+named the risk (two edits of one line leave both versions) but not its other forms. What happened: PR #19 edited the
+LAST line of an existing decision-log entry (a path, `.claude/future-tasks/simulator-panel-focus-on-toggle.md` to
+`.claude/future-tasks/resolved/...`) and appended its own entry; PRs #21, #22 and #23 each appended an entry too. Each
+of the last three branches took `integration` in with a plain `git merge`, and `merge=union` resolved it without a
+conflict, three ways wrong:
+
+- **The old version of the edited line came back:** the "Label in Name" entry ended with the pre-rename path again.
+- **The edited line was stranded.** The merge put the new entry ABOVE the edited last line of the earlier entry, so
+  that line ended up under another PR's entry, where it read as that entry's last bullet.
+- **It was duplicated:** #21's and #22's merges each left a copy. #23's builder noticed the same thing in its own
+  merge and fixed it before pushing.
+
+A review of "what did this PR add to the log" sees only additions, and each wrong merge was already in the branch
+being reviewed, so nothing looked wrong. Two builders noticed it by chance, from a deletion in
+`git diff origin/integration -- docs/decision-log.md`.
+
+**After any merge that touches either log, read the log diff before committing or pushing:**
+`git diff origin/integration -- docs/decision-log.md docs/build-notes.md` must be additions only, as one block at the
+end of the file, and nothing in it may be a line another PR wrote. A deletion, a second hunk, or a line you did not
+write is the damage. GitHub's "update branch" button runs a merge too; whether it honours `.gitattributes` is not
+verified, so treat it the same way. The audit that found this counted, for every first-parent merge on
+`integration` that touched either log, the hunks and deletions against its first parent. Everything but the cases
+above was one added block. The exceptions were deliberate: #11 added a note inside the demo budget history, and #18
+and #19 changed paths in earlier entries after their files moved to `resolved/`.
+
+## `@sssb/eslint-plugin` (2026-11-18, ADR-0014 P6, `feat/eslint-plugin`)
+
+- **`pnpm exec` installs when the workspace changed.** pnpm 11 checks the workspace before running a command and
+  installs if a package was added, so a gate-probe loop that runs `pnpm exec vitest` while you create a package
+  directory runs an install in the middle of a probe, and every probe after it errors instead of reporting. Finish the
+  workspace change (and one `pnpm install`) before probing.
+- **Flat config's `basePath` makes a preset work from anywhere.** Every block the app preset returns carries
+  `basePath: <the app's absolute directory>` (its parent, for an `apps/*` root) and app-relative globs (`src/**`), so it means the same thing from the
+  app's own `eslint.config.mjs`, from a workspace root's, and whether ESLint was started in the app or the root. A
+  global-ignores object keeps `basePath` and is still global.
+- **To retire a core rule's setting, reproduce what it matches before changing what it is called.** The fences moved
+  from `no-restricted-imports` to rules of their own with the same matcher (eslint's own `ignore` options, `iu` for a
+  `regex`, the specifier trimmed, `TSImportEqualsDeclaration` visited; that one's specifier is trimmed too, which
+  ESLint's rule does not do) and the same messages, so each `tests/lint`
+  probe kept its fragment and only its rule id changed: a diff of the expectations is a diff of names alone.
+- **A third-party rule can be pinned to SSSB's options by delegation.** `sssb/no-jsx-literals` calls react's
+  `jsx-no-literals` `create()` with `Object.create(context, { options: { value: OPTIONS } })`: every other context
+  property comes through the prototype, and no later config block can change the options, because the rule has none.
+- **What a composed config does to a file is ESLint's answer, not the config's text.** `checkFences` asks
+  `calculateConfigForFile` for every source file, through the app's config and through the preset alone, and compares
+  the `sssb/*` rules. That one comparison sees a rule turned off or down, a later `ignores`, a global ignore and a
+  nested config file that takes over a directory (ESLint 10 looks up the config from each file's directory), none of
+  which a probe at a fixed path would see unless it happened to sit there.
+
 ## The contract runner in `@sssb/kit/testing/contract` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
 
 - **The Data API pass catches what the `pg` passes cannot.** Probe: the starter's migration 1001 with its two
@@ -2135,14 +2226,3 @@ bite there first.
 - **`playwright test --list`** starts no `webServer`, runs no global setup and needs no browser, but one spec that fails
   to load makes it list nothing. Its JSON report holds only the first entry of a `globalSetup` array; write it with
   `PLAYWRIGHT_JSON_OUTPUT_FILE`, since a spec's own output shares stdout.
-
-## A rest destructure turned the React Compiler off for a whole component (2026-11-18, `feat/simulator-ticker-control`)
-
-- **Symptom:** after a small change to `apps/showcase/src/app/[locale]/simulator-glue.tsx`, ESLint reported six
-  "Unused eslint-disable directive" warnings for `react-hooks/set-state-in-effect`, at lines nobody had touched.
-- **Cause:** the new code destructured a response with a rest element (`const { error, ...status } = body`). The React
-  Compiler bailed out of the whole component, and the `react-hooks` rules that run on its analysis went silent with it,
-  so every disable for them became "unused". Nothing else said so: typecheck and the rest of lint were green.
-- **Lesson:** a burst of unused `react-hooks/*` disables in a component you changed means the compiler stopped
-  compiling it, not that the code got better. Find the construct by bisecting (`git show HEAD:<file>` piped to
-  `eslint --stdin --stdin-filename <file>` gives the before count) and write it another way.

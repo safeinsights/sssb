@@ -865,6 +865,33 @@ address, so no one person's absence locks the names. This changes two things the
 Nothing else in the body changed. Publishing still goes through trusted publishing from GitHub Actions with no
 long-lived token (D11), so the shared account's credentials are not part of any release.
 
+## Addendum — 2026-11-18: P9, what the body did not pin down
+
+P9 built `@sssb/cdk` and moved the root `infra/` into each app. Details the body left open, each argued in
+`docs/decision-log.md` (2026-11-18, P9):
+
+- **The construct's props** are `appDir`, `slug`, `params` (it reads `params.database.transport`), `environment`
+  (a name, the app's own policy) and `production` (a boolean). Which environments exist, the context that picks one, the
+  stack, its id and its tags stay in the app's `infra/app.ts`: they are the adopter's policy, not SSSB's.
+- **Logical ids are unchanged.** Each app's `infra/app.ts` gives the construct the id `Default`, which CDK leaves out of
+  every logical id under it, so every resource and output keeps the id it had as a child of the old `AppStack`. Compared
+  on both network shapes: the same ids, and the same properties but for the VPC's `Name` tags (which carry the construct
+  path) and the migrator's asset hash.
+- **The migrator is bundled with the seam alias and no tsconfig.** The old stack passed the app's tsconfig; with the
+  alias that is no longer what decides the seam, and passing it only added `"use strict"` to the wrapped CommonJS
+  modules. Dropping it is the only change in the bundle's contents, and why its asset hash changed.
+- **The version check runs at construction**, when the construct resolves `@sssb/kit` from the app, and fails the
+  synth with both versions named. The environment and bundle checks run as a construct validation, so they read
+  the final rendered template, escape-hatch overrides included. The bundle check is skipped only when the synth does
+  not bundle the stack at all (`cdk deploy --exclusively OtherStack`), the one case in which there is no bundle to read.
+- **`@sssb/cdk` depends on `@sssb/tools`**, for the assembly checks (`@sssb/tools/assembly-checks`) and for rule 4's
+  one resolver (`@sssb/tools/kit`). This refines part 10, which says SSSB's packages carry no dependency on each
+  other. Its reason holds: what part 10 guards against is a release bumping a package through another's **peer**
+  range, which can lift the fixed group to 1.0.0, and this is a plain dependency (`workspace:*`, published as the
+  exact version). Probed with a `minor` and a `patch` changeset on `@sssb/tools`: `pnpm release:check` planned
+  0.2.0 and 0.1.1 for all three packages, nothing at 1.0.0. Rule 4's other half is unchanged: neither depends on
+  `@sssb/kit`.
+
 ## Addendum — 2026-11-18: P4, `@sssb/tools`
 
 P4 built `packages/tools` as the plan row says. Where it refined what the body said (each in `docs/decision-log.md`,
@@ -889,6 +916,33 @@ P4 built `packages/tools` as the plan row says. Where it refined what the body s
   which a check on the path missed. Besides the resolver's users, the Vite and Vitest presets run it on every module
   they load, and the `dev:real` preflight on everything it bundles or leaves external.
 - **The resolver is published as `@sssb/tools/kit`**, so `@sssb/cdk` (P9) runs the same check.
+
+## Addendum — 2026-11-18: P6, the ESLint plugin, as built
+
+P6 put the fences in `packages/eslint-plugin` (`@sssb/eslint-plugin`, JavaScript, `private: true` until P14, in the
+fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are the details it left open.
+
+- **The preset is async**: `...(await sssb.configs.app({ root: import.meta.dirname }))`, because it imports the app's
+  `lint-exceptions.mjs`. Every block it returns carries `basePath` (`root`, or its parent directory when `root` ends in `*`), and
+  `root` must be absolute. This repo's
+  config passes `join(import.meta.dirname, 'apps/*')`: a last segment of `*` means every app in that directory.
+- **Every fence has a rule id, the internal ones too.** Part 4 asked it of the preset's fences; the framework/app
+  fence's and core's declaration halves moved as well (`sssb/no-app-import`, `sssb/no-framework-import-in-core`), so
+  `eslint.config.mjs` sets neither `no-restricted-imports` nor `no-restricted-syntax`. `react/jsx-no-literals` is
+  `sssb/no-jsx-literals`, react's rule with SSSB's options fixed.
+- **An app adds its own adapters' SDKs to the vendor ban in its `package.json`** (`"sssb": { "vendors": [...] }`),
+  which part 4 did not provide for: the recipe for an app-owned adapter told the adopter to edit `vendorSdkPattern`,
+  which now ships in the plugin. A file, not a preset option, so `sssb check-fences` reads the same list; a leading
+  `!` is refused.
+- **`sssb check-fences` compares, and probes.** The comparison is the half part 3 did not name: for every source file
+  in the app, every `sssb/*` rule the preset alone enables at `error` must be enabled at `error` with the same options
+  through the app's config (`calculateConfigForFile` on both). That is what sees a later block narrowing a fence to
+  one directory, a later `ignores`, and a nested config file, none of which a probe at a fixed path sees. The probes,
+  each `lint-exceptions.mjs` entry and its sibling, and every fence finding in the app's own files (at any
+  severity, suppressed by a directive or switched off by an inline config; ESLint reads the directives itself)
+  complete it. The logic is the plugin's (`@sssb/eslint-plugin/check-fences`); the `sssb` command resolves it from
+  the app's directory.
+- **The e2e import ban of part 2 is not in P6.** It needs `@sssb/kit/testing/e2e`, which P5 builds.
 
 ## Addendum — 2026-11-18: P5 as built
 

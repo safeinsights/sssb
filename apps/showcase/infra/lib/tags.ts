@@ -1,13 +1,13 @@
 import * as cdk from 'aws-cdk-lib'
 import type { Construct } from 'constructs'
-import { APP_SLUG } from '../../apps/showcase/config/app'
+import { APP_SLUG } from '../../config/app'
 
 /**
  * The mandatory-tag pattern: one map applied to EVERY construct in the stack (`addTags` below), so
  * no resource can be created without answering the questions the organisation asks of it.
  *
  * The first three keys are near-universal — what this is (`Name`, `Application`) and who answers for
- * it (`Owner`); `Environment` is the fourth, added per stack in `../stack.ts` because only the stack
+ * it (`Owner`); `Environment` is the fourth, added per stack in `../app.ts` because only the stack
  * knows which deployment it is. Keep those.
  *
  * The classification keys below are an EXAMPLE of the other half of the pattern — the governance

@@ -3,7 +3,8 @@
 Your app needs a vendor that SSSB has no port for: a CDN's key-value store signed with SigV4A, an e-sign
 provider, a domain-specific API. The port, its fake and its real adapter belong to **your app**, under
 `apps/<app>/src/`. This page says how to build them. The lint fence that makes it legal lives in
-`eslint.config.mjs`, and `tests/lint/app-owned-adapters.test.ts` pins it. Nothing here is built in this
+`@sssb/eslint-plugin`'s app preset (`packages/eslint-plugin/src/app-config.js`), and
+`tests/lint/app-owned-adapters.test.ts` pins it. Nothing here is built in this
 repo, for the reason given in §9.
 
 ## 1. Whose port is it?
@@ -45,9 +46,9 @@ apps/<app>/src/adapters/real/<name>.ts   the real adapter: the only place the ve
 Unit tests (`*.test.ts`) may read `process.env`, as they already may everywhere in the app. The
 `process.env` ban also covers `apps/<app>/config/`, so `params.ts` records values and names and never
 reads the environment. The vendor ban also covers the rest of `apps/<app>/` (`apps/<app>/config/`,
-`apps/<app>/tests/`, `apps/<app>/scripts/`), minus the two carve-outs `eslint.config.mjs` names:
-`apps/<app>/next.config.*` (the `.ts`, `.mts`, `.js` and `.mjs` names Next loads it from) and
-`apps/<app>/tests/contract/`. The registry and fakes also may not import SSSB's own published real adapters
+`apps/<app>/tests/`, `apps/<app>/scripts/`), minus the three carve-outs the preset names:
+`apps/<app>/next.config.*` (the `.ts`, `.mts`, `.js` and `.mjs` names Next loads it from),
+`apps/<app>/tests/contract/`, and `apps/<app>/infra/`, the app's deployment. The registry and fakes also may not import SSSB's own published real adapters
 (`@sssb/kit/adapters/real/*`) statically.
 
 Every row holds whatever the file's extension: `.mjs`, `.cjs`, `.js`, `.jsx`, `.mts` and `.cts` are fenced
@@ -101,8 +102,9 @@ project.
 
 - **The SDK goes in your app's `package.json`** (`pnpm --filter <app> add <sdk>`), never in SSSB's.
 - **The fence has to know it is a vendor SDK.** If the package is not already matched by
-  `vendorSdkPattern` in `eslint.config.mjs`, add it there; otherwise the rest of your app could import
-  it with a green lint. (`@aws-sdk/*` already covers `@aws-sdk/client-cloudfront-keyvaluestore` and its
+  SSSB's list (`vendorSdkPattern` in `packages/eslint-plugin/src/patterns.js`), name it in your app's
+  `package.json`, `"sssb": { "vendors": ["<sdk>", "<sdk>/*"] }`, which the preset reads; otherwise the rest of your
+  app could import it with a green lint. The list only adds to SSSB's (a leading `!` is refused). (`@aws-sdk/*` already covers `@aws-sdk/client-cloudfront-keyvaluestore` and its
   SigV4A signer, `@aws-sdk/signature-v4a`.) An adapter that is plain `fetch` needs no entry;
   `docs/recipes/workspace-coder.md` §4 is that case.
 - **Configuration comes from `process.env`, read in `real/` only**, which is the channel SSSB's own real
@@ -221,5 +223,5 @@ the extensions other than `.ts` and `.tsx`).
   name built at runtime (`'get' + 'Db'`) is not.
 - A hand-written `.js` file in `apps/<app>/src/styles/generated/` is not linted at all: the `.js` and
   `.d.ts` files there are Panda's output, and ignored. Anything else in that directory is fenced.
-- To the fence, a vendor SDK is whatever `vendorSdkPattern` lists. A package missing from the list is
-  ordinary code to it.
+- To the fence, a vendor SDK is whatever `vendorSdkPattern` lists, plus the app's own `sssb.vendors`. A package
+  missing from both is ordinary code to it.
