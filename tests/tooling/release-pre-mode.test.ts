@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { check, prepare, verifyRelease } from '../../scripts/release.mjs'
+import { candidateNotes, check, prepare, verifyRelease } from '../../scripts/release.mjs'
 import { lintChangesets, readChangesets, releaseNotes } from '../../scripts/release-notes.mjs'
 import { changesetDir } from '../support/changeset-files'
 import { makeTestTmpDir } from '../support/tmp-dir'
@@ -81,6 +81,12 @@ describe('a tree that has been through a release in pre mode', () => {
         git(root, 'tag', 'v0.2.0-rc.0')
         const dir = path.join(root, '.changeset')
         expect(existsSync(path.join(dir, 'pre.json'))).toBe(true)
+
+        // THE TAG RUN's `candidate` job, on that commit: the prerelease's notes, which are the file the release commit carries (the changesets are gone from `.changeset/` by then)
+        const prerelease = candidateNotes(root, '0.2.0-rc.0', 'safeinsights/sssb', rc0, [])
+        expect(prerelease).toMatch(/^# Release notes: v0\.2\.0-rc\.0\n/)
+        expect(prerelease).toMatch(/### A seam gains a hook/)
+        expect(prerelease).toMatch(/## Installing this release candidate/)
 
         // THE CI RUN ON THAT COMMIT. The directory is read as Changesets leaves it: nothing pending, three consumed,
         // `pre` not a stray.
