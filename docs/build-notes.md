@@ -1980,3 +1980,19 @@ the panel is the element that carries it.
 - **Timings.** A full local run with a warm pnpm store took 77–88s. On CI, with a cold cache, the script took
   163s inside a 3m12s job: install 22s, the two typechecks 33s, unit tests and conformance 26s, `next build`
   22s, e2e 54s (Playwright's browser and its OS packages included).
+
+## Package hygiene (2026-11-17, ADR-0014 P3)
+
+- **`files` takes negations, and order matters.** `["src", "!src/**/*.test.ts", …, "src/i18n/namespaces.test.ts"]`
+  under `pnpm pack` drops the tests and keeps the files named after the negation. Check the tarball's list, not
+  the manifest: `pnpm pack --dry-run --json` in `packages/kit`.
+- **Next inlines a `NEXT_PUBLIC_*` variable only when it is written with a dot.** Under
+  `noPropertyAccessFromIndexSignature`, `process.env['NEXT_PUBLIC_SENTRY_DSN']` would compile but reach the
+  browser as `undefined`. `(process.env as { NEXT_PUBLIC_SENTRY_DSN?: string }).NEXT_PUBLIC_SENTRY_DSN` passes the
+  flag, and SWC strips the cast back to the dot form. Probe: a showcase `next build` with
+  `NEXT_PUBLIC_SENTRY_DSN` set to a marker put the marker in a client chunk.
+- **`readlink -f apps/<app>/node_modules/<pkg>` misses a package the app finds at the root.** `@types/react`,
+  `@types/node` and `typescript` are root devDependencies, so an app has no `node_modules/@types/react` of its
+  own and resolves the root's by walking up. The singleton check compares the NEAREST `node_modules/<pkg>`,
+  walking up from each of `packages/kit` and the two apps; at this step `react`, `react-dom`, `next`, `next-intl`,
+  `@mantine/core`, `@types/react`, `@types/node`, `kysely`, `typescript` and `vitest` resolved to one directory each.

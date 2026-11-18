@@ -2932,3 +2932,37 @@ Dependabot's #1.
 - **`@axe-core/playwright` stays held at `~4.12.1`.** The other half of #1 is not decided:
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
   hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
+
+## Package hygiene (2026-11-17, ADR-0014 P3, `chore/package-hygiene`)
+
+- **A `files` allowlist, with the conformance suites re-included by name.** `packages/kit/package.json` ships
+  `src` minus every `*.test.ts`, `*.test.tsx` and `*.stories.tsx`, then names the five seam-conformance suites
+  back in. `pnpm pack` went from 293 files on main (2242a28) to 190: the 45 files of the test fixture and 60
+  test and story files no longer ship. The suites list lives once, in `CONFORMANCE_SUITES`
+  (`scripts/pack-and-consume/checks.mjs`); a unit test holds the allowlist's re-includes equal to it, and pack and
+  consume checks the tarball itself (`shippedFileProblems`). P5 replaces the suites with `@sssb/kit/testing`.
+- **The strict set runs in this repo too, over the whole of `packages/kit/src`.** `packages/kit/tsconfig.strict.json`
+  turns on part 2's nine options at the ES2022 lib floor, and `pnpm typecheck` runs it, so a regression fails
+  `pnpm verify` and CI's `lint-typecheck-unit` before pack and consume sees it. Tests and stories are in it, because five tests ship and P5
+  ships more. About 191 errors were fixed in the source: 123 index-signature accesses written with brackets, 11
+  parameter properties written as fields, and the rest possibly-undefined values handled by a guard that throws
+  where the invariant holds, a conditional spread, or an optional property declared `| undefined` where
+  `undefined` is part of its contract. No non-null assertion and no suppression. Pack and consume's baseline of
+  122 is gone: any error inside the framework fails its strict typecheck.
+- **`@types/node` is a peer, beside `@types/react`.** Part 2's rule is that the types of host singletons are peers,
+  and the rest dependencies; `@types/node` declares globals the way `@types/react` declares JSX, so two copies in one
+  program conflict. Its range, like the others', is the one this repo tests (`^26.6.5`); an adopter on an older
+  `@types/node` gets a peer warning until a test widens it. `@types/react` `~19.3.0`, `typescript` `~6.0.3` and
+  `kysely` `^0.29.7` (moved from `dependencies`) are peers; `@types/pg` is a dependency.
+- **`vitest` is an optional peer.** The scratch-directory helper moved into the package
+  (`packages/kit/src/testing/tmp-dir.ts`, internal, not in `exports`) is shipped source that imports `vitest`,
+  because the demo-presets suite, which ships, uses it. Pack and consume's undeclared-import check would otherwise
+  fail on it, rightly. `@sssb/kit/testing` (P5) needs the same peer.
+- **The helper moved; the repo's copy re-exports it.** 24 of the framework's files imported
+  `tests/support/tmp-dir` (part 2 counted 23 at 6d67a7c). They import the package's own module now, and
+  `tests/support/tmp-dir.ts` re-exports it for the repo's and the apps' tests until P4 moves it into
+  `@sssb/tools`. The leak guard reads the marker suffix from the package.
+- **A lint rule holds the package's edge.** `sssb/no-path-out-of-package` reports a relative or absolute path, or
+  a `file:` URL, from `packages/kit` (fixture included) that lands outside it. The two real-Postgres contract
+  tests are its only exemptions, by name: they start their server through `tests/support/contract-postgres.ts`,
+  which needs `scripts/ports.mjs`, and P5 moves that runner into the package. Neither ships.

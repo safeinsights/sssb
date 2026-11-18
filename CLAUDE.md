@@ -31,7 +31,13 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   fence bans the app's `@/*` alias, `@app/seed`, a relative or absolute path (or `file:` URL) that lands in `apps/` or
   `packages/seed`, a `..` in any package or alias specifier, and any specifier through `node_modules`, by
   `import()` and in a type `import('…')` as well as in a declaration; the `@sssb/app-config/*` alias is the only
-  channel back.
+  channel back. `sssb/no-path-out-of-package` also bars any path out of `packages/kit` (two real-Postgres contract
+  tests are the named exceptions). **The framework must compile under `packages/kit/tsconfig.strict.json`**
+  (the strict-flag set at the ES2022 lib floor; `pnpm typecheck` runs it), because adopters compile the shipped
+  `.ts` under their own options. **`@sssb/kit`'s `files` allowlist in its `package.json` decides what ships**
+  (tests and stories out, the five seam-conformance tests in); a new file that must ship, or a new import of a
+  package the source needs, goes in the manifest (a peer for types an adopter's compile resolves) — pack and
+  consume checks the tarball.
 - **The kit's OWN tests run against its own app seam, never an app's** — `packages/kit/test-fixture`
   (outside `packages/kit/src` because that tree is what `@sssb/kit/*` resolves to and what ships; the
   fixture is neither). Living outside that tree buys NO exemption: every gate names `test-fixture/**`
@@ -149,7 +155,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   dev server; `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last
   also isolates `pnpm test:contract` between worktrees), and `print-port.mjs` reports it.
 - **A test that needs a scratch directory calls `makeTestTmpDir()` / `makeTestTmpDirAsync()`**
-  (`tests/support/tmp-dir.ts`) — never `mkdtemp`/`mkdtempSync`, which `sssb/no-direct-mkdtemp` bans in test
+  (`packages/kit/src/testing/tmp-dir.ts`; `tests/support/tmp-dir.ts` re-exports it) — never `mkdtemp`/`mkdtempSync`, which `sssb/no-direct-mkdtemp` bans in test
   files. The helper removes the directory when the file finishes; `test:unit`, `test:coverage` and
   `test:contract` run through `scripts/check-tmpdir-leak.mjs`, which fails the run if one survives. Do not
   call `vitest run` directly in a new script that is meant to gate — route it through that script.
