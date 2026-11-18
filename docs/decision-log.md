@@ -3611,6 +3611,54 @@ init-app my-app` in a copy of the repository followed by its real `cdk synth` (`
   project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
   with that reason (a false red, not a hole).
 
+## The reusable workflow (2026-11-18, ADR-0014 P10, `ci/reusable-workflow`)
+
+- **`.github/workflows/app-checks.yml`**, `on: workflow_call` only, `permissions: contents: read`, no secrets. Its jobs
+  are `lint-typecheck-unit` (the workspace's lint, typecheck and unit tests, then `sssb check-fences` in each app,
+  one `sssb doctor` run and `sssb check-e2e` in each app),
+  `contract` (a `postgres:16` service and the workspace's `test:contract`), `discover` (the e2e shards and the
+  static-demo apps), `e2e (<shard>)`, `demo-static (<app>)`, an optional `synth`, and `all-checks`. Every step that
+  is not setup is one `pnpm exec sssb ci <job>`; the jobs P10 adds to `sssb ci` are `lint-typecheck-unit`,
+  `contract`, `matrix` and `synth`, and `--apps` narrows the ones that fan out.
+- **`all-checks` is the one check an adopter requires.** A skipped job reports as a passing check, and a job that
+  never starts reports nothing, so requiring the jobs one by one lets a check go missing or pass without running.
+  `all-checks` runs `if: always()`, needs every other job, and fails unless each one's result is `success` (synth's
+  `skipped` when no synth was asked for). A test holds its `needs` and its list to every other job. The alternative,
+  documenting a list of checks to require, leaves each adopter's ruleset to drift from the workflow.
+- **A job with nothing to run fails.** A missing root script, an e2e or static-demo list that comes out empty, or a
+  synth selector that matches no package is an error, not a quiet pass. So the workflow assumes a few conventions,
+  which it says at its top: a pnpm workspace at the repository's root, depending on `@sssb/tools`, whose root defines
+  `lint`, `typecheck`, `test:unit` (or `test:coverage`, which is run instead when present) and `test:contract`, and
+  apps that each have a Playwright config and a `test:e2e` script (and a `chromium` project beside a `destructive`
+  one), and the scripts `build:demo-static`, `check:demo-size` and `e2e:demo-static`. `@sssb/create` (P12) writes them.
+- **`apps` is optional and defaults to the workspace's apps** (the root's `sssb.apps`, or every `apps/<name>`, P4's
+  rule). This repository passes none, so `pnpm init-app`'s rename and eject need no edit to `checks.yml`. A listed app
+  must be a package inside the workspace.
+- **`synth` is a pnpm `--filter` selector** (`./apps/console/infra`, or this repository's `./apps/*/infra`), run with
+  `--fail-if-no-match`. Empty skips the job.
+- **This repository calls it by its local path**, so it runs at the commit under test; an adopter pins it to a
+  commit SHA. The alternative, pinning this repository's own call to an earlier SHA, would test old CI against new
+  code.
+- **Check names change.** GitHub names a called workflow's jobs `<caller job> / <job>`, so the app checks are now
+  `sssb / lint-typecheck-unit`, `sssb / contract`, `sssb / discover`, `sssb / e2e (showcase)`,
+  `sssb / e2e (showcase-destructive)`, `sssb / e2e (starter)`, `sssb / demo-static (showcase)`,
+  `sssb / demo-static (starter)`, `sssb / synth` and `sssb / all-checks`. The old `e2e-shards` is `sssb / discover`,
+  and the old single `demo-static` is one job per app. What only this repository checks (the bidi scan, knip, jscpd,
+  the spike) is a new job, `repo-checks`. `tests/tooling/app-checks-workflow.test.ts` pins the fixed names, and
+  in SSSB's own tree the five per-app names, so a renamed job or Playwright project goes red here before a ruleset
+  blocks every PR (a renamed app skips the per-app pin).
+- **`release.yml` is unchanged.** Its gate (`scripts/release.mjs wait-for-checks`) reads the conclusion of
+  `checks.yml`'s push run, and a called workflow's jobs are part of that run and of its conclusion
+  (docs.github.com, "Reusing workflow configurations": the called workflow's jobs run in
+  the caller's workflow run; PR 28's runs show them there).
+- **`sssb doctor` and `sssb check-e2e` (P5) run inside `sssb ci lint-typecheck-unit`**, after check-fences,
+  not as jobs of their own: no check name changes, and the job already has the workspace installed. Doctor runs once,
+  for the first app (one run checks every app of the workspace, and an adopter's root need not resolve `@sssb/kit`;
+  run from `apps/showcase` here it makes the root's checks less the root's own singleton and version lines, which
+  check no app). check-e2e runs in each app the job covers. In this repository they leave `repo-checks`, where
+  merging P5 had put them. The alternative, two more jobs, would add two required check names for no isolation
+  gained: both need the same install.
+
 ## Release notes are assembled from the changesets by a script, and committed with the release (2026-11-18, `feat/release-notes`)
 
 The entry on requiring changesets (`ci/changeset-required`) deferred this until `@sssb/tools` existed; this ends that deferral, but in `scripts/` rather than in `@sssb/tools` (below). #21 made every PR
