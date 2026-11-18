@@ -70,7 +70,7 @@ export async function githubRequest<T>(
     } catch (err) {
         return { ok: false, status: 0, body: null, message: redact(errorMessage(err)) }
     }
-    let body: T | null = null
+    let body: T | null
     try {
         body = text ? (JSON.parse(text) as T) : null
     } catch {
@@ -78,9 +78,7 @@ export async function githubRequest<T>(
     }
     // Only for a failure: a successful body here can be the App's credentials.
     const record = body as { message?: unknown } | null
-    const message = response.ok
-        ? ''
-        : redact(typeof record?.message === 'string' ? record.message : text.slice(0, 200))
+    const message = response.ok ? '' : redact(typeof record?.message === 'string' ? record.message : text.slice(0, 200))
     return { ok: response.ok, status: response.status, body, message }
 }
 

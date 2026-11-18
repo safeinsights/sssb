@@ -53,7 +53,7 @@ import { appJwt, errorMessage, ghJson, githubRequest, redact, type FetchFn, type
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
 const REPO = `${RELEASE_REPO.owner}/${RELEASE_REPO.repo}`
 
-export type Io = {
+type Io = {
     out: (text: string) => void
     err: (text: string) => void
     /** One line from the operator; `null` once their input has ended. */
@@ -277,10 +277,7 @@ async function preflight(deps: Deps): Promise<string[]> {
  */
 async function storeKey(deps: Deps, pem: string): Promise<boolean> {
     for (;;) {
-        const result = await deps.gh(
-            ['secret', 'set', KEY_SECRET, '--env', RELEASE_ENVIRONMENT, '--repo', REPO],
-            pem,
-        )
+        const result = await deps.gh(['secret', 'set', KEY_SECRET, '--env', RELEASE_ENVIRONMENT, '--repo', REPO], pem)
         if (result.code === 0) return true
         deps.io.err(
             `\n  THE PRIVATE KEY WAS NOT STORED: gh exited ${result.code}: ${redact(result.stderr.trim())}\n` +
@@ -379,11 +376,15 @@ async function readBack(
     // A token for listing only: metadata read and nothing else, not narrowed to one repository (narrowing it
     // would hide exactly the extra repositories this is looking for), revoked at once.
     let repositories: string[] | null = null
-    const minted = await githubRequest<{ token?: string }>(fetchFn, `/app/installations/${installation.id}/access_tokens`, {
-        jwt,
-        method: 'POST',
-        body: { permissions: { metadata: 'read' } },
-    })
+    const minted = await githubRequest<{ token?: string }>(
+        fetchFn,
+        `/app/installations/${installation.id}/access_tokens`,
+        {
+            jwt,
+            method: 'POST',
+            body: { permissions: { metadata: 'read' } },
+        },
+    )
     if (minted.ok && typeof minted.body?.token === 'string') {
         const token = minted.body.token
         const repos = await githubRequest<{ total_count?: number; repositories?: { full_name?: string }[] }>(
@@ -396,7 +397,8 @@ async function readBack(
             repositories = repos.body.total_count === names.length ? names : null
         }
         const revoked = await githubRequest<unknown>(fetchFn, '/installation/token', { method: 'DELETE', token })
-        if (revoked.status !== 204) io.err(`  ! the listing token was NOT revoked (HTTP ${revoked.status}); it expires within the hour`)
+        if (revoked.status !== 204)
+            io.err(`  ! the listing token was NOT revoked (HTTP ${revoked.status}); it expires within the hour`)
     } else {
         findings.push(`could not mint an installation token (HTTP ${minted.status}: ${minted.message})`)
     }
@@ -480,7 +482,9 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
                     io.err(`  ✗ ${args.slice(0, 4).join(' ')} failed: ${redact(result.stderr.trim())}. Stopped here.`)
                     return false
                 }
-                io.out(`  ✓ ${change.kind === 'create' ? 'created' : 'updated'} "${change.kind === 'create' ? change.body.name : change.before.name}"`)
+                io.out(
+                    `  ✓ ${change.kind === 'create' ? 'created' : 'updated'} "${change.kind === 'create' ? change.body.name : change.before.name}"`,
+                )
             }
             const after = await readRulesets(gh)
             const replanned = after.rulesets ? planBypass(after.rulesets, appId) : null
@@ -529,7 +533,9 @@ export async function createCommand(deps: Deps, options: CreateOptions): Promise
     }
     const name = options.name ?? DEFAULT_APP_NAME
     if (name.length > APP_NAME_MAX_LENGTH) {
-        io.err(`The App's name is ${name.length} characters; GitHub refuses more than ${APP_NAME_MAX_LENGTH}. Pass --name.`)
+        io.err(
+            `The App's name is ${name.length} characters; GitHub refuses more than ${APP_NAME_MAX_LENGTH}. Pass --name.`,
+        )
         return 1
     }
 
@@ -627,7 +633,10 @@ export async function createCommand(deps: Deps, options: CreateOptions): Promise
         io.out(`  ✓ private key stored as the secret ${KEY_SECRET} of the "${RELEASE_ENVIRONMENT}" environment`)
         const clientIdStored = await storeClientId(deps, created.clientId)
         if (clientIdStored) io.out(`  ✓ client id stored as the variable ${CLIENT_ID_VARIABLE}`)
-        else io.err(`  ✗ set it by hand: gh variable set ${CLIENT_ID_VARIABLE} --env ${RELEASE_ENVIRONMENT} --repo ${REPO} --body ${created.clientId}`)
+        else
+            io.err(
+                `  ✗ set it by hand: gh variable set ${CLIENT_ID_VARIABLE} --env ${RELEASE_ENVIRONMENT} --repo ${REPO} --body ${created.clientId}`,
+            )
 
         io.out(
             `\n2. Install it on ${REPO} ONLY:\n\n     https://github.com/apps/${created.slug}/installations/new\n\n` +
@@ -652,7 +661,16 @@ export async function createCommand(deps: Deps, options: CreateOptions): Promise
             `\nApp id ${created.id}, slug ${created.slug}. Re-check any time, changing nothing:\n` +
                 `  pnpm release-app verify --app-id ${created.id}`,
         )
-        return stored && clientIdStored && readback.ok && bypassed ? 0 : 1
+        if (readback.ok && !bypassed) {
+            io.out(
+                '\nThe App is made, stored and installed. Still to do: the ruleset steps above (re-run them with\n' +
+                    `  \`pnpm release-app bypass --app-id ${created.id} --apply\`), then \`verify\` until it passes.`,
+            )
+        }
+        // The exit code is about what `create` made: the App, its key and client id, and its installation.
+        // The rulesets are reported above and `verify` is the check that holds them; the organisation's half is
+        // always a hand step, so counting it here would fail every first run.
+        return stored && clientIdStored && readback.ok ? 0 : 1
     } finally {
         callback.close()
         if (formDir) await rm(formDir, { recursive: true, force: true }).catch(() => {})
@@ -672,8 +690,10 @@ export async function verifyCommand(deps: Deps, options: VerifyOptions): Promise
     const credentials = await readCredentials(gh)
     if (credentials.error) findings.push(`could not read the environment's secrets and variables: ${credentials.error}`)
     if (!credentials.secret) findings.push(`the "${RELEASE_ENVIRONMENT}" environment has no secret ${KEY_SECRET}`)
-    if (credentials.variable === null) findings.push(`the "${RELEASE_ENVIRONMENT}" environment has no variable ${CLIENT_ID_VARIABLE}`)
-    if (findings.length === 0) io.out(`  ✓ environment "${RELEASE_ENVIRONMENT}": main only, admins not exempt, key and client id present`)
+    if (credentials.variable === null)
+        findings.push(`the "${RELEASE_ENVIRONMENT}" environment has no variable ${CLIENT_ID_VARIABLE}`)
+    if (findings.length === 0)
+        io.out(`  ✓ environment "${RELEASE_ENVIRONMENT}": main only, admins not exempt, key and client id present`)
     report(io, findings)
 
     let readbackOk = true

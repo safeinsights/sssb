@@ -59,7 +59,9 @@ function appIdOf(value: string | undefined): number | null {
 async function main(argv: string[]): Promise<number> {
     const [command, ...rest] = argv
     const { values } = parseArgs({
-        args: rest,
+        // `pnpm release-app create -- --name x` hands the script a literal `--`, which parseArgs would take as
+        // the end of the options.
+        args: rest[0] === '--' ? rest.slice(1) : rest,
         options: {
             name: { type: 'string' },
             'apply-bypass': { type: 'boolean', default: false },

@@ -39,7 +39,14 @@ import {
 const WORKFLOW = fileURLToPath(new URL('../../.github/workflows/release.yml', import.meta.url))
 const MINT_ACTION = 'actions/create-github-app-token@'
 
-type Step = { id?: string; name?: string; uses?: string; run?: string; with?: Record<string, unknown>; env?: Record<string, unknown> }
+type Step = {
+    id?: string
+    name?: string
+    uses?: string
+    run?: string
+    with?: Record<string, unknown>
+    env?: Record<string, unknown>
+}
 type Job = { environment?: unknown; steps?: Step[] } & Record<string, unknown>
 type Workflow = { jobs: Record<string, Job> } & Record<string, unknown>
 
@@ -207,7 +214,8 @@ function classify(words: string[], findings: Finding[]): Operation | null {
     if (sub === 'push') {
         const positional = rest.filter((w) => !w.startsWith('-'))
         for (const option of rest.filter((w) => w.startsWith('-'))) {
-            if (!PUSH_OPTIONS.has(option)) findings.push(`git push ${option} is not allowed (only ${[...PUSH_OPTIONS].join(' ')})`)
+            if (!PUSH_OPTIONS.has(option))
+                findings.push(`git push ${option} is not allowed (only ${[...PUSH_OPTIONS].join(' ')})`)
         }
         const [remote, ...refspecs] = positional
         if (remote !== PUSH_REMOTE) findings.push(`git push goes to ${remote}, not ${PUSH_REMOTE}`)
@@ -216,7 +224,8 @@ function classify(words: string[], findings: Finding[]): Operation | null {
             if (refspec.startsWith('+')) findings.push(`git push ${refspec} forces`)
             const [src, dst = src] = refspec.replace(/^\+/, '').split(':')
             if (src === '') findings.push(`git push ${refspec} deletes ${dst}`)
-            if (!PUSH_DESTINATIONS.has(dst)) findings.push(`git push lands on ${dst}, which is not main or the release tag`)
+            if (!PUSH_DESTINATIONS.has(dst))
+                findings.push(`git push lands on ${dst}, which is not main or the release tag`)
         }
         return { command: 'git push', permission: 'contents' }
     }
@@ -235,7 +244,8 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
     const mints: { job: string; index: number; step: Step }[] = []
     for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
         ;(job.steps ?? []).forEach((step, index) => {
-            if (typeof step.uses === 'string' && step.uses.startsWith(MINT_ACTION)) mints.push({ job: jobName, index, step })
+            if (typeof step.uses === 'string' && step.uses.startsWith(MINT_ACTION))
+                mints.push({ job: jobName, index, step })
         })
     }
     if (mints.length !== 1) findings.push(`expected exactly one ${MINT_ACTION} step, found ${mints.length}`)
@@ -262,9 +272,13 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
         if (key.startsWith('permission-')) asked[key.slice('permission-'.length).replace(/-/g, '_')] = String(value)
         else findings.push(`the mint step sets \`${key}\`, which widens or changes the token`)
     }
-    const expectedAsk = Object.fromEntries(Object.entries(RELEASE_APP_PERMISSIONS).filter(([name]) => name !== 'metadata'))
+    const expectedAsk = Object.fromEntries(
+        Object.entries(RELEASE_APP_PERMISSIONS).filter(([name]) => name !== 'metadata'),
+    )
     if (JSON.stringify(Object.entries(asked).sort()) !== JSON.stringify(Object.entries(expectedAsk).sort())) {
-        findings.push(`the token asks for ${JSON.stringify(asked)}; RELEASE_APP_PERMISSIONS says ${JSON.stringify(expectedAsk)}`)
+        findings.push(
+            `the token asks for ${JSON.stringify(asked)}; RELEASE_APP_PERMISSIONS says ${JSON.stringify(expectedAsk)}`,
+        )
     }
 
     // 3 and 4. Where the token goes, and what each step that holds it does.
@@ -272,7 +286,9 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
     const all = strings(workflow, 'workflow').filter((s) => tokenRef.test(s.text))
     const consumers = new Set<number>()
     for (const use of all) {
-        const match = new RegExp(`^workflow\\.jobs\\.${mint.job}\\.steps\\[(\\d+)\\]\\.env\\.[A-Za-z_][A-Za-z0-9_]*$`).exec(use.at)
+        const match = new RegExp(
+            `^workflow\\.jobs\\.${mint.job}\\.steps\\[(\\d+)\\]\\.env\\.[A-Za-z_][A-Za-z0-9_]*$`,
+        ).exec(use.at)
         if (!match) {
             findings.push(`${use.at} uses the release app's token; only a later run step's env may`)
             continue
@@ -281,7 +297,7 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
         if (index <= mint.index) findings.push(`${use.at} uses the token before it is minted`)
         consumers.add(index)
     }
-    if (consumers.size === 0) findings.push('nothing uses the release app\'s token')
+    if (consumers.size === 0) findings.push("nothing uses the release app's token")
     for (const index of consumers) {
         const step = (job.steps ?? [])[index]
         if (typeof step.run !== 'string' || step.uses !== undefined) {
@@ -289,7 +305,9 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
             continue
         }
         if (/GITHUB_(ENV|OUTPUT|PATH)\b/.test(step.run)) {
-            findings.push(`step "${step.name ?? index}" holds the token and writes $GITHUB_ENV, $GITHUB_OUTPUT or $GITHUB_PATH`)
+            findings.push(
+                `step "${step.name ?? index}" holds the token and writes $GITHUB_ENV, $GITHUB_OUTPUT or $GITHUB_PATH`,
+            )
         }
         let commands: string[][]
         try {
@@ -307,10 +325,12 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
     // 6. Both directions.
     const needed = new Set<string>(['metadata', ...forced.values()])
     for (const name of needed) {
-        if (!(name in RELEASE_APP_PERMISSIONS)) findings.push(`release.yml needs ${name}, which RELEASE_APP_PERMISSIONS lacks`)
+        if (!(name in RELEASE_APP_PERMISSIONS))
+            findings.push(`release.yml needs ${name}, which RELEASE_APP_PERMISSIONS lacks`)
     }
     for (const name of Object.keys(RELEASE_APP_PERMISSIONS)) {
-        if (!needed.has(name)) findings.push(`RELEASE_APP_PERMISSIONS grants ${name}, which nothing in release.yml uses`)
+        if (!needed.has(name))
+            findings.push(`RELEASE_APP_PERMISSIONS grants ${name}, which nothing in release.yml uses`)
     }
     return { findings, forced }
 }
@@ -328,7 +348,9 @@ function pushJob(workflow: Workflow): Job {
 }
 
 function pushStep(workflow: Workflow): Step {
-    const step = (pushJob(workflow).steps ?? []).find((s) => Object.values(s.env ?? {}).some((v) => /outputs\.token/.test(String(v))))
+    const step = (pushJob(workflow).steps ?? []).find((s) =>
+        Object.values(s.env ?? {}).some((v) => /outputs\.token/.test(String(v))),
+    )
     if (!step) throw new Error('no step uses the token')
     return step
 }
@@ -343,7 +365,9 @@ describe('release.yml and the release app agree', () => {
 
 describe('the shell reader', () => {
     it('splits commands, follows $(…), strips quotes and drops comments', () => {
-        expect(commandsOf(`set -e # note\nx=$(git rev-parse HEAD)\necho "a $(printf '%s' "$Y" | base64 -w0) b" >> "$F"`)).toEqual([
+        expect(
+            commandsOf(`set -e # note\nx=$(git rev-parse HEAD)\necho "a $(printf '%s' "$Y" | base64 -w0) b" >> "$F"`),
+        ).toEqual([
             ['set', '-e'],
             ['git', 'rev-parse', 'HEAD'],
             ['x=$(…)'],
@@ -367,23 +391,67 @@ describe('the guard goes red when release.yml outgrows the App', () => {
         const workflow = load()
         mutate(workflow)
         const { findings } = audit(workflow)
-        expect(findings.some((finding) => pattern.test(finding)), JSON.stringify(findings, null, 2)).toBe(true)
+        expect(
+            findings.some((finding) => pattern.test(finding)),
+            JSON.stringify(findings, null, 2),
+        ).toBe(true)
     }
     const appendRun = (workflow: Workflow, line: string) => {
         const step = pushStep(workflow)
         step.run = `${step.run}\n${line}\n`
     }
 
-    it('a gh call with the token', () => red((w) => appendRun(w, 'GH_TOKEN="$TOKEN" gh release create "v$VERSION"'), /unclassified command `.*gh release/))
-    it('a curl to the API', () => red((w) => appendRun(w, 'curl -H "Authorization: token $TOKEN" https://api.github.com/x'), /unclassified command `curl/))
-    it('a force push', () => red((w) => appendRun(w, 'git -C "$pusher" push --force "https://github.com/$GITHUB_REPOSITORY" release:main'), /--force is not allowed/))
-    it('a + refspec', () => red((w) => appendRun(w, 'git -C "$pusher" push "https://github.com/$GITHUB_REPOSITORY" +release:main'), /forces/))
-    it('a deletion', () => red((w) => appendRun(w, 'git -C "$pusher" push "https://github.com/$GITHUB_REPOSITORY" :refs/tags/v0.1.0'), /deletes refs\/tags\/v0.1.0/))
-    it('a push to another branch', () => red((w) => appendRun(w, 'git -C "$pusher" push "https://github.com/$GITHUB_REPOSITORY" release:other'), /lands on other/))
-    it('a push to another repository', () => red((w) => appendRun(w, 'git -C "$pusher" push https://github.com/elsewhere/x release:main'), /goes to https:\/\/github.com\/elsewhere/))
-    it('a push of every tag', () => red((w) => appendRun(w, 'git -C "$pusher" push --tags "https://github.com/$GITHUB_REPOSITORY"'), /--tags is not allowed/))
-    it('a new git setting on the push', () => red((w) => appendRun(w, 'git -c credential.helper=store push "https://github.com/$GITHUB_REPOSITORY" release:main'), /credential\.helper/))
-    it('the token handed to a later step', () => red((w) => appendRun(w, 'echo "T=$TOKEN" >> "$GITHUB_ENV"'), /writes \$GITHUB_ENV/))
+    it('a gh call with the token', () =>
+        red(
+            (w) => appendRun(w, 'GH_TOKEN="$TOKEN" gh release create "v$VERSION"'),
+            /unclassified command `.*gh release/,
+        ))
+    it('a curl to the API', () =>
+        red(
+            (w) => appendRun(w, 'curl -H "Authorization: token $TOKEN" https://api.github.com/x'),
+            /unclassified command `curl/,
+        ))
+    it('a force push', () =>
+        red(
+            (w) => appendRun(w, 'git -C "$pusher" push --force "https://github.com/$GITHUB_REPOSITORY" release:main'),
+            /--force is not allowed/,
+        ))
+    it('a + refspec', () =>
+        red(
+            (w) => appendRun(w, 'git -C "$pusher" push "https://github.com/$GITHUB_REPOSITORY" +release:main'),
+            /forces/,
+        ))
+    it('a deletion', () =>
+        red(
+            (w) => appendRun(w, 'git -C "$pusher" push "https://github.com/$GITHUB_REPOSITORY" :refs/tags/v0.1.0'),
+            /deletes refs\/tags\/v0.1.0/,
+        ))
+    it('a push to another branch', () =>
+        red(
+            (w) => appendRun(w, 'git -C "$pusher" push "https://github.com/$GITHUB_REPOSITORY" release:other'),
+            /lands on other/,
+        ))
+    it('a push to another repository', () =>
+        red(
+            (w) => appendRun(w, 'git -C "$pusher" push https://github.com/elsewhere/x release:main'),
+            /goes to https:\/\/github.com\/elsewhere/,
+        ))
+    it('a push of every tag', () =>
+        red(
+            (w) => appendRun(w, 'git -C "$pusher" push --tags "https://github.com/$GITHUB_REPOSITORY"'),
+            /--tags is not allowed/,
+        ))
+    it('a new git setting on the push', () =>
+        red(
+            (w) =>
+                appendRun(
+                    w,
+                    'git -c credential.helper=store push "https://github.com/$GITHUB_REPOSITORY" release:main',
+                ),
+            /credential\.helper/,
+        ))
+    it('the token handed to a later step', () =>
+        red((w) => appendRun(w, 'echo "T=$TOKEN" >> "$GITHUB_ENV"'), /writes \$GITHUB_ENV/))
     it('the token given to an action', () =>
         red((w) => {
             pushJob(w).steps?.push({ uses: 'some/action@v1', with: { token: '${{ steps.app-token.outputs.token }}' } })

@@ -61,7 +61,7 @@ export function appSlug(name: string): string {
  * A summary short enough to survive the account's App list (it truncates at about 37 characters), then the
  * detail only the App's own page shows. Generic on purpose: this text lives on GitHub and goes stale there.
  */
-export function appDescription(): string {
+function appDescription(): string {
     return [
         'Pushes SSSB release commits and tags',
         '',
@@ -201,7 +201,9 @@ export function installationFindings(installation: InstallationSummary, reposito
     findings.push(...permissionFindings(installation.permissions ?? {}))
     const expected = `${RELEASE_REPO.owner}/${RELEASE_REPO.repo}`
     if (repositories === null) {
-        findings.push('could not list the repositories the installation reaches, so "this repository only" is UNCHECKED')
+        findings.push(
+            'could not list the repositories the installation reaches, so "this repository only" is UNCHECKED',
+        )
     } else if (repositories.length !== 1 || repositories[0] !== expected) {
         findings.push(
             `the installation reaches ${JSON.stringify(repositories)}; it must reach ${expected} and nothing else`,

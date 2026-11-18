@@ -28,9 +28,9 @@ export const TAGS_IMMUTABLE = 'release tags: v* immutable'
 const DEFAULT_BRANCH = '~DEFAULT_BRANCH'
 const RELEASE_TAGS = 'refs/tags/v*'
 
-export type Rule = { type: string; parameters?: unknown }
+type Rule = { type: string; parameters?: unknown }
 export type BypassActor = { actor_id: number | null; actor_type: string; bypass_mode: string }
-export type RulesetBody = {
+type RulesetBody = {
     name: string
     target: 'branch' | 'tag'
     enforcement: string
@@ -42,13 +42,12 @@ export type RulesetBody = {
 export type Ruleset = RulesetBody & { id: number; source_type: string }
 
 export type RulesetChange =
-    | { kind: 'create'; body: RulesetBody }
-    | { kind: 'update'; id: number; before: RulesetBody; after: RulesetBody }
+    { kind: 'create'; body: RulesetBody } | { kind: 'update'; id: number; before: RulesetBody; after: RulesetBody }
 
 export type BypassPlan = { changes: RulesetChange[]; problems: string[] }
 
 /** The App as a bypass actor: `always`, so its direct push passes; GitHub's audit log records each bypass. */
-export function appBypass(appId: number): BypassActor {
+function appBypass(appId: number): BypassActor {
     return { actor_id: appId, actor_type: 'Integration', bypass_mode: 'always' }
 }
 
@@ -136,7 +135,11 @@ export function planBypass(rulesets: Ruleset[], appId: number): BypassPlan {
         want(checks, { ...body(checks), enforcement: 'active', bypass_actors: bypass }, updates)
     }
 
-    want(byName(MAIN_HISTORY), simple(MAIN_HISTORY, 'branch', DEFAULT_BRANCH, ['deletion', 'non_fast_forward'], []), creates)
+    want(
+        byName(MAIN_HISTORY),
+        simple(MAIN_HISTORY, 'branch', DEFAULT_BRANCH, ['deletion', 'non_fast_forward'], []),
+        creates,
+    )
 
     const tags = byName(TAGS_CREATE)
     if (!tags) {
