@@ -89,7 +89,7 @@ See also `per-visitor-demo-worlds.md`, which wants the same primitive for a diff
 
 Parallelism is bought where the worlds are genuinely separate: across apps locally (different ports
 via `@sssb/tools/ports`, different cwd-relative `.data`) and across shards on CI (different machines —
-`.github/workflows/checks.yml` splits the suite across three runners). Never inside one server.
+`.github/workflows/app-checks.yml` splits the suite across three runners). Never inside one server.
 
 Note also that raising `workers` surfaced a second, independent problem that IS fixed: the chromium
 project was the only one still on Playwright's 30s default test timeout, and now uses 60s like the

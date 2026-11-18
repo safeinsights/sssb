@@ -292,10 +292,16 @@ describe('sssb ci', () => {
         const line = result.stdout.split('\n').find((l) => l.startsWith('computed matrix: '))
         expect(line).toBeDefined()
         expect(JSON.parse(line!.slice('computed matrix: '.length))).toEqual([
-            { name: 'alpha', app: 'apps/alpha', run: 'pnpm exec sssb ci e2e --app apps/alpha --project chromium' },
+            {
+                name: 'alpha',
+                app: 'apps/alpha',
+                project: 'chromium',
+                run: 'pnpm exec sssb ci e2e --app apps/alpha --project chromium',
+            },
             {
                 name: 'alpha-destructive',
                 app: 'apps/alpha',
+                project: 'destructive',
                 run: 'pnpm exec sssb ci e2e --app apps/alpha --project destructive',
             },
             { name: 'beta', app: 'apps/beta', run: 'pnpm exec sssb ci e2e --app apps/beta' },
@@ -322,6 +328,127 @@ describe('sssb ci', () => {
         const result = sssb(workspace('ci-unknown'), ['ci', 'deploy'])
         expect(result.status).toBe(1)
         expect(result.stderr).toContain('usage: sssb ci')
+    })
+})
+
+// The jobs the reusable workflow (.github/workflows/app-checks.yml, ADR-0014 P10) runs. Each must FAIL when it has
+// nothing to run: a check that ran nothing would report green with every required check passing.
+describe('sssb ci, the reusable workflow’s jobs', () => {
+    /** A workspace whose root scripts append their name to `ran`, and exit with the given status. */
+    function scripted(prefix: string, scripts: Record<string, number>) {
+        const root = workspace(prefix)
+        const ran = path.join(root, 'ran')
+        const manifest = {
+            name: 'ws',
+            private: true,
+            scripts: Object.fromEntries(
+                Object.entries(scripts).map(([name, status]) => [
+                    name,
+                    `node -e "require('fs').appendFileSync('ran', '${name}\\\\n'); process.exit(${status})"`,
+                ]),
+            ),
+        }
+        write(path.join(root, 'package.json'), JSON.stringify(manifest))
+        return { root, ran: () => (existsSync(ran) ? readFileSync(ran, 'utf8').trim().split('\n') : []) }
+    }
+
+    it('`matrix` writes the e2e shards and the static-demo apps, and `--apps` narrows both', () => {
+        const root = workspace('ci-matrix')
+        for (const name of ['alpha', 'beta']) {
+            app(root, `apps/${name}`, { name, scripts: { 'build:demo-static': 'vite build' } })
+            write(path.join(root, `apps/${name}/playwright.config.ts`), 'export default {}\n')
+        }
+        const output = path.join(root, 'github-output')
+        writeFileSync(output, '')
+
+        expect(sssb(root, ['ci', 'matrix'], { GITHUB_OUTPUT: output }).status).toBe(0)
+        const lines = readFileSync(output, 'utf8').trim().split('\n')
+        expect(lines.map((line) => line.split('=')[0])).toEqual(['e2e', 'demo-static'])
+        expect(JSON.parse(lines[1]!.slice('demo-static='.length))).toEqual([
+            { name: 'alpha', app: 'apps/alpha' },
+            { name: 'beta', app: 'apps/beta' },
+        ])
+
+        writeFileSync(output, '')
+        expect(sssb(root, ['ci', 'matrix', '--apps', 'apps/beta'], { GITHUB_OUTPUT: output }).status).toBe(0)
+        const narrowed = readFileSync(output, 'utf8').trim().split('\n')
+        expect(JSON.parse(narrowed[0]!.slice('e2e='.length)).map((s: { app: string }) => s.app)).toEqual(['apps/beta'])
+    })
+
+    it('`matrix` fails when no app has a Playwright config or a static demo, rather than writing an empty matrix', () => {
+        const root = workspace('ci-matrix-empty')
+        app(root, 'apps/alpha', { name: 'alpha', scripts: { 'build:demo-static': 'vite build' } })
+        const noE2e = sssb(root, ['ci', 'matrix'])
+        expect(noE2e.status).toBe(1)
+        expect(noE2e.stderr).toContain('has a Playwright config')
+
+        write(path.join(root, 'apps/alpha/playwright.config.ts'), 'export default {}\n')
+        write(path.join(root, 'apps/alpha/package.json'), JSON.stringify({ name: 'alpha' }))
+        const noDemo = sssb(root, ['ci', 'matrix'])
+        expect(noDemo.status).toBe(1)
+        expect(noDemo.stderr).toContain('build:demo-static')
+    })
+
+    it.each([
+        ['an absolute path', '/etc'],
+        ['a path out of the workspace', '../elsewhere'],
+        ['a directory that is not a package', 'apps/missing'],
+    ])('`--apps` refuses %s', (_case, listed) => {
+        const root = workspace('ci-apps')
+        app(root, 'apps/alpha', { name: 'alpha' })
+        const result = sssb(root, ['ci', 'matrix', '--apps', listed])
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain(`--apps names ${listed}`)
+    })
+
+    it('`lint-typecheck-unit` runs every step even after one fails, and fails if any did', () => {
+        const { root, ran } = scripted('ci-ltu', { lint: 1, typecheck: 0, 'test:unit': 0 })
+        app(root, 'apps/alpha', { name: 'alpha' })
+        const result = sssb(root, ['ci', 'lint-typecheck-unit'])
+        expect(result.status).not.toBe(0)
+        expect(ran()).toEqual(['lint', 'typecheck', 'test:unit'])
+    })
+
+    it('`lint-typecheck-unit` runs the coverage run instead of the unit run when the workspace defines it', () => {
+        const { root, ran } = scripted('ci-ltu-coverage', { lint: 0, typecheck: 0, 'test:unit': 0, 'test:coverage': 0 })
+        app(root, 'apps/alpha', { name: 'alpha' })
+        sssb(root, ['ci', 'lint-typecheck-unit'])
+        expect(ran()).toEqual(['lint', 'typecheck', 'test:coverage'])
+    })
+
+    // Every root script green: what is left is check-fences, which this tiny app cannot pass (it installs no plugin),
+    // so the job's failure shows check-fences ran in each app.
+    it('`lint-typecheck-unit` runs sssb check-fences in each app', () => {
+        const { root } = scripted('ci-ltu-fences', { lint: 0, typecheck: 0, 'test:unit': 0 })
+        app(root, 'apps/alpha', { name: 'alpha' })
+        const result = sssb(root, ['ci', 'lint-typecheck-unit'])
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('does not resolve @sssb/eslint-plugin')
+    })
+
+    it.each([
+        ['lint-typecheck-unit', { typecheck: 0, 'test:unit': 0 }, '`lint`'],
+        ['lint-typecheck-unit', { lint: 0, typecheck: 0 }, '`test:coverage` or `test:unit`'],
+        ['contract', { lint: 0 }, '`test:contract`'],
+    ])('`%s` fails when the root has no script for it, rather than passing empty', (job, scripts, missing) => {
+        const { root, ran } = scripted(`ci-missing-${job}`, scripts)
+        app(root, 'apps/alpha', { name: 'alpha' })
+        const result = sssb(root, ['ci', job])
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain(`has no ${missing} script`)
+        expect(ran()).toEqual([])
+    })
+
+    it('`contract` runs the root `test:contract` and passes its status on', () => {
+        const { root, ran } = scripted('ci-contract', { 'test:contract': 3 })
+        expect(sssb(root, ['ci', 'contract']).status).toBe(3)
+        expect(ran()).toEqual(['test:contract'])
+    })
+
+    it('`synth` needs a filter', () => {
+        const result = sssb(workspace('ci-synth'), ['ci', 'synth'])
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('usage: sssb ci synth --filter <selector>')
     })
 })
 

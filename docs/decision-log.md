@@ -3587,3 +3587,41 @@ JP asked what is worth borrowing from CanopyCMS's documentation setup. Two thing
 - **Typed linting cannot pass check-fences yet.** Its probe files are virtual and outside the app's TypeScript
   project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
   with that reason (a false red, not a hole).
+
+## The reusable workflow (2026-11-18, ADR-0014 P10, `ci/reusable-workflow`)
+
+- **`.github/workflows/app-checks.yml`**, `on: workflow_call` only, `permissions: contents: read`, no secrets. Its jobs
+  are `lint-typecheck-unit` (the workspace's lint, typecheck and unit tests, then `sssb check-fences` in each app),
+  `contract` (a `postgres:16` service and the workspace's `test:contract`), `discover` (the e2e shards and the
+  static-demo apps), `e2e (<shard>)`, `demo-static (<app>)`, an optional `synth`, and `all-checks`. Every step that
+  is not setup is one `pnpm exec sssb ci <job>`; the jobs P10 adds to `sssb ci` are `lint-typecheck-unit`,
+  `contract`, `matrix` and `synth`, and `--apps` narrows the ones that fan out.
+- **`all-checks` is the one check an adopter requires.** A skipped job reports as a passing check, and a job that
+  never starts reports nothing, so requiring the jobs one by one lets a check go missing or pass without running.
+  `all-checks` runs `if: always()`, needs every other job, and fails unless each one's result is `success` (synth's
+  `skipped` when no synth was asked for). A test holds its `needs` and its list to every other job. The alternative,
+  documenting a list of checks to require, leaves each adopter's ruleset to drift from the workflow.
+- **A job with nothing to run fails.** A missing root script, an e2e or static-demo list that comes out empty, or a
+  synth selector that matches no package is an error, not a quiet pass. So the workflow assumes a few conventions,
+  which it says at its top: a pnpm workspace at the repository's root, depending on `@sssb/tools`, whose root defines
+  `lint`, `typecheck`, `test:unit` (or `test:coverage`, which is run instead when present) and `test:contract`, and
+  apps that each have a Playwright config and a `build:demo-static` script. `@sssb/create` (P12) writes them.
+- **`apps` is optional and defaults to the workspace's apps** (the root's `sssb.apps`, or every `apps/<name>`, P4's
+  rule). This repository passes none, so `pnpm init-app`'s rename and eject need no edit to `checks.yml`. A listed app
+  must be a package inside the workspace.
+- **`synth` is a pnpm `--filter` selector** (`./apps/console/infra`, or this repository's `./apps/*/infra`), run with
+  `--fail-if-no-match`. Empty skips the job.
+- **This repository calls it by its local path**, so it runs at the commit under test; an adopter pins it to a
+  commit SHA. The alternative, pinning this repository's own call to an earlier SHA, would test old CI against new
+  code.
+- **Check names change.** GitHub names a called workflow's jobs `<caller job> / <job>`, so the app checks are now
+  `sssb / lint-typecheck-unit`, `sssb / contract`, `sssb / discover`, `sssb / e2e (showcase)`,
+  `sssb / e2e (showcase-destructive)`, `sssb / e2e (starter)`, `sssb / demo-static (showcase)`,
+  `sssb / demo-static (starter)`, `sssb / synth` and `sssb / all-checks`. The old `e2e-shards` is `sssb / discover`,
+  and the old single `demo-static` is one job per app. What only this repository checks (the bidi scan, knip, jscpd,
+  the spike) is a new job, `repo-checks`. `tests/tooling/app-checks-workflow.test.ts` pins the full list, so a
+  rename goes red here before a ruleset blocks every PR.
+- **`release.yml` is unchanged.** Its gate (`scripts/release.mjs wait-for-checks`) reads the conclusion of
+  `checks.yml`'s push run, and a called workflow's jobs are part of that run and of its conclusion.
+- **`sssb doctor` and `sssb check-e2e` (P5) are not in it yet.** P5 is still building them; they join
+  `lint-typecheck-unit` (or a job of their own) when it lands.

@@ -943,3 +943,21 @@ fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are t
   complete it. The logic is the plugin's (`@sssb/eslint-plugin/check-fences`); the `sssb` command resolves it from
   the app's directory.
 - **The e2e import ban of part 2 is not in P6.** It needs `@sssb/kit/testing/e2e`, which P5 builds.
+
+## Addendum — 2026-11-18: P10, the reusable workflow, as built
+
+`.github/workflows/app-checks.yml`, as part 7 describes: `on: workflow_call`, `contents: read`, no secrets, the
+services, the e2e shard matrix discovered from the apps, the install, every step a `pnpm exec sssb ci <job>`, an
+`apps` input and an optional `synth` job. The details part 7 left open (each in `docs/decision-log.md`, "The reusable
+workflow"):
+
+- **One check to require.** Its `all-checks` job fails unless every other job ran and passed, so an adopter requires
+  `<caller job> / all-checks` rather than a list that a skipped or renamed job could slip out of.
+- **`apps` defaults to the workspace's apps** (P4's `sssb.apps` or `apps/*`), and `synth` is a pnpm `--filter`
+  selector, so this repository's call names no app.
+- **A job with nothing to run fails**, so the workflow states the conventions it relies on: the root's `lint`,
+  `typecheck`, `test:unit` (or `test:coverage`) and `test:contract` scripts, and each app's Playwright config and
+  `build:demo-static`.
+- **This repository calls it by its local path**, at the commit under test; adopters pin a SHA. Its checks are
+  named `sssb / <job>`, and the rulesets on `main` and `integration` changed with it.
+- `sssb doctor` and `sssb check-e2e` join it with P5.

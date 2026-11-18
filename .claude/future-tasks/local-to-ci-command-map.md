@@ -12,7 +12,9 @@ gitleaks, and that CI runs those. That is true, but it does not say **which CI j
 and the list is incomplete. A session that wants to know whether its local green covers what the PR
 will be judged on has to read `checks.yml` itself. The sessions that went red had not.
 
-What `checks.yml` actually runs, compared with `verify`:
+What `checks.yml` actually runs, compared with `verify` (since ADR-0014 P10 the app-side rows run in
+`.github/workflows/app-checks.yml`, which `checks.yml` calls, each as one `pnpm exec sssb ci <job>` that runs the
+local command shown):
 
 | Check                                                                               | Local command                                                            | In `pnpm verify`?       | CI job                                                                                                                        |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -22,7 +24,7 @@ What `checks.yml` actually runs, compared with `verify`:
 | Coverage report                                                                     | `pnpm test:coverage`                                                     | **no**                  | `lint-typecheck-unit`                                                                                                         |
 | Dead code                                                                           | `pnpm knip`                                                              | yes                     | `lint-typecheck-unit`                                                                                                         |
 | Duplication                                                                         | `pnpm jscpd`                                                             | **no**                  | `lint-typecheck-unit`                                                                                                         |
-| Infra synth                                                                         | `pnpm --filter infra synth`                                              | **no**                  | `lint-typecheck-unit`                                                                                                         |
+| Infra synth                                                                         | `pnpm --filter './apps/*/infra' synth`                                   | **no**                  | `lint-typecheck-unit`                                                                                                         |
 | Kysely/pglite spike                                                                 | `pnpm --filter spike-kysely-pglite test`                                 | **no**                  | `lint-typecheck-unit`                                                                                                         |
 | RLS proofs on real Postgres                                                         | `pnpm test:contract`                                                     | **no**                  | `contract`                                                                                                                    |
 | E2E, per app                                                                        | `pnpm test:e2e`                                                          | yes, against `next dev` | `e2e` matrix (one shard per app, two for an app with a `destructive` project), **against a production build** (`E2E_BUILD=1`) |
