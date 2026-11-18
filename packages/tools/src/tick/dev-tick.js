@@ -28,7 +28,7 @@ import { TICK_APPS } from './tick.js'
 import { createTicker, intervalProblem } from './ticker.js'
 import { tickerMarkerPath } from './ticker-marker.js'
 
-export const DEV_TICK_VARIABLE = 'DEV_TICK_SECONDS'
+const DEV_TICK_VARIABLE = 'DEV_TICK_SECONDS'
 
 /**
  * What the environment asks of the ticker.

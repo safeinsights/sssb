@@ -25,8 +25,8 @@ export const TICK_PATH = '/api/webhooks/cron'
 export const DEFAULT_TIMEOUT_SECONDS = 60
 
 /** Bounds that keep `AbortSignal.timeout` meaningful: a value that rounds to 0 times out at once, a huge one throws. */
-export const MIN_TIMEOUT_SECONDS = 0.1
-export const MAX_TIMEOUT_SECONDS = 3600
+const MIN_TIMEOUT_SECONDS = 0.1
+const MAX_TIMEOUT_SECONDS = 3600
 
 const USAGE = `usage: pnpm tick [--url <origin>] [--timeout <seconds>]
        (per app: pnpm tick = showcase, pnpm tick:starter = starter; direct: sssb tick <${TICK_APPS.join('|')}> ...)
