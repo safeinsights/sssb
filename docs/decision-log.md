@@ -3001,3 +3001,55 @@ second, human owner would be added once a maintainer had one.
   tsconfig base is where an adopter gets them. `dedupePeerDependents: false`, which the consumer's workspace sets,
   is a registered workaround now (`dedupe-peer-dependents-written`, `workarounds.mjs:68`, P12). `src/authz/route-scan.ts` and `src/adapters/real/rds-data-emulator.ts` ship
   but nothing shipped reaches them; P5's `@sssb/kit/testing` is what will.
+## Transitive dependency advisories, handled by reach (2026-11-17, `deps/advisories`)
+
+JP's call on 2026-11-17: "address the transitive dependencies appropriately with judgement". Before this branch
+`pnpm audit` reported 37 advisory entries (33 distinct GHSA ids; 3 low, 10 moderate, 24 high), 18 of them in the
+`--prod` graph, every one in a transitive dependency. After it, 2 remain, 1 of them in the `--prod` graph. Only
+`pnpm-lock.yaml` changed: no `package.json` range, no `pnpm.overrides` entry.
+
+- **The policy.** An advisory whose package reaches shipped code is fixed whenever a fix exists, preferring a
+  lockfile refresh, then a parent upgrade, then a `pnpm.overrides` entry that names the advisory, why, and when to
+  remove it. "Shipped" means an app's server or client bundle, the migrator Lambda, the static demo, or the
+  `--prod` graph of `@sssb/kit` and the apps, which an adopter installs even when only its build tooling runs
+  it. A dev-only advisory (lint, commit hooks, Ladle, tests) is fixed when a lockfile refresh or a safe patch
+  bump does it, and otherwise accepted and recorded here. An advisory with no patched release is accepted and
+  rechecked when one appears. `minimumReleaseAge` is not bypassed for a fix, and no hold recorded in this log is
+  raised for one.
+- **Reach was measured, not inferred.** None of the twelve affected packages appears in what ships: the
+  showcase's simulated `next build` (its `.next/server` and `.next/static` chunks and its standalone trace), the
+  static demo's Rollup module graph (31 packages: React, Mantine, next-intl's runtime, floating-ui, valibot and
+  their helpers), or an esbuild bundle of the migrator entry with `infra/stack.ts`'s options (kysely and `pg`).
+  The 18 `--prod` entries reached the graph through build tooling: `postcss` and `styled-jsx`'s Babel under
+  `next`, webpack's `schema-utils`/`ajv` under `@sentry/nextjs`'s bundler plugins, `@rollup/plugin-commonjs` and
+  `@sentry/cloudflare`'s `vite` under `@sentry/nextjs`, `@parcel/watcher` under `next-intl`, and `zod` as the
+  `@anthropic-ai/sdk` optional peer that this workspace's `autoInstallPeers` installs. The SDK imports `zod` only
+  in its `helpers/zod` and `helpers/beta/zod` modules, and SSSB imports only the package root
+  (`packages/kit/src/adapters/real/llm.ts:1`); pack and consume's adopter install does not install `zod` at
+  all.
+- **Fixed by refreshing the lockfile inside the parents' existing ranges:** `fast-uri` 3.1.3 → 3.1.9 (12
+  entries), `browserslist` 4.28.5 → 4.29.5 (2; 4.29.6 is younger than the release-age window), `nanoid` 3.3.16
+  → 3.3.20, `source-map-js` 1.2.1 → 1.2.2, `zod` 4.4.3 → 4.6.7, `brace-expansion` 1.1.16 → 1.1.22 and 5.0.8 →
+  5.0.13 (9), `js-yaml` 4.3.0 → 4.3.2 (2), Ladle's `vite` 6.4.3 → 6.4.6 (5), and Ladle's `query-string` 9.4.1 →
+  9.5.1, which is inside Ladle's `^9.1.1` and moves `decode-uri-component` 0.4.1 → 0.5.1 (2).
+- **Accepted: GHSA-fc5q-39xc-vjpf, `picomatch` ReDoS (high, `--prod`).** No patched release exists: 4.0.7 and
+  2.3.2 are the newest of their lines and both are affected. It is reached through file watching and globbing
+  (`@parcel/watcher`, `@rollup/plugin-commonjs`, `vite`, `tinyglobby`). `next-intl`'s plugin requires
+  `@parcel/watcher` when it loads, so any process that evaluates `next.config.ts` loads it, a plain `next start`
+  included; the standalone server does not evaluate it, and its trace holds no `picomatch`. The advisory needs a
+  hostile glob pattern, and every pattern here comes from configuration, never from a request. Recheck when a
+  fixed `picomatch` is published.
+- **Accepted: GHSA-g3hv-75wg-m249, `minimatch` (moderate, dev-only).** `typescript-eslint` 8.72's estree takes
+  `minimatch` `^10.2.2`; the fix is in 11.0.1, which only `typescript-eslint` 8.73.0 takes, published
+  2026-11-16 and still inside the two-day release-age window. ESLint globs are this repository's own. The next
+  `typescript-eslint` refresh clears it; an override forcing a new major onto a transitive dependency was not
+  worth it for a dev-only moderate.
+- **Next's vendored copies are outside `pnpm audit`.** `next/dist/compiled` carries its own `zod`, `nanoid` and
+  `picomatch`, without versions an audit can read. They move only with `next` itself. Next's `picomatch` does run
+  at request time: `/_next/image` matches the requested URL against `images.remotePatterns` and `localPatterns`
+  (`next/dist/shared/lib/match-remote-pattern.js`). Those patterns are configuration, and neither app sets
+  `images`; an adopter who writes an extglob there should check it against GHSA-fc5q-39xc-vjpf.
+- **No standing audit gate on pull requests.** `pnpm audit --prod --audit-level high` is red today on the
+  unfixable `picomatch` entry, and with that one ignored it would still turn every open PR red on the day any new
+  advisory is published, whatever the PR touches. Advisories reach SSSB through Dependabot and through review
+  instead (the Next upgrade advisor is off; see "Next's upgrade advisor is switched off" above).
