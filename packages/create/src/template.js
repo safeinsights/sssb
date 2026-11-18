@@ -7,7 +7,8 @@
 //   template/meta.json   what the generator needs from the repository once it is no longer beside it: the version,
 //                        the reusable workflow's repository and commit, the toolchain (packageManager, engines, the
 //                        ranges of the tools the workspace installs), the build-script approvals, the seam's
-//                        specifiers, the framework's cutover rows and the action pins its own workflow uses
+//                        specifiers, the framework's cutover rows, the action pins its own workflow uses, and the
+//                        names of SSSB's Claude Code marketplace and plugin, which its settings enable at that commit
 //   template/app/        apps/starter, its infra/ included: the files git tracks there, as they are in the working tree
 //   template/root/       the workspace-level files that are generic and copied as they are (tracked too)
 //   template/guide.md    @sssb/kit's app guide, which the workspace carries a stamped copy of (`sssb guide`)
@@ -143,6 +144,7 @@ const ACTIONS = ['actions/checkout', 'pnpm/action-setup', 'actions/setup-node']
  *   actions: Record<string, string>,
  *   gitleaksVersion: string,
  *   dependencyNames: string[],
+ *   plugin: { marketplace: string, name: string },
  * }} TemplateMeta
  */
 
@@ -262,8 +264,20 @@ export function unpushedPin({ repoRoot, ref, repository }) {
     )
 }
 
-/** What the template copies from the working tree, which must be the pinned commit's at pack time. */
-const TEMPLATE_SOURCES = [STARTER, 'packages/kit/src/guide.md']
+/**
+ * SSSB's Claude Code plugin (ADR-0014 P13): the marketplace at the repository's root, and the plugin it lists, which
+ * the workspace's `.claude/settings.json` enables from that marketplace pinned at the workflow commit. The template
+ * reads their names; the files themselves are installed by Claude Code from GitHub at the pin.
+ */
+const MARKETPLACE_FILE = '.claude-plugin/marketplace.json'
+const PLUGIN_DIR = 'plugins/sssb'
+const PLUGIN_FILE = `${PLUGIN_DIR}/.claude-plugin/plugin.json`
+
+/**
+ * What the template copies from the working tree, and what the workspace's settings pin at the template's commit (the
+ * plugin), which must be that commit's at pack time.
+ */
+const TEMPLATE_SOURCES = [STARTER, 'packages/kit/src/guide.md', MARKETPLACE_FILE, PLUGIN_DIR]
 
 /**
  * Why the template's sources may not be the commit it pins, or null when they are: the template is copied from the
@@ -280,11 +294,20 @@ export function uncommittedSources(repoRoot) {
         '--untracked-files=all',
         '--',
         ...TEMPLATE_SOURCES,
-    ])
-        .split('\0')
-        .filter(Boolean)
-    // A rename's entry is followed by its old path, which has no status of its own.
-    const changed = entries.filter((entry) => /^[ MADRCU?!]{2} /.test(entry)).map((entry) => entry.slice(3))
+    ]).split('\0')
+    // Every entry is `XY <path>`, whatever its status letters (matching them instead would let one git adds, or one left
+    // out, as T, a type change, once was, pass as clean); a rename's or copy's (R or C in either column) is followed by
+    // its old path, an entry with no status of its own. @sssb/kit's stamp-release.mjs reads its status the same way.
+    /** @type {string[]} */
+    const changed = []
+    for (let i = 0; i < entries.length; i++) {
+        const entry = /** @type {string} */ (entries[i])
+        if (entry === '') continue
+        if (entry.length < 4 || entry[2] !== ' ')
+            throw new CreateError(`git status printed ${JSON.stringify(entry)}, not \`XY <path>\``)
+        changed.push(entry.slice(3))
+        if (/[RC]/.test(entry.slice(0, 2))) i++
+    }
     return changed.length === 0
         ? null
         : `the template's sources differ from HEAD, which it pins (commit them, or remove what is untracked):\n  ${changed.join('\n  ')}`
@@ -347,6 +370,23 @@ function dependencyNames(lockfile) {
     const names = new Set()
     for (const match of section.matchAll(/^ {2}'?([a-z0-9][^@'\s/]*)@/gm)) if (match[1]) names.add(match[1])
     return [...names].sort()
+}
+
+/**
+ * The marketplace's name and the plugin's, as the workspace's settings name them (`enabledPlugins` takes
+ * `<plugin>@<marketplace>`): the plugin's manifest names it, and the marketplace must list it by that name.
+ * @param {(relative: string) => string} at
+ */
+function pluginNames(at) {
+    const marketplace = readJson(at(MARKETPLACE_FILE))
+    const plugin = readJson(at(PLUGIN_FILE))
+    if (typeof marketplace?.name !== 'string' || typeof plugin?.name !== 'string')
+        throw new CreateError(`${MARKETPLACE_FILE} or ${PLUGIN_FILE} has no name`)
+    const listed = (Array.isArray(marketplace.plugins) ? marketplace.plugins : []).find(
+        (/** @type {{ name?: unknown }} */ entry) => entry?.name === plugin.name,
+    )
+    if (!listed) throw new CreateError(`${MARKETPLACE_FILE} does not list the plugin ${PLUGIN_DIR} (${plugin.name})`)
+    return { marketplace: marketplace.name, name: plugin.name }
 }
 
 /**
@@ -429,6 +469,7 @@ function writeTemplate({ repoRoot, outDir, workflowRef, warn = () => {} }) {
         actions: actionPins(appChecks),
         gitleaksVersion,
         dependencyNames: dependencyNames(readFileSync(at(WORKSPACE_LOCKFILE), 'utf8')),
+        plugin: pluginNames(at),
     }
     // The app guide @sssb/kit ships (`@sssb/kit/guide.md`), which the workspace carries a stamped copy of (`sssb
     // guide`); `sssb doctor` fails a workspace without it. The kit is of the generator's version (one fixed group).

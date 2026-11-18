@@ -6,8 +6,8 @@ written often enough that typing the script is the bottleneck.
 
 ## The problem
 
-Authoring a preset today is writing a script of operation objects (`.claude/commands/new-preset.md`);
-authoring a tour is writing selectors and actions (`.claude/commands/new-tour.md`). Both are mechanical
+Authoring a preset today is writing a script of operation objects (`plugins/sssb/commands/new-preset.md`);
+authoring a tour is writing selectors and actions (`plugins/sssb/commands/new-tour.md`). Both are mechanical
 enough that "do it once by hand, then save it" is the obvious workflow. They are two different recorders
 with very different costs, and conflating them is how this ends up looking bigger than it is.
 
@@ -46,7 +46,7 @@ exemption.
 **Open question: how far to apply the `applyTicketChanges` shape.** Extracting a route's post-authorize body
 into a named function, with a static twin, is what makes a mutation recordable — and it has a payoff of its
 own, since a script step and a click can no longer drift apart. It costs a refactor per mutation
-(`/new-preset-operation` step 5 is the recipe). The default stays **per kind, when a preset needs it**.
+(`/sssb:new-preset-operation` step 5 is the recipe). The default stays **per kind, when a preset needs it**.
 Sweeping a whole screen's mutations in advance, for the recorder's sake alone, is the version to resist.
 
 **Sketch.** A Record / Stop control in the Snapshots tab, on both hosts, that ends in "copy as preset
@@ -68,7 +68,7 @@ navigate, click, change, and so on — each with ranked alternative selectors), 
 and stringifies that format. Evaluate it as the INPUT format: record in Chrome, then a converter script maps
 each step to a `TourAction`, taking the `data-testid` selector from the step's list and flagging any step
 that has none. Verify that the Recorder can be told to prefer `data-testid` before committing to this.
-The converter also owns the pacing rules in `.claude/commands/new-tour.md`: a submit goes in `advance`, never
+The converter also owns the pacing rules in `plugins/sssb/commands/new-tour.md`: a submit goes in `advance`, never
 `script`.
 
 **Narration stays hand-written.** Narration is the craft of a tour — one idea per step, which term gets
@@ -81,6 +81,6 @@ record the viewer's walk over it.
 
 ## Trigger
 
-Presets or tours being authored often enough that the typing is the cost. Until then `/new-preset` and
-`/new-tour` are cheap enough. The tour converter is a script with no framework change; the preset recorder
+Presets or tours being authored often enough that the typing is the cost. Until then `/sssb:new-preset` and
+`/sssb:new-tour` are cheap enough. The tour converter is a script with no framework change; the preset recorder
 needs the Simulator-panel routing first, and neither depends on the other.

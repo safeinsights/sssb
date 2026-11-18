@@ -9,7 +9,7 @@ import type { DB } from './schema'
  * WHY THIS EXISTS. `SECURITY.md` promises that every tenant-scoped table is protected by row-level
  * security. Nothing used to enforce the word "every" — the proof suite was a hand-written list of
  * tables somebody remembered to extend, and a table left off it was invisible. That was demonstrated,
- * not theorised: a tenant-scoped table added exactly the way `/new-entity` instructs, minus its
+ * not theorised: a tenant-scoped table added exactly the way `/sssb:new-entity` instructs, minus its
  * six-line RLS block, passed typecheck, lint, knip and the whole unit suite while permitting a
  * cross-tenant SELECT *and* a cross-tenant INSERT through the sanctioned `db.withTenant()` API.
  *

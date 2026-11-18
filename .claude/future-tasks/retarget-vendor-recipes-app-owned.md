@@ -24,7 +24,7 @@ channel SSSB owns (`packages/kit/src/server-lib/sms.ts`), so it is SSSB code by 
 
 ## What done looks like
 
-For each of the two: decide whose port it is by the rule in `.claude/commands/new-port.md`, then either
+For each of the two: decide whose port it is by the rule in `plugins/sssb/commands/new-port.md`, then either
 rewrite its paths to `apps/<app>/src/ports/`, `apps/<app>/src/adapters/{fake,real}/` and the app registry,
 with the config section moved from SSSB's `REQUIRED_ENV` to the app's `real/index.ts`, or record in the
 recipe why it stays SSSB's. The doc-path gate will check the paths.

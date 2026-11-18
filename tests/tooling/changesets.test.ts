@@ -287,6 +287,8 @@ describe('require-changeset gate', () => {
         ['the build of the compiled e2e entry (it makes dist)', { 'packages/kit/scripts/build-testing-e2e.mjs': 'a' }],
         ['a starter change', { 'apps/starter/src/app-config/x.ts': 'a' }],
         ['a starter test (the scaffold carries it)', { 'apps/starter/tests/e2e/x.spec.ts': 'a' }],
+        ['a plugin command (adopters load it at their pin)', { 'plugins/sssb/commands/new-x.md': 'a' }],
+        ['the plugin marketplace', { '.claude-plugin/marketplace.json': '{}' }],
         ['a message catalog edit', { 'packages/kit/src/i18n/messages/en.json': '{}' }],
         ['a non-ASCII path under the starter', { 'apps/starter/src/café.ts': 'a' }],
         ['a path with a quote under the starter', { 'apps/starter/src/a"b.ts': 'a' }],

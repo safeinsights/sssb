@@ -12,6 +12,7 @@ import {
     createPackEnv,
     expectedConformanceTests,
     GENERATED_VERIFY_GATES,
+    generatedPinProblems,
     heldUnitScripts,
     lockfileFromSeed,
     lockfileMoves,
@@ -796,6 +797,57 @@ describe('createPackEnv', () => {
             optOut,
         )
         expect(createPackEnv({})).toEqual(optOut)
+    })
+})
+
+describe('generatedPinProblems', () => {
+    const SHA = 'a'.repeat(40)
+    const OTHER = 'b'.repeat(40)
+    const workflow = (ref: string) =>
+        `jobs:\n    sssb:\n        uses: safeinsights/sssb/.github/workflows/app-checks.yml@${ref} # @sssb/create 0.1.0\n`
+    const settings = (ref: string, enabled = 'sssb@sssb') =>
+        JSON.stringify({
+            extraKnownMarketplaces: { sssb: { source: { source: 'github', repo: 'safeinsights/sssb', ref } } },
+            enabledPlugins: { [enabled]: true },
+        })
+    const stamp = (commit: string) => `${JSON.stringify({ commit })}\n`
+    const doctorOk = (commit: string) =>
+        `ok      workflow and plugin pins: the reusable workflow and the plugin marketplace pin @sssb/kit 0.1.0's release commit ${commit}\n`
+    const good = { workflow: workflow(SHA), settings: settings(SHA), stamp: stamp(SHA), plugin: 'sssb' }
+
+    it('passes one commit across the workflow, the marketplace, the stamp and doctor, and names it', () => {
+        expect(generatedPinProblems({ ...good, doctorOutput: doctorOk(SHA) })).toEqual({ commit: SHA, problems: [] })
+    })
+
+    it('fails a marketplace pinned elsewhere, a plugin not enabled from it, and a stamp naming another commit', () => {
+        expect(generatedPinProblems({ ...good, settings: settings(OTHER) }).problems).toEqual([
+            `the generated .claude/settings.json pins the marketplace sssb at ${OTHER}, not the workflow's ${SHA}`,
+        ])
+        expect(generatedPinProblems({ ...good, settings: settings(SHA, 'sssb@elsewhere') }).problems).toEqual([
+            'the generated .claude/settings.json does not enable sssb@sssb',
+        ])
+        expect(generatedPinProblems({ ...good, stamp: stamp(OTHER) }).problems).toEqual([
+            `the packed @sssb/kit's release stamp names ${OTHER}, not the generated pins' ${SHA}`,
+        ])
+        expect(generatedPinProblems({ ...good, stamp: null }).problems).toEqual([
+            `the packed @sssb/kit's release stamp names no commit, not the generated pins' ${SHA}`,
+        ])
+        expect(generatedPinProblems({ ...good, settings: '{}' }).problems).toEqual([
+            'the generated .claude/settings.json declares 0 marketplaces from safeinsights/sssb, not one',
+        ])
+    })
+
+    it("fails a workflow that pins no commit, and doctor's report not saying the pins match", () => {
+        expect(generatedPinProblems({ ...good, workflow: workflow('main') }).problems).toEqual([
+            "the generated workflow pins safeinsights/sssb's reusable workflow at main, not a commit SHA",
+        ])
+        expect(generatedPinProblems({ ...good, workflow: '' }).problems).toEqual([
+            "the generated workflow calls SSSB's reusable workflow 0 times, not once",
+        ])
+        const reported = `report  workflow and plugin pins: 1 pin(s) differ from @sssb/kit 0.1.0's release commit ${SHA}\n`
+        expect(generatedPinProblems({ ...good, doctorOutput: reported }).problems).toEqual([
+            `sssb doctor does not report the workflow and plugin pins as the kit's release commit ${SHA}`,
+        ])
     })
 })
 

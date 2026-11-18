@@ -9,7 +9,7 @@ import type { TourDefinition } from '@sssb/kit/demo-static/tour/contracts'
  * A real adopter replaces this file with their own tour, or with `[]` (apps/starter does — the tab then
  * does not render at all).
  *
- * ── Conventions this file follows, and /new-tour repeats ──────────────────────────────────────────
+ * ── Conventions this file follows, and /sssb:new-tour repeats ─────────────────────────────────────
  *
  * **Narration** carries fully-qualified keys into the app catalog (`apps/showcase/messages/*.json`,
  * `tours` namespace), resolved by the engine with the root translator — the same shape an app-registered

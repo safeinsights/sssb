@@ -96,6 +96,10 @@
         "yaml": "2.9.1"
     },
     "sssb": {
+        "apps": [
+            "apps/showcase",
+            "apps/starter"
+        ],
         "docPaths": {
             "roots": [
                 "apps/",
@@ -110,7 +114,8 @@
                 "messages/",
                 ".claude/",
                 ".github/",
-                "spikes/"
+                "spikes/",
+                "plugins/"
             ],
             "include": [
                 "docs",

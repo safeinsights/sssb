@@ -716,8 +716,78 @@ export function heldUnitScripts(scripts, runBy) {
 }
 
 /**
- * The environment `@sssb/create` is packed with. Its prepack refuses to pin a commit no branch on GitHub holds, or a
- * template that differs from that commit, unless SSSB_CREATE_UNPUSHED_PIN=1. Only a push to SSSB's own repository
+ * THE GENERATED PINS AGREE (ADR-0014 P13): the generated workflow calls SSSB's reusable workflow at exactly one full
+ * commit SHA; the generated `.claude/settings.json` declares exactly one marketplace from that repository, pinned to that
+ * same commit, and enables the plugin (`<plugin>@<that marketplace>`) from it; the packed `@sssb/kit`'s release stamp
+ * (`dist/release.json`) names that commit; and, once `doctorOutput` is given, `sssb doctor`'s pin report says they
+ * match. Returns the commit (null when the workflow pins none) and the problems.
+ * @param {{ workflow: string, settings: string, stamp: string | null, plugin: string, doctorOutput?: string }} input
+ *   `workflow`: the generated checks.yml; `settings`: the generated .claude/settings.json; `stamp`: the kit tarball's
+ *   dist/release.json, null when it has none; `plugin`: the plugin's name as its manifest gives it
+ * @returns {{ commit: string | null, problems: string[] }}
+ */
+export function generatedPinProblems({ workflow, settings, stamp, plugin, doctorOutput }) {
+    const problems = []
+    const calls = [...workflow.matchAll(/uses: ([\w.-]+\/[\w.-]+)\/\.github\/workflows\/app-checks\.yml@(\S+)/g)]
+    if (calls.length !== 1) {
+        problems.push(`the generated workflow calls SSSB's reusable workflow ${calls.length} times, not once`)
+        return { commit: null, problems }
+    }
+    const [, repository, commit] = /** @type {[string, string, string]} */ (/** @type {unknown} */ (calls[0]))
+    if (!/^[0-9a-f]{40}$/.test(commit)) {
+        problems.push(`the generated workflow pins ${repository}'s reusable workflow at ${commit}, not a commit SHA`)
+        return { commit: null, problems }
+    }
+
+    /** @type {Record<string, any>} */
+    let parsed = {}
+    try {
+        parsed = JSON.parse(settings)
+    } catch (error) {
+        problems.push(
+            `the generated .claude/settings.json is not JSON: ${error instanceof Error ? error.message : error}`,
+        )
+    }
+    const marketplaces = Object.entries(parsed.extraKnownMarketplaces ?? {}).filter(
+        ([, entry]) => entry?.source?.source === 'github' && entry.source.repo === repository,
+    )
+    if (marketplaces.length !== 1)
+        problems.push(
+            `the generated .claude/settings.json declares ${marketplaces.length} marketplaces from ${repository}, not one`,
+        )
+    for (const [name, entry] of marketplaces) {
+        if (entry.source.ref !== commit)
+            problems.push(
+                `the generated .claude/settings.json pins the marketplace ${name} at ${entry.source.ref}, not the workflow's ${commit}`,
+            )
+        if (parsed.enabledPlugins?.[`${plugin}@${name}`] !== true)
+            problems.push(`the generated .claude/settings.json does not enable ${plugin}@${name}`)
+    }
+
+    /** @type {unknown} */
+    let stamped
+    try {
+        stamped = stamp === null ? null : JSON.parse(stamp).commit
+    } catch {
+        stamped = null
+    }
+    if (stamped !== commit)
+        problems.push(
+            `the packed @sssb/kit's release stamp names ${stamped ?? 'no commit'}, not the generated pins' ${commit}`,
+        )
+
+    if (
+        doctorOutput !== undefined &&
+        !new RegExp(`^ok +workflow and plugin pins: .*release commit ${commit}$`, 'm').test(doctorOutput)
+    )
+        problems.push(`sssb doctor does not report the workflow and plugin pins as the kit's release commit ${commit}`)
+    return { commit, problems }
+}
+
+/**
+ * The environment `@sssb/create` and `@sssb/kit` are packed with. The generator's prepack refuses to pin a commit no
+ * branch on GitHub holds, or a template (or the plugin it pins) that differs from that commit, and the kit's refuses a
+ * release stamp naming a commit its shipped sources differ from, unless SSSB_CREATE_UNPUSHED_PIN=1. Only a push to SSSB's own repository
  * packs a pushed commit whose tarballs a release candidate may attach (checks.yml), so only it packs with the checks
  * on; a pull request's merge commit, a fork's push and a local run's HEAD are not on SSSB's GitHub, and their tarballs
  * never leave the run.

@@ -29,8 +29,10 @@
 // package.json scripts pass to vitest (doctor proves what each configuration would run, never what a CI step's own
 // command line adds); which script runs each app's contract config (doctor lists the contract checks, it never runs
 // them); `dedupePeerDependents: false` missing from pnpm-workspace.yaml (advice); framework cutover rows the
-// workspace's checklist never mentions; and the workflow and plugin pins it cannot check yet.
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+// workspace's checklist never mentions; and the commits the workspace pins SSSB's reusable workflow and the plugin's
+// marketplace at (`.github/workflows/*.yml`, `.claude/settings.json`), against the release commit the installed
+// @sssb/kit stamps into its package (`dist/release.json`), naming both commits where they differ.
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { readJson, takeAppDir, UsageError, workspaceRootOf } from '../app.js'
@@ -40,12 +42,14 @@ import {
     areaOf,
     cutoverReport,
     discoverWorkspace,
+    githubRepositoryOf,
     importerSeamProblems,
     kitPeers,
     missingTests,
     ownTests,
     packageDirFrom,
     parseWorkspaceYaml,
+    pinReport,
     PROBE,
     realish,
     singletonProblems,
@@ -133,13 +137,7 @@ export async function run(args) {
         ...apps.flatMap((app) => RUNNERS.flatMap((runner) => conformance(root, app, runner, plans, cache))),
         ...commandLines(root, appDir, apps, plans),
         ...(await guides(root, apps, inRepo)),
-        {
-            status: 'report',
-            title:
-                `workflow and plugin pins: not checked: @sssb/kit ${version} stamps no release commit to compare the ` +
-                "reusable workflow's and the plugin marketplace's pins with (both arrive with later steps of ADR-0014: " +
-                'the workflow at P10, the plugin at P13)',
-        },
+        pins(root, kitDir, version, inRepo),
         dedupeAdvice(root, inRepo),
         cutover(root, appDir),
     ]
@@ -703,10 +701,11 @@ function commandLines(root, appDir, apps, plans) {
 /**
  * The app guide (`sssb guide --check`) of every app, once the framework ships one.
  *
- * IN-REPO, a missing copy is reported, not failed. There the kit is a package of the workspace and its guide
+ * IN-REPO, a missing copy is not a failure. There the kit is a package of the workspace and its guide
  * (`packages/kit/src/guide.md`) is the source, checked by the doc gate; a copy is the adopter's mechanism, and SSSB's
- * own repository takes one only when its `CLAUDE.md` imports it (ADR-0014 P13). Once a copy exists it is checked as
- * an adopter's is. An adopter's workspace is never in-repo, so a missing copy fails there.
+ * own `CLAUDE.md` imports the source itself (`@packages/kit/src/guide.md`, ADR-0014 P13), which nothing can make stale:
+ * that import is ok, and its absence is reported. Once a copy exists it is checked as an adopter's is. An adopter's
+ * workspace is never in-repo, so a missing copy fails there.
  *
  * @param {string} root
  * @param {string[]} apps
@@ -721,17 +720,31 @@ async function guides(root, apps, inRepo) {
         if (!results.some((r) => r.title === title)) results.push({ status: 'report', title })
     }
     for (const app of apps) {
+        let source
         try {
-            resolveAppsKit(app, 'guide.md')
+            source = resolveAppsKit(app, 'guide.md')
         } catch {
             reportOnce('app guide: not checked: this @sssb/kit ships no guide (it arrives at P7)')
             continue
         }
         if (inRepo && !existsSync(path.join(workspaceRootOf(app), '.claude', 'sssb-guide.md'))) {
-            reportOnce(
-                "app guide: not checked: in-repo, the kit's guide is this workspace's own source and the repository " +
-                    'holds no copy of it (`.claude/sssb-guide.md`) yet',
-            )
+            const importLine = `@${path.relative(root, realpathSync(source)).split(path.sep).join('/')}`
+            const claudeMd = path.join(root, 'CLAUDE.md')
+            const imports =
+                existsSync(claudeMd) &&
+                readFileSync(claudeMd, 'utf8')
+                    .split('\n')
+                    .some((line) => line.trim().split(/\s+/).includes(importLine))
+            if (imports && !results.some((r) => r.status === 'ok' && r.title.startsWith('app guide:')))
+                results.push({
+                    status: 'ok',
+                    title: `app guide: in-repo, CLAUDE.md imports the kit's guide from its source (${importLine}), so no copy can go stale`,
+                })
+            else if (!imports)
+                reportOnce(
+                    "app guide: not checked: in-repo, the kit's guide is this workspace's own source, and the repository " +
+                        `neither imports it from CLAUDE.md (${importLine}) nor holds a copy of it (\`.claude/sssb-guide.md\`)`,
+                )
             continue
         }
         const name = relativeTo(root)(app)
@@ -743,6 +756,39 @@ async function guides(root, apps, inRepo) {
         )
     }
     return results
+}
+
+/**
+ * The workflow and plugin pins against the kit's release stamp (pinReport): read here, judged there. The workflows are
+ * the workspace root's `.github/workflows/*.{yml,yaml}`, the settings its `.claude/settings.json` (the shared one; a
+ * machine's `settings.local.json` is no pin of the repository's), the stamp the APP's kit's `dist/release.json`.
+ * @param {string} root
+ * @param {string} kitDir
+ * @param {string} version
+ * @param {boolean} inRepo
+ * @returns {Result}
+ */
+function pins(root, kitDir, version, inRepo) {
+    const read = (/** @type {string} */ file) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
+    const workflowsDir = path.join(root, '.github', 'workflows')
+    const workflows = existsSync(workflowsDir)
+        ? readdirSync(workflowsDir)
+              .filter((name) => /\.ya?ml$/.test(name))
+              .sort()
+              .map((name) => ({
+                  file: `.github/workflows/${name}`,
+                  text: /** @type {string} */ (read(path.join(workflowsDir, name))),
+              }))
+        : []
+    const settingsText = read(path.join(root, '.claude', 'settings.json'))
+    return pinReport({
+        inRepo,
+        version,
+        stamp: read(path.join(kitDir, 'dist', 'release.json')),
+        repository: githubRepositoryOf(readJson(path.join(kitDir, 'package.json')).repository),
+        workflows,
+        settings: settingsText === null ? null : { file: '.claude/settings.json', text: settingsText },
+    })
 }
 
 /**

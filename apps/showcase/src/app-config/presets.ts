@@ -18,7 +18,7 @@
  * The app's own OPERATION KINDS register here too, beside SSSB's `invite`/`inbound`/`flag`/`actor.hold`: one directory
  * per kind under `./presets/operations/`, whose `definition.ts` is listed in `appPresetOperations` and
  * typed into `AppPresetOperation`. Its server half registers on the server-only `./preset-operations.ts`
- * and its static half in the static composition root (src/demo-static/app.tsx) — `/new-preset-operation`
+ * and its static half in the static composition root (src/demo-static/app.tsx) — `/sssb:new-preset-operation`
  * scaffolds all three.
  */
 

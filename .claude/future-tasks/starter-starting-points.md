@@ -23,8 +23,8 @@ and every Snapshots feature are therefore reachable in the starter only through 
 registration seam is there (`apps/starter/src/app-config/presets.ts` and `tours.ts` register nothing today),
 and a server host for it is not.
 
-The consequence lands on the adopter the day after generating. A preset or tour written with `/new-preset` or
-`/new-tour` is watchable only in the static demo; `pnpm dev` has no panel to load it from, and no org screen
+The consequence lands on the adopter the day after generating. A preset or tour written with `/sssb:new-preset` or
+`/sssb:new-tour` is watchable only in the static demo; `pnpm dev` has no panel to load it from, and no org screen
 or accept route for an `invite` step to lead into.
 
 ## The question to decide
@@ -58,7 +58,7 @@ Against, and these are the reasons this is a question rather than a task:
 
 1. **Wire it into the starter.** Simplest for the adopter, largest minimum, most duplication.
 2. **Keep the starter minimal and ship a scaffold command** (an `/add-simulator`, `/add-invitations`, in the
-   style of `.claude/commands/new-tour.md`) that writes the wiring into the adopter's app on request. The
+   style of `plugins/sssb/commands/new-tour.md`) that writes the wiring into the adopter's app on request. The
    minimum stays small and the wiring is still theirs, but an agent command is not a gate, and CI cannot
    prove the wiring still compiles unless an adoption-probe leg runs it.
 3. **Promote the wiring into SSSB as re-exportable route handlers**, so the adopter's route file is one line.

@@ -330,7 +330,7 @@ const actorHoldOperation = (): PresetOperationDefinition<'actor.hold', ActorHold
 })
 
 /** SSSB's own operation kinds. An app may replace any of them by registering a definition of the same
- *  `kind` in its `appPresetOperations` (`/new-preset-operation --from <kind>` copies one to start from;
+ *  `kind` in its `appPresetOperations` (`/sssb:new-preset-operation --from <kind>` copies one to start from;
  *  `composePresetOperations([])[kind]` reaches SSSB's to wrap). */
 const frameworkPresetOperations = (): readonly PresetOperationDefinition[] => [
     inviteOperation(),

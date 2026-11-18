@@ -4492,3 +4492,159 @@ Pack and consume (`scripts/pack-and-consume.mjs`) now proves the generator as we
   `sssb add-app`); the pages shape does it by hand today, as an adopter with two apps would, and it is not a workaround
   because no ADR-0014 step promises it. ADR-0014 part 7's "a sibling package that imports keel and links the seam"
   is still not in the pages shape (it had none before P12 either).
+
+## The Claude Code plugin, and CLAUDE.md cut to the maintainer half (2026-11-18, ADR-0014 P13, `feat/claude-plugin`)
+
+P13 moves the commands an app author runs out of `.claude/commands/` into a Claude Code plugin that an adopter's
+workspace enables at a pinned commit, makes `@sssb/kit` name the commit it was packed from so `sssb doctor` can hold
+the pins to it, and cuts this repository's `CLAUDE.md` to what holds only here. ADR-0014's addendum of the same date
+says where this differs from part 9. Each decision, and what was rejected:
+
+- **Marketplace `sssb` at the repository root (`.claude-plugin/marketplace.json`), listing one plugin, `sssb`, at
+  `plugins/sssb/`** (relative source `./plugins/sssb`). The enable key is `sssb@sssb`, the commands are
+  `/sssb:<name>` and the agent `sssb:doc-steward`. The generator reads both names from the two manifests
+  (`pluginNames`, `packages/create/src/template.js`) and refuses a marketplace that does not list the plugin, so a
+  rename cannot drift from the settings it writes. Rejected: the plugin at the repository root (`source: "./"`), which
+  makes the whole repository the plugin directory and mixes the maintainer's files into what adopters load.
+- **No `version` in `plugin.json` or the marketplace entry.** Claude Code takes a plugin's version from the manifest's
+  `version`, then the entry's, and only without either from the source (for a relative path in a git-hosted
+  marketplace, the commit SHA); a pinned string keeps every user on the cached copy until its author changes it
+  (Claude Code's plugin docs, "Plugin loading reference", "How Claude Code computes the version"). Left out, raising
+  the pin moves the plugin. The cost: `claude plugin validate --strict` exits 1 on exactly one warning,
+  `version: No version specified`. The gate filters that one line and fails any other warning or error
+  (`tests/tooling/plugin.test.ts`, "claude plugin validate --strict"; an unknown key in `plugin.json` turns both of
+  its rows red). Rejected: the fixed group's semver in `plugin.json`: nothing in the release flow stamps it, and a
+  stale string would silently freeze adopters' plugins across a pin bump.
+- **Which commands move.** Into the plugin: `new-entity`, `new-job`, `new-actor`, `new-notification-kind`,
+  `new-webhook-event`, `new-tour`, `new-preset`, `new-preset-operation`, `new-slice`, `new-port` (an APP-owned port
+  only), `verify`, `pre-pr`, `a11y-review`, `design-review`, and the `doc-steward` agent: each acts on an app and works
+  in a generated workspace. Kept in `.claude/commands/` as the maintainer's: `branch-review` and `sub-review`
+  (generic, not SSSB's to ship), `repo-health` (triages `@sssb/kit/core` and the kit's fakes), `record-fixtures` (the
+  showcase's `llm:record`; a generated app has no LLM fixtures), and **`new-kit-port`**, the framework-port half of
+  the old `/new-port`, renamed so `/new-kit-port` and `/sssb:new-port` are never confused; each sends the other kind
+  of port to the other. Rejected: shipping `record-fixtures` (no such script in a generated app); keeping a project
+  copy of any moved command (two copies drift).
+- **How a command addresses the app and cites SSSB.** "The app" is the root `package.json`'s `sssb.apps` (with
+  several, the one the request names, or ask), and every path is relative to it, else to the workspace root. SSSB's
+  reference app is cited only as a code span `https://github.com/safeinsights/sssb/(blob|tree)/<ref>/apps/showcase/…`,
+  where each command defines `<ref>` as the commit the project's Claude Code settings pin the `sssb` marketplace to (in
+  SSSB's own repository, the local showcase). The plugin and the cited file are then read at one commit, and the gate
+  fails a URL at a branch or a path not in the tree. A generated app's own Items slice is the worked example where it
+  has one. Rejected: `apps/<app>/…` everywhere (wrong for a Pages-shaped workspace, ADR-0014 part 9); a bare `src/…`
+  with no rule; `main` URLs (they drift from the pinned plugin); copying the examples into the plugin (a third copy of
+  the showcase).
+- **The commands are written for the app a generated workspace has**, which lacks the showcase's server Simulator: its
+  only Simulator panel is the static demo's (`DemoShell` with `extraTabs={[]}`), and it has no `/api/simulator/*`
+  routes, no `/api/jobs`, no header bell and no `src/domain`. So `/sssb:new-actor` adds the actor to the static demo
+  and keeps the server host as a section for an app that has one (porting the server Simulator is its own work), and
+  the job, webhook, notification, tour and accessibility commands say what the generated app lacks and where the
+  capability does exist (the static demo's Jobs, Hooks and Snapshots tabs, its bell and profile preferences). An actor
+  registration copies the reference's `as const` shape (the kit exports no actor-definition type), and a tick is
+  picked by id exhaustively. A spec reads the kit's catalog as a file through `require.resolve` of an exported
+  subpath, never an import (`sssb check-e2e` fails any kit import but `@sssb/kit/testing/e2e`). Rejected: inlining the
+  server port into "add an actor" (the showcase's `simulator-glue.tsx` is 867 lines, beside 33 `/api/simulator` and 2 `/api/service` routes); dropping the server guidance.
+- **Adding a package: by hand, never `pnpm add`.** In an installed generated workspace, `pnpm --filter <app> add
+<pkg>` re-resolves `@sssb/kit` without its optional `@sssb/app-config` peer (`sssb doctor` fails "has no seam
+  linked"; typecheck fails inside the kit). The three commands that add one (`new-preset-operation`, `new-port`,
+  `a11y-review`) carry one shared "Adding a package" section, which the gate holds identical: edit the app's
+  `package.json`, `pnpm install`, `pnpm sssb:doctor`; after a `pnpm add` already ran, keep the manifest, restore the
+  lockfile with `git checkout HEAD -- pnpm-lock.yaml`, install, run doctor. The root cause is open as
+  `.claude/future-tasks/pnpm-add-drops-seam-link.md`. Rejected: `git restore pnpm-lock.yaml` (it restores from the
+  index, which may hold the broken lockfile after a `git add`); the clean reinstall (it re-resolves the whole tree); a
+  sentence per command pointing at one of them (a second hop).
+- **Playwright's browser install is filtered to the apps**: `pnpm --filter './apps/*' exec playwright install
+chromium` (or `--filter <app>`) in the commands, the generator's "Next:" lines and README, and `docs/adopting.md`. A
+  generated workspace declares `@playwright/test` in the app, not the root; the root form worked in one workspace only
+  because pnpm hoisted the bin. This repository's root declares it, so this repository's own `README.md` and
+  `CLAUDE.md` keep the root form. Rejected: the root form for adopters (hoisting is not a contract); `pnpm dlx
+playwright` (a version unpinned against `@playwright/test`).
+- **The plugin's gate, `tests/tooling/plugin.test.ts`** (its header lists the conventions): (a) the manifests' shape,
+  which never skips (CI has no `claude`); (b) every reference a command or agent makes resolves in a workspace
+  generated from the live tree: paths, `pnpm` scripts (here as well), `pnpm exec` binaries that a dependency of the
+  package it runs in declares, `sssb` commands, `@sssb/kit` subpaths and the identifiers and props the prose ties to
+  them, rule ids, `/sssb:` commands, SSSB URLs, fenced shell lines and TypeScript imports, and `npx`, `npm`, `yarn`,
+  `pnpm dlx` of SSSB's packages and an un-negated `pnpm add` fail; (c) `claude plugin validate --strict` where the
+  binary is on PATH. A canary of planted rows must each yield exactly its own problem. Rejected: installing `claude`
+  in CI for (c) (a network install of a moving binary into every run, for checks (a) mostly mirrors); a type-checker
+  `Program` for the identifier and props checks (slow); a block-level "a capability word needs a host word" rule (it
+  flagged true sentences).
+- **This repository dogfoods the plugin.** `.claude/settings.json` commits only `enabledPlugins: {"sssb@sssb": true}`,
+  so nothing loads until a maintainer either installs it (`claude plugin marketplace add ./ --scope local`, which
+  writes a `directory` source with the checkout's absolute path to the gitignored `.claude/settings.local.json`, then
+  `claude plugin install sssb@sssb --scope local`, once per checkout) or starts the session with
+  `claude --plugin-dir plugins/sssb`. Checked with Claude Code 2.1.280 in a scratch `CLAUDE_CONFIG_DIR`: the install is
+  a copy in the plugin cache under the commit's SHA (`installed_plugins.json`'s `installPath` and `gitCommitSha`),
+  `claude plugin update` ignores an uncommitted edit and moves to a new commit, and `--plugin-dir` loads the tree as it
+  is (`claude plugin list` shows both `sssb@sssb` and `sssb@inline`). Claude Code's plugin docs say a `--plugin-dir`
+  plugin replaces an installed one of the same name ("Name conflicts"), and describe a local marketplace's
+  relative-path plugin as loaded in place, which 2.1.280 did not do, so `CLAUDE.md` names the version it describes.
+  Rejected: a committed `directory` source with a relative path (undocumented; the CLI resolves `./` to an absolute
+  path before writing it); a `github` source (maintainers would run `main`'s plugin, not their tree's).
+- **The release stamp, `dist/release.json`** (`{ "commit": "<40 hex>" }`), written by the kit's `prepack` after
+  `build-testing-e2e.mjs`, which empties `dist/` first (a test pins the order). It ships under `dist`, which `files`
+  already names. It refuses shipped sources (`src/`, `package.json`) that differ from `HEAD`, staged, unstaged or
+  untracked, read from `git status --porcelain=v1 -z` by position, never by status letter (a `T` once slipped
+  through), under `@sssb/create`'s switch `SSSB_CREATE_UNPUSHED_PIN=1`; it fails outside a git checkout. It does not
+  repeat the generator's unpushed-`HEAD` refusal: the generator's pin, which GitHub must resolve, is the same commit
+  and is refused there. `release.mjs candidate` refuses a kit whose stamp is not the candidate's commit. Rejected: a
+  field in the packed `package.json` (pnpm reads the manifest before `prepack` runs); an `exports` entry (doctor reads
+  the file by path, and the public surface would widen for a file no app imports); the repository in the stamp (the
+  kit's `package.json` `repository` names it); mirroring the unpushed check in the kit (a second copy, or an import
+  from a kit script into `packages/create`); a `"modified": true` flag doctor would then have to explain.
+- **`sssb doctor`'s pin report** (`pinReport`, `packages/tools/src/commands/doctor-checks.js`) replaces "workflow and
+  plugin pins: not checked". SSSB's repository is the installed kit's `package.json` `repository`; its pins are every
+  `uses: <owner>/<name>/.github/workflows/<file>@<ref>` in the root's workflows and every `extraKnownMarketplaces`
+  entry of `.claude/settings.json` from that repository (`github` `repo`, or `git` `url`). It is `ok` only when the kit
+  has a stamp, the workspace has a workflow pin and a marketplace pin, every one is the stamp's commit, and
+  `enabledPlugins` enables some plugin from that marketplace (`true`, or a non-empty array: Claude Code 2.1.280's
+  settings schema describes an "extended format with version constraints"). Otherwise it reports, naming both commits,
+  a branch or missing `ref`, what is enabled instead, or why it cannot judge; it never fails (ADR-0014 part 5). In-repo
+  it is "not checked", decided by doctor's in-repo flag, not by the file's absence (a `dist/` a local pack left behind
+  is not read). Rejected: hardcoding `safeinsights/sssb` (a fork publishing under its own repository would be
+  misjudged); hardcoding the plugin's name (the kit would have to know it, and a rename would break the check
+  quietly); reading `settings.local.json` (a machine's, not the repository's pin).
+- **Doctor's in-repo guide check**: with no `.claude/sssb-guide.md`, `ok` when the root `CLAUDE.md` imports the kit's
+  guide from its source (`@packages/kit/src/guide.md` as a whitespace-separated token; a backticked mention is no
+  import), a report otherwise. Rejected: "holds no copy yet" (this repository never will: the import is the
+  mechanism); failing in-repo (doctor's failures are for adopters' installs).
+- **`@sssb/create` writes `.claude/settings.json` and `CLAUDE.md`.** The settings declare the marketplace as a
+  `github` source of the template's workflow repository at the workflow's pin (`--workflow-ref` moves both) and enable
+  `<plugin>@<marketplace>`. A commit `ref` needs Claude Code 2.1.324 or later (Claude Code's marketplace reference,
+  "Fields by type", `ref`), which the generated README, `docs/adopting.md` and the changeset say, beside
+  `claude plugin install sssb@sssb --scope project` once per clone after trusting the folder (a project's
+  `enabledPlugins` installs nothing). `CLAUDE.md` is a heading, a sentence, the line `@.claude/sssb-guide.md` and a
+  heading for the adopter's own rules, written once. This reverses P12's "not written: `CLAUDE.md`": without it the
+  guide steers no agent until the adopter writes the file, and the plugin's commands assume the guide is loaded. The
+  plugin's files are template sources for the uncommitted check (`TEMPLATE_SOURCES`), so a pack refuses a plugin that
+  differs from the `HEAD` the settings pin. Rejected: leaving `CLAUDE.md` to the README (most adopters would not
+  write it); the app's display name in it (one more Prettier-sensitive place for a name).
+- **Pack and consume's generated shape gains a pin step** (`pinsGenerated` in `scripts/pack-and-consume.mjs`,
+  `generatedPinProblems` in `scripts/pack-and-consume/checks.mjs`): the workflow calls the reusable workflow once at a
+  full SHA, the settings declare exactly one marketplace of that repository at that SHA and enable its plugin, the
+  packed kit's stamp names it, the generated workspace's `sssb doctor` prints the `ok` pin line, and `git cat-file -e`
+  finds the marketplace and plugin manifests at that commit in this checkout. The kit is packed under the generator's
+  switch. So the plugin must be committed before a local run, as the starter must. Rejected: checking the plugin only
+  in the pages shape (the generated shape is the one whose settings are untouched); reading doctor's line from
+  verify's interleaved output.
+- **`CLAUDE.md` cut to the maintainer half.** It opens with `@packages/kit/src/guide.md` (the source, not a copy, so
+  nothing can make it stale), then says nothing the guide says is repeated and an app-facing rule goes into the guide
+  (it ships, so it takes a changeset). The app half left (the seam, vendor SDKs and `process.env` in an app, `getDb`,
+  keyset and migration rules, `authorize`, i18n, router-agnostic screens, hermetic dev, the conformance and e2e
+  rules, knip's narrow entry); the maintainer half of each stayed. **The guide gained the cutover rule and a "dev
+  loop" section** (`.changeset/app-guide-dev-loop.md`, a `minor`, Kind seam, since doctor fails a stale copy):
+  ticking scheduled work, the cron route behind `withWebhookSecret`, per-worktree ports via `pnpm exec sssb port`,
+  and verify, `lint:fix` and conventional commits. Rejected moving: the gate-must-fail and git habits (general
+  engineering), the product name in tests (the generator's concern), ladle (the starter has none); naming the
+  `starter` port band in the guide (the generator's no-survivor test bans it).
+- **This repository's root `package.json` gains `sssb.apps: ["apps/showcase", "apps/starter"]`**, the set doctor
+  already walked, so the commands' "the app" rule is literal here, and `plugins/` in `sssb.docPaths.roots`, so a doc
+  citing a command file is checked. Not added to `include`: the commands' paths are app-relative, and the plugin's
+  gate checks them more strictly.
+- **The changeset gate covers `plugins/` and `.claude-plugin/`** (`.github/scripts/require-changeset.sh`,
+  `tests/tooling/changesets.test.ts`, `.changeset/README.md`): adopters load the plugin from this repository at the
+  pin they raise at a release, so a plugin change reaches them as a shipped file does. Its changeset names
+  `@sssb/create`, the package that writes the pin. Rejected: leaving it ungated (the plugin is no npm package, but it
+  is adopter-visible).
+- **Command names say `/sssb:`** wherever they mean the plugin's: the starter's comments (a generated workspace holds
+  no bare `/<command>`, which `tests/tooling/create-generate.test.ts` checks against the plugin's command list), the
+  kit's shipped comments, the docs, `README.md` and `CONTRIBUTING.md`; a framework port is `/new-kit-port`.

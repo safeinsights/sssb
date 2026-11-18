@@ -67,7 +67,7 @@ lint fail the gate otherwise — and the "items route" comment in `apps/starter/
    With zero app tables, `pnpm test:contract` runs only the framework half; say so rather than letting
    it look like coverage.
 3. **It deletes the worked RLS example.** `1001_items.ts` is the only worked RLS migration
-   in a generated workspace: the adopting guide cites it, while `/new-slice`, `/new-entity` and
+   in a generated workspace: the adopting guide cites it, while `/sssb:new-slice`, `/sssb:new-entity` and
    `CLAUDE.md` cite the showcase's `1001_tickets.ts`, which a generated workspace never had. A blank app
    has nothing to copy from. Either the reference moves into a recipe
    under `docs/recipes/`, or `--blank` leaves the migration behind as an unregistered template, or the
@@ -80,7 +80,7 @@ Scripted surgery on TypeScript source is the fragile part. Two ways to avoid reg
 - **Whole-file replacement from a checked-in blank variant**, which the generator copies over the
   template's files. Robust at run time, but the variants are a third app in disguise: they must typecheck
   and lint against SSSB or they rot.
-- **A `/strip-starter` agent command** in `.claude/commands/` that walks the list above and ends on
+- **A `/sssb:strip-starter` plugin command** (`plugins/sssb/commands/`) that walks the list above and ends on
   `pnpm verify`. Cheap, and consistent with how the scaffolds already work, but an agent recipe is not
   a gate and CI cannot run it.
 

@@ -7,6 +7,7 @@ import {
     aliasProblems,
     aliasRoutes,
     cutoverReport,
+    githubRepositoryOf,
     importerSeamProblems,
     isInRepoKit,
     kitImporters,
@@ -14,6 +15,7 @@ import {
     packageDirFrom,
     ownTests,
     parseWorkspaceYaml,
+    pinReport,
     PROBE,
     singletonProblems,
     sssbPackagesOf,
@@ -1016,13 +1018,78 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
             const inRepo = doctorWorkspace('sssb-doctor-e2e-guide-in-repo-', 'in-repo', ['web'])
             shipGuide(path.join(inRepo, 'packages', 'kit'))
             const none = await doctor(inRepo, 'apps/web')
-            expect(none.out).toMatch(/^report +app guide: not checked: in-repo, .*holds no copy of it/m)
+            expect(none.out).toMatch(
+                /^report +app guide: not checked: in-repo, .*neither imports it from CLAUDE\.md \(@packages\/kit\/guide\.md\) nor holds a copy of it/m,
+            )
             expect(none.code, none.out).toBe(0)
+
+            // SSSB's own repository imports the source itself, which nothing can make stale; a mention in a code span
+            // is no import.
+            write(path.join(inRepo, 'CLAUDE.md'), '# Maintainers\n\nNot `@packages/kit/guide.md` here.\n')
+            const mentioned = await doctor(inRepo, 'apps/web')
+            expect(mentioned.out).toMatch(/^report +app guide: not checked: in-repo/m)
+            write(path.join(inRepo, 'CLAUDE.md'), '# Maintainers\n\n@packages/kit/guide.md\n')
+            const imported = await doctor(inRepo, 'apps/web')
+            expect(imported.out).toMatch(
+                /^ok +app guide: in-repo, CLAUDE\.md imports the kit's guide from its source \(@packages\/kit\/guide\.md\)/m,
+            )
+            expect(imported.code, imported.out).toBe(0)
 
             write(copy(inRepo), '# A copy with no stamp\n')
             const stale = await doctor(inRepo, 'apps/web')
             expect(stale.out).toMatch(/^FAIL +apps\/web: app guide: the repository's copy is not the kit's/m)
             expect(stale.code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        "reports the workflow and plugin pins against the app's kit's release stamp, and never fails on them",
+        async () => {
+            const sha = 'c'.repeat(40)
+            const packed = doctorWorkspace('sssb-doctor-e2e-pins-', 'packed', ['web'])
+            const kit = path.join(packed, 'store', 'web', 'node_modules', '@sssb', 'kit')
+            pkg(kit, {
+                ...KIT_MANIFEST,
+                repository: { type: 'git', url: 'git+https://github.com/safeinsights/sssb.git' },
+            })
+            write(path.join(kit, 'dist', 'release.json'), `${JSON.stringify({ commit: sha })}\n`)
+            const uses = (ref: string) =>
+                `jobs:\n    sssb:\n        uses: safeinsights/sssb/.github/workflows/app-checks.yml@${ref}\n`
+            const settings = (ref: string) =>
+                JSON.stringify({
+                    extraKnownMarketplaces: { sssb: { source: { source: 'github', repo: 'safeinsights/sssb', ref } } },
+                    enabledPlugins: { 'sssb@sssb': true },
+                })
+            write(path.join(packed, '.github', 'workflows', 'checks.yml'), uses(sha))
+
+            const noSettings = await doctor(packed, 'apps/web')
+            expect(noSettings.out).toMatch(/^report +workflow and plugin pins: not every pin is there/m)
+            expect(noSettings.out).toMatch(/^ +no \.claude\/settings\.json: no plugin marketplace pin/m)
+            expect(noSettings.code, noSettings.out).toBe(0)
+
+            write(path.join(packed, '.claude', 'settings.json'), settings('d'.repeat(40)))
+            const mismatched = await doctor(packed, 'apps/web')
+            expect(mismatched.out).toMatch(
+                /^report +workflow and plugin pins: 1 pin\(s\) differ from @sssb\/kit 0\.1\.0's release commit c{40}/m,
+            )
+            expect(mismatched.out).toMatch(/\(marketplace sssb\) pins d{40}, not @sssb\/kit's release commit c{40}$/m)
+            expect(mismatched.code, mismatched.out).toBe(0)
+
+            write(path.join(packed, '.claude', 'settings.json'), settings(sha))
+            const matching = await doctor(packed, 'apps/web')
+            expect(matching.out).toMatch(
+                /^ok +workflow and plugin pins: the reusable workflow and the plugin marketplace pin @sssb\/kit 0\.1\.0's release commit c{40}$/m,
+            )
+
+            // In-repo there is no stamp: the kit is the workspace's own source (a dist/ left by a pack is not read).
+            const inRepo = doctorWorkspace('sssb-doctor-e2e-pins-in-repo-', 'in-repo', ['web'])
+            write(path.join(inRepo, 'packages', 'kit', 'dist', 'release.json'), `${JSON.stringify({ commit: sha })}\n`)
+            const own = await doctor(inRepo, 'apps/web')
+            expect(own.out).toMatch(
+                /^report +workflow and plugin pins: not checked: in-repo, @sssb\/kit is this workspace's own source/m,
+            )
+            expect(own.code, own.out).toBe(0)
         },
         E2E_TIMEOUT,
     )
@@ -1062,5 +1129,159 @@ describe('cutoverReport', () => {
             sssbOnly: ['release-app'],
         })
         expect(cutoverReport(rows, null).unmentioned).toEqual(['auth-dev', 'errors', 'look-alike'])
+    })
+})
+
+describe('pinReport: the workflow and plugin pins against the kit’s release stamp (never a failure)', () => {
+    const SHA = 'a'.repeat(40)
+    const OTHER = 'b'.repeat(40)
+    const workflow = (ref: string) => ({
+        file: '.github/workflows/checks.yml',
+        text: `jobs:\n    sssb:\n        uses: safeinsights/sssb/.github/workflows/app-checks.yml@${ref} # @sssb/create 0.1.0\n    other:\n        steps:\n            - uses: actions/checkout@${OTHER}\n`,
+    })
+    const settings = (ref: string | null, repo = 'safeinsights/sssb') => ({
+        file: '.claude/settings.json',
+        text: JSON.stringify({
+            extraKnownMarketplaces: {
+                sssb: { source: { source: 'github', repo, ...(ref === null ? {} : { ref }) } },
+                elsewhere: { source: { source: 'github', repo: 'someone/else', ref: OTHER } },
+            },
+            enabledPlugins: { 'sssb@sssb': true },
+        }),
+    })
+    const base = {
+        inRepo: false,
+        version: '0.2.0',
+        stamp: `${JSON.stringify({ commit: SHA })}\n`,
+        repository: 'safeinsights/sssb',
+        workflows: [workflow(SHA)],
+        settings: settings(SHA),
+    }
+
+    it('is ok when the kit is stamped and the workflow and the marketplace both pin that commit', () => {
+        expect(pinReport(base)).toEqual({
+            status: 'ok',
+            title: `workflow and plugin pins: the reusable workflow and the plugin marketplace pin @sssb/kit 0.2.0's release commit ${SHA}`,
+            lines: [
+                '.github/workflows/checks.yml (.github/workflows/app-checks.yml)',
+                '.claude/settings.json (marketplace sssb)',
+            ],
+        })
+    })
+
+    it('reports, naming both commits, a pin that differs, and one that follows a branch or no ref at all', () => {
+        const mismatched = pinReport({ ...base, workflows: [workflow(OTHER)], settings: settings('main') })
+        expect(mismatched.status).toBe('report')
+        expect(mismatched.title).toMatch(
+            /^workflow and plugin pins: 2 pin\(s\) differ from @sssb\/kit 0\.2\.0's release commit a{40} \(reported, not failed/,
+        )
+        expect(mismatched.lines).toEqual([
+            `.github/workflows/checks.yml (.github/workflows/app-checks.yml) pins ${OTHER}, not @sssb/kit's release commit ${SHA}`,
+            `.claude/settings.json (marketplace sssb) pins main (a branch or tag, not a commit), not @sssb/kit's release commit ${SHA}`,
+        ])
+        expect(pinReport({ ...base, settings: settings(null) }).lines).toEqual([
+            `.claude/settings.json (marketplace sssb) pins no ref, so it follows safeinsights/sssb's default branch, not @sssb/kit's release commit ${SHA}`,
+        ])
+        // The repository is matched as GitHub matches it, without case; a git source by its URL.
+        const git = JSON.stringify({
+            extraKnownMarketplaces: {
+                s: { source: { source: 'git', url: 'https://github.com/SafeInsights/SSSB.git', ref: OTHER } },
+            },
+            enabledPlugins: { 'sssb@s': true },
+        })
+        expect(pinReport({ ...base, settings: { file: '.claude/settings.json', text: git } }).lines).toEqual([
+            `.claude/settings.json (marketplace s) pins ${OTHER}, not @sssb/kit's release commit ${SHA}`,
+        ])
+    })
+
+    it('reports a missing .claude/settings.json, a marketplace of another repository, or unreadable settings, never failing', () => {
+        const missing = pinReport({ ...base, settings: null })
+        expect(missing.status).toBe('report')
+        expect(missing.title).toMatch(
+            /not every pin is there to compare with @sssb\/kit 0\.2\.0's release commit a{40}/,
+        )
+        expect(missing.lines).toEqual([
+            'no .claude/settings.json: no plugin marketplace pin (a workspace whose people do not use Claude Code has no plugin)',
+        ])
+        expect(pinReport({ ...base, settings: settings(SHA, 'someone/fork') }).lines).toEqual([
+            '.claude/settings.json declares no marketplace from safeinsights/sssb: no plugin marketplace pin',
+        ])
+        expect(pinReport({ ...base, settings: { file: '.claude/settings.json', text: '{' } }).lines[0]).toMatch(
+            /^\.claude\/settings\.json is not JSON doctor can read/,
+        )
+        expect(pinReport({ ...base, workflows: [] }).lines).toEqual([
+            'no workflow under .github/workflows calls a reusable workflow of safeinsights/sssb: no workflow pin',
+        ])
+    })
+
+    it('reports a pinned marketplace no plugin is enabled from, naming what is enabled instead', () => {
+        const withPlugins = (enabledPlugins: unknown) => ({
+            file: '.claude/settings.json',
+            text: JSON.stringify({ ...JSON.parse(settings(SHA).text), enabledPlugins }),
+        })
+        // Disabled, or enabled only from another marketplace (a local checkout's copy, say): the pin loads nothing.
+        const otherCopy = pinReport({ ...base, settings: withPlugins({ 'sssb@dev': true, 'sssb@sssb': false }) })
+        expect(otherCopy).toEqual({
+            status: 'report',
+            title: `workflow and plugin pins: the pins are @sssb/kit 0.2.0's release commit ${SHA}, but no plugin is enabled from the pinned marketplace (reported, not failed: enable it in this workspace's .claude/settings.json)`,
+            lines: [
+                '.claude/settings.json enables no plugin from marketplace sssb, so the pin loads nothing: its enabledPlugins enable sssb@dev (and set sssb@sssb: false)',
+            ],
+        })
+        for (const enabledPlugins of [undefined, {}, { 'sssb@sssb': 'yes' }])
+            expect(pinReport({ ...base, settings: withPlugins(enabledPlugins) }).lines, String(enabledPlugins)).toEqual(
+                [
+                    expect.stringMatching(
+                        /^\.claude\/settings\.json enables no plugin from marketplace sssb, so the pin loads nothing: its enabledPlugins enable none/,
+                    ),
+                ],
+            )
+        // Any plugin enabled from the pinned marketplace is SSSB's: the kit does not know the plugin's name.
+        expect(pinReport({ ...base, settings: withPlugins({ 'renamed@sssb': true }) }).status).toBe('ok')
+        // Claude Code's settings also take a non-empty array of version constraints as enabled; an empty one is not.
+        expect(pinReport({ ...base, settings: withPlugins({ 'sssb@sssb': ['>=0.1.0'] }) }).status).toBe('ok')
+        expect(pinReport({ ...base, settings: withPlugins({ 'sssb@sssb': [] }) }).lines).toEqual([
+            '.claude/settings.json enables no plugin from marketplace sssb, so the pin loads nothing: its enabledPlugins enable none (and set sssb@sssb: [])',
+        ])
+        // Alongside a pin that differs, the title is the pin's; the line still says what is enabled.
+        const both = pinReport({ ...base, workflows: [workflow(OTHER)], settings: withPlugins({}) })
+        expect(both.title).toMatch(/1 pin\(s\) differ/)
+        expect(both.lines).toHaveLength(2)
+        expect(both.lines[1]).toMatch(/enables no plugin from marketplace sssb/)
+        // Without a stamp, the line is shown with the pins found.
+        expect(pinReport({ ...base, stamp: null, settings: withPlugins({}) }).lines.at(-1)).toMatch(
+            /enables no plugin from marketplace sssb/,
+        )
+    })
+
+    it('says plainly when there is no stamp to compare with: in-repo, an unstamped kit, a stamp naming no commit', () => {
+        const inRepo = pinReport({ ...base, inRepo: true })
+        expect(inRepo).toMatchObject({ status: 'report', lines: [] })
+        expect(inRepo.title).toMatch(
+            /^workflow and plugin pins: not checked: in-repo, @sssb\/kit is this workspace's own source, which carries no release stamp/,
+        )
+        const unstamped = pinReport({ ...base, stamp: null, workflows: [workflow(OTHER)] })
+        expect(unstamped.status).toBe('report')
+        expect(unstamped.title).toMatch(
+            /not checked: @sssb\/kit 0\.2\.0 carries no release stamp \(dist\/release\.json\)/,
+        )
+        // The pins found are still shown.
+        expect(unstamped.lines).toEqual([
+            `.github/workflows/checks.yml (.github/workflows/app-checks.yml) pins ${OTHER}`,
+            '.claude/settings.json (marketplace sssb) pins ' + SHA,
+        ])
+        expect(pinReport({ ...base, stamp: '{"commit":"HEAD"}' }).title).toMatch(
+            /has a release stamp .* that names no commit/,
+        )
+        expect(pinReport({ ...base, repository: null }).title).toMatch(/names no GitHub repository/)
+    })
+
+    it("reads the repository a kit's package.json names on GitHub", () => {
+        expect(githubRepositoryOf({ type: 'git', url: 'git+https://github.com/safeinsights/sssb.git' })).toBe(
+            'safeinsights/sssb',
+        )
+        expect(githubRepositoryOf('git@github.com:Org/Repo.git')).toBe('org/repo')
+        expect(githubRepositoryOf({ url: 'https://gitlab.com/o/r' })).toBeNull()
+        expect(githubRepositoryOf(undefined)).toBeNull()
     })
 })

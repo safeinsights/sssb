@@ -7,7 +7,7 @@ pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research --ow
 cd acme
 git init                                # first, so the install's `prepare` (husky) has a repository to hook
 pnpm install
-pnpm exec playwright install chromium   # once, for the e2e suites
+pnpm --filter './apps/*' exec playwright install chromium   # once, for the e2e suites
 pnpm verify                             # hermetic: no docker, no credentials, no network
 ```
 
@@ -40,7 +40,9 @@ node packages/create/bin/create.js ~/acme --sssb ~/sssb-tarballs --name "Acme Re
   is. Run from a checkout, the generator warns when no remote-tracking branch of a remote at `safeinsights/sssb`
   holds the commit (as of your last fetch). A packed generator pins the commit it was packed from, and packing it
   refuses a commit that is not on such a branch, or an `apps/starter` or app guide that differs from that commit
-  (`SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings, for a tarball no workspace will run on GitHub).
+  (`SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings, for a tarball no workspace will run on GitHub). Packing
+  `@sssb/kit` likewise refuses shipped sources (`packages/kit/src`, its `package.json`) that differ from `HEAD`,
+  because it stamps that commit into `dist/release.json`; the same variable turns that refusal into a warning.
 - **`--sssb <dir>` wants exactly one `sssb-<package>-<version>.tgz` for each of `kit`, `tools`, `eslint-plugin`
   and `cdk`, all of the generator's own version** (`packages/create/package.json`'s). The workspace depends on them
   by absolute `file:` path, and `pnpm-workspace.yaml` gets an `overrides` block mapping every `@sssb/*` package to
@@ -193,9 +195,12 @@ ends as the signal asked.
 - **A `README.md`** of your own, **`docs/cutover-checklist.md`** and **`apps/<app>/DEMO-SIZE.md`** (both under
   "What the generator leaves for you" below).
 - **`.claude/sssb-guide.md`**, SSSB's app guide as `pnpm exec sssb guide` writes it: a stamped copy of the one
-  `@sssb/kit` ships, which `sssb doctor` requires (below, "Your README and agent guide").
+  `@sssb/kit` ships, which `sssb doctor` requires, and a short **`CLAUDE.md`** that imports it (below, "Your README
+  and agent guide").
+- **`.claude/settings.json`**: SSSB's Claude Code plugin marketplace (`sssb`), pinned to the same commit as the
+  workflow, and its plugin enabled (`sssb@sssb`; below, "Your README and agent guide").
 
-It writes no `LICENSE`, no `CLAUDE.md`, no `.github/dependabot.yml` and no `.changeset/`: a
+It writes no `LICENSE`, no `.github/dependabot.yml` and no `.changeset/`: a
 workspace that publishes no package has no use for SSSB's release-note machinery, and an adopter who wants a
 changelog adds Changesets themselves. The workspace's `packages/*` glob is there for packages of your own; none
 is written.
@@ -283,12 +288,15 @@ These are the parts that take judgement:
 - **Your README and agent guide.** The `README.md` the generator writes is yours to fill in. It starts with the
   first commands, the layout, the repository settings only you can make (the ones above, plus replacing any
   placeholder the generator left and adding a `LICENSE`) and how to upgrade SSSB. The workspace gets
-  `.claude/sssb-guide.md`, the app guide (the app-facing half of SSSB's `CLAUDE.md`) that `@sssb/kit` ships, and no
-  `CLAUDE.md`: write your own and import the guide from it with `@.claude/sssb-guide.md`. Edit nothing in the guide's
+  `.claude/sssb-guide.md`, the app guide (the app-facing half of SSSB's `CLAUDE.md`) that `@sssb/kit` ships, and a
+  `CLAUDE.md` that imports it (`@.claude/sssb-guide.md`) above a heading for your own rules: the file is yours from
+  then on, so keep the import line. Edit nothing in the guide's
   copy (a rerun overwrites it). Its header stamps the hash of the guide it was copied from, and `sssb doctor` fails
   when that is not the installed kit's guide, so after an upgrade `pnpm exec sssb guide` refreshes it and the change
-  reaches your diff. The app-author commands (`/new-slice` and the rest) arrive as a
-  Claude Code plugin with ADR-0014's P13.
+  reaches your diff. The app-author commands arrive as SSSB's Claude Code plugin, which `.claude/settings.json`
+  enables from SSSB's marketplace pinned to the workflow's commit: `/sssb:new-slice`, `/sssb:new-entity` and the
+  rest. A commit `ref` needs Claude Code 2.1.324 or later, and enabling it does not install it: each person runs
+  `claude plugin install sssb@sssb --scope project` once per clone, after trusting the folder.
 
 ### The starter's content is still wired into your UI
 
@@ -334,7 +342,7 @@ is protected, not that your proofs exercise two tenants — so it is yours to ke
 **The Items slice is a worked example, so take what it teaches before you delete it.**
 `apps/<app>/src/app-config/db/migrations/1001_items.ts` is a worked RLS migration — in a generated workspace, the only one there — and its
 section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it. Build your first real slice
-from them (`/new-slice`), then remove Items the way "To remove a demo slice" below describes. There is
+from them (`/sssb:new-slice`), then remove Items the way "To remove a demo slice" below describes. There is
 no flag that does this for you yet; `.claude/future-tasks/create-blank-option.md` carries the design.
 
 **Wire the static demo last, and look at it.** A shell or a home screen you build in
@@ -523,32 +531,33 @@ The framework never imports your code directly; it imports the registration seam
 a lint fence enforces the direction. Each module there is the app-side half of one capability. The
 "empty" column is what `apps/starter` registers — read it as the off switch for that capability:
 
-| Seam module                                   | You register                                                                                       | Empty looks like                           |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `abilities.ts`                                | subject types + staff org + credential kinds + person and machine (`appMachineAbilityRules`) rules | (starter registers one)                    |
-| `db/schema.ts`, `db/migrations/`              | your tables (`AppTables`) + migrations named `NNNN_name`, four digits, numbered ≥ 1001             | (starter registers one)                    |
-| `db/rls-proofs.ts`                            | tenant-isolation proofs for those tables                                                           | an empty async body                        |
-| `jobs.ts`                                     | your background job kinds + handlers                                                               | `[] as const`, `{}`                        |
-| `digest.ts`                                   | the rows the framework's scheduled digest summarizes                                               | `async () => []`                           |
-| `actors.ts`                                   | your simulated counterparties for dev/demo                                                         | `actors = []`, `type ActorId = never`      |
-| `simulator.ts`                                | your extra Simulator tabs + feature flags                                                          | `flags = []`                               |
-| `presets.ts`                                  | demo presets (`/new-preset`): starting worlds every host can load, and your own kinds' definitions | `presets = []`, `appPresetOperations = []` |
-| `preset-operations.ts`                        | server halves of your own preset operation kinds (`/new-preset-operation`)                         | `{}`                                       |
-| `tours.ts`                                    | scripted Simulator walkthroughs of your product                                                    | `tours = []` (no Tours tab)                |
-| `notifications.ts`, `webhooks.ts`, `audit.ts` | your event vocabularies                                                                            | `[] as const` / `never`                    |
-| `inbound-email.ts`                            | your `<org>+<slug>@domain` email handlers                                                          | `{}`                                       |
-| `assistant.ts`                                | your LLM tools + system prompt                                                                     | omit the module and its route              |
-| `messages.ts`                                 | your i18n namespaces + catalog loader (partitioned)                                                | (every app registers some)                 |
-| `identity.ts`                                 | `APP_SLUG`, re-exported from the app's app config                                                  | (every app registers it)                   |
-| `seed.ts`                                     | your seed data re-export                                                                           | (every app registers it)                   |
+| Seam module                                   | You register                                                                                            | Empty looks like                           |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `abilities.ts`                                | subject types + staff org + credential kinds + person and machine (`appMachineAbilityRules`) rules      | (starter registers one)                    |
+| `db/schema.ts`, `db/migrations/`              | your tables (`AppTables`) + migrations named `NNNN_name`, four digits, numbered ≥ 1001                  | (starter registers one)                    |
+| `db/rls-proofs.ts`                            | tenant-isolation proofs for those tables                                                                | an empty async body                        |
+| `jobs.ts`                                     | your background job kinds + handlers                                                                    | `[] as const`, `{}`                        |
+| `digest.ts`                                   | the rows the framework's scheduled digest summarizes                                                    | `async () => []`                           |
+| `actors.ts`                                   | your simulated counterparties for dev/demo                                                              | `actors = []`, `type ActorId = never`      |
+| `simulator.ts`                                | your extra Simulator tabs + feature flags                                                               | `flags = []`                               |
+| `presets.ts`                                  | demo presets (`/sssb:new-preset`): starting worlds every host can load, and your own kinds' definitions | `presets = []`, `appPresetOperations = []` |
+| `preset-operations.ts`                        | server halves of your own preset operation kinds (`/sssb:new-preset-operation`)                         | `{}`                                       |
+| `tours.ts`                                    | scripted Simulator walkthroughs of your product                                                         | `tours = []` (no Tours tab)                |
+| `notifications.ts`, `webhooks.ts`, `audit.ts` | your event vocabularies                                                                                 | `[] as const` / `never`                    |
+| `inbound-email.ts`                            | your `<org>+<slug>@domain` email handlers                                                               | `{}`                                       |
+| `assistant.ts`                                | your LLM tools + system prompt                                                                          | omit the module and its route              |
+| `messages.ts`                                 | your i18n namespaces + catalog loader (partitioned)                                                     | (every app registers some)                 |
+| `identity.ts`                                 | `APP_SLUG`, re-exported from the app's app config                                                       | (every app registers it)                   |
+| `seed.ts`                                     | your seed data re-export                                                                                | (every app registers it)                   |
 
 The one place an empty registration is not free: `AppSubjectFields` in `abilities.ts` must be an
 `interface` (the framework's `AbilitySubject` extends it), and an app with no extra subject fields
 therefore declares an empty one and suppresses `@typescript-eslint/no-empty-object-type` on that line.
 `apps/starter` shows the suppression and why.
 
-**To add a feature slice**: run `/new-slice` (and the per-capability scaffolds `/new-entity`,
-`/new-job`, `/new-actor`, `/new-notification-kind`, `/new-webhook-event`, `/new-tour`, `/new-preset`, `/new-preset-operation`). Each walks the house way:
+**To add a feature slice**: run `/sssb:new-slice` (and the per-capability scaffolds `/sssb:new-entity`,
+`/sssb:new-job`, `/sssb:new-actor`, `/sssb:new-notification-kind`, `/sssb:new-webhook-event`, `/sssb:new-tour`,
+`/sssb:new-preset`, `/sssb:new-preset-operation`: SSSB's Claude Code plugin). Each walks the house way:
 screen in your app's `apps/<app>/src/components` (yours) or `packages/kit/src/components` (framework-generic),
 thin route, seam registrations, an RLS migration copied from the reference
 (`apps/starter/src/app-config/db/migrations/1001_items.ts`), colocated tests, e2e, then `pnpm verify` +
@@ -659,7 +668,9 @@ older server that migration cannot run. Everything SSSB targets already meets it
 A workspace `pnpm create @sssb` writes depends on SSSB's packages by version, so an update is `pnpm up` (every
 `@sssb/*` package together: they share one version), reading the release notes' "Seam changes"
 ([ADR-0014](adr/0014-distribution-as-versioned-packages.md)), and raising the commit your
-`.github/workflows/checks.yml` pins SSSB's reusable workflow to, to the one the notes name. Then run
+`.github/workflows/checks.yml` pins SSSB's reusable workflow to, and the plugin marketplace's `ref` in
+`.claude/settings.json`, to the one the notes name (`sssb doctor` reports either when it is not the release commit
+the installed `@sssb/kit` names). Then run
 `pnpm exec sssb guide` to refresh `.claude/sssb-guide.md`: `sssb doctor` fails until its stamp is the installed
 kit's guide. A repository
 adopted earlier as a fork of this one takes updates by `git merge` until it switches:
@@ -702,6 +713,6 @@ exist), dated records, and future tasks. Three consequences for you:
 
 The habits that keep the rest truthful, which you inherit: record unplanned decisions in
 `decision-log.md` and hard-won lessons in `build-notes.md` as they happen; amend an ADR by appending a
-dated addendum, never by editing what it said; run the `doc-steward` agent on every branch diff before a
-PR; `/pre-pr` runs the verify gate plus a branch review. `CLAUDE.md` teaches all of this to agent
+dated addendum, never by editing what it said; run the `sssb:doc-steward` agent on every branch diff before a
+PR; `/sssb:pre-pr` runs the verify gate plus a branch review. `CLAUDE.md` teaches all of this to agent
 sessions — keep it current as your product diverges.
