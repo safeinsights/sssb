@@ -78,7 +78,7 @@
     "simulator": {
         "pillLabel": "Simulador",
         "pillSuffix": ", abrir el panel",
-        "pillUnreadSuffix": "{count, plural, one {# correo sin leer} other {# correos sin leer}}, abrir el panel",
+        "pillUnreadSuffix": ", {count, plural, one {# correo sin leer} other {# correos sin leer}}, abrir el panel",
         "panelTitle": "Simulador",
         "peopleTab": "Personas",
         "mailTab": "Correo",
