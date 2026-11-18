@@ -3543,6 +3543,7 @@ so `pnpm init-app my-app` gave a stack that synthesized and failed at deploy.
 - **Proved** by a test that synthesizes a dashed-slug app on both transports (red with the old naming), by `pnpm
 init-app my-app` in a copy of the repository followed by its real `cdk synth` (`DatabaseName: my_app`), and by
   `init-app` refusing `user`, `select`, `rdsadmin` and a 64-character slug (each red without the check).
+
 ## `@sssb/eslint-plugin`: the fences as one plugin (2026-11-18, ADR-0014 P6, `feat/eslint-plugin`)
 
 - **Every fence is a rule with an id of its own.** The fences that were `no-restricted-imports` patterns or
