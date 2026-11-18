@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import { failClosedEnvironmentProblems, migratorBundleProblems } from '@sssb/tools/assembly-checks'
-import { kitDirOf, resolveAppsKit } from './_p4/kit.js'
+import { kitDirOf, kitVersionOf, resolveAppsKit } from '@sssb/tools/kit'
 
 const { aws_budgets, aws_cloudfront, aws_cloudfront_origins, aws_cloudwatch, aws_ec2, aws_lambda } = cdk
 const { aws_lambda_nodejs, aws_rds, aws_s3 } = cdk
@@ -78,12 +78,10 @@ function seamMigrationNames(index) {
  */
 function resolveMigrator(appDir) {
     const kitDir = kitDirOf(appDir)
-    const kitVersion = /** @type {{ version?: unknown }} */ (
-        JSON.parse(readFileSync(path.join(kitDir, 'package.json'), 'utf8'))
-    ).version
+    const kitVersion = kitVersionOf(appDir)
     if (kitVersion !== OWN_VERSION) {
         throw new Error(
-            `SssbApp: ${appDir} resolves @sssb/kit ${String(kitVersion)} (${kitDir}), but this @sssb/cdk is ` +
+            `SssbApp: ${appDir} resolves @sssb/kit ${kitVersion} (${kitDir}), but this @sssb/cdk is ` +
                 `${OWN_VERSION}. SSSB's packages are released in lockstep: install the matching versions.`,
         )
     }

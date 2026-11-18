@@ -45,5 +45,5 @@ dist-demo/
 # cdk synth output
 apps/*/infra/cdk.out/
 
-# generated per checkout by scripts/write-launch-json.mjs (ports differ per worktree)
+# generated per checkout by `sssb launch-json` (@sssb/tools) (ports differ per worktree)
 .claude/launch.json

@@ -884,6 +884,31 @@ P9 built `@sssb/cdk` and moved the root `infra/` into each app. Details the body
   synth with both versions named. The environment and bundle checks run as a construct validation, so they read
   the final rendered template, escape-hatch overrides included. The bundle check is skipped only when the synth does
   not bundle the stack at all (`cdk deploy OtherStack`), the one case in which there is no bundle to read.
-- **`@sssb/cdk` depends on `@sssb/tools`** for the assembly checks (`@sssb/tools/assembly-checks`) and for rule 4's
-  resolver. Until `@sssb/tools` publishes the resolver as a subpath, `packages/cdk/src/_p4/kit.js` is a marked copy
-  of its `src/kit.js`.
+- **`@sssb/cdk` depends on `@sssb/tools`**, for the assembly checks (`@sssb/tools/assembly-checks`) and for rule 4's
+  one resolver (`@sssb/tools/kit`). This refines part 10, which says SSSB's packages carry no dependency on each
+  other. Its reason holds: what part 10 guards against is a release bumping a package through another's **peer**
+  range, which can lift the fixed group to 1.0.0, and this is a plain dependency (`workspace:*`, published as the
+  exact version). Probed with a `minor` and a `patch` changeset on `@sssb/tools`: `pnpm release:check` planned
+  0.2.0 and 0.1.1 for all three packages, nothing at 1.0.0. Rule 4's other half is unchanged: neither depends on
+  `@sssb/kit`.
+
+## Addendum — 2026-11-18: P4, `@sssb/tools`
+
+P4 built `packages/tools` as the plan row says. Where it refined what the body said (each in `docs/decision-log.md`,
+"`@sssb/tools`"):
+
+- **Rule 4's resolver walks `node_modules` instead of calling `require.resolve(…, { paths: [appDir] })`.** `pnpm exec`
+  and `pnpm run` set `NODE_PATH` to the hoisted `.pnpm/node_modules`, Node's resolver falls back to it, and an app with
+  no framework of its own then resolved the hoisted copy. The shared real-path check is unchanged.
+- **`@sssb/tools` is written in JavaScript with hand-written declarations**, not TypeScript built when packed, so its
+  bin and presets run from source inside this repository.
+- **The presets load the tools they configure from the app** (next-intl's plugin, Vite's React plugin,
+  `vite-plugin-singlefile`, jest-dom), so `@sssb/tools` has no runtime peer to keep in step.
+- **The Vite and Vitest presets pass the seam explicitly**, as part 8 says every SSSB builder does. Pack and consume's
+  proof of the seam link now comes from `tsc`, `next build`, the migrator bundle and the negative fixture.
+- **Each app declares its port slot** in its package.json (`"sssb": { "port": … }`); `sssb port` with no argument
+  reads it.
+- **The tick scripts, which part 3's table does not list, moved into `@sssb/tools`** (`sssb tick`, `sssb dev-tick`).
+- **`sssb ci` has the jobs this repository's CI needed first** (`e2e-shards`, `e2e`, `demo-static`); P10 adds the rest.
+- **`sssb guide`** looks for the guide at the published subpath `@sssb/kit/guide.md` and copies it to
+  `.claude/sssb-guide.md`; P7 publishes the guide.

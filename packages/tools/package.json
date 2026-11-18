@@ -30,6 +30,10 @@
             "types": "./src/doc-paths.d.ts",
             "default": "./src/doc-paths.js"
         },
+        "./kit": {
+            "types": "./src/kit.d.ts",
+            "default": "./src/kit.js"
+        },
         "./next": {
             "types": "./src/next.d.ts",
             "default": "./src/next.js"
@@ -41,6 +45,14 @@
         "./testing/tmp-dir": {
             "types": "./src/testing/tmp-dir.d.ts",
             "default": "./src/testing/tmp-dir.js"
+        },
+        "./ticker": {
+            "types": "./src/tick/ticker.d.ts",
+            "default": "./src/tick/ticker.js"
+        },
+        "./ticker-marker": {
+            "types": "./src/tick/ticker-marker.d.ts",
+            "default": "./src/tick/ticker-marker.js"
         },
         "./vite": {
             "types": "./src/vite.d.ts",

@@ -7,7 +7,7 @@
 ## The moving parts (ADR-0001)
 
 - Artifact: the `output: 'standalone'` build zipped with `run.sh` at its root (the exact thing
-  `pnpm start:demo` runs locally via `scripts/serve-standalone.mjs`).
+  `pnpm start:demo` runs locally via `sssb serve-standalone`).
 - Stack: `apps/<app>/infra/`, one stack holding SSSB's `SssbApp` construct
   (`packages/cdk`) — server Lambda + Web Adapter layer, CloudFront, S3 assets, migrator Lambda, Aurora
   Serverless v2, in one of two network shapes (`apps/showcase/infra/README.md`: the Lambdas in the VPC with a
@@ -24,7 +24,7 @@
 1. ⛔ Pipeline builds `pnpm build` (real mode env), zips the app's `.next/standalone` + static assets
    (build outputs live under the app — `apps/showcase/` today). Monorepo caveat: Next nests the
    standalone output under the app's path relative to the workspace root, so `server.js` is NOT at the
-   zip root — `scripts/serve-standalone.mjs` shows where to find it and where the static assets have
+   zip root — `packages/tools/src/commands/serve-standalone.js` shows where to find it and where the static assets have
    to land beside it.
 2. ⛔ Upload zip to the deploy bucket; sync the app's `.next/static` + `public/` to the assets bucket
    (`/_next/static/*` and `/assets/*` behaviors are served from S3, not the Lambda).
@@ -46,5 +46,5 @@ column.
 
 ```sh
 pnpm build:demo && pnpm start:demo   # the same standalone artifact, fake adapters, demo badge
-curl "localhost:$(node scripts/print-port.mjs showcase)/api/health"
+curl "localhost:$(pnpm exec sssb port showcase)/api/health"
 ```

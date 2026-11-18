@@ -13,10 +13,6 @@
 
 /** @type {Record<string, Workaround>} */
 export const WORKAROUNDS = {
-    'tick-scripts-copied': {
-        removedBy: 'P4',
-        what: "scripts/tick.mjs, dev-tick.mjs, ticker.mjs and ticker-marker.mjs are copied into the consumer, because the apps' dev and tick scripts run them and their Playwright config imports ticker-marker (P4: `sssb tick` and the ticker module in @sssb/tools)",
-    },
     'in-repo-tsconfig-stripped': {
         removedBy: 'P12',
         what: "each app's tsconfig.json is the starter's, which extends @sssb/tools' base, with what reaches into this repo taken out: the `paths` that send @sssb/kit and the seam to source (inside this repo resolution goes through aliases, ADR-0014 part 1) and the include of packages/kit/src that makes the starter the framework's falsifier (P12: @sssb/create writes the template's tsconfig without them)",

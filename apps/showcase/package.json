@@ -5,8 +5,8 @@
     "license": "MIT",
     "description": "The showcase app: the demo product that exercises every SSSB capability (ADR-0007).",
     "scripts": {
-        "dev": "NEXT_TELEMETRY_DISABLED=1 APP_MODE=simulated node ../../scripts/dev-tick.mjs showcase -- next dev --port \"$(sssb port)\"",
-        "tick": "node ../../scripts/tick.mjs showcase",
+        "dev": "NEXT_TELEMETRY_DISABLED=1 APP_MODE=simulated sssb dev-tick showcase -- next dev --port \"$(sssb port)\"",
+        "tick": "sssb tick showcase",
         "dev:real": "APP_MODE=real sssb check-real-env && NEXT_TELEMETRY_DISABLED=1 APP_MODE=real next dev --port \"$(sssb port)\"",
         "llm:record": "tsx scripts/llm-record.ts",
         "build": "NEXT_TELEMETRY_DISABLED=1 next build",

@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { assertAppsKitFile, kitDirOf, resolveAppsKit } from '../../packages/tools/src/kit.js'
+import { assertAppsKitFile, kitDirOf, kitVersionOf, resolveAppsKit } from '../../packages/tools/src/kit.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
@@ -89,6 +89,17 @@ describe('resolveAppsKit', () => {
         expect(() => resolveAppsKit(appA, 'adapters/real/index')).toThrow(
             'does not publish `@sssb/kit/adapters/real/index`',
         )
+    })
+})
+
+describe('kitVersionOf', () => {
+    it("reads the version of the framework the app resolves, so a package can assert it is in step (@sssb/cdk's construct)", () => {
+        writeFileSync(
+            path.join(kitB, 'package.json'),
+            JSON.stringify({ ...JSON.parse(readFileSync(path.join(kitB, 'package.json'), 'utf8')), version: '9.9.9' }),
+        )
+        expect(kitVersionOf(appA)).toBe('0.0.0')
+        expect(kitVersionOf(appB)).toBe('9.9.9')
     })
 })
 

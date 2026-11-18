@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 /**
  * What the static demo's bundle may contain is a property of how a module is WRITTEN, and the size budget
- * (scripts/check-demo-size.mjs) only sees it as a total that drifts. These tests pin the shape of the
+ * (`sssb check-demo-size`) only sees it as a total that drifts. These tests pin the shape of the
  * modules the demo imports, so a regression names its cause instead of tipping a budget a release later.
  */
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))

@@ -36,9 +36,6 @@
         },
         "packages/tools": {
             "ignoreDependencies": ["next", "vite", "vitest"]
-        },
-        "packages/cdk": {
-            "ignore": ["src/_p4/**"]
         }
     },
     "ignore": ["spikes/**"]

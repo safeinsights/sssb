@@ -1,3 +1,4 @@
+// @ts-check
 // A marker file that says "a dev ticker is running against this app's data directory".
 //
 // Why it exists: Playwright's `reuseExistingServer` (everywhere but CI) ADOPTS a dev server already listening on the

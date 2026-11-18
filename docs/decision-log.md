@@ -3207,11 +3207,13 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 - **The seam reaches esbuild as an alias alone; the app's tsconfig is no longer passed.** Rejected: passing both. Seen
   failing without the alias: the bundle then names neither the app's migration registry nor any of its four migrations,
   and the synth fails on each.
-- **Kit resolution and the assembly checks come from `@sssb/tools`** (P4's `kitDirOf`, `resolveAppsKit`,
-  `migratorBundleProblems`, `failClosedEnvironmentProblems`, the grant and Data API checks): `@sssb/cdk` depends on
-  `@sssb/tools`. The resolver is not a published subpath yet, so `packages/cdk/src/_p4/kit.js` is a marked copy of
-  `@sssb/tools`' `src/kit.js` until it is (`./kit`, asked of P4). Rejected: a resolver of `@sssb/cdk`'s own, which
-  would split rule 4's one shared check in two. P4's walks `node_modules` from the app rather than calling
+- **Kit resolution and the assembly checks come from `@sssb/tools`** (`@sssb/tools/kit`'s `kitDirOf`,
+  `kitVersionOf` and `resolveAppsKit`, which P4 published for this; `@sssb/tools/assembly-checks`): `@sssb/cdk`
+  depends on `@sssb/tools`, a plain dependency. Rejected: a resolver of `@sssb/cdk`'s own, which would split rule 4's
+  one shared check in two, and a peer dependency, the form ADR-0014 part 10 warns can lift the fixed group to 1.0.0.
+  Part 10 says the packages carry no dependency on each other; the probe it calls for, a `minor` and then a `patch`
+  changeset on `@sssb/tools` through `pnpm release:check`, planned the same step for all three packages and nothing
+  at 1.0.0 (ADR-0014, addendum 2026-11-18, P9). P4's resolver walks `node_modules` from the app rather than calling
   `require.resolve`, which matters here: the construct runs under `pnpm exec`, which sets `NODE_PATH` to the
   hoisted store.
 - **`check-shapes` became `packages/cdk/src/sssb-app.test.js`, a Vitest project of its own (`cdk`)**, which discovers
@@ -3233,3 +3235,81 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   `apps/*` and `packages/*`, and `@sssb/cdk` is not packed. The construct's synth assertions are what catch a wrong
   kit or a wrong seam in a consumer; proving that from tarballs is P12's, when the generator ships the starter's
   `infra/`.
+
+## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
+
+P4 of ADR-0014: the `sssb` CLI, the helpers any workspace package imports, the Next, Vite and Vitest presets and the
+tsconfig base, as `packages/tools` (`@sssb/tools`, `private` until P14, in the Changesets fixed group). Both apps use
+them; `scripts/` keeps only what is this repository's own (`init-app`, `release`, `release-app`, `pack-and-consume`).
+
+- **JavaScript with hand-written declarations, and no build.** Every module is ESM with `// @ts-check`, and each
+  published entry has a `.d.ts` beside it that the JavaScript is annotated against, so the root `tsc` checks the
+  implementation against its contract. A build step was the alternative ADR-0014 allows ("written in TypeScript and
+  built when packed"); without one, the bin and the presets run from source inside this repository too, where a
+  workspace link would otherwise need a build before any app script could start. Pack and consume checks that the
+  tarball ships only JavaScript, declarations and the tsconfig base (`toolsShippedFileProblems`).
+- **One resolver, `packages/tools/src/kit.js`.** It finds the app's `@sssb/kit` by walking `node_modules` up from the
+  app's directory, as Node's lookup does, and checks that every framework file a tool loads has its real path inside
+  that directory. It started as `require.resolve(…, { paths: [appDir] })`, as the ADR wrote it; the tests found that
+  `pnpm exec` and `pnpm run` set `NODE_PATH` to the hoisted `.pnpm/node_modules`, which Node's resolver falls back to,
+  so an app with no framework of its own resolved the hoisted copy, another app's instance: the slip rule 4 exists for.
+  The walk never reads `NODE_PATH`. Its users are the `dev:real` preflight, the Next preset's next-intl request path
+  and `sssb guide`. `sssb/no-bare-kit-import` bans a literal `@sssb/kit` specifier (declarations, `import()`, type
+  imports, `require`, any `.resolve('…')`, Vitest's loaders) in every package under `packages/` but the framework and
+  the showcase's seed, deny-by-default, so P6's and P9's packages are covered before anyone names them; seen red on a
+  probe in each form (`tests/lint/no-bare-kit-import.test.ts`).
+- **A preset configures the app's own tools.** The Vite preset loads `@vitejs/plugin-react` and
+  `vite-plugin-singlefile`, the Vitest preset the React plugin and jest-dom, and the Next preset next-intl's plugin,
+  each resolved from the app's directory, so `@sssb/tools` declares no peer it would have to keep in step and never
+  brings a second copy. jest-dom goes to Vitest as the bare specifier, not a resolved path: resolved with Node's
+  `require` conditions it is jest-dom's CommonJS build, which cannot load Vitest.
+- **The Vite and Vitest presets pass the seam explicitly** (`@sssb/app-config` to the app's `src/app-config`), as the
+  ADR says every SSSB builder does: the same directory as the link in an adopter's app, the only way in this
+  repository. The Next preset does not, since `next build` resolves the seam through the app's tsconfig `paths` here
+  and the link in an adopter's app. Pack and consume therefore proves the link through `tsc`, `next build`, the
+  migrator bundle and the negative fixture, and no longer through Vitest.
+- **The Next preset takes the app's directory** (`withSssb(config, { appDir: __dirname })`). Its default, the working
+  directory, is the app's when Next loads the config, but knip loads it from the repository root, and the next-intl
+  request path came out relative to the wrong directory.
+- **Each app declares its port slot** in its package.json (`"sssb": { "port": "starter" }`). `sssb port` with no
+  argument reads it, as do `sssb serve-standalone` and `sssb launch-json`, so the dev server, the standalone server
+  and the browser pane read one declaration. The slots are unchanged (showcase, starter, ladle, contractPg) and still
+  name a slot, not an app, so `init-app`, which leaves the declaration as it is, needs no change. The browser pane's
+  configurations are named `<app directory>-dev`, so the showcase's `app-dev` is now `showcase-dev`.
+- **The `dev:real` preflight is bundled by esbuild** (`sssb check-real-env`), as CommonJS, with every package but the
+  framework and the app's own source left external at the path esbuild resolves from the importing file, preferring
+  each package's `require` entry. Under plain Node two packages fail otherwise: `@clerk/nextjs`'s ES build imports
+  directories, which Node refuses, and `pg`'s CommonJS has no named exports for an ES `import { Pool }`.
+- **The tsconfig base sits at the ES2022 floor** (target and lib) and carries the compiler contract
+  `packages/kit/tsconfig.strict.json`'s header measured. Both apps extend it and typecheck there; they had `esnext` from
+  the root config before. The root config extends it too and raises `lib` to `esnext` for the repo's scripts and tests.
+- **The tick scripts moved into `@sssb/tools`** (`sssb tick`, `sssb dev-tick`, `@sssb/tools/ticker`,
+  `@sssb/tools/ticker-marker`), in a commit of their own: every app with a scheduled-tick route needs them, and the
+  starter's Playwright config imports the marker. ADR-0014's table had no row for them (`pnpm tick` merged after it).
+  Their code is unchanged but for imports and entry points.
+- **The framework keeps its own scratch-directory helper** for its tests, the shipped conformance suites among them,
+  because no SSSB package depends on another; everyone else imports `@sssb/tools/testing/tmp-dir`. The two marker
+  suffixes are held equal by `tests/tooling/tmp-dir.test.ts`. The framework's copy lost `makeTestTmpDirAsync`, which
+  only the repository's own tests used.
+- **`sssb ci`** has three jobs today: `e2e-shards` (discovering shards from the workspace's apps, with a project named
+  `destructive` splitting an app in two, as the shell in `checks.yml` did), `e2e` and `demo-static`. `checks.yml` runs
+  `e2e-shards` from the package's source before any install, as its shell loop ran. P10's reusable workflow adds the
+  rest.
+- **`sssb guide` exists ahead of the guide.** It copies the framework's published `@sssb/kit/guide.md` to
+  `.claude/sssb-guide.md` with a `sha256` stamp and `--check` compares stamps; until P7 publishes the guide it says so
+  and exits 1.
+- **The assembly checks** (`@sssb/tools/assembly-checks`: the migrator bundle, the fail-closed environment, #49's Data
+  API shape) are pure functions over a synthesized template, which `infra/check-shapes.ts` now calls. It also gained
+  the fail-closed check on the server function's environment, on both shapes.
+- **`sssb check-doc-paths`** runs the doc-path gate's engine (`@sssb/tools/doc-paths`) over the doc set in the root
+  package.json's `sssb.docPaths`. `tests/docs/doc-set.ts` reads the same configuration, so the gate, the CLI and
+  `init-app`'s rewriter still share one list.
+- **Pack and consume** packs `@sssb/tools` beside the framework and installs both tarballs. Nine P4 workarounds are
+  gone: `prune-plugin-copied`, `ports-copied`, `check-demo-size-copied`, `tmp-dir-helper-copied`,
+  `vitest-config-written`, `tsconfig-written`, `vite-aliases-removed`, `next-intl-request-path` and
+  `tick-scripts-copied`. One is new, `in-repo-tsconfig-stripped` (P12): the starter's tsconfig extends the base but also
+  maps the framework and the seam to source and includes `packages/kit/src`, which only this repository can. New
+  steps check the packed tools (no SSSB dependency in any field, JavaScript only) and run the `dev:real` preflight
+  from each app, and the sibling package `gate` uses `@sssb/tools`' helper with no framework installed.
+- **knip** cannot see what a preset loads from the app or what `@sssb/tools` imports from its optional peers; the
+  narrow entries are in `docs/build-notes.md`.

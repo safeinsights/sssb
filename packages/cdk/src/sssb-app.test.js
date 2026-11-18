@@ -12,7 +12,7 @@ import { Template } from 'aws-cdk-lib/assertions'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../../../tests/support/tmp-dir'
 import { dataApiShapeProblems, lambdaBundles, lambdaFunction, secretGrantProblems } from '@sssb/tools/assembly-checks'
-import { kitDirOf } from './_p4/kit.js'
+import { kitDirOf } from '@sssb/tools/kit'
 import { SssbApp } from './index.js'
 
 /** @typedef {import('@sssb/tools/assembly-checks').Resources} Resources */
