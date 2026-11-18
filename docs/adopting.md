@@ -40,7 +40,9 @@ node packages/create/bin/create.js ~/acme --sssb ~/sssb-tarballs --name "Acme Re
   is. Run from a checkout, the generator warns when no remote-tracking branch of a remote at `safeinsights/sssb`
   holds the commit (as of your last fetch). A packed generator pins the commit it was packed from, and packing it
   refuses a commit that is not on such a branch, or an `apps/starter` or app guide that differs from that commit
-  (`SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings, for a tarball no workspace will run on GitHub).
+  (`SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings, for a tarball no workspace will run on GitHub). Packing
+  `@sssb/kit` likewise refuses shipped sources (`packages/kit/src`, its `package.json`) that differ from `HEAD`,
+  because it stamps that commit into `dist/release.json`; the same variable turns that refusal into a warning.
 - **`--sssb <dir>` wants exactly one `sssb-<package>-<version>.tgz` for each of `kit`, `tools`, `eslint-plugin`
   and `cdk`, all of the generator's own version** (`packages/create/package.json`'s). The workspace depends on them
   by absolute `file:` path, and `pnpm-workspace.yaml` gets an `overrides` block mapping every `@sssb/*` package to

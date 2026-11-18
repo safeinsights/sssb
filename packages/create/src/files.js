@@ -605,7 +605,7 @@ the e2e suites, the static demo and the offline CDK synth. Only the secret scan 
 \`.claude/settings.json\` declares SSSB's plugin marketplace (\`${c.meta.plugin.marketplace}\`), pinned to the same commit
 of SSSB's repository as the CI workflow, and enables its plugin, \`${c.meta.plugin.name}@${c.meta.plugin.marketplace}\`:
 the commands an app author runs, namespaced as \`/${c.meta.plugin.name}:<command>\` (\`/${c.meta.plugin.name}:new-entity\`,
-\`/${c.meta.plugin.name}:verify\` and the rest), and the \`doc-steward\` agent.
+\`/${c.meta.plugin.name}:verify\` and the rest), and the \`${c.meta.plugin.name}:doc-steward\` agent.
 
 - **Claude Code ${CLAUDE_CODE_FLOOR} or later**: older versions cannot pin a marketplace to a commit
   (\`claude --version\`; \`claude update\`).
