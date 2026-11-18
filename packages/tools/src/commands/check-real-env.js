@@ -47,7 +47,7 @@ export async function run(args) {
     const realIndex = resolveAppsKit(appDir, 'adapters/real/index')
     const errors = resolveAppsKit(appDir, 'ports/errors')
 
-    const { build } = await import('esbuild')
+    const { build, transform } = await import('esbuild')
     const outDir = mkdtempSync(path.join(tmpdir(), 'sssb-check-real-env-'))
     try {
         const outfile = path.join(outDir, 'preflight.cjs')
@@ -90,17 +90,31 @@ export async function run(args) {
                     setup(build) {
                         // The bundle is CommonJS, where `import.meta` is empty, so a bundled file (the framework, the
                         // app, a workspace package) that finds a file beside it with `new URL('./x', import.meta.url)`
-                        // or `import.meta.dirname` would break or look in the bundle's temp directory. Each one gets
-                        // its own location written in, as it would have when loaded where it sits.
-                        build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, (args) => {
+                        // or `import.meta.dirname` would break or look in the bundle's temp directory. Each such file is
+                        // first transformed with `import.meta` defined as an object holding its own location. A define
+                        // replaces expressions, never text inside a string, and covers `import.meta.url`, `.dirname`,
+                        // `.filename` and a destructured or bare `import.meta`; `.resolve` and `.env` stay undefined.
+                        // TypeScript is stripped here and JSX kept, so the bundle still compiles JSX with the app's
+                        // tsconfig.
+                        build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
                             if (args.path.includes(NODE_MODULES) && !isFrameworkFile(args.path)) return undefined
                             const text = readFileSync(args.path, 'utf8')
                             if (!text.includes('import.meta')) return undefined
-                            const contents = text
-                                .replaceAll('import.meta.url', JSON.stringify(pathToFileURL(args.path).href))
-                                .replaceAll('import.meta.dirname', JSON.stringify(path.dirname(args.path)))
-                                .replaceAll('import.meta.filename', JSON.stringify(args.path))
-                            return { contents, loader: loaderFor(args.path) }
+                            const loader = loaderFor(args.path)
+                            const meta = {
+                                url: pathToFileURL(args.path).href,
+                                dirname: path.dirname(args.path),
+                                filename: args.path,
+                            }
+                            const { code } = await transform(text, {
+                                loader,
+                                format: 'esm',
+                                jsx: 'preserve',
+                                sourcefile: args.path,
+                                define: { 'import.meta': JSON.stringify(meta) },
+                                logLevel: 'silent',
+                            })
+                            return { contents: code, loader: loader === 'tsx' || loader === 'jsx' ? 'jsx' : 'js' }
                         })
                         build.onResolve({ filter: /^[^./]/ }, async (args) => {
                             if (args.pluginData === 'sssb-inner') return undefined

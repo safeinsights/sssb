@@ -166,13 +166,18 @@ describe('sssb check-real-env', () => {
                 "import path from 'node:path'",
                 "export const TEXT = readFileSync(new URL('./data.txt', import.meta.url), 'utf8')",
                 'export const DIR = path.basename(import.meta.dirname)',
+                // A string that mentions import.meta is text, not an expression: it must come through as written.
+                'export const NOTE = "see import.meta.url"',
+                // The destructured form reads the same object.
+                'const { filename } = import.meta',
+                'export const FILE = path.basename(filename)',
                 '',
             ].join('\n'),
         )
         const appH = writeApp(
             root,
             'h',
-            "import { TEXT, DIR } from 'shared-meta'\nexport const APP_SLUG = `${TEXT}@${DIR}`\n",
+            "import { TEXT, DIR, NOTE, FILE } from 'shared-meta'\nexport const APP_SLUG = `${TEXT}@${DIR}|${NOTE}|${FILE}`\n",
         )
         mkdirSync(path.join(appH, 'node_modules'), { recursive: true })
         symlinkSync(shared, path.join(appH, 'node_modules/shared-meta'), 'dir')
@@ -180,7 +185,7 @@ describe('sssb check-real-env', () => {
         const result = checkRealEnv(appH)
 
         expect(result.status).toBe(1)
-        expect(result.output).toContain('missing for zeta-data@src')
+        expect(result.output).toContain('missing for zeta-data@src|see import.meta.url|index.ts')
     })
 
     it('refuses a workspace package that brings a framework copy of its own', () => {
