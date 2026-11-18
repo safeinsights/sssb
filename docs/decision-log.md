@@ -3235,6 +3235,29 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   `apps/*` and `packages/*`, and `@sssb/cdk` is not packed. The construct's synth assertions are what catch a wrong
   kit or a wrong seam in a consumer; proving that from tarballs is P12's, when the generator ships the starter's
   `infra/`.
+- **What the reviews added, each seen failing in `packages/cdk/src/sssb-app.test.js`.** The independent review asked
+  whether a stack could run with fake adapters, the wrong app's migrations or another app's seam while every check
+  passed, and found no accidental route; the code review found no HIGH. The construct now also refuses: a `slug`
+  other than the `APP_SLUG` the app's `config/app.ts` declares (a root `infra/` composing several apps could pair one
+  app's directory with another's slug); an app whose linked `@sssb/app-config` is not its own `src/app-config`; a
+  migrator whose deployed `Code` is not the bundle this synth staged (an escape-hatch override); a migrator
+  environment carrying `DEMO_MODE` or `E2E_BUILD`; and a `production` that is not a boolean, which in JavaScript
+  silently gave the destructive non-production defaults. The expected migration names now include every migration
+  file's name beside the seam's index, so an index with computed keys, which made the name check expect nothing,
+  fails instead (seen: `[[1001, 'items'].join('_')]` in the starter's index fails the synth).
+- **Local bundling only.** `@sssb/cdk` depends on `esbuild`, and Docker bundling is unsupported (`docs/build-notes.md`,
+  P9). Rejected: an alias relative to the working directory, which in Docker is `/`, not the project root, and which
+  `NodejsFunction` does not let a caller change.
+- **Accepted, not closed:**
+    - App source can still import from `apps/<app>/infra`, which the vendor fence no longer covers; the
+      `tests/contract` carve-out has the same shape. No import pattern bans it without also banning an app's own
+      module that happens to be called `infra`.
+    - The VPC's `Name` tags carry the construct path (`…/Default/Vpc`), so they change in place on the first deploy
+      after P9.
+    - What synth cannot see (the server's uploaded zip, a synth with validation off, changes after synth) is
+      `.claude/future-tasks/deployed-artifact-identity.md`.
+- **Found, not this branch's:** `defaultDatabaseName` is the slug, and `init-app` accepts dashes, which an Aurora
+  database name cannot hold. A follow-up.
 
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 

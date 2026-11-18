@@ -2112,3 +2112,10 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 - **A Vitest config with an async default needs its return type named.** `defineConfig(async () => ({ … }))` failed
   `tsc` (no overload matched: the inferred literal is wider than `UserConfig`); `async (): Promise<ViteUserConfig> =>`
   passes. The config is async because the presets are: they `import()` the app's plugins.
+- **The migrator bundles locally, never in Docker.** CDK's `NodejsFunction` falls back to bundling in a Docker image
+  when it finds no esbuild, and there it runs from `/` with the project mounted at `/asset-input`: the seam alias,
+  an absolute host path, would name nothing, and the bundle's path comments would no longer be relative to the
+  project root the check computes them from. So `@sssb/cdk` depends on `esbuild`, which puts a copy where CDK's own
+  `require` finds it, and the construct says Docker bundling is unsupported. knip reports the dependency as unused,
+  because nothing imports it (`knip.json`, `packages/cdk`, `ignoreDependencies`). Found by P9's review, read from
+  aws-cdk-lib 2.277's `aws-lambda-nodejs/lib/bundling.js`; there is no Docker on the machine it was found on.

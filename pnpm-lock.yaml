@@ -298,6 +298,9 @@ importers:
       '@sssb/tools':
         specifier: workspace:*
         version: link:../tools
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
     devDependencies:
       aws-cdk-lib:
         specifier: ^2.274.0

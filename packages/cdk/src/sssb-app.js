@@ -192,6 +192,9 @@ function stagedBundle(fn) {
  * - that the migrator's bundle carries the app's own migrations, built from the app's seam and no test
  *   fixture (when this synth bundles the stack at all: `cdk deploy OtherStack` skips it).
  *
+ * The migrator is bundled LOCALLY, by the esbuild this package depends on, never in CDK's Docker fallback: the
+ * seam alias and the bundle's path comments the check reads are paths on the machine running the synth.
+ *
  * Gates before any deploy (docs/cutover-checklist.md): `cloud-accounts` and `recurring-cost` (Aurora, NAT
  * gateway, CloudFront must be approved).
  */
@@ -204,7 +207,9 @@ export class SssbApp extends Construct {
     constructor(scope, id, props) {
         super(scope, id)
 
-        const appDir = path.resolve(props.appDir)
+        // Real, so that the project root, the entry and the seam are all spelled the same way: esbuild and CDK
+        // compare them, and the entry comes back from the resolver as a real path.
+        const appDir = realpathSync(path.resolve(props.appDir))
         const slug = props.slug
         if (!/^[a-z][a-z0-9-]*$/.test(slug ?? '')) {
             throw new Error(`SssbApp: slug must be lowercase letters, digits and dashes (got "${String(slug)}")`)
@@ -224,7 +229,12 @@ export class SssbApp extends Construct {
         if (typeof props.environment !== 'string' || props.environment === '') {
             throw new Error('SssbApp: environment must name the deployment (e.g. Staging, Production)')
         }
-        const isProd = props.production === true
+        // A boolean, never inferred: a JavaScript caller that left it out would otherwise get the destructive
+        // non-production defaults (a database destroyed with the stack, buckets that empty themselves).
+        if (typeof props.production !== 'boolean') {
+            throw new Error(`SssbApp: production must be true or false (got ${JSON.stringify(props.production)})`)
+        }
+        const isProd = props.production
         const dataApi = transport === 'data-api'
         const removalPolicy = isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY
         const migratorSource = resolveMigrator(appDir)
@@ -471,6 +481,11 @@ export class SssbApp extends Construct {
                 const problems = failClosedEnvironmentProblems(environment).map(
                     (problem) => `the server is not fail-closed: ${problem}`,
                 )
+                // The migrator runs no adapters, but the same switches have no business on it either.
+                const migratorEnvironment = renderedProperties(migrator).Environment?.Variables ?? {}
+                for (const name of ['DEMO_MODE', 'E2E_BUILD']) {
+                    if (name in migratorEnvironment) problems.push(`the migrator's environment sets ${name}`)
+                }
                 if (cdk.Stack.of(this).bundlingRequired) {
                     const bundle = stagedBundle(migrator)
                     problems.push(

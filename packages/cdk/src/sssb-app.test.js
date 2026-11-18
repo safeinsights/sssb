@@ -4,7 +4,7 @@
 // environment (moved here from packages/kit's production-guard test, which read the old stack's source), and
 // each synth assertion the construct makes, seen to FAIL on the thing it guards. Offline, like synth: nothing
 // is deployed and no credentials are read.
-import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as cdk from 'aws-cdk-lib'
@@ -207,6 +207,33 @@ describe('the synth assertions fail', () => {
         }
     })
 
+    it('when this synth bundled the stack but staged no migrator bundle', () => {
+        const drop = (/** @type {SssbApp} */ app) => {
+            const stage = /** @type {{ absoluteStagedPath: string }} */ (
+                /** @type {unknown} */ (app.migrator.node.findChild('Code').node.findChild('Stage'))
+            )
+            rmSync(path.join(stage.absoluteStagedPath, 'index.mjs'))
+        }
+        try {
+            expect(() => synthesize({ appDir, slug, transport: 'pg', configure: drop })).toThrow(
+                /the migrator bundle is wrong: the migrator is not bundled by this synth/,
+            )
+        } finally {
+            cdk.AssetStaging.clearAssetHashCache()
+        }
+    })
+
+    it('when the migrator is given a bypass', () => {
+        expect(withServer((app) => app.migrator.addEnvironment('E2E_BUILD', '1'))).toThrow(
+            /the migrator's environment sets E2E_BUILD/,
+        )
+    })
+
+    it('when production is not a boolean', () => {
+        expect(construct({ production: /** @type {any} */ ('true') })).toThrow(/production must be true or false/)
+        expect(construct({ production: /** @type {any} */ (undefined) })).toThrow(/production must be true or false/)
+    })
+
     it('when the migrator deploys code other than the bundle this synth staged', () => {
         const swap = (/** @type {SssbApp} */ app) => {
             const cfn = /** @type {cdk.CfnResource} */ (app.migrator.node.defaultChild)
@@ -244,6 +271,32 @@ describe('the synth assertions fail', () => {
         expect(construct({ params: { database: { transport: /** @type {any} */ ('mysql') } } })).toThrow(
             /params\.database\.transport must be pg or data-api/,
         )
+    })
+})
+
+describe('a production deployment', () => {
+    it('keeps its data: the database and both buckets are retained, and the writer stays warm', () => {
+        const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
+        const slug = /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))
+        const outdir = makeTestTmpDir('sssb-cdk-')
+        const app = new cdk.App({ outdir, context: { 'aws:cdk:bundling-stacks': [] } })
+        const stack = new cdk.Stack(app, 'Production')
+        new SssbApp(stack, 'Default', {
+            appDir,
+            slug: /** @type {string} */ (slug?.[1]),
+            params: { database: { transport: 'pg' } },
+            environment: 'Production',
+            production: true,
+        })
+        const template = /** @type {{ Resources: Record<string, any> }} */ (Template.fromStack(stack).toJSON())
+        const ofType = (/** @type {string} */ type) => Object.values(template.Resources).filter((r) => r.Type === type)
+        const [cluster] = ofType('AWS::RDS::DBCluster')
+        expect(cluster.DeletionPolicy).toBe('Retain')
+        expect(cluster.Properties.ServerlessV2ScalingConfiguration.MinCapacity).toBe(1)
+        const buckets = ofType('AWS::S3::Bucket')
+        expect(buckets).toHaveLength(2)
+        expect(buckets.every((b) => b.DeletionPolicy === 'Retain')).toBe(true)
+        expect(ofType('Custom::S3AutoDeleteObjects')).toHaveLength(0)
     })
 })
 

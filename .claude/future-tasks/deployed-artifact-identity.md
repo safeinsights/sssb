@@ -9,7 +9,7 @@ synth and every check pass. It found no accidental route. These are the delibera
 
 At synth the construct (`packages/cdk/src/sssb-app.js`) fails unless the app's `@sssb/kit` is its own version,
 the server's final environment pins `APP_MODE=real` with neither `DEMO_MODE` nor `E2E_BUILD`, the slug is the one
-the app's `config/app.ts` declares, a linked `@sssb/app-config` is the app's own `src/app-config`, and the migrator
+`apps/<app>/config/app.ts` declares, a linked `@sssb/app-config` is the app's own `apps/<app>/src/app-config`, and the migrator
 deploys the bundle this synth staged, carrying every one of the app's migrations. Each is seen failing in
 `packages/cdk/src/sssb-app.test.js`. Four things are outside its reach:
 
@@ -44,4 +44,4 @@ deploys the bundle this synth staged, carrying every one of the app's migrations
   reporting `mode: "real"` after a deploy.
 - **Pack and consume's synth.** The consumer copies `apps/starter/infra` but neither installs `@sssb/cdk` nor
   synthesizes it. Proving the construct from tarballs, in a workspace with two apps, belongs with ADR-0014's P12,
-  when `@sssb/create` ships the starter's `infra/`.
+  when `@sssb/create` ships `apps/starter/infra/`.

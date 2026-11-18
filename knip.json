@@ -36,6 +36,9 @@
         },
         "packages/tools": {
             "ignoreDependencies": ["next", "vite", "vitest"]
+        },
+        "packages/cdk": {
+            "ignoreDependencies": ["esbuild"]
         }
     },
     "ignore": ["spikes/**"]
