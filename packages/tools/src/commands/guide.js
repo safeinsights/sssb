@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { readJson, takeAppDir, takeFlag, takeOption, UsageError, workspaceRootOf } from '../app.js'
+import { readJson, takeAppDir, takeFlag, takeOption, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
 import { kitDirOf, resolveAppsKit } from '../kit.js'
 
 const STAMP = /^<!-- sssb-guide sha256:([0-9a-f]{64}) /
@@ -22,9 +22,44 @@ const STAMP = /^<!-- sssb-guide sha256:([0-9a-f]{64}) /
 /** @param {string | Buffer} text */
 const sha256 = (text) => createHash('sha256').update(text).digest('hex')
 
+/**
+ * The app whose kit's guide is copied. The copy is the workspace's, so the command has to work where people type it,
+ * the root, as `sssb doctor` does: with no `--app`, a working directory that resolves `@sssb/kit` is the app, and a
+ * workspace root that does not (a generated workspace's root takes no framework) uses the workspace's first app
+ * (`sssb.apps`, else `apps/*`). Every app of a workspace is on one kit version, which doctor checks.
+ * @param {string[]} args
+ * @param {string} [cwd]
+ * @returns {string}
+ */
+function guideApp(args, cwd = process.cwd()) {
+    if (args.includes('--app')) return takeAppDir(args, cwd)
+    const here = path.resolve(cwd)
+    const isRoot = existsSync(path.join(here, 'pnpm-workspace.yaml')) && existsSync(path.join(here, 'package.json'))
+    if (isRoot && !resolvesKit(here)) {
+        const apps = workspaceApps(here)
+        if (apps.length > 0) {
+            const dir = path.resolve(here, /** @type {string} */ (apps[0]))
+            console.log(`sssb guide: no --app, and ${here} takes no @sssb/kit: using ${apps[0]}'s`)
+            return dir
+        }
+    }
+    // Anything else: the app is the working directory, and kitDirOf's refusal says to pass --app.
+    return takeAppDir(args, cwd)
+}
+
+/** @param {string} dir */
+function resolvesKit(dir) {
+    try {
+        kitDirOf(dir)
+        return true
+    } catch {
+        return false
+    }
+}
+
 /** @param {string[]} args */
 export async function run(args) {
-    const appDir = takeAppDir(args)
+    const appDir = guideApp(args)
     const check = takeFlag(args, '--check')
     const out = takeOption(args, '--out')
     if (args.length > 0) throw new UsageError('usage: sssb guide [--app <dir>] [--out <file>] [--check]')

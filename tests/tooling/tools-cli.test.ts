@@ -264,6 +264,23 @@ describe('sssb guide', () => {
         expect(sssb(appDir, ['guide', '--check', '--out', out]).status).toBe(0)
     })
 
+    // A generated workspace's root takes no @sssb/kit, and its README and CLAUDE.md run the command there.
+    it('from a workspace root that takes no kit, copies the first app’s guide to the root', () => {
+        const { root } = withKit('guide-root', '# Rules\n')
+        const written = sssb(root, ['guide'])
+        expect(written.status).toBe(0)
+        expect(written.stdout).toContain('using apps/a')
+        expect(readFileSync(path.join(root, '.claude', 'sssb-guide.md'), 'utf8')).toMatch(STAMP)
+        expect(sssb(root, ['guide', '--check']).status).toBe(0)
+    })
+
+    it('from a workspace root with no app, refuses and says to pass --app', () => {
+        const root = workspace('guide-noapp')
+        const result = sssb(root, ['guide'])
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('--app')
+    })
+
     it('exits 1, pointing at P7, when the installed kit ships no guide', () => {
         const { appDir } = withKit('guide-absent', undefined)
         const result = sssb(appDir, ['guide'])
