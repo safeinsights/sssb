@@ -3252,3 +3252,7 @@ JP asked on 2026-11-17 whether the Simulator could start the ticking clock from 
   at build time so production never resolves the devDependency, and it sits behind the `isSimulatedDevServer` 404 so a
   production build never evaluates it. If the rule is to hold without exception, the alternative is a kit-owned
   ticker, which would duplicate `scripts/ticker.mjs`.
+- **The interval is a native number field, not Mantine's `NumberInput`.** `NumberInput` brought `react-number-format`
+  into the showcase's static demo, which renders the kit's Jobs tab but never the control, and put it 8,364 bytes over
+  its 860,000-byte budget. A `TextInput` of type number took the bundle to 840,890 bytes, under budget again; the route
+  validates the value either way.

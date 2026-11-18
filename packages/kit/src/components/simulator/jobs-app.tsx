@@ -1,6 +1,6 @@
 'use client'
 
-import { Box, Group, NumberInput, Stack, Text, UnstyledButton } from '@mantine/core'
+import { Box, Group, Stack, Text, TextInput, UnstyledButton } from '@mantine/core'
 import { useLocale, useTranslations } from 'next-intl'
 import { useState } from 'react'
 import type { ScheduleSpec } from '../../core/schedules'
@@ -199,7 +199,7 @@ function DevTicker({ ticker }: { ticker: DevTickerLike }) {
     const t = useTranslations('simulator')
     const locale = useLocale()
     const [busy, setBusy] = useState(false)
-    const [seconds, setSeconds] = useState<number | string>(ticker.seconds ?? ticker.defaultSeconds)
+    const [seconds, setSeconds] = useState(String(ticker.seconds ?? ticker.defaultSeconds))
     // Another process's ticker is live on this world: starting a second is refused, so the button says so up front.
     const blocked = !ticker.running && ticker.elsewhere !== null
     const inert = busy || blocked
@@ -248,17 +248,20 @@ function DevTicker({ ticker }: { ticker: DevTickerLike }) {
             <Group gap={6} wrap="nowrap" align="end" mt={8}>
                 {/* While it runs, the status line names the interval; a disabled field would only be harder to read. */}
                 {ticker.running ? null : (
-                    <NumberInput
+                    // A native number field, not Mantine's NumberInput: that one brings react-number-format into the
+                    // static demo's bundle for a control the demo never shows. The server checks the value anyway.
+                    <TextInput
                         size="xs"
                         w={150}
+                        type="number"
+                        inputMode="numeric"
                         data-testid="simulator-ticker-seconds"
                         label={t('tickerIntervalLabel')}
                         min={ticker.minSeconds}
                         max={ticker.maxSeconds}
-                        allowDecimal={false}
-                        allowNegative={false}
+                        step={1}
                         value={seconds}
-                        onChange={setSeconds}
+                        onChange={(event) => setSeconds(event.currentTarget.value)}
                     />
                 )}
                 <UnstyledButton
