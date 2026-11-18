@@ -4851,6 +4851,56 @@ installed once, on selected repositories, but which repositories are selected ne
   `safeinsights/canopycms` only, vouched for by JP on 2026-11-18. It has to be re-vouched or removed if that App is
   ever installed on more repositories.
 
+## `@sssb/tools` is a peer of `@sssb/cdk`, and Next's lint knows the apps (2026-11-18, `fix/cdk-tools-peer`)
+
+Pages' switch to v0.2.0-rc.1 found two packaging problems (its items 1 and 5). ADR-0014's addendum of the same date
+records the first. Decisions, each with what was rejected:
+
+- **`@sssb/tools` is a peer of `@sssb/cdk`, not a dependency** (`packages/cdk/package.json`). Reproduced first with
+  the packed tarballs served over a local URL, installed as the rc.1 notes say (pnpm 11.14.0): with the notes'
+  `overrides`, `ERR_PNPM_EXOTIC_SUBDEP`; without them, pnpm asked npm for `@sssb/tools` and found no release candidate, only the `0.0.0` and `0.0.0-stage` placeholders. With the
+  peer and no `overrides`, the install resolved and cdk's peer was the package's own `@sssb/tools`. Rejected:
+  documenting `blockExoticSubdeps: false` (it turns off a supply-chain guard for every dependency of the workspace, to
+  admit one); keeping the dependency and `overrides` (the error above); publishing release candidates to a registry
+  (npm publishing waits for P14, and it would not fix the tarball recipe `@sssb/create --sssb` writes).
+- **`SssbApp` refuses to synth beside an `@sssb/tools` of another version** (`toolsVersionProblem`,
+  `packages/cdk/src/sssb-app.js`, read from cdk's own resolution of `@sssb/tools/package.json`). The exact dependency
+  used to pin it; a peer at another version is only pnpm's warning (`strictPeerDependencies` is off), and cdk's
+  deploy-time checks are that tools release's, while `sssb doctor`'s version check reads each app's own packages, never
+  its `infra/`. The review found it. `packages/cdk/src/sssb-app-tools-version.test.js` pins the refusal (cdk reads its
+  `@sssb/tools` manifest as another version; without the call in `resolveMigrator` the test goes red).
+  Rejected: `strictPeerDependencies` (an adopter's whole-workspace setting).
+- **Each app's `infra/` declares `@sssb/tools`** beside `@sssb/cdk` (`apps/starter/infra/package.json`,
+  `apps/showcase/infra/package.json`), so the peer is met by a dependency of the package itself rather than by pnpm's
+  `resolvePeersFromWorkspaceRoot` finding the root's copy, or `autoInstallPeers` asking the registry.
+- **The peer cannot lift the fixed group to 1.0.0** (part 10's reason for keeping peers out): measured with
+  `@changesets/cli` 3.0.3, a `minor` on `@sssb/tools` versions the set to 0.3.0 from 0.2.0 and to `rc.2` in pre mode;
+  a peer range the bump leaves out of range (`^0.2.0`) moved cdk with the set to 0.3.0, and with the fixed group
+  removed gave it only a patch, never a major. The release plan's 1.0.0 backstop stays.
+- **No `overrides`, anywhere** (`release.mjs` `candidateNotes`, `@sssb/create`'s `--sssb`): nothing needs one now.
+- **The packed cdk's check** (`cdkPackProblems`, `scripts/pack-and-consume/checks.mjs`) requires `@sssb/tools` as a
+  required peer at exactly cdk's version, and fails it as a dependency.
+- **Pack and consume proves the notes' recipe** (`notesRecipe`, the pages shape): `candidateNotes` rendered for the
+  packed tarballs, its JSON block taken verbatim into a workspace package, the URLs pointed at a local server (a child
+  process, stopped when the step ends or the run exits), the generated workspace's `minimumReleaseAge` guard kept and
+  nothing else set, installed with `--ignore-scripts`. The guard and the flag came from review: the install has no
+  lockfile, and this job's tarballs become a release candidate's assets, so a package published in the last days must
+  not be installed, nor any install script run, beside them. Past pre mode (P14) `candidateNotes` has no notes to
+  render, so the step says it is skipped (`.claude/future-tasks/p14-leave-pre-mode.md` has the follow-up). Rejected:
+  rewriting the whole pages shape to install by URL (the shape's `file:` installs and committed seed would need a URL
+  token, for no more coverage of the recipe); a committed lockfile seed for the recipe (one more seed to refresh, for a
+  step that checks only how the `@sssb` packages resolve).
+- **Next's lint gets each app as its root dir** (`settings.next.rootDir` on the preset's `next` block,
+  `packages/eslint-plugin/src/app-config.js`). `@next/next/no-html-link-for-pages` looked for `pages/` and `app/`
+  under the directory ESLint ran from, so from a workspace root it printed "Pages directory cannot be found" on every
+  run (exit 0), and found no app to check links against. The preset already knows the apps (`resolveRoot`). Next
+  reads each as a fast-glob pattern after turning every backslash into a slash, so a backslash escape broke any path
+  with a special character (the review found it); each special character is a one-character class instead
+  (`nextRootDir`), and `!` is left as it is (`[!]` is a negated class). This repository's own root config, which gives
+  the framework's screens Next's rules too, points them at the apps (`apps/*`), where they render; `pnpm verify`'s
+  `eslint .` showed it warning the same way. Rejected: switching the rule off (it then checks nothing anywhere); an
+  option adopters set (the preset has the answer).
+
 ## The real S3 storage adapter is published as a factory, and rc.0's gitleaks advice is corrected (2026-11-18, `feat/s3-storage-factory`)
 
 The first adopter, on `v0.2.0-rc.1`, kept a copy of the kit's real S3 storage adapter for a simulated app run against a

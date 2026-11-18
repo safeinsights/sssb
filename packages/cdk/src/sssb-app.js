@@ -1,5 +1,6 @@
 // @ts-check
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 // A namespace import, never a default one: aws-cdk-lib is CommonJS, and a loader that compiles this file to
@@ -19,6 +20,28 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const OWN_VERSION = /** @type {{ version: string }} */ (
     JSON.parse(readFileSync(path.join(HERE, '../package.json'), 'utf8'))
 ).version
+
+/**
+ * The version of the `@sssb/tools` this package runs its checks with: its peer, so the adopter's own copy, which pnpm
+ * only warns about when it is another release. Read from this package's own resolution.
+ */
+const TOOLS_VERSION = /** @type {{ version: string }} */ (
+    JSON.parse(readFileSync(createRequire(import.meta.url).resolve('@sssb/tools/package.json'), 'utf8'))
+).version
+
+/**
+ * The problem with running this `@sssb/cdk` beside `@sssb/tools` at `tools`, or null: the two are released in lockstep,
+ * and the construct's deploy-time checks are that release's. A peer at another version is only a pnpm warning.
+ * @param {string} tools
+ * @param {string} [own]
+ */
+export function toolsVersionProblem(tools, own = OWN_VERSION) {
+    if (tools === own) return null
+    return (
+        `SssbApp: this @sssb/cdk is ${own}, but the @sssb/tools beside it is ${tools}. SSSB's packages are released in ` +
+        `lockstep: depend on @sssb/tools ${own} in the package that takes @sssb/cdk (its peer), then run pnpm install.`
+    )
+}
 
 const TRANSPORTS = /** @type {const} */ (['pg', 'data-api'])
 
@@ -101,6 +124,8 @@ function declaredSlug(appDir) {
  * @param {string} appDir
  */
 function resolveMigrator(appDir) {
+    const tools = toolsVersionProblem(TOOLS_VERSION)
+    if (tools !== null) throw new Error(tools)
     const kitDir = kitDirOf(appDir)
     const kitVersion = kitVersionOf(appDir)
     if (kitVersion !== OWN_VERSION) {

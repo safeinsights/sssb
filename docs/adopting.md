@@ -45,9 +45,9 @@ node packages/create/bin/create.js ~/acme --sssb ~/sssb-tarballs --name "Acme Re
   because it stamps that commit into `dist/release.json`; the same variable turns that refusal into a warning.
 - **`--sssb <dir>` wants exactly one `sssb-<package>-<version>.tgz` for each of `kit`, `tools`, `eslint-plugin`
   and `cdk`, all of the generator's own version** (`packages/create/package.json`'s). The workspace depends on them
-  by absolute `file:` path, and `pnpm-workspace.yaml` gets an `overrides` block mapping every `@sssb/*` package to
-  its tarball, because `@sssb/cdk` depends on `@sssb/tools` at a registry version that pnpm would otherwise look up.
-  When you move to published versions, remove the block and replace the `file:` paths with the version.
+  by absolute `file:` path, in each package that takes one, and needs no `overrides`: no SSSB package depends on
+  another (`@sssb/tools` is a peer of `@sssb/cdk`, which `apps/<app>/infra/` installs beside it). When you move to
+  published versions, replace the `file:` paths with the version.
 
 The workspace has no showcase. The showcase stays in SSSB's repository as the worked example you will read most in
 week one: keep a checkout of SSSB beside your own (`pnpm install && pnpm dev` there), read the slice you need, and

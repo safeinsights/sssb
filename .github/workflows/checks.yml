@@ -195,8 +195,8 @@ jobs:
                   restore-keys: pack-and-consume-playwright-${{ runner.os }}-
             # --ignore-scripts: the root's `prepare` (husky, launch-json, panda codegen) needs the whole repo installed,
             # and the pack needs no install script (esbuild's binary arrives as an optional dependency).
-            # @sssb/cdk too: its `workspace:*` dependency on @sssb/tools is resolved to a version when packed, which
-            # needs the link an install makes.
+            # @sssb/cdk too: its `workspace:*` peer (and dev dependency) on @sssb/tools is resolved to a version when
+            # packed, which needs the link an install makes.
             - name: install the kit's dependencies, for its prepack build, and the cdk's workspace link
               run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit --filter @sssb/cdk
             - run: node scripts/pack-and-consume.mjs --shape pages --dir "$RUNNER_TEMP/pack-and-consume"

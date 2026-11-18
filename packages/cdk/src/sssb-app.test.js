@@ -15,6 +15,7 @@ import { makeTestTmpDir } from '../../../tests/support/tmp-dir'
 import { dataApiShapeProblems, lambdaBundles, lambdaFunction, secretGrantProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf } from '@sssb/tools/kit'
 import { databaseNameFor, SssbApp } from './index.js'
+import { toolsVersionProblem } from './sssb-app.js'
 
 /** @typedef {import('@sssb/tools/assembly-checks').Resources} Resources */
 /** @typedef {'pg' | 'data-api'} Transport */
@@ -243,6 +244,19 @@ describe('the synth assertions fail', () => {
         expect(() => synthesize({ appDir, slug, transport: 'pg', configure: swap })).toThrow(
             /the migrator bundle is wrong: it deploys .*elsewhere\.zip.*, not the bundle this synth staged/,
         )
+    })
+
+    // @sssb/tools is cdk's peer, so pnpm only warns when the copy beside it is another release. SssbApp's own refusal is
+    // sssb-app-tools-version.test.js.
+    it('names both versions when @sssb/tools is not its own version, and nothing when they match', () => {
+        expect(toolsVersionProblem('0.0.0-other', '0.2.0-rc.2')).toBe(
+            "SssbApp: this @sssb/cdk is 0.2.0-rc.2, but the @sssb/tools beside it is 0.0.0-other. SSSB's packages are " +
+                'released in lockstep: depend on @sssb/tools 0.2.0-rc.2 in the package that takes @sssb/cdk (its peer), ' +
+                'then run pnpm install.',
+        )
+        // This repository's @sssb/tools, beside this @sssb/cdk: one release.
+        const tools = JSON.parse(readFileSync(path.join(REPO, 'packages/tools/package.json'), 'utf8')).version
+        expect(toolsVersionProblem(tools)).toBeNull()
     })
 
     it("when the app's @sssb/kit is not the construct's version", () => {

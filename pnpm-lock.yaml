@@ -223,6 +223,9 @@ importers:
       '@sssb/cdk':
         specifier: workspace:*
         version: link:../../../packages/cdk
+      '@sssb/tools':
+        specifier: workspace:*
+        version: link:../../../packages/tools
       aws-cdk-lib:
         specifier: ^2.274.0
         version: 2.277.0(constructs@10.8.1)
@@ -282,6 +285,9 @@ importers:
       '@sssb/cdk':
         specifier: workspace:*
         version: link:../../../packages/cdk
+      '@sssb/tools':
+        specifier: workspace:*
+        version: link:../../../packages/tools
       aws-cdk-lib:
         specifier: ^2.274.0
         version: 2.277.0(constructs@10.8.1)
@@ -294,11 +300,10 @@ importers:
         version: 2.1148.1
 
   packages/cdk:
-    dependencies:
+    devDependencies:
       '@sssb/tools':
         specifier: workspace:*
         version: link:../tools
-    devDependencies:
       aws-cdk-lib:
         specifier: ^2.274.0
         version: 2.277.0(constructs@10.8.1)
