@@ -2932,3 +2932,38 @@ Dependabot's #1.
 - **`@axe-core/playwright` stays held at `~4.12.1`.** The other half of #1 is not decided:
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
   hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
+
+## The release app, made by a script (2026-11-17, `ci/release-app-setup`)
+
+`release.yml` (P1b) needs a GitHub App whose token pushes the release commit and its tag. JP asked to make it the
+way CanopyCMS makes its App, by GitHub's App-manifest flow from a script, not by hand in settings.
+`pnpm release-app:init` (`scripts/release-app.ts`, `scripts/release-app/`) is that script, with
+`docs/runbooks/release-app.md` and the `release-app` cutover row. Decisions:
+
+- **Borrowed, not shared.** The loopback callback server, the manifest form, the JWT over `node:crypto` and the
+  read-back come from CanopyCMS's `src/cli/init-github-app.ts`, adapted rather than imported: Canopy's is a
+  per-site tool for adopters, and this one has one fixed repository and one fixed destination for the key.
+- **The key goes to `gh secret set` on stdin and nowhere else.** No file, no argv, no output. If `gh` fails, the
+  operator retries while the key is in memory; giving up costs one "Generate a private key" on the App's page.
+  Canopy also offers a key file as a fallback; this does not, so the only file the script writes is the creation
+  form (the manifest, no key), in a private temporary directory it removes.
+- **The client id is a variable, not a secret.** `release.yml` reads `vars.RELEASE_BOT_CLIENT_ID`, and a client id
+  is not secret.
+- **The exchange's answer is checked before the key is stored.** If GitHub made an App owned elsewhere or with any
+  permission but `contents: write` and `metadata: read`, its key does not become what `release.yml` signs with.
+- **The token asks for the App's permissions explicitly** (`permission-contents: write` on
+  `create-github-app-token`), so an App widened later mints nothing wider in `release.yml`.
+- **Four rulesets, not two.** A bypass covers every rule in its ruleset. Adding the App to `release tags: v*` as it
+  stood (creation, update, deletion, non-fast-forward) would have let it move and delete release tags, and the App
+  must also bypass the organisation's `require-pr`, which carries deletion and non-fast-forward on `main`. So the
+  rules the App passes and the rules nobody passes are split: `release tags: v*` keeps creation (App bypass), new
+  `release tags: v* immutable` holds the rest (no bypass), and new `main: history` re-states deletion and
+  non-fast-forward on `main` with no bypass. The script creates the no-bypass ones first.
+- **The script never changes an organisation ruleset.** `require-pr` is shared by the org's repositories and needs
+  `admin:org`; the script lists it and checks it, and an org owner adds the bypass by hand.
+- **The drift guard reads `release.yml` parsed, and denies by default.** Canopy's guard drives its worker against a
+  recording proxy; here the only consumer is a workflow, so `tests/tooling/release-app-drift.test.ts` parses it
+  (the `yaml` package, a new root devDependency), traces every use of the key, the client id and the token, and
+  classifies every command in the step holding the token. An unknown command is red until someone names the
+  permission it needs; `git push` may go only to this repository, `main` and the release tag, without force or
+  deletion. In-memory mutations of the real workflow prove each rule can fail.
