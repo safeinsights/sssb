@@ -1,4 +1,5 @@
 ---
+'@sssb/kit': minor
 '@sssb/tools': minor
 '@sssb/create': minor
 ---
@@ -15,7 +16,8 @@ app: `sssb doctor` then fails ("runs on a seam not its own") and typecheck fails
 does not bring it back. The seam is now a workspace package with a name of its own, which the app takes under the name
 the framework imports, and pnpm keeps that linked. `sssb doctor` fails an app that still declares its seam as a
 `link:`, even while it is linked, and says what to change; it also fails an app whose declared seam is another app's.
-A workspace `pnpm create @sssb` writes has the new form, and the plugin's commands say `pnpm --filter <app> add <pkg>`
+The conformance suite's `seam-map` check holds the seam's `package.json` to the name the app declares it by. A
+workspace `pnpm create @sssb` writes has the new form, and the plugin's commands say `pnpm --filter <app> add <pkg>`
 again.
 
 **To adopt.** For each app (`apps/<app>`, whose `package.json` name is `<name>`):
