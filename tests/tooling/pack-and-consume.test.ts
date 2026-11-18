@@ -694,11 +694,12 @@ describe('verifyGateProblems', () => {
         const inline = { ...scripts, verify: scripts.verify!.replace("'pnpm:check-fences'", "'sssb check-fences'") }
         expect(verifyGateProblems(inline).runBy.get('check-fences')).toBe('verify')
         // `pnpm --filter … synth` runs the infra package's synth, not the root's: verify reaching only that is no synth.
-        const filtered = {
-            ...scripts,
-            verify: scripts.verify!.replace('pnpm synth', "pnpm --filter './apps/*/infra' synth"),
-        }
-        delete filtered.synth
+        const filtered: Record<string, string> = Object.fromEntries(
+            Object.entries({
+                ...scripts,
+                verify: scripts.verify!.replace('pnpm synth', "pnpm --filter './apps/*/infra' synth"),
+            }).filter(([name]) => name !== 'synth'),
+        )
         expect(verifyGateProblems(filtered).problems).toEqual([expect.stringMatching(/^verify does not run synth /)])
     })
 
