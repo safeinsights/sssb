@@ -1,0 +1,35 @@
+{
+    "$comment": "SssbApp's stateful resources (logical id: type), per deployment shape, from packages/cdk/src/stateful-logical-ids.test.js. A changed logical id replaces the resource on the next cdk deploy: change this file only with a 'minor' changeset (ADR-0014 part 10; .github/scripts/require-changeset.sh).",
+    "pg": {
+        "AssetsBucket5CB76180": "AWS::S3::Bucket",
+        "Db5D02A0A9": "AWS::RDS::DBCluster",
+        "DbSecretCF6D79B0": "AWS::SecretsManager::Secret",
+        "DbSubnets93851898": "AWS::RDS::DBSubnetGroup",
+        "Dbwriter9B286E50": "AWS::RDS::DBInstance",
+        "StorageBucket19DB2FF8": "AWS::S3::Bucket"
+    },
+    "pg, production": {
+        "AssetsBucket5CB76180": "AWS::S3::Bucket",
+        "Db5D02A0A9": "AWS::RDS::DBCluster",
+        "DbSecretCF6D79B0": "AWS::SecretsManager::Secret",
+        "DbSubnets93851898": "AWS::RDS::DBSubnetGroup",
+        "Dbwriter9B286E50": "AWS::RDS::DBInstance",
+        "StorageBucket19DB2FF8": "AWS::S3::Bucket"
+    },
+    "data-api": {
+        "AssetsBucket5CB76180": "AWS::S3::Bucket",
+        "Db5D02A0A9": "AWS::RDS::DBCluster",
+        "DbSecretCF6D79B0": "AWS::SecretsManager::Secret",
+        "DbSubnets93851898": "AWS::RDS::DBSubnetGroup",
+        "Dbwriter9B286E50": "AWS::RDS::DBInstance",
+        "StorageBucket19DB2FF8": "AWS::S3::Bucket"
+    },
+    "data-api, production": {
+        "AssetsBucket5CB76180": "AWS::S3::Bucket",
+        "Db5D02A0A9": "AWS::RDS::DBCluster",
+        "DbSecretCF6D79B0": "AWS::SecretsManager::Secret",
+        "DbSubnets93851898": "AWS::RDS::DBSubnetGroup",
+        "Dbwriter9B286E50": "AWS::RDS::DBInstance",
+        "StorageBucket19DB2FF8": "AWS::S3::Bucket"
+    }
+}
