@@ -442,7 +442,7 @@ type OrgInstallation = {
  * selected is not shown to this tool, so that part stays the vouch's; what can drift without anyone noticing (the
  * App moved to all repositories, installed twice) is caught here. Returns what no longer holds, or null.
  */
-export function vouchProblem(appId: number, installations: OrgInstallation[]): string | null {
+function vouchProblem(appId: number, installations: OrgInstallation[]): string | null {
     const its = installations.filter((installation) => installation.app_id === appId)
     if (its.length !== 1) return `App ${appId} has ${its.length} installations in ${RELEASE_REPO.owner}, not one`
     const [installation] = its
