@@ -6,6 +6,7 @@ import { i18nParity, i18nPartition } from './i18n'
 import { checkOptOut, registerChecks } from './register'
 import { seamMap } from './seam-map'
 import type { CheckContext, CheckImpl } from './types'
+import { registerTestTmpDirCleanup } from '../tmp-dir'
 
 /**
  * THE CONFORMANCE SUITE (ADR-0014 part 3, step P5): the framework's checks that must hold for EVERY app, run
@@ -44,6 +45,9 @@ export interface ConformanceOptions {
 
 /** Registers the conformance suite in the calling test file. Call it once, at the file's top level. */
 export function conformanceSuite(options: ConformanceOptions): void {
+    // First, so the scratch directories' cleanup is this file's own, at its top level, and runs after the checks'
+    // teardown, even under `isolate: false`, where the helper loads once per worker (../tmp-dir.ts).
+    registerTestTmpDirCleanup()
     const optOut = options.optOut ?? {}
     checkOptOut('conformanceSuite', 'unit', optOut)
     if (typeof options.appDir !== 'string' || options.appDir === '') {
