@@ -4,10 +4,10 @@ import { makeTestTmpDir } from '../../testing/tmp-dir'
 // Point all fake-adapter state at a throwaway dir BEFORE importing the adapters.
 const tmp = makeTestTmpDir('app-jobs-fake-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 async function orgIds(tenantSlug: string, orgSlug: string): Promise<{ tenantId: string; orgId: string }> {

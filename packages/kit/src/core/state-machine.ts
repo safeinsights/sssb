@@ -1,10 +1,12 @@
 /** Thrown by assertTransition when a hop isn't allowed by the machine's transition table. */
 export class InvalidTransitionError extends Error {
-    constructor(
-        readonly from: string,
-        readonly to: string,
-    ) {
+    readonly from: string
+    readonly to: string
+
+    constructor(from: string, to: string) {
         super(`invalid transition: ${from} -> ${to}`)
+        this.from = from
+        this.to = to
         this.name = 'InvalidTransitionError'
     }
 }

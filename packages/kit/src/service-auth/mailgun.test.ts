@@ -16,14 +16,14 @@ vi.mock('../adapters/index', () => ({
 
 const tmp = makeTestTmpDir('app-mailgun-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 afterEach(() => {
     state.fake = true
-    delete process.env.MAILGUN_WEBHOOK_SIGNING_KEY
+    delete process.env['MAILGUN_WEBHOOK_SIGNING_KEY']
     __resetMailgunReplayGuard()
 })
 
@@ -66,7 +66,7 @@ describe('verifyMailgunWebhook (simulated mode, dev secret)', () => {
 describe('verifyMailgunWebhook (real mode, env key)', () => {
     test('the configured MAILGUN_WEBHOOK_SIGNING_KEY passes', () => {
         state.fake = false
-        process.env.MAILGUN_WEBHOOK_SIGNING_KEY = 'real-mg-key-0123456789'
+        process.env['MAILGUN_WEBHOOK_SIGNING_KEY'] = 'real-mg-key-0123456789'
         const token = uniqueToken()
         const signature = mailgunSignature('real-mg-key-0123456789', TS, token)
         expect(() => verifyMailgunWebhook({ timestamp: TS, token, signature }, NOW)).not.toThrow()
@@ -74,7 +74,7 @@ describe('verifyMailgunWebhook (real mode, env key)', () => {
 
     test('no configured key rejects everything', () => {
         state.fake = false
-        delete process.env.MAILGUN_WEBHOOK_SIGNING_KEY
+        delete process.env['MAILGUN_WEBHOOK_SIGNING_KEY']
         const token = uniqueToken()
         const signature = mailgunSignature('whatever', TS, token)
         expect(() => verifyMailgunWebhook({ timestamp: TS, token, signature }, NOW)).toThrow(AuthRequiredError)

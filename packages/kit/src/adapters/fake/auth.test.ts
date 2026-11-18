@@ -7,10 +7,10 @@ import { APP_SLUG } from '@sssb/app-config/identity'
 // throwaway-dir + mocked-cookie-jar setup as simulator.test.ts.
 const tmp = makeTestTmpDir('app-auth-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 const cookieStore = new Map<string, { value: string }>()

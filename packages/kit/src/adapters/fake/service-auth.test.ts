@@ -9,11 +9,11 @@ import { devWebhookSecret, mintServiceToken } from './service-auth'
 
 const tmp = makeTestTmpDir('app-svc-mint-')
 beforeAll(async () => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
     await fakeDb.ready()
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 async function orgId(slug: string): Promise<string> {

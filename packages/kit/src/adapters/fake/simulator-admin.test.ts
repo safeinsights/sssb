@@ -8,10 +8,10 @@ import { makeTestTmpDir } from '../../testing/tmp-dir'
 // resetWorld/saveSnapshot/restoreSnapshot only touch it if some earlier code in THIS process already did.
 const tmp = makeTestTmpDir('app-simulator-admin-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 describe('simulator-admin snapshots', () => {

@@ -61,7 +61,9 @@ async function executeJob(job: SubmittedJob): Promise<boolean> {
         return true
     }
     try {
-        const { resultKey } = await jobHandlers[job.kind](job.payload, {
+        const handler = jobHandlers[job.kind]
+        if (!handler) throw new Error(`no job handler registered for kind: ${job.kind}`)
+        const { resultKey } = await handler(job.payload, {
             db: fakeDb,
             storage: fakeStorage,
             email: fakeEmail,
@@ -249,7 +251,9 @@ export async function produceJobArtifact(
     if (!row) throw new NotFoundError(`unknown job: ${jobId}`)
     if (!isJobKind(row.kind)) return { error: `unknown job kind: ${row.kind}` }
     try {
-        const { resultKey } = await jobHandlers[row.kind](row.payload, {
+        const handler = jobHandlers[row.kind]
+        if (!handler) throw new Error(`no job handler registered for kind: ${row.kind}`)
+        const { resultKey } = await handler(row.payload, {
             db: fakeDb,
             storage: fakeStorage,
             email: fakeEmail,

@@ -115,7 +115,7 @@ export interface MailAppProps {
 }
 
 export interface SnapshotsAppProps {
-    snapshots?: Snapshot[]
+    snapshots?: Snapshot[] | undefined
     onReset: () => void
     onSave?: (name: string) => void
     onRestore?: (name: string) => void
@@ -212,7 +212,7 @@ export function SimulatorPanel({
     snapshots: SnapshotsAppProps
     /** Scripted walkthroughs (@sssb/kit/demo-static/tour/use-tours). Undefined when the app registers no
      *  tours — the tab then doesn't exist at all, which is the off-switch an adopter gets for free. */
-    tours?: ToursAppProps
+    tours?: ToursAppProps | undefined
     notices?: SimulatorNotice[]
 }) {
     const t = useTranslations('simulator')

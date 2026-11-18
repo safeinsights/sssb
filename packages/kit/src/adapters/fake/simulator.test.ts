@@ -7,10 +7,10 @@ import { APP_SLUG } from '@sssb/app-config/identity'
 // Point all fake-adapter state at a throwaway dir BEFORE importing the module (fake-adapters.test.ts pattern).
 const tmp = makeTestTmpDir('app-simulator-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 // next/headers' cookies() throws outside a request scope (confirmed against this Next version);

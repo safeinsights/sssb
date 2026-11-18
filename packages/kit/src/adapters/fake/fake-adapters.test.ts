@@ -7,10 +7,10 @@ import { NotFoundError, PreconditionFailedError } from '../../ports/errors'
 // Point all fake-adapter state at a throwaway dir BEFORE importing the adapters.
 const tmp = makeTestTmpDir('app-fakes-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 describe('fake storage', () => {
@@ -553,7 +553,7 @@ describe('fake storage', () => {
             maxBytes: 1000,
         })
         expect(target.url).toBe('/api/storage-upload')
-        expect(target.fields.key).toBe('uploads/t/u/report.csv')
+        expect(target.fields['key']).toBe('uploads/t/u/report.csv')
         expect(target.fields['content-type']).toBe('text/csv')
         expect(target.fields['max-bytes']).toBe('1000')
 

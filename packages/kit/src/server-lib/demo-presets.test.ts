@@ -13,10 +13,10 @@ import { makeTestTmpDir } from '../testing/tmp-dir'
 // the fake adapters themselves, unmocked, which is the whole path the replay drives.
 const tmp = makeTestTmpDir('app-demo-presets-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 const cookieStore = new Map<string, { value: string }>()

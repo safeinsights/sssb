@@ -23,10 +23,10 @@ vi.mock('../adapters/index', async () => {
 
 const tmp = makeTestTmpDir('app-scheduled-tick-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 afterEach(async () => {
     state.calls.length = 0

@@ -6,10 +6,10 @@ import { DEMO_INBOUND_DOMAIN, formatInboundRecipient } from '../core/inbound-ema
 // precedent). Simulated mode is the default, so intake runs against the seeded fake db + fake auth.
 const tmp = makeTestTmpDir('app-inbound-intake-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 const ADA = 'ada.keeper@example.test' // seed admin of the `depot` org (tenant `harbor`)

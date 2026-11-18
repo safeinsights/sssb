@@ -81,7 +81,7 @@ interface Fixture {
 let fx: Fixture
 
 beforeAll(async () => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
     await fakeDb.ready()
 
     const now = Math.floor(Date.now() / 1000)
@@ -215,7 +215,7 @@ beforeAll(async () => {
 }, 30_000)
 
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 describe('verifyServiceCaller', () => {

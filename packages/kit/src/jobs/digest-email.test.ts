@@ -50,10 +50,10 @@ vi.mock('@sssb/app-config/digest', () => ({ digestBodies: async () => digest.bod
 // Fake-adapter state goes to a throwaway dir before anything opens pglite or the email catch-store.
 const tmp = makeTestTmpDir('digest-email-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 beforeEach(async () => {

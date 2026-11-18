@@ -129,11 +129,11 @@ export interface VerifiedUploadFields {
  * policy signature is wrong. Simulated-mode-only (NOT part of StoragePort).
  */
 export function verifyUploadFields(fields: Record<string, string | undefined>): VerifiedUploadFields | null {
-    const key = fields.key
+    const key = fields['key']
     const contentType = fields['content-type']
     const maxBytesRaw = fields['max-bytes']
-    const expiresRaw = fields.expires
-    const signature = fields.signature
+    const expiresRaw = fields['expires']
+    const signature = fields['signature']
     if (!key || !contentType || !maxBytesRaw || !expiresRaw || !signature) return null
     const maxBytes = Number(maxBytesRaw)
     if (!Number.isInteger(maxBytes) || maxBytes < 0) return null

@@ -15,10 +15,10 @@ vi.mock('./handlers', () => ({
 
 const tmp = makeTestTmpDir('app-inbound-credential-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 describe('intakeInboundEmail: the received row records the credential the handler reports', () => {
