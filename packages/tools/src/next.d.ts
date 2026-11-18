@@ -1,7 +1,10 @@
 import type { NextConfig } from 'next'
 
 export interface SssbNextOptions {
-    /** The app's directory. Defaults to the working directory, which is the app's when Next loads its config. */
+    /**
+     * The app's directory (`__dirname` in its next.config.ts). Defaults to the working directory, which is the app's
+     * when Next loads the config, but not when another tool does, so pass it.
+     */
     appDir?: string
 }
 

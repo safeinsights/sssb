@@ -3,7 +3,7 @@
 //
 //     // apps/<app>/next.config.ts
 //     import { withSssb } from '@sssb/tools/next'
-//     export default withSssb({ typedRoutes: true })
+//     export default withSssb({ typedRoutes: true }, { appDir: __dirname })
 //
 // What every SSSB app's Next config needs, with the app's own settings layered over it:
 // - `transpilePackages: ['@sssb/kit']`: the framework ships TypeScript source, compiled by the app's build.
@@ -19,7 +19,8 @@
 //   outside CI queries npm's advisory feed for the installed next, and an agent's run stops when an advisory matches.
 //   Both are defined in node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/.
 //
-// The app's directory defaults to the working directory, which is the app's whenever Next loads its config.
+// Pass the app's directory: Next loads the config with the app as the working directory, which is the default, but
+// another tool that loads it (knip does) may not.
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { resolveAppsKit, resolveFromApp } from './kit.js'

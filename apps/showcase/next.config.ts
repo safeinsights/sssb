@@ -4,10 +4,7 @@ import { params } from './config/params'
 
 // What every SSSB app needs (the framework transpiled, next-intl pointed at the framework's request config, the
 // standalone output, the native server packages external, a hermetic `next dev`) comes from the preset.
-const nextConfig = withSssb({
-    typedRoutes: true,
-    transpilePackages: ['@app/seed'],
-})
+const nextConfig = withSssb({ typedRoutes: true, transpilePackages: ['@app/seed'] }, { appDir: __dirname })
 
 // Sentry wraps the build ONLY when a DSN exists (cutover row `errors`) — hermetic builds make
 // zero network calls and skip sourcemap upload entirely.

@@ -6,4 +6,4 @@ import { withSssb } from '@sssb/tools/next'
  * app needs (the framework transpiled, next-intl pointed at the framework's request config, the standalone output,
  * a hermetic `next dev`) comes from the preset, @sssb/tools/next.
  */
-export default withSssb({ typedRoutes: true })
+export default withSssb({ typedRoutes: true }, { appDir: __dirname })

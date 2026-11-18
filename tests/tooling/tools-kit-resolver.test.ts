@@ -68,16 +68,17 @@ describe('resolveAppsKit', () => {
         expect(kitDirOf(noKitApp)).toBe(realpathSync(kitRoot))
     })
 
-    it('says the app does not resolve @sssb/kit when nothing installs it', () => {
-        // In a child process with NODE_PATH cleared: `pnpm exec` (and so `pnpm test`) sets NODE_PATH to pnpm's hoisted
-        // `.pnpm/node_modules`, which Node's resolver honours as a last resort, and that would find a framework here.
+    it('says the app does not resolve @sssb/kit when nothing installs it, even with NODE_PATH at a hoisted copy', () => {
+        // `pnpm exec` and `pnpm run` set NODE_PATH to pnpm's hoisted `.pnpm/node_modules`, which Node's resolver honours
+        // as a last resort. Resolved that way, an app with no framework of its own would get the hoisted one: another
+        // app's instance. So the child runs with NODE_PATH pointing straight at a hoisted copy, and must still refuse.
         const script = [
             `import { kitDirOf, resolveAppsKit } from ${JSON.stringify(KIT_JS)}`,
             `for (const f of [() => kitDirOf(${JSON.stringify(lonely)}), () => resolveAppsKit(${JSON.stringify(lonely)}, 'ports/errors')]) {`,
             "    try { f(); console.log('no error') } catch (e) { console.log(e.message) }",
             '}',
         ].join('\n')
-        const env = { ...process.env, NODE_PATH: '' }
+        const env = { ...process.env, NODE_PATH: path.dirname(path.dirname(kitHoisted)) }
         const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env })
         const lines = result.stdout.trim().split('\n')
         expect(lines).toHaveLength(2)
