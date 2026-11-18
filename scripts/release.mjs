@@ -622,6 +622,35 @@ export function candidate(root, version, files) {
 }
 
 /**
+ * Markdown with its soft line breaks joined: a GitHub release's body is rendered as GitHub renders a comment, where
+ * every newline inside a paragraph is a hard break, so notes wrapped at a fixed width would show ragged. Joins a line
+ * onto the one before when both are text in the same paragraph or list item; leaves code fences, tables, headings,
+ * quotes, blank lines and the start of every list item as they are.
+ * @param {string} markdown
+ */
+export function unwrap(markdown) {
+    const out = []
+    let fence = false
+    const starts = /^\s*([-*+] |\d+[.)] |#|\||>|```|~~~)/
+    for (const line of markdown.split('\n')) {
+        const isFence = /^\s*(```|~~~)/.test(line)
+        const prev = out.at(-1)
+        const joinable =
+            !fence &&
+            !isFence &&
+            line.trim() !== '' &&
+            !starts.test(line) &&
+            prev !== undefined &&
+            prev.trim() !== '' &&
+            !/^\s*(#|\||```|~~~)/.test(prev)
+        if (joinable) out[out.length - 1] = `${prev.trimEnd()} ${line.trim()}`
+        else out.push(line)
+        if (isFence) fence = !fence
+    }
+    return out.join('\n')
+}
+
+/**
  * The GitHub prerelease's notes: the release notes the release commit carries (`docs/releases/v<version>.md`, written
  * by `prepare` and checked by `verify-release`), then how to install each tarball by URL, its sha512, and how to
  * verify the attestation. An adopter commits the lockfile and installs with `--frozen-lockfile`: a release asset can be
@@ -672,7 +701,7 @@ export function candidateNotes(root, version, repo, sha, assets) {
         `Each tarball is attested by this repository's release workflow: \`gh attestation verify <tarball> --repo ${repo}\`.`,
         '',
     ]
-    return out.join('\n')
+    return unwrap(out.join('\n'))
 }
 
 const CHANGESET_FILE = /^\.changeset\/[^/]+\.md$/

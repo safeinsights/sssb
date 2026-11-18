@@ -12,6 +12,7 @@ import {
     impliedVersion,
     nextCandidate,
     prepare,
+    unwrap,
     preflight,
     publishable,
     verifyRelease,
@@ -642,6 +643,51 @@ describe('release candidates (ADR-0014 P7): the version they take, as Changesets
         expect(impliedVersion(['0.1.0'], ['patch'], false)).toBe('0.1.1')
         expect(impliedVersion(['0.1.0'], ['none'], true)).toBeNull()
         expect(() => impliedVersion(['0.1.0', '0.2.0'], ['patch'], true)).toThrow(/several versions/)
+    })
+})
+
+describe("the prerelease notes' line breaks", () => {
+    it('joins wrapped lines, which a GitHub release renders as hard breaks, and leaves the rest as it was', () => {
+        const wrapped = [
+            '# Release notes: v0.2.0-rc.0',
+            '',
+            'A paragraph wrapped',
+            'onto two lines.',
+            '',
+            '- an item',
+            '  continued',
+            '- another',
+            '',
+            '| a | b |',
+            '| --- | --- |',
+            '',
+            '```yaml',
+            'overrides:',
+            "    '@sssb/kit': x",
+            '```',
+            '### A title',
+            'right under it',
+        ].join('\n')
+        expect(unwrap(wrapped)).toBe(
+            [
+                '# Release notes: v0.2.0-rc.0',
+                '',
+                'A paragraph wrapped onto two lines.',
+                '',
+                '- an item continued',
+                '- another',
+                '',
+                '| a | b |',
+                '| --- | --- |',
+                '',
+                '```yaml',
+                'overrides:',
+                "    '@sssb/kit': x",
+                '```',
+                '### A title',
+                'right under it',
+            ].join('\n'),
+        )
     })
 })
 
