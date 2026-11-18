@@ -6,6 +6,7 @@
 // is deployed and no credentials are read.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
@@ -411,8 +412,25 @@ describe('the database name', () => {
         expect(() => databaseNameFor('a'.repeat(64))).toThrow(/at most 63/)
     })
 
+    it('refuses a slug whose database name Aurora reserves', () => {
+        for (const reserved of [
+            'user',
+            'select',
+            'order',
+            'table',
+            'postgres',
+            'rdsadmin',
+            'template1',
+            'current-user',
+        ]) {
+            expect(() => databaseNameFor(reserved), reserved).toThrow(/a word Aurora PostgreSQL reserves/)
+        }
+    })
+
     // A scratch app inside this repository, so the construct finds the repository's lock file, esbuild and framework
-    // above it, as an app under apps/ does. Its slug has a dash, which init-app accepts and Aurora's names do not.
+    // above it, as an app under apps/ does: not a makeTestTmpDir directory, which has no lock file above it and so no
+    // project root (the construct refuses such an app). afterAll removes it, a failed run included. Its slug has a
+    // dash, which init-app accepts and Aurora's names do not.
     const scratch = path.join(REPO, 'node_modules/.cache', `sssb-cdk-dashed-${process.pid}`, 'my-app')
     afterAll(() => rmSync(path.dirname(scratch), { recursive: true, force: true }))
 
@@ -438,21 +456,22 @@ describe('the database name', () => {
                 expect(JSON.stringify(server.env['DATABASE_URL'])).toMatch(/"\/my_app"\]\]\}$/)
             } else {
                 expect(server.env['DATABASE_NAME']).toBe('my_app')
-                expect(lambdaFunction(all, 'Migrator').env['DATABASE_NAME']).toBe('my_app')
             }
+            // On both transports the migrator is told the name, not left to a secret field the template cannot show.
+            expect(lambdaFunction(all, 'Migrator').env['DATABASE_NAME']).toBe('my_app')
         },
     )
 
-    it.each(APPS)(
-        "keeps apps/%s's database name its slug, so an existing deployment's database is not replaced",
-        (app) => {
-            const appDir = path.join(REPO, 'apps', app)
-            const slug = /** @type {string} */ (
-                /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
-            )
-            const { all } = synthesize({ appDir, slug, transport: 'pg', bundle: false })
-            const cluster = Object.values(all).find((r) => r.Type === 'AWS::RDS::DBCluster')
-            expect(cluster?.Properties?.['DatabaseName']).toBe(slug)
-        },
-    )
+    // The apps in this tree: SSSB's own (no dash, so the name is the slug and nothing is renamed), or, in an adopter's
+    // tree after `pnpm init-app acme-corp`, an app whose slug has a dash.
+    it.each(APPS)("names apps/%s's database from its slug, and an undashed slug's database the slug itself", (app) => {
+        const appDir = path.join(REPO, 'apps', app)
+        const slug = /** @type {string} */ (
+            /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+        )
+        const { all } = synthesize({ appDir, slug, transport: 'pg', bundle: false })
+        const cluster = Object.values(all).find((r) => r.Type === 'AWS::RDS::DBCluster')
+        expect(cluster?.Properties?.['DatabaseName']).toBe(databaseNameFor(slug))
+        if (!slug.includes('-')) expect(cluster?.Properties?.['DatabaseName']).toBe(slug)
+    })
 })

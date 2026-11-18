@@ -4,8 +4,8 @@ import { Construct } from 'constructs'
 /**
  * The database an app's slug names: the slug with each dash as an underscore, since Aurora PostgreSQL's database
  * name may hold only letters, digits and underscores (`acme-corp` → `acme_corp`; `showcase` stays `showcase`). Throws
- * for a string that is not a slug, or one over 63 characters. An adopter's own infra that does not use `SssbApp` names
- * its database with this too.
+ * for a string that is not a slug, one over 63 characters, or one whose name the engine reserves (`user`, `select`,
+ * `rdsadmin`, …). An adopter's own infra that does not use `SssbApp` names its database with this too.
  */
 export declare function databaseNameFor(slug: string): string
 

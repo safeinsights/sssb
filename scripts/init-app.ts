@@ -20,6 +20,7 @@ import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSyn
 import { createInterface } from 'node:readline/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { databaseNameFor } from '../packages/cdk/src/database-name.js'
 import { doctrineDocs, EXEMPT, generalizeAppCitations, resolves } from '../tests/docs/doc-set'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -905,6 +906,14 @@ async function main(): Promise<void> {
     if (slug !== null) {
         if (!/^[a-z][a-z0-9-]*$/.test(slug)) fail(`"${slug}" is not a valid slug: lowercase letters, digits, dashes`)
         if (slug === SHOWCASE) fail('"showcase" is reserved for the demo app')
+        // The deployed database is named from the slug (dashes become underscores), and Aurora refuses some names
+        // that a slug can spell: one over 63 characters, or a word the engine reserves (`user`, `select`, …). The
+        // construct would refuse them at synth; here they are refused where the slug is chosen.
+        try {
+            databaseNameFor(slug)
+        } catch (error) {
+            fail(`"${slug}" cannot name the app's database: ${(error as Error).message.replace(/^SssbApp: /, '')}`)
+        }
         // `kit` is the framework's own vitest project name, so an app called that would collide with it
         // in vitest.config.ts before this script's work could even be tested. `sssb` would give the app the
         // contract database `sssb_contract`, which is the framework fixture's own (and the next check

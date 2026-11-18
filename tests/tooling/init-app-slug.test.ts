@@ -71,6 +71,19 @@ describe('init-app slug refusals', () => {
         expect(result.stderr).toContain(`"${slug}"`)
     })
 
+    // The deployed database is named from the slug (`databaseNameFor`, packages/cdk/src/database-name.js), and Aurora
+    // refuses a name over 63 characters or one its engine reserves, so init-app refuses those slugs up front.
+    it.each(['user', 'select', 'rdsadmin', 'a'.repeat(64)])('refuses "%s", which cannot name the database', (slug) => {
+        const result = initApp(slug)
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain("cannot name the app's database")
+    })
+
+    it('takes a dashed slug, whose database name is the slug with underscores', () => {
+        const result = initApp('acme-corp')
+        expect(result.status, result.stderr).toBe(0)
+    })
+
     it('still takes an ordinary slug (the positive control: a refusal test that cannot fail proves nothing)', () => {
         const result = initApp('acme')
         expect(result.status).toBe(0)

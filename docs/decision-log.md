@@ -3522,3 +3522,26 @@ JP asked what is worth borrowing from CanopyCMS's documentation setup. Two thing
   that is not one, and a parent `LC_ALL=C`.
 - **Rejected: porting `check-action-pins.mjs` into `scripts/`** with a `package.json` script. It would grep for
   `uses:` rather than parse, and would touch the files other work owns.
+
+## The database is named from the slug with dashes as underscores (2026-11-18, `fix/aurora-db-name`)
+
+`@sssb/cdk`'s entry above left this as a follow-up: `SssbApp` named the deployed database by the app's slug, `pnpm
+init-app` accepts dashes in a slug, and Aurora PostgreSQL's database names take letters, numbers and underscores only,
+so `pnpm init-app my-app` gave a stack that synthesized and failed at deploy.
+
+- **Derived, not refused.** Dashes are ordinary in a slug, so the construct names the database
+  `databaseNameFor(slug)`: the slug with each dash as an underscore (`packages/cdk/src/database-name.js`). A slug has no
+  underscore of its own, so two slugs never share a name, and a slug with no dash names the same database as before:
+  the showcase's and the starter's templates are unchanged but for one variable on the migrator.
+- **Every place the name is used takes it from there**: the cluster's `defaultDatabaseName`, the server's
+  `DATABASE_NAME` (data-api) or the path of its `DATABASE_URL` (pg), and the migrator's `DATABASE_NAME`, on both
+  transports now. On pg the migrator used to take the name from the secret's `dbname`, which the synthesized secret
+  does not carry (only the cluster's secret attachment would add it, at deploy); the framework's handler now prefers
+  `DATABASE_NAME`. The contract test databases already folded dashes (`contractDatabaseName`), and nothing in
+  `packages/kit/src/db` or an app's `config/params.ts` turns the slug into a database or role name.
+- **Refused where the name cannot be made**: a slug over 63 characters, or one whose name the engine reserves (its
+  reserved key words, `postgres`, `rdsadmin`, `template0`, `template1`), throws at synth, and `pnpm init-app` refuses it
+  where the slug is chosen, importing the same function.
+- **Proved** by a test that synthesizes a dashed-slug app on both transports (red with the old naming), by `pnpm
+init-app my-app` in a copy of the repository followed by its real `cdk synth` (`DatabaseName: my_app`), and by
+  `init-app` refusing `user`, `select`, `rdsadmin` and a 64-character slug (each red without the check).

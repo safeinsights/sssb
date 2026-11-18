@@ -8,6 +8,7 @@ import * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import { failClosedEnvironmentProblems, migratorBundleProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '@sssb/tools/kit'
+import { databaseNameFor, SLUG } from './database-name.js'
 
 const { aws_budgets, aws_cloudfront, aws_cloudfront_origins, aws_cloudwatch, aws_ec2, aws_lambda } = cdk
 const { aws_lambda_nodejs, aws_rds, aws_s3 } = cdk
@@ -202,26 +203,7 @@ function stagedBundle(fn) {
     return { code: file === undefined ? undefined : readFileSync(file, 'utf8'), problems }
 }
 
-/**
- * The database an app's slug names: the slug with each dash as an underscore. A slug is lowercase letters, digits
- * and dashes, and dashes are ordinary in one (`acme-corp`), but Aurora PostgreSQL's database name (the cluster's
- * `DatabaseName`, from `defaultDatabaseName`) may hold only letters, digits and underscores, start with a letter, and
- * run to 63 characters: a dashed slug synthesized cleanly and failed at deploy. A slug has no underscore of its own,
- * so two slugs never map to one name, and a slug with no dash maps to itself (`showcase`, `starter`), so an existing
- * deployment's database keeps its name.
- * @type {import('./index.d.ts').databaseNameFor}
- */
-export function databaseNameFor(slug) {
-    if (!SLUG.test(slug)) throw new Error(`SssbApp: slug must be lowercase letters, digits and dashes (got "${slug}")`)
-    const name = slug.replaceAll('-', '_')
-    if (name.length > 63) {
-        throw new Error(`SssbApp: slug "${slug}" is ${slug.length} characters; a database name may have at most 63`)
-    }
-    return name
-}
-
-/** What a slug is: what `pnpm init-app` accepts. */
-const SLUG = /^[a-z][a-z0-9-]*$/
+export { databaseNameFor } from './database-name.js'
 
 /**
  * An SSSB app's deployment (ADR-0001, ADR-0014 part 8): the Next standalone server in one Lambda behind the
@@ -451,7 +433,11 @@ export class SssbApp extends Construct {
             ...lambdaNetwork,
             // pg: the handler builds its own connection string from the secret. data-api: the same
             // variables as the server (the handler follows DATABASE_TRANSPORT too).
-            environment: dataApi ? databaseEnv : { DATABASE_TRANSPORT: 'pg', DB_SECRET_ARN: secret.secretArn },
+            // On pg it gets the database's name too: the framework's handler prefers it to the secret's `dbname`,
+            // which the synthesized secret does not carry (only the cluster's secret attachment would add it, at deploy).
+            environment: dataApi
+                ? databaseEnv
+                : { DATABASE_TRANSPORT: 'pg', DB_SECRET_ARN: secret.secretArn, DATABASE_NAME: databaseName },
             bundling: {
                 format: aws_lambda_nodejs.OutputFormat.ESM,
                 // pg's optional native/cloudflare shims must stay external or esbuild chokes
