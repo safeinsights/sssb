@@ -19,15 +19,25 @@ import ts from 'typescript'
  *   `'x' ?? …`, or a `const` bound to such a literal. Constants are literals, `!`, `void` and parentheses;
  *   nothing else is evaluated;
  * - in a function literal passed as an argument (`withPortErrors(async () => { … })`), which the call is
- *   ASSUMED to invoke. That is the wrapper idiom every route uses, and the one trust this module extends:
- *   it cannot read an imported wrapper to see whether it really calls its argument;
+ *   ASSUMED to invoke and to carry its failure in the call's own result. That is the wrapper idiom every route
+ *   uses, and the one trust this module extends: it cannot read an imported wrapper to see whether it really
+ *   calls its argument;
  * - in a function declared in the SAME module and called (or passed as an argument) from the handler's
  *   path, followed to any depth. A function that is only defined, or that the file reassigns or declares twice,
- *   is not followed.
+ *   is not followed;
+ * - where its denial reaches the handler's OUTCOME, the promise Next awaits. `authorize` throws synchronously, so a
+ *   denial reaches it through every synchronous frame. It is lost at an async boundary nobody awaits: in an
+ *   `async` function, a throw only rejects the function's promise, and a function handed to a call may run later
+ *   (`.then`, a timer, an async wrapper). So a call into an `async` function, or one a function is handed to,
+ *   carries the denial only when its result is `await`ed or returned on the spot (`return`, an arrow's expression
+ *   body; through parentheses, a type assertion, a ternary arm, or the right of `&&`, `||`, `??` or a comma). A
+ *   statement of its own, `void`, a variable awaited later, a `.then` or `.catch` chain, an argument, all leave the
+ *   promise floating, and nothing in it counts. (The rule is syntactic: a sync function counts as throwing in
+ *   place, and `authorize` from `ScanOptions.authorizeModules` must throw synchronously too, as SSSB's does.)
  *
  * For a handler that is a wrapper's result (`export const POST = withX(fn)`), the wrapper call itself and
  * its other arguments run once, when the module loads; only the functions handed to it run per request, so
- * only those are the handler's path.
+ * only those are the handler's path, and the wrapper, being what Next calls, is trusted to carry their failure.
  *
  * What is NOT followed, and so does not count: a call into another module (an imported helper that calls
  * `authorize` inside it), a method on an object, a getter, a class body, a generator (calling one runs none of its
@@ -243,9 +253,10 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
         return (
             `${where} exports a mutating handler that does not reach authorize(...) on its own path, and the route is ` +
             `not in the exemption map. A call in a string, a comment, another handler, a dead branch, an uncalled ` +
-            `function or another module does not count. Call authorize(...) in this handler (or in a function in this ` +
-            `file that it calls), or, only if it is genuinely not a per-actor product mutation, add a justified ` +
-            `exemption.` +
+            `function or another module does not count, nor does one in an async function or a callback whose ` +
+            `promise the handler neither awaits nor returns. Call authorize(...) in this handler (or in a function in ` +
+            `this file that it calls, awaiting it if it is async), or, only if it is genuinely not a per-actor product ` +
+            `mutation, add a justified exemption.` +
             (policy.hint ? ` ${policy.hint}` : '')
         )
     }
@@ -477,11 +488,26 @@ class RootScanner {
     }
 }
 
+/**
+ * Where a failure at one point of the walk goes: whether a throw there, or a rejection of the promise the current
+ * function returns, reaches the handler's outcome (what Next awaits). A handler's own body reaches it both ways.
+ */
+interface Outcome {
+    /** A throw here reaches the handler's outcome. In an async function, that is a rejection of its promise. */
+    thrown: boolean
+    /** A promise the current function returns reaches the handler's outcome, so a rejection of it does. */
+    returned: boolean
+}
+
+const HANDLER_OUTCOME: Outcome = { thrown: true, returned: true }
+const LOST: Outcome = { thrown: false, returned: false }
+
 /** Walks one handler's path, collecting the calls on it. One instance per handler, never shared. */
 class Reach {
     readonly calls = new Set<string>()
     authorize = false
-    private readonly invoked = new Set<ts.Node>()
+    /** Each function walked, per outcome it was walked under: a cycle stops, a second path that reaches does not. */
+    private readonly invoked = new Map<ts.Node, Set<string>>()
 
     private readonly src: Source
     private readonly authorizeModules: readonly string[]
@@ -491,21 +517,26 @@ class Reach {
         this.authorizeModules = authorizeModules
     }
 
-    invoke(fn: ts.FunctionLikeDeclaration): void {
-        if (this.invoked.has(fn)) return
-        this.invoked.add(fn)
+    /** Walks `fn`'s body, where `outcome` says what reaches the handler's outcome from inside it. */
+    invoke(fn: ts.FunctionLikeDeclaration, outcome: Outcome = HANDLER_OUTCOME): void {
+        const key = `${outcome.thrown}/${outcome.returned}`
+        const seen = this.invoked.get(fn) ?? new Set<string>()
+        if (seen.has(key)) return
+        seen.add(key)
+        this.invoked.set(fn, seen)
         // Calling a generator runs none of its body; it only makes an iterator.
         if (fn.asteriskToken) return
         // Parameter defaults are not visited: one runs only when its argument is missing, which for a handler
         // depends on what Next passes, and for a helper on the caller. Not counting them fails closed.
         if (!fn.body) return
-        if (ts.isBlock(fn.body)) this.statements(fn.body.statements)
-        else this.visit(fn.body)
+        if (ts.isBlock(fn.body)) this.statements(fn.body.statements, outcome)
+        else this.visit(fn.body, outcome)
     }
 
     /**
      * A handler that is a call's result. The call and its non-function arguments ran when the module loaded;
-     * per request, only the functions handed to it run (a nested wrapper's, too: `withA(withB(fn))`).
+     * per request, only the functions handed to it run (a nested wrapper's, too: `withA(withB(fn))`). The wrapper
+     * is what Next calls, and is trusted to carry their failure to Next (see the header).
      */
     wrapped(call: ts.CallExpression): void {
         for (const argument of call.arguments) {
@@ -519,44 +550,58 @@ class Reach {
         }
     }
 
-    visit(node: ts.Node): void {
+    private visit(node: ts.Node, outcome: Outcome): void {
         // A function or class body runs only when called; a type never runs.
         if (ts.isFunctionLike(node) || ts.isClassLike(node) || ts.isTypeNode(node)) return
-        if (ts.isCallExpression(node) || ts.isNewExpression(node)) return this.call(node)
+        if (ts.isCallExpression(node) || ts.isNewExpression(node)) return this.call(node, outcome)
         // The initializer runs; a default inside a destructuring pattern runs only when the value is missing.
-        if (ts.isVariableDeclaration(node)) return node.initializer && this.visit(node.initializer)
+        if (ts.isVariableDeclaration(node)) return node.initializer && this.visit(node.initializer, outcome)
         // A condition always runs; only the branch it rules out is dead.
         if (ts.isConditionalExpression(node)) {
             const condition = constantTruth(this.src, node.condition)
-            this.visit(node.condition)
-            if (condition !== false) this.visit(node.whenTrue)
-            if (condition !== true) this.visit(node.whenFalse)
+            this.visit(node.condition, outcome)
+            if (condition !== false) this.visit(node.whenTrue, outcome)
+            if (condition !== true) this.visit(node.whenFalse, outcome)
             return
         }
         if (ts.isBinaryExpression(node) && isShortCircuit(node.operatorToken.kind)) {
-            this.visit(node.left)
-            if (!rightIsDead(this.src, node)) this.visit(node.right)
+            this.visit(node.left, outcome)
+            if (!rightIsDead(this.src, node)) this.visit(node.right, outcome)
             return
         }
-        ts.forEachChild(node, (child) => this.visit(child))
+        ts.forEachChild(node, (child) => this.visit(child, outcome))
     }
 
-    private call(node: ts.CallExpression | ts.NewExpression): void {
+    private call(node: ts.CallExpression | ts.NewExpression, outcome: Outcome): void {
         const callee = unwrap(node.expression)
         const name = gateName(this.src, callee)
         if (name) this.calls.add(name)
-        if (this.isAuthorize(callee)) this.authorize = true
-        this.callable(callee)
-        for (const argument of node.arguments ?? []) this.callable(argument)
-    }
-
-    /** A callee or an argument: a function literal or a same-file function by name runs; anything else is visited. */
-    private callable(expression: ts.Expression): void {
-        const e = unwrap(expression)
-        if (isFunctionLiteral(e)) return this.invoke(e)
-        this.visit(e)
-        const local = this.localFunction(e)
-        if (local) this.invoke(local)
+        // `authorize` throws synchronously, so its denial reaches the outcome wherever a throw here does.
+        if (outcome.thrown && this.isAuthorize(callee)) this.authorize = true
+        // The promise this call returns reaches the outcome only when it is awaited or returned on the spot.
+        const settled = settledBy(node)
+        const result = settled === 'await' ? outcome.thrown : settled === 'return' ? outcome.returned : false
+        // Called directly, a sync function throws into this point; an async one only rejects its promise.
+        const direct = (fn: ts.FunctionLikeDeclaration): Outcome =>
+            isAsync(fn) ? { thrown: result, returned: result } : { thrown: outcome.thrown, returned: result }
+        if (isFunctionLiteral(callee)) this.invoke(callee, direct(callee))
+        else {
+            this.visit(callee, outcome)
+            const local = this.localFunction(callee)
+            if (local) this.invoke(local, direct(local))
+        }
+        // A function handed to a call is assumed to be invoked, but the callee is not read: it may run it now or
+        // later (`.then`, a timer, an async wrapper), so its failure counts only through the call's own result.
+        const handed: Outcome = result ? HANDLER_OUTCOME : LOST
+        for (const argument of node.arguments ?? []) {
+            const a = unwrap(argument)
+            if (isFunctionLiteral(a)) this.invoke(a, handed)
+            else {
+                this.visit(a, outcome)
+                const local = this.localFunction(a)
+                if (local) this.invoke(local, handed)
+            }
+        }
     }
 
     private localFunction(e: ts.Expression): ts.FunctionLikeDeclaration | undefined {
@@ -593,57 +638,92 @@ class Reach {
         return false
     }
 
-    private statements(list: readonly ts.Statement[]): void {
+    private statements(list: readonly ts.Statement[], outcome: Outcome): void {
         for (const statement of list) {
-            this.statement(statement)
+            this.statement(statement, outcome)
             if (alwaysExits(this.src, statement)) return
         }
     }
 
-    private statement(s: ts.Statement): void {
-        if (ts.isExpressionStatement(s)) this.visit(s.expression)
-        else if (ts.isVariableStatement(s)) this.visit(s.declarationList)
+    private statement(s: ts.Statement, outcome: Outcome): void {
+        if (ts.isExpressionStatement(s)) this.visit(s.expression, outcome)
+        else if (ts.isVariableStatement(s)) this.visit(s.declarationList, outcome)
         else if (ts.isReturnStatement(s) || ts.isThrowStatement(s)) {
-            if (s.expression) this.visit(s.expression)
+            if (s.expression) this.visit(s.expression, outcome)
         } else if (ts.isIfStatement(s)) {
             const condition = constantTruth(this.src, s.expression)
-            this.visit(s.expression)
-            if (condition !== false) this.statement(s.thenStatement)
-            if (condition !== true && s.elseStatement) this.statement(s.elseStatement)
-        } else if (ts.isBlock(s)) this.statements(s.statements)
+            this.visit(s.expression, outcome)
+            if (condition !== false) this.statement(s.thenStatement, outcome)
+            if (condition !== true && s.elseStatement) this.statement(s.elseStatement, outcome)
+        } else if (ts.isBlock(s)) this.statements(s.statements, outcome)
         else if (ts.isTryStatement(s)) {
-            this.statements(s.tryBlock.statements)
-            if (s.catchClause) this.statements(s.catchClause.block.statements)
-            if (s.finallyBlock) this.statements(s.finallyBlock.statements)
+            this.statements(s.tryBlock.statements, outcome)
+            if (s.catchClause) this.statements(s.catchClause.block.statements, outcome)
+            if (s.finallyBlock) this.statements(s.finallyBlock.statements, outcome)
         } else if (ts.isWhileStatement(s)) {
             const condition = constantTruth(this.src, s.expression)
-            this.visit(s.expression)
-            if (condition !== false) this.statement(s.statement)
+            this.visit(s.expression, outcome)
+            if (condition !== false) this.statement(s.statement, outcome)
         } else if (ts.isDoStatement(s)) {
-            this.statement(s.statement)
+            this.statement(s.statement, outcome)
             // The condition runs only when the body falls through or continues; a body that always returns
             // never reaches it.
-            if (reachesLoopEnd(this.src, s)) this.visit(s.expression)
+            if (reachesLoopEnd(this.src, s)) this.visit(s.expression, outcome)
         } else if (ts.isForStatement(s)) {
-            if (s.initializer) this.visit(s.initializer)
+            if (s.initializer) this.visit(s.initializer, outcome)
             const condition = s.condition ? constantTruth(this.src, s.condition) : true
-            if (s.condition) this.visit(s.condition)
+            if (s.condition) this.visit(s.condition, outcome)
             if (condition !== false) {
-                this.statement(s.statement)
-                if (s.incrementor && reachesLoopEnd(this.src, s)) this.visit(s.incrementor)
+                this.statement(s.statement, outcome)
+                if (s.incrementor && reachesLoopEnd(this.src, s)) this.visit(s.incrementor, outcome)
             }
         } else if (ts.isForOfStatement(s) || ts.isForInStatement(s)) {
-            this.visit(s.expression)
-            this.statement(s.statement)
+            this.visit(s.expression, outcome)
+            this.statement(s.statement, outcome)
         } else if (ts.isSwitchStatement(s)) {
-            this.visit(s.expression)
+            this.visit(s.expression, outcome)
             for (const clause of s.caseBlock.clauses) {
-                if (ts.isCaseClause(clause)) this.visit(clause.expression)
-                this.statements(clause.statements)
+                if (ts.isCaseClause(clause)) this.visit(clause.expression, outcome)
+                this.statements(clause.statements, outcome)
             }
-        } else if (ts.isLabeledStatement(s)) this.statement(s.statement)
+        } else if (ts.isLabeledStatement(s)) this.statement(s.statement, outcome)
         // Anything else (a function or class declaration, an import, an enum) runs nothing on this path that
         // the scan credits: fail closed.
+    }
+}
+
+function isAsync(fn: ts.FunctionLikeDeclaration): boolean {
+    return hasModifier(fn, ts.SyntaxKind.AsyncKeyword)
+}
+
+/**
+ * What happens to the value of `call` on the spot: it is `await`ed, or returned from the function it sits in (by
+ * `return`, or as an arrow's expression body). On the way it may pass through parentheses, a type assertion, a
+ * ternary's arm, or the right of `&&`, `||`, `??` or a comma, which hand it on. Anything else (a statement of its
+ * own, `void`, a variable, an argument, a `.then`) leaves its promise floating, as far as the scan can see.
+ */
+function settledBy(call: ts.Expression): 'await' | 'return' | undefined {
+    let node: ts.Node = call
+    for (;;) {
+        const parent: ts.Node = node.parent
+        if (
+            ts.isParenthesizedExpression(parent) ||
+            ts.isAsExpression(parent) ||
+            ts.isSatisfiesExpression(parent) ||
+            ts.isNonNullExpression(parent) ||
+            ts.isTypeAssertionExpression(parent) ||
+            (ts.isConditionalExpression(parent) && parent.condition !== node) ||
+            (ts.isBinaryExpression(parent) &&
+                parent.right === node &&
+                (isShortCircuit(parent.operatorToken.kind) || parent.operatorToken.kind === ts.SyntaxKind.CommaToken))
+        ) {
+            node = parent
+            continue
+        }
+        if (ts.isAwaitExpression(parent)) return 'await'
+        if (ts.isReturnStatement(parent)) return 'return'
+        if (ts.isArrowFunction(parent) && parent.body === node) return 'return'
+        return undefined
     }
 }
 

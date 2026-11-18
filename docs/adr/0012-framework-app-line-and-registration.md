@@ -950,3 +950,22 @@ stack bundling the migrator from a file path in `packages/kit`, is gone: the con
 (`--alias:@sssb/app-config=<app>/src/app-config`), and fails `cdk synth` unless the bundle carries the app's own
 migrations. Each app's `infra/` is a CDK project, not app source: the app's vendor fence does not reach it
 (`APP_INFRA_GLOB` in `eslint.config.mjs`), and nothing typechecks it but its synth.
+
+## Addendum (2026-11-18): a denial counts only where it reaches the handler's outcome
+
+The 2026-11-17 addendum's limits said an `async` same-file helper that calls `authorize` counts whether or not the
+handler awaits it. That is no longer so. The scan (`packages/kit/src/authz/route-scan.ts`) credits `authorize` only
+where its denial reaches what Next awaits: it throws synchronously, so through any synchronous frame, but a call into
+an `async` function, or a call a function is handed to (a wrapper, `.then`, a timer), carries it only when that
+call's result is `await`ed or returned on the spot. Not awaited, `void`, chained, stored in a variable or passed on,
+the promise floats, and nothing inside it counts. A function handed to a call is still assumed to be invoked, and now
+also to carry its failure in the call's result, which is why that result must be awaited or returned; the wrapper a
+handler IS (`export const POST = withX(fn)`) is what Next calls, and stays trusted. The decision log has the rejected
+alternative (type-aware lint) and the shapes that newly fail.
+
+**Limits**, in addition to the 2026-11-17 list, less its un-awaited item:
+
+- A `catch` that swallows the denial (`try { await check() } catch {}`) still counts: syntax cannot tell it from one
+  that answers 403.
+- An `authorize` named through `authorizeModules` must throw synchronously, as SSSB's does; a floating call to an
+  async one would count.

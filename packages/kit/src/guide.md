@@ -72,7 +72,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - Every exported mutating route handler (POST, PUT, PATCH, DELETE) in a `route.ts` anywhere under `src/app`, not only
   under `src/app/api`, calls `authorize(...)` from `@sssb/kit/authz/authorize` on its own path, as
   `src/app/api/items/route.ts` does. The conformance suite's `authz-mutations` check reads each handler: a string, a
-  comment, a dead branch or a helper in another module does not count.
+  comment, a dead branch or a helper in another module does not count, nor does an `async` helper or a callback
+  whose promise the handler neither awaits nor returns. `await` the helper that authorizes.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
   `src/app/api`), with a reason and a `mustMatch` gate. A mutating route outside `src/app/api` can match no
   exemption.

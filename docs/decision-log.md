@@ -5123,3 +5123,35 @@ _Accepted gap_ and adds to the rule.
   `packages/kit/tsconfig.strict.json`, is what compiles the kit against a seam without `appRoles` (the strict config
   resolves the seam to the fixture, which exports it): reading `.appRoles` directly fails `apps/starter` and
   `apps/showcase` with TS2339 and passes the strict config.
+
+## The authorization scan counts a denial only where it reaches the handler's outcome (2026-11-18, `fix/authz-scan-unawaited`)
+
+The 2026-11-17 entry on the scan left a known hole to lint: a handler that calls an `async` same-file helper without
+awaiting it "reaches" `authorize`, yet the helper's `ForbiddenError` becomes an unhandled rejection and the handler goes
+on to mutate. The lint rule it named was never added. Decided by the session that fixed it, under JP's standing rule.
+
+- **A scan change, not type-aware lint.** `route-scan.ts` now walks each function under an outcome: whether a throw
+  there, and a promise the function returns, reach what Next awaits. `authorize` throws synchronously, so it counts
+  wherever a throw does. A call into an `async` function, or into a call a function is handed to, carries the denial
+  only when its result is `await`ed or returned on the spot (through parentheses, type assertions, a ternary arm, or
+  the right of `&&`, `||`, `??` or a comma). Rejected: `@typescript-eslint/no-floating-promises` scoped to route files.
+  It answers a different question. It accepts `void p`, `p.catch(() => {})` and `p.then(ok, onError)` as handled, and
+  each of those drops the denial; it would sit beside a conformance check that still passed the route; an adopter can
+  turn a lint rule off where a conformance opt-out is named and reasoned; and it needs type information in
+  `@sssb/eslint-plugin`'s preset (`parserOptions.projectService`), a type-checked program on every adopter's lint run.
+  The scan needs no types: the only functions it credits are same-file ones and literals, whose `async` it can see.
+- **A function handed to a call needs that call awaited or returned, sync or async.** The scan cannot read the callee,
+  and `.then`, a timer, `new Promise` and an `async` wrapper (`db.withTenant`) all run a sync function where its throw
+  never reaches the handler. So `[1].forEach(() => authorize(…))` as a statement of its own now fails, though `forEach`
+  throws in place; write a `for … of`. Rejected: trusting a sync callback to run in place, which passes
+  `load().then((row) => authorize(row))` and an unawaited `db.withTenant(org, () => { authorize(…) })`. No route in
+  either app or the fixture had a shape this fails; every one authorizes in its body or in a wrapper it returns.
+- **Fail closed on chains and stored promises.** `await check().then(…)` and `const p = check(); …; await p` do carry
+  a rejection, but the scan does not follow a chain or a variable, and the second lets the handler mutate before the
+  await. Both fail; `await check()` is the shape to write.
+- **`try { await check() } catch {}` still counts.** A catch that swallows the denial is not something syntax can tell
+  from one that turns it into a 403 (`withPortErrors`, inlined). Left as a stated limit (ADR-0012's addendum of
+  2026-11-18), as before for a sync `authorize` in the same place.
+- **Gate calls are unchanged.** `calls` (`auth.updateProfile`, `auth.setActiveOrg`) still counts an unawaited call:
+  there the call is the mutation the port guards, so a rejected one mutated nothing, and a gate proves the kind of
+  route, not that it waits.
