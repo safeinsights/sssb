@@ -1,7 +1,7 @@
 'use client'
 
-import { Box, Group, SegmentedControl, Stack, Text, UnstyledButton } from '@mantine/core'
-import { useLocale, useTranslations } from 'next-intl'
+import { Box, Group, SegmentedControl, Stack, Text, UnstyledButton, VisuallyHidden } from '@mantine/core'
+import { useFormatter, useLocale, useTranslations } from 'next-intl'
 import type { CSSProperties, KeyboardEvent, PointerEvent, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 // LOCALES is imported relatively (not via '@') so the static-demo vite bundle resolves it the
@@ -216,6 +216,7 @@ export function SimulatorPanel({
     notices?: SimulatorNotice[]
 }) {
     const t = useTranslations('simulator')
+    const format = useFormatter()
     const locale = useLocale()
     // Collapsed by default: SSR has no localStorage, so starting expanded would flash the column
     // before the persisted value can be read on mount.
@@ -419,7 +420,6 @@ export function SimulatorPanel({
             <UnstyledButton
                 data-testid="simulator-pill"
                 data-hydrated={hydrated ? 'true' : undefined}
-                aria-label={t('pillAriaLabel')}
                 onClick={toggle}
                 style={{
                     position: 'fixed',
@@ -437,17 +437,28 @@ export function SimulatorPanel({
                     boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
                 }}
             >
+                {/* Named by its content, never an aria-label (WCAG 2.5.3 Label in Name): the visible
+                    "Simulator", then a visually hidden ", 3 unread emails, open the panel" (Chromium
+                    computes "Simulator , 3 unread…": the hidden text is absolutely positioned, which it
+                    pads with a space). The badge is
+                    aria-hidden because the hidden text says its count with a unit; both use the same
+                    locale number format, so the digits a voice user sees are the ones in the name. axe
+                    4.14 reads label and badge as one word ("Simulator3"), which no aria-label contains. */}
                 <Text size="sm" fw={600} c="gray.0">
                     {t('pillLabel')}
+                    <VisuallyHidden>
+                        {totalUnread > 0 ? t('pillUnreadSuffix', { count: totalUnread }) : t('pillSuffix')}
+                    </VisuallyHidden>
                 </Text>
                 {totalUnread > 0 ? (
                     <Text
                         ref={badgeRef}
+                        aria-hidden
                         size="xs"
                         fw={700}
                         style={{ background: '#c92a2a', color: '#fff', borderRadius: 999, padding: '1px 8px' }}
                     >
-                        {totalUnread}
+                        {format.number(totalUnread)}
                     </Text>
                 ) : null}
             </UnstyledButton>

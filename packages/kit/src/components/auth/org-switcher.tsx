@@ -1,6 +1,6 @@
 'use client'
 
-import { Group, Menu, UnstyledButton } from '@mantine/core'
+import { Group, Menu, UnstyledButton, VisuallyHidden } from '@mantine/core'
 import { useTranslations } from 'next-intl'
 import { CheckIcon, ChevronDownIcon } from './auth-icons'
 import { PreviewRow } from './preview-row'
@@ -34,9 +34,13 @@ export function OrgSwitcher({
     return (
         <Menu position="bottom-end" width={264} withinPortal>
             <Menu.Target>
+                {/* Named by its content, never an aria-label (WCAG 2.5.3 Label in Name): the name is the
+                    team name the button shows, then a visually hidden ", switch team". The avatar's
+                    initials are aria-hidden (PreviewRow): they are a symbol, like a "B" on a Bold
+                    button, not the label. An aria-label would have to repeat them, since axe 4.14
+                    compares one with every word on screen. */}
                 <UnstyledButton
                     data-testid="org-switcher"
-                    aria-label={t('switchLabel')}
                     style={{
                         maxWidth: 220,
                         padding: '4px 8px',
@@ -48,6 +52,7 @@ export function OrgSwitcher({
                         <PreviewRow name={active.name} title={active.name} size="sm" />
                         <ChevronDownIcon />
                     </Group>
+                    <VisuallyHidden>{t('switchTriggerSuffix')}</VisuallyHidden>
                 </UnstyledButton>
             </Menu.Target>
             <Menu.Dropdown>
