@@ -591,6 +591,10 @@ describe('@sssb/create: the generated workspace', () => {
         expect(run('workspace:@other/gone@^1')).toThrow(/still depends on @other\/gone by workspace: protocol/)
         // The seam's own package, under an alias of its own.
         expect(run('workspace:acme-app-config@*')).not.toThrow()
+        // A package whose manifest is there but that no pnpm-workspace.yaml glob covers is not the workspace's.
+        mkdirSync(path.join(broken, 'app/vendor/stray'), { recursive: true })
+        writeFileSync(path.join(broken, 'app/vendor/stray/package.json'), JSON.stringify({ name: 'stray' }))
+        expect(run('workspace:stray@*')).toThrow(/still depends on stray by workspace: protocol/)
     })
 
     it('claims no licence for the workspace’s packages', () => {

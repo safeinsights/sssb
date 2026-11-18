@@ -413,29 +413,33 @@ describe('one SSSB per importer, with its own seam', () => {
         ])
     })
 
-    it("fails an app that declares another app's seam as its own, with an instance of its own linked to it", () => {
-        const ws = seamWorkspace('sssb-doctor-seams-borrowed-', 'none')
-        const consoleSeam = path.join(ws, 'apps', 'console', 'src', 'app-config')
-        const ledger = path.join(ws, 'apps', 'ledger')
+    // Both directions: the app named is the borrower, whichever of the two the walk reaches first.
+    it.each([
+        ['ledger', 'console'],
+        ['console', 'ledger'],
+    ])("fails %s, which declares %s's seam as its own, with an instance of its own linked to it", (app, owner) => {
+        const ws = seamWorkspace(`sssb-doctor-seams-borrowed-${app}-`, 'none')
+        const ownerSeam = path.join(ws, 'apps', owner, 'src', 'app-config')
+        const borrower = path.join(ws, 'apps', app)
         writeFileSync(
-            path.join(ledger, 'package.json'),
-            readFileSync(path.join(ledger, 'package.json'), 'utf8').replace(
-                'ledger-app-config@*',
-                'console-app-config@*',
+            path.join(borrower, 'package.json'),
+            readFileSync(path.join(borrower, 'package.json'), 'utf8').replace(
+                `${app}-app-config@*`,
+                `${owner}-app-config@*`,
             ),
         )
-        // pnpm links what the ledger declares: the console's seam, beside the ledger's own instance too.
-        rmSync(path.join(ledger, 'node_modules', '@sssb', 'app-config'))
-        link(path.join(ledger, 'node_modules', '@sssb', 'app-config'), consoleSeam)
+        // pnpm links what the borrower declares: the owner's seam, beside the borrower's own instance too.
+        rmSync(path.join(borrower, 'node_modules', '@sssb', 'app-config'))
+        link(path.join(borrower, 'node_modules', '@sssb', 'app-config'), ownerSeam)
         const instanceSeam = path.join(
-            realpathSync(path.join(ledger, 'node_modules', '@sssb', 'kit')),
+            realpathSync(path.join(borrower, 'node_modules', '@sssb', 'kit')),
             '..',
             'app-config',
         )
         rmSync(instanceSeam)
-        link(instanceSeam, consoleSeam)
+        link(instanceSeam, ownerSeam)
         expect(importerSeamProblems(ws, kitDirOf).problems).toEqual([
-            "apps/ledger: declares @sssb/app-config as workspace:console-app-config@*, which is apps/console's seam apps/console/src/app-config, not one of its own",
+            `apps/${app}: declares @sssb/app-config as workspace:${owner}-app-config@*, which is apps/${owner}'s seam apps/${owner}/src/app-config, not one of its own`,
         ])
     })
 })
@@ -672,7 +676,11 @@ function addApp(ws: string, dir: string, mode: Mode, { conformance = true } = {}
 /** A workspace of `apps` under apps/, with root configs that give each app a unit and a contract project. */
 function doctorWorkspace(prefix: string, mode: Mode, apps: string[] = ['a', 'b']) {
     const ws = realpathSync(makeTestTmpDir(prefix))
-    write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n    - apps/*\n    - packages/*\n')
+    // Each app's seam is a workspace package, as a generated workspace's is.
+    write(
+        path.join(ws, 'pnpm-workspace.yaml'),
+        'packages:\n    - apps/*\n    - apps/*/src/app-config\n    - packages/*\n',
+    )
     pkg(ws, {
         name: 'ws',
         private: true,
@@ -995,6 +1003,24 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
             const { code, out } = await doctor(ws, 'apps/a')
             expect(out).toMatch(/^FAIL +apps\/c: the conformance suite would run/m)
             expect(code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        "counts the tests in an app's seam as the app's, though the seam is a workspace package of its own",
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-seam-tests-', 'packed')
+            write(
+                path.join(ws, 'apps', 'a', 'src', 'app-config', 'abilities.test.ts'),
+                "import { it } from 'vitest'\nit('a seam test', () => {})\n",
+            )
+            write(
+                path.join(ws, 'apps', 'a', 'vitest.seam.config.mjs'),
+                "export default { test: { include: ['src/app-config/**/*.test.ts'] } }\n",
+            )
+            const { out } = await doctor(ws, 'apps/a')
+            expect(out).toMatch(/vitest\.seam\.config\.mjs runs 1 of its src\/ test files but not/)
         },
         E2E_TIMEOUT,
     )

@@ -471,11 +471,35 @@ function writeWorkspace(root, c, templateDir) {
     }
 
     const all = filesUnder(root)
-    // Nothing may still point at a workspace package this workspace does not have (the seam is one it has).
+    // Nothing may still point at a workspace package this workspace does not have (the seam is one it has): a package
+    // is the workspace's when pnpm-workspace.yaml's `packages` globs (a `*` is one path segment) cover its directory.
+    const globs = readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8')
+        .split('\n\n')[0]
+        .split('\n')
+        .flatMap((line) => /^\s*-\s+(\S+)\s*$/.exec(line)?.[1] ?? [])
+        .map(
+            (glob) =>
+                new RegExp(
+                    `^${glob
+                        .split('*')
+                        .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+                        .join('[^/]+')}$`,
+                ),
+        )
     const manifests = all
         .filter((f) => path.basename(f) === 'package.json')
-        .map((file) => ({ file, json: readJson(path.join(root, file)) }))
-    const names = new Set(manifests.map(({ json }) => json.name))
+        .map((file) => {
+            try {
+                return { file, json: readJson(path.join(root, file)) }
+            } catch (err) {
+                throw new CreateError(`${file} is not valid JSON: ${/** @type {Error} */ (err).message}`)
+            }
+        })
+    const member = (/** @type {string} */ file) => {
+        const dir = path.dirname(file).split(path.sep).join('/')
+        return dir === '.' || globs.some((glob) => glob.test(dir))
+    }
+    const names = new Set(manifests.filter(({ file }) => member(file)).map(({ json }) => json.name))
     for (const { file, json } of manifests) {
         for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
             for (const [dep, spec] of Object.entries(json[field] ?? {})) {

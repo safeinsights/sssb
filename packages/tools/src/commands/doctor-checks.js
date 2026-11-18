@@ -544,8 +544,16 @@ export function importerSeamProblems(root, resolveKit, found = kitImporters(root
     /** @type {string[]} */
     const importers = []
     const rel = (/** @type {string} */ dir) => path.relative(root, dir) || '(the workspace root)'
-    /** @type {Map<string, string>} each package's own seam (real path) -> the first package that declares it */
+    /**
+     * Each declared seam (real path) -> its package: the importer whose own `src/app-config` it is, else the first that
+     * declares it. By location first, so an app that declares another's seam is the one named, whatever the walk order.
+     * @type {Map<string, string>}
+     */
     const seamOwners = new Map()
+    for (const { dir } of found) {
+        const home = path.join(dir, 'src', 'app-config')
+        if (existsSync(home)) seamOwners.set(realpathSync(home), rel(dir))
+    }
     for (const { dir, manifest } of found) {
         const own = ownSeam(dir, declared(manifest, SEAM))
         if (own && !seamOwners.has(own)) seamOwners.set(own, rel(dir))
