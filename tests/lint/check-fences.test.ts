@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import sssb from '@sssb/eslint-plugin'
@@ -17,9 +17,15 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  * blocks, which used to replace the fences) must not.
  */
 const repoRoot = process.cwd()
+// The apps of the tree this runs in, never named: `pnpm init-app` renames the starter and can eject the showcase, and
+// the adoption probe runs this suite in such a tree.
+const APPS = readdirSync(path.join(repoRoot, 'apps'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(path.join(repoRoot, 'apps', entry.name, 'package.json')))
+    .map((entry) => entry.name)
+    .sort()
 
 describe("this repo's apps keep every fence through the repo's config", () => {
-    it.each(['showcase', 'starter'])(
+    it.each(APPS)(
         'apps/%s',
         async (app) => {
             const result = await checkFences({ appDir: path.join(repoRoot, 'apps', app), ESLint })
@@ -321,12 +327,16 @@ describe('sssb check-fences', () => {
             encoding: 'utf8',
         })
 
-    it('passes the starter through the repo config', () => {
-        const run = sssbCli('--app', 'apps/starter')
-        expect(run.stderr).toBe('')
-        expect(run.status).toBe(0)
-        expect(run.stdout).toMatch(/every fence holds/)
-    }, 120_000)
+    it.each(APPS)(
+        'passes apps/%s through the repo config',
+        (app) => {
+            const run = sssbCli('--app', `apps/${app}`)
+            expect(run.stderr).toBe('')
+            expect(run.status).toBe(0)
+            expect(run.stdout).toMatch(/every fence holds/)
+        },
+        120_000,
+    )
 
     it('says so when the app does not resolve the plugin', () => {
         const appDir = makeTestTmpDir('check-fences-cli-')
