@@ -3587,3 +3587,42 @@ JP asked what is worth borrowing from CanopyCMS's documentation setup. Two thing
 - **Typed linting cannot pass check-fences yet.** Its probe files are virtual and outside the app's TypeScript
   project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
   with that reason (a false red, not a hole).
+
+## Release notes are assembled from the changesets by a script, outside the release commit (2026-11-18, `feat/release-notes`)
+
+The Canopy survey deferred this until `@sssb/tools` existed. #21 made every PR that changes what ships carry a
+changeset with a Kind and an Action; ADR-0014 part 10 wants notes with "Seam changes", "Framework migrations",
+"Operator actions" and "Scaffold changes to apply by hand", and the stock Changesets changelog ignores Kind and Action
+and deletes the files. `scripts/release-notes.mjs` reads the files first and writes those sections, with each entry's
+What changed, To adopt and Now deletable.
+
+- **Taken from CanopyCMS** (`scripts/migration-notes.mjs`): the entries are the changeset files, assembled by a script
+  that lints them first and gives the same bytes for the same files, and a regeneration from a tag after the files are
+  gone. **Not taken:** its area table, int labels, `## Unreleased` table, rewriting a changelog in the repository and
+  `--promote`, which serve an npm prerelease channel and cost 3,286 lines.
+- **A script in `scripts/`, not an `@sssb/tools` command.** Only SSSB's maintainers release SSSB. `@sssb/tools` ships
+  to adopters, so a command there would ship maintainer-only code, and P4 left `scripts/` for what is the repository's
+  own. `pnpm release:notes` runs it. Rejected: `sssb release-notes`.
+- **One shape lint, and it is the assembler's.** `lintChangeset` moved from `tests/support/changeset-shape.ts` into the
+  script, which the test file re-exports: the tests, `release.mjs check`, `release.mjs prepare` and the command read a
+  changeset with the same code. It no longer uses the `yaml` package, because the `push` and `publish` jobs install
+  nothing and the module must be loadable there: the frontmatter is read one `'@sssb/pkg': bump` per line, as
+  `release.mjs`'s own reader does, so a changeset using YAML's other forms is refused (Changesets would accept it).
+- **Loaded dynamically.** release.yml's `push` job copies `scripts/release.mjs` out of the commit and `publish` checks
+  out only that file, so `release.mjs` imports the notes module only inside `check` and `prepare`; a test runs the lone
+  copy to pin it.
+- **`check` lints every changeset on every PR; `prepare` always assembles before `changeset version`.** A changeset that
+  is not a readable entry would otherwise fail a release after its plan was accepted. `prepare` writes the file only
+  when asked (`--notes <file>`, outside the tree), and the `plan` job asks. While every package is private `prepare`
+  returns before this point, so a release stays dormant; the lint on PRs does not.
+- **The notes are not in the release commit.** The `push` job is pinned by hash and `verifyRelease` refuses any file
+  other than the version bumps, the deleted changesets and the package changelogs. A committed notes file would widen
+  what that job must be trusted with, and `verifyRelease`, a lone file, cannot regenerate the notes to compare. The
+  notes are the `plan` job's summary and a `release-notes` artifact, and `--at <release commit>^ --version <v>`
+  regenerates them from the tag at any time. Rejected: a `docs/releases/v<version>.md` per release, a durable record
+  in the repository, because of the above.
+- **No GitHub release is created.** That is publishing, which P7 (a release candidate, from `--since <previous tag>`)
+  and P14 (npm) own.
+- **Order inside a section:** Action required first, then optional, then none, then by file name, so the entries that
+  break an adopter who does nothing come first.
+- **The `release.test.ts` fixtures now carry a shaped body**, since `check` and `prepare` refuse any other.

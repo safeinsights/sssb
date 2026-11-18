@@ -943,3 +943,16 @@ fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are t
   complete it. The logic is the plugin's (`@sssb/eslint-plugin/check-fences`); the `sssb` command resolves it from
   the app's directory.
 - **The e2e import ban of part 2 is not in P6.** It needs `@sssb/kit/testing/e2e`, which P5 builds.
+
+## Addendum — 2026-11-18: release notes are assembled from the changesets
+
+Part 10 and the P7 row say the notes' "Seam changes" and "Framework migrations" sections are written by hand "until
+Changesets exists". Changesets exists, and its changelog does not carry Kind and Action, so the notes are assembled
+instead: `scripts/release-notes.mjs` reads the pending changesets (each filed by its `**Kind.**` into the four
+sections of part 10, then "Other changes") and writes them with each entry's What changed, To adopt and Now deletable.
+`release.mjs prepare` runs it before `changeset version` deletes the files, the `plan` job publishes the result as its
+summary and a `release-notes` artifact, and `--since <tag>` gives a release candidate its notes (what was added since
+the previous one) and `--at <release commit>^` a finished release's. A release candidate's notes are therefore not
+hand-written, only checked; the sections for changes that predate the changesets (everything since 24b0589) are
+still written by hand. Creating the GitHub release is still P7's step. Why a script and not an `@sssb/tools` command,
+and why the notes stay out of the release commit, is in `docs/decision-log.md` (2026-11-18, `feat/release-notes`).

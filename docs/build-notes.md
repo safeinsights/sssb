@@ -2192,3 +2192,13 @@ and #19 changed paths in earlier entries after their files moved to `resolved/`.
   the `sssb/*` rules. That one comparison sees a rule turned off or down, a later `ignores`, a global ignore and a
   nested config file that takes over a directory (ESLint 10 looks up the config from each file's directory), none of
   which a probe at a fixed path would see unless it happened to sit there.
+
+## `release.mjs` runs as a lone file in two release jobs (2026-11-18, `feat/release-notes`)
+
+release.yml's `push` job copies `scripts/release.mjs` out of the commit to a temp path (so a patch that rewrote it
+would not be the code that judges it) and `publish` checks out that one file; neither has `node_modules`, and neither
+has `scripts/release-notes.mjs` beside it. A static `import './release-notes.mjs'` would have failed both with
+`ERR_MODULE_NOT_FOUND`, in the one job that holds the release app's key, after the release was already planned. So the
+notes module is imported inside `check` and `prepare`, and `tests/tooling/release.test.ts` copies `release.mjs` alone
+and runs it. A script run through a symlinked temp directory (macOS's `/var`) also never reaches `main` if it compares
+`process.argv[1]` with `import.meta.url` as plain strings; `release.mjs` and `release-notes.mjs` compare real paths.

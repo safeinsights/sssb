@@ -7,6 +7,7 @@ import { isChangesetName as releaseIsChangesetName } from '../../scripts/release
 import {
     assembleNotes,
     isChangesetName,
+    lintChangeset,
     lintChangesets,
     main,
     readChangesets,
@@ -432,5 +433,31 @@ describe('the command line', () => {
     it('main takes the root, so the real repository can be judged in-process too', () => {
         expect(main(['--check'], ROOT)).toBe(0)
         expect(readdirSync(path.join(ROOT, '.changeset')).length).toBeGreaterThan(0)
+    })
+})
+
+describe('the shape lint, where the notes depend on it', () => {
+    it('reports only the frontmatter when a frontmatter line cannot be read, not a pile of consequences', () => {
+        expect(lintChangeset("---\n'@sssb/kit': minor, '@sssb/tools': minor\n---\n\n### T\n")).toEqual([
+            expect.stringMatching(/^cannot read the frontmatter line/),
+        ])
+    })
+
+    it('puts entries of one section and action in file-name order, whatever order they arrive in', () => {
+        const one = changeset({ kind: 'seam', action: 'required', title: 'Alpha' })
+        const two = changeset({ kind: 'seam', action: 'required', title: 'Beta' })
+        const forward = assembleNotes(asList({ '.changeset/a.md': one, '.changeset/b.md': two })).markdown
+        const backward = assembleNotes(asList({ '.changeset/b.md': two, '.changeset/a.md': one })).markdown
+        expect(backward).toBe(forward)
+        expect(forward.indexOf('### Alpha')).toBeLessThan(forward.indexOf('### Beta'))
+    })
+
+    it('closes a fence only with a fence at least as long, so a longer fence can show a shorter one', () => {
+        const nested = ['````md', '```bash', '# not a heading', '```', '# nor is this', '````'].join('\n')
+        expect(lintChangeset(changeset({ kind: 'seam', action: 'required', adopt: `See:\n\n${nested}` }))).toEqual([])
+        // ...and a real heading after the fence closes is still caught
+        expect(
+            lintChangeset(changeset({ kind: 'seam', action: 'required', adopt: `See:\n\n${nested}\n\n# Real` })),
+        ).toEqual([expect.stringMatching(/no `#` or `##` heading/)])
     })
 })
