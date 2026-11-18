@@ -515,6 +515,37 @@ function declared(manifest, name, fields = DEPENDENCY_FIELDS) {
 export const seamOfKit = (kitDir) => packageDirFrom(kitDir, SEAM)
 
 /**
+ * THE INSTALLED LAYOUT: SSSB needs pnpm's default `nodeLinker`, `isolated`. Every check doctor makes reads the layout
+ * it builds (each importer's own `@sssb/kit` instance in the virtual store, with its seam linked beside it, found
+ * through `node_modules`), and so does the shared kit resolver. Under `hoisted` one instance serves every app, so no
+ * two apps can each have their own seam; under `pnp` the tools doctor runs (Vitest's listing) may never finish. The
+ * layout pnpm installed is in the root's `node_modules/.modules.yaml` (JSON, which is YAML), whatever setting asked
+ * for it. Null when the layout is isolated, or when nothing is installed (the kit resolver then says so).
+ * @param {string} root
+ * @returns {string | null} the problem
+ */
+export function nodeLinkerProblem(root) {
+    const file = path.join(root, 'node_modules', '.modules.yaml')
+    if (!existsSync(file)) return null
+    const text = readFileSync(file, 'utf8')
+    /** @type {unknown} */
+    let linker
+    try {
+        linker = JSON.parse(text)?.nodeLinker
+    } catch {
+        // A pnpm that writes it as YAML: a top-level `nodeLinker: <value>` line.
+        linker = /^nodeLinker:\s*['"]?([A-Za-z-]+)/m.exec(text)?.[1]
+    }
+    if (typeof linker !== 'string') linker = 'isolated'
+    if (linker === 'isolated') return null
+    return (
+        `pnpm installed this workspace with nodeLinker ${linker} (node_modules/.modules.yaml); SSSB needs nodeLinker ` +
+        `isolated, pnpm's default, which gives each app its own @sssb/kit linked to its own seam. Remove the ` +
+        `nodeLinker (or node-linker) setting from pnpm-workspace.yaml and .npmrc, then run pnpm install`
+    )
+}
+
+/**
  * Every package of the workspace, the root included, that takes `@sssb/kit` in any dependency field (dependencies,
  * devDependencies, optionalDependencies, peerDependencies), the framework itself aside. Real paths.
  * @param {string} root

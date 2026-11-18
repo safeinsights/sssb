@@ -437,7 +437,12 @@ Vitest config (a browser, integration or CI config) that runs some of an app's t
 failed, and so is a bare `vitest` from the app's own directory (what the app's scripts and `pnpm -r` run) when the main
 run is the root's and that one would not run the suite, even if it runs none of the app's tests; so are the narrowing
 flags your package.json scripts pass to vitest and which script runs each contract config: doctor cannot see which config or flags your CI uses, so make
-sure CI runs the config doctor names. It also fails a second copy of any peer `@sssb/kit` declares (React, Next,
+sure CI runs the config doctor names. Before any of that it fails a workspace pnpm installed with a `nodeLinker` other
+than `isolated`, pnpm's default (`pnp` or `hoisted`, from `pnpm-workspace.yaml` or `.npmrc`): every app needs its own
+`@sssb/kit` linked to its own seam in `node_modules`, which only `isolated` gives; nothing else is checked until it is.
+Each `vitest list` doctor runs is stopped after 120 seconds (`SSSB_DOCTOR_VITEST_TIMEOUT`, in seconds, changes the
+limit), so a listing that never finishes is a problem doctor names rather than a hang. It also fails a second copy of
+any peer `@sssb/kit` declares (React, Next,
 Kysely...), an importer of the framework anywhere in the workspace that does not run on its own seam or declares it as
 a `link:` (which the next `pnpm add <pkg>` for the app unlinks) or by a name that no workspace package, or several,
 have, and an

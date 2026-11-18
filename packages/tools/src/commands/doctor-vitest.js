@@ -111,18 +111,28 @@ function vitestCli(cwd) {
     return typeof relative === 'string' ? path.join(dir, relative) : null
 }
 
+/** The environment variable that sets the limit on one `vitest list`, in seconds. */
+const TIMEOUT_ENV = 'SSSB_DOCTOR_VITEST_TIMEOUT'
+
+/** The limit on one `vitest list`, in milliseconds: `SSSB_DOCTOR_VITEST_TIMEOUT` seconds when set, else 120 s. */
+function listTimeoutMs() {
+    const seconds = Number(process.env[TIMEOUT_ENV])
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 120_000
+}
+
 /** @typedef {{ name: string, file: string, projectName?: string }} ListedTest */
 /** @typedef {{ file: string, projectName?: string }} ListedFile */
 
 /**
  * `vitest list --json=<file>`, with `--filesOnly` or not, from `run.cwd`, selecting `projects` (none: all). Returns
  * what it listed, or the error Vitest stopped with (a test file that throws while it is collected stops the list,
- * and Vitest then writes no JSON at all).
+ * and Vitest then writes no JSON at all). A listing that runs past `timeoutMs` is killed and reported as an error,
+ * so nothing it waits on can hang doctor.
  * @param {VitestRun} run
- * @param {{ filesOnly?: boolean, projects?: readonly string[] }} [options]
+ * @param {{ filesOnly?: boolean, projects?: readonly string[], timeoutMs?: number }} [options]
  * @returns {{ ok: true, listed: ListedTest[] } | { ok: false, error: string }}
  */
-export function vitestList(run, { filesOnly = false, projects = [] } = {}) {
+export function vitestList(run, { filesOnly = false, projects = [], timeoutMs = listTimeoutMs() } = {}) {
     const cli = vitestCli(run.cwd)
     if (cli === null) return { ok: false, error: `no vitest is installed for ${run.cwd}` }
     const scratch = mkdtempSync(path.join(tmpdir(), 'sssb-doctor-'))
@@ -137,9 +147,18 @@ export function vitestList(run, { filesOnly = false, projects = [] } = {}) {
             encoding: 'utf8',
             env: { ...process.env, VITE_CONFIG_NATIVE_IGNORE_WARNING: 'true' },
             maxBuffer: 64 * 1024 * 1024,
+            timeout: timeoutMs,
+            killSignal: 'SIGKILL',
         })
+        const output = `${result.stderr ?? ''}\n${result.stdout ?? ''}`
+        if (/** @type {NodeJS.ErrnoException | undefined} */ (result.error)?.code === 'ETIMEDOUT') {
+            return {
+                ok: false,
+                error: `vitest list did not finish within ${timeoutMs / 1000}s, so doctor stopped it (${TIMEOUT_ENV} sets the limit, in seconds)`,
+            }
+        }
         if (result.status === 0 && existsSync(out)) return { ok: true, listed: JSON.parse(readFileSync(out, 'utf8')) }
-        return { ok: false, error: vitestError(`${result.stderr ?? ''}\n${result.stdout ?? ''}`, result.status) }
+        return { ok: false, error: vitestError(output, result.status) }
     } finally {
         rmSync(scratch, { recursive: true, force: true })
     }

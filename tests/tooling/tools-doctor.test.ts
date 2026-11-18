@@ -12,6 +12,7 @@ import {
     isInRepoKit,
     kitImporters,
     missingTests,
+    nodeLinkerProblem,
     packageDirFrom,
     ownTests,
     parseWorkspaceYaml,
@@ -23,7 +24,12 @@ import {
     vitestInvocations,
     workspacePackages,
 } from '../../packages/tools/src/commands/doctor-checks.js'
-import { projectsRunning, vitestDefaultConfig, vitestRunsFor } from '../../packages/tools/src/commands/doctor-vitest.js'
+import {
+    projectsRunning,
+    vitestDefaultConfig,
+    vitestList,
+    vitestRunsFor,
+} from '../../packages/tools/src/commands/doctor-vitest.js'
 import { kitDirOf } from '../../packages/tools/src/kit.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
@@ -457,6 +463,61 @@ describe('one SSSB per importer, with its own seam', () => {
             `apps/${app}: declares @sssb/app-config as workspace:${owner}-app-config@*, which is apps/${owner}'s seam apps/${owner}/src/app-config, not one of its own`,
         ])
     })
+})
+
+describe('the installed layout', () => {
+    // What pnpm 11 writes: JSON, which is YAML, with the layout it installed.
+    const installed = (linker: string | null) => {
+        const ws = realpathSync(makeTestTmpDir('sssb-doctor-linker-'))
+        if (linker !== null)
+            json(path.join(ws, 'node_modules', '.modules.yaml'), { layoutVersion: 5, nodeLinker: linker })
+        return ws
+    }
+
+    it('passes isolated, pnpm’s default, and a workspace nothing is installed in', () => {
+        expect(nodeLinkerProblem(installed('isolated'))).toBeNull()
+        expect(nodeLinkerProblem(installed(null))).toBeNull()
+    })
+
+    it.each(['pnp', 'hoisted'])('fails nodeLinker %s, naming it and the fix', (linker) => {
+        expect(nodeLinkerProblem(installed(linker))).toBe(
+            `pnpm installed this workspace with nodeLinker ${linker} (node_modules/.modules.yaml); SSSB needs nodeLinker ` +
+                "isolated, pnpm's default, which gives each app its own @sssb/kit linked to its own seam. Remove the " +
+                'nodeLinker (or node-linker) setting from pnpm-workspace.yaml and .npmrc, then run pnpm install',
+        )
+    })
+})
+
+describe('vitestList', () => {
+    it('stops a listing that never finishes, even one whose child holds its output open, and says so', () => {
+        const dir = realpathSync(makeTestTmpDir('sssb-doctor-hang-'))
+        pkg(dir, { name: 'hang', private: true })
+        // A "vitest" that never exits, and leaves a child of its own holding stdout and stderr for 4 s.
+        pkg(path.join(dir, 'node_modules', 'vitest'), { name: 'vitest', version: '4.0.0', bin: { vitest: 'cli.js' } })
+        write(
+            path.join(dir, 'node_modules', 'vitest', 'cli.js'),
+            "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 4000)'], { stdio: 'inherit' })\n" +
+                'setInterval(() => {}, 1000)\n',
+        )
+        const started = Date.now()
+        const result = vitestList({ cwd: dir, config: null }, { timeoutMs: 1000 })
+        expect(result).toEqual({
+            ok: false,
+            error: 'vitest list did not finish within 1s, so doctor stopped it (SSSB_DOCTOR_VITEST_TIMEOUT sets the limit, in seconds)',
+        })
+        // Back at the limit, not when the child it left behind exits.
+        expect(Date.now() - started).toBeLessThan(3500)
+        // The limit doctor uses, from the environment (seconds).
+        process.env.SSSB_DOCTOR_VITEST_TIMEOUT = '1'
+        try {
+            expect(vitestList({ cwd: dir, config: null })).toMatchObject({
+                ok: false,
+                error: expect.stringMatching(/within 1s/),
+            })
+        } finally {
+            delete process.env.SSSB_DOCTOR_VITEST_TIMEOUT
+        }
+    }, 20_000)
 })
 
 describe('in-repo mode', () => {
@@ -1061,6 +1122,22 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
             expect(out).toMatch(/^FAIL +\(the workspace root\): the conformance suite would run/m)
             expect(out).toMatch(/^FAIL +\(the workspace root\): the contract runner's checks would run/m)
             expect(code).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'fails at once, before any check, in a workspace pnpm installed with nodeLinker pnp',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-pnp-', 'packed')
+            json(path.join(ws, 'node_modules', '.modules.yaml'), { layoutVersion: 5, nodeLinker: 'pnp' })
+            const started = Date.now()
+            const { code, out } = await doctor(ws, 'apps/a')
+            expect(out).toMatch(/^FAIL +installed layout: pnpm installed this workspace with nodeLinker pnp/m)
+            expect(out).toMatch(/Nothing else is checked until it is\nsssb doctor: 1 problem\(s\)\n$/)
+            expect(out).not.toMatch(/conformance suite|vitest list/)
+            expect(code).toBe(1)
+            expect(Date.now() - started).toBeLessThan(10_000)
         },
         E2E_TIMEOUT,
     )

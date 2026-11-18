@@ -6,6 +6,8 @@
 // `src/app-config`), and gives each app the per-app checks, the one it runs for (`--app`, or the working directory)
 // among them. It fails, naming every problem, on:
 //
+//   - FIRST, and alone: a layout pnpm installed with a `nodeLinker` other than `isolated` (`pnp`, `hoisted`), which
+//     no check below can read, and under which Vitest's listing may never finish;
 //   - a workspace walk that cannot read pnpm-workspace.yaml, or that does not reach the app doctor runs for;
 //   - two copies of a singleton: a peer of @sssb/kit found from the kit's directory and from an app's must be ONE
 //     real directory (the `readlink -f` check build-notes tells a dependency PR to run by hand);
@@ -46,6 +48,7 @@ import {
     importerSeamProblems,
     kitPeers,
     missingTests,
+    nodeLinkerProblem,
     ownTests,
     packageDirFrom,
     parseWorkspaceYaml,
@@ -94,6 +97,12 @@ export async function run(args) {
     const appDir = realpathSync(takeAppDir(args))
     if (args.length > 0) throw new UsageError(`sssb doctor: unknown argument ${args[0]} (usage: doctor [--app <dir>])`)
     const root = realpathSync(workspaceRootOf(appDir))
+    // First: under another layout nothing below holds, and some of it (Vitest's listing, under pnp) never returns.
+    const layout = nodeLinkerProblem(root)
+    if (layout !== null) {
+        console.log(`sssb doctor: ${relativeTo(root)(appDir)}`)
+        return print([{ status: 'FAIL', title: `installed layout: ${layout}. Nothing else is checked until it is` }])
+    }
     const kitDir = kitDirOf(appDir)
     const version = kitVersionOf(appDir)
     const rel = relativeTo(root)
