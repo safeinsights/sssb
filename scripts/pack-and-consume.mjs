@@ -571,12 +571,6 @@ minimumReleaseAge: 2880
     // registry for one, the seam above all, fails instead of passing on whatever the registry answered.
     write(path.join(WS, '.npmrc'), '@sssb:registry=http://127.0.0.1:9/\n')
 
-    // The tick scripts the apps' dev and tick scripts still run from the repo's scripts/.
-    applyWorkaround('tick-scripts-copied')
-    for (const name of ['tick.mjs', 'dev-tick.mjs', 'ticker.mjs', 'ticker-marker.mjs']) {
-        cpSync(path.join(REPO, 'scripts', name), path.join(WS, 'scripts', name))
-    }
-
     // The committed lockfile seed, as an adopter commits theirs: pnpm keeps every resolution in it whose
     // specifier still matches and resolves only what changed (the tarball, whose file name changes with a
     // release's version, or a range this repo moved). So a third-party release cannot turn this check red

@@ -46,6 +46,14 @@ const COMMANDS = {
         load: () => import('../src/commands/guide.js'),
         summary: "copy @sssb/kit's app guide into the repository, stamped with its hash (--check compares)",
     },
+    tick: {
+        load: () => import('../src/commands/tick.js'),
+        summary: "call the running dev server's scheduled-tick route once and say what ran",
+    },
+    'dev-tick': {
+        load: () => import('../src/commands/dev-tick.js'),
+        summary: "run the app's dev server, ticking the scheduler on a timer only when DEV_TICK_SECONDS asks",
+    },
     ci: {
         load: () => import('../src/commands/ci.js'),
         summary: "a CI job's logic: e2e-shards, e2e, demo-static",

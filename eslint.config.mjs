@@ -1001,7 +1001,6 @@ const eslintConfig = [
             globals: {
                 process: 'readonly',
                 console: 'readonly',
-                // tick.mjs and dev-tick.mjs: an HTTP client with a timeout, and a stoppable timer
                 URL: 'readonly',
                 fetch: 'readonly',
                 AbortController: 'readonly',

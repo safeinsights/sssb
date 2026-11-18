@@ -42,6 +42,14 @@
             "types": "./src/testing/tmp-dir.d.ts",
             "default": "./src/testing/tmp-dir.js"
         },
+        "./ticker": {
+            "types": "./src/tick/ticker.d.ts",
+            "default": "./src/tick/ticker.js"
+        },
+        "./ticker-marker": {
+            "types": "./src/tick/ticker-marker.d.ts",
+            "default": "./src/tick/ticker-marker.js"
+        },
         "./vite": {
             "types": "./src/vite.d.ts",
             "default": "./src/vite.js"
