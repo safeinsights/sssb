@@ -42,13 +42,17 @@ jobs:
               run: node -e "const s=require('./coverage/coverage-summary.json').total; console.log('| metric | % |\n|---|---|', ...Object.entries(s).map(([k,v])=>'\n| '+k+' | '+v.pct+' |'))" >> "$GITHUB_STEP_SUMMARY"
             - run: pnpm knip
             - run: pnpm jscpd
-            # infra/ and spikes/ sit outside the root TS program, knip and jscpd, so ESLint was the
-            # only gate reaching either — and each one STATES a verification bar that nothing ran.
-            # infra/README.md calls `synth` its bar, and infra/ is the one tree whose paths have
-            # already rotted unnoticed once; docs/provenance.md cites the spike as the harness that
-            # de-risked ADR-0004 before anything was built on it, which makes it doc-load-bearing
-            # with no guard. Both are fast and fully offline.
-            - run: pnpm --filter infra synth
+            # Each app's infra/ and spikes/ sit outside the root TS program and jscpd, and each one STATES a
+            # verification bar: apps/<app>/infra/README.md calls `synth` its bar, and infra is the one tree
+            # whose paths have already rotted unnoticed once; docs/provenance.md cites the spike as the
+            # harness that de-risked ADR-0004 before anything was built on it, which makes it
+            # doc-load-bearing with no guard. Both are fast and fully offline. The synth runs once per app
+            # (ADR-0014, P9), and with it the SssbApp construct's assertions for that app (the full list heads
+            # packages/cdk/src/sssb-app.js), among them its @sssb/kit at the construct's version, the
+            # fail-closed environment, and its own migrations in the migrator bundle (jpslav/keel#54). Both
+            # network shapes of every app, and the way in, are checked by packages/cdk's own test, which
+            # `test:coverage` above runs.
+            - run: pnpm --filter './apps/*/infra' --fail-if-no-match synth
             - run: pnpm --filter spike-kysely-pglite test
 
     # ADR-0014 part 10: on 0.x a breaking change is a `minor`, because Changesets turns a `major` into 1.0.0 and
@@ -309,11 +313,11 @@ jobs:
               env:
                   NEXT_TELEMETRY_DISABLED: '1'
                   E2E_BUILD: '1'
-            # `pnpm verify` does not synth the infra. After init-app's rewrites the stack must still
-            # bundle the migrator with the surviving app's tsconfig, and the shape check reads that bundle
-            # for the app's migrations (infra/check-shapes.ts).
-            - name: pnpm --filter infra synth
-              run: pnpm --filter infra synth
+            # `pnpm verify` does not synth the infra. After init-app's rename and eject, each surviving app's
+            # infra/ must still synth: SssbApp resolves the migrator from the app's directory and fails the
+            # synth unless its bundle carries that app's migrations (packages/cdk, ADR-0014 P9).
+            - name: pnpm --filter './apps/*/infra' --fail-if-no-match synth
+              run: pnpm --filter './apps/*/infra' --fail-if-no-match synth
               working-directory: ${{ env.PROBE_DIR }}
             - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               if: failure()

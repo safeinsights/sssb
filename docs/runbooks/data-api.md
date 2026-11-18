@@ -206,7 +206,7 @@ model of AWS.)
 - **On an EMPTY database.** On the `data-api` network shape the Data API is the migrator's only way in, so
   every migration must be seen to go through it: deploy staging with `params.database.transport` set to
   `'data-api'` (so `DATABASE_TRANSPORT=data-api`) as a new stack, whose new cluster's database (named
-  `APP_SLUG` by `infra/stack.ts`) no migrator has touched. Point `$CLUSTER`, `$SECRET` and `$DB` at that
+  `APP_SLUG` by the `SssbApp` construct, `packages/cdk/src/sssb-app.js`) no migrator has touched. Point `$CLUSTER`, `$SECRET` and `$DB` at that
   cluster, its secret and that database for the rest of this step. Invoke the migrator Lambda. It must
   return `{ ok: true }`, and then
 

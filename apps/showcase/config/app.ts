@@ -10,6 +10,6 @@
  *
  * Adopting this template = change this one value.
  *
- * Kept dependency-free on purpose: imported by both `src/` (the app) and `infra/` (CDK) code.
+ * Kept dependency-free on purpose: imported by both `src/` (the app) and the app's `infra/` (CDK) code.
  */
 export const APP_SLUG = 'showcase'

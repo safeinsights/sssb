@@ -57,17 +57,7 @@ describe('the production fail-closed guard', () => {
     })
 })
 
-describe('deployed environments', () => {
-    const stack = readFileSync(path.join(__dirname, '../../../../infra/stack.ts'), 'utf8')
-
-    it('never set an opt-in that would let fake adapters serve a real deployment', () => {
-        // The whole point of the guard. A deploy that set either flag would boot happily on fakes —
-        // real users, fake auth, no error. Nothing in the CDK stack may mention them.
-        expect(stack).not.toMatch(/DEMO_MODE/)
-        expect(stack).not.toMatch(/E2E_BUILD/)
-    })
-
-    it('still pins APP_MODE=real, which is what makes the guard irrelevant in production', () => {
-        expect(stack).toContain("APP_MODE: 'real'")
-    })
-})
+// The other half — that no deployed environment sets either opt-in and every one pins APP_MODE=real — is
+// @sssb/cdk's: the SssbApp construct asserts it at synth on the server's final environment, overrides
+// included, and packages/cdk/src/sssb-app.test.js checks every app's synthesized stack (ADR-0014, P9). It
+// used to read a stack's source here, which no adopter's infra is.
