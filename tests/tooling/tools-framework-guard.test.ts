@@ -59,7 +59,7 @@ describe('frameworkGuard', () => {
     })
 
     it('is the first plugin of both presets', async () => {
-        // Whichever app of this tree builds a static demo: `init-app` renames and ejects apps, so no name is assumed.
+        // Whichever app of this tree builds a static demo: no name is assumed.
         const appsDir = path.resolve(__dirname, '../../apps')
         const appDir = readdirSync(appsDir)
             .map((name) => path.join(appsDir, name))

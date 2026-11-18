@@ -30,7 +30,7 @@ body:
           label: Where
           description: |
               Which part — the framework (`packages/kit`), an example app, the adoption command
-              (`pnpm init-app`), the static demo, CI, or the docs.
+              (`pnpm create @sssb`), the static demo, CI, or the docs.
       validations:
           required: true
     - type: textarea

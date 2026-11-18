@@ -36,7 +36,7 @@ CIDRs and rolls back. Changing shape later means a new stack and a snapshot rest
     - both Lambdas run outside it and reach Aurora through the RDS Data API, authorised by IAM alone;
     - the function configuration holds no database credential.
 
-    Cutover rows `data-api` (the transport, proven live by `docs/runbooks/data-api.md`) and
+    Cutover rows `data-api` (the transport, proven live by SSSB's `docs/runbooks/data-api.md` runbook) and
     `data-api-access` (this shape, deployed) close it.
 
 ## What synth asserts
@@ -74,4 +74,5 @@ expects (the construct's placeholder asset is a `run.sh` that execs `node server
 `Migrator` before shifting traffic. Cutover row `deploy-pipeline` is where that gets built.
 
 Nothing in this directory may depend on app source beyond `config/app.ts` and `config/params.ts`, which is
-what makes moving it mechanical. It is not covered by `pnpm typecheck` — `synth` verifies it.
+what makes moving it mechanical. `pnpm typecheck` covers it, through the app's own `typecheck` (`tsc --noEmit -p infra`,
+with `infra/tsconfig.json`), and `synth` runs it.

@@ -10,7 +10,7 @@ import { expect } from 'vitest'
  *
  * The paths sit under `apps/any-app/`, which is neither of this repo's apps, on purpose. Every fence
  * is written `apps/*`, so the app's name is not what is being tested, and a name nobody owns
- * survives `pnpm init-app` renaming or ejecting the real ones.
+ * survives renaming or removing the real ones.
  */
 const repoRoot = process.cwd()
 export const APP = 'apps/any-app'

@@ -47,7 +47,7 @@ export interface ContractOptions {
 
 /**
  * The database name a suite uses for an app: `<slug>_contract`, the slug folded to what an unquoted Postgres
- * identifier may hold. `acme-corp` becomes `acme_corp_contract`, so an app renamed by `pnpm init-app` gets its own
+ * identifier may hold. `acme-corp` becomes `acme_corp_contract`, so a renamed app gets its own
  * name with no edit anywhere.
  */
 export function contractDatabaseName(slug: string): string {

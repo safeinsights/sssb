@@ -1,8 +1,8 @@
 // @ts-check
-// The database an app's slug names, in a module of its own with no CDK in it, so `scripts/init-app.ts` refuses the
-// same slugs the construct would (`sssb-app.js` re-exports it as `@sssb/cdk`'s `databaseNameFor`).
+// The database an app's slug names, in a module of its own with no CDK in it, so a caller can refuse the same slugs
+// the construct would without loading CDK (`sssb-app.js` re-exports it as `@sssb/cdk`'s `databaseNameFor`).
 
-/** What a slug is: lowercase letters, digits and dashes, from a letter. `pnpm init-app` accepts the same. */
+/** What a slug is: lowercase letters, digits and dashes, from a letter. */
 export const SLUG = /^[a-z][a-z0-9-]*$/
 
 /**

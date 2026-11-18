@@ -55,7 +55,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   (`harbor`/`lakeside`, `depot`/`annex`/`steward`/`wharf`, `fixture-*`, `dockets`) is deliberately
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
-  `pnpm init-app --eject-showcase` with a red gate.
+  deleting the showcase with a red gate.
 - **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 138 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it);
   the rest of the package is internal and reachable only by relative import inside it. Lint-enforced
@@ -95,6 +95,18 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   the tools it configures (Vite's React plugin, next-intl's plugin, jest-dom) from the app, never its own copies. A
   new CLI command is a module in `packages/tools/src/commands/` plus one entry in `bin/sssb.js`'s `COMMANDS`; a new published
   helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
+- **`@sssb/create` (`packages/create`) is the generator** (ADR-0014 P12): `pnpm create @sssb <dir>` runs its bin,
+  `sssb-create`. Plain JavaScript with no dependencies at all, SSSB's packages included (rule 4), because it runs
+  before anything is installed. **Its template is the files git tracks in `apps/starter`**, copied from the working
+  tree (`buildTemplate` in `packages/create/src/template.js`): **`git add` a new starter file** before a pack or the
+  create tests see it. `prepack` writes a gitignored `template/` beside the bin and `postpack` removes it (never
+  commit it); packing refuses a `HEAD` that no remote-tracking branch of `safeinsights/sssb` holds, and an
+  `apps/starter` or `packages/kit/src/guide.md` that differs from `HEAD`, unless `SSSB_CREATE_UNPUSHED_PIN=1` (pack
+  and consume sets it, but on a push to `safeinsights/sssb`). Run from a checkout, the bin builds the template into a
+  temporary directory first and only warns about the pin; the tests call `buildTemplate` themselves. The
+  workspace around the app is written by `packages/create/src/files.js`; a root file that names nothing of this
+  repository's can be copied instead (`ROOT_FILES` in `packages/create/src/template.js`). Running it by hand:
+  `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting.md`).
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.
 - **Screens are router-agnostic** — framework screens in `packages/kit/src/components`, app
@@ -131,12 +143,18 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   (`.github/workflows/app-checks.yml`, ADR-0014 P10): `checks.yml`'s `sssb` job calls it (by its local path), so
   its checks are named `sssb / <job>` (`sssb / all-checks` fails unless every one ran and passed), and each job's
   work is one `pnpm exec sssb ci <job>`. A job renamed or added there changes a required check's name: the rulesets
-  on `main` and `integration` require them by name, and `tests/tooling/app-checks-workflow.test.ts` pins the names. **Pack and consume** (`pnpm pack-and-consume`, ADR-0014 P2) packs
-  `@sssb/kit` and runs an adopter-shaped workspace's verify against the tarball, outside this repo; a change
-  to what the package ships, its manifest or the starter shows there first. Its gaps are named workarounds in
-  `scripts/pack-and-consume/workarounds.mjs`, each removed by a later ADR-0014 step: never patch the consumer
-  silently. It installs from a committed lockfile seed; when its notice says the resolution moved, refresh it
-  with `pnpm pack-and-consume --update-lockfile` and commit `scripts/pack-and-consume/consumer-lock.yaml`.
+  on `main` and `integration` require them by name, and `tests/tooling/app-checks-workflow.test.ts` pins the names. **Pack and consume** (`pnpm pack-and-consume [--shape pages|generated]`, ADR-0014 P2 and
+  P12) packs every `@sssb` package flat into one directory, generates workspaces outside this repo with the PACKED
+  `@sssb/create` against those tarballs, and checks them: `pages` (CI's `pack-and-consume` job) shapes the generated
+  workspace like the first adopter's (a second generated app, an adapter, a sibling package, a seamless negative
+  fixture) and runs the script's own checks; `generated` (CI's `adoption-probe` job) changes not one file and runs
+  the workspace's own gates (`pnpm verify`, the unit and contract runs held to the conformance suite,
+  `sssb ci lint-typecheck-unit`, `sssb ci synth`, `pnpm knip`, `pnpm jscpd`). No flag runs both. A change to what a
+  package ships, its manifest, the generator or the starter shows there first. Its gaps are named workarounds in
+  `scripts/pack-and-consume/workarounds.mjs` (none today), each removed by a later ADR-0014 step: never patch the
+  consumer silently. Both shapes install from one committed lockfile seed, with tokens for the tarball directory and
+  the group's version; when its notice says the resolution moved, refresh it with
+  `pnpm pack-and-consume --update-lockfile` and commit `scripts/pack-and-consume/consumer-lock.yaml`.
   **Any migration/db change: run `pnpm test:contract` yourself** (the
   same RLS proofs on real Postgres, for EVERY app AND SSSB's fixture seam, each in its own
   database, each twice: once through the `pg` driver and once through the RDS Data API driver and its
@@ -204,7 +222,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   are derived per checkout by `@sssb/tools/ports`, so parallel agent sessions don't adopt each other's
   dev server; `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last
   also isolates `pnpm test:contract` between worktrees), and `pnpm exec sssb port <service>` reports it. Each app
-  declares its slot in its package.json (`"sssb": { "port": "starter" }`), which `sssb port` reads.
+  declares its slot in its package.json (`"sssb": { "port": "starter" }`), which `sssb port` reads; the slot is a
+  port band, not the app's name, so the app `@sssb/create` writes keeps `starter` too.
 - **A test that needs a scratch directory calls `makeTestTmpDir()` / `makeTestTmpDirAsync()`**
   (`@sssb/tools/testing/tmp-dir`; `tests/support/tmp-dir.ts` re-exports it; the framework's own tests use its
   copy, `packages/kit/src/testing/tmp-dir.ts`) — never `mkdtemp`/`mkdtempSync`, which `sssb/no-direct-mkdtemp`
@@ -225,7 +244,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   dev server's marker is live) and the demo. The ticking is `@sssb/tools/ticker` (start, stop, status), policy-free;
   all of it lives in `packages/tools/src/tick`. Never add a bypass to the route for any of them: it stays `withWebhookSecret`.
 - **A PR that changes what ships to adopters adds a changeset** (`.changeset/README.md` has the template and what
-  counts): every `@sssb/*` package's shipped files (today the kit and the tools) and `apps/starter`. It is the release-note entry, with a "Now deletable" part,
+  counts): every `@sssb/*` package's shipped files and `apps/starter`, the generator's template. It is the release-note entry, with a "Now deletable" part,
   and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset.
 - Before opening a PR, run `/pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.
@@ -263,17 +282,25 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   designed-but-unbuilt work in `.claude/future-tasks/` (one file per item, listed in its `index.md`).
   Amend an ADR by appending a dated addendum — never by editing what its body said.
 - **Doctrine docs are gated**: `tests/docs/doc-paths.test.ts` fails if a doctrine doc cites a repo path
-  that doesn't exist. The doc set and its exemptions live in `tests/docs/doc-set.ts`, shared with
-  `scripts/init-app.ts` so the gate and the adoption rewriter cannot disagree about scope. The dated
+  that doesn't exist. The doc set and its exemptions are `sssb.docPaths` in the root `package.json`, read by
+  `@sssb/tools/doc-paths` (`sssb check-doc-paths` runs the same engine) through `tests/docs/doc-set.ts`. The dated
   records (`build-notes.md`, `decision-log.md`, ADR bodies and anything appended to them) are exempt — see
   `docs/README.md` for the split. If you move a directory, the gate is what tells you which docs you
   just falsified. A citation of `apps/showcase` or `apps/starter` is checked strictly while that app
   exists and passes where it does not (it then names SSSB's reference app, and a doc merged in from
   upstream must not turn an adopter's gate red); write `apps/<app>/…` when you mean the reader's own app.
-- **The app's identity is a script, not a checklist**: `pnpm init-app <slug> [--repo <name>] [--eject-showcase]`
-  (`scripts/init-app.ts`). Anything that names an app directory or the product's display name belongs
-  in the surface that script covers — and **never hard-code the product name in a test**; specs read
-  the app's own catalog via `apps/*/tests/catalog.ts`. See `docs/adopting.md`.
+- **An adopter's workspace is generated, not forked**: `pnpm create @sssb <dir>` (`@sssb/create`, ADR-0014 P12)
+  writes it from `apps/starter` plus generated root config, renaming the app on the way. The generator renames
+  only the app's identity, each in one place that `packages/create/src/generate.js` names: `APP_SLUG` and the
+  `<slug>_session` cookie in `apps/<app>/config/app.ts`, `welcome.appName` and `welcome.title` in
+  `apps/<app>/messages/{en,es}.json`, the title in `apps/<app>/src/app/[locale]/layout.tsx` and in
+  `apps/<app>/src/demo-static/index.html`, and the app's and its infra's package names. Anything new in the starter that names the app's directory or the product's display name must go through
+  one of those (or become a new rename there, which must find its text exactly once), and **never hard-code the
+  product name in a test**; specs read the app's own catalog via `apps/*/tests/catalog.ts`. Everything else is
+  copied as written, so **starter prose must read true in an adopter's tree**: a comment that names the showcase,
+  "the starter", the framework's source tree (say `@sssb/kit/…`), a relative path out of the app, or SSSB's spikes,
+  build notes or decision log fails `tests/tooling/create-generate.test.ts`. Any other path into this repository (a
+  doc's, say) passes it, so say it is SSSB's. See `docs/adopting.md`.
 - At the end of a slice or before a PR, run the `doc-steward` agent on the branch diff — it
   proposes updates to development-approach, an ADR addendum, decision-log, build-notes, and the
   cutover checklist so the docs keep telling the truth. It also reports the net line delta of each doctrine doc

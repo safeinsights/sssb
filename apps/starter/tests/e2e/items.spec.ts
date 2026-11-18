@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
 /**
- * The starter's whole e2e budget, spent on the one claim the template exists to make: an item written
+ * This app's whole e2e budget, spent on the one claim the template exists to make: an item written
  * in one tenant is invisible from the other, through the entire stack (UI → route → withTenant → RLS
  * on pglite).
  *

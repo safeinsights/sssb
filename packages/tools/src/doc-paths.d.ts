@@ -16,7 +16,7 @@ export interface DocPathsConfig {
     /**
      * Path prefixes (root-relative, forward slashes) never gated, each an append-only dated record or not this
      * checkout's content. Rewriting a record to match today's tree would be revisionist, so such files are corrected
-     * opportunistically but never gated, and `init-app` never rewrites them. SSSB's own, with the reason for each:
+     * opportunistically but never gated. SSSB's own, with the reason for each:
      *
      * - `docs/adr/`: dated decisions, amended by appending a dated addendum, never by editing the body.
      * - `docs/build-notes.md`: a running log of dated lessons.

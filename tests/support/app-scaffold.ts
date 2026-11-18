@@ -7,7 +7,7 @@ import { contractDatabaseName } from '@sssb/kit/testing/contract'
  * What every app in `apps/*` must carry to be a template an adopter can keep, checked the same way for all of them:
  * the deployment parameters the cutover rows point at, a contract suite for its migrations, and the file that runs
  * SSSB's conformance suite from the app's own tree (`src/sssb.conformance.test.ts`). These were once the
- * two things `pnpm init-app --eject-showcase` copied out of the showcase before deleting it, because only the
+ * two things the retired `init-app --eject-showcase` copied out of the showcase before deleting it, because only the
  * showcase had them; each app owns them now, and these are the gates that say so. Generic over apps and
  * deliberately free of any one app's content, so the conformance kit (ADR-0014, P5) can take it as it is.
  */

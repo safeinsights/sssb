@@ -2278,3 +2278,28 @@ bite there first.
   `prerelease` step out of `release.yml` and runs it as GitHub does (`bash --noprofile --norc -eo pipefail`) against a
   fake `gh` holding the release in a file, so the test cannot drift from the step. Seen failing: with the download check
   turned into `true`, the "other bytes" and "stray file" cases go red.
+
+## `@sssb/create` and pack and consume's generated shape (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
+
+- **Packing `@sssb/create` needs a pushed, clean `HEAD`.** Its `prepack` refuses a commit no remote-tracking branch of
+  `safeinsights/sssb` holds (as of your last fetch) and an `apps/starter` or `packages/kit/src/guide.md` that differs
+  from it, untracked files included. `SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings, for a tarball nothing will
+  run on GitHub; pack and consume sets it except on a push to `safeinsights/sssb`. And the template is the files git
+  tracks: **`git add` a new starter file** before a local pack or the create tests will see it (a build prints the
+  untracked ones it left out).
+- **A signal held across synchronous work needs two event-loop turns to be dispatched.** libuv reads a pending signal
+  only in the poll phase. Called from a poll callback (a `readline` answer, an `fs.readFile` callback), the next
+  turn's check phase (`setImmediate`) comes before any poll phase, so a one-turn wait released the listener first and
+  the run exited 0 with the Ctrl-C dropped. `signalsSettled()` in `packages/create/src/signals.js` waits two;
+  `process.nextTick`, microtasks and `setTimeout(0)` do not reach a poll phase in time. Seen in a child that generates
+  from `fs.readFile`'s callback: with one turn it exits 0, with two it dies by SIGINT.
+- **TypeScript 6 includes no `@types` package by default.** A program of its own (`apps/starter/infra/tsconfig.json`)
+  needs `types: ["node"]`; without it `tsc -p apps/starter/infra` fails on `node:path` and `__dirname` (6.0.3).
+- **pnpm writes a `file:` specifier into the lockfile as given**, absolute path and all, in the importers and in
+  `overrides`. A committed lockfile seed for a workspace generated with `--sssb <dir>` therefore holds tokens for the
+  tarball directory and the group's version (`scripts/pack-and-consume/checks.mjs`, `SEED_TARBALLS` and
+  `SEED_VERSION`), or it would differ on every machine and every release candidate.
+- **An app package named like a dependency is mistaken for it.** pnpm handed an app named `ws` the `ws` package's
+  optional peers, so the generator refuses a slug that names a package the workspace installs.
+- **npm's packing drops some dotfiles** (`.gitignore`, `.npmrc`), so the template stores a leading `.` in a path
+  segment as `_dot_` and the generator turns it back.

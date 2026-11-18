@@ -96,6 +96,16 @@ export function lockfileProblems(lockfile) {
         if (indent === 4 && /^\s+[A-Za-z]+:\s*$/.test(line)) group = line.trim().slice(0, -1)
         if (!line.includes('@sssb/')) continue
 
+        // A workspace generated from tarballs (`@sssb/create --sssb <dir>`) overrides every @sssb package to its
+        // tarball, and pnpm records the overrides: `  '@sssb/kit': file:/…/sssb-kit-0.1.0.tgz`.
+        const override =
+            section === 'overrides' && indent === 2 ? /^ {2}'(@sssb\/[^']+)':\s*(\S+)\s*$/.exec(line) : null
+        if (override) {
+            seen.push(`overrides: ${override[1]} -> ${override[2]}`)
+            if (override[1] === '@sssb/app-config' || !isLocal(override[1], override[2]))
+                problems.push(`${where}: ${override[1]} is overridden to ${override[2]}, not a local tarball`)
+            continue
+        }
         // packages: and snapshots: are keyed `  '@sssb/kit@<version>':`, the snapshot key with peer suffixes.
         const key = indent === 2 ? /^ {2}'(@sssb\/[^@']+)@([^']+)':\s*$/.exec(line) : null
         if (key && (section === 'packages' || section === 'snapshots')) {
@@ -422,6 +432,305 @@ export function pluginShippedFileProblems(files) {
 }
 
 /**
+ * The packed @sssb/create (ADR-0014 P12): named so, with its bin, no dependency at all (it runs before anything is
+ * installed, and depends on no SSSB package, rule 4), shipping JavaScript under bin/ and src/ and the template its
+ * prepack built (template/meta.json, the app under template/app/). What template/app/ holds, file by file, is
+ * `templateAppProblems`'. Returns the problems.
+ * @param {Record<string, unknown>} manifest
+ * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
+ */
+export function createPackageProblems(manifest, files) {
+    const problems = []
+    if (manifest.name !== '@sssb/create')
+        problems.push(`the packed manifest is named ${manifest.name}, not @sssb/create`)
+    const bin = /** @type {Record<string, string> | undefined} */ (manifest.bin)
+    if (typeof bin !== 'object' || bin === null || Object.values(bin).length === 0)
+        problems.push('the packed manifest has no bin')
+    for (const field of /** @type {const} */ (['dependencies', 'peerDependencies', 'optionalDependencies'])) {
+        for (const dep of Object.keys(/** @type {Record<string, string>} */ (manifest[field] ?? {})))
+            problems.push(`${field} names ${dep}: @sssb/create runs with no dependency installed`)
+    }
+    for (const file of files) {
+        if (['package.json', 'README.md', 'LICENSE'].includes(file)) continue
+        if (file.startsWith('template/')) continue
+        else if (!/^(bin|src)\//.test(file)) problems.push(`${file}: outside bin/, src/ and template/`)
+        else if (/\.test\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test file is shipped`)
+        else if (!/\.js$/.test(file)) problems.push(`${file}: not JavaScript`)
+    }
+    for (const entry of [
+        'template/meta.json',
+        'template/app/package.json',
+        'template/app/src/sssb.conformance.test.ts',
+    ])
+        if (!files.includes(entry)) problems.push(`${entry}: the template is not packed whole`)
+    for (const entry of Object.values(bin ?? {}))
+        if (!files.includes(entry.replace(/^\.\//, ''))) problems.push(`${entry}: the bin is not shipped`)
+    return problems
+}
+
+/**
+ * The packed template's app (`template/app/`), file for file, against what the repository tracks under apps/starter
+ * (`git ls-files apps/starter`) plus the files the template build itself writes there (`generated`): an allowlist, so
+ * no checkout's local state (an env file, a build's output, a cache under a name nobody thought to deny) can reach an
+ * adopter, and no tracked file of the starter can go missing. The template stores a leading `.` of a path segment as
+ * `_dot_` (npm's packing drops some dotfiles); this compares the paths as the workspace gets them. Returns the problems.
+ * @param {readonly string[]} files every file in the @sssb/create package, relative to its root, `/`-separated
+ * @param {readonly string[]} tracked every file git tracks under apps/starter, relative to apps/starter
+ * @param {readonly string[]} [generated] files the template build writes into template/app/, relative to it
+ */
+export function templateAppProblems(files, tracked, generated = []) {
+    const fromStored = (/** @type {string} */ stored) =>
+        stored
+            .split('/')
+            .map((segment) => (segment.startsWith('_dot_') ? `.${segment.slice('_dot_'.length)}` : segment))
+            .join('/')
+    /** Each packed app file as the workspace gets it, to the path the tarball stores it at. */
+    const packed = new Map(
+        files
+            .filter((file) => file.startsWith('template/app/'))
+            .map((file) => [fromStored(file.slice('template/app/'.length)), file]),
+    )
+    const expected = new Set([...tracked, ...generated])
+    const problems = []
+    for (const [file, stored] of [...packed].sort()) {
+        if (!expected.has(file))
+            problems.push(`${stored}: not a file git tracks under apps/starter (a checkout's local state?)`)
+    }
+    for (const file of [...expected].sort()) {
+        if (!packed.has(file)) problems.push(`apps/starter/${file}: tracked, but not in the packed template`)
+    }
+    return problems
+}
+
+/** The packed @sssb packages a lockfile can name by tarball file. */
+const SSSB_TARBALL_NAMES = '(kit|tools|eslint-plugin|cdk|create)'
+/** The seed's stand-in for this run's tarball directory, an absolute path that differs between machines. */
+export const SEED_TARBALLS = '__PACK_AND_CONSUME_TARBALLS__'
+/** The seed's stand-in for the fixed group's version, which every release (and every release candidate) moves. */
+export const SEED_VERSION = '__PACK_AND_CONSUME_VERSION__'
+
+/** @param {string} text */
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * Rewrites the version of every packed @sssb package a lockfile names: in each tarball's file name
+ * (`sssb-kit-<version>.tgz`, in specifiers, overrides, keys and dependency edges) and in the `version:` line of each
+ * one's `packages:` entry.
+ * @param {string} text
+ * @param {string} from
+ * @param {string} to
+ */
+function swapSssbVersion(text, from, to) {
+    const name = new RegExp(`(sssb-${SSSB_TARBALL_NAMES}-)${escapeRegExp(from)}(\\.tgz)`, 'g')
+    let inSssbEntry = false
+    return text
+        .split('\n')
+        .map((line) => {
+            if (/^ {2}'@sssb\/(kit|tools|eslint-plugin|cdk|create)@file:/.test(line)) inSssbEntry = true
+            else if (/^ {0,2}\S/.test(line)) inSssbEntry = false
+            const renamed = line.replace(name, `$1${to}$3`)
+            return inSssbEntry && renamed === `    version: ${from}` ? `    version: ${to}` : renamed
+        })
+        .join('\n')
+}
+
+/**
+ * The committed seed made from an installed workspace's lockfile: this run's tarball directory and the fixed group's
+ * version replaced by their tokens, so the seed matches the next run's workspace on any machine and at any version (a
+ * release candidate packs `sssb-kit-0.2.0-rc.0.tgz`, and the seed still names the tarball the generator wrote).
+ * @param {string} lockText
+ * @param {{ tarballs: string, version: string }} run
+ */
+export function seedFromLockfile(lockText, { tarballs, version }) {
+    return swapSssbVersion(lockText.replaceAll(tarballs, SEED_TARBALLS), version, SEED_VERSION)
+}
+
+/**
+ * The seed as a workspace's pnpm-lock.yaml for this run: each token replaced by this run's tarball directory and the
+ * version it packed. A seed written before the version was a token names a literal version, and is taken as it is.
+ * @param {string} seed
+ * @param {{ tarballs: string, version: string }} run
+ */
+export function lockfileFromSeed(seed, { tarballs, version }) {
+    return swapSssbVersion(seed.replaceAll(SEED_TARBALLS, tarballs), SEED_VERSION, version)
+}
+
+/**
+ * What would make a seed machine-specific: a path into this run's directory left in it after the tokens went in (a
+ * workspace's absolute path pnpm recorded somewhere other than the tarballs'). Checked on every run, from the seed
+ * this run's lockfile would make, not only when the seed is written, so a change that introduces one fails the PR that
+ * makes it rather than the next refresh. Returns the problems.
+ * @param {string} seed `seedFromLockfile` of the run's lockfile
+ * @param {string} base this run's directory
+ */
+export function seedMachinePathProblems(seed, base) {
+    return seed
+        .split('\n')
+        .map((line, i) => ({ line, at: i + 1 }))
+        .filter(({ line }) => line.includes(base))
+        .map(({ line, at }) => `line ${at} holds a path into this run's directory (${base}): ${line.trim()}`)
+}
+
+/**
+ * Every gate a generated workspace's `pnpm verify` must run, so that it holds locally what the reusable workflow's
+ * `sssb / all-checks` holds in CI (`sssb ci`'s jobs, plus knip and jscpd). Each is met by a root script verify
+ * reaches (`scripts`) or by a command a reached script, or verify itself, runs (`commands`). `e2e` marks the gates
+ * `--skip-build-and-e2e` leaves out.
+ * @type {readonly { gate: string, scripts?: string[], commands?: string[], e2e?: boolean }[]}
+ */
+export const GENERATED_VERIFY_GATES = [
+    { gate: 'typecheck', scripts: ['typecheck'] },
+    { gate: 'lint', scripts: ['lint'] },
+    { gate: 'unit tests', scripts: ['test:unit', 'test:coverage'] },
+    { gate: 'knip', scripts: ['knip'] },
+    { gate: 'jscpd', scripts: ['jscpd'] },
+    { gate: 'doctor', scripts: ['sssb:doctor'], commands: ['sssb doctor'] },
+    { gate: 'check-e2e', scripts: ['check:e2e'], commands: ['sssb check-e2e'] },
+    { gate: 'check-fences', scripts: ['check-fences', 'check:fences'], commands: ['sssb check-fences'] },
+    { gate: 'contract tests', scripts: ['test:contract'] },
+    { gate: 'synth', scripts: ['synth'] },
+    { gate: 'e2e', scripts: ['test:e2e'], e2e: true },
+    { gate: 'static demo build', scripts: ['build:demo-static'], e2e: true },
+    { gate: 'static demo size', scripts: ['check:demo-size'], e2e: true },
+    { gate: 'static demo e2e', scripts: ['e2e:demo-static'], e2e: true },
+]
+
+/**
+ * The root scripts a command runs, by name: `pnpm <script>`, `pnpm run <script>` and concurrently's `pnpm:<script>`,
+ * counting only names the root defines (`pnpm --filter … <script>` runs another package's script, not the root's).
+ * @param {string} command
+ * @param {Record<string, string>} scripts
+ */
+function scriptsRunBy(command, scripts) {
+    const names = []
+    for (const match of command.matchAll(/(?:^|[\s'"&|;(])pnpm(?::|\s+(?:run\s+)?)([\w:.-]+)/g)) {
+        const name = /** @type {string} */ (match[1])
+        if (Object.hasOwn(scripts, name)) names.push(name)
+    }
+    return names
+}
+
+/**
+ * A script as a shell sequences it: each quoted string ('…' or "…") blanked out, so that a `;` inside one (an argument:
+ * a glob, a pattern, `node -e` code) is not read as a separator. Not when the script hands quoted text to another shell
+ * (concurrently runs each of its arguments in one, as `sh -c` does), where a quoted `;` separates steps all the same:
+ * then the script as it is.
+ * @param {string} script
+ */
+const sequencedText = (script) =>
+    /\bconcurrently\b|\b(?:ba|da|k|z)?sh\s+(?:-\w+\s+)*-\w*c\b/.test(script)
+        ? script
+        : script.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "''")
+
+/**
+ * The shell and runner forms that let a script exit 0 with a step failed or never run, so that naming a gate's script
+ * is not running it: each with what it does. Deliberately plain text matches over the whole script, quoted or not,
+ * except a `;` inside quotes where no other shell reads it (sequencedText): the generator writes none of them, and an
+ * adopter's verify that needs one can say why in review.
+ * @type {[{ test: (script: string) => boolean }, string][]}
+ */
+const SWALLOWING_FORMS = [
+    [/\|\|/, '`||` (a failure before it is swallowed)'],
+    [/(?<!\|)\|(?!\|)/, '`|` (a pipeline exits with its last command, so a failure before it is swallowed)'],
+    [/[\n\r]/, 'a newline (each line runs whatever the one before returned)'],
+    [{ test: (script) => sequencedText(script).includes(';') }, '`;` (the steps run whatever the one before returned)'],
+    [/(?<![&>])&(?![&>])/, '`&` (a step put in the background is never waited for)'],
+    [/--if-present/, '`--if-present` (a script that is missing passes)'],
+    [
+        /--success(?:=|\s+)(?!all\b)/,
+        "concurrently's `--success` other than `all` (one step's exit code stands for all)",
+    ],
+    [/(?:^|[\s'"(&|])echo\b/, '`echo` (it prints a step instead of running it)'],
+    [/(?:^|\s)#/, '`#` (the rest of the line is a comment)'],
+    [
+        {
+            test: (script) =>
+                script
+                    .split(/[;&|\n\r]+/)
+                    .some((command) => /--filter\b/.test(command) && !/--fail-if-no-match\b/.test(command)),
+        },
+        '`--filter` without `--fail-if-no-match` in the same command (a selector matching nothing passes)',
+    ],
+]
+
+/**
+ * How a generated workspace's `verify` meets each of `GENERATED_VERIFY_GATES`: the root scripts it reaches (through
+ * any depth of scripts calling scripts), and for each gate the script that runs it (or `verify` itself, for a command
+ * it runs inline). A gate verify does not reach is a problem: the generated required check would go green with that
+ * gate dropped. So is a reached script holding one of SWALLOWING_FORMS, which can pass with a gate failed or not run.
+ * Returns `{ problems, runBy }`, `runBy` mapping each gate met to the script that meets it.
+ * @param {Record<string, string>} scripts the generated root package.json's scripts
+ */
+export function verifyGateProblems(scripts) {
+    const problems = []
+    /** @type {Map<string, string>} */
+    const runBy = new Map()
+    if (typeof scripts.verify !== 'string') return { problems: ['the root package.json has no verify script'], runBy }
+    const reached = new Set()
+    const queue = ['verify']
+    while (queue.length > 0) {
+        const script = /** @type {string} */ (queue.shift())
+        if (reached.has(script)) continue
+        reached.add(script)
+        queue.push(...scriptsRunBy(/** @type {string} */ (scripts[script]), scripts))
+    }
+    for (const script of reached) {
+        for (const [pattern, what] of SWALLOWING_FORMS)
+            if (pattern.test(/** @type {string} */ (scripts[script]))) problems.push(`${script} uses ${what}`)
+    }
+    for (const { gate, scripts: names = [], commands = [] } of GENERATED_VERIFY_GATES) {
+        const byName = names.find((name) => reached.has(name))
+        const byCommand = [...reached].find((script) =>
+            commands.some((command) =>
+                new RegExp(`(?:^|[\\s'"&|;(])${escapeRegExp(command)}(?=$|[\\s'"&|;)])`).test(
+                    /** @type {string} */ (scripts[script]),
+                ),
+            ),
+        )
+        const by = byName ?? byCommand
+        if (by === undefined)
+            problems.push(
+                `verify does not run ${gate} (${[...names, ...commands].map((n) => `\`${n}\``).join(' or ')})`,
+            )
+        else runBy.set(gate, by)
+    }
+    return { problems, runBy }
+}
+
+/**
+ * The root scripts `sssb ci lint-typecheck-unit` looks for to run the unit tests, the first one defined: the coverage
+ * run when the workspace has one (@sssb/tools' ci.js, `rootScript(root, job, [...])`, which a test holds this to).
+ */
+export const CI_UNIT_SCRIPTS = ['test:coverage', 'test:unit']
+
+/**
+ * Every root script that runs a generated workspace's unit tests on the way to a green: the one its `verify` reaches
+ * for the unit gate (`runBy`, from verifyGateProblems) and the one the reusable workflow's job runs (CI_UNIT_SCRIPTS),
+ * once each. Each must be held to the conformance suite: holding a script nothing runs proves nothing.
+ * @param {Record<string, string>} scripts
+ * @param {Map<string, string>} runBy
+ */
+export function heldUnitScripts(scripts, runBy) {
+    const ci = CI_UNIT_SCRIPTS.find((name) => typeof scripts[name] === 'string')
+    return [...new Set([runBy.get('unit tests'), ci])].filter((name) => name !== undefined)
+}
+
+/**
+ * The environment `@sssb/create` is packed with. Its prepack refuses to pin a commit no branch on GitHub holds, or a
+ * template that differs from that commit, unless SSSB_CREATE_UNPUSHED_PIN=1. Only a push to SSSB's own repository
+ * packs a pushed commit whose tarballs a release candidate may attach (checks.yml), so only it packs with the checks
+ * on; a pull request's merge commit, a fork's push and a local run's HEAD are not on SSSB's GitHub, and their tarballs
+ * never leave the run.
+ * @param {Record<string, string | undefined>} env
+ * @returns {Record<string, string>}
+ */
+export function createPackEnv(env) {
+    return env.GITHUB_EVENT_NAME === 'push' && env.GITHUB_REPOSITORY === 'safeinsights/sssb'
+        ? {}
+        : { SSSB_CREATE_UNPUSHED_PIN: '1' }
+}
+
+/**
  * How far a lockfile moved from its seed, leaving out the packed SSSB packages' own entries (a tarball's name,
  * integrity and version change with every build or release, and are this run's to change). Lines are
  * compared as a multiset, so an edge that moves to a line some other entry already has still counts.
@@ -436,9 +745,9 @@ export function lockfileMoves(seed, lockfile) {
         let inSssbBlock = false
         for (const line of text.split('\n')) {
             // A `packages:` or `snapshots:` entry for a packed SSSB package: its key and every line indented under it.
-            if (/^ {2}'@sssb\/(kit|tools|eslint-plugin)@/.test(line)) inSssbBlock = true
+            if (/^ {2}'@sssb\/(kit|tools|eslint-plugin|cdk)@/.test(line)) inSssbBlock = true
             else if (/^ {0,2}\S/.test(line)) inSssbBlock = false
-            if (inSssbBlock || /sssb-(kit|tools|eslint-plugin)-/.test(line)) continue
+            if (inSssbBlock || /sssb-(kit|tools|eslint-plugin|cdk)-/.test(line)) continue
             counts.set(line, (counts.get(line) ?? 0) + 1)
         }
         return counts
@@ -450,6 +759,31 @@ export function lockfileMoves(seed, lockfile) {
     for (const [line, n] of after) added += Math.max(0, n - (before.get(line) ?? 0))
     for (const [line, n] of before) removed += Math.max(0, n - (after.get(line) ?? 0))
     return { added, removed }
+}
+
+/**
+ * The package versions a lockfile resolved that its seed does not hold: its `packages:` keys (`  name@version:`) less
+ * the seed's, the packed SSSB packages' own left out. For a workspace whose importers are a SUBSET of the seed's, where
+ * a line-by-line comparison also counts the flags pnpm moves when importers drop out (`optional: true`), this is what
+ * says its resolution left the seed.
+ * @param {string} seed
+ * @param {string} lockfile
+ */
+export function packagesBeyondSeed(seed, lockfile) {
+    /** @param {string} text */
+    const keys = (text) => {
+        /** @type {Set<string>} */
+        const out = new Set()
+        let section = ''
+        for (const line of text.split('\n')) {
+            if (/^[A-Za-z]+:/.test(line)) section = line.slice(0, line.indexOf(':'))
+            else if (section === 'packages' && /^ {2}\S.*:\s*$/.test(line) && !/^ {2}'?@sssb\//.test(line))
+                out.add(line.trim().replace(/^'|':$|:$/g, ''))
+        }
+        return out
+    }
+    const known = keys(seed)
+    return [...keys(lockfile)].filter((key) => !known.has(key))
 }
 
 /**

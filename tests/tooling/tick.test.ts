@@ -38,8 +38,7 @@ const DEV_TICK = [SSSB, 'dev-tick']
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 
 /**
- * The apps of THIS tree, by directory: `showcase` and `starter` in the template, the adopter's own in a tree
- * `init-app` has run on (the adoption probe runs this suite there). Never a literal list.
+ * The apps of THIS tree, by directory: `showcase` and `starter` here. Never a literal list.
  */
 const APP_DIRS = readdirSync(path.join(REPO_ROOT, 'apps'), { withFileTypes: true })
     .filter(
@@ -401,7 +400,7 @@ describe('the e2e servers are started with the ticker blanked', () => {
     it.each(APP_DIRS)('apps/%s `dev` goes through the wrapper and has a `tick` script', (app) => {
         const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, 'apps', app, 'package.json'), 'utf8'))
         const scripts = manifest.scripts
-        // the PORT key (`showcase` or `starter`), which `init-app` does not rename with the app
+        // the PORT key (`showcase` or `starter`), a slot, not the app's name, so it survives a rename of the app
         const key = /\bsssb dev-tick (showcase|starter) -- next dev --port/.exec(scripts.dev)?.[1]
         expect(key, scripts.dev).toBeDefined()
         // the server binds the app's declared port service (`sssb port`), which must be the one the ticker is told

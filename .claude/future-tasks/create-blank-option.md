@@ -1,15 +1,16 @@
-# `init-app` has no option that removes the starter's own content
+# `@sssb/create` has no option that removes the starter's own content
 
 **Priority:** P2 · **Status:** open
 **Found by:** an adopter's report, 2026-10-02. Their product's static demo opened on the starter's
 tenants and its Items card four days after adoption. The doc half is fixed (`docs/adopting.md`, "The
-starter's content is still wired into your UI", and the matching section `scripts/init-app.ts`
-prints); this is the half that would make the sweep a command.
+starter's content is still wired into your UI"); this is the half that would make the sweep a command.
+**Retargeted 2026-11-18** from `init-app`, retired in ADR-0014's P12, to the generator that replaced it: the
+starter is the generator's template, so what follows applies to every workspace `pnpm create @sssb` writes.
 
 ## What is missing
 
-`--eject-showcase` deletes the demo app. Nothing deletes what the app you KEEP shows: after
-`pnpm init-app acme` an adopter still has the Items slice on every dashboard and the starter's
+A generated workspace has no demo app. Nothing deletes what the app it writes shows: after
+`pnpm create @sssb acme` an adopter has the Items slice on every dashboard and the starter's
 marketing line on the welcome screen, and removing them is a hand sweep over about fifteen files.
 
 ## What can and cannot go
@@ -21,7 +22,7 @@ marketing line on the welcome screen, and removing them is a hand sweep over abo
 | The welcome and dashboard screens        | no         | the signed-in redirect needs a destination; they can be emptied, not deleted                                                    |
 | The seed world (tenants, orgs, 3 people) | no         | hermetic sign-in needs someone to pick, `staffOrgSlug` must name a real org, and two tenants are what make isolation observable |
 
-So the option is `pnpm init-app <slug> --blank`, and it does NOT touch the seed. Renaming the seed
+So the option is `pnpm create @sssb <dir> --blank`, and it does NOT touch the seed. Renaming the seed
 world from flags (`--tenant`, `--org`) was considered and is not worth it: a real product's world is
 more than two strings, and the doc now says to replace the file.
 
@@ -60,14 +61,14 @@ lint fail the gate otherwise — and the "items route" comment in `apps/starter/
    well compile — and an empty interface will trip `@typescript-eslint/no-empty-object-type` the way
    `AppSubjectFields` already does (see `empty-registration-friction.md`). Find out before designing
    around it.
-2. **It needs its own adoption-probe leg.** `.github/workflows/checks.yml` runs
-   `init-app acme --eject-showcase --yes` and then `pnpm verify`. `--blank` needs the same treatment,
-   and the gate must be seen to fail first: leave one Items reference behind, watch the leg go red.
+2. **It needs its own adoption-probe leg.** The `adoption-probe` job in `.github/workflows/checks.yml`
+   generates a workspace with the packed `@sssb/create` and runs its `pnpm verify`. `--blank` needs the same treatment, and the gate must be seen to
+   fail first: leave one Items reference behind, watch the leg go red.
    With zero app tables, `pnpm test:contract` runs only the framework half; say so rather than letting
    it look like coverage.
 3. **It deletes the worked RLS example.** `1001_items.ts` is the only worked RLS migration
-   that survives `--eject-showcase`: the adopting guide cites it, while `/new-slice`, `/new-entity` and
-   `CLAUDE.md` cite the showcase's `1001_tickets.ts`, which an eject has already deleted. A blank app
+   in a generated workspace: the adopting guide cites it, while `/new-slice`, `/new-entity` and
+   `CLAUDE.md` cite the showcase's `1001_tickets.ts`, which a generated workspace never had. A blank app
    has nothing to copy from. Either the reference moves into a recipe
    under `docs/recipes/`, or `--blank` leaves the migration behind as an unregistered template, or the
    scaffolds learn to cite `packages/kit/test-fixture`. Decide this first; it changes the other two.
@@ -76,8 +77,9 @@ lint fail the gate otherwise — and the "items route" comment in `apps/starter/
 
 Scripted surgery on TypeScript source is the fragile part. Two ways to avoid regex-editing code:
 
-- **Whole-file replacement from a checked-in blank variant.** Robust at run time, but the variants are
-  a third app in disguise: they must typecheck and lint against SSSB or they rot.
+- **Whole-file replacement from a checked-in blank variant**, which the generator copies over the
+  template's files. Robust at run time, but the variants are a third app in disguise: they must typecheck
+  and lint against SSSB or they rot.
 - **A `/strip-starter` agent command** in `.claude/commands/` that walks the list above and ends on
   `pnpm verify`. Cheap, and consistent with how the scaffolds already work, but an agent recipe is not
   a gate and CI cannot run it.

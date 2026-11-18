@@ -1,26 +1,17 @@
-import { fileURLToPath } from 'node:url'
-// By relative path, not `@sssb/tools/doc-paths`: `scripts/init-app.ts` imports this file, and the adopter-identity test
-// runs init-app in a copy of the checkout that has no node_modules. The engine needs only Node's built-ins.
-import * as engine from '../../packages/tools/src/doc-paths.js'
-import type { Citation } from '../../packages/tools/src/doc-paths.js'
+import * as engine from '@sssb/tools/doc-paths'
+import type { Citation } from '@sssb/tools/doc-paths'
 
 /**
  * WHICH MARKDOWN THIS REPO HOLDS TO ITS PATH CITATIONS.
  *
- * Two callers need the same answer and must never drift apart: `doc-paths.test.ts`, which fails the
- * build when a doctrine doc cites a path that does not exist, and `scripts/init-app.ts`, which
- * repoints those citations when an adopter renames an app or ejects the showcase. A second list
- * would mean the rewriter could miss a file the gate checks — a broken gate on the adopter's first
- * command, which is the exact failure this whole seam exists to remove.
- *
- * The one list is now `sssb.docPaths` in the root `package.json` (roots, include, exempt,
- * referenceApps), read by the engine in `@sssb/tools/doc-paths`, which is also what `sssb
- * check-doc-paths` runs — so an adopter keeps the gate the day `packages/kit` leaves the tree. This
- * file is only the adapter that gives the tests and the rewriter their old, cwd-relative signatures.
+ * The one list is `sssb.docPaths` in the root `package.json` (roots, include, exempt, referenceApps),
+ * read by the engine in `@sssb/tools/doc-paths`, which is also what `sssb check-doc-paths` runs, so an
+ * adopter keeps the gate the day `packages/kit` leaves the tree. This file is only the adapter that
+ * gives `doc-paths.test.ts` and `doc-set.test.ts` cwd-relative signatures.
  *
  * Why each prefix in `exempt` is there — each is an append-only record whose entries were true on the
  * date they were written. Rewriting them to match today's tree would be revisionist, so they are
- * corrected opportunistically but never gated (and never rewritten by `init-app`):
+ * corrected opportunistically but never gated:
  *
  *   - `docs/adr/`: dated decisions; amended by appending a dated addendum, never by editing the body.
  *   - `docs/build-notes.md`: running log of dated lessons.
@@ -42,13 +33,6 @@ export type { Citation }
 const root = () => process.cwd()
 const config = () => engine.readDocPathsConfig(root())
 
-/**
- * Exempt prefixes, for `init-app`, which must not rewrite what the gate does not read. Read when this module loads,
- * from the checkout this file sits in, never from the working directory: `init-app` imports this before it changes
- * into the repository root, so a run started from a subdirectory would otherwise read the wrong package.json.
- */
-export const EXEMPT: string[] = engine.readDocPathsConfig(fileURLToPath(new URL('../..', import.meta.url))).exempt
-
 /** Every gated markdown file, as repo-relative paths. Call with the repo root as the cwd. */
 export function doctrineDocs(): string[] {
     return engine.docFiles(root(), config())
@@ -61,11 +45,6 @@ export function citedPaths(file: string): Citation[] {
 /** Whether a cited path resolves under `root` (default: the working directory). */
 export function resolves(path: string, root = '.'): boolean {
     return engine.resolves(path, root, config())
-}
-
-/** See the engine: rewrites citations of an app path `isMissing` reports gone into `apps/<app>/…`. */
-export function generalizeAppCitations(text: string, isMissing: (path: string) => boolean): string {
-    return engine.generalizeAppCitations(text, isMissing, config())
 }
 
 /** The `sssb.docPaths.include` entries that name nothing in the tree. Call with the repo root as the cwd. */

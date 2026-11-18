@@ -15,6 +15,7 @@ LICENSE
 
 apps/*/infra/cdk.out/
 dist-demo/
+packages/create/template/
 
 # linked git worktrees from agent sessions — not this checkout's content
 .claude/worktrees/

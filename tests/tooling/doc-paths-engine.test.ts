@@ -7,6 +7,7 @@ import {
     readDocPathsConfig,
     resolves,
     citationsIn,
+    generalizeAppCitations,
     type DocPathsConfig,
     missingIncludes,
 } from '@sssb/tools/doc-paths'
@@ -214,6 +215,60 @@ describe('citationsIn', () => {
         const found = citationsIn('`cp apps/a/x.ts apps/a/y.ts`', config)
         expect(found.map((c) => c.path)).toEqual(['apps/a/x.ts', 'apps/a/y.ts'])
         expect(new Set(found.map((c) => c.raw)).size).toBe(1)
+    })
+})
+
+/**
+ * The rewriter, tested against the shape that broke it: several citations sharing ONE backticked span. Rewriting per
+ * citation by replacing the span verbatim made the span unfindable after the first rewrite, so every later path in
+ * it was skipped: a command left half-generalised, and the doc-path gate red. `gone` stands in for a filesystem check
+ * (`(cited) => !resolves(cited, root, config)`), so these cases pin the rewriting rule without a tree on disk.
+ */
+describe('generalizeAppCitations', () => {
+    const generalize = (text: string, isMissing: (cited: string) => boolean) =>
+        generalizeAppCitations(text, isMissing, config)
+    const gone = (cited: string) => cited.startsWith('apps/showcase/')
+
+    it('rewrites EVERY app path in one backticked span', () => {
+        expect(generalize('Run `cp apps/showcase/src/jobs/x.ts apps/showcase/src/domain/y.ts` to start.', gone)).toBe(
+            'Run `cp apps/<app>/src/jobs/x.ts apps/<app>/src/domain/y.ts` to start.',
+        )
+    })
+
+    it('rewrites a repeated path within the span, not just its first occurrence', () => {
+        expect(generalize('`diff apps/showcase/src/a.ts apps/showcase/src/a.ts`', gone)).toBe(
+            '`diff apps/<app>/src/a.ts apps/<app>/src/a.ts`',
+        )
+    })
+
+    it('rewrites every occurrence of a repeated span in the document', () => {
+        expect(generalize('`apps/showcase/src/jobs` twice: `apps/showcase/src/jobs`', gone)).toBe(
+            '`apps/<app>/src/jobs` twice: `apps/<app>/src/jobs`',
+        )
+    })
+
+    it('leaves paths that still resolve alone, even beside one that does not', () => {
+        expect(generalize('`cp apps/starter/src/a.ts apps/showcase/src/b.ts`', gone)).toBe(
+            '`cp apps/starter/src/a.ts apps/<app>/src/b.ts`',
+        )
+    })
+
+    it('generalises a glob citation at its static prefix', () => {
+        expect(generalize('`apps/showcase/src/jobs/*.ts`', gone)).toBe('`apps/<app>/src/jobs/*.ts`')
+    })
+
+    it('touches nothing when every citation resolves', () => {
+        const text = '`apps/starter/src` and `packages/kit/src`'
+        expect(generalize(text, gone)).toBe(text)
+    })
+
+    it('ignores paths outside apps/, which have no <app> to generalise to', () => {
+        const text = '`rm packages/kit/src/gone.ts`'
+        expect(generalize(text, () => true)).toBe(text)
+    })
+
+    it('generalises a brace expansion at its static prefix, keeping the braces', () => {
+        expect(generalize('`apps/showcase/messages/{en,es}.json`', gone)).toBe('`apps/<app>/messages/{en,es}.json`')
     })
 })
 

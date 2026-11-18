@@ -218,7 +218,7 @@ describe("checks.yml's call to it", () => {
         expect(sssb.permissions).toEqual({ contents: 'read' })
     })
 
-    // No `apps`: the workspace's apps are discovered, so `pnpm init-app`'s rename and eject need no edit here, and no
+    // No `apps`: the workspace's apps are discovered, so adding, renaming or removing an app needs no edit here, and no
     // app can be left out by a list that went stale.
     it('covers every app, and synthesizes every app’s infra', () => {
         expect(Object.keys(sssb.with ?? {})).toEqual(['synth'])
@@ -254,12 +254,73 @@ describe("checks.yml's call to it", () => {
     })
 })
 
+// Pack and consume's two jobs (ADR-0014 P2, P12): each packs every @sssb package before its shape runs, without
+// installing the whole repository, and the pack-and-consume job hands its tarballs to a release candidate (P7).
+describe("checks.yml's pack and consume jobs", () => {
+    const JOBS = { 'adoption-probe': 'generated', 'pack-and-consume': 'pages' } as const
+    const stepsOf = (job: string) =>
+        (checks.jobs[job]!.steps ?? []) as (Step & { name?: string; with?: Record<string, string> })[]
+
+    // `pnpm pack` needs a package's dependencies installed when its prepack builds with them, and the workspace link
+    // when it has a `workspace:` dependency to resolve (ERR_PNPM_CANNOT_RESOLVE_WORKSPACE_PROTOCOL otherwise).
+    it('each installs what packing every @sssb package needs, and runs its own shape', () => {
+        const needed = readdirSync(path.join(ROOT, 'packages'))
+            .filter((dir) => existsSync(path.join(ROOT, 'packages', dir, 'package.json')))
+            .map((dir) => JSON.parse(readFileSync(path.join(ROOT, 'packages', dir, 'package.json'), 'utf8')))
+            .filter((pkg) => String(pkg.name).startsWith('@sssb/'))
+            .filter((pkg) => {
+                const deps = { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.optionalDependencies }
+                const buildsOnPack = typeof pkg.scripts?.prepack === 'string' && Object.keys(deps).length > 0
+                const linksOnPack = Object.values(deps).some((range) => String(range).startsWith('workspace:'))
+                return buildsOnPack || linksOnPack
+            })
+            .map((pkg) => pkg.name as string)
+            .sort()
+        expect(needed).toEqual(expect.arrayContaining(['@sssb/cdk', '@sssb/kit']))
+        for (const [job, shape] of Object.entries(JOBS)) {
+            const install = stepsOf(job).find((s) => s.run?.startsWith('pnpm install'))?.run ?? ''
+            expect(install, job).toMatch(/^pnpm install --frozen-lockfile --ignore-scripts( --filter \S+)+$/)
+            const filters = [...install.matchAll(/--filter (\S+)/g)].map((m) => m[1]).sort()
+            expect(filters, job).toEqual(needed)
+            const script = stepsOf(job).find((s) => s.run?.startsWith('node scripts/pack-and-consume.mjs'))?.run
+            expect(script, job).toContain(`--shape ${shape}`)
+        }
+    })
+
+    // The two jobs' stores hold different sets (the generated shape installs a subset of the seed), so one key would
+    // let whichever saved first hand the other a store missing what it installs.
+    it('each caches under prefixes of its own', () => {
+        for (const job of Object.keys(JOBS)) {
+            const caches = stepsOf(job).filter((s) => s.uses?.startsWith('actions/cache@'))
+            expect(caches.length, job).toBeGreaterThan(0)
+            for (const cache of caches) {
+                expect(cache.with?.key, job).toMatch(new RegExp(`^${job}-`))
+                expect(cache.with?.['restore-keys'], job).toMatch(new RegExp(`^${job}-`))
+            }
+        }
+    })
+
+    // scripts/pack-and-consume.mjs packs every tarball flat into <dir>/tarballs (the directory the generator's `--sssb`
+    // takes), and release.mjs `candidate` refuses a set missing any fixed-group package.
+    it('keeps every tarball pack-and-consume packed, flat, as the artifact a release candidate attaches', () => {
+        const keep = stepsOf('pack-and-consume').find((s) => s.name === 'keep the tested tarballs')
+        expect(keep?.run).toContain('cp "$RUNNER_TEMP"/pack-and-consume/tarballs/*.tgz "$RUNNER_TEMP/sssb-tarballs/"')
+        expect(
+            stepsOf('pack-and-consume').find((s) => s.run?.startsWith('node scripts/pack-and-consume.mjs'))?.run,
+        ).toContain('--dir "$RUNNER_TEMP/pack-and-consume"')
+        const script = readFileSync(path.join(ROOT, 'scripts/pack-and-consume.mjs'), 'utf8')
+        expect(script).toContain("const TARBALLS = path.join(BASE, 'tarballs')")
+        expect(script).toContain("run('pnpm', ['pack', '--pack-destination', TARBALLS]")
+    })
+})
+
 // The rulesets on `main` and `integration` require checks BY NAME, and a name that stops appearing blocks every PR
 // (or, if the ruleset is edited to match the wrong name, lets one through). So the names are pinned here: a job
 // renamed or added fails this, and the rulesets change in the same step as the merge.
 describe('the check names the rulesets require', () => {
     // The names that do not depend on which apps the tree holds: a job renamed or added fails this.
     const FIXED = [
+        // Pack and consume's generated shape: the packed @sssb/create's workspace, and its own verify (ADR-0014 P12).
         'adoption-probe',
         'changeset-required',
         'pack-and-consume',
@@ -272,8 +333,8 @@ describe('the check names the rulesets require', () => {
         'sssb / lint-typecheck-unit',
         'sssb / synth',
     ]
-    // One per e2e shard and one per static demo, named from the tree's own apps, so this holds in a tree `pnpm
-    // init-app` has renamed or ejected (the adoption probe runs it there). In SSSB's own tree they are
+    // One per e2e shard and one per static demo, named from the tree's own apps, so this holds whichever apps the tree
+    // holds. In SSSB's own tree they are
     // `sssb / e2e (showcase)`, `sssb / e2e (showcase-destructive)`, `sssb / e2e (starter)`,
     // `sssb / demo-static (showcase)` and `sssb / demo-static (starter)`.
     const PER_APP = ['sssb / e2e (<shard>)', 'sssb / demo-static (<app>)']
@@ -323,8 +384,8 @@ describe('the check names the rulesets require', () => {
     })
 
     // In SSSB's own tree the per-app names are pinned literally too: the rulesets require them by name, and a renamed
-    // Playwright project would otherwise change them with this test still green. (A renamed app skips this case, as the
-    // adoption probe's tree must; the ruleset change is then the adopter's.)
+    // Playwright project would otherwise change them with this test still green. (A tree without both reference apps
+    // skips this case.)
     it("are, in SSSB's own tree, the five the rulesets name", () => {
         const apps = readdirSync(path.join(ROOT, 'apps'))
             .filter((app) => existsSync(path.join(ROOT, 'apps', app, 'package.json')))
