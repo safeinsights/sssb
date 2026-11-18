@@ -6,7 +6,8 @@ code, 2026-07-31. That task resolved the showcase and left the starter behind wi
 
 ## The gap
 
-`.github/workflows/checks.yml` sets `E2E_BUILD: '1'` once, on the whole `e2e` job — so it lands in the
+`.github/workflows/app-checks.yml` (the reusable workflow `checks.yml` calls) sets `E2E_BUILD: '1'` once, on the
+`e2e` job's run step — so it lands in the
 environment of all three shards, `showcase`, `showcase-destructive` **and** `starter`. Only the showcase
 reads it:
 

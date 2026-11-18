@@ -995,3 +995,23 @@ still written by hand for P7: the sections for changes that predate the changese
 rename among it), the tarballs' sha512 and install lines, and creating the GitHub release. P14's first npm release
 would omit that hand-written history unless it is backfilled first. Why a script and not an `@sssb/tools` command,
 and what review changed, is in `docs/decision-log.md` (2026-11-18, `feat/release-notes`).
+
+## Addendum — 2026-11-18: P10, the reusable workflow, as built
+
+`.github/workflows/app-checks.yml`, as part 7 describes, with one exception below: `on: workflow_call`, `contents: read`, no secrets, the
+services, the e2e shard matrix discovered from the apps, the install, every step a `pnpm exec sssb ci <job>`, an
+`apps` input and an optional `synth` job. The details part 7 left open (each in `docs/decision-log.md`, "The reusable
+workflow"):
+
+- **One check to require.** Its `all-checks` job fails unless every other job ran and passed, so an adopter requires
+  `<caller job> / all-checks` rather than a list that a skipped or renamed job could slip out of.
+- **`apps` defaults to the workspace's apps** (P4's `sssb.apps` or `apps/*`), and `synth` is a pnpm `--filter`
+  selector, so this repository's call names no app.
+- **A job with nothing to run fails**, so the workflow states the conventions it relies on: the root's `lint`,
+  `typecheck`, `test:unit` (or `test:coverage`) and `test:contract` scripts, and each app's Playwright config and
+  `test:e2e`, `build:demo-static`, `check:demo-size` and `e2e:demo-static` scripts.
+- **This repository calls it by its local path**, at the commit under test; adopters pin a SHA. Its checks are
+  named `sssb / <job>`, so the rulesets on `main` and `integration` must change to those names when this merges.
+- **The service image is `postgres:16` by tag**, as `checks.yml` had it, not yet by digest as part 7 asks.
+- **`sssb doctor` and `sssb check-e2e` run inside `lint-typecheck-unit`**, after `sssb check-fences`: doctor once
+  (it checks the whole workspace), check-e2e in each app.

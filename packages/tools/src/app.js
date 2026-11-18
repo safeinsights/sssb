@@ -87,10 +87,13 @@ export function workspaceApps(root) {
         if (!Array.isArray(listed) || !listed.every((entry) => typeof entry === 'string'))
             throw new UsageError('sssb: `sssb.apps` in the root package.json must be a list of directories')
         for (const dir of listed) {
+            if (path.isAbsolute(dir) || dir.split(/[\\/]/).includes('..'))
+                throw new UsageError(`sssb: \`sssb.apps\` names ${dir}: each app is a directory inside the workspace`)
             if (!existsSync(path.join(root, dir, 'package.json')))
                 throw new UsageError(`sssb: \`sssb.apps\` names ${dir}, which is not a package`)
         }
-        return listed.map((dir) => dir.replace(/\/+$/, ''))
+        // Normalised (`./apps/a/` is `apps/a`) and each named once, so two spellings of one app are one app.
+        return [...new Set(listed.map(normalAppDir))]
     }
     const appsDir = path.join(root, 'apps')
     if (!existsSync(appsDir)) return []
@@ -98,6 +101,14 @@ export function workspaceApps(root) {
         .filter((entry) => entry.isDirectory() && existsSync(path.join(appsDir, entry.name, 'package.json')))
         .map((entry) => `apps/${entry.name}`)
         .sort()
+}
+
+/**
+ * An app directory as the workspace names it: `/`-separated, normalised, with no leading `./` or trailing `/`.
+ * @param {string} dir
+ */
+export function normalAppDir(dir) {
+    return path.posix.normalize(dir.split(path.sep).join('/')).replace(/\/+$/, '')
 }
 
 /**
