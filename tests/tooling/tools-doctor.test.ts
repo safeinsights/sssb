@@ -475,9 +475,10 @@ describe('the installed layout', () => {
     }
 
     const FIX =
-        "SSSB needs nodeLinker isolated, pnpm's default, which gives each app its own @sssb/kit linked to its own seam. " +
-        'Remove the nodeLinker (or node-linker) setting from pnpm-workspace.yaml and .npmrc, delete .pnp.cjs and ' +
-        '.pnp.loader.mjs at the workspace root if they are there, then run pnpm install'
+        "SSSB needs nodeLinker isolated, pnpm's default, which gives each app its own @sssb/kit linked to its own seam " +
+        "with no Plug'n'Play. Remove the nodeLinker setting from pnpm-workspace.yaml (and any " +
+        'pnpm_config_node_linker variable or --config.node-linker flag), delete .pnp.cjs at the workspace root if it is ' +
+        'there, then run pnpm install'
 
     it('passes isolated, pnpm’s default, and a workspace nothing is installed in', () => {
         expect(nodeLinkerProblem(installed('isolated'), {})).toBeNull()
@@ -519,52 +520,47 @@ describe('vitestList', () => {
     it('stops a listing that never finishes, and every process it started, and says so', async () => {
         const dir = realpathSync(makeTestTmpDir('sssb-doctor-hang-'))
         pkg(dir, { name: 'hang', private: true })
-        // A "vitest" that never exits, with a "worker" of its own that never exits either and writes its pid down.
-        const pidFile = path.join(dir, 'worker.pid')
+        // A "vitest" that never exits, with a "worker" of its own that never exits either; each run writes both pids down.
+        const pidFile = path.join(dir, 'pids')
         pkg(path.join(dir, 'node_modules', 'vitest'), { name: 'vitest', version: '4.0.0', bin: { vitest: 'cli.js' } })
         write(
             path.join(dir, 'node_modules', 'vitest', 'cli.js'),
             "const worker = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' })\n" +
-                `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(worker.pid))\n` +
+                `require('node:fs').appendFileSync(${JSON.stringify(pidFile)}, \`\${process.pid} \${worker.pid}\\n\`)\n` +
                 'setInterval(() => {}, 1000)\n',
         )
-        const started = Date.now()
-        const result = vitestList({ cwd: dir, config: null }, { timeoutMs: 1000 })
-        expect(result).toEqual({
-            ok: false,
-            timedOut: true,
-            error: 'vitest list did not finish within 1s, so doctor stopped it (SSSB_DOCTOR_VITEST_TIMEOUT sets the limit, in seconds)',
-        })
-        expect(Date.now() - started).toBeLessThan(5000)
-        // Its worker went with it, rather than living on under init.
-        const worker = Number(readFileSync(pidFile, 'utf8'))
-        await new Promise((resolve) => setTimeout(resolve, 300))
-        const alive = () => {
+        const pids = () =>
+            existsSync(pidFile) ? readFileSync(pidFile, 'utf8').split(/\s+/).filter(Boolean).map(Number) : []
+        const alive = (pid: number) => {
             try {
-                process.kill(worker, 0)
+                process.kill(pid, 0)
                 return true
             } catch {
                 return false
             }
         }
-        const left = alive()
-        if (left) process.kill(worker, 'SIGKILL')
-        expect(left, 'the worker outlived the listing').toBe(false)
-        // The limit doctor uses, from the environment, in seconds, rounded up to a whole millisecond.
-        process.env.SSSB_DOCTOR_VITEST_TIMEOUT = '0.0015'
         try {
+            const started = Date.now()
+            const result = vitestList({ cwd: dir, config: null }, { timeoutMs: 1000 })
+            expect(result).toEqual({
+                ok: false,
+                timedOut: true,
+                error: 'vitest list did not finish within 1s, so doctor stopped it (SSSB_DOCTOR_VITEST_TIMEOUT sets the limit, in seconds)',
+            })
+            expect(Date.now() - started).toBeLessThan(5000)
+            // Its worker went with it, rather than living on under init.
+            await new Promise((resolve) => setTimeout(resolve, 300))
+            expect(pids().filter(alive), 'processes the listing started outlived it').toEqual([])
+            // The limit doctor uses, from the environment, in seconds, rounded up to a whole millisecond.
+            process.env.SSSB_DOCTOR_VITEST_TIMEOUT = '0.0015'
             expect(vitestList({ cwd: dir, config: null })).toMatchObject({
                 ok: false,
                 error: expect.stringMatching(/within 0\.002s/),
             })
         } finally {
             delete process.env.SSSB_DOCTOR_VITEST_TIMEOUT
-            const again = Number(readFileSync(pidFile, 'utf8'))
-            try {
-                process.kill(again, 'SIGKILL')
-            } catch {
-                // Already gone, as it should be.
-            }
+            // Whatever failed above, nothing of the fake's is left running.
+            for (const pid of pids().filter(alive)) process.kill(pid, 'SIGKILL')
         }
     }, 20_000)
 })

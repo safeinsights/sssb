@@ -518,20 +518,22 @@ export const seamOfKit = (kitDir) => packageDirFrom(kitDir, SEAM)
  * THE INSTALLED LAYOUT: SSSB needs pnpm's default `nodeLinker`, `isolated`. Every check doctor makes reads the layout
  * it builds (each importer's own `@sssb/kit` instance in the virtual store, with its seam linked beside it, found
  * through `node_modules`), and so does the shared kit resolver. Under `hoisted` one instance serves every app, so no
- * two apps can each have their own seam; under `pnp` the tools doctor runs (Vitest's listing) may never finish. The
- * layout pnpm installed is in the root's `node_modules/.modules.yaml` (JSON, which is YAML), whatever setting asked
- * for it. PnP's files outlive the setting: while `.pnp.cjs` is at the root, `pnpm run` puts it in every script's
- * `NODE_OPTIONS`, and PnP then resolves inside doctor itself. Null when the layout is isolated with no PnP anywhere, or
- * when nothing is installed (the kit resolver then says so).
+ * two apps can each have their own seam. Under `pnp` pnpm 11 still builds that `node_modules`, but writes a
+ * `.pnp.cjs` at the root, and while it is there `pnpm run` loads it into every script's `NODE_OPTIONS` (removing the
+ * setting and reinstalling leaves it behind): Plug'n'Play then resolves inside doctor itself, and Vitest's listing
+ * never finishes. The layout pnpm installed is in the root's `node_modules/.modules.yaml` (JSON, which is YAML),
+ * whatever setting asked for it. Null when the layout is isolated with no Plug'n'Play anywhere, or when nothing is
+ * installed (the kit resolver then says so).
  * @param {string} root
  * @param {Record<string, string | undefined>} [env] doctor's own environment
  * @returns {string | null} the problem
  */
 export function nodeLinkerProblem(root, env = process.env) {
     const fix =
-        "SSSB needs nodeLinker isolated, pnpm's default, which gives each app its own @sssb/kit linked to its own seam. " +
-        'Remove the nodeLinker (or node-linker) setting from pnpm-workspace.yaml and .npmrc, delete .pnp.cjs and ' +
-        '.pnp.loader.mjs at the workspace root if they are there, then run pnpm install'
+        "SSSB needs nodeLinker isolated, pnpm's default, which gives each app its own @sssb/kit linked to its own seam " +
+        "with no Plug'n'Play. Remove the nodeLinker setting from pnpm-workspace.yaml (and any " +
+        'pnpm_config_node_linker variable or --config.node-linker flag), delete .pnp.cjs at the workspace root if it is ' +
+        'there, then run pnpm install'
     const file = path.join(root, 'node_modules', '.modules.yaml')
     if (existsSync(file)) {
         /** @type {string} */
@@ -546,17 +548,16 @@ export function nodeLinkerProblem(root, env = process.env) {
         try {
             linker = JSON.parse(text)?.nodeLinker
         } catch {
-            // Not JSON (a damaged file, or a pnpm that writes YAML): a top-level `nodeLinker` key, quoted or not.
+            // Not JSON (a damaged file, or a pnpm that writes YAML): a `nodeLinker` key at the start of any line,
+            // indented or not, quoted or not.
             linker = /^\s*["']?nodeLinker["']?\s*:\s*["']?([A-Za-z-]+)/m.exec(text)?.[1]
         }
         if (typeof linker === 'string' && linker !== 'isolated') {
             return `pnpm installed this workspace with nodeLinker ${linker} (node_modules/.modules.yaml). ${fix}`
         }
     }
-    const leftovers = ['.pnp.cjs', '.pnp.loader.mjs'].filter((name) => existsSync(path.join(root, name)))
-    if (leftovers.length > 0) {
-        const verb = leftovers.length === 1 ? 'makes' : 'make'
-        return `${leftovers.join(' and ')} at the workspace root ${verb} pnpm run every script under Plug'n'Play, whatever layout it installed. ${fix}`
+    if (existsSync(path.join(root, '.pnp.cjs'))) {
+        return `.pnp.cjs at the workspace root makes pnpm run every script under Plug'n'Play, whatever layout it installed. ${fix}`
     }
     if (/\.pnp\.c?js\b/.test(env.NODE_OPTIONS ?? '')) {
         return `doctor runs under Plug'n'Play (NODE_OPTIONS loads a .pnp.cjs: ${env.NODE_OPTIONS}). ${fix}`
