@@ -93,8 +93,8 @@ export function pnpmWorkspace(c) {
         'packages:',
         '    - apps/*',
         '    - apps/*/infra',
-        "    # Each app's seam, src/app-config: a workspace package, so `pnpm add`, `remove` and `update` keep it linked",
-        "    # into the app's @sssb/kit (a `link:` they drop). `pnpm exec sssb doctor` checks it.",
+        "    # Each app's seam, src/app-config: a workspace package, so `pnpm add <pkg>`, `remove` and `update <pkg>` for",
+        '    # the app keep it linked into its @sssb/kit (a `link:` they drop). `pnpm sssb:doctor` checks it.',
         '    - apps/*/src/app-config',
         '    - packages/*',
         '',
@@ -316,8 +316,8 @@ export function knipJson(c) {
                 // (@sssb/tools/vite and /vitest), none of which the app imports.
                 ignoreDependencies: ['@sssb/app-config', '@vitejs/plugin-react', 'vite-plugin-singlefile'],
             },
-            // The seam, a workspace package of its own: read by SSSB's framework, the module that names it, never by
-            // the app's own code.
+            // The seam, a workspace package of its own: read mostly by SSSB's framework, from node_modules, which knip
+            // does not follow.
             [`${app(c)}/src/app-config`]: { entry: ['**/*.ts'] },
         },
     })

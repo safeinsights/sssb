@@ -407,7 +407,7 @@ describe('one SSSB per importer, with its own seam', () => {
             readFileSync(manifest, 'utf8').replace('"workspace:ledger-app-config@*"', '"link:./src/app-config"'),
         )
         expect(importerSeamProblems(ws, kitDirOf).problems).toEqual([
-            'apps/ledger: declares @sssb/app-config as link:./src/app-config, which the next `pnpm add`, `remove` or `update` unlinks from its @sssb/kit. ' +
+            'apps/ledger: declares @sssb/app-config as link:./src/app-config, which the next `pnpm add <pkg>`, `remove` or `update <pkg>` for it unlinks from its @sssb/kit. ' +
                 "Make the seam a workspace package: list apps/ledger/src/app-config in pnpm-workspace.yaml's packages, name it ledger-app-config in its package.json, " +
                 'declare "@sssb/app-config": "workspace:ledger-app-config@*", and run pnpm install',
         ])

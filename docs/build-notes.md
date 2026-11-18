@@ -2335,7 +2335,8 @@ bite there first.
 
 - **Fixed: the P13 note above ("`pnpm add` in a generated workspace drops the kit's seam link") no longer holds** for
   a workspace `@sssb/create` writes now. Its seam is a workspace package (`workspace:<slug>-app-config@*`), which
-  pnpm's partial installs keep linked; ADR-0014's addendum "the seam is a workspace package" has the cause.
+  pnpm's partial installs keep linked; ADR-0014's addendum "the seam is a workspace package" has the cause. (The
+  task that note cites is now `.claude/future-tasks/resolved/pnpm-add-drops-seam-link.md`.)
 - **The cheap probe is the lockfile, not doctor.** `grep -c '(@sssb/app-config@apps+<app>+src+app-config)'
 pnpm-lock.yaml` counts the kit's peer suffix (2 for one app: its importer entry and its snapshot key); it drops to
   0 the moment pnpm unlinks the seam. Doctor says the same, slower.

@@ -123,8 +123,9 @@ function resolveMigrator(appDir) {
     if (existsSync(linked) && realpathSync(linked) !== realpathSync(seamDir)) {
         throw new Error(
             `SssbApp: ${appDir} links @sssb/app-config to ${realpathSync(linked)}, not to its ${SEAM_DIR}, ` +
-                'which is the seam the migrator is bundled with. Link the seam with `link:./src/app-config` (a ' +
-                '`file:` dependency installs a copy).',
+                'which is the seam the migrator is bundled with. Declare the seam as the workspace package in ' +
+                '`src/app-config` (`"@sssb/app-config": "workspace:<name>-app-config@*"`; a `file:` dependency ' +
+                'installs a copy).',
         )
     }
     const lockFile = lockFileAbove(appDir)

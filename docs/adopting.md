@@ -173,7 +173,7 @@ ends as the signal asked.
   keeps only the app's own `@/*` alias, an `eslint.config.mjs` applying the preset, and the seam package
   (`apps/<app>/src/app-config/package.json`, a workspace package named `<slug>-app-config`, which the app declares
   under the name the framework imports, `"@sssb/app-config": "workspace:<slug>-app-config@*"`: a `link:` would be
-  unlinked from the app's `@sssb/kit` by the next `pnpm add`, `remove` or `update`). Its
+  unlinked from the app's `@sssb/kit` by the next `pnpm add <pkg>`, `remove` or `update <pkg>` for the app). Its
   `exports` map is one pattern for the flat seam modules (`./*` to `./*.ts`) plus each directory module by name
   (`./db/migrations`), so every specifier the framework imports resolves, and a seam module a later release adds is
   exported once you write it. It declares the app's own module `type`, which for the starter is none. The app's and
@@ -399,7 +399,7 @@ declaration. The generated `knip.json` carries a few narrow entries beside the a
 ignored dependency (`@sssb/cdk` bundles the migrator with the root's esbuild at synth); in the app,
 `@sssb/app-config`, `@vitejs/plugin-react` and `vite-plugin-singlefile` as ignored dependencies (the seam the
 framework resolves, and two tools SSSB's presets load from the app's directory); and the seam, a workspace of its own
-to knip, with every `.ts` file an entry, since the framework reads it and the app's code does not. Their reasons are in
+to knip, with every `.ts` file an entry, since what reads most of it is the framework, from `node_modules`, which knip does not follow. Their reasons are in
 `packages/create/src/files.js`, since JSON holds no comments.
 
 **What the showcase's absence does NOT cost you is the gate.** SSSB's own suite used to be welded to the demo's
@@ -439,7 +439,8 @@ run is the root's and that one would not run the suite, even if it runs none of 
 flags your package.json scripts pass to vitest and which script runs each contract config: doctor cannot see which config or flags your CI uses, so make
 sure CI runs the config doctor names. It also fails a second copy of any peer `@sssb/kit` declares (React, Next,
 Kysely...), an importer of the framework anywhere in the workspace that does not run on its own seam or declares it as
-a `link:` (which the next `pnpm add` unlinks), and an
+a `link:` (which the next `pnpm add <pkg>` for the app unlinks) or by a name that no workspace package, or several,
+have, and an
 `@sssb/*` package out of step with the framework's version, and it reports framework cutover rows your
 `docs/cutover-checklist.md` never mentions. Inside SSSB's own repository it says "in-repo mode" and checks each app's
 seam aliases instead of links. **`sssb check-e2e`** asks your own Playwright which files your configs load

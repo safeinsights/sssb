@@ -406,8 +406,8 @@ function writeWorkspace(root, c, templateDir) {
     // The seam package (ADR-0014 part 1, option C): the app's src/app-config, a workspace package of the app's own name
     // that the app takes under the name the framework imports (`@sssb/app-config`: `workspace:<slug>-app-config@*`),
     // with an export for every module the framework imports. A workspace package, not a `link:`, because pnpm's
-    // `add`, `remove` and `update` drop a `link:` dependency as the provider of @sssb/kit's peer (the 2026-11-18
-    // addendum to ADR-0014). It takes the app's module `type`, because a nested package.json resets it for everything
+    // partial installs for the app (`add <pkg>`, `remove`, `update <pkg>`) drop a `link:` dependency as the provider of
+    // @sssb/kit's peer (the 2026-11-18 addendum to ADR-0014). It takes the app's module `type`, because a nested package.json resets it for everything
     // below it.
     const seamDir = inApp('src/app-config')
     /** @type {Record<string, unknown>} */

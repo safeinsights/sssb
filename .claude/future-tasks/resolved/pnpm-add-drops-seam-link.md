@@ -74,7 +74,8 @@ and its gate rule relaxed to match.
 
 **The cause, in pnpm 11.14.0's bundled source.** A partial install re-resolves only some of an importer's
 dependencies. The rest become "top parents" read from `node_modules` (`getTopParents`), with no linked directory, so
-peer resolution (`createPkgsByName`) finds no provider for the kit's optional peer and drops it. A fresh install
+peer resolution (`createPkgsByName`) gives such a parent no node, so the kit's optional peer records no provider and is
+dropped. A fresh install
 resolves the `link:` as well, which is why it worked there.
 
 **What was tried, in generated workspaces** (a scratch harness counting the suffix, then running doctor):
@@ -92,9 +93,10 @@ resolves the `link:` as well, which is why it worked there.
 
 **What landed with it:**
 
-- **`sssb doctor`** fails a `link:` seam (naming the change) and a seam two importers declare.
-- **Pack and consume's generated shape** ends with `pnpm add`, `remove` and `update` in the app, each followed by
-  doctor; seen red with the `link:` seam.
+- **`sssb doctor`** fails a `link:` seam (naming the change), a seam two importers declare, and a `workspace:` seam
+  whose name no workspace package, or more than one, has.
+- **Pack and consume's generated shape** ends with `pnpm add`, `remove` and `update` for the app (from the root,
+  `--filter <app>`), each followed by doctor; seen red with the `link:` seam.
 - **The plugin's "Adding a package" sections and their gate rule are gone.**
 - **Records:** ADR-0014's addendum "the seam is a workspace package", the decision log, and
   `.changeset/seam-workspace-package.md` (what an existing workspace changes).

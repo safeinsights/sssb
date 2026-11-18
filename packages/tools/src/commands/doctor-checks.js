@@ -609,11 +609,12 @@ export function importerSeamProblems(root, resolveKit, found = kitImporters(root
         }
         if (link?.startsWith('link:') && own !== null) {
             // Linked today, unlinked by the next partial install: pnpm keeps a `link:` dependency as the provider of
-            // @sssb/kit's peer only when it resolves every dependency (a fresh install), never on `add`, `remove` or
-            // `update`, which leave it unresolved (ADR-0014's 2026-11-18 addendum).
+            // @sssb/kit's peer only when it re-resolves every dependency of the app (a fresh install, a bare
+            // `pnpm update`), never on a partial install for the app, `add <pkg>`, `remove` or `update <pkg>`, which
+            // leave it unresolved (ADR-0014's 2026-11-18 addendum).
             const name = `${typeof manifest.name === 'string' ? manifest.name : path.basename(dir)}-app-config`
             problems.push(
-                `${rel(dir)}: declares ${SEAM} as ${link}, which the next \`pnpm add\`, \`remove\` or \`update\` unlinks from its @sssb/kit. ` +
+                `${rel(dir)}: declares ${SEAM} as ${link}, which the next \`pnpm add <pkg>\`, \`remove\` or \`update <pkg>\` for it unlinks from its @sssb/kit. ` +
                     `Make the seam a workspace package: list ${path.relative(root, path.join(dir, 'src', 'app-config'))} in pnpm-workspace.yaml's packages, name it ${name} in its package.json, ` +
                     `declare "${SEAM}": "workspace:${name}@*", and run pnpm install`,
             )

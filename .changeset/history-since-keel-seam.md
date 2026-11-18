@@ -20,10 +20,12 @@ that came with changesets of their own (`@sssb/tools`, `@sssb/eslint-plugin`, th
 
 - Rewrite every `keel/…` import to `@sssb/kit/…` and every `@app-config/…` to `@sssb/app-config/…`, in source,
   tests, `vi.mock` and `import()` specifiers. The seam's directory stays `apps/<app>/src/app-config`.
-- Link the seam as a package: `"@sssb/app-config": "link:./src/app-config"` in the app's `dependencies`, and
-  `src/app-config/package.json` holding
-  `{ "name": "@sssb/app-config", "private": true, "exports": { "./db/migrations": "./db/migrations/index.ts", "./*": "./*.ts" } }`,
-  plus the app's own `"type"` if its `package.json` sets one. A seam module that is a directory or a `.tsx` file
+- Make the seam a workspace package (`seam-workspace-package.md` has why: a `link:` is unlinked by `pnpm add`): list
+  `apps/*/src/app-config` in `pnpm-workspace.yaml`'s `packages`, give `src/app-config/package.json`
+  `{ "name": "<name>-app-config", "private": true, "exports": { "./db/migrations": "./db/migrations/index.ts", "./*": "./*.ts" } }`,
+  plus the app's own `"type"` if its `package.json` sets one, and declare
+  `"@sssb/app-config": "workspace:<name>-app-config@*"` in the app's `dependencies` (`<name>` is the app's package
+  name). A seam module that is a directory or a `.tsx` file
   needs an entry of its own; the conformance suite's `seam-map` check names one that is missing.
 - Lint rule ids `keel/<rule>` are `sssb/<rule>`: rename them in `eslint-disable` comments and in the keys of
   `lint-exceptions.mjs` (a `keel/no-raw-db-handle` key stops the lint config loading, naming the file).

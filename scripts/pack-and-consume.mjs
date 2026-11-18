@@ -660,8 +660,9 @@ function scaffold() {
         ],`,
     )
 
-    // Every @sssb package is routed to an address nothing listens on, so an install that asked the
-    // registry for one, the seam above all, fails instead of passing on whatever the registry answered.
+    // Every @sssb package is routed to an address nothing listens on, so an install that asked the registry for one
+    // (the kit's `@sssb/app-config` peer above all) fails instead of passing on whatever the registry answered; the
+    // seam's own package, a `workspace:` dependency, pnpm resolves only inside the workspace.
     write(path.join(WS, '.npmrc'), '@sssb:registry=http://127.0.0.1:9/\n')
 
     // The committed lockfile seed, as an adopter commits theirs: so a third-party release cannot turn this check red
@@ -1476,7 +1477,8 @@ function generatedUntouched() {
 }
 
 /**
- * THE SEAM SURVIVES pnpm's partial installs: `pnpm add`, `remove` and `update` in the app, as an author runs them,
+ * THE SEAM SURVIVES pnpm's partial installs: `pnpm add`, `remove` and `update` for the app (from the root, `--filter
+ * <app>`), as an author runs them,
  * each followed by `sssb doctor` and the lockfile's seam link. A `link:` seam passed a fresh install and was unlinked by
  * the first of these (ADR-0014's 2026-11-18 addendum). Last, because each rewrites the app's package.json and lockfile.
  */

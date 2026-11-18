@@ -4652,7 +4652,8 @@ playwright` (a version unpinned against `@playwright/test`).
 ## The seam is a workspace package (2026-11-18, `fix/pnpm-add-seam-link`)
 
 P13 found that `pnpm add` in a generated workspace unlinks the app's seam from its `@sssb/kit`, and worked around it in
-the plugin's commands. This fixes it in what `@sssb/create` writes (ADR-0014's addendum of the same date has the
+the plugin's commands (its task, cited in P13's entry above, is now
+`.claude/future-tasks/resolved/pnpm-add-drops-seam-link.md`). This fixes it in what `@sssb/create` writes (ADR-0014's addendum of the same date has the
 cause, in pnpm's source). Each decision, and what was rejected:
 
 - **Each app's `src/app-config` is a workspace package named `<slug>-app-config`, declared
@@ -4698,15 +4699,13 @@ cause, in pnpm's source). Each decision, and what was rejected:
   its name in a package that takes no kit (`apps/zzz/src/app-config` named `acme-app-config`). pnpm took both without
   a warning and linked the later one, into the app and its kit alike, so the seam check's two readings agreed and
   doctor said ok. Rejected: holding every seam to `<importer>/src/app-config` (it would also refuse a seam an adopter
-  keeps elsewhere on purpose, which the names alone do not). Everything else the review ran kept the seam or made
+  keeps elsewhere on purpose, which the names alone do not). Everything else the review reported running (the claim
+  check re-ran `dedupe`, `install --force` and `nodeLinker: hoisted`, with the same result) kept the seam or made
   doctor fail: `pnpm up -r` with and without `--latest`, `--lockfile-only` and Renovate-style updates, `dedupe`,
   `rebuild`, `prune`, `patch`, `catalog:`, overrides, `install --force`, pnpm 11.21.0, `shamefullyHoist`,
   `publicHoistPattern`, the three workspace-protocol settings, renaming an app, and running pnpm inside the seam
   (kept); `nodeLinker: hoisted`, `injectWorkspacePackages`, `injected`, a filtered install, and a copied second app
   with the seam's name or dependency left unrenamed (failed). Not run: `nodeLinker: pnp` (doctor's Vitest listing hung
-  there), `pnpm import`, Renovate and Dependabot themselves, and a kit from a registry. One oddity, left as is: with
-  `linkWorkspacePackages` and `preferWorkspacePackages` true and `saveWorkspaceProtocol: rolling`, `pnpm up -r`
-  rewrote the seam's spec to `workspace:<slug>-app-config@^undefined` (the seam has no `version`); it still installed
-  with the seam linked.
+  there), `pnpm import`, Renovate and Dependabot themselves, and a kit from a registry.
 - **Not covered: `nodeLinker: hoisted`.** One hoisted `@sssb/kit` cannot hold two apps' seams; with two apps doctor
   fails it ("runs on a seam not its own"), as it did before this change.
