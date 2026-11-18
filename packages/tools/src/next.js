@@ -21,6 +21,7 @@
 //
 // Pass the app's directory: Next loads the config with the app as the working directory, which is the default, but
 // another tool that loads it (knip does) may not.
+import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { resolveAppsKit, resolveFromApp } from './kit.js'
@@ -30,7 +31,11 @@ const union = (list, add) => [...new Set([...(list ?? []), ...add])]
 
 /** @type {import('./next.d.ts').withSssb} */
 export function withSssb(nextConfig = {}, { appDir = process.cwd() } = {}) {
-    const root = path.resolve(appDir)
+    // Real paths on both ends: the request config comes back as a real path (the shared check returns one), so the
+    // app's directory must be one too, or a checkout behind a symlink (macOS's /tmp, a symlinked home or worktree)
+    // gets a relative path that climbs out of one spelling and back in through the other, and a module graph that
+    // resolves under two spellings loads two copies of next's modules.
+    const root = realpathSync(path.resolve(appDir))
     const request = resolveAppsKit(root, 'i18n/request')
     const relative = path.relative(root, request).split(path.sep).join('/')
     const pluginFile = resolveFromApp(root, 'next-intl/plugin', "the framework's i18n needs")
