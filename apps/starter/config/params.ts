@@ -12,7 +12,7 @@
  * instrumentation files (NEXT_PUBLIC needs literal inlining) and the two secret readers
  * (service-auth/{webhook,mailgun}.ts). This file may not read process.env itself (the ban covers config/).
  * An app-owned adapter's non-secret parameters and secret NAMES are recorded here too, with their cutover
- * rows (docs/recipes/app-owned-adapter.md).
+ * rows (SSSB's recipe for an app-owned adapter, docs/recipes/app-owned-adapter.md in SSSB's repository).
  * NOT enforced: that a param's literal VALUE appears nowhere else in the repo — that stays a convention,
  * not a scanner.
  */

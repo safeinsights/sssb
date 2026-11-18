@@ -721,6 +721,9 @@ export function candidateNotes(root, version, repo, sha, assets) {
         throw new Error(`${notesPath(version)} is not the release notes of v${version}`)
     }
     const url = (/** @type {string} */ file) => `https://github.com/${repo}/releases/download/v${version}/${file}`
+    // The generator is run, never depended on: it is left out of the overrides and dependencies, and said how to run.
+    const generator = assets.find((a) => a.name === GENERATOR)
+    const libraries = assets.filter((a) => a.name !== GENERATOR)
     const out = [
         notes.trimEnd(),
         '',
@@ -736,15 +739,28 @@ export function candidateNotes(root, version, repo, sha, assets) {
         '',
         '```yaml',
         'overrides:',
-        ...assets.map((a) => `    '${a.name}': ${url(a.file)}`),
+        ...libraries.map((a) => `    '${a.name}': ${url(a.file)}`),
         '```',
         '',
         'and in each workspace package that uses one, depend on the same URL:',
         '',
         '```json',
-        JSON.stringify(Object.fromEntries(assets.map((a) => [a.name, url(a.file)])), null, 4),
+        JSON.stringify(Object.fromEntries(libraries.map((a) => [a.name, url(a.file)])), null, 4),
         '```',
         '',
+        ...(generator
+            ? [
+                  `\`${GENERATOR}\` is the generator, which no workspace depends on: to start a new workspace on this`,
+                  'candidate, download every tarball below into one directory, extract the generator there, and run it with',
+                  'that directory as its packages (its workspace then depends on them by `file:` path):',
+                  '',
+                  '```sh',
+                  `tar -xzf ${generator.file}`,
+                  'node package/bin/create.js <dir> --sssb . --repo <owner/name> --owner <@handle>',
+                  '```',
+                  '',
+              ]
+            : []),
         '| Package | Tarball | sha512 |',
         '| --- | --- | --- |',
         ...assets.map((a) => `| \`${a.name}\` | [\`${a.file}\`](${url(a.file)}) | \`${a.sha512}\` |`),
@@ -759,6 +775,9 @@ export function candidateNotes(root, version, repo, sha, assets) {
     ]
     return unwrap(out.join('\n'))
 }
+
+/** The fixed group's generator (ADR-0014 P12), which an adopter runs rather than installs. */
+const GENERATOR = '@sssb/create'
 
 const CHANGESET_FILE = /^\.changeset\/[^/]+\.md$/
 const MANIFEST = /^packages\/[^/]+\/package\.json$/

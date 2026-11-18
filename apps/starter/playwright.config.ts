@@ -8,8 +8,8 @@ assertNoLiveDevTicker()
 
 /**
  * A port of this app's own: two apps in one workspace must be able to run (and be tested) side
- * by side without one silently reusing the other's dev server — the exact failure mode build-notes
- * records for a foreign server squatting :3000.
+ * by side without one silently reusing the other's dev server (or a foreign server squatting :3000,
+ * which `reuseExistingServer` would otherwise adopt as this app's).
  *
  * Both numbers now come from @sssb/tools/ports rather than being written here, which extends that same
  * guarantee ACROSS checkouts: a linked worktree gets its own pair, so two agent sessions running e2e

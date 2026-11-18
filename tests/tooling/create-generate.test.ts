@@ -141,7 +141,8 @@ describe('@sssb/create: the generated workspace', () => {
 
     /**
      * NOTHING OF SSSB'S REPOSITORY SURVIVES: its apps' names, its workspace's name, its framework's path, its own
-     * repository (but the pinned workflow), its maintainer, and the project's old name. Two allowances, each pinned to
+     * repository (but the pinned workflow), its maintainer, the project's old name, and its spikes and dated records
+     * (build notes, decision log), which a workspace does not have. Two allowances, each pinned to
      * its exact form: the reusable workflow's `uses:` line names SSSB's repository, and `starter` is the name of the
      * port service in @sssb/tools (`sssb port`, `originFor`, `sssb tick`/`dev-tick`), which the app keeps when it is
      * renamed (@sssb/tools' ports.js). And every relative path stays inside its own app, or inside the workspace.
@@ -151,7 +152,18 @@ describe('@sssb/create: the generated workspace', () => {
             'safeinsights/sssb': [/^ {8}uses: safeinsights\/sssb\/\.github\/workflows\/app-checks\.yml@[0-9a-f]{40} /],
             starter: [/originFor\('starter'\)/, /"port": "starter"/, /sssb (?:dev-)?tick starter\b/],
         }
-        const banned = ['starter', 'showcase', 'sssb-workspace', 'packages/kit', 'safeinsights/sssb', 'jpslav', 'keel']
+        const banned = [
+            'starter',
+            'showcase',
+            'sssb-workspace',
+            'packages/kit',
+            'safeinsights/sssb',
+            'jpslav',
+            'keel',
+            'spikes/',
+            'build-notes',
+            'decision-log',
+        ]
         const survivors: string[] = []
         for (const file of filesUnder(ws)) {
             const lines = read(ws, file).split('\n')

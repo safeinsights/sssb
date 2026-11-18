@@ -105,11 +105,12 @@ jobs:
     # ADR-0014 P12: a new adopter's workspace, as `pnpm create @sssb` makes it. Packs every @sssb package, runs the
     # PACKED @sssb/create (extracted from its tarball, under plain Node) into a scratch directory with the tarballs as
     # its packages, installs, and runs that workspace's OWN gates with not one of its files changed: `pnpm verify`
-    # (e2e and the static demo included), `pnpm test:contract` on embedded Postgres, the reusable workflow's
-    # `sssb ci lint-typecheck-unit`, `pnpm synth` and `pnpm jscpd`. A required check, under the name the rulesets
+    # (e2e and the static demo included), the unit tests and `pnpm test:contract` (on embedded Postgres) held to the
+    # conformance suite, the reusable workflow's `sssb ci lint-typecheck-unit` and `sssb ci synth`, and `pnpm knip` and
+    # `pnpm jscpd` (the workspace's own CI job). A required check, under the name the rulesets
     # already require. It is pack and consume's second shape (`--shape generated`), and the job below runs the first:
     # two jobs side by side rather than one running both, so each is its own required check and neither waits on the
-    # other. Packing, and the install it needs, are the job below's. The caches are keyed on the same seed (both
+    # other. Packing, and the install it needs, are done as in the job below, whose comment says why. The caches are keyed on the same seed (both
     # workspaces install from it) under prefixes of this job's own: the two jobs' stores hold different sets (this
     # shape installs a subset of the seed), and with one key whichever job saved first would hand the other a store
     # missing what it installs.

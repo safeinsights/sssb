@@ -1,8 +1,8 @@
 // @ts-check
-// THE TEMPLATE (ADR-0014 D4: the starter IS the template). One function builds it from SSSB's repository, and it is
-// used twice: by the package's `prepack`, which writes `template/` into the tarball (never committed: no second copy of
-// the starter lives in the repository), and by the repository's tests, which generate from the live tree without
-// packing. So what the tests prove is what is packed.
+// THE TEMPLATE (ADR-0014 D4: the starter IS the template). One function builds it from SSSB's repository, used by the
+// package's `prepack`, which writes `template/` into the tarball (never committed: no second copy of the starter lives
+// in the repository), by the bin run from a checkout (into a temporary directory), and by the repository's tests,
+// which generate from the live tree without packing. So what the tests prove is what is packed.
 //
 //   template/meta.json   what the generator needs from the repository once it is no longer beside it: the version,
 //                        the reusable workflow's repository and commit, the toolchain (packageManager, engines, the

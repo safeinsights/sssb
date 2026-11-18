@@ -36,7 +36,7 @@ CIDRs and rolls back. Changing shape later means a new stack and a snapshot rest
     - both Lambdas run outside it and reach Aurora through the RDS Data API, authorised by IAM alone;
     - the function configuration holds no database credential.
 
-    Cutover rows `data-api` (the transport, proven live by `docs/runbooks/data-api.md`) and
+    Cutover rows `data-api` (the transport, proven live by SSSB's `docs/runbooks/data-api.md` runbook) and
     `data-api-access` (this shape, deployed) close it.
 
 ## What synth asserts

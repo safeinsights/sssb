@@ -4161,9 +4161,9 @@ generator. What went, what replaced each, and what was kept:
   synth). **The job name is kept**: `integration`'s ruleset requires a check called `adoption-probe`, and
   dropping the name would block every PR until the ruleset was edited. The new job of that
   name generates a workspace with the packed `@sssb/create` and runs its own `pnpm verify`, which is what the old
-  probe proved for a fork: that an adopter's first command leaves a green gate. A later worker in this PR adds it;
-  `TODO(P12-adoption-probe)` marks the place in `checks.yml` and in `tests/tooling/app-checks-workflow.test.ts`,
-  which still pins the name.
+  probe proved for a fork: that an adopter's first command leaves a green gate. It is pack and consume's second
+  shape (below, "Pack and consume's two shapes and the `adoption-probe` job");
+  `tests/tooling/app-checks-workflow.test.ts` still pins the name.
 - **`tests/docs/adopter-identity.test.ts`.** Dropped, as ADR-0014's table says: the generator writes the owner files
   from its flags, so there is no maintainer identity in an adopter's tree to scrub. The check that the template's
   own owner files name the maintainer went with it.
@@ -4179,9 +4179,8 @@ generator. What went, what replaced each, and what was kept:
 - **Future tasks.** `eject-rewrites-prose-into-false-sentences.md` is resolved by retirement (the rewrite it
   describes no longer exists). `init-app-blank-option.md` became `create-blank-option.md`: a `--blank` option is as
   much needed on the generator. The rest had their init-app mentions retargeted.
-- **Docs, as far as P12 needs.** `docs/adopting.md`'s fork and `init-app` sections now start from the generator; its
-  flags are as the P12 design names them, with `TODO(P12)` where the built CLI must confirm them. The full rewrite,
-  and ADR-0013's supersession, are P15.
+- **Docs, as far as P12 needs.** `docs/adopting.md`'s fork and `init-app` sections now start from the generator, as
+  built (its usage block is `--help`'s output). The full rewrite, and ADR-0013's supersession, are P15.
 
 ## `@sssb/create` (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
 
@@ -4189,27 +4188,48 @@ generator. What went, what replaced each, and what was kept:
 plain JavaScript, no dependencies, no `@sssb/*` dependency (rule 4), `private: true` until P14 and in the fixed
 group. The choices the P12 row and the design left open, each with what was rejected:
 
-- **The template is built from the working tree, with an exclude list, and stamped.** `buildTemplate`
-  (`packages/create/src/template.js`) walks `apps/starter` and drops, at any depth, the names this repository's
-  `.gitignore` gives build output, local state and secrets (`node_modules`, `.next`, `.data`, `dist-demo`,
-  `test-results`, `playwright-report`, `coverage`, `cdk.out`, `out`, `dist`, `build`, `.turbo`, `.DS_Store`,
-  `next-env.d.ts`, `.eslintcache`, `*.tsbuildinfo`, every `.env*` but `.env.example`), then copies six generic root
-  files (`.editorconfig`, `.nvmrc`, `.prettierrc.json`, the two husky hooks, `commitlint.config.mjs`). It writes
-  `template/{meta.json, app/, root/}`, a leading `.` in a path segment stored as `_dot_` because npm's packing drops
-  some dotfiles. `meta.json` holds what the generator needs once it is away from the repository: the version, the
-  workflow's repository and commit, `packageManager`, `engines`, the ranges of the root's tools, the raw
-  `allowBuilds` block, `minimumReleaseAge`, the seam specifiers, the framework's cutover rows (less `scope: sssb`),
-  the action pins `app-checks.yml` uses and the gitleaks version `checks.yml` uses. The package's `prepack` builds
+- **The template is the starter's TRACKED files, copied from the working tree, and stamped.** `buildTemplate`
+  (`packages/create/src/template.js`) copies what `git ls-files` lists under `apps/starter`, and six generic root
+  files (`.editorconfig`, `.nvmrc`, `.prettierrc.json`, the two husky hooks, `commitlint.config.mjs`; `ROOT_FILES`,
+  which must be tracked too), each as the working tree has it. Untracked files are left out with one warning naming
+  them; a symlink, a submodule, an unmerged file or a tracked file missing from the working tree is refused with the
+  list; a checkout without git is refused. It writes `template/{meta.json, guide.md, app/, root/}`, a leading `.` in
+  a path segment stored as `_dot_` because npm's packing drops some dotfiles. `meta.json` holds what the generator
+  needs once it is away from the repository: the version, the workflow's repository and commit, `packageManager`,
+  `engines`, the ranges of the root's tools, the `allowBuilds` approvals, `minimumReleaseAge`, the seam specifiers,
+  the framework's cutover rows (less `scope: sssb`), the action pins `app-checks.yml` uses, the gitleaks version
+  `checks.yml` uses, and the dependency names the slug check reads (below). The package's `prepack` builds
   `template/` and its `postpack` removes it (it is gitignored, and ignored by Prettier and ESLint), so no copy of the
-  starter is ever committed; run from a checkout, with no `template/`, the bin builds one from that checkout into a
-  temporary directory, which is how the tests drive it. Rejected: `git ls-files`, as pack and consume's
-  `copyTracked` does, which needs a git checkout at pack time and a second path for the tests' stand-in repository.
-  The cost: an untracked, non-ignored file in a developer's `apps/starter` is packed (a release packs on CI's clean
-  checkout, where there is none). Also rejected: the generator reading the seam specifiers from `@sssb/kit` when it
-  runs (rule 4; and it runs before anything is installed).
-- **The workflow pin is the packing commit**: `git rev-parse HEAD`, asserted to hold
-  `.github/workflows/app-checks.yml`; `--workflow-ref <sha>` overrides it. An adopter's `uses:` resolves only if that
-  commit is on GitHub, which release packing satisfies and a local pack of an unpushed commit does not.
+  starter is ever committed; run from a checkout, with no `template/`, the bin builds one into a temporary
+  directory. **Consequence: a new starter file must be `git add`ed before a local pack or the create tests see it.**
+  Rejected: round 0's deny-list over the working tree (it copied any local file nobody listed, such as an `.npmrc`
+  holding a token, a key, `.vscode/` or a swap file, and dropped symlinks silently);
+  `git ls-files --cached --others --exclude-standard` (still packs a developer's unignored local file, the leak the
+  deny-list had); refusing when
+  untracked files exist (blocks every local test run while a new starter file is unstaged); copying symlinks (what a
+  link points at is outside what git tracks, npm's packing treats links inconsistently, and the starter has none);
+  building from `HEAD` with `git show` (a second copy path the tests, which build from the working tree, would not
+  exercise). Also rejected: the generator reading the seam specifiers from `@sssb/kit` when it runs (rule 4; and it
+  runs before anything is installed).
+- **The workflow pin is the packing commit, and packing checks it is on GitHub and is the template's.** The pin is
+  `git rev-parse HEAD`, asserted to hold `.github/workflows/app-checks.yml`; `--workflow-ref <sha>` overrides it. An
+  adopter's `uses:` resolves only if that commit is on GitHub, so `prepack` (`scripts/build-template.js`) refuses a
+  `HEAD` that no remote-tracking branch contains (`git branch --remotes --contains`, as of the last fetch: no
+  network) of a remote whose path is the package's `repository` (`unpushedPin`). The remote is recognized by its
+  PATH, `safeinsights/sssb` (case-insensitive, `.git` and a trailing `/` optional), in an scp-like URL (any ssh host
+  alias) or one with a scheme (`ssh://git@ssh.github.com:443/…` included); a local path or `file://` is not a
+  network remote. It also refuses template sources that differ from `HEAD` (`uncommittedSources`:
+  `git status --porcelain --untracked-files=all -- apps/starter packages/kit/src/guide.md`, so modified, staged,
+  deleted or untracked), since the template is copied from the working tree and the release it ships in is `HEAD`'s.
+  **`SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings**, for a tarball no workspace will run on GitHub. Pack and
+  consume sets it but on a push to `safeinsights/sssb` (`createPackEnv` in `scripts/pack-and-consume/checks.mjs`),
+  the one run whose tarballs a release candidate attaches. The checkout path (`node packages/create/bin/create.js`)
+  only warns about the pin, on stderr, and does not check the sources: a developer generating while editing the
+  starter is its normal case, and it is how the repository's own tests generate. Rejected: asking GitHub (network
+  at pack time); failing the checkout path too; requiring `github.com` in the URL (misses ssh aliases and
+  ssh-over-443; the known looseness is that a mirror at that path counts, a fork never); turning the checks on for
+  any push (a fork's push to its own `main` would fail: its commit is on no branch of SSSB's remote); refusing only
+  tracked changes (strict is simpler to state, and a pack that needs an untracked file opts out).
 - **The generated workflow is `.github/workflows/checks.yml`**, not the design's `ci.yml`: the starter's
   `infra/README.md` already says "`.github/workflows/checks.yml` runs checks only", which is then true in both
   trees. Three jobs: `sssb` (the reusable workflow at the pinned SHA, `permissions: contents: read`,
@@ -4242,6 +4262,18 @@ group. The choices the P12 row and the design left open, each with what was reje
   pnpm asks the registry for `@sssb/tools`, which `@sssb/cdk` depends on at an exact version (P9's addendum). This
   refines ADR-0014 part 7's "No overrides are used": that holds for published versions, where none is written, and
   not for tarballs. `--sssb <version>` writes the version as given; the default is `^<the generator's version>`.
+  The `file:` paths in the overrides are quoted as Prettier's YAML printer would (`yamlString` in
+  `packages/create/src/yaml.js`: single quotes with `''`, except a value with `'` and no `"` or `\`, which is
+  double-quoted, so `prettier --check` stays green), and so is a scoped `allowBuilds` key; a control character is
+  refused, and values already held to plain-safe characters (slug, repository, SHAs, versions) stay plain.
+- **`--sssb` must be the generator's own version.** A tarball directory refuses tarballs of mixed versions, naming
+  each version's packages (the fixed group never publishes a mix), and a directory or version flag whose version
+  (`^`/`~` stripped) is not the template's `meta.version` is refused, naming `@sssb/create@<that version>` to run
+  instead. The workspace's `.claude/sssb-guide.md` is stamped with the hash of the guide packed into the generator,
+  and `sssb doctor` fails the first verify when the installed kit's guide differs. Rejected: copying the guide out of
+  the `--sssb` tarballs (a tarball reader in a package with no dependencies, and nothing for the version form). A
+  `^<version>` can still resolve a later patch whose guide differs; keeping a guide change out of a patch is the
+  release process's, not checked here.
 - **The root's `sssb:doctor` is `sssb doctor --app apps/<slug>`.** An adopter's root installs no `@sssb/kit`, and
   doctor will not start from a directory that does not resolve it; one run still checks every app. Rejected: a
   bare `sssb doctor` at the root, which works in this repository only because its root resolves the framework.
@@ -4254,10 +4286,17 @@ group. The choices the P12 row and the design left open, each with what was reje
   Prettier-clean without re-implementing table alignment. `DEMO-SIZE.md` is written fresh, with the budget at
   generation and an empty "Changes", because the starter's copy carries SSSB's history and links into
   `jpslav/keel`; the starter's own copy is untouched.
-- **Not written: `LICENSE`, `.claude/`, `CLAUDE.md`, `.github/dependabot.yml`; and no `git init`.** The README says
-  to add a licence. The agent guide arrives with P7 (`sssb guide`) and the commands with P13's plugin. The generator
-  runs no `git init`, no install, no Prettier and no network; the README and the closing output put `git init`
-  first, before `pnpm install`, so husky's `prepare` finds a repository.
+- **The workspace carries `.claude/sssb-guide.md`**, since P7's `sssb doctor` fails a workspace without it: the
+  template packs `@sssb/kit`'s `src/guide.md` as `template/guide.md`, and the generator writes the stamped copy byte
+  for byte as `sssb guide` writes it (the test compares against `sssb guide --out`). The stamp's format is duplicated
+  from `@sssb/tools`' `guide` command (rule 4), held by that test. The README says to import it from the adopter's
+  `CLAUDE.md` with `@.claude/sssb-guide.md`, and that `pnpm exec sssb guide` refreshes it after an upgrade.
+- **Not written: `LICENSE`, `CLAUDE.md`, `.github/dependabot.yml`; no `license` field; and no `git init`.** The
+  README says to add a licence. The app's and infra's `package.json` lose the starter's `license`: they are private
+  (never published, so npm does not ask), and `UNLICENSED`, the alternative, would claim a proprietary choice the
+  adopter has not made. The commands arrive with P13's plugin. The generator runs no `git init`, no install, no
+  Prettier and no network; the README and the closing output put `git init` first, before `pnpm install`, so
+  husky's `prepare` finds a repository.
 - **The owner files come from flags.** `--repo owner/name` (validated) fills the advisory links in `SECURITY.md`,
   `CODE_OF_CONDUCT.md` and the issue-template config; without it they name
   `PLACEHOLDER_GITHUB_OWNER/PLACEHOLDER_GITHUB_REPO`, init-app's convention. `--owner` (repeatable, `@` optional,
@@ -4271,9 +4310,85 @@ group. The choices the P12 row and the design left open, each with what was reje
   `packages/cdk/src/database-name.js`'s (rule 4: no SSSB dependency), held equal by
   `tests/tooling/create-args.test.ts`. init-app's other refusals (`kit`, `cdk`, `repo`, `sssb-*`) guarded collisions
   inside SSSB's repository and do not apply to a fresh workspace.
+- **A slug that names a dependency is refused**, in `generate` (so by the CLI and the API): one where `<slug>`,
+  `<slug>-infra` or `<slug>-workspace` is the unscoped name of a package in pack and consume's lockfile seed
+  (`scripts/pack-and-consume/consumer-lock.yaml`), stamped into `meta.json` as `dependencyNames`. pnpm mistook an app
+  named `ws` for the `ws` package and handed it that package's optional peers. The seed is the generated shape's own
+  resolution (a slight superset: it also holds the pages shape's second app and sibling package), so `ws`, `react`,
+  `next` and `kysely` are refused and this repository's own tooling (`events`, `history`, `open`, `cookies`) is not.
+  Rejected: SSSB's `pnpm-lock.yaml` (it refused names no generated workspace installs); walking the generated
+  importers' tree in the seed (precise, but more code for the handful of names the pages shape adds); a scoped app
+  package (`@<slug>/app`: it changes every `--filter <slug>`, the CLI's identity surface and pack and consume's pins,
+  and only narrows the collision to a scope).
+- **The display name is held to what every file it lands in carries as itself** (`displayName` in
+  `packages/create/src/args.js`, applied by the CLI and by `generate`). It lands in TypeScript and JSON strings, an
+  HTML `<title>`, markdown and the app's catalogs, which next-intl parses as ICU messages. Control characters,
+  U+2028/9 and bidirectional overrides are refused; it is trimmed and each whitespace run made one space; it may hold
+  letters, marks, digits, emoji (with their joiners), spaces and `. , ' ’ " & ( ) ! ? : / + % ; = ~ _ # -`, starting
+  with a letter or digit (a leading `-`, `1.` or `#` would make a markdown line a list or heading); `_` only inside a
+  word, at most one `~` (a pair is strikethrough), no `#` as a word of its own at the end (a heading's closing
+  sequence), no `''` (ICU reads one apostrophe), and no `&` that markdown reads as a character reference: `&#`
+  anywhere, or `&` with letters or digits and a `;` (`R&D`, `Q & A` and `Harbor & O'Neill` stay allowed; `&amp;`,
+  `&copy;`, `R&D;Lab` are refused). At most 60 columns, a wide character counting two, and the static demo's
+  `<title>` line must fit 120. `SECURITY.md`'s sentence was written so the name never starts a markdown line.
+  Rejected: escaping (it would have to be right for markdown, HTML, ICU and TS/JSON at once, and Prettier-stable in
+  each: Prettier rewrites `*x*` to `_x_` and drops needless markdown escapes); collapsing control characters (a
+  newline in a name is a mistake to report); a list of HTML5 entity names (2000+, for names that are only
+  entity-shaped). Pack and consume generates its second shape with `Harbor & O'Neill C# Console; 50% = data_lab ~ v1`,
+  so every allowed special goes through install, typecheck, lint and the unit run.
 - **JSON is written Prettier-shaped without Prettier** (`packages/create/src/json.js`): `package.json` in
   `JSON.stringify`'s layout (Prettier's `json-stringify` parser), other `.json` with short arrays of plain values on
   one line within 120 columns. A test runs the repository's Prettier `--check` over a whole generated workspace.
+  `allowBuilds` is read from this repository's `pnpm-workspace.yaml` as data (name to boolean) and written with the
+  generator's own comment, so SSSB's comments about its own platforms stay in SSSB's file.
+- **Generation writes into the target in place, all or nothing, and never removes or replaces an existing target.**
+  The target is created if absent (remembered); the workspace is written into `<target>/.sssb-create-<hex>/`, and at
+  the end its entries are renamed up into the target, after checking nothing else arrived meanwhile and never over
+  an existing entry. A failure removes the stage, the entries already moved up, and each directory this run created,
+  walking up from the target only while they are empty. A target that is a symlink is refused; one holding only
+  `.git`, `.DS_Store` or `lost+found` counts as empty (`LEFT_ALONE` in `generate.js`), so `gh repo clone` of a new
+  repository then `pnpm create @sssb .` works and a Finder `.DS_Store` written mid-run neither refuses nor rolls back;
+  those are never removed. Filesystem errors become `CreateError`s ("could not write the workspace: …", "could not
+  build the template: …"); a bug still shows its stack. Rejected: a sibling stage renamed over the target (it removes
+  the user's directory: `pnpm create @sssb .` loses the shell's cwd, a parent that is not writable fails, the
+  target's mode, owner and ACLs reset, a mount point is `EBUSY`); writing straight into the target (a failure leaves
+  half a workspace mixed with whatever the user adds); ignoring every dotfile (`.gitignore`, `.github` and `.env`
+  are content the workspace would clash with); only `.git` (macOS volumes hit `.DS_Store` routinely).
+- **SIGINT, SIGTERM and SIGHUP are held while the generator works** (`packages/create/src/signals.js`). The work is
+  synchronous, so a signal's default action would end the process part-way and leave it behind: while a generation
+  (or, on the checkout path, the template build into its temporary directory, held from before `mkdtempSync`) is
+  under way, one module-level listener defers the signal; when it is dispatched it undoes everything still held, even
+  work that finished, each undo best-effort, and raises the signal again so the process ends as signalled. Release,
+  and the CLI's "Created" and failure paths, wait two event-loop turns (`signalsSettled`): libuv reads a pending
+  signal only in the poll phase, and when `generate` runs inside a poll callback (`main()` resumes from the prompt's
+  stdin read), the first turn's check phase comes before any poll phase. With one turn the run printed "Created" and
+  exited 0 with the SIGINT dropped; the test (a child generating from `fs.readFile`'s callback) reds that way. A
+  signal that arrives after the work returned is not promised either way. Rejected: keeping a finished workspace when
+  the interrupt arrives during the write (the person asked to stop); a listener per call (Node's MaxListeners
+  warning); a flag set by the handler (it has not run yet: that is the bug); `process.nextTick` or microtasks (never
+  reach the poll phase); `setTimeout(0)` (it can fire in the next turn's timers phase, still before its poll phase);
+  a `process.on('exit')` cleanup (it does not run on a default-action kill); an async template build (a rewrite for
+  a sub-second window).
+- **The generated `pnpm verify` runs what CI runs, but the secret scan**: `concurrently --kill-others-on-fail --group`
+  over `typecheck`, `lint`, `test:coverage`, `knip`, `jscpd`, `check:fences`, `sssb:doctor`, `check:e2e` and `synth`,
+  then `test:contract` alone (embedded Postgres starting on a loaded machine is the step that timed out), `test:e2e` and
+  the static demo's three. `check:fences` is a root script of the workspace's own,
+  `pnpm --filter './apps/*' --fail-if-no-match exec sssb check-fences`, per app as `sssb ci` runs it, and every
+  generated `--filter './apps/*'` script carries `--fail-if-no-match`, so a selector that matches nothing fails.
+  `tests/tooling/create-generate.test.ts` reads `sssb ci`'s source for the scripts its jobs run and the workflow for the
+  workspace's own job, and fails a verify that misses one. Rejected: verify as the `sssb ci <job>` commands themselves
+  (serial, and `sssb ci matrix`/`e2e` are CI's orchestration); a root `check:fences` naming the one app (it misses an
+  app added later).
+- **`infra/` is typechecked by a program of its own, run by the app's `typecheck`.** In the starter (so in both
+  trees): `apps/starter/infra/tsconfig.json` extends the app's, with `include: ["**/*.ts"]`, `types: ["node"]`
+  (TypeScript 6 includes no `@types` by default) and `incremental: false`, and the app's `typecheck` is
+  `next typegen && tsc --noEmit && tsc --noEmit -p infra`. SSSB's `pnpm typecheck` and the generated one both reach it
+  through `pnpm --filter './apps/*' typecheck`, with no root change in either. Rejected: `infra/**` in the app's
+  tsconfig (`next build` would typecheck the CDK's declarations on every build and e2e run); a `typecheck` script in
+  infra's `package.json` (`./apps/*` does not match `apps/*/infra`, so both roots would change).
+- **Small CLI choices.** A bare `--` is ignored (`npm create @sssb dir -- --slug x` hands it through); the closing
+  `cd` line is shell-quoted; `--workflow-ref` reaches the checkout path's template build (no `git rev-parse` then);
+  the checkout path's temporary template is removed however the run ends.
 - **The root's devDependencies are a list in the generator** (`ROOT_DEV_DEPENDENCIES`) at this repository's
   ranges, captured when the template is built: pack and consume's `root-devdeps-picked` workaround, moved. `vite`
   and `@vitejs/plugin-react` are not among them: the app has them. The app gains `@sssb/eslint-plugin` and `eslint`.
@@ -4285,3 +4400,58 @@ group. The choices the P12 row and the design left open, each with what was reje
   `docs/adopting.md` argues. This repository's `knip.json` gained no entry for `packages/create`.
 
 The `TODO(P12)` markers the previous section left in `docs/adopting.md` are resolved against the built CLI.
+
+## Pack and consume's two shapes and the `adoption-probe` job (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
+
+Pack and consume (`scripts/pack-and-consume.mjs`) now proves the generator as well as the packages, and the
+`adoption-probe` check is its second shape. What it does, and what was rejected:
+
+- **It packs all five `@sssb` packages flat into one `tarballs/` directory**, the directory the generator's `--sssb`
+  takes, checks the packed `@sssb/create` (`createPackageProblems`: no dependency at all, the bin shipped, the
+  template packed whole with none of a checkout's local state in it, JavaScript only under `bin/` and `src/`) and that
+  its `postpack` left no `packages/create/template` behind, and extracts it. Both shapes run THAT generator under
+  plain Node. On a push, `checks.yml` keeps the directory's tarballs as the run's `sssb-tarballs` artifact, so a
+  release candidate attaches `@sssb/create` with the rest (it is in the fixed group). `candidateNotes`
+  (`scripts/release.mjs`) leaves the generator out of the overrides and dependencies it tells an adopter to write and
+  says how to run it instead: a generator is run, never depended on.
+- **Two shapes, two jobs.** `--shape pages` (CI's `pack-and-consume`) generates the workspace (`--slug console`),
+  generates a second app (`--slug ledger`) elsewhere and moves it in, extending the root's three app lists as an
+  adopter adding an app would, and adds the shape's own code (an adapter, a sibling package, the seamless negative
+  fixture, the strict-flag tsconfig) for the script's checks. `--shape generated` (CI's `adoption-probe`) changes not
+  one file: every file the generator wrote is hashed and must be byte-identical at the end (a tool that rewrites one
+  means the generator must write it that way). No flag runs both. Rejected: one job running both (each is its own
+  required check, and they run in parallel).
+- **The generated shape runs the workspace's own gates**: `pnpm verify` (`verifyGateProblems` first: verify must reach a
+  script for every gate `sssb / all-checks` holds, plus knip and jscpd, and no reached script may hold a form that
+  passes with a step failed or not run: `||`, a lone `|`, a newline, `;` outside quotes no other shell reads, a lone
+  `&`, `--if-present`, concurrently's `--success` other than `all`, `echo`, a `#` comment, or a `--filter` without
+  `--fail-if-no-match`); the unit tests through every script that runs them on the way to a green (`heldUnitScripts`:
+  the one verify reaches and the one `sssb ci lint-typecheck-unit` runs, `CI_UNIT_SCRIPTS`, which a test holds to
+  `ci.js`), each held to every conformance test the packed registry names; `pnpm test:contract`, held likewise;
+  `sssb ci lint-typecheck-unit`; and synth, knip and jscpd as steps of their own, as CI runs them
+  (`sssb ci synth --filter <the selector the generated workflow passes>`, `pnpm knip`, `pnpm jscpd`). Rejected: holding
+  only `test:unit` (nothing in verify or CI runs it any more, so a `test:coverage` that excluded the conformance file
+  passed); a shell parser for the gate check (heavy for input the generator writes; plain matches refuse a rare
+  `grep -E 'a|b'`, and a non-pnpm `--filter` is refused without the flag only pnpm takes); catching every no-op
+  (`synth: 'true'` still passes composition, which is why synth runs on its own: CI never runs the root `synth`).
+- **One lockfile seed for both shapes, with two tokens.** `consumer-lock.yaml` is the pages shape's resolution; the
+  generated shape's importers (`.`, `apps/console`, `apps/console/infra`) are a subset, and pnpm keeps the seed's
+  resolution when it drops the rest. The generator writes ABSOLUTE `file:` paths, which pnpm copies verbatim into the
+  lockfile's specifiers and `overrides`, so the seed holds `__PACK_AND_CONSUME_TARBALLS__` for the run's tarball
+  directory and `__PACK_AND_CONSUME_VERSION__` for the group's version (a candidate's tarballs are
+  `sssb-kit-x.y.z-rc.N.tgz`), swapped in on the way in and back by `--update-lockfile`, which fails if any other path
+  of the run's directory is left. Shape 2's "resolution moved" notice counts package versions the seed does not hold
+  (`packagesBeyondSeed`), not lines: dropping importers moves `optional: true` flags. `lockfileProblems` reads the
+  `overrides:` section (each `@sssb/*` to a `file:` tarball, the seam never). Rejected: a second seed for shape 2
+  (another ~8k lines to refresh, for the same resolution).
+- **The workaround register is empty.** P12's six (the stripped in-repo tsconfig, the seam package, the root's
+  tools, `allowBuilds`, the ESLint configs, `dedupePeerDependents`) left with the generator, which writes each. The
+  machinery stays for the next gap.
+- **The `adoption-probe` job** runs `node scripts/pack-and-consume.mjs --shape generated`, with the same install as
+  `pack-and-consume` (the kit's dependencies for its `prepack`, the cdk's `workspace:` link; `@sssb/create`'s
+  `prepack` needs Node and git only) and caches keyed on the same seed under prefixes of its own (the two stores hold
+  different sets). Its name is the one the rulesets already required.
+- **Left for later**: a way to add a second app to a generated workspace (`@sssb/create --add-app` or
+  `sssb add-app`); the pages shape does it by hand today, as an adopter with two apps would, and it is not a workaround
+  because no ADR-0014 step promises it. ADR-0014 part 7's "a sibling package that imports keel and links the seam"
+  is still not in the pages shape (it had none before P12 either).

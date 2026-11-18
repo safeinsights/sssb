@@ -1,8 +1,7 @@
 import { Kysely, sql } from 'kysely'
 
 /**
- * The `items` table — this app's only tenant-scoped table, carrying the RLS pattern proven in
- * spikes/kysely-pglite (ADR-0004). It runs after every framework migration (name-sorted, 0001–0999
+ * The `items` table — this app's only tenant-scoped table, carrying SSSB's RLS pattern (ADR-0004). It runs after every framework migration (name-sorted, 0001–0999
  * first), so it can reference `tenants` and `organizations` directly.
  *
  * Two deliberate differences from SSSB's reference app's `1001_tickets`: `org_id` is NOT NULL (this

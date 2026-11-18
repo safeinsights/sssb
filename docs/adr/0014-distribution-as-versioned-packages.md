@@ -1058,21 +1058,26 @@ workflow"):
 
 P12 built `packages/create` as the plan row says, with `init-app` and the adopter-identity test retired in the same
 PR. Where it decided differently from the body, or more precisely (each argued in `docs/decision-log.md`,
-"`@sssb/create`" and "Retiring init-app, the adoption probe and the adopter-identity test"):
+"`@sssb/create`", "Retiring init-app, the adoption probe and the adopter-identity test" and "Pack and consume's two
+shapes and the `adoption-probe` job"):
 
 - **The bin is `sssb-create`**, the name `pnpm create @sssb` and `npm create @sssb` run. The package is plain
   JavaScript with no dependencies, SSSB's packages included (rule 4), `private: true` until P14.
-- **The template is built from the working tree**, not from git: `apps/starter` less the names this repository's
-  `.gitignore` gives build output, local state and secrets, plus six generic root files, stamped with a
-  `meta.json` (the version, the workflow commit, the toolchain, the seam specifiers, the cutover rows, the action
-  pins). The package's `prepack` writes it to `template/` and its `postpack` removes it, so no copy is committed (D4);
-  run from a checkout, the bin builds it into a temporary directory first. The workflow pin is the packing commit,
-  which must hold `app-checks.yml` and be on GitHub for an adopter's `uses:` to resolve; `--workflow-ref` overrides
-  it.
+- **The template is the files git tracks in `apps/starter`, copied from the working tree**, plus six generic root
+  files and the kit's app guide, stamped with a `meta.json` (the version, the workflow commit, the toolchain, the seam
+  specifiers, the cutover rows, the action pins, the names of the packages a workspace installs). Untracked files are
+  left out; a symlink or submodule is refused. The package's `prepack` writes it to `template/` and its `postpack`
+  removes it, so no copy is committed (D4); run from a checkout, the bin builds it into a temporary directory first.
+  The workflow pin is the packing commit, which must hold `app-checks.yml` and be on GitHub for an adopter's `uses:`
+  to resolve; `--workflow-ref` overrides it. Packing refuses a commit no remote-tracking branch of
+  `safeinsights/sssb` holds, and a starter or app guide that differs from it, unless `SSSB_CREATE_UNPUSHED_PIN=1`
+  (pack and consume's tarballs, but on a push to SSSB's own repository).
 - **Part 7's "No overrides are used" holds for published versions only.** `--sssb <dir>`, a directory of packed
   tarballs, writes `file:` dependencies and a pnpm `overrides` block mapping every `@sssb/*` package to its tarball,
   because `@sssb/cdk` depends on `@sssb/tools` at an exact registry version (the P9
-  addendum), which pnpm would otherwise fetch. With a version, the default, no override is written.
+  addendum), which pnpm would otherwise fetch. With a version, the default, no override is written. Either way the
+  version must be the generator's own: the workspace's copy of the app guide is that version's, and `sssb doctor`
+  fails one that is not the installed kit's.
 - **The seam package's `type` is the app's own**, which for the starter is none, not `module`: a nested
   `package.json` resets the module type of everything under it, and the app's configs are CommonJS-typed. Its
   `exports` is `./*` for the flat seam modules plus each directory module by name.
@@ -1083,16 +1088,27 @@ PR. Where it decided differently from the body, or more precisely (each argued i
   (`.claude/future-tasks/neutral-app-port-service.md`).
 - **The generated workflow is `.github/workflows/checks.yml`**, with the `sssb` job calling the reusable workflow,
   and `workspace-checks` (knip, jscpd) and `secret-scan` (gitleaks) beside it. The root's `sssb:doctor` is
-  `sssb doctor --app apps/<slug>`, since an adopter's root installs no `@sssb/kit`.
+  `sssb doctor --app apps/<slug>`, since an adopter's root installs no `@sssb/kit`. The generated `pnpm verify` runs
+  every script those jobs run but the secret scan (the contract tests, the fences and synth included), so a local
+  green is a CI green; each app's `infra/` is typechecked by the app's `typecheck`, through a `tsconfig.json` of its
+  own (in the starter, so in this repository too).
 - **The `adoption-probe` check is kept, under its old name, for the generator.** Part 3's table says pack and
   consume replaces it, and the Consequences retire it; its init-app steps are gone, but the rulesets require a check
   called `adoption-probe`, so the name now carries the generated workspace's verify: CI generates a workspace with
-  the packed `@sssb/create` from the packed packages and runs its `pnpm verify`.
+  the packed `@sssb/create` from the packed packages and runs its `pnpm verify`, then its unit and contract runs held
+  to the conformance suite, the reusable workflow's `sssb ci lint-typecheck-unit` and `sssb ci synth`, and its knip
+  and jscpd, with not one generated file changed (pack and consume's `--shape generated`).
 - **With P7, a release candidate attaches five tarballs**, `@sssb/create` among them (it is in the fixed group).
   Pack and consume packs every one flat into one directory, the one the generator's `--sssb` takes, and that
   directory is the `sssb-tarballs` artifact `candidate` checks member by member. Its lockfile seed holds a token for
   the group's version as well as for the run's directory, so a candidate's `x.y.z-rc.N` file names match the seed.
+  The candidate's notes list the generator but leave it out of the overrides and dependencies they tell an adopter to
+  write, and say how to run it against the downloaded tarballs instead.
 - **Also written, beyond the row's list**: `docs/cutover-checklist.md` (a task list of the framework's rows, which
-  `sssb doctor` looks for) and a fresh `DEMO-SIZE.md`. **Not written**: Changesets (an app workspace publishes
-  nothing), a `LICENSE`, `CLAUDE.md` or `.claude/` (the guide is P7's and the plugin P13's), Dependabot's config,
-  and no `git init`.
+  `sssb doctor` looks for), a fresh `DEMO-SIZE.md`, and `.claude/sssb-guide.md`, the app guide's stamped copy as
+  `sssb guide` writes it (P7's doctor fails a workspace without it). **Not written**: Changesets (an app workspace
+  publishes nothing), a `LICENSE` or a `license` field, `CLAUDE.md` (the adopter's own, which imports the guide; the
+  plugin is P13's), Dependabot's config, and no `git init`.
+- **Generation is all or nothing, in place.** The workspace is staged inside the target and moved up; an existing
+  target is never removed or replaced, and a failure or a SIGINT, SIGTERM or SIGHUP part-way leaves nothing this run
+  wrote.

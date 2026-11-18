@@ -778,6 +778,17 @@ describe('a release candidate, end to end, against a local fake tag', () => {
         expect(notes).toContain(`"@sssb/kit": "${url}"`)
         expect(notes).toContain(`| \`@sssb/kit\` | [\`sssb-kit-0.2.0-rc.0.tgz\`](${url}) | \`${assets[0].sha512}\` |`)
         expect(notes).toContain(`cut from \`${SHA}\``)
+        expect(notes).not.toContain('package/bin/create.js')
+        // the generator is listed and said how to run, never overridden or depended on
+        const generator = { name: '@sssb/create', file: 'sssb-create-0.2.0-rc.0.tgz', sha512: 'sha512-AAAA' }
+        const withGenerator = candidateNotes(root, '0.2.0-rc.0', 'safeinsights/sssb', SHA, [...assets, generator])
+        expect(withGenerator).toContain(`overrides:\n    '@sssb/kit': ${url}\n`)
+        expect(withGenerator).not.toContain(`'@sssb/create':`)
+        expect(withGenerator).not.toContain(`"@sssb/create":`)
+        expect(withGenerator).toContain('| `@sssb/create` | [`sssb-create-0.2.0-rc.0.tgz`]')
+        expect(withGenerator).toContain(
+            'tar -xzf sssb-create-0.2.0-rc.0.tgz\nnode package/bin/create.js <dir> --sssb . --repo',
+        )
         // pinned to the release workflow, the candidate's tag and this commit, not just the repository
         expect(notes).toContain(
             'gh attestation verify <tarball> --repo safeinsights/sssb --signer-workflow ' +

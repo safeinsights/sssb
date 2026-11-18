@@ -97,10 +97,13 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
 - **`@sssb/create` (`packages/create`) is the generator** (ADR-0014 P12): `pnpm create @sssb <dir>` runs its bin,
   `sssb-create`. Plain JavaScript with no dependencies at all, SSSB's packages included (rule 4), because it runs
-  before anything is installed. **Its template is `apps/starter`**, copied from the working tree when the package is
-  packed (`prepack` writes a gitignored `template/` beside the bin, `postpack` removes it; never commit it) and, run
-  from a checkout, built into a temporary directory first, which is how `tests/tooling/create-generate.test.ts`
-  drives it. The
+  before anything is installed. **Its template is the files git tracks in `apps/starter`**, copied from the working
+  tree (`buildTemplate` in `packages/create/src/template.js`): **`git add` a new starter file** before a pack or the
+  create tests see it. `prepack` writes a gitignored `template/` beside the bin and `postpack` removes it (never
+  commit it); packing refuses a `HEAD` that no remote-tracking branch of `safeinsights/sssb` holds, and an
+  `apps/starter` or `packages/kit/src/guide.md` that differs from `HEAD`, unless `SSSB_CREATE_UNPUSHED_PIN=1` (pack
+  and consume sets it, but on a push to `safeinsights/sssb`). Run from a checkout, the bin builds the template into a
+  temporary directory first and only warns about the pin; the tests call `buildTemplate` themselves. The
   workspace around the app is written by `packages/create/src/files.js`; a root file that names nothing of this
   repository's can be copied instead (`ROOT_FILES` in `packages/create/src/template.js`). Running it by hand:
   `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting.md`).
@@ -140,12 +143,18 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   (`.github/workflows/app-checks.yml`, ADR-0014 P10): `checks.yml`'s `sssb` job calls it (by its local path), so
   its checks are named `sssb / <job>` (`sssb / all-checks` fails unless every one ran and passed), and each job's
   work is one `pnpm exec sssb ci <job>`. A job renamed or added there changes a required check's name: the rulesets
-  on `main` and `integration` require them by name, and `tests/tooling/app-checks-workflow.test.ts` pins the names. **Pack and consume** (`pnpm pack-and-consume`, ADR-0014 P2) packs
-  `@sssb/kit` and runs an adopter-shaped workspace's verify against the tarball, outside this repo; a change
-  to what the package ships, its manifest or the starter shows there first. Its gaps are named workarounds in
-  `scripts/pack-and-consume/workarounds.mjs`, each removed by a later ADR-0014 step: never patch the consumer
-  silently. It installs from a committed lockfile seed; when its notice says the resolution moved, refresh it
-  with `pnpm pack-and-consume --update-lockfile` and commit `scripts/pack-and-consume/consumer-lock.yaml`.
+  on `main` and `integration` require them by name, and `tests/tooling/app-checks-workflow.test.ts` pins the names. **Pack and consume** (`pnpm pack-and-consume [--shape pages|generated]`, ADR-0014 P2 and
+  P12) packs every `@sssb` package flat into one directory, generates workspaces outside this repo with the PACKED
+  `@sssb/create` against those tarballs, and checks them: `pages` (CI's `pack-and-consume` job) shapes the generated
+  workspace like the first adopter's (a second generated app, an adapter, a sibling package, a seamless negative
+  fixture) and runs the script's own checks; `generated` (CI's `adoption-probe` job) changes not one file and runs
+  the workspace's own gates (`pnpm verify`, the unit and contract runs held to the conformance suite,
+  `sssb ci lint-typecheck-unit`, `sssb ci synth`, `pnpm knip`, `pnpm jscpd`). No flag runs both. A change to what a
+  package ships, its manifest, the generator or the starter shows there first. Its gaps are named workarounds in
+  `scripts/pack-and-consume/workarounds.mjs` (none today), each removed by a later ADR-0014 step: never patch the
+  consumer silently. Both shapes install from one committed lockfile seed, with tokens for the tarball directory and
+  the group's version; when its notice says the resolution moved, refresh it with
+  `pnpm pack-and-consume --update-lockfile` and commit `scripts/pack-and-consume/consumer-lock.yaml`.
   **Any migration/db change: run `pnpm test:contract` yourself** (the
   same RLS proofs on real Postgres, for EVERY app AND SSSB's fixture seam, each in its own
   database, each twice: once through the `pg` driver and once through the RDS Data API driver and its
@@ -289,8 +298,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   one of those (or become a new rename there, which must find its text exactly once), and **never hard-code the
   product name in a test**; specs read the app's own catalog via `apps/*/tests/catalog.ts`. Everything else is
   copied as written, so **starter prose must read true in an adopter's tree**: a comment that names the showcase,
-  "the starter" or a path into this repository (the framework's source tree; say `@sssb/kit/…`) fails
-  `tests/tooling/create-generate.test.ts`. See `docs/adopting.md`.
+  "the starter", the framework's source tree (say `@sssb/kit/…`), a relative path out of the app, or SSSB's spikes,
+  build notes or decision log fails `tests/tooling/create-generate.test.ts`. Any other path into this repository (a
+  doc's, say) passes it, so say it is SSSB's. See `docs/adopting.md`.
 - At the end of a slice or before a PR, run the `doc-steward` agent on the branch diff — it
   proposes updates to development-approach, an ADR addendum, decision-log, build-notes, and the
   cutover checklist so the docs keep telling the truth. It also reports the net line delta of each doctrine doc
