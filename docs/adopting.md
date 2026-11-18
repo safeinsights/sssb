@@ -288,8 +288,8 @@ want it.
 
 One gate is relaxed on the way out. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 132 published subpaths from its source (37
-counting its tests), so the same setting would start demanding you delete the other 97 — capabilities you merely have not
+nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 137 published subpaths from its source (38
+counting its tests), so the same setting would start demanding you delete the other 102 — capabilities you merely have not
 reached yet, not dead code. `--eject-showcase` therefore turns it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration.
@@ -313,18 +313,27 @@ check out takes a named opt-out with a reason (the check ids are in `@sssb/kit/t
 fails the run, and so does a check that is skipped without one. That is what stops the fixture becoming the only world
 the framework is ever proved against.
 
-Two `sssb` commands guard that suite and the install around it, and `pnpm verify` and CI run both for every app
-(`pnpm sssb:doctor`, `pnpm check:e2e`; each app's own scripts are `sssb:doctor` and `check:e2e`, because `pnpm doctor`
-is pnpm's own command). **`sssb doctor`** asks `vitest list` what would actually run, from the workspace root the way CI
-runs Vitest, and fails naming every conformance test (unit, and the contract runner's) that would not, unless its check
-is opted out by name; so an `.only`, a `testNamePattern` or a config that stops picking the file up is red before it
-silently drops a check. It also fails a second copy of any peer `@sssb/kit` declares (React, Next, Kysely...), an
-importer of the framework anywhere in the workspace that does not run on its own seam, and an `@sssb/*` package out of
-step with the framework's version, and it reports framework cutover rows your `docs/cutover-checklist.md` never
-mentions. Inside SSSB's own repository it says "in-repo mode" and checks each app's seam aliases instead of links.
-**`sssb check-e2e`** bundles every file your Playwright configs load and fails, naming spec and framework file, if a
-spec reaches the framework other than through `@sssb/kit/testing/e2e`, the one entry Node can load; reaching it
-through your own domain module counts.
+Two `sssb` commands guard that suite and the install around it, and `pnpm verify` and CI run both (`pnpm sssb:doctor`,
+`pnpm check:e2e`; the scripts are `sssb:doctor` and `check:e2e` because `pnpm doctor` is pnpm's own command).
+**`sssb doctor`** checks every app of the workspace in one run. It asks `vitest list` what would actually run with the
+config a bare `vitest` would load for each app (the root's `vitest.config.*` when it runs the app's tests, else the
+app's own, else Vitest's defaults), and fails naming every unit conformance test that would not, unless its check is
+opted out by name in the app's own `apps/<app>/src/sssb.conformance.test.ts`; some config that runs your
+`apps/<app>/tests/contract/` files must list every contract check. So an `.only`, a `testNamePattern` or a config that stops picking the file up is red
+before it silently drops a check. Any other Vitest config (a browser, integration or CI config) that runs some of an
+app's tests but not the suite is reported, not failed, and so are the narrowing flags your package.json scripts pass
+to vitest and which script runs each contract config: doctor cannot see which config or flags your CI uses, so make
+sure CI runs the config doctor names. It also fails a second copy of any peer `@sssb/kit` declares (React, Next,
+Kysely...), an importer of the framework anywhere in the workspace that does not run on its own seam, and an
+`@sssb/*` package out of step with the framework's version, and it reports framework cutover rows your
+`docs/cutover-checklist.md` never mentions. Inside SSSB's own repository it says "in-repo mode" and checks each app's
+seam aliases instead of links. **`sssb check-e2e`** asks your own Playwright which files your configs load
+(`playwright test --list`, which starts no server and needs no browser), bundles each, and fails, naming spec and
+framework file, if a spec reaches the framework other than through `@sssb/kit/testing/e2e`, the one entry Node can
+load; reaching it through your own domain module or a workspace package counts. A spec that reaches the framework's
+TypeScript stops Playwright listing its config at all (Node will not load TypeScript under `node_modules`), so
+check-e2e then fails the config with Playwright's error and names the framework file. A config Playwright cannot list,
+or that lists no test, fails too; a config kept outside the app's directory is named with `--config <file>`.
 
 ## Layout
 
