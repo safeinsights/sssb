@@ -3193,96 +3193,6 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 - **The pill's badge uses the name's number format** (`useFormatter().number`, as ICU's `#` does: "1,000" in en). The
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
-  `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
-
-## `@sssb/eslint-plugin`: the fences as one plugin (2026-11-18, ADR-0014 P6, `feat/eslint-plugin`)
-
-- **Every fence is a rule with an id of its own.** The fences that were `no-restricted-imports` patterns or
-  `no-restricted-syntax` selectors are now `sssb/no-vendor-import`, `sssb/no-next-font-google`,
-  `sssb/no-real-adapter-import`, `sssb/no-static-real-adapter-import`, `sssb/no-kit-real-adapter-import`,
-  `sssb/no-dynamic-real-adapter-import`, `sssb/no-process-env`, `sssb/no-run-mode-env`, `sssb/no-literal-a11y-copy`,
-  and, SSSB-internal, `sssb/no-app-import` and `sssb/no-framework-import-in-core`. The declaration rules match as
-  `no-restricted-imports` did (the `ignore` package with `allowRelativePaths` and `ignorecase`, a `regex` with `iu`,
-  the specifier trimmed, `import m = require()` included; they also trim that last form's specifier, which ESLint
-  does not, a tightening) and report each pattern's own message, so every
-  probe in `tests/lint` kept its message fragment and only its rule id changed. `eslint.config.mjs` no longer sets
-  either core rule. The alternative, keeping the core rules for SSSB's own repository and ids only in the preset,
-  would have left two readings of each fence.
-- **`react/jsx-no-literals` became `sssb/no-jsx-literals`**: react's rule, run with SSSB's options fixed and no
-  options of its own. The alternative, leaving `react/jsx-no-literals` in the preset, let an adopter's block that
-  configures that rule for its own reasons replace SSSB's options for every file it matched.
-- **`configs.app({ root })` is async**, because it imports the app's `lint-exceptions.mjs` (an ES module, re-read by
-  mtime as before). A synchronous factory through `require()` of ESM was the alternative; it cannot re-read an edited
-  file in a long-lived lint server. Adopters write `...(await sssb.configs.app({ root: import.meta.dirname }))`.
-- **`root` must be absolute, and every block carries `basePath`**: `root` itself, or its parent directory when
-  `root`'s last segment is `*`. A relative root is refused: it would be
-  relative to wherever ESLint started (ADR-0014 part 4). A last segment of `*` means every app in that directory;
-  this repo's config passes `join(import.meta.dirname, 'apps/*')`, the ADR's `apps/*` anchored.
-- **The internal rules' anchors are a `{ root }` option**, read when the rule runs: `sssb/public-surface` and
-  `sssb/no-path-out-of-package` read `packages/kit/package.json` under it, and both path rules resolve landings
-  against it. Nothing in the plugin reads a file when it loads but its own `package.json` (for `meta.version`).
-- **Scope changes, each a tightening or a no-op.** The a11y-copy ban now covers the app's registry
-  (`src/adapters/index.ts`), which lost it only because the fakes block ignored the registry for the dynamic real/
-  ban. The `next/font/google` ban now covers `next.config.*` and `tests/contract/`, which the vendor block's carve-outs
-  had dropped with it. The registry pattern (`appRealAdapterPattern`, now `sssb/no-real-adapter-import`) no longer applies to
-  `packages/*/src`: a package
-  has no registry, and in `packages/kit/src` the merge trap had already replaced it with the framework fence's list.
-  `SSSB_LINT_EXCEPTIONS_ROOT` is gone: the tests point `configs.app` at a scratch tree directly.
-- **An app adds its own vendors in its `package.json`** (`"sssb": { "vendors": [...] }`, beside P4's `sssb.port`). An
-  app-owned adapter's SDK used to go into `vendorSdkPattern` in a fork's `eslint.config.mjs`; once the list ships in
-  the plugin, an adopter cannot edit it. The first cut was a `configs.app({ root, vendors })` option, and round 1 of
-  review (both reviewers) found it could narrow SSSB's list: `ignore` reads a leading `!` as a negation, and
-  check-fences skipped the vendor rules' options, so a later block could also swap the app's list for one directory.
-  Now the list is a file check-fences reads too, the options are compared exactly, and a leading `!` is refused in
-  the package.json and in the rules' schema. The alternative, keeping the option and teaching check-fences a superset
-  test, still needed check-fences to know the app's list, which only a file gives it.
-- **What the plugin depends on.** `eslint` is a peer; the base config's plugins (`@eslint/js`, `typescript-eslint`,
-  `eslint-plugin-react`, `-react-hooks`, `-jsx-a11y`, `@next/eslint-plugin-next`, `eslint-config-prettier`) and
-  `ignore` are dependencies, so `configs.app` needs nothing else installed. An adopter's own block that binds one of
-  those plugins to another copy gets ESLint's loud `Cannot redefine plugin`, never a silent change.
-- **The e2e import ban (ADR-0014 part 2) waits for P5.** The spec it allows, `@sssb/kit/testing/e2e`, does not exist
-  yet, and `apps/showcase/tests/e2e/destructive/simulator-webhooks.spec.ts` imports `@sssb/kit/core/webhook-signing`.
-
-## Changesets are required on PRs that change what ships, and carry the release note (2026-11-18, `ci/changeset-required`)
-
-JP asked whether CanopyCMS's way of keeping a changelog up to date could be copied. Its mechanism: every PR that
-changes a published package adds a `.changeset/*.md` that is its changelog entry, in a fixed template ending with a
-"Now deletable" part, and CI fails the PR without one. SSSB already had Changesets but no rule, template or lint.
-
-- **What was taken:** the gate, the template, the explicit "no adopter-visible effect" answer (an empty changeset),
-  and "Now deletable". The template's `**Kind.**` is one of P7's four release-note sections (`seam`, `migration`,
-  `operator`, `scaffold`) or `none`, so the notes can be written from the files by section.
-- **Kind and Action are separate fields.** Canopy keeps "which area" and "must the adopter act" apart; a first
-  version here tied the bump to Kind and left an additive migration or a new optional export with no honest home
-  (ADR-0014 part 10 calls a migration breaking only when it needs operator action). `**Action.** required` is a
-  `minor`; `optional` and `none` may be a `patch`. Part 10's other breaking items (a raised peer floor, a rule that
-  turns app code red) are filed under `seam`, and a change in two sections is two files.
-- **What was not taken:** CanopyCMS's 3,286-line assembly script, its area table and its int-prerelease labels. They
-  serve an npm prerelease channel; SSSB's release candidates are tarballs on a GitHub prerelease (ADR-0014 P7).
-  Assembling the notes from the files waits for `@sssb/tools` to exist to host it, and the stock
-  `@changesets/cli/changelog` ignores Kind and Action, so P7/P14 need a custom changelog function or an assembler
-  (said in `.changeset/README.md`). Rejected alternative: port the script whole.
-- **The gate is path-based, not `changeset status`.** Every package is `private` until P14 and `status` ignores
-  private packages, so it would pass for any change. "Ships" is every `@sssb/*` package under `packages/` (read from
-  its manifest, so P4's tools, P6's plugin, P9's cdk and P12's create are covered the day they land; the kit is
-  narrowed to its `files` allowlist, the seam-conformance tests included, other tests and stories not) and
-  `apps/starter`, the scaffold an adopter copies and the future `@sssb/create` template. `apps/showcase`,
-  `packages/seed`, the lockfile and the kit's `test-fixture` are not shipped. The lockfile counts in CanopyCMS
-  because its worker is an esbuild bundle; SSSB ships source. A test fails when the kit manifest's `files` gains an
-  entry the gate does not know.
-- **Known gap, taken on purpose:** while adoption is a fork, adopters also receive `infra/`, the cutover checklist,
-  the ESLint config, `.gitleaks.toml`, the CI workflows, `scripts/` and the docs. Gating them now would make every
-  P5, P6, P9 and P10 PR carry a changeset for files those steps are moving. Some of them land in packages and the
-  starter, which the gate covers; some land elsewhere (the showcase's `infra/`, a generator's write-once files).
-  The README says to check whether the gate sees a change.
-- **Exemptions:** the release merge (`integration` into `main`, same repository, so a fork's branch of that name is
-  not exempt); Dependabot's PRs unless one changes the kit's `peerDependencies`; a PR opened before the gate reached
-  its base branch (read from git, so no date is written down); and a file a PR carries only because it merged `main`
-  in (ported from CanopyCMS), since the repository does merge `main` back into branches.
-- **The logic is a shell script under `.github/scripts/`, tested by a vitest file** that builds real git repositories
-  (the machine's git config isolated), and the shape lint is `tests/support/changeset-shape.ts` run by the same file.
-  Neither adds a `scripts/` file, a `package.json` script or a `knip.json` entry, because P4 is moving `scripts/`
-  and P4, P5 and P6 own the root manifest. Each moving part of the script was mutated to confirm a case goes red.
   `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
 
 ## `@sssb/cdk` and per-app infra (2026-11-18, ADR-0014 P9, `feat/sssb-cdk`)
@@ -3439,25 +3349,6 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
   from each app, and the sibling package `gate` uses `@sssb/tools`' helper with no framework installed.
 - **knip** cannot see what a preset loads from the app or what `@sssb/tools` imports from its optional peers; the
   narrow entries are in `docs/build-notes.md`.
-- **What `sssb check-fences` defends against: an adopter's config weakening a fence by ACCIDENT.** Three review rounds
-  and an independent reviewer (Fable) on "can a config composed after the preset silently switch off or narrow a
-  fence?" closed every plain-configuration case they found: a rule turned off or down, narrowed to a directory, an
-  `ignores`, a nested config file, a processor or parser for one directory, an app's vendor list negated or swapped,
-  inline directives in every form ESLint reads, an `eslint-suppressions.json` (the ESLint CLI applies it, the ESLint
-  class only with `applySuppressions: true`, which check-fences does not pass, so check-fences now reports every fence finding in the app's own files, at any severity), symlinked
-  files and directories, and build-output names deeper in `src/`. What is left needs config code written to deceive,
-  and each case keys on the probes' public file name: a parser that borrows the real one's `meta`, the preset's blocks
-  rewritten to bind `sssb` to a look-alike plugin, a module the rules read rewritten. These are OUT OF SCOPE (manager,
-  2026-11-18): a config that is written to deceive can as well delete the preset, and no lint-time check stops that.
-  The plugin, its rules, its patterns and react's `create` are frozen or captured anyway, because that was cheap. The
-  stronger check, a probe at every real file's path, is `.claude/future-tasks/check-fences-real-file-probes.md`:
-  rejected for now because it adds a third lint per file to a check that already takes about 5s on the showcase (233
-  files; `sssb check-fences --app apps/showcase`, measured 2026-11-18).
-  Also not covered, by nature: flags on the app's lint command (any fence finding is still reported by check-fences,
-  whatever the command does with it), and a config that behaves differently when it detects which tool loaded it.
-- **Typed linting cannot pass check-fences yet.** Its probe files are virtual and outside the app's TypeScript
-  project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
-  with that reason (a false red, not a hole).
 - **What review changed** (two rounds and a diff review, Opus and Fable). Framework source is now recognised by its
   package, not its path: a file is the framework's when its nearest named package.json is `@sssb/kit`'s
   (`isFrameworkFile`), which also catches a copy of the framework's tree reached by a relative path. The `dev:real`
@@ -3629,3 +3520,70 @@ JP asked what is worth borrowing from CanopyCMS's documentation setup. Two thing
   that is not one, and a parent `LC_ALL=C`.
 - **Rejected: porting `check-action-pins.mjs` into `scripts/`** with a `package.json` script. It would grep for
   `uses:` rather than parse, and would touch the files other work owns.
+
+## `@sssb/eslint-plugin`: the fences as one plugin (2026-11-18, ADR-0014 P6, `feat/eslint-plugin`)
+
+- **Every fence is a rule with an id of its own.** The fences that were `no-restricted-imports` patterns or
+  `no-restricted-syntax` selectors are now `sssb/no-vendor-import`, `sssb/no-next-font-google`,
+  `sssb/no-real-adapter-import`, `sssb/no-static-real-adapter-import`, `sssb/no-kit-real-adapter-import`,
+  `sssb/no-dynamic-real-adapter-import`, `sssb/no-process-env`, `sssb/no-run-mode-env`, `sssb/no-literal-a11y-copy`,
+  and, SSSB-internal, `sssb/no-app-import` and `sssb/no-framework-import-in-core`. The declaration rules match as
+  `no-restricted-imports` did (the `ignore` package with `allowRelativePaths` and `ignorecase`, a `regex` with `iu`,
+  the specifier trimmed, `import m = require()` included; they also trim that last form's specifier, which ESLint
+  does not, a tightening) and report each pattern's own message, so every
+  probe in `tests/lint` kept its message fragment and only its rule id changed. `eslint.config.mjs` no longer sets
+  either core rule. The alternative, keeping the core rules for SSSB's own repository and ids only in the preset,
+  would have left two readings of each fence.
+- **`react/jsx-no-literals` became `sssb/no-jsx-literals`**: react's rule, run with SSSB's options fixed and no
+  options of its own. The alternative, leaving `react/jsx-no-literals` in the preset, let an adopter's block that
+  configures that rule for its own reasons replace SSSB's options for every file it matched.
+- **`configs.app({ root })` is async**, because it imports the app's `lint-exceptions.mjs` (an ES module, re-read by
+  mtime as before). A synchronous factory through `require()` of ESM was the alternative; it cannot re-read an edited
+  file in a long-lived lint server. Adopters write `...(await sssb.configs.app({ root: import.meta.dirname }))`.
+- **`root` must be absolute, and every block carries `basePath`**: `root` itself, or its parent directory when
+  `root`'s last segment is `*`. A relative root is refused: it would be
+  relative to wherever ESLint started (ADR-0014 part 4). A last segment of `*` means every app in that directory;
+  this repo's config passes `join(import.meta.dirname, 'apps/*')`, the ADR's `apps/*` anchored.
+- **The internal rules' anchors are a `{ root }` option**, read when the rule runs: `sssb/public-surface` and
+  `sssb/no-path-out-of-package` read `packages/kit/package.json` under it, and both path rules resolve landings
+  against it. Nothing in the plugin reads a file when it loads but its own `package.json` (for `meta.version`).
+- **Scope changes, each a tightening or a no-op.** The a11y-copy ban now covers the app's registry
+  (`src/adapters/index.ts`), which lost it only because the fakes block ignored the registry for the dynamic real/
+  ban. The `next/font/google` ban now covers `next.config.*` and `tests/contract/`, which the vendor block's carve-outs
+  had dropped with it. The registry pattern (`appRealAdapterPattern`, now `sssb/no-real-adapter-import`) no longer applies to
+  `packages/*/src`: a package
+  has no registry, and in `packages/kit/src` the merge trap had already replaced it with the framework fence's list.
+  `SSSB_LINT_EXCEPTIONS_ROOT` is gone: the tests point `configs.app` at a scratch tree directly.
+- **An app adds its own vendors in its `package.json`** (`"sssb": { "vendors": [...] }`, beside P4's `sssb.port`). An
+  app-owned adapter's SDK used to go into `vendorSdkPattern` in a fork's `eslint.config.mjs`; once the list ships in
+  the plugin, an adopter cannot edit it. The first cut was a `configs.app({ root, vendors })` option, and round 1 of
+  review (both reviewers) found it could narrow SSSB's list: `ignore` reads a leading `!` as a negation, and
+  check-fences skipped the vendor rules' options, so a later block could also swap the app's list for one directory.
+  Now the list is a file check-fences reads too, the options are compared exactly, and a leading `!` is refused in
+  the package.json and in the rules' schema. The alternative, keeping the option and teaching check-fences a superset
+  test, still needed check-fences to know the app's list, which only a file gives it.
+- **What the plugin depends on.** `eslint` is a peer; the base config's plugins (`@eslint/js`, `typescript-eslint`,
+  `eslint-plugin-react`, `-react-hooks`, `-jsx-a11y`, `@next/eslint-plugin-next`, `eslint-config-prettier`) and
+  `ignore` are dependencies, so `configs.app` needs nothing else installed. An adopter's own block that binds one of
+  those plugins to another copy gets ESLint's loud `Cannot redefine plugin`, never a silent change.
+- **The e2e import ban (ADR-0014 part 2) waits for P5.** The spec it allows, `@sssb/kit/testing/e2e`, does not exist
+  yet, and `apps/showcase/tests/e2e/destructive/simulator-webhooks.spec.ts` imports `@sssb/kit/core/webhook-signing`.
+- **What `sssb check-fences` defends against: an adopter's config weakening a fence by ACCIDENT.** Three review rounds
+  and an independent reviewer (Fable) on "can a config composed after the preset silently switch off or narrow a
+  fence?" closed every plain-configuration case they found: a rule turned off or down, narrowed to a directory, an
+  `ignores`, a nested config file, a processor or parser for one directory, an app's vendor list negated or swapped,
+  inline directives in every form ESLint reads, an `eslint-suppressions.json` (the ESLint CLI applies it, the ESLint
+  class only with `applySuppressions: true`, which check-fences does not pass, so check-fences now reports every fence finding in the app's own files, at any severity), symlinked
+  files and directories, and build-output names deeper in `src/`. What is left needs config code written to deceive,
+  and each case keys on the probes' public file name: a parser that borrows the real one's `meta`, the preset's blocks
+  rewritten to bind `sssb` to a look-alike plugin, a module the rules read rewritten. These are OUT OF SCOPE (manager,
+  2026-11-18): a config that is written to deceive can as well delete the preset, and no lint-time check stops that.
+  The plugin, its rules, its patterns and react's `create` are frozen or captured anyway, because that was cheap. The
+  stronger check, a probe at every real file's path, is `.claude/future-tasks/check-fences-real-file-probes.md`:
+  rejected for now because it adds a third lint per file to a check that already takes about 5s on the showcase (233
+  files; `sssb check-fences --app apps/showcase`, measured 2026-11-18).
+  Also not covered, by nature: flags on the app's lint command (any fence finding is still reported by check-fences,
+  whatever the command does with it), and a config that behaves differently when it detects which tool loaded it.
+- **Typed linting cannot pass check-fences yet.** Its probe files are virtual and outside the app's TypeScript
+  project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
+  with that reason (a false red, not a hole).
