@@ -8,11 +8,13 @@
 
 - Artifact: the `output: 'standalone'` build zipped with `run.sh` at its root (the exact thing
   `pnpm start:demo` runs locally via `scripts/serve-standalone.mjs`).
-- Stack: `infra/` — server Lambda + Web Adapter layer, CloudFront, S3 assets, migrator Lambda, Aurora
-  Serverless v2, in one of two network shapes (`infra/README.md`: the Lambdas in the VPC with a NAT
-  gateway, or outside it on the RDS Data API). It is a draft you take over, and it can move into your own
-  infrastructure repo: it imports two things from the app, `apps/showcase/config/app.ts` and
-  `apps/showcase/config/params.ts` (for `params.database.transport`).
+- Stack: `apps/<app>/infra/`, one stack holding SSSB's `SssbApp` construct
+  (`packages/cdk`) — server Lambda + Web Adapter layer, CloudFront, S3 assets, migrator Lambda, Aurora
+  Serverless v2, in one of two network shapes (`apps/showcase/infra/README.md`: the Lambdas in the VPC with a
+  NAT gateway, or outside it on the RDS Data API). It is a draft you take over, and it can move into your own
+  infrastructure repo: it reads two things from the app, `apps/<app>/config/app.ts` and
+  `apps/<app>/config/params.ts` (for `params.database.transport`), and hands the construct the app's
+  directory, from which it resolves the framework's migrator.
 - Pipeline: yours (cutover `deploy-pipeline`). `.github/workflows/checks.yml` runs checks and **never
   deploys**, deliberately — the deploy pipeline is the piece most tied to an organisation's accounts and
   approval gates, so the template declines to guess it.
