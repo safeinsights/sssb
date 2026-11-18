@@ -2,8 +2,8 @@
 
 The static demo (`pnpm build:demo-static`) is one HTML file you can hand someone, and `pnpm check:demo-size`
 fails if it grows past a byte budget. The number is the argument of `check:demo-size` in this app's
-`package.json`, and it is this app's own: `scripts/check-demo-size.mjs` is SSSB's, holds no number, and says
-what to look at first when the gate goes red.
+`package.json`, and it is this app's own: the command, `sssb check-demo-size` (from `@sssb/tools`), is SSSB's,
+holds no number, and says what to look at first when the gate goes red.
 
 ## What this number is for
 
@@ -17,8 +17,8 @@ headroom you want.
 ## How to change it
 
 Re-set the number in `package.json` and add an entry under "Changes" below in the same commit: what grew or
-shrank, by how much, and how much headroom you left on purpose. Newest first. Do not record it in
-`scripts/check-demo-size.mjs`: that file is SSSB's, and an upstream merge will change it.
+shrank, by how much, and how much headroom you left on purpose. Newest first. The command is SSSB's and holds
+no app's number, so this file is where the history lives.
 
 ## Changes
 
@@ -41,7 +41,8 @@ presets (jpslav/keel#26) +8706, the Simulator's people-and-orgs work (jpslav/kee
   function now, and `tests/tooling/static-demo-bundle.test.ts` holds it.
 - 130247 bytes were Mantine's stylesheet. The apps import `@mantine/core/styles.css` whole, 273 KB for ~100
   components, of which the demo's bundle reaches 33. The static demo's build now drops every rule whose hashed
-  class is in no shipped file (`scripts/vite-prune-mantine-css.ts`, wired in each app's `vite.demo.config.ts`):
+  class is in no shipped file (the Mantine pruning in `@sssb/tools`' Vite preset, which each app's
+  `vite.demo.config.ts` uses):
   14-15% of the file.
 
 What stays is the presets themselves: net of the trim about 5.5 KB on the starter, real code (the static

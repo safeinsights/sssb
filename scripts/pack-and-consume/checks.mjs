@@ -271,18 +271,21 @@ export function undeclaredImports(sources, manifest, builtins, specifiersOf) {
 }
 
 /**
- * The integrities pnpm recorded for `@sssb/kit` tarballs in the lockfile's `packages:` section.
+ * The integrities pnpm recorded for one SSSB package's tarballs (`@sssb/kit`, `@sssb/tools`) in the lockfile's
+ * `packages:` section.
  * @param {string} lockfile
+ * @param {string} [name]
  */
-export function kitIntegrities(lockfile) {
+export function tarballIntegrities(lockfile, name = '@sssb/kit') {
     const lines = lockfile.split('\n')
     /** @type {string[]} */
     const found = []
     let section = ''
+    const key = `  '${name}@file:`
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i] ?? ''
         if (/^[A-Za-z]+:/.test(line)) section = line.slice(0, line.indexOf(':'))
-        if (section !== 'packages' || !/^ {2}'@sssb\/kit@file:/.test(line)) continue
+        if (section !== 'packages' || !line.startsWith(key)) continue
         const integrity = /integrity: (sha512-[A-Za-z0-9+/=]+)/.exec(lines[i + 1] ?? '')?.[1]
         found.push(integrity ?? '(no integrity)')
     }
@@ -290,7 +293,49 @@ export function kitIntegrities(lockfile) {
 }
 
 /**
- * How far a lockfile moved from its seed, leaving out the framework's own entries (its tarball's name,
+ * What the packed @sssb/tools must be (ADR-0014 rule 4 and part 2): named so, carrying the `sssb` bin, and taking
+ * no SSSB package at all, in any dependency field. It reaches the framework only from the app's directory, so a
+ * dependency on @sssb/kit would be a second instance waiting to be loaded by mistake. Returns the problems.
+ * @param {{ name?: string, bin?: unknown, dependencies?: Record<string, string>, peerDependencies?: Record<string, string>, optionalDependencies?: Record<string, string>, peerDependenciesMeta?: Record<string, unknown> }} manifest
+ */
+export function toolsManifestProblems(manifest) {
+    const problems = []
+    if (manifest.name !== '@sssb/tools') problems.push(`the packed manifest is named ${manifest.name}, not @sssb/tools`)
+    const bin = /** @type {Record<string, string> | undefined} */ (manifest.bin)
+    if (typeof bin !== 'object' || bin === null || typeof bin['sssb'] !== 'string')
+        problems.push('the packed manifest has no `sssb` bin')
+    for (const field of /** @type {const} */ ([
+        'dependencies',
+        'peerDependencies',
+        'optionalDependencies',
+        'peerDependenciesMeta',
+    ])) {
+        for (const dep of Object.keys(manifest[field] ?? {})) {
+            if (dep.startsWith('@sssb/')) problems.push(`${field} names ${dep}: @sssb/tools depends on no SSSB package`)
+        }
+    }
+    return problems
+}
+
+/**
+ * What the packed @sssb/tools may ship: JavaScript Node loads directly, its hand-written declarations and the
+ * tsconfig base (ADR-0014 part 2: "every other package ships JavaScript"), and no tests. Returns the problems.
+ * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
+ */
+export function toolsShippedFileProblems(files) {
+    const problems = []
+    for (const file of files) {
+        if (['package.json', 'tsconfig.base.json', 'README.md', 'LICENSE'].includes(file)) continue
+        if (/\.test\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test file is shipped`)
+        else if (!/^(bin|src)\//.test(file)) problems.push(`${file}: outside bin/ and src/`)
+        else if (!/\.(js|mjs|d\.ts)$/.test(file)) problems.push(`${file}: neither JavaScript nor a declaration file`)
+    }
+    if (!files.includes('bin/sssb.js')) problems.push('bin/sssb.js: the CLI is not shipped')
+    return problems
+}
+
+/**
+ * How far a lockfile moved from its seed, leaving out the packed SSSB packages' own entries (a tarball's name,
  * integrity and version change with every build or release, and are this run's to change). Lines are
  * compared as a multiset, so an edge that moves to a line some other entry already has still counts.
  * @param {string} seed
@@ -301,12 +346,12 @@ export function lockfileMoves(seed, lockfile) {
     const lines = (text) => {
         /** @type {Map<string, number>} */
         const counts = new Map()
-        let inKitBlock = false
+        let inSssbBlock = false
         for (const line of text.split('\n')) {
-            // A `packages:` or `snapshots:` entry for the framework: its key and every line indented under it.
-            if (/^ {2}'@sssb\/kit@/.test(line)) inKitBlock = true
-            else if (/^ {0,2}\S/.test(line)) inKitBlock = false
-            if (inKitBlock || line.includes('sssb-kit-')) continue
+            // A `packages:` or `snapshots:` entry for a packed SSSB package: its key and every line indented under it.
+            if (/^ {2}'@sssb\/(kit|tools)@/.test(line)) inSssbBlock = true
+            else if (/^ {0,2}\S/.test(line)) inSssbBlock = false
+            if (inSssbBlock || /sssb-(kit|tools)-/.test(line)) continue
             counts.set(line, (counts.get(line) ?? 0) + 1)
         }
         return counts

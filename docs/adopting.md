@@ -42,9 +42,9 @@ Three kinds of thing live in this repo (see
   anything SSSB reaches for that only exists because the showcase supplies it fails to compile there.
 - **The repo scaffold**: the verify gate, lint fences, CI, docs doctrine, infra draft. You keep it.
   One rule in it reaches your own tests: a test that needs a scratch directory calls
-  `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `tests/support/tmp-dir.ts` (a re-export of `packages/kit/src/testing/tmp-dir.ts`), never `mkdtemp` (lint
+  `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `@sssb/tools/testing/tmp-dir` (`tests/support/tmp-dir.ts` re-exports it), never `mkdtemp` (lint
   bans it), and `test:unit`, `test:coverage` and `test:contract` run through
-  `scripts/check-tmpdir-leak.mjs`, which fails the run if a directory made that way survives it.
+  `sssb check-tmpdir-leak`, which fails the run if a directory made that way survives it.
 
 Apps live under `apps/` — one per product, each with its own `package.json`, configs and tests
 (ADR-0007). Root commands that operate on ALL apps (`pnpm verify`, `pnpm typecheck`, `pnpm lint`,
@@ -168,10 +168,11 @@ that is right — and `react/jsx-no-literals`, the one rule that would have caug
 a translated key that is merely the wrong one.
 
 **The port key keeps its old name, on purpose.** After `pnpm init-app acme`, the renamed app's
-`package.json` still runs `print-port.mjs starter`, its `playwright.config.ts` still calls
+`package.json` still declares `"sssb": { "port": "starter" }`, its `playwright.config.ts` still calls
 `originFor('starter')`, and the override is still `STARTER_PORT`. That reads oddly and is correct: the
-keys in `scripts/ports.mjs` name a dev-server SLOT, not an app, and the package script that starts the
-server and the Playwright config that points at it agree only because both spell the same literal. A
+keys in `@sssb/tools/ports` name a dev-server SLOT, not an app, and the app declares its slot in its own
+`package.json` (its scripts call `sssb port`, which reads the declaration), which `init-app` keeps when it renames the app.
+The declaration and the Playwright config that points at the server agree only because both spell the same literal. A
 per-adopter rename would add two more files to the rewrite surface for no functional gain, and a
 half-applied one produces two servers on two ports — silent wrong-app adoption, the exact failure that
 whole module exists to prevent. Read `starter` as "the second slot", or set `STARTER_PORT` and forget it.
@@ -197,11 +198,11 @@ It prints this list when it finishes, because these are the parts that take judg
   measures plus the headroom you want, in its own commit. `apps/<app>/DEMO-SIZE.md` beside it says what the
   number was set for and how it got there, and is where you record each change and why; it still calls the
   app by its template name, and that history is SSSB's and stays as written.
-  `scripts/check-demo-size.mjs` is SSSB's and holds no number, so an upstream merge may change it and you
-  never edit it: re-set the number in `package.json`, never in the script. If you renamed the showcase
+  `sssb check-demo-size` is SSSB's (`@sssb/tools`) and holds no number: the number lives in the app's
+  `package.json`, so re-set it there. If you renamed the showcase
   instead (`--app showcase`), its number is its own pace-setting one, thin on purpose, and it has no
   `DEMO-SIZE.md`: SSSB keeps the showcase's history in `docs/decision-log.md`. When it goes red,
-  that script's header says what to look at first.
+  the command's source (`packages/tools/src/commands/check-demo-size.js`, "WHEN IT GOES RED") says what to look at first.
 - **The licence** — this template is MIT, which means the product you build on it is yours with no
   copyleft obligation. Your own product's licence is still a decision you make; nothing here makes it
   for you.
@@ -426,9 +427,9 @@ table that is 74 lines; the showcase's, with three entities plus actors and the 
 Budget-gated per app (`pnpm check:demo-size`, each app passing its own byte budget). The starter's is
 the number you inherit, sized for YOUR growth (room to grow to the showcase's size), and it is yours to
 re-set in `apps/<app>/package.json`, with the reason recorded in `apps/<app>/DEMO-SIZE.md` beside it; the
-header of `scripts/check-demo-size.mjs` (SSSB's, never yours to edit) says what it guards and what to do when
+source of `sssb check-demo-size` (`packages/tools/src/commands/check-demo-size.js`, SSSB's, never yours to edit) says what it guards and what to do when
 it goes red. The demo's build also drops every Mantine style rule no shipped component can
-match (`scripts/vite-prune-mantine-css.ts`), so a Mantine component you add needs no CSS import. The same file is
+match (`packages/tools/src/prune-mantine-css.js`, inside the `@sssb/tools/vite` preset), so a Mantine component you add needs no CSS import. The same file is
 the ONLY door for your shell, too: the `nav`, `welcome` and `dashboard` it passes `DemoShell` are what
 the demo shows, so a navigation you build for the real app is absent from the twin until you pass it
 there.

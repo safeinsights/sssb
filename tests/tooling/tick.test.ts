@@ -15,25 +15,26 @@ import {
     summarizeTick,
     tickDidWork,
     tickOnce,
-} from '../../scripts/tick.mjs'
-import { parseDevArgs, resolveDevTick } from '../../scripts/dev-tick.mjs'
-import { MAX_INTERVAL_SECONDS, createTicker, intervalProblem } from '../../scripts/ticker.mjs'
+} from '../../packages/tools/src/tick/tick.js'
+import { parseDevArgs, resolveDevTick } from '../../packages/tools/src/tick/dev-tick.js'
+import { MAX_INTERVAL_SECONDS, createTicker, intervalProblem } from '../../packages/tools/src/tick/ticker.js'
 import {
     assertNoLiveDevTicker,
     liveTickerMarker,
     removeTickerMarker,
     tickerMarkerPath,
     writeTickerMarker,
-} from '../../scripts/ticker-marker.mjs'
+} from '../../packages/tools/src/tick/ticker-marker.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
- * `pnpm tick` and the opt-in dev ticker (scripts/tick.mjs, scripts/dev-tick.mjs). The claims worth pinning: a bad
+ * `pnpm tick` and the opt-in dev ticker (`sssb tick` and `sssb dev-tick`, packages/tools/src/tick). The claims worth pinning: a bad
  * command line and a failed tick both exit non-zero (and differently), the dev secret only ever goes to this
  * machine, and the ticker is off unless asked and refuses to run where it must not.
  */
-const TICK = fileURLToPath(new URL('../../scripts/tick.mjs', import.meta.url))
-const DEV_TICK = fileURLToPath(new URL('../../scripts/dev-tick.mjs', import.meta.url))
+const SSSB = fileURLToPath(new URL('../../packages/tools/bin/sssb.js', import.meta.url))
+const TICK = [SSSB, 'tick']
+const DEV_TICK = [SSSB, 'dev-tick']
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 
 /**
@@ -279,18 +280,18 @@ async function listen(dataDir: string, respond: (hit: Hit) => { status: number; 
     return { port: (server.address() as AddressInfo).port, hits }
 }
 
-function run(script: string, args: string[], env: Record<string, string>) {
+function run(command: string[], args: string[], env: Record<string, string>) {
     return new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
         execFile(
             process.execPath,
-            [script, ...args],
+            [...command, ...args],
             { cwd: REPO_ROOT, env: { PATH: process.env.PATH ?? '', ...env } as unknown as NodeJS.ProcessEnv },
             (error, out, err) => resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, out, err }),
         )
     })
 }
 
-describe('node scripts/tick.mjs', () => {
+describe('sssb tick', () => {
     it('exits 0 and prints what ran when the route answers, having authenticated with the dev secret', async () => {
         const dataDir = makeTestTmpDir('sssb-tick-cli-')
         const { port, hits } = await listen(dataDir, (hit) =>
@@ -398,14 +399,15 @@ describe('the e2e servers are started with the ticker blanked', () => {
     })
 
     it.each(APP_DIRS)('apps/%s `dev` goes through the wrapper and has a `tick` script', (app) => {
-        const scripts = JSON.parse(readFileSync(path.join(REPO_ROOT, 'apps', app, 'package.json'), 'utf8')).scripts
+        const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, 'apps', app, 'package.json'), 'utf8'))
+        const scripts = manifest.scripts
         // the PORT key (`showcase` or `starter`), which `init-app` does not rename with the app
-        const key = /node \.\.\/\.\.\/scripts\/dev-tick\.mjs (showcase|starter) -- next dev --port/.exec(
-            scripts.dev,
-        )?.[1]
+        const key = /\bsssb dev-tick (showcase|starter) -- next dev --port/.exec(scripts.dev)?.[1]
         expect(key, scripts.dev).toBeDefined()
-        expect(scripts.dev).toContain(`print-port.mjs ${key})`)
-        expect(scripts.tick).toBe(`node ../../scripts/tick.mjs ${key}`)
+        // the server binds the app's declared port service (`sssb port`), which must be the one the ticker is told
+        expect(scripts.dev).toContain('--port "$(sssb port)"')
+        expect(manifest.sssb?.port).toBe(key)
+        expect(scripts.tick).toBe(`sssb tick ${key}`)
     })
 })
 
@@ -622,7 +624,7 @@ describe('the ticker marker: what keeps a ticking dev server out of the e2e suit
     )
 })
 
-describe('node scripts/dev-tick.mjs', () => {
+describe('sssb dev-tick', () => {
     it('parses `<app> -- <command...>` and rejects anything else', () => {
         expect(parseDevArgs(['showcase', '--', 'next', 'dev', '--port', '3000'])).toEqual({
             app: 'showcase',
@@ -679,7 +681,7 @@ describe('node scripts/dev-tick.mjs', () => {
             const child = spawn(
                 process.execPath,
                 [
-                    DEV_TICK,
+                    ...DEV_TICK,
                     'showcase',
                     '--',
                     process.execPath,

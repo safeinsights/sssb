@@ -8,7 +8,7 @@ second upstream merge hit two of them.
 
 An adopter takes SSSB by fork and takes updates by merge (ADR-0013). Anything upstream edits, an adopter
 should not edit, or every later merge conflicts there. Two cases were fixed in `fix/adopter-merge-friction`: the
-path gate failing on a merged-in doc that cites `apps/starter`, and `scripts/check-demo-size.mjs`'s header
+path gate failing on a merged-in doc that cites `apps/starter`, and `sssb check-demo-size`'s header (`packages/tools/src/commands/check-demo-size.js`)
 asking the adopter to record budget changes in it. This note lists the instructions found by the same sweep
 that were NOT fixed, because each needs a decision. "SSSB-owned" means a file upstream merges touch: anything
 under `packages/kit`, `scripts/`, `docs/`, `.claude/`, the root configs, `CLAUDE.md` and `README.md`.

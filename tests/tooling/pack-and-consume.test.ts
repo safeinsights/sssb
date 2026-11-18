@@ -6,11 +6,13 @@ import {
     CONFORMANCE_DATA,
     conformanceProblems,
     expectedConformanceTests,
-    kitIntegrities,
     lockfileMoves,
     lockfileProblems,
     seamPeerProblems,
     shippedFileProblems,
+    tarballIntegrities,
+    toolsManifestProblems,
+    toolsShippedFileProblems,
     tscErrors,
     undeclaredImports,
 } from '../../scripts/pack-and-consume/checks.mjs'
@@ -343,10 +345,57 @@ describe('undeclaredImports', () => {
     })
 })
 
-describe('kitIntegrities', () => {
-    it("reads the framework tarball's integrity from the packages section only", () => {
-        expect(kitIntegrities(GOOD_LOCKFILE)).toEqual(['sha512-abc'])
-        expect(kitIntegrities(GOOD_LOCKFILE.replace('integrity: sha512-abc, ', ''))).toEqual(['(no integrity)'])
+const TOOLS_ENTRY = `  '@sssb/tools@file:../tarballs/sssb-tools-0.1.0.tgz':
+    resolution: {integrity: sha512-tools, tarball: file:../tarballs/sssb-tools-0.1.0.tgz}
+    version: 0.1.0
+    hasBin: true
+
+`
+const WITH_TOOLS = GOOD_LOCKFILE.replace('snapshots:\n', `${TOOLS_ENTRY}snapshots:\n`)
+
+describe('tarballIntegrities', () => {
+    it("reads a packed package's integrity from the packages section only, per package", () => {
+        expect(tarballIntegrities(GOOD_LOCKFILE)).toEqual(['sha512-abc'])
+        expect(tarballIntegrities(GOOD_LOCKFILE.replace('integrity: sha512-abc, ', ''))).toEqual(['(no integrity)'])
+        expect(tarballIntegrities(WITH_TOOLS, '@sssb/tools')).toEqual(['sha512-tools'])
+        expect(tarballIntegrities(GOOD_LOCKFILE, '@sssb/tools')).toEqual([])
+    })
+})
+
+describe('toolsManifestProblems', () => {
+    const good = { name: '@sssb/tools', bin: { sssb: './bin/sssb.js' }, dependencies: { esbuild: '^0.28.2' } }
+    it('passes the shape @sssb/tools must have', () => {
+        expect(toolsManifestProblems(good)).toEqual([])
+    })
+    it('fails any dependency on an SSSB package, in every field (rule 4)', () => {
+        for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies', 'peerDependenciesMeta']) {
+            expect(toolsManifestProblems({ ...good, [field]: { '@sssb/kit': '0.1.0' } }), field).toEqual([
+                `${field} names @sssb/kit: @sssb/tools depends on no SSSB package`,
+            ])
+        }
+    })
+    it('fails a missing bin or a wrong name', () => {
+        expect(toolsManifestProblems({ ...good, bin: undefined })).toEqual(['the packed manifest has no `sssb` bin'])
+        expect(toolsManifestProblems({ ...good, name: '@sssb/kit' })).toHaveLength(1)
+    })
+})
+
+describe('toolsShippedFileProblems', () => {
+    const good = ['package.json', 'tsconfig.base.json', 'bin/sssb.js', 'src/kit.js', 'src/ports.d.ts']
+    it('passes JavaScript, declarations and the tsconfig base', () => {
+        expect(toolsShippedFileProblems(good)).toEqual([])
+    })
+    it('fails TypeScript source, a test, a stray file and a missing CLI (ADR-0014 part 2: it ships JavaScript)', () => {
+        expect(toolsShippedFileProblems([...good, 'src/vite.ts'])).toEqual([
+            'src/vite.ts: neither JavaScript nor a declaration file',
+        ])
+        expect(toolsShippedFileProblems([...good, 'src/kit.test.js'])).toEqual([
+            'src/kit.test.js: a test file is shipped',
+        ])
+        expect(toolsShippedFileProblems([...good, 'scripts/x.js'])).toEqual(['scripts/x.js: outside bin/ and src/'])
+        expect(toolsShippedFileProblems(good.filter((f) => f !== 'bin/sssb.js'))).toEqual([
+            'bin/sssb.js: the CLI is not shipped',
+        ])
     })
 })
 
@@ -356,6 +405,11 @@ describe('lockfileMoves', () => {
             .replace('sha512-abc', 'sha512-def')
             .replace('    version: 0.1.0', '    version: 0.2.0')
         expect(lockfileMoves(GOOD_LOCKFILE, bumped)).toEqual({ added: 0, removed: 0 })
+    })
+
+    it("ignores @sssb/tools' entries the same way", () => {
+        const bumped = WITH_TOOLS.replaceAll('sssb-tools-0.1.0', 'sssb-tools-0.2.0').replace('sha512-tools', 'sha512-x')
+        expect(lockfileMoves(WITH_TOOLS, bumped)).toEqual({ added: 0, removed: 0 })
     })
 
     it('counts any other line that moved, including one that duplicates a line elsewhere', () => {
