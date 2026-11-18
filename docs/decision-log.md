@@ -4542,7 +4542,7 @@ says where this differs from part 9. Each decision, and what was rejected:
   registration copies the reference's `as const` shape (the kit exports no actor-definition type), and a tick is
   picked by id exhaustively. A spec reads the kit's catalog as a file through `require.resolve` of an exported
   subpath, never an import (`sssb check-e2e` fails any kit import but `@sssb/kit/testing/e2e`). Rejected: inlining the
-  server port into "add an actor" (the showcase's `simulator-glue.tsx` is 867 lines, beside 35 `/api/simulator` and `/api/service` routes); dropping the server guidance.
+  server port into "add an actor" (the showcase's `simulator-glue.tsx` is 867 lines, beside 33 `/api/simulator` and 2 `/api/service` routes); dropping the server guidance.
 - **Adding a package: by hand, never `pnpm add`.** In an installed generated workspace, `pnpm --filter <app> add
 <pkg>` re-resolves `@sssb/kit` without its optional `@sssb/app-config` peer (`sssb doctor` fails "has no seam
   linked"; typecheck fails inside the kit). The three commands that add one (`new-preset-operation`, `new-port`,

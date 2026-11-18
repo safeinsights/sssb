@@ -97,6 +97,25 @@ describe("@sssb/kit's release stamp", () => {
         expect(run.stderr).toMatch(/:\n {2}packages\/kit\/src\/b\.ts\nCommit them first/)
     })
 
+    it('refuses a staged change, and names an untracked file in a new directory by its own path', () => {
+        // Staged: the index differs from HEAD though the working tree matches the index.
+        const staged = standIn().kit
+        writeFileSync(path.join(staged, 'src/a.ts'), 'export const a = 4\n')
+        git(staged, ['add', 'src/a.ts'])
+        const stagedRun = stamp(staged)
+        expect(stagedRun.status).toBe(1)
+        expect(stagedRun.stderr).toContain('\n  packages/kit/src/a.ts\n')
+
+        // Untracked in a directory git has never seen: git's default (`--untracked-files=normal`) lists only the
+        // directory, so naming the file itself is what `--untracked-files=all` buys.
+        const fresh = standIn().kit
+        mkdirSync(path.join(fresh, 'src/fresh'), { recursive: true })
+        writeFileSync(path.join(fresh, 'src/fresh/x.ts'), 'export const x = 1\n')
+        const freshRun = stamp(fresh)
+        expect(freshRun.status).toBe(1)
+        expect(freshRun.stderr).toContain('\n  packages/kit/src/fresh/x.ts\n')
+    })
+
     it('is not refused by a change outside what ships', () => {
         const { kit } = standIn()
         writeFileSync(path.join(kit, 'scripts/notes.txt'), 'scratch\n')

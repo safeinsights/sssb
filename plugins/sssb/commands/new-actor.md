@@ -36,7 +36,7 @@ app's and not part of a generated app.
 3. **The tick, in the static composition root** `src/demo-static/app.tsx`, modelled on the reference's
    (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/demo-static/app.tsx`, from `serviceTickFn`
    to `extraTabs`), with `tSimulator = useTranslations('simulator')` and `tActors = useTranslations('actors')`:
-    - **A tick per actor**, `(log: ActorLog) => Promise<void>`, with `ActorLog` from
+    - **A tick per actor**, `(log: ActorLog) => Promise<void>`, with `ActorLog`, `builderTick` and `serviceTick` from
       `@sssb/kit/components/simulator/actor-runtime`. Over the jobs subsystem, use the framework's shapes:
       `builderTick(world.builderDriver(serviceManagedOrgSlugs, log), log, tSimulator)` completes queued jobs as a
       build service would (`serviceManagedOrgSlugs` is in `src/app-config/jobs.ts`), and `serviceTick` over
