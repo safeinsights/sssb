@@ -1,6 +1,7 @@
 // Builds `@sssb/kit/testing/e2e` — the one kit entry Node loads directly — into `dist/testing/` (ADR-0014 part 2).
 //
 //   node scripts/build-testing-e2e.mjs        (the package's `prepack` script: `pnpm pack` runs it)
+//   node scripts/build-testing-e2e.mjs --entry <file> --out-dir <dir>   (another entry or output; the guard's tests)
 //
 // Playwright loads an adopter's e2e specs with Node, and it does not transform files under `node_modules`, so
 // the entry a spec imports must be JavaScript in the packed package: esbuild bundles `src/testing/e2e.ts` into
@@ -14,8 +15,12 @@
 // (non-zero exit) if the entry's closure, in the bundle or in the declarations, imports `@sssb/app-config/*` or
 // any other package, or reaches a file outside ALLOWED. Growing the entry means adding a seam-free file to
 // ALLOWED, deliberately; a file that reads the seam (core/webhook-signing.ts is the example: its header names
-// come from APP_SLUG) can never be on it.
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+// come from APP_SLUG) can never be on it. esbuild sees only a LITERAL specifier, so the emitted file is checked too,
+// read with the TypeScript parser: it must hold no import or export of a module, no `import(…)` (a computed or
+// template-literal specifier is left in the output as one), no `import.meta`, and no reference to a loader or a
+// way to one (`require`, `module`, `globalThis`, `eval`, `Function`, …), since `globalThis['req' + 'uire']` loads
+// a module without ever spelling it. The entry is self-contained or the build fails.
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -23,8 +28,27 @@ import * as esbuild from 'esbuild'
 import ts from 'typescript'
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const ENTRY = 'src/testing/e2e.ts'
-const OUT_DIR = path.join(KIT, 'dist')
+/** `--entry <file>` and `--out-dir <dir>`, both optional; anything else is refused. */
+const flags = (() => {
+    /** @type {Record<string, string>} */
+    const out = {}
+    const args = process.argv.slice(2)
+    for (let i = 0; i < args.length; i += 2) {
+        const [flag, value] = [args[i], args[i + 1]]
+        if ((flag !== '--entry' && flag !== '--out-dir') || value === undefined) {
+            process.stderr.write(
+                `build-testing-e2e: usage: [--entry <file>] [--out-dir <dir>] (got ${args.join(' ')})\n`,
+            )
+            process.exit(2)
+        }
+        out[flag] = path.resolve(value)
+    }
+    return out
+})()
+// The real path, as esbuild reports its inputs (a temp dir under macOS's /var is really /private/var).
+const ENTRY = flags['--entry'] ? path.relative(KIT, realpathSync(flags['--entry'])) : 'src/testing/e2e.ts'
+const OUT_DIR = flags['--out-dir'] ?? path.join(KIT, 'dist')
+const OUT_FILE = path.join(OUT_DIR, 'testing/e2e.js')
 
 /** Every file the compiled entry may contain, relative to packages/kit. Each must import nothing but these. */
 const ALLOWED = new Set([ENTRY, 'src/core/webhook-hmac.ts'])
@@ -45,7 +69,7 @@ const packageImports = []
 const result = await esbuild.build({
     absWorkingDir: KIT,
     entryPoints: [ENTRY],
-    outfile: path.join(OUT_DIR, 'testing/e2e.js'),
+    outfile: OUT_FILE,
     bundle: true,
     format: 'esm',
     platform: 'neutral',
@@ -88,6 +112,55 @@ if (outside.length) {
     fail(
         `@sssb/kit/testing/e2e reaches files outside its allowed seam-free set:\n  ${outside.join('\n  ')}\n` +
             `Allowed: ${[...ALLOWED].join(', ')}. Add a file there only if it imports nothing outside that set.`,
+    )
+}
+
+// ---- What was emitted: one module that loads nothing ----
+/** Free names that reach a module loader, or code built from a string (which could reach one). */
+const LOADERS = new Set([
+    'require',
+    'module',
+    'exports',
+    'globalThis',
+    'global',
+    'self',
+    'window',
+    'process',
+    'eval',
+    'Function',
+])
+const emittedJs = ts.createSourceFile(OUT_FILE, readFileSync(OUT_FILE, 'utf8'), ts.ScriptTarget.ES2022, true)
+/** @type {string[]} */
+const loading = []
+const at = (/** @type {ts.Node} */ node) => {
+    const { line } = emittedJs.getLineAndCharacterOfPosition(node.getStart(emittedJs))
+    return `line ${line + 1}: ${node.getText(emittedJs).slice(0, 80)}`
+}
+const visit = (/** @type {ts.Node} */ node) => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+        loading.push(`an ${ts.isImportDeclaration(node) ? 'import' : 'export'} from a module, ${at(node)}`)
+    } else if (ts.isImportEqualsDeclaration(node)) loading.push(`an import, ${at(node)}`)
+    else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        loading.push(`a dynamic import(), ${at(node)}`)
+    } else if (ts.isMetaProperty(node)) loading.push(`import.meta, ${at(node)}`)
+    else if (ts.isIdentifier(node) && LOADERS.has(node.text)) {
+        // A property NAME (`x.require`, `{ require: … }`) is not a reference; everything else, a declaration of a
+        // local by that name included, is.
+        const { parent } = node
+        const isPropertyName =
+            (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+            ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent) || ts.isPropertyDeclaration(parent)) &&
+                parent.name === node)
+        if (!isPropertyName) loading.push(`a reference to \`${node.text}\`, ${at(node)}`)
+    }
+    ts.forEachChild(node, visit)
+}
+visit(emittedJs)
+if (loading.length) {
+    fail(
+        `@sssb/kit/testing/e2e must be one self-contained module, but what esbuild emitted can still load code:\n  ` +
+            `${loading.join('\n  ')}\nA specifier esbuild cannot read (computed, a template literal) is left for ` +
+            'Node to resolve at run time, which is the seam guard bypassed. Import the module by a literal path.',
     )
 }
 
@@ -135,4 +208,4 @@ if (diagnostics.length || emitted.emitSkipped) {
     fail(`emitting declarations failed:\n${ts.formatDiagnostics(diagnostics, host)}`)
 }
 
-process.stdout.write(`build-testing-e2e: dist/testing/e2e.js + declarations from ${inputs.join(', ')}\n`)
+process.stdout.write(`build-testing-e2e: ${path.relative(KIT, OUT_FILE)} + declarations from ${inputs.join(', ')}\n`)

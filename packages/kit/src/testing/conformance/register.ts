@@ -1,4 +1,4 @@
-import { afterAll, describe, it } from 'vitest'
+import { aroundAll, describe, it, type RunnerTask } from 'vitest'
 import registry from '../checks.json'
 import type { CheckImpl } from './types'
 
@@ -16,10 +16,15 @@ import type { CheckImpl } from './types'
  * an opted-out check registers ONE passing test `[sssb:opt-out:<id>] <why>` in its place, so `vitest list` shows the
  * decision.
  *
- * THE SKIP GUARD: a file-level `afterAll` fails the run if any registered test (opt-outs aside) did not run. It runs
- * whenever at least one test in the file runs, so an `it.only` beside the suite, or a `-t` filter that matches part
- * of it, fails the run instead of skipping checks quietly. When EVERY test in the file is skipped no hook runs, and
- * Vitest exits 0: that half is `sssb doctor`'s, which asks `vitest list --json` whether every check would run.
+ * THE SKIP GUARD fails the run if any registered test (opt-outs aside) did not run. It is a file-level `aroundAll`
+ * that checks once the file's whole run, its `afterAll` hooks included, has returned: an `afterAll` would be one of
+ * the file's own, which Vitest runs in turn and abandons at the first that throws, so a guard that fired there could
+ * leave the contract server running and the file's scratch directories on disk, under every `sequence.hooks` order.
+ * It runs whenever at least one test in the file runs, so an `it.only` beside the suite, or a `-t` filter that
+ * matches part of it, fails the run instead of skipping checks quietly; a check skipped because a hook above it
+ * failed (a `beforeAll` of the file or of the check) is reported as that, not as a filter. When EVERY test in the
+ * file is skipped no hook runs, and Vitest exits 0: that half is `sssb doctor`'s, which asks `vitest list --json`
+ * whether every check would run.
  */
 
 /** A check, as `checks.json` names it. */
@@ -107,15 +112,47 @@ export function registerChecks<C>(options: {
         })
     }
 
-    afterAll(() => {
+    // eslint-disable-next-line no-empty-pattern -- Vitest reads this parameter as the hook's fixtures and refuses anything but a destructuring pattern; the guard uses none, only the file (the third)
+    aroundAll(async (runSuite, {}, file) => {
+        await runSuite()
         const skipped = expected.filter((name) => !ran.has(name))
-        if (skipped.length > 0) {
-            throw new Error(
-                `the SSSB ${runner === 'unit' ? 'conformance suite' : 'contract suite'} did not run ${skipped.length} of ` +
-                    `its checks, and none of them is opted out:\n  ${skipped.join('\n  ')}\n` +
-                    `A check is left out only by naming it in ${caller}({ optOut: { <id>: <reason> } }); an ` +
-                    '`.only`, a `.skip` or a test-name filter that drops one fails the run.',
+        if (skipped.length === 0) return
+        const underFailedHook = testsUnderAFailedHook(file)
+        const blocked = skipped.filter((name) => underFailedHook.has(name))
+        const dropped = skipped.filter((name) => !underFailedHook.has(name))
+        const suite = runner === 'unit' ? 'conformance suite' : 'contract suite'
+        const parts: string[] = []
+        if (blocked.length > 0) {
+            parts.push(
+                `the SSSB ${suite} did not run ${blocked.length} of its checks because a hook failed (its error is ` +
+                    `reported above; fix that and they run):\n  ${blocked.join('\n  ')}`,
             )
         }
+        if (dropped.length > 0) {
+            parts.push(
+                `the SSSB ${suite} did not run ${dropped.length} of its checks, and none of them is opted out:\n  ` +
+                    `${dropped.join('\n  ')}\nA check is left out only by naming it in ${caller}({ optOut: { <id>: ` +
+                    '<reason> } }); an `.only`, a `.skip` or a test-name filter that drops one fails the run.',
+            )
+        }
+        throw new Error(parts.join('\n'))
     })
+}
+
+/**
+ * The tests (`<describe> > <test>`, as `expected` names them) under a suite whose result carries an error: a
+ * `beforeAll` that threw there skipped every test below it.
+ */
+function testsUnderAFailedHook(file: RunnerTask): Set<string> {
+    const names = new Set<string>()
+    const visit = (task: RunnerTask, failed: boolean, parent: string | undefined) => {
+        const here = failed || (task.result?.errors?.length ?? 0) > 0
+        if (task.type === 'suite') {
+            for (const child of task.tasks) visit(child, here, task === file ? undefined : task.name)
+        } else if (here && parent !== undefined) {
+            names.add(`${parent} > ${task.name}`)
+        }
+    }
+    visit(file, false, undefined)
+    return names
 }

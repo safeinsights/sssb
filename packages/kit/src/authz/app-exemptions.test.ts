@@ -105,6 +105,24 @@ describe("an app's own exemptions", () => {
         ])
     })
 
+    it('fail nested app prefixes, both of them, rather than let one silently drop the other gate', async () => {
+        // `hooks/` is listed first, so a scan taking the first matching prefix would judge hooks/partner/ by the
+        // looser `partner.ping` gate and never check `withPartnerSignature`.
+        const exemptions =
+            `export default { prefixes: { 'hooks/': ${PING_EXEMPTION}, 'hooks/partner/': { reason: 'signed by the ` +
+            `partner', mustMatch: { kind: 'wrapped-by', callees: ['withPartnerSignature'] } } } }\n`
+        const scan = await scanApp(
+            app({ 'api/hooks/a/route.ts': PINGING_POST, 'api/hooks/partner/b/route.ts': PINGING_POST }, exemptions),
+        )
+        expect(scan.exemptionProblems).toEqual([
+            expect.stringMatching(/prefixes `hooks\/` overlaps the app's own prefix `hooks\/partner\/`/),
+            expect.stringMatching(/prefixes `hooks\/partner\/` overlaps the app's own prefix `hooks\/`/),
+        ])
+        // Neither applies, so neither route passes on a gate.
+        expect(scan.failures).toHaveLength(2)
+        expect(scan.failures.join('\n')).toMatch(/hooks\/partner\/b\/route\.ts POST exports a mutating handler/)
+    })
+
     it("fail an entry that matches no mutating route in the app's own tree", async () => {
         const exemptions =
             `export default { files: { 'partner/gone/route.ts': ${PING_EXEMPTION} }, ` +

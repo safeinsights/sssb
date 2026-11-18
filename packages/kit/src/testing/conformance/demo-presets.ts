@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, vi } from 'vitest'
+import { dataRoot, setDataRoot } from '../../adapters/fake/data-dir'
 import type { MessageTree } from '../../i18n/messages'
 import { makeTestTmpDir } from '../tmp-dir'
 import type { CheckImpl } from './types'
@@ -20,6 +21,12 @@ import type { CheckImpl } from './types'
  * (@sssb/kit/server-lib/demo-presets.ts) against this app's real seed, migrations and handlers, so a preset that
  * only an e2e would have caught throwing fails here. Same harness as demo-presets.test.ts: a throwaway data dir, a
  * cookie jar, a stub translator, and the fake adapters standing in for the `server-only` registry.
+ *
+ * THE DATA DIR. The fake adapters keep their world under APP_DATA_DIR, else the working directory's `.data`, which is
+ * the developer's own dev world: a replay there would reset and reseed it. So `setup` ASSIGNS APP_DATA_DIR for the
+ * check's tests (`setDataRoot`), never `vi.stubEnv`, which an adopter's `unstubEnvs: true` undoes before every test,
+ * and every test that reaches the adapters first proves the scratch dir is still in effect (`inScratchWorld`),
+ * failing rather than replaying anywhere else.
  *
  * THE MOCKS. A test file's `vi.mock` is hoisted above its imports; a library's is not, so `setup` registers them
  * with `vi.doMock` while the suite is collected, before any test runs, and every module that reaches them (the
@@ -82,15 +89,31 @@ async function registries() {
     return { presets, definitions: composePresetOperations(appPresetOperations) }
 }
 
+/** The check's scratch data dir while its tests run; undefined outside them. */
+let scratch: string | undefined
+
+/** Fails loudly, before any adapter is touched, when the fake adapters would not write into the scratch dir. */
+function inScratchWorld(): void {
+    const root = dataRoot()
+    if (scratch === undefined || root !== scratch) {
+        throw new Error(
+            `demo-presets: the fake adapters' data dir is ${root}, not the check's scratch dir (${scratch ?? 'not made'}), ` +
+                'so a replay would reset and reseed that world. Something reassigned APP_DATA_DIR after the check set it.',
+        )
+    }
+}
+
 export const demoPresets: CheckImpl = {
     setup: () => {
         mockServerOnlyWorld()
-        // The replay's world lives in a throwaway data dir (the fake adapters read APP_DATA_DIR), never the app's .data.
+        let previous: string | undefined
         beforeAll(() => {
-            vi.stubEnv('APP_DATA_DIR', makeTestTmpDir('app-demo-presets-seam-'))
+            scratch = makeTestTmpDir('app-demo-presets-seam-')
+            previous = setDataRoot(scratch)
         })
         afterAll(() => {
-            vi.unstubAllEnvs()
+            if (scratch !== undefined && dataRoot() === scratch) setDataRoot(previous)
+            scratch = undefined
         })
     },
     timeouts: {
@@ -130,6 +153,7 @@ export const demoPresets: CheckImpl = {
             expect([...used].filter((kind) => !Object.hasOwn(definitions, kind))).toEqual([])
         },
         'have a server half for every defined operation kind, and no server half without a definition': async () => {
+            inScratchWorld()
             await mockedRegistry()
             const { definitions } = await registries()
             const { presetOperationHandlers } = await import('../../server-lib/demo-presets')
@@ -151,6 +175,7 @@ export const demoPresets: CheckImpl = {
         },
         'replay on the server host: every operation performed, every invite pending, every hold set, the viewpoint signed in':
             async () => {
+                inScratchWorld()
                 await mockedRegistry()
                 const { presets } = await registries()
                 const { expandPreset } = await import('../../core/presets')
@@ -162,6 +187,7 @@ export const demoPresets: CheckImpl = {
                     // and viewpoint are as much its world as its own.
                     const expanded = expandPreset(preset.id, presets)
                     if (!expanded) throw new Error(`${preset.id} does not expand (unknown base or a cycle)`)
+                    inScratchWorld()
                     const result = await applyDemoPreset(preset.id, { baseUrl: 'http://localhost:3000/' })
                     expect(result, preset.id).toEqual({ signedIn: expanded.viewpoint !== undefined })
                     // The replay reset the world first, so the hold file is exactly the script's last word per actor.

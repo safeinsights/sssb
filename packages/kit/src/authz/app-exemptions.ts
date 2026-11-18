@@ -22,7 +22,8 @@ import { type Exemption, type ScannedRoute, type ScanRoot, type ScanPolicy, judg
  * (./route-scan.ts, `Gate`), for the same reason the framework's do: a gateless entry exempts that path outright.
  * An entry FAILS (and is not applied) when it is malformed, when it overlaps a framework entry (same key, under one
  * of the framework's prefixes, or a prefix over one of its keys — an app cannot weaken a framework gate, the
- * `service/` gate above all), or when it matches no mutating route in the app's own tree: an app exemption is
+ * `service/` gate above all), when it is a prefix nested in another of the app's prefixes (both fail: a route under
+ * both would get one gate and silently lose the other), or when it matches no mutating route in the app's own tree: an app exemption is
  * measured against the app, so a deleted route's exemption cannot wait for a new route at the same path.
  */
 
@@ -114,6 +115,20 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
             ;(prefix ? exemptions.prefixes : exemptions.files)[rel] = { reason, mustMatch }
         }
     }
+    // Nested prefixes (`hooks/` and `hooks/partner/`) would leave the route under both to whichever the scan meets
+    // first, silently dropping the other's gate. Neither is applied: the app names one prefix per subtree.
+    const appPrefixes = Object.keys(exemptions.prefixes)
+    const nested = appPrefixes
+        .map((rel) => ({ rel, others: appPrefixes.filter((other) => other !== rel && overlaps(rel, other)) }))
+        .filter(({ others }) => others.length > 0)
+    for (const { rel, others } of nested) {
+        problems.push(
+            `${label}: prefixes \`${rel}\` overlaps the app's own prefix ${others.map((o) => `\`${o}\``).join(', ')}; ` +
+                'a route under both would get only one of their gates, so neither applies. Use one prefix per ' +
+                'subtree, or name the inner routes in `files` (an exact entry wins over a prefix).',
+        )
+    }
+    for (const { rel } of nested) delete exemptions.prefixes[rel]
     return { exemptions, problems }
 }
 
