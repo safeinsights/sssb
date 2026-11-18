@@ -1,0 +1,5 @@
+# The two dated, append-only records take git's built-in union merge: when two branches both add an entry at the
+# end, a merge keeps both sides' lines instead of stopping on a conflict. What it risks is in docs/build-notes.md
+# ("Union merge for the two append-only records"): read the file again after any merge that touched one entry.
+docs/decision-log.md merge=union
+docs/build-notes.md merge=union
