@@ -9,10 +9,20 @@ updates:
       cooldown:
           default-days: 3
       groups:
+          # React's own group, patch updates only (the `ignore` rules below drop its minors and majors). The four
+          # packages must move in one PR: react-dom throws at load when its version differs from `react`'s, so a
+          # PR that bumped one alone would be red by construction.
+          react:
+              patterns:
+                  - react
+                  - react-dom
+                  - '@types/react'
+                  - '@types/react-dom'
+              update-types: ['patch']
           minor-and-patch:
               update-types: ['minor', 'patch']
-              # React moves only by hand, never inside this group (see the `ignore` rules below). Excluding it
-              # here keeps even a patch out of the group, so a patch arrives as a PR of its own.
+              # React never arrives in this group: it has the group above, and nothing minor or major of it is
+              # taken here either.
               exclude-patterns:
                   - react
                   - react-dom

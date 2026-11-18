@@ -237,8 +237,13 @@ function workspacePackageNames(): string[] {
     }
     return dirs.flatMap((dir) => {
         if (!existsSync(abs(`${dir}/package.json`))) return []
-        const name = (JSON.parse(readText(`${dir}/package.json`)) as { name?: string }).name
-        return name === undefined ? [] : [name]
+        let manifest: { name?: unknown } | null
+        try {
+            manifest = JSON.parse(readText(`${dir}/package.json`)) as { name?: unknown } | null
+        } catch {
+            return fail(`${dir}/package.json is not valid JSON, so its name cannot be checked against the slug`)
+        }
+        return typeof manifest?.name === 'string' ? [manifest.name] : []
     })
 }
 
