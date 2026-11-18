@@ -299,9 +299,11 @@ describe('@sssb/create: the generated workspace', () => {
         expect(read(ws, 'apps/acme/src/app-config/presets.ts')).toContain('`/sssb:new-preset-operation`')
     })
 
-    it('links the seam as a package whose exports map covers every specifier the framework imports', () => {
+    it('makes the seam a workspace package whose exports map covers every specifier the framework imports', () => {
         const seam = readJson(ws, 'apps/acme/src/app-config/package.json')
-        expect(seam.name).toBe('@sssb/app-config')
+        // A name of its own, taken under the framework's name: a `link:` is unlinked by pnpm's add, remove and update.
+        expect(seam.name).toBe('acme-app-config')
+        expect(read(ws, 'pnpm-workspace.yaml')).toMatch(/^ {4}- apps\/\*\/src\/app-config$/m)
         const exportsMap: Record<string, string> = seam.exports
         const resolve = (subpath: string) => {
             if (exportsMap[subpath]) return exportsMap[subpath]
@@ -320,7 +322,7 @@ describe('@sssb/create: the generated workspace', () => {
             expect(existsSync(path.join(ws, 'apps/acme/src/app-config', target ?? '')), specifier).toBe(true)
         }
         const app = readJson(ws, 'apps/acme/package.json')
-        expect(app.dependencies['@sssb/app-config']).toBe('link:./src/app-config')
+        expect(app.dependencies['@sssb/app-config']).toBe('workspace:acme-app-config@*')
         // The app's module type, which a nested package.json would otherwise reset below it.
         expect(seam.type).toBe(app.type)
     })
@@ -569,6 +571,30 @@ describe('@sssb/create: the generated workspace', () => {
         )
         expect(sssb.status, sssb.stderr).toBe(0)
         expect(read(ws, '.claude/sssb-guide.md')).toBe(readFileSync(out, 'utf8'))
+    })
+
+    it('refuses a workspace: dependency on a package the workspace lacks, the seam alias aside', () => {
+        const broken = path.join(makeTestTmpDir('create-workspace-dep-'), 'template')
+        cpSync(template, broken, { recursive: true })
+        const manifest = path.join(broken, 'app/package.json')
+        const json = JSON.parse(readFileSync(manifest, 'utf8'))
+        const run = (spec: string) => () => {
+            writeFileSync(manifest, JSON.stringify({ ...json, dependencies: { ...json.dependencies, gone: spec } }))
+            generate({
+                templateDir: broken,
+                target: path.join(makeTestTmpDir('create-ws-dep-'), 'ws'),
+                slug: 'acme',
+                name: 'A',
+            })
+        }
+        expect(run('workspace:*')).toThrow(/apps\/acme\/package\.json still depends on gone by workspace: protocol/)
+        expect(run('workspace:@other/gone@^1')).toThrow(/still depends on @other\/gone by workspace: protocol/)
+        // The seam's own package, under an alias of its own.
+        expect(run('workspace:acme-app-config@*')).not.toThrow()
+        // A package whose manifest is there but that no pnpm-workspace.yaml glob covers is not the workspace's.
+        mkdirSync(path.join(broken, 'app/vendor/stray'), { recursive: true })
+        writeFileSync(path.join(broken, 'app/vendor/stray/package.json'), JSON.stringify({ name: 'stray' }))
+        expect(run('workspace:stray@*')).toThrow(/still depends on stray by workspace: protocol/)
     })
 
     it('claims no licence for the workspace’s packages', () => {

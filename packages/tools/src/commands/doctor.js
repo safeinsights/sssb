@@ -172,12 +172,15 @@ const verdict = (title, problems, notes = []) =>
     problems.length > 0 ? { status: 'FAIL', title, lines: problems } : { status: 'ok', title, lines: notes }
 
 /**
- * The workspace packages strictly inside `app` (a root-level app's apps/*), real paths.
+ * The workspace packages strictly inside `app` (a root-level app's apps/*), real paths. The app's own seam,
+ * `src/app-config`, is a workspace package too (so pnpm keeps it linked), but its files, tests included, are the app's.
  * @param {readonly string[]} packages
  * @param {string} app
  */
 const nestedIn = (packages, app) =>
-    packages.map((dir) => realpathSync(dir)).filter((dir) => dir !== app && dir.startsWith(app + path.sep))
+    packages
+        .map((dir) => realpathSync(dir))
+        .filter((dir) => dir !== app && dir.startsWith(app + path.sep) && dir !== path.join(app, 'src', 'app-config'))
 
 /**
  * THE WALK REACHES THE APP: what every workspace-wide check below covers is what the walk found, so an app it missed
@@ -255,7 +258,7 @@ const messageOf = (error) => (error instanceof Error ? error.message : String(er
  * @returns {Result}
  */
 function importers(root, workspace) {
-    const { problems, importers: found } = importerSeamProblems(root, kitDirOf, workspace.importers)
+    const { problems, importers: found } = importerSeamProblems(root, kitDirOf, workspace.importers, workspace.packages)
     return verdict(
         problems.length > 0
             ? 'one SSSB per importer, with its own seam: an importer of @sssb/kit runs on a seam not its own'

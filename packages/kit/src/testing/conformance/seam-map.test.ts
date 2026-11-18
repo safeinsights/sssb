@@ -34,6 +34,24 @@ describe('seam-map, through a seam package', () => {
         expect(run(appWithSeam({}))).not.toThrow()
     })
 
+    it("holds the seam package to the name the app's package.json declares it by", () => {
+        const appDir = appWithSeam({})
+        const declare = (spec: string) =>
+            writeFileSync(
+                path.join(appDir, 'package.json'),
+                JSON.stringify({ dependencies: { '@sssb/app-config': spec } }),
+            )
+        // A workspace package of its own name, which the app takes as @sssb/app-config.
+        declare('workspace:acme-app-config@*')
+        expect(run(appDir)).toThrow(/src\/app-config\/package\.json is named @sssb\/app-config, not acme-app-config/)
+        const seam = path.join(appDir, 'src/app-config/package.json')
+        writeFileSync(seam, JSON.stringify({ name: 'acme-app-config', exports: { './*': './*.ts' } }))
+        expect(run(appDir)).not.toThrow()
+        // Any other declaration (a `link:`, which `sssb doctor` fails) names the seam by its own name.
+        declare('link:./src/app-config')
+        expect(run(appDir)).toThrow(/is named acme-app-config, not @sssb\/app-config/)
+    })
+
     it('fails an entry whose target is a directory', () => {
         // `db/migrations` is a directory here (it holds index.ts), as a directory module's is.
         const appDir = appWithSeam({ './db/migrations': './db/migrations' }, ['db/migrations/index.ts'])

@@ -93,6 +93,9 @@ export function pnpmWorkspace(c) {
         'packages:',
         '    - apps/*',
         '    - apps/*/infra',
+        "    # Each app's seam, src/app-config: a workspace package, so `pnpm add <pkg>`, `remove` and `update <pkg>` for",
+        '    # the app keep it linked into its @sssb/kit (a `link:` they drop). `pnpm sssb:doctor` checks it.',
+        '    - apps/*/src/app-config',
         '    - packages/*',
         '',
         "# pnpm blocks dependencies' install scripts unless they are approved here: these are the ones the app and SSSB's",
@@ -307,13 +310,15 @@ export function knipJson(c) {
                 ignoreDependencies: ['esbuild'],
             },
             [app(c)]: {
-                // The seam is read by SSSB's framework, the module that names it, never by the app's own code.
-                entry: ['src/demo-static/**/*.{ts,tsx}', 'src/app-config/**/*.ts', 'src/seed/*.ts'],
+                entry: ['src/demo-static/**/*.{ts,tsx}', 'src/seed/*.ts'],
                 project: ['src/**'],
-                // The seam link (@sssb/kit resolves it), and the tools SSSB's presets load from the app's directory
+                // The seam (@sssb/kit resolves it), and the tools SSSB's presets load from the app's directory
                 // (@sssb/tools/vite and /vitest), none of which the app imports.
                 ignoreDependencies: ['@sssb/app-config', '@vitejs/plugin-react', 'vite-plugin-singlefile'],
             },
+            // The seam, a workspace package of its own: read mostly by SSSB's framework, from node_modules, which knip
+            // does not follow.
+            [`${app(c)}/src/app-config`]: { entry: ['**/*.ts'] },
         },
     })
 }
@@ -589,7 +594,8 @@ the e2e suites, the static demo and the offline CDK synth. Only the secret scan 
 ## Layout
 
 - \`${app(c)}/\`: the app. Its \`src/app-config/\` is the seam SSSB's framework (\`@sssb/kit\`) reads the app's
-  registrations through, linked as the package \`@sssb/app-config\`; \`config/app.ts\` holds its slug and
+  registrations through, a workspace package of its own (\`${c.slug}-app-config\`) that the app takes as
+  \`@sssb/app-config\`; \`config/app.ts\` holds its slug and
   \`config/params.ts\` its deployment parameters.
 - \`${app(c)}/infra/\`: the app's deployment, a CDK app composing SSSB's \`SssbApp\` construct (\`@sssb/cdk\`).
 - \`docs/cutover-checklist.md\`: what the app defers until it has real accounts.

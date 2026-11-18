@@ -8,8 +8,9 @@ import type { CheckImpl } from './types'
  * `seam-map`: every `@sssb/app-config/*` specifier the shipped kit source imports (../seam-specifiers.json, held equal
  * to a scan of the source by the kit's own test) resolves for this app. Two halves (ADR-0014 part 1):
  *
- * - When the app's seam is a PACKAGE (`src/app-config/package.json`, linked into the app as `@sssb/app-config`, which
- *   is how an adopter's install reaches it), each specifier resolves through that package's `exports` map to a FILE
+ * - When the app's seam is a PACKAGE (`src/app-config/package.json`, a workspace package the app declares as
+ *   `@sssb/app-config`, which is how an adopter's install reaches it), it has the name that declaration names, and
+ *   each specifier resolves through that package's `exports` map to a FILE
  *   (a directory is not something an import can load). The `./*` pattern covers flat `.ts` modules only, so a
  *   directory module (`db/migrations`) or a `.tsx` one needs its own entry, and a map that forgets one fails here by
  *   name rather than at the first import. Inside SSSB's own repo the seam resolves through each app's alias, and
@@ -130,6 +131,23 @@ function resolveExport(exportsMap: Record<string, ExportsTarget>, subpath: strin
     return null
 }
 
+/**
+ * The name the app's seam package must have: the package a `workspace:<name>@<range>` declaration of
+ * `@sssb/app-config` in the app's `package.json` names (each app's seam is a workspace package of a name of its own,
+ * which pnpm's `add`, `remove` and `update` keep linked), else `@sssb/app-config` itself.
+ */
+function seamPackageName(appDir: string): string {
+    const file = path.join(appDir, 'package.json')
+    if (!existsSync(file)) return SEAM
+    const manifest = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    for (const field of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+        const deps = manifest[field]
+        const spec = typeof deps === 'object' && deps !== null ? (deps as Record<string, unknown>)[SEAM] : undefined
+        if (typeof spec === 'string') return /^workspace:(@?[^@]+)@/.exec(spec)?.[1] ?? SEAM
+    }
+    return SEAM
+}
+
 export const seamMap: CheckImpl = {
     tests: {
         "through the exports map of the app's seam package, when it has one": ({ appDir }) => {
@@ -141,7 +159,9 @@ export const seamMap: CheckImpl = {
                 exports?: unknown
             }
             const problems: string[] = []
-            if (manifest.name !== SEAM) problems.push(`src/app-config/package.json is named ${String(manifest.name)}`)
+            const name = seamPackageName(appDir)
+            if (manifest.name !== name)
+                problems.push(`src/app-config/package.json is named ${String(manifest.name)}, not ${name}`)
             const exportsMap =
                 typeof manifest.exports === 'object' && manifest.exports !== null && !Array.isArray(manifest.exports)
                     ? (manifest.exports as Record<string, ExportsTarget>)

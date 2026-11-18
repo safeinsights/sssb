@@ -1154,3 +1154,40 @@ maintainer half"):
   because doctor fails a stale copy.
 - **A plugin change takes a changeset.** `plugins/` and `.claude-plugin/` join the paths `changeset-required` gates:
   adopters load them at the pin they raise at a release.
+
+## Addendum — 2026-11-18: the seam is a workspace package, not a `link:`
+
+Part 1's option C linked each app's seam as `"@sssb/app-config": "link:./src/app-config"`. A fresh `pnpm install`
+links it into the app's `@sssb/kit`, but a partial install for the app, `pnpm add <pkg>`, `pnpm remove <pkg>` or
+`pnpm update <pkg>` (from the root with `--filter`, or in the app's directory), re-resolves the kit without it (a bare
+`pnpm update -r` or `pnpm add -w` kept it): its lockfile snapshot loses the peer, its instance has no seam beside
+it, and `sssb doctor` fails. Option C stands; only the way the app declares its seam changes (`docs/decision-log.md`,
+"The seam is a workspace package"):
+
+- **The seam is a workspace package of the app's own name**, taken under the name the framework imports.
+  `pnpm-workspace.yaml` lists `apps/*/src/app-config`, the seam's `package.json` is named `<slug>-app-config`, and the
+  app declares `"@sssb/app-config": "workspace:<slug>-app-config@*"`. The lockfile records the same resolution as
+  before (`version: link:src/app-config`, and the kit's snapshot `'@sssb/app-config': link:apps/<app>/src/app-config`),
+  so each app still gets an instance of its own, linked to its own seam. The kit's manifest does not change: the seam
+  stays an optional peer declared in `peerDependenciesMeta` alone. `workspace:` resolves only to a package of the
+  workspace, so the unscoped `<slug>-app-config` is never requested from a registry (part 1's reason for the scope
+  holds for the name the kit imports, which is still `@sssb/app-config`).
+- **Why `add` dropped a `link:`** (pnpm 11.14.0's bundled `pnpm.mjs`). On a partial install pnpm re-resolves only some
+  of an importer's dependencies; the others become "top parents" read from its `node_modules` (`getTopParents`),
+  with a name and a version but no linked directory. Peer resolution (`createPkgsByName`) gives such a parent no node
+  (`nodeId: linkedDir`, undefined), so the kit's optional peer records no provider and is dropped. A fresh install resolves every dependency, the `link:`
+  among them, which is why it worked there. A workspace package came through `add`, `remove`, `update`, `update -r`,
+  `update --latest`, `add -w`, `add` run in the app, and a fresh install, with one app and with two, each app keeping
+  its own seam; the settings and hooks that did not help are in the decision log.
+- **`sssb doctor` fails a `link:` seam**, naming the change, though it is linked when doctor runs: the next
+  `pnpm add <pkg>` for the app would unlink it. It also fails an importer whose declared seam is another importer's, and a `workspace:` seam whose
+  name no workspace package has or more than one has: pnpm accepts two packages of one name and links one of them, so
+  a copy of a seam left under its name becomes the app's seam with the kit's link agreeing. Its check of the seam's
+  target reads the importer's `node_modules` link for a `workspace:` seam, as it did for any form but `link:`. The
+  conformance suite's `seam-map` check, which required the seam's `package.json` to be named `@sssb/app-config`, now
+  requires the name the app's `workspace:` declaration names (`@sssb/app-config` for any other form).
+- **Pack and consume's generated shape runs `pnpm add`, `pnpm remove` and `pnpm update` for the app (from the root,
+  `--filter <app>`) after every other step**, each followed by `sssb doctor` and the lockfile's seam check. With the `link:` seam it failed at the first.
+- **The plugin's workaround is gone.** P13's commands told authors to edit `package.json` and run `pnpm install`
+  rather than `pnpm add`, and its gate failed a command that said `pnpm add`; they now say
+  `pnpm --filter <app> add <pkg>`.
