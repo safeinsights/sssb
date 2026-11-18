@@ -215,6 +215,22 @@ importers:
         specifier: ^4.1.12
         version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@26.6.6)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(msw@2.15.0(@types/node@26.6.6)(typescript@6.0.3))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  apps/showcase/infra:
+    dependencies:
+      '@sssb/cdk':
+        specifier: workspace:*
+        version: link:../../../packages/cdk
+      aws-cdk-lib:
+        specifier: ^2.274.0
+        version: 2.277.0(constructs@10.8.1)
+      constructs:
+        specifier: ^10.8.1
+        version: 10.8.1
+    devDependencies:
+      aws-cdk:
+        specifier: ^2.1146.0
+        version: 2.1148.1
+
   apps/starter:
     dependencies:
       '@mantine/core':
@@ -252,18 +268,14 @@ importers:
         specifier: ^2.3.4
         version: 2.3.4(rollup@4.62.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.15)(yaml@2.9.1))
 
-  infra:
-    dependencies:
+  packages/cdk:
+    devDependencies:
       aws-cdk-lib:
         specifier: ^2.274.0
         version: 2.277.0(constructs@10.8.1)
       constructs:
         specifier: ^10.8.1
         version: 10.8.1
-    devDependencies:
-      aws-cdk:
-        specifier: ^2.1146.0
-        version: 2.1148.1
 
   packages/kit:
     dependencies:

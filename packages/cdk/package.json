@@ -1,0 +1,35 @@
+{
+    "name": "@sssb/cdk",
+    "version": "0.1.0",
+    "private": true,
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/safeinsights/sssb.git",
+        "directory": "packages/cdk"
+    },
+    "type": "module",
+    "description": "SSSB's deployment construct: SssbApp, an app's server, migrator, database and CDN, composed inside the adopter's own CDK stack. Plain JavaScript; it never depends on @sssb/kit, and reaches it only from the app's own directory (ADR-0014, rule 4).",
+    "files": [
+        "src",
+        "!src/**/*.test.*"
+    ],
+    "exports": {
+        "./package.json": "./package.json",
+        ".": {
+            "types": "./src/index.d.ts",
+            "default": "./src/index.js"
+        }
+    },
+    "engines": {
+        "node": ">=24"
+    },
+    "peerDependencies": {
+        "aws-cdk-lib": "^2.274.0",
+        "constructs": "^10.8.1"
+    },
+    "devDependencies": {
+        "aws-cdk-lib": "^2.274.0",
+        "constructs": "^10.8.1"
+    }
+}
