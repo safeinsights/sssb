@@ -472,6 +472,25 @@ describe('sssb ci, the reusable workflow’s jobs', () => {
         }
     })
 
+    // This tiny workspace installs no kit, so every check fails; what is pinned is that each one ran, in order:
+    // check-fences in each app, ONE doctor run (it checks the whole workspace) for the first app, then check-e2e in
+    // each app.
+    it('`lint-typecheck-unit` then runs sssb doctor once and sssb check-e2e in each app', () => {
+        const { root } = scripted('ci-ltu-doctor', { lint: 0, typecheck: 0, 'test:unit': 0 })
+        app(root, 'apps/alpha', { name: 'alpha' })
+        app(root, 'apps/beta', { name: 'beta' })
+        const result = sssb(root, ['ci', 'lint-typecheck-unit'])
+        expect(result.status).toBe(1)
+        const ran = [...result.stdout.matchAll(/^\$ \(.*\) sssb (.*)$/gm)].map((match) => match[1])
+        expect(ran).toEqual([
+            'check-fences --app apps/alpha',
+            'check-fences --app apps/beta',
+            'doctor --app apps/alpha',
+            'check-e2e --app apps/alpha',
+            'check-e2e --app apps/beta',
+        ])
+    })
+
     it.each([
         ['lint-typecheck-unit', { typecheck: 0, 'test:unit': 0 }, '`lint`'],
         ['lint-typecheck-unit', { lint: 0, typecheck: 0 }, '`test:coverage` or `test:unit`'],

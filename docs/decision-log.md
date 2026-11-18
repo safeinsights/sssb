@@ -3614,7 +3614,8 @@ init-app my-app` in a copy of the repository followed by its real `cdk synth` (`
 ## The reusable workflow (2026-11-18, ADR-0014 P10, `ci/reusable-workflow`)
 
 - **`.github/workflows/app-checks.yml`**, `on: workflow_call` only, `permissions: contents: read`, no secrets. Its jobs
-  are `lint-typecheck-unit` (the workspace's lint, typecheck and unit tests, then `sssb check-fences` in each app),
+  are `lint-typecheck-unit` (the workspace's lint, typecheck and unit tests, then `sssb check-fences` in each app,
+  one `sssb doctor` run and `sssb check-e2e` in each app),
   `contract` (a `postgres:16` service and the workspace's `test:contract`), `discover` (the e2e shards and the
   static-demo apps), `e2e (<shard>)`, `demo-static (<app>)`, an optional `synth`, and `all-checks`. Every step that
   is not setup is one `pnpm exec sssb ci <job>`; the jobs P10 adds to `sssb ci` are `lint-typecheck-unit`,
@@ -3650,8 +3651,13 @@ init-app my-app` in a copy of the repository followed by its real `cdk synth` (`
   `checks.yml`'s push run, and a called workflow's jobs are part of that run and of its conclusion
   (docs.github.com, "Reusing workflow configurations": the called workflow's jobs run in
   the caller's workflow run; PR 28's runs show them there).
-- **`sssb doctor` and `sssb check-e2e` (P5) are not in it yet.** P5 is still building them; they join
-  `lint-typecheck-unit` (or a job of their own) when it lands.
+- **`sssb doctor` and `sssb check-e2e` (P5) run inside `sssb ci lint-typecheck-unit`**, after check-fences,
+  not as jobs of their own: no check name changes, and the job already has the workspace installed. Doctor runs once,
+  for the first app (one run checks every app of the workspace, and an adopter's root need not resolve `@sssb/kit`;
+  run from `apps/showcase` here it makes the root's checks less the root's own singleton and version lines, which
+  check no app). check-e2e runs in each app the job covers. In this repository they leave `repo-checks`, where
+  merging P5 had put them. The alternative, two more jobs, would add two required check names for no isolation
+  gained: both need the same install.
 
 ## `@sssb/kit/testing/e2e`: compiled when packed, source in the repo (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
 

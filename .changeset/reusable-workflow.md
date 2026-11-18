@@ -9,7 +9,8 @@
 **Action.** optional
 
 **What changed.** `.github/workflows/app-checks.yml` in `safeinsights/sssb` runs SSSB's checks for an app workspace:
-lint, typecheck and unit tests with `sssb check-fences` in each app, the contract tests on a Postgres service, the e2e
+lint, typecheck and unit tests with `sssb check-fences` and `sssb check-e2e` in each app and one `sssb doctor` run, the
+contract tests on a Postgres service, the e2e
 shards, each app's static demo, an optional CDK synth, and `all-checks`, which fails unless every one of them ran and
 passed. Each step is a `pnpm exec sssb ci <job>` command, and `sssb ci` gains the jobs it runs (`lint-typecheck-unit`,
 `contract`, `matrix`, `synth`) and an `--apps` list.

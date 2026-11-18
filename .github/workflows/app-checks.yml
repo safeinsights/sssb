@@ -48,9 +48,10 @@ permissions:
     contents: read
 
 jobs:
-    # The workspace's lint, typecheck and unit tests (in this repository the framework's seam-conformance suites run
-    # among them; P5's conformance suite joins when it lands), then `sssb check-fences`
-    # in each app: the fences as the app's own config composes them.
+    # The workspace's lint, typecheck and unit tests (each app's conformance suite runs among them), then
+    # `sssb check-fences` in each app (the fences as the app's own config composes them), one `sssb doctor` run (every
+    # app's installed SSSB, its seam, and the conformance checks its main Vitest run would list) and `sssb check-e2e`
+    # in each app (no e2e spec reaching the kit other than through @sssb/kit/testing/e2e).
     lint-typecheck-unit:
         runs-on: ubuntu-latest
         timeout-minutes: 45

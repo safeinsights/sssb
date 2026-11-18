@@ -4,7 +4,8 @@
 // (.github/workflows/app-checks.yml, P10) runs every job here, and SSSB's own checks.yml runs it.
 //
 //   sssb ci lint-typecheck-unit [--apps <dirs>]  the workspace's lint, typecheck and unit tests, then
-//                                                `sssb check-fences` in each app
+//                                                `sssb check-fences` in each app, `sssb doctor` once and
+//                                                `sssb check-e2e` in each app
 //   sssb ci contract                             the workspace's real-Postgres contract tests
 //   sssb ci matrix [--apps <dirs>]               print the e2e shards and the static-demo apps (and write both to
 //                                                $GITHUB_OUTPUT as `e2e=` and `demo-static=`)
@@ -188,6 +189,28 @@ function rootScript(root, job, names) {
     return found
 }
 
+/**
+ * Runs one of this package's commands in this process, as `sssb <command> <args>` would. A usage error (an app the
+ * command cannot check) is printed and counts as a failure, so the steps after it still run.
+ * @param {string} root
+ * @param {string} command
+ * @param {(args: string[]) => Promise<number>} runCommand
+ * @param {string[]} args
+ * @returns {Promise<number>}
+ */
+async function inProcess(root, command, runCommand, args) {
+    console.log(
+        `\n$ (${root}) sssb ${command} ${args.map((arg) => (arg === '--app' ? arg : path.relative(root, arg) || '.')).join(' ')}`,
+    )
+    try {
+        return await runCommand(args)
+    } catch (error) {
+        if (!(error instanceof UsageError)) throw error
+        console.error(error.message)
+        return 1
+    }
+}
+
 /** @param {string[]} args */
 export async function run(args) {
     const [job, ...rest] = args
@@ -244,19 +267,23 @@ export async function run(args) {
             const result = sh(root, ['pnpm', 'run', script])
             status ||= result
         }
+        // Each check runs even when one before it fails or cannot run: a usage error (an app that does not resolve the
+        // plugin, say) fails that check and the job, and the next check still runs.
+        /** @type {[string, (args: string[]) => Promise<number>, string[]][]} */
+        const checks = []
         const { run: checkFences } = await import('./check-fences.js')
-        for (const app of apps) {
-            console.log(`\n$ (${root}) sssb check-fences --app ${app}`)
-            // Each app is checked even when one before it cannot be: a usage error (an app that does not resolve the
-            // plugin) fails this app and the job, and the next app is still checked.
-            let result
-            try {
-                result = await checkFences(['--app', path.join(root, app)])
-            } catch (error) {
-                if (!(error instanceof UsageError)) throw error
-                console.error(error.message)
-                result = 1
-            }
+        for (const app of apps) checks.push(['check-fences', checkFences, ['--app', path.join(root, app)]])
+        // ADR-0014 parts 2, 3 and 5 (P5). ONE doctor run checks every app of the workspace, whatever `--apps` lists:
+        // one copy of each singleton, each app on its own seam, the @sssb packages in step, and the conformance suite's
+        // checks under the config a bare `vitest` loads for each app. It runs for the first app, not the root, because
+        // an adopter's root need not resolve @sssb/kit. Then, in each app, no e2e spec reaching the kit other than
+        // through @sssb/kit/testing/e2e.
+        const { run: doctor } = await import('./doctor.js')
+        checks.push(['doctor', doctor, ['--app', path.join(root, apps[0] ?? '.')]])
+        const { run: checkE2e } = await import('./check-e2e.js')
+        for (const app of apps) checks.push(['check-e2e', checkE2e, ['--app', path.join(root, app)]])
+        for (const [command, runCommand, commandArgs] of checks) {
+            const result = await inProcess(root, command, runCommand, commandArgs)
             status ||= result
         }
         return status

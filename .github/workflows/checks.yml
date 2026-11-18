@@ -24,7 +24,7 @@ concurrency:
 jobs:
     # SSSB's checks for both apps, through the REUSABLE WORKFLOW an adopter's own CI calls (app-checks.yml, ADR-0014
     # P10), so every app-side job is proved here before an adopter runs it: lint, typecheck and unit tests with
-    # `sssb check-fences` in each app, the contract tests on real Postgres, the e2e shards, each app's static demo, each
+    # `sssb check-fences` and `sssb check-e2e` in each app and one `sssb doctor` run, the contract tests on real Postgres, the e2e shards, each app's static demo, each
     # app's CDK synth, and `all-checks`, which fails unless every one of them ran and passed. Called by its local path,
     # so it runs at the commit under test; an adopter pins it by commit SHA. No `apps` input: the workspace's apps are
     # discovered (every apps/<name>), so `pnpm init-app`'s rename and eject need no edit here. Its checks are named
@@ -55,12 +55,6 @@ jobs:
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
             - run: pnpm knip
-            # ADR-0014 parts 2, 3 and 5, one doctor run over every app: one copy of each singleton, each app on its
-            # own seam, the @sssb packages in step, every unit check listed by `vitest list` under the config a bare
-            # `vitest` loads for the app and every contract check under some config (which config CI runs is only
-            # reported); and, per app, no e2e spec reaching the kit other than through @sssb/kit/testing/e2e.
-            - run: pnpm sssb:doctor
-            - run: pnpm check:e2e
             - run: pnpm jscpd
             - run: pnpm --filter spike-kysely-pglite test
 

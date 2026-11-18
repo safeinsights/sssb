@@ -997,4 +997,5 @@ workflow"):
 - **This repository calls it by its local path**, at the commit under test; adopters pin a SHA. Its checks are
   named `sssb / <job>`, so the rulesets on `main` and `integration` must change to those names when this merges.
 - **The service image is `postgres:16` by tag**, as `checks.yml` had it, not yet by digest as part 7 asks.
-- `sssb doctor` and `sssb check-e2e` join it with P5.
+- **`sssb doctor` and `sssb check-e2e` run inside `lint-typecheck-unit`**, after `sssb check-fences`: doctor once
+  (it checks the whole workspace), check-e2e in each app.
