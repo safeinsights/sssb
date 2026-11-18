@@ -175,6 +175,19 @@ describe('isFrameworkFile', () => {
     })
 })
 
+describe('a package.json with no name inside a framework copy', () => {
+    const nested = path.join(WS, 'vendor', 'kit-nested')
+    writeKit(nested, 'nested')
+    writeFile(path.join(nested, 'src', 'nested', 'package.json'), JSON.stringify({ type: 'module' }))
+    const deep = path.join(nested, 'src', 'nested', 'deep.ts')
+    writeFile(deep, '')
+
+    it('does not make a package: the walk goes on to the framework above it', () => {
+        expect(isFrameworkFile(deep)).toBe(true)
+        expect(() => assertNoForeignFramework(appA, deep)).toThrow('is not part of the @sssb/kit')
+    })
+})
+
 describe('assertNoForeignFramework', () => {
     it('passes the app’s own kit file and files that are not framework source', () => {
         expect(() => assertNoForeignFramework(appA, errorsOf(kitA))).not.toThrow()
@@ -207,6 +220,11 @@ describe('resolveFromApp', () => {
             env: { ...process.env, NODE_PATH: hoisted },
         })
         expect(result.stdout).toContain('does not install `x-plugin`')
+    })
+
+    it('resolves Node’s built-ins, which are not packages on a lookup chain', () => {
+        expect(() => resolveFromApp(appA, 'node:fs', 'x')).not.toThrow()
+        expect(() => resolveFromApp(appA, 'fs', 'x')).not.toThrow()
     })
 
     it('resolves a package in the app’s own node_modules or an ancestor’s', () => {

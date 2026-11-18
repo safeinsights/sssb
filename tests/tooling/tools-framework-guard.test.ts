@@ -50,6 +50,14 @@ describe('frameworkGuard', () => {
         expect(() => load(`${foreign}?v=1`)).toThrow('is not part of the @sssb/kit')
     })
 
+    it('remembers a file only once it passes: a foreign file fails every load, an own file passes every load', () => {
+        const guard = frameworkGuard(app).load as unknown as (this: unknown, id: string) => unknown
+        expect(() => guard.call({}, foreign)).toThrow('is not part of the @sssb/kit')
+        expect(() => guard.call({}, foreign)).toThrow('is not part of the @sssb/kit')
+        expect(guard.call({}, ownKit)).toBeNull()
+        expect(guard.call({}, ownKit)).toBeNull()
+    })
+
     it('is the first plugin of both presets', async () => {
         const appDir = path.resolve(__dirname, '../../apps/starter')
         const project = await appTestProject({ appDir })
