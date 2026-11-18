@@ -109,6 +109,7 @@ function run(temp: string, state: State, version = VERSION) {
     const result = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script()], {
         encoding: 'utf8',
         env: {
+            NODE_ENV: 'test',
             PATH: `${path.join(temp, 'bin')}:${process.env.PATH}`,
             RUNNER_TEMP: temp,
             GITHUB_REPOSITORY: 'safeinsights/sssb',

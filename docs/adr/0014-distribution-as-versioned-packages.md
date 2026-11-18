@@ -995,3 +995,41 @@ still written by hand for P7: the sections for changes that predate the changese
 rename among it), the tarballs' sha512 and install lines, and creating the GitHub release. P14's first npm release
 would omit that hand-written history unless it is backfilled first. Why a script and not an `@sssb/tools` command,
 and what review changed, is in `docs/decision-log.md` (2026-11-18, `feat/release-notes`).
+
+## Addendum — 2026-11-18: P7, a release candidate is cut by a merge to main
+
+JP (2026-11-18): "I don't want publishing a release to be my call separately from merges to main." So P7's release
+candidate does not come from a hand-pushed tag, as part 10 and the P7 row leave open, but from the release flow P1b
+built. This refines part 10 in five ways; `docs/decision-log.md` (2026-11-18, P7) has each with what was rejected.
+
+- **Changesets' pre mode, with the tag `rc`, is how a candidate is versioned.** Part 10 and P1b said prereleases are
+  GitHub-release tarballs "never Changesets' pre mode"; the first half stands, the second is reversed. While the group is
+  private, `.changeset/pre.json` holds pre mode `rc` and `.changeset/config.json` versions private packages and ignores
+  every package outside `@sssb/*` (`"*"`, `"@app/*"`), so a merge to `main` with changesets versions the group to
+  `0.x.y-rc.N` and `push` tags it. `release.mjs check` fails a PR that takes a private group out of pre mode (a merge
+  would then cut a plain version nothing can publish) or puts a public group into it. P14 leaves pre mode
+  (`changeset pre exit`) with the same change that removes `private`.
+- **Changesets 3 keeps what pre mode consumes.** It moves each consumed changeset to `.changeset/pre/` rather than
+  deleting it, and `pre.json` holds only the mode and the tag. `verify-release`, which installs nothing, recomputes the
+  candidate's number as Changesets does (semver's `inc` on the group's version, then one past its `-rc.N`) and accepts a
+  changeset moved there unchanged, never deleted. `prepare` cross-checks its number against Changesets' before changing
+  anything.
+- **A candidate's tag runs three jobs of its own**, never `pack` or `publish`: `candidate` (the CI gate on the release
+  commit, then the tarballs `checks`' pack-and-consume job packed and tested there, from that run's `sssb-tarballs`
+  artifact, never packed again), `attest` (`actions/attest-build-provenance`, the run's only id-token, in no
+  environment) and `prerelease` (a draft first, every byte checked, then a prerelease never marked latest). Pack and
+  consume packs `@sssb/cdk` too, and checks its packed shape, so the four tarballs come from one place; it does not
+  install it (P12).
+- **The notes are complete without a hand step.** The history since keel's `24b0589` that predates changesets is four
+  changesets (`.changeset/history-since-keel-*.md`, one per section), consumed once, by the first candidate. The
+  prerelease's notes are the release commit's `docs/releases/v<version>.md` plus the install lines (`overrides` in
+  `pnpm-workspace.yaml` and a dependency per package, so `@sssb/cdk`'s exact dependency on `@sssb/tools` resolves to the
+  tarball, npm having no candidate), each tarball's sha512, and how to verify its attestation. This replaces what the
+  previous addendum left to be written by hand for P7.
+- **The app guide ships in `@sssb/kit`** as `@sssb/kit/guide.md` (`packages/kit/src/guide.md`), checked by the doc gate
+  against `apps/starter` (`sssb.docPaths.relativeTo`). `sssb doctor` fails an adopter's app whose copy is missing or
+  stale; in this repository, where the guide is the source and no copy is kept until P13, a missing copy is reported.
+
+What must exist first is JP's: the release app (`pnpm release-app:init`, `docs/runbooks/release-app.md`), before the
+first merge to `main` that carries changesets; until it exists that merge's `push` job fails at minting its token,
+having written nothing.

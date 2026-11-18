@@ -7,14 +7,22 @@
 #      pending changesets with Changesets, and then `push`, which checks that result and pushes it as a release
 #      commit and its `vX.Y.Z` tag;
 #   2. that tag's push runs `pack`, which waits for `checks` to pass on the release commit and packs, and then
-#      `publish`, which publishes the packed tarballs with provenance.
+#      `publish`, which publishes the packed tarballs with provenance. A release candidate's tag
+#      (`vX.Y.Z-rc.N`) runs `candidate`, `attest` and `prerelease` instead (below).
 # Each pair splits the same way: the first job installs the workspace's dependencies and holds no secret; the
 # second holds the secret (the release app's key in `push`, npm's id-token in `publish`), installs nothing, and
-# re-checks what the first handed it. No job holds both a token that writes to the repository and the id-token.
+# re-checks what the first handed it. No job holds both a token that writes to the repository and the id-token. A
+# run holds the id-token in one job at most: `publish` on a release's tag, `attest` (to sign, in no environment, so
+# npm's trusted publisher refuses it) on a candidate's.
 #
-# NOTHING REACHES NPM BEFORE P14. Every package is `"private": true` until then, so Changesets plans no
-# release (`privatePackages.version` is false in .changeset/config.json), `plan` reports none and `push` is
-# skipped, and on a tag `pack` finds nothing publishable and `publish` is skipped. As a third lock, `publish`
+# RELEASE CANDIDATES UNTIL P14, AND NOTHING ON NPM (ADR-0014 P7; JP, 2026-11-18: the merge to main is the release
+# decision). Every package is `"private": true` until P14, and Changesets is in pre mode with the tag `rc`
+# (.changeset/pre.json), versioning private packages; scripts/release.mjs `check` fails a PR that breaks that pairing.
+# So a push to main with pending changesets versions the group to `0.x.y-rc.N`, and `push` tags it `v0.x.y-rc.N`.
+# That tag's run is the candidate's: `candidate` waits for `checks` on the release commit and takes the tarballs its
+# pack-and-consume job packed and tested there, `attest` signs them, and `prerelease` attaches them to a GitHub
+# prerelease with the notes. A candidate's tag never runs `pack` or `publish`. On a plain `vX.Y.Z` tag (P14 on),
+# `pack` finds nothing publishable while every package is private and `publish` is skipped; as a third lock, `publish`
 # refuses any tarball whose own manifest says private. Do not count on npm for that: `npm publish <tarball>
 # --dry-run` (11.21.2) accepted a private one.
 #
@@ -26,7 +34,8 @@
 #     repository only, contents write), whose token may push to `main` past its rules;
 #   - environment `npm-publish`: deployment refs `v*` tags only, administrators not exempt;
 #   - a tag ruleset on `v*` that only the release app may create, that nobody may move or delete, with no other
-#     bypass. Without it anyone who can push a tag can run an edited copy of this file in `npm-publish`;
+#     bypass. Without it anyone who can push a tag can run an edited copy of this file in `npm-publish`, or attach a
+#     prerelease of their own: `v*` covers a candidate's `vX.Y.Z-rc.N` too;
 #   - `main`'s ruleset: changes through a reviewed PR with `checks` required, only the release app bypassing;
 #   - on npmjs.com, per package: a trusted publisher naming `safeinsights/sssb`, `release.yml` and the
 #     environment `npm-publish`, with publishing requiring 2FA and disallowing tokens. npm binds the publisher to

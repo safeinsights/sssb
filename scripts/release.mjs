@@ -4,22 +4,25 @@
 // the plan `changeset version` applies.
 //
 //   check                         Every PR. Fails on a `major` changeset for a package on 0.x, and on any plan
-//                                 that reaches 1.0.0, because npm versions cannot be withdrawn. It judges the
-//                                 plan as it will be once `private` comes off (P14): today Changesets plans
-//                                 nothing for a private package, and a check of that plan could never fail. It
-//                                 also fails on what would stall a release later: a changeset naming a package
-//                                 outside the fixed group, a group member outside packages/ or without
-//                                 repository.url, a group that is part private, and a changeset whose body is not a
-//                                 readable release-note entry (scripts/release-notes.mjs).
+//                                 that reaches 1.0.0, because npm versions cannot be withdrawn. It also fails on what
+//                                 would stall a release later: a changeset naming a package outside the fixed group,
+//                                 a group member outside packages/ or without repository.url, a group that is part
+//                                 private, a changeset whose body is not a readable release-note entry
+//                                 (scripts/release-notes.mjs), and a private group outside pre mode `rc` or a public
+//                                 one inside it. While the group is private (until P14) every release is a release
+//                                 candidate, `0.x.y-rc.N`, cut by a merge to main and shipped as a GitHub prerelease
+//                                 (ADR-0014 P7); .changeset/pre.json and a config that versions private packages are
+//                                 what make Changesets plan one.
 //   prepare [--allow-dirty]       The `plan` job. Plans, guards, writes the release notes (assembled from the pending
 //                                 changesets by scripts/release-notes.mjs) to docs/releases/v<version>.md, then runs
 //                                 `changeset version` in the working tree and commits nothing. stdout is one JSON
 //                                 object, `{"release":false,"reason":…}` or `{"release":true,"version":…,
 //                                 "packages":[…],"notes":"docs/releases/v<version>.md"}`.
 //   verify-release <version>      The `push` job, which holds the release app's key. From HEAD alone, works out
-//                                 the release the pending changesets imply and fails unless the staged patch is
-//                                 exactly that, notes file included; prints `verified <version>`. Needs no installed
-//                                 dependencies.
+//                                 the release the pending changesets imply (a candidate's `-rc.N` as Changesets 3
+//                                 numbers it) and fails unless the staged patch is exactly that, notes file included,
+//                                 each consumed changeset deleted or, in pre mode, moved unchanged to
+//                                 `.changeset/pre/`; prints `verified <version>`. Needs no installed dependencies.
 //   publishable <version>         The tag's pack job. The packages to publish, as JSON, and `[]` while every
 //                                 package is private. Fails if a non-private package is outside the fixed group
 //                                 or at another version.
@@ -33,6 +36,16 @@
 //                                 commit of `main` to pass, and fails on any other conclusion or after an hour;
 //                                 prints `passed <sha>`. Reads GITHUB_REPOSITORY and GH_TOKEN. Needs no installed
 //                                 dependencies.
+//   checks-run <sha>              A candidate's tag. The same gate, then `run <id>`: the run whose artifact holds the
+//                                 tarballs pack-and-consume packed and tested on that commit.
+//   candidate <version> <tarball>…
+//                                 A candidate's tag, before anything is attested or attached. Checks the tarballs are
+//                                 exactly the commit's fixed group at the candidate's version, one each, laid out as
+//                                 `pnpm pack` lays them out, and prints each one's name, file, size, sha256 and sha512
+//                                 as JSON. Needs no installed dependencies.
+//   candidate-notes <version> <owner/repo> <sha> <assets.json>
+//                                 The GitHub prerelease's notes: the release commit's docs/releases/v<version>.md, then
+//                                 how to install each tarball by URL, its sha512, and how to verify its attestation.
 //
 // Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout carries only the result.
 import { Buffer } from 'node:buffer'

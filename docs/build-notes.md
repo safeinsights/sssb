@@ -2260,3 +2260,21 @@ bite there first.
 - **The pack-and-consume job installs the kit's own dependencies** (`pnpm install --frozen-lockfile --ignore-scripts
 --filter @sssb/kit`) because the kit's `prepack` builds that entry with esbuild and typescript; the root's
   `prepare` needs the whole repo, hence `--ignore-scripts`.
+
+## The first release candidate (2026-11-18, ADR-0014 P7)
+
+- **Changesets 3's pre mode is not Changesets 2's.** `changeset pre enter rc` writes only `{"mode": "pre", "tag":
+"rc"}`; there are no `initialVersions` or `changesets` lists. `changeset version` moves each consumed changeset to
+  `.changeset/pre/<name>.md` (`@changesets/read` gives it the id `pre/<name>`, and `assembleReleasePlan` skips those in
+  pre mode) and numbers the candidate from the packages' current versions: `semver.inc(version, type)`, then
+  `-rc.<one past the highest -rc.N in the fixed group>`. So `0.1.0` with a minor is `0.2.0-rc.0`, a patch after it
+  `0.2.0-rc.1`, a minor after that `0.2.0-rc.2` (`inc` of a prerelease returns the release it leads to). Read from
+  `@changesets/assemble-release-plan@7.0.0`'s `incrementVersion` and `getPreInfo`, and seen in this repository.
+- **Changesets' `ignore` takes globs, not negations.** `["!@sssb/*"]` ignored nothing; `["*", "@app/*"]` ignores every
+  unscoped package and the seed, and leaves `@sssb/*` (a `*` does not cross the scope's `/`). A changeset naming an
+  ignored package beside an `@sssb/*` one makes `assembleReleasePlan` throw ("mixed changeset"), so `check` reports the
+  name first and skips the plan.
+- **A test of a workflow's shell runs it from the workflow.** `tests/tooling/release-prerelease-job.test.ts` reads the
+  `prerelease` step out of `release.yml` and runs it as GitHub does (`bash --noprofile --norc -eo pipefail`) against a
+  fake `gh` holding the release in a file, so the test cannot drift from the step. Seen failing: with the download check
+  turned into `true`, the "other bytes" and "stray file" cases go red.
