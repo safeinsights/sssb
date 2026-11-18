@@ -188,8 +188,8 @@ importers:
         version: 1.5.0(typescript@6.0.3)
     devDependencies:
       '@axe-core/playwright':
-        specifier: ~4.12.1
-        version: 4.12.1(playwright-core@1.65.1)
+        specifier: ^4.14.0
+        version: 4.14.0(playwright-core@1.65.1)
       '@ladle/react':
         specifier: ^5.1.1
         version: 5.1.1(@swc/helpers@0.5.23)(@types/node@26.6.6)(@types/react@19.3.0)(jiti@2.7.0)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(terser@5.49.0)(tsx@4.23.15)(typescript@6.0.3)(yaml@2.9.1)
@@ -499,8 +499,9 @@ packages:
     resolution: {integrity: sha512-sl4Bm6yiMNYrZKkqqDFWN0UfnWhlS8ivKxrYl+6t0gCLrqr8y3B2IqZZbFRkfaVVp7C/baApyh71P+LeE1A2sQ==}
     engines: {node: '>=18.0.0'}
 
-  '@axe-core/playwright@4.12.1':
-    resolution: {integrity: sha512-rMd7xriptqKpP+w5265i4Hdkv2X5kbu6uiBi/B2I7uf3hieRBM3qDCfaKPtxfiYb2mKXfF+yLODJwIx+Jv1GDw==}
+  '@axe-core/playwright@4.14.0':
+    resolution: {integrity: sha512-SGUhG5PIHd2eMdpgBF2PyQLOhX+qyDR2PT4cmoS4Qk2ak+jX/rrSvst9l0PGv5WTHolKpUMvVmoHpr4cZgf1RQ==}
+    engines: {node: '>=22.12.0'}
     peerDependencies:
       playwright-core: '>= 1.0.0'
 
@@ -3791,6 +3792,10 @@ packages:
 
   axe-core@4.12.1:
     resolution: {integrity: sha512-s7iGf5GaVMxEG0ENN9x+xTr7GFZCb1ZP/1uATUpCEK2X78nDB3RwbtFCo9pGAf9ru+VwoQ464DkaLEeRM08wJA==}
+    engines: {node: '>=4'}
+
+  axe-core@4.14.0:
+    resolution: {integrity: sha512-9WTZxEjsZ7b13TH8JPmbV2z8CHbl80/2hm3XPEG4JgNdQLK81IBRXmSxHfMAOkSqQeRxT/0dwNDz2GOm3zzpcQ==}
     engines: {node: '>=4'}
 
   axios@1.21.1:
@@ -7090,9 +7095,9 @@ snapshots:
 
   '@aws/lambda-invoke-store@0.3.0': {}
 
-  '@axe-core/playwright@4.12.1(playwright-core@1.65.1)':
+  '@axe-core/playwright@4.14.0(playwright-core@1.65.1)':
     dependencies:
-      axe-core: 4.12.1
+      axe-core: 4.14.0
       playwright-core: 1.65.1
 
   '@babel/code-frame@7.29.7':
@@ -9956,6 +9961,8 @@ snapshots:
   aws-cdk@2.1148.1: {}
 
   axe-core@4.12.1: {}
+
+  axe-core@4.14.0: {}
 
   axios@1.21.1:
     dependencies:

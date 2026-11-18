@@ -36,7 +36,9 @@ export function OrgSwitcher({
             <Menu.Target>
                 <UnstyledButton
                     data-testid="org-switcher"
-                    aria-label={t('switchLabel')}
+                    // Starts with the team name the trigger shows (WCAG 2.5.3 Label in Name), then
+                    // says what the button does.
+                    aria-label={t('switchTriggerLabel', { name: active.name })}
                     style={{
                         maxWidth: 220,
                         padding: '4px 8px',

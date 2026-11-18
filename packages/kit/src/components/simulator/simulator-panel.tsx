@@ -419,7 +419,9 @@ export function SimulatorPanel({
             <UnstyledButton
                 data-testid="simulator-pill"
                 data-hydrated={hydrated ? 'true' : undefined}
-                aria-label={t('pillAriaLabel')}
+                // Starts with the visible "Simulator" (WCAG 2.5.3 Label in Name). The unread badge is a
+                // count, not part of the label: it is hidden below and spoken here instead.
+                aria-label={totalUnread > 0 ? t('pillUnreadAriaLabel', { count: totalUnread }) : t('pillAriaLabel')}
                 onClick={toggle}
                 style={{
                     position: 'fixed',
@@ -443,6 +445,7 @@ export function SimulatorPanel({
                 {totalUnread > 0 ? (
                     <Text
                         ref={badgeRef}
+                        aria-hidden
                         size="xs"
                         fw={700}
                         style={{ background: '#c92a2a', color: '#fff', borderRadius: 999, padding: '1px 8px' }}

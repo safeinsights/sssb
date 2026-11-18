@@ -30,9 +30,13 @@ export function UserMenu({
     return (
         <Menu position="bottom-end" width={260}>
             <Menu.Target>
-                <UnstyledButton aria-label={t('userMenuLabel')} data-testid="user-menu">
+                {/* The trigger shows only initials, which name nobody to a screen-reader user. They are
+                    hidden from the accessible tree, and the name carries the user's full name instead
+                    (WCAG 2.5.3 Label in Name then has no visible text to contradict). */}
+                <UnstyledButton aria-label={t('userMenuLabel', { name: user.name })} data-testid="user-menu">
                     <Avatar
                         name={user.name}
+                        aria-hidden
                         radius="xl"
                         styles={{ placeholder: { color: '#fff', background: 'var(--mantine-color-dark-6)' } }}
                     />

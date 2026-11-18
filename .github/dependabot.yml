@@ -45,11 +45,6 @@ updates:
             update-types: ['version-update:semver-minor', 'version-update:semver-major']
           - dependency-name: '@types/react-dom'
             update-types: ['version-update:semver-minor', 'version-update:semver-major']
-          # `@axe-core/playwright` is held at `~4.12.1` (axe-core 4.14 fails four framework controls on "label in
-          # name"). Every Dependabot group that bumps it fails the showcase e2e until they are fixed. Lift this,
-          # and the `~` in apps/showcase/package.json, when .claude/future-tasks/label-in-name-axe-4-14.md is done.
-          - dependency-name: '@axe-core/playwright'
-            update-types: ['version-update:semver-minor', 'version-update:semver-major']
     - package-ecosystem: github-actions
       directory: /
       schedule:
