@@ -1,6 +1,6 @@
 'use client'
 
-import { Group, Menu, UnstyledButton } from '@mantine/core'
+import { Group, Menu, UnstyledButton, VisuallyHidden } from '@mantine/core'
 import { useTranslations } from 'next-intl'
 import { CheckIcon, ChevronDownIcon } from './auth-icons'
 import { PreviewRow } from './preview-row'
@@ -34,11 +34,13 @@ export function OrgSwitcher({
     return (
         <Menu position="bottom-end" width={264} withinPortal>
             <Menu.Target>
+                {/* Named by its content, never an aria-label (WCAG 2.5.3 Label in Name). The visible row
+                    reads "initials + team name"; the initials are decorative, so the row is hidden from
+                    assistive tech and a visually hidden line gives the name: the team name, then what the
+                    button does. axe 4.14 compares an aria-label with the on-screen text, initials
+                    included, which no sensible label can match; a content name is not compared. */}
                 <UnstyledButton
                     data-testid="org-switcher"
-                    // Starts with the team name the trigger shows (WCAG 2.5.3 Label in Name), then
-                    // says what the button does.
-                    aria-label={t('switchTriggerLabel', { name: active.name })}
                     style={{
                         maxWidth: 220,
                         padding: '4px 8px',
@@ -46,7 +48,8 @@ export function OrgSwitcher({
                         border: '1px solid var(--mantine-color-gray-3)',
                     }}
                 >
-                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <VisuallyHidden>{t('switchTriggerLabel', { name: active.name })}</VisuallyHidden>
+                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }} aria-hidden>
                         <PreviewRow name={active.name} title={active.name} size="sm" />
                         <ChevronDownIcon />
                     </Group>

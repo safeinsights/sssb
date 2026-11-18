@@ -77,8 +77,8 @@
     },
     "simulator": {
         "pillLabel": "Simulator",
-        "pillAriaLabel": "Simulator, open the panel",
-        "pillUnreadAriaLabel": "Simulator, open the panel, {count, plural, one {# unread email} other {# unread emails}}",
+        "pillName": "Simulator, open the panel",
+        "pillUnreadName": "Simulator {count, plural, one {# unread email} other {# unread emails}}, open the panel",
         "panelTitle": "Simulator",
         "peopleTab": "People",
         "mailTab": "Mail",

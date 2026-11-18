@@ -1,7 +1,7 @@
 'use client'
 
-import { Box, Group, SegmentedControl, Stack, Text, UnstyledButton } from '@mantine/core'
-import { useLocale, useTranslations } from 'next-intl'
+import { Box, Group, SegmentedControl, Stack, Text, UnstyledButton, VisuallyHidden } from '@mantine/core'
+import { useFormatter, useLocale, useTranslations } from 'next-intl'
 import type { CSSProperties, KeyboardEvent, PointerEvent, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 // LOCALES is imported relatively (not via '@') so the static-demo vite bundle resolves it the
@@ -216,6 +216,7 @@ export function SimulatorPanel({
     notices?: SimulatorNotice[]
 }) {
     const t = useTranslations('simulator')
+    const format = useFormatter()
     const locale = useLocale()
     // Collapsed by default: SSR has no localStorage, so starting expanded would flash the column
     // before the persisted value can be read on mount.
@@ -419,9 +420,6 @@ export function SimulatorPanel({
             <UnstyledButton
                 data-testid="simulator-pill"
                 data-hydrated={hydrated ? 'true' : undefined}
-                // Starts with the visible "Simulator" (WCAG 2.5.3 Label in Name). The unread badge is a
-                // count, not part of the label: it is hidden below and spoken here instead.
-                aria-label={totalUnread > 0 ? t('pillUnreadAriaLabel', { count: totalUnread }) : t('pillAriaLabel')}
                 onClick={toggle}
                 style={{
                     position: 'fixed',
@@ -439,7 +437,16 @@ export function SimulatorPanel({
                     boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
                 }}
             >
-                <Text size="sm" fw={600} c="gray.0">
+                {/* Named by its content, never an aria-label (WCAG 2.5.3 Label in Name): the hidden line
+                    starts with what the pill shows, "Simulator" then the unread count, and says what it
+                    does. The visible pieces are hidden from assistive tech so they aren't read twice.
+                    axe 4.14 joins the label and the badge into one word ("Simulator1"), which no
+                    aria-label can contain; a content name is not compared. The badge uses the same
+                    locale number format as the hidden line's `#`, so the digits a voice user sees match. */}
+                <VisuallyHidden>
+                    {totalUnread > 0 ? t('pillUnreadName', { count: totalUnread }) : t('pillName')}
+                </VisuallyHidden>
+                <Text size="sm" fw={600} c="gray.0" aria-hidden>
                     {t('pillLabel')}
                 </Text>
                 {totalUnread > 0 ? (
@@ -450,7 +457,7 @@ export function SimulatorPanel({
                         fw={700}
                         style={{ background: '#c92a2a', color: '#fff', borderRadius: 999, padding: '1px 8px' }}
                     >
-                        {totalUnread}
+                        {format.number(totalUnread)}
                     </Text>
                 ) : null}
             </UnstyledButton>

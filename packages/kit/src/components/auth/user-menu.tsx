@@ -1,6 +1,6 @@
 'use client'
 
-import { Avatar, Menu, UnstyledButton } from '@mantine/core'
+import { Avatar, Menu, UnstyledButton, VisuallyHidden } from '@mantine/core'
 import { useTranslations } from 'next-intl'
 import { SignOutIcon, UserIcon } from './auth-icons'
 import { PreviewRow } from './preview-row'
@@ -30,10 +30,12 @@ export function UserMenu({
     return (
         <Menu position="bottom-end" width={260}>
             <Menu.Target>
-                {/* The trigger shows only initials, which name nobody to a screen-reader user. They are
-                    hidden from the accessible tree, and the name carries the user's full name instead
-                    (WCAG 2.5.3 Label in Name then has no visible text to contradict). */}
-                <UnstyledButton aria-label={t('userMenuLabel', { name: user.name })} data-testid="user-menu">
+                {/* The trigger shows only initials, which name nobody. They are hidden from assistive
+                    tech, and a visually hidden line names the button with the user's full name instead.
+                    Named by its content, never an aria-label: axe 4.14's Label in Name check (WCAG 2.5.3)
+                    compares an aria-label with the on-screen initials, which no sensible label can match. */}
+                <UnstyledButton data-testid="user-menu">
+                    <VisuallyHidden>{t('userMenuLabel', { name: user.name })}</VisuallyHidden>
                     <Avatar
                         name={user.name}
                         aria-hidden
