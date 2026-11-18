@@ -1,16 +1,80 @@
 # Changesets
 
 SSSB's packages are released with [Changesets](https://github.com/changesets/changesets) (ADR-0014 part 10).
-A changeset is a markdown file here naming the packages a change affects and how far it bumps them, for example
-`.changeset/short-name.md`:
+A changeset is a markdown file here, and it is also the release-note entry for its change. ADR-0014 P7's release
+notes have four sections ("Seam changes", "Framework migrations", "Operator actions", "Scaffold changes to apply by
+hand"); each changeset says which one it belongs to and what an adopter does, so the notes can be written from them.
+The shape follows CanopyCMS's changelog, whose entries end with "Now deletable"; its assembly script is not copied. Name the file after the change, in kebab-case: `.changeset/short-name.md`.
+
+## When one is required
+
+CI's `changeset-required` job fails a PR that changes what ships to adopters and adds no changeset. What ships:
+
+- **Every `@sssb/*` package under `packages/`** (read from its `package.json`, so a package added later is covered
+  the day it lands), less tests, stories and a `test-fixture` directory. For `packages/kit` that is exactly what its
+  `files` allowlist ships: `package.json`, `src` less tests and stories, plus the five seam-conformance tests.
+- **`apps/starter`**, the scaffold an adopter keeps and edits, which becomes `@sssb/create`'s template (ADR-0014 P12).
+
+Not gated: `apps/showcase`, `packages/seed` (the showcase's world, `@app/seed`), tests, scripts, docs and the
+lockfile. **Known gaps:** while adoption is still a fork that takes updates by merge (ADR-0013), a forking adopter
+receives those too, and also `docs/cutover-checklist.md`, the ESLint config, `.gitleaks.toml` and the CI workflows;
+a change to any of them is not gated. Write a changeset for it anyway when it is an "Operator actions" or "Scaffold
+changes" item. Each app's deployment is in the app since ADR-0014's P9, so `apps/starter/infra/` is gated with the
+starter and `packages/cdk` as a package, while `apps/showcase/infra/` is not. ADR-0014's later steps move more of
+these into packages and the starter, which the gate covers, and some elsewhere (a generator's write-once files);
+until each step lands, check whether the gate sees your change.
+
+Exempt: a PR from `integration` into `main` in this repository (the release merge); Dependabot's PRs, unless one
+changes the kit's `peerDependencies` (a raised peer floor is breaking); a PR opened before the gate reached its base
+branch; and a file a PR carries only because it merged `main` in. The rule and its cases are
+`.github/scripts/require-changeset.sh` and `tests/tooling/changesets.test.ts`.
+
+If adopters would see no difference (a refactor, an internal fix), add an **empty changeset**: a file holding only
+`---` and `---`. `pnpm changeset add --empty` writes one once the packages are public; until then write it by hand.
+
+## Template
+
+Copy it; `tests/tooling/changesets.test.ts` checks every file here against it.
 
 ```md
 ---
 '@sssb/kit': minor
 ---
 
-What changed, for the changelog.
+### Short title
+
+**Kind.** seam
+
+**Action.** required
+
+**What changed.** One or two sentences.
+
+**To adopt.** What the adopter does, with the import path and the call shape.
+
+**Now deletable.** The PATTERN of local code this supersedes ("a hand-rolled wrapper around X"), recognisable in any
+adopter's tree.
 ```
+
+- **Kind** says which release-note section the entry belongs to, one value per file (a change that belongs to two
+  sections is two files). `seam`: what an app must say or satisfy to build, i.e. the `@sssb/app-config/*` contract, an
+  `exports` removal or addition, a raised peer floor, a lint rule, conformance check, `sssb doctor` check or tsconfig
+  option that newly fails app code. `migration`: a framework migration an app must take or order around. `operator`:
+  something the deployer does, i.e. params, a required environment variable, secret or IAM permission, a stateful
+  resource replaced. `scaffold`: the starter changed and an adopter applies it by hand. `none`: a fix with no
+  section. They are P7's four sections, in that order.
+- **Action** says whether the adopter must do something, and it, not Kind, sets the bump: `required` (an adopter who
+  does nothing breaks) is a `minor`, ADR-0014 part 10's "breaking"; `optional` (new and additive) and `none` may be a
+  `patch`. Kind `none` has Action `none`. Never `major` (next section).
+- **To adopt** is required unless Action is `none`; **Now deletable** is left out when nothing becomes deletable.
+- Describe the change an adopter sees, not the PR; never name another adopter's files or hosts. Code in a fenced
+  block is not read for structure, so `# comments` in a shell snippet are fine.
+- **A name is never reused, and a file is edited after a release candidate only to correct it.** More to say about a
+  change a release candidate already carried is a new file. A release candidate's notes are the changesets added
+  since the previous candidate's tag.
+- **The release notes are written from these files, not generated by Changesets.** `changeset version` groups
+  the bodies by bump under "Major", "Minor" and "Patch Changes" (`@changesets/apply-release-plan`), ignores Kind and
+  Action, and deletes the files, so the four sections need an assembler that reads the files before it runs
+  (ADR-0014 P7, P14).
 
 `.github/workflows/release.yml` versions the pending ones on the next push to `main` and publishes the result.
 `pnpm changeset` writes one once the packages are public; until then it stops at "No versionable packages found",

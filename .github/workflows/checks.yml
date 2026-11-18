@@ -73,6 +73,31 @@ jobs:
             - run: pnpm install --frozen-lockfile --ignore-scripts
             - run: pnpm release:check
 
+    # A PR that changes what SSSB hands an adopter (every `@sssb/*` package's shipped files, today the kit, and the starter) adds a changeset: its
+    # release-note entry, which ADR-0014 P7's notes are assembled from. Path-based, because every package is private
+    # until P14 and `changeset status` ignores private packages. The script, its exemptions and its tests:
+    # .github/scripts/require-changeset.sh, tests/tooling/changesets.test.ts. A newer push to the PR re-runs it, so
+    # adding the file turns it green.
+    changeset-required:
+        if: github.event_name == 'pull_request'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  # The gate diffs from the merge-base and reads when the gate reached the base branch.
+                  fetch-depth: 0
+            - name: Require a changeset
+              env:
+                  BASE_REF: ${{ github.base_ref }}
+                  HEAD_REF: ${{ github.head_ref }}
+                  CREATED_AT: ${{ github.event.pull_request.created_at }}
+                  ACTOR: ${{ github.event.pull_request.user.login }}
+                  HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+                  REPO: ${{ github.repository }}
+              run: bash .github/scripts/require-changeset.sh
+
     # The anti-drift job: the SAME migrations + RLS proof suite that unit tests run on pglite,
     # against real Postgres (locally that's embedded-postgres; here a service container). One server, and a
     # database of its own for every app under apps/ (discovered, so an ejected app is covered) and for SSSB's
