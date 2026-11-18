@@ -10,9 +10,10 @@
 //   pages      (shape 1) the Pages-shaped multi-app workspace below, built on the generator's output, and this
 //              script's own checks over it. CI's `pack-and-consume` job.
 //   generated  (shape 2) the generator's output and NOTHING else: not one file of it is edited (the run fails if one
-//              changed), and the workspace's OWN gates run: `pnpm verify`, `pnpm test:contract` on embedded Postgres,
-//              the reusable workflow's `sssb ci lint-typecheck-unit`, `pnpm synth` and `pnpm jscpd`. CI's
-//              `adoption-probe` job, a required check. A failure here is the generator's to fix, never this script's.
+//              changed), and the workspace's OWN gates run: `pnpm verify`, the unit tests and `pnpm test:contract` (on
+//              embedded Postgres) held to the conformance suite, the reusable workflow's `sssb ci lint-typecheck-unit`
+//              and `sssb ci synth`, `pnpm knip` and `pnpm jscpd` (the workspace's own CI job). CI's `adoption-probe`
+//              job, a required check. A failure here is the generator's to fix, never this script's.
 //   (neither)  both, the pages shape first.
 //
 // Inside this repo every tool reaches the framework through workspace links and per-app aliases, which
@@ -80,7 +81,9 @@ import {
     checkE2eFailProblems,
     checkE2eOkProblems,
     createPackageProblems,
+    createPackEnv,
     expectedConformanceTests,
+    heldUnitScripts,
     lockfileFromSeed,
     seedFromLockfile,
     seedMachinePathProblems,
@@ -1234,17 +1237,19 @@ function e2eEntryUnderNode() {
 /** The generated workspace's app, the generator's `--slug`: the seed's own (see LOCK_SEED), so its resolution holds. */
 const GEN_APP = 'console'
 /**
- * Its display name. The apostrophe and the ampersand are deliberate: the generator writes the name into TypeScript,
- * JSON and HTML, each quoted its own way, and the workspace's lint, typecheck and e2e read every one of them.
+ * Its display name. The apostrophe and the ampersand are deliberate, and so is one of each character a display name may
+ * hold only with care (`#`, `;`, `%`, `=`, `_`, `~`): the generator writes the name into TypeScript, JSON, HTML,
+ * markdown and ICU messages, each quoted its own way, and the workspace's lint, typecheck and e2e read every one.
  */
-const GEN_NAME = "Harbor & O'Neill Console"
+const GEN_NAME = "Harbor & O'Neill C# Console; 50% = data_lab ~ v1"
 /**
- * The gates this shape runs as steps of their own, held to more than an exit code (the unit and contract runs, to
- * every conformance test the packed registry names) or run whatever verify does (synth and jscpd, with
- * --skip-build-and-e2e): `--skip-build-and-e2e` leaves them out of its script-by-script verify, which would run them
- * twice.
+ * The gates this shape runs as steps of their own, in both modes, as CI runs them rather than as verify says it does:
+ * the unit and contract runs held to every conformance test the packed registry names, synth through the reusable
+ * workflow's `sssb ci synth` with the generated workflow's selector, knip and jscpd as the generated workflow's own job
+ * runs them. A verify script can name a gate and still run nothing (verifyGateProblems refuses the common forms, not
+ * every one). `--skip-build-and-e2e` leaves them out of its script-by-script verify, which would run them twice.
  */
-const OWN_STEP_GATES = new Set(['unit tests', 'contract tests', 'synth', 'jscpd'])
+const OWN_STEP_GATES = new Set(['unit tests', 'contract tests', 'synth', 'jscpd', 'knip'])
 
 /** @param {string} dir */
 const fileHashes = (dir) =>
@@ -1317,8 +1322,12 @@ function verifyComposition() {
     console.log(
         `verify runs every gate: ${[...runBy].map(([gate, script]) => (gate === script ? gate : `${gate} (${script})`)).join(', ')}`,
     )
+    verifyRunBy = runBy
     return runBy
 }
+
+/** Which script the generated verify meets each gate with (verifyComposition), for the steps that hold them. */
+let verifyRunBy = new Map()
 
 /**
  * The workspace's own `pnpm verify`. With --skip-build-and-e2e, the part of it before e2e and the static demo, gate by
@@ -1376,10 +1385,29 @@ function heldRun(script, runner, file) {
     return expected.length
 }
 
-/** `pnpm test:unit`, held to every unit conformance test the PACKED registry names. */
+/**
+ * The unit run, held to every unit conformance test the PACKED registry names: through each script that runs it on the
+ * way to a green (heldUnitScripts: the one verify reaches for the gate, the one `sssb ci lint-typecheck-unit` runs).
+ */
 function unitGenerated() {
-    const count = heldRun('test:unit', 'unit', 'src/sssb.conformance.test.ts')
-    console.log(`conformance: all ${count} checks' tests ran and passed, from @sssb/kit/testing`)
+    const scripts = heldUnitScripts(readJson(path.join(GEN, 'package.json')).scripts ?? {}, verifyRunBy)
+    if (scripts.length === 0) fail('no script of the generated workspace runs its unit tests')
+    for (const script of scripts) {
+        const count = heldRun(script, 'unit', 'src/sssb.conformance.test.ts')
+        console.log(
+            `conformance: pnpm ${script} ran all ${count} checks' tests, and they passed, from @sssb/kit/testing`,
+        )
+    }
+}
+
+/**
+ * The synth job as the reusable workflow runs it, `sssb ci synth --filter <selector>`, with the selector the generated
+ * workflow passes it: every infra package it matches must have a synth script, and one must match.
+ */
+function synthGenerated() {
+    const selector = /^ +synth: (\S+)$/m.exec(readFileSync(path.join(GEN, '.github/workflows/checks.yml'), 'utf8'))?.[1]
+    if (!selector) fail("the generated workflow passes SSSB's reusable workflow no synth selector")
+    run('pnpm', ['exec', 'sssb', 'ci', 'synth', '--filter', /** @type {string} */ (selector)], { cwd: GEN })
 }
 
 /** `pnpm test:contract` on an embedded Postgres, held to every contract test the PACKED registry names. */
@@ -1500,14 +1528,10 @@ step('pack every @sssb package, and extract @sssb/create', () => {
     )
 
     // @sssb/create: the generator, with the template its prepack built from this checkout packed into it, and no
-    // dependency at all. Its postpack removes the template from the working tree again. Its prepack refuses to pin a
-    // commit no branch on GitHub holds; a PR's merge commit and a local run's HEAD are such commits, and their
-    // tarballs never leave this run, so the pin may be unpushed there. A push's commit is on GitHub, and its tarballs
-    // are the run's artifact a release candidate attaches (checks.yml), so a push packs with the check on.
-    const create = pack(
-        'packages/create',
-        process.env.GITHUB_EVENT_NAME === 'push' ? {} : { SSSB_CREATE_UNPUSHED_PIN: '1' },
-    )
+    // dependency at all. Its postpack removes the template from the working tree again. Its prepack refuses a pin
+    // GitHub does not hold, and a template that is not the pinned commit's, but on a push to SSSB's own repository
+    // (createPackEnv): only there are the tarballs a release candidate may attach.
+    const create = pack('packages/create', createPackEnv(process.env))
     const createFiles = packedFiles(create)
     // The template's app, file for file, is what git tracks under apps/starter: an allowlist, so no local state of
     // this checkout (whatever its name) and no missing file reaches an adopter.
@@ -1600,16 +1624,15 @@ if (RUN_GENERATED) {
     step('generated: run the packed generator', generateWorkspace)
     step('generated: install the tarballs', installGenerated)
     step(`generated: pnpm verify${SKIP_BUILD_AND_E2E ? ' (without e2e and the static demo)' : ''}`, verifyGenerated)
-    step('generated: pnpm test:unit, held to every conformance test', unitGenerated)
+    step('generated: the unit tests, held to every conformance test, through each script that runs them', unitGenerated)
     step('generated: pnpm test:contract, on embedded Postgres', contractGenerated)
     step('generated: sssb ci lint-typecheck-unit (the reusable workflow’s job)', () =>
         run('pnpm', ['exec', 'sssb', 'ci', 'lint-typecheck-unit'], { cwd: GEN }),
     )
-    // Without --skip-build-and-e2e, verify ran both (its composition is pinned before it runs).
-    if (SKIP_BUILD_AND_E2E) {
-        step('generated: pnpm synth (the app’s infra/, offline)', () => run('pnpm', ['synth'], { cwd: GEN }))
-        step('generated: pnpm jscpd', () => run('pnpm', ['jscpd'], { cwd: GEN }))
-    }
+    // As CI runs them, in both modes: verify naming them is not verify running them (OWN_STEP_GATES).
+    step('generated: sssb ci synth (the reusable workflow’s job, offline)', synthGenerated)
+    step('generated: pnpm knip (the workspace’s own job)', () => run('pnpm', ['knip'], { cwd: GEN }))
+    step('generated: pnpm jscpd (the workspace’s own job)', () => run('pnpm', ['jscpd'], { cwd: GEN }))
     step('generated: every file the generator wrote is unchanged', generatedUntouched)
 }
 

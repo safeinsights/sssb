@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import {
     chmodSync,
     cpSync,
@@ -6,16 +6,19 @@ import {
     mkdirSync,
     readdirSync,
     readFileSync,
+    statSync,
     symlinkSync,
     writeFileSync,
 } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import { CreateError } from '../../packages/create/src/args.js'
 import { generate } from '../../packages/create/src/generate.js'
 import { buildTemplate, filesUnder, fromStored, ROOT_FILES } from '../../packages/create/src/template.js'
+import { verifyGateProblems } from '../../scripts/pack-and-consume/checks.mjs'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
@@ -27,6 +30,8 @@ import { makeTestTmpDir } from '../support/tmp-dir'
 const REPO = path.resolve(__dirname, '../..')
 const CLI = path.join(REPO, 'packages/create/bin/create.js')
 const HEAD = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim()
+/** The generator's version, the fixed group's: the only one its workspaces may install. */
+const VERSION: string = JSON.parse(readFileSync(path.join(REPO, 'packages/create/package.json'), 'utf8')).version
 const SEAM_SPECIFIERS: string[] = JSON.parse(
     readFileSync(path.join(REPO, 'packages/kit/src/testing/seam-specifiers.json'), 'utf8'),
 ).specifiers
@@ -77,6 +82,11 @@ describe('@sssb/create: the template', () => {
         expect(meta.seamSpecifiers).toEqual(SEAM_SPECIFIERS)
         expect(meta.dependencyNames).toEqual(expect.arrayContaining(['ws', 'react', 'next', 'kysely']))
         expect(meta.dependencyNames.some((name: string) => name.startsWith('@'))).toBe(false)
+        // In this repository's lockfile for its own tooling, never installed by a generated workspace.
+        for (const name of ['events', 'history', 'open', 'cookies']) {
+            expect(read(REPO, 'pnpm-lock.yaml')).toMatch(new RegExp(`^ {2}'?${name}@`, 'm'))
+            expect(meta.dependencyNames).not.toContain(name)
+        }
     })
 })
 
@@ -263,10 +273,10 @@ describe('@sssb/create: the generated workspace', () => {
     it('with --sssb <dir>, depends on each @sssb package by its tarball', () => {
         const tarballs = makeTestTmpDir('create-tarballs-')
         for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk', 'create'])
-            writeFileSync(path.join(tarballs, `sssb-${pkg}-0.9.0.tgz`), '')
+            writeFileSync(path.join(tarballs, `sssb-${pkg}-${VERSION}.tgz`), '')
         const out = path.join(makeTestTmpDir('create-file-'), 'ws')
         generate({ templateDir: template, target: out, slug: 'acme', name: 'Acme', sssb: tarballs })
-        const file = (pkg: string) => `file:${path.join(tarballs, `sssb-${pkg}-0.9.0.tgz`)}`
+        const file = (pkg: string) => `file:${path.join(tarballs, `sssb-${pkg}-${VERSION}.tgz`)}`
         const app = readJson(out, 'apps/acme/package.json')
         expect(app.dependencies['@sssb/kit']).toBe(file('kit'))
         expect(app.devDependencies['@sssb/tools']).toBe(file('tools'))
@@ -280,7 +290,7 @@ describe('@sssb/create: the generated workspace', () => {
 
         // A directory missing one is refused; so is a value that is neither a directory nor a version.
         const partial = makeTestTmpDir('create-partial-')
-        writeFileSync(path.join(partial, 'sssb-kit-0.9.0.tgz'), '')
+        writeFileSync(path.join(partial, `sssb-kit-${VERSION}.tgz`), '')
         const again = path.join(makeTestTmpDir('create-file-'), 'ws')
         const run = (sssb: string) => () =>
             generate({ templateDir: template, target: again, slug: 'a', name: 'A', sssb })
@@ -295,8 +305,33 @@ describe('@sssb/create: the generated workspace', () => {
             /different versions \(@sssb\/kit, @sssb\/eslint-plugin, @sssb\/cdk 0\.9\.0; @sssb\/tools 0\.9\.1\)/,
         )
         expect(existsSync(again)).toBe(false)
-        generate({ templateDir: template, target: again, slug: 'a', name: 'A', sssb: '0.3.0-rc.1' })
-        expect(readJson(again, 'apps/a/package.json').dependencies['@sssb/kit']).toBe('0.3.0-rc.1')
+        generate({ templateDir: template, target: again, slug: 'a', name: 'A', sssb: VERSION })
+        expect(readJson(again, 'apps/a/package.json').dependencies['@sssb/kit']).toBe(VERSION)
+    })
+
+    // The workspace's guide copy is stamped with the hash of the guide packed into the generator: another version's
+    // @sssb/kit ships another guide, and `sssb doctor` would fail the first `pnpm verify`.
+    it("refuses --sssb of any version but the generator's own", () => {
+        const other = makeTestTmpDir('create-other-')
+        for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk'])
+            writeFileSync(path.join(other, `sssb-${pkg}-0.9.0.tgz`), '')
+        const run = (sssb: string) => () =>
+            generate({
+                templateDir: template,
+                target: path.join(makeTestTmpDir('create-version-'), 'ws'),
+                slug: 'a',
+                name: 'A',
+                sssb,
+            })
+        expect(run(other)).toThrow(CreateError)
+        expect(run(other)).toThrow(
+            new RegExp(
+                `is @sssb 0\\.9\\.0, and this generator writes workspaces of @sssb ${VERSION.replace(/\./g, '\\.')}`,
+            ),
+        )
+        for (const version of ['0.9.0', '^0.9.0', `${VERSION}-rc.1`])
+            expect(run(version), version).toThrow(/run @sssb\/create@/)
+        for (const version of [VERSION, `^${VERSION}`, `~${VERSION}`]) expect(run(version), version).not.toThrow()
     })
 
     it('refuses a target that is not an empty directory', () => {
@@ -356,12 +391,16 @@ describe('@sssb/create: the generated workspace', () => {
         ])
             expect([...ran], `verify runs ${name}`).toContain(name)
         expect(scripts['check:fences']).toBe("pnpm --filter './apps/*' --fail-if-no-match exec sssb check-fences")
+        // Pack and consume's composition check, which also refuses a script that can pass with a gate not run.
+        expect(verifyGateProblems(scripts).problems).toEqual([])
     })
 
     it("typechecks each app's infra/, as the starter's own typecheck does in SSSB's repository", () => {
         for (const app of [path.join(REPO, 'apps/starter'), path.join(ws, 'apps/acme')])
             expect(readJson(app, 'package.json').scripts.typecheck).toMatch(/ && tsc --noEmit -p infra$/)
-        expect(readJson(ws, 'package.json').scripts.typecheck).toMatch(/^pnpm --filter '\.\/apps\/\*' typecheck /)
+        expect(readJson(ws, 'package.json').scripts.typecheck).toMatch(
+            /^pnpm --filter '\.\/apps\/\*' --fail-if-no-match typecheck /,
+        )
         expect(read(ws, 'apps/acme/infra/tsconfig.json')).toBe(read(REPO, 'apps/starter/infra/tsconfig.json'))
         const program = execFileSync(
             path.join(REPO, 'node_modules/.bin/tsc'),
@@ -378,12 +417,14 @@ describe('@sssb/create: the generated workspace', () => {
         const tarballs = path.join(makeTestTmpDir('create-yaml-'), `it's "odd" #1: here`)
         mkdirSync(tarballs)
         for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk'])
-            writeFileSync(path.join(tarballs, `sssb-${pkg}-0.9.0.tgz`), '')
+            writeFileSync(path.join(tarballs, `sssb-${pkg}-${VERSION}.tgz`), '')
         const out = path.join(makeTestTmpDir('create-yaml-out-'), 'ws')
         generate({ templateDir: template, target: out, slug: 'acme', name: 'Acme', sssb: tarballs })
         const workspace = parseYaml(read(out, 'pnpm-workspace.yaml'))
         for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk'])
-            expect(workspace.overrides[`@sssb/${pkg}`]).toBe(`file:${path.join(tarballs, `sssb-${pkg}-0.9.0.tgz`)}`)
+            expect(workspace.overrides[`@sssb/${pkg}`]).toBe(
+                `file:${path.join(tarballs, `sssb-${pkg}-${VERSION}.tgz`)}`,
+            )
         expect(workspace.allowBuilds).toEqual(parseYaml(read(REPO, 'pnpm-workspace.yaml')).allowBuilds)
         expect(prettierCheck(out)).toBe('')
         for (const file of filesUnder(out).filter((f) => /\.ya?ml$/.test(f)))
@@ -399,6 +440,9 @@ describe('@sssb/create: the generated workspace', () => {
             '1. Numbered',
             'R&D: Portal (Beta)!',
             'W'.repeat(60),
+            '50% Study; Q&A = Help',
+            'Acme ~ Lab_1 snake_case',
+            'C# Lab #1 of C#',
         ]) {
             const out = path.join(makeTestTmpDir('create-name-'), 'ws')
             generate({ templateDir: template, target: out, slug: 'acme', name })
@@ -438,6 +482,8 @@ describe('@sssb/create: the generated workspace', () => {
         expect(run('ws')).toThrow(CreateError)
         expect(run('ws')).toThrow(/the slug "ws" would name a package "ws", which is also a dependency/)
         expect(run('react')).toThrow(/would name a package "react"/)
+        // Only what a generated workspace installs (pack and consume's seed), not this repository's own tooling.
+        for (const slug of ['events', 'history', 'open', 'cookies']) expect(run(slug), slug).not.toThrow()
     })
 
     // `sssb doctor` fails a workspace without the app guide's stamped copy, so it is written as `sssb guide` writes it.
@@ -487,6 +533,60 @@ describe('@sssb/create: the generated workspace', () => {
             chmodSync(locked, 0o755)
         }
     })
+
+    // `pnpm create @sssb .` from inside it, a mount point, a directory with its own mode or ACLs, in a parent the user
+    // cannot write: the target is the user's, so the workspace is moved into it, never put in its place.
+    it('never removes or replaces an existing target: the same directory, its mode kept, in a parent it cannot write', () => {
+        const parent = makeTestTmpDir('create-keep-')
+        const target = path.join(parent, 'ws')
+        mkdirSync(target)
+        chmodSync(target, 0o2770)
+        const before = statSync(target)
+        chmodSync(parent, 0o555)
+        try {
+            generate({ templateDir: template, target, slug: 'acme', name: 'Acme' })
+        } finally {
+            chmodSync(parent, 0o755)
+        }
+        const after = statSync(target)
+        expect([after.ino, after.mode]).toEqual([before.ino, before.mode])
+        expect(readdirSync(parent)).toEqual(['ws'])
+        expect(readdirSync(target).filter((entry) => entry.includes('sssb-create'))).toEqual([])
+        expect(existsSync(path.join(target, 'apps/acme/package.json'))).toBe(true)
+    })
+
+    it('leaves nothing behind when SIGINT or SIGTERM comes part-way', async () => {
+        // A template with thousands of files more, so the write lasts long enough to be interrupted.
+        const big = path.join(makeTestTmpDir('create-big-'), 'template')
+        cpSync(template, big, { recursive: true })
+        mkdirSync(path.join(big, 'app/bulk'))
+        for (let index = 0; index < 4000; index += 1) writeFileSync(path.join(big, `app/bulk/f${index}.txt`), '')
+        const script = path.join(makeTestTmpDir('create-signal-'), 'run.mjs')
+        const generator = pathToFileURL(path.join(REPO, 'packages/create/src/generate.js')).href
+        writeFileSync(script, `import { generate } from '${generator}'\ngenerate(JSON.parse(process.argv[2]))\n`)
+        for (const [signal, existing] of [
+            ['SIGINT', false],
+            ['SIGTERM', true],
+        ] as const) {
+            const parent = makeTestTmpDir('create-signal-parent-')
+            const target = path.join(parent, 'ws')
+            if (existing) mkdirSync(target)
+            const options = { templateDir: big, target, slug: 'acme', name: 'Acme' }
+            const child = spawn(process.execPath, [script, JSON.stringify(options)], { stdio: 'ignore' })
+            const exited = new Promise((resolve) => child.on('exit', (code, sig) => resolve({ code, signal: sig })))
+            const staged = () =>
+                [parent, target].some(
+                    (dir) => existsSync(dir) && readdirSync(dir).some((e) => e.includes('sssb-create-')),
+                )
+            const until = Date.now() + 20_000
+            while (!staged() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 1))
+            expect(staged(), 'the stage appeared').toBe(true)
+            child.kill(signal)
+            expect(await exited, signal).toEqual({ code: null, signal })
+            expect(readdirSync(parent), signal).toEqual(existing ? ['ws'] : [])
+            if (existing) expect(readdirSync(target), signal).toEqual([])
+        }
+    }, 60_000)
 })
 
 describe('@sssb/create: the command', () => {

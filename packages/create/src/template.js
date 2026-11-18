@@ -27,8 +27,9 @@ import { CreateError } from './args.js'
 const STARTER = 'apps/starter'
 
 /**
- * Packing pins the reusable workflow at a commit GitHub must have. Set to `1`, packing goes on with an unpushed
- * commit (with a warning): for a tarball that never reaches GitHub's runners, as pack and consume's.
+ * Packing pins the reusable workflow at a commit GitHub must have, and the template must be that commit's. Set to `1`,
+ * packing goes on with an unpushed commit or uncommitted template sources (with a warning): for a tarball that never
+ * reaches GitHub's runners, as pack and consume's.
  */
 export const UNPUSHED_PIN_ENV = 'SSSB_CREATE_UNPUSHED_PIN'
 
@@ -214,20 +215,36 @@ function workflowCommit(repoRoot) {
 }
 
 /**
+ * The `owner/name` path a remote's URL names, lowercased, or null for a URL that is not a network remote: scp-like
+ * (`git@github.com:o/n.git`, or through an ssh host alias, `git@github-work:o/n.git`) or a URL with a scheme
+ * (`https://github.com/o/n`, `ssh://git@ssh.github.com:443/o/n`). The host is not read: an ssh alias can be named
+ * anything, so any remote at the path counts, a fork (another owner's path) never.
+ * @param {string} url
+ */
+export function remotePath(url) {
+    const match = /^[a-z][a-z0-9+.-]*:\/\/[^/]+\/(.+)$/i.exec(url) ?? /^(?:[^@/:]+@)?[^/:]+:(?!\/\/)(.+)$/.exec(url)
+    return match?.[1]
+        ? match[1]
+              .replace(/\/+$/, '')
+              .replace(/\.git$/i, '')
+              .replace(/^\/+/, '')
+              .toLowerCase()
+        : null
+}
+
+/**
  * Why the pinned commit may not be on GitHub, or null when it is: a workspace pinned to a commit GitHub does not have
  * fails its first CI run (`uses:` cannot resolve). On GitHub means: contained in a remote-tracking branch of a remote
- * of this checkout that is `repository` on GitHub, as of the last fetch (no network).
+ * of this checkout whose path is `repository` (remotePath), as of the last fetch (no network).
  * @param {{ repoRoot: string, ref: string, repository: string }} options
  * @returns {string | null}
  */
 export function unpushedPin({ repoRoot, ref, repository }) {
-    const [owner = '', name = ''] = repository.toLowerCase().split('/')
     /** @type {Set<string>} */
     const remotes = new Set()
     for (const line of git(repoRoot, ['remote', '-v']).split('\n')) {
         const [remote, url] = line.split(/\s+/)
-        const match = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url ?? '')
-        if (remote && match?.[1]?.toLowerCase() === owner && match[2]?.toLowerCase() === name) remotes.add(remote)
+        if (remote && remotePath(url ?? '') === repository.toLowerCase()) remotes.add(remote)
     }
     if (remotes.size === 0)
         return `no remote of this checkout is github.com/${repository}, so commit ${ref} cannot be shown to be there`
@@ -243,6 +260,34 @@ export function unpushedPin({ repoRoot, ref, repository }) {
         `commit ${ref} is on no branch of ${[...remotes].join(', ')} (github.com/${repository}) as of the last ` +
         "fetch: a workspace pinned to it fails its first CI run, because GitHub cannot resolve the workflow's `uses:`"
     )
+}
+
+/** What the template copies from the working tree, which must be the pinned commit's at pack time. */
+const TEMPLATE_SOURCES = [STARTER, 'packages/kit/src/guide.md']
+
+/**
+ * Why the template's sources may not be the commit it pins, or null when they are: the template is copied from the
+ * working tree, but the pin (and the release it ships in) is HEAD, so a change not committed (staged or not), an
+ * untracked file, or a deleted one under them makes a tarball whose template no commit holds.
+ * @param {string} repoRoot
+ * @returns {string | null}
+ */
+export function uncommittedSources(repoRoot) {
+    const entries = git(repoRoot, [
+        'status',
+        '--porcelain=v1',
+        '-z',
+        '--untracked-files=all',
+        '--',
+        ...TEMPLATE_SOURCES,
+    ])
+        .split('\0')
+        .filter(Boolean)
+    // A rename's entry is followed by its old path, which has no status of its own.
+    const changed = entries.filter((entry) => /^[ MADRCU?!]{2} /.test(entry)).map((entry) => entry.slice(3))
+    return changed.length === 0
+        ? null
+        : `the template's sources differ from HEAD, which it pins (commit them, or remove what is untracked):\n  ${changed.join('\n  ')}`
 }
 
 /**
@@ -282,14 +327,22 @@ function actionPins(workflow) {
 }
 
 /**
- * The unscoped names of every package in the repository's lockfile: a slug that is one of them would make the app's
- * package share its name with a dependency, and pnpm then mistakes one for the other (it gave an app named `ws` the
- * `ws` package's optional peers). Scoped names cannot be a slug.
- * @param {string} lockfile the text of pnpm-lock.yaml
+ * The resolution of a workspace shaped as the generator writes one: pack and consume's lockfile seed, which its
+ * generated shape installs from (a superset of the generated workspace's: the seed also holds the pages shape's second
+ * app and sibling package). Not this repository's own pnpm-lock.yaml, which holds this repository's own tooling too
+ * (`events`, `history`, `open` and `cookies` among it), none of which a generated workspace installs.
+ */
+const WORKSPACE_LOCKFILE = 'scripts/pack-and-consume/consumer-lock.yaml'
+
+/**
+ * The unscoped names of every package a generated workspace installs (WORKSPACE_LOCKFILE): a slug that is one of them
+ * would make the app's package share its name with a dependency, and pnpm then mistakes one for the other (it gave an
+ * app named `ws` the `ws` package's optional peers). Scoped names cannot be a slug.
+ * @param {string} lockfile the text of a pnpm lockfile
  */
 function dependencyNames(lockfile) {
     const section = /^packages:\n([\s\S]*?)(?=^\S|(?![\s\S]))/m.exec(lockfile)?.[1]
-    if (!section) throw new CreateError("could not read the packages of the repository's pnpm-lock.yaml")
+    if (!section) throw new CreateError(`could not read the packages of the repository's ${WORKSPACE_LOCKFILE}`)
     /** @type {Set<string>} */
     const names = new Set()
     for (const match of section.matchAll(/^ {2}'?([a-z0-9][^@'\s/]*)@/gm)) if (match[1]) names.add(match[1])
@@ -375,7 +428,7 @@ function writeTemplate({ repoRoot, outDir, workflowRef, warn = () => {} }) {
             .map((/** @type {{ id: string, what: string }} */ row) => ({ id: row.id, what: row.what })),
         actions: actionPins(appChecks),
         gitleaksVersion,
-        dependencyNames: dependencyNames(readFileSync(at('pnpm-lock.yaml'), 'utf8')),
+        dependencyNames: dependencyNames(readFileSync(at(WORKSPACE_LOCKFILE), 'utf8')),
     }
     // The app guide @sssb/kit ships (`@sssb/kit/guide.md`), which the workspace carries a stamped copy of (`sssb
     // guide`); `sssb doctor` fails a workspace without it. The kit is of the generator's version (one fixed group).

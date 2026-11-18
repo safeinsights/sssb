@@ -5,11 +5,14 @@ import { describe, expect, it } from 'vitest'
 import {
     checkE2eFailProblems,
     checkE2eOkProblems,
+    CI_UNIT_SCRIPTS,
     CONFORMANCE_DATA,
     conformanceProblems,
     createPackageProblems,
+    createPackEnv,
     expectedConformanceTests,
     GENERATED_VERIFY_GATES,
+    heldUnitScripts,
     lockfileFromSeed,
     lockfileMoves,
     packagesBeyondSeed,
@@ -642,21 +645,22 @@ describe('the lockfile seed', () => {
 
 describe('verifyGateProblems', () => {
     /** A verify that holds every gate `sssb / all-checks` does, the way the generator writes one. */
+    const apps = "--filter './apps/*' --fail-if-no-match"
     const scripts: Record<string, string> = {
-        typecheck: "pnpm --filter './apps/*' typecheck && tsc --noEmit",
+        typecheck: `pnpm ${apps} typecheck && tsc --noEmit`,
         lint: 'eslint . && prettier --check .',
         'test:unit': 'sssb check-tmpdir-leak vitest run',
         'test:contract': 'sssb check-tmpdir-leak vitest run --config vitest.contract.config.ts',
-        'test:e2e': "pnpm --filter './apps/*' test:e2e",
+        'test:e2e': `pnpm ${apps} test:e2e`,
         knip: 'knip',
         jscpd: 'jscpd',
         'sssb:doctor': 'sssb doctor --app apps/console',
-        'check:e2e': "pnpm --filter './apps/*' check:e2e",
-        'check-fences': "pnpm --filter './apps/*' exec sssb check-fences",
-        'build:demo-static': "pnpm --filter './apps/*' build:demo-static",
-        'check:demo-size': "pnpm --filter './apps/*' check:demo-size",
-        'e2e:demo-static': "pnpm --filter './apps/*' e2e:demo-static",
-        synth: "pnpm --filter './apps/*/infra' synth",
+        'check:e2e': `pnpm ${apps} check:e2e`,
+        'check-fences': `pnpm ${apps} exec sssb check-fences`,
+        'build:demo-static': `pnpm ${apps} build:demo-static`,
+        'check:demo-size': `pnpm ${apps} check:demo-size`,
+        'e2e:demo-static': `pnpm ${apps} e2e:demo-static`,
+        synth: "pnpm --filter './apps/*/infra' --fail-if-no-match synth",
         checks: "concurrently 'pnpm:typecheck' 'pnpm:lint' 'pnpm:test:unit' 'pnpm:knip' 'pnpm:jscpd'",
         verify:
             "pnpm checks && concurrently 'pnpm:sssb:doctor' 'pnpm:check:e2e' 'pnpm:check-fences' && pnpm run test:contract " +
@@ -697,7 +701,10 @@ describe('verifyGateProblems', () => {
         const filtered: Record<string, string> = Object.fromEntries(
             Object.entries({
                 ...scripts,
-                verify: scripts.verify!.replace('pnpm synth', "pnpm --filter './apps/*/infra' synth"),
+                verify: scripts.verify!.replace(
+                    'pnpm synth',
+                    "pnpm --filter './apps/*/infra' --fail-if-no-match synth",
+                ),
             }).filter(([name]) => name !== 'synth'),
         )
         expect(verifyGateProblems(filtered).problems).toEqual([expect.stringMatching(/^verify does not run synth /)])
@@ -718,6 +725,71 @@ describe('verifyGateProblems', () => {
             'verify does not run contract tests',
             'verify does not run synth',
         ])
+    })
+
+    // A verify that names every gate's script and still exits 0 with one failed or never run.
+    it.each([
+        ['`||`', { verify: scripts.verify!.replace('pnpm run test:contract &&', 'pnpm run test:contract || true &&') }],
+        ['`;`', { verify: scripts.verify!.replaceAll(' && ', ' ; ') }],
+        ['`&`', { verify: scripts.verify!.replace('pnpm run test:contract &&', 'pnpm run test:contract &') }],
+        ['`--if-present`', { synth: "pnpm --filter './apps/*/infra' --fail-if-no-match --if-present synth" }],
+        [
+            "concurrently's `--success`",
+            { checks: scripts.checks!.replace('concurrently', 'concurrently --success first') },
+        ],
+        [
+            "concurrently's `--success`",
+            { checks: scripts.checks!.replace('concurrently', 'concurrently --success=last') },
+        ],
+        ['`echo`', { verify: scripts.verify!.replace('pnpm run test:contract', "echo 'pnpm run test:contract'") }],
+        ['`#`', { verify: `${scripts.verify!.replace(' && pnpm run test:contract', '')} # pnpm run test:contract` }],
+        ['`--filter` without `--fail-if-no-match`', { synth: "pnpm --filter './nothing/*' synth" }],
+        ['`--filter` without `--fail-if-no-match`', { 'test:e2e': "pnpm --filter './apps/*' test:e2e" }],
+    ])('fails a reached script that uses %s', (form, change) => {
+        const { problems } = verifyGateProblems({ ...scripts, ...change })
+        expect(problems).toContainEqual(expect.stringContaining(` uses ${form}`))
+        // Each the script it is in.
+        const script = Object.keys(change)[0]!
+        expect(problems.filter((p) => p.startsWith(`${script} uses `)).length).toBeGreaterThan(0)
+    })
+
+    it('accepts the forms that only look like those: `&&`, a redirect, `--success all`, a filter that must match', () => {
+        const fine = {
+            ...scripts,
+            checks: scripts.checks!.replace('concurrently', 'concurrently --success all'),
+            lint: 'eslint . 2>&1 && prettier --check .',
+        }
+        expect(verifyGateProblems(fine).problems).toEqual([])
+    })
+})
+
+describe('the scripts held to the conformance suite', () => {
+    const scripts = { 'test:unit': 'vitest run', 'test:coverage': 'vitest run --coverage' }
+
+    it('holds the unit script verify reaches and the one `sssb ci lint-typecheck-unit` runs, once each', () => {
+        expect(heldUnitScripts(scripts, new Map([['unit tests', 'test:coverage']]))).toEqual(['test:coverage'])
+        expect(heldUnitScripts(scripts, new Map([['unit tests', 'test:unit']]))).toEqual(['test:unit', 'test:coverage'])
+        expect(heldUnitScripts({ 'test:unit': 'vitest run' }, new Map([['unit tests', 'test:unit']]))).toEqual([
+            'test:unit',
+        ])
+    })
+
+    it("names the scripts `sssb ci lint-typecheck-unit` looks for, in @sssb/tools' order", () => {
+        const ci = readFileSync(path.resolve(__dirname, '../../packages/tools/src/commands/ci.js'), 'utf8')
+        const unit = /rootScript\(root, job, \[('test:[^\]]+)\]\)/.exec(ci)?.[1]
+        expect(unit).toBe(CI_UNIT_SCRIPTS.map((name) => `'${name}'`).join(', '))
+    })
+})
+
+describe('createPackEnv', () => {
+    it("packs @sssb/create with its checks on for a push to SSSB's own repository only", () => {
+        const optOut = { SSSB_CREATE_UNPUSHED_PIN: '1' }
+        expect(createPackEnv({ GITHUB_EVENT_NAME: 'push', GITHUB_REPOSITORY: 'safeinsights/sssb' })).toEqual({})
+        expect(createPackEnv({ GITHUB_EVENT_NAME: 'push', GITHUB_REPOSITORY: 'someone/sssb' })).toEqual(optOut)
+        expect(createPackEnv({ GITHUB_EVENT_NAME: 'pull_request', GITHUB_REPOSITORY: 'safeinsights/sssb' })).toEqual(
+            optOut,
+        )
+        expect(createPackEnv({})).toEqual(optOut)
     })
 })
 

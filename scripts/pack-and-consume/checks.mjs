@@ -611,10 +611,39 @@ function scriptsRunBy(command, scripts) {
 }
 
 /**
+ * The shell and runner forms that let a script exit 0 with a step failed or never run, so that naming a gate's script
+ * is not running it: each with what it does. Deliberately plain text matches over the whole script (a quoted `;` is
+ * refused too): the generator writes none of them, and an adopter's verify that needs one can say why in review.
+ * @type {[{ test: (script: string) => boolean }, string][]}
+ */
+const SWALLOWING_FORMS = [
+    [/\|\|/, '`||` (a failure before it is swallowed)'],
+    [/;/, '`;` (the steps run whatever the one before returned)'],
+    [/(?<![&>])&(?![&>])/, '`&` (a step put in the background is never waited for)'],
+    [/--if-present/, '`--if-present` (a script that is missing passes)'],
+    [
+        /--success(?:=|\s+)(?!all\b)/,
+        "concurrently's `--success` other than `all` (one step's exit code stands for all)",
+    ],
+    [/(?:^|[\s'"(&|])echo\b/, '`echo` (it prints a step instead of running it)'],
+    [/(?:^|\s)#/, '`#` (the rest of the line is a comment)'],
+    [
+        {
+            test: (script) =>
+                script
+                    .split(/[;&|]+/)
+                    .some((command) => /--filter\b/.test(command) && !/--fail-if-no-match\b/.test(command)),
+        },
+        '`--filter` without `--fail-if-no-match` in the same command (a selector matching nothing passes)',
+    ],
+]
+
+/**
  * How a generated workspace's `verify` meets each of `GENERATED_VERIFY_GATES`: the root scripts it reaches (through
  * any depth of scripts calling scripts), and for each gate the script that runs it (or `verify` itself, for a command
  * it runs inline). A gate verify does not reach is a problem: the generated required check would go green with that
- * gate dropped. Returns `{ problems, runBy }`, `runBy` mapping each gate met to the script that meets it.
+ * gate dropped. So is a reached script holding one of SWALLOWING_FORMS, which can pass with a gate failed or not run.
+ * Returns `{ problems, runBy }`, `runBy` mapping each gate met to the script that meets it.
  * @param {Record<string, string>} scripts the generated root package.json's scripts
  */
 export function verifyGateProblems(scripts) {
@@ -629,6 +658,10 @@ export function verifyGateProblems(scripts) {
         if (reached.has(script)) continue
         reached.add(script)
         queue.push(...scriptsRunBy(/** @type {string} */ (scripts[script]), scripts))
+    }
+    for (const script of reached) {
+        for (const [pattern, what] of SWALLOWING_FORMS)
+            if (pattern.test(/** @type {string} */ (scripts[script]))) problems.push(`${script} uses ${what}`)
     }
     for (const { gate, scripts: names = [], commands = [] } of GENERATED_VERIFY_GATES) {
         const byName = names.find((name) => reached.has(name))
@@ -647,6 +680,39 @@ export function verifyGateProblems(scripts) {
         else runBy.set(gate, by)
     }
     return { problems, runBy }
+}
+
+/**
+ * The root scripts `sssb ci lint-typecheck-unit` looks for to run the unit tests, the first one defined: the coverage
+ * run when the workspace has one (@sssb/tools' ci.js, `rootScript(root, job, [...])`, which a test holds this to).
+ */
+export const CI_UNIT_SCRIPTS = ['test:coverage', 'test:unit']
+
+/**
+ * Every root script that runs a generated workspace's unit tests on the way to a green: the one its `verify` reaches
+ * for the unit gate (`runBy`, from verifyGateProblems) and the one the reusable workflow's job runs (CI_UNIT_SCRIPTS),
+ * once each. Each must be held to the conformance suite: holding a script nothing runs proves nothing.
+ * @param {Record<string, string>} scripts
+ * @param {Map<string, string>} runBy
+ */
+export function heldUnitScripts(scripts, runBy) {
+    const ci = CI_UNIT_SCRIPTS.find((name) => typeof scripts[name] === 'string')
+    return [...new Set([runBy.get('unit tests'), ci])].filter((name) => name !== undefined)
+}
+
+/**
+ * The environment `@sssb/create` is packed with. Its prepack refuses to pin a commit no branch on GitHub holds, or a
+ * template that differs from that commit, unless SSSB_CREATE_UNPUSHED_PIN=1. Only a push to SSSB's own repository
+ * packs a pushed commit whose tarballs a release candidate may attach (checks.yml), so only it packs with the checks
+ * on; a pull request's merge commit, a fork's push and a local run's HEAD are not on SSSB's GitHub, and their tarballs
+ * never leave the run.
+ * @param {Record<string, string | undefined>} env
+ * @returns {Record<string, string>}
+ */
+export function createPackEnv(env) {
+    return env.GITHUB_EVENT_NAME === 'push' && env.GITHUB_REPOSITORY === 'safeinsights/sssb'
+        ? {}
+        : { SSSB_CREATE_UNPUSHED_PIN: '1' }
 }
 
 /**

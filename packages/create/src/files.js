@@ -40,7 +40,8 @@ const repoOrPlaceholder = (c) => c.repo ?? `${PLACEHOLDER_OWNER}/${PLACEHOLDER_R
 /** @param {Context} c */
 export function rootPackageJson(c) {
     const filter = `--filter ${c.slug}`
-    const apps = "--filter './apps/*'"
+    // A selector that matches no app fails, rather than running nothing and passing.
+    const apps = "--filter './apps/*' --fail-if-no-match"
     return packageJson({
         // Not the slug: a root package named like the app makes `pnpm --filter <slug>` match both, and the root's
         // scripts fan out to every app.
@@ -69,7 +70,7 @@ export function rootPackageJson(c) {
             // One run checks every app of the workspace; it starts from an app, because the root takes no @sssb/kit.
             'sssb:doctor': `sssb doctor --app ${app(c)}`,
             // Each app's lint fences as its own config composes them (SSSB's reusable workflow runs this per app).
-            'check:fences': `pnpm ${apps} --fail-if-no-match exec sssb check-fences`,
+            'check:fences': `pnpm ${apps} exec sssb check-fences`,
             'check:e2e': `pnpm ${apps} check:e2e`,
             'build:demo-static': `pnpm ${apps} build:demo-static`,
             'check:demo-size': `pnpm ${apps} check:demo-size`,

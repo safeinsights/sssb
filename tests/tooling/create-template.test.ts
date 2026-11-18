@@ -1,13 +1,15 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { CreateError } from '../../packages/create/src/args.js'
 import {
     buildTemplate,
     filesUnder,
     fromStored,
+    remotePath,
     ROOT_FILES,
+    uncommittedSources,
     UNPUSHED_PIN_ENV,
     unpushedPin,
 } from '../../packages/create/src/template.js'
@@ -26,7 +28,7 @@ const READ_FILES = [
     '.gitignore',
     'package.json',
     'pnpm-workspace.yaml',
-    'pnpm-lock.yaml',
+    'scripts/pack-and-consume/consumer-lock.yaml',
     '.github/workflows/app-checks.yml',
     '.github/workflows/checks.yml',
     'packages/kit/src/testing/seam-specifiers.json',
@@ -34,8 +36,26 @@ const READ_FILES = [
     'packages/kit/src/guide.md',
 ]
 
+/**
+ * What would point git, or the packing, somewhere else: a git hook running these tests sets GIT_DIR and GIT_INDEX_FILE
+ * (git would then act on THIS repository, not the stand-in), and a shell that exported the opt-out would let every
+ * refused pack through. Removed from this process's environment (template.js runs git in it) and from every child's.
+ */
+const OUTSIDE_ENV = [UNPUSHED_PIN_ENV, 'GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE']
+beforeAll(() => {
+    for (const name of OUTSIDE_ENV) vi.stubEnv(name, undefined)
+})
+afterAll(() => vi.unstubAllEnvs())
+
+/** @param extra set for the child, the opt-out included */
+function cleanEnv(extra: Record<string, string> = {}) {
+    const env: NodeJS.ProcessEnv = { ...process.env }
+    for (const name of OUTSIDE_ENV) delete env[name]
+    return { ...env, ...extra }
+}
+
 const git = (cwd: string, args: string[]) =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: cleanEnv() })
 const commit = (cwd: string) =>
     git(cwd, [
         ...['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false'],
@@ -139,13 +159,80 @@ describe('@sssb/create: the pinned commit must be on GitHub', () => {
         )
     })
 
+    it("knows SSSB's repository by its path, through an ssh host alias or an ssh URL with a port, and never a fork", () => {
+        expect(
+            [
+                'https://github.com/safeinsights/sssb',
+                'https://github.com/SafeInsights/SSSB.git/',
+                'git+https://github.com/safeinsights/sssb.git',
+                'git@github.com:safeinsights/sssb.git',
+                'github.com:safeinsights/sssb',
+                'git@github-work:safeinsights/sssb.git',
+                'ssh://git@ssh.github.com:443/safeinsights/sssb',
+                'ssh://git@github.com/safeinsights/sssb.git',
+            ].map(remotePath),
+        ).toEqual(Array(8).fill('safeinsights/sssb'))
+        expect(remotePath('git@github-work:someone/sssb.git')).toBe('someone/sssb')
+        // A local path or file: URL is not a network remote.
+        for (const local of ['/srv/safeinsights/sssb', '../sssb', 'file:///srv/safeinsights/sssb'])
+            expect(remotePath(local), local).toBeNull()
+
+        const repo = standIn()
+        const check = () => unpushedPin({ repoRoot: repo, ref: head(repo), repository: 'safeinsights/sssb' })
+        git(repo, ['remote', 'add', 'fork', 'git@github-work:someone/sssb.git'])
+        pushTo(repo, 'fork')
+        expect(check()).toMatch(/no remote of this checkout is github\.com\/safeinsights\/sssb/)
+        git(repo, ['remote', 'add', 'work', 'git@github-work:safeinsights/sssb.git'])
+        git(repo, ['remote', 'add', 'port443', 'ssh://git@ssh.github.com:443/safeinsights/sssb'])
+        expect(check()).toMatch(/is on no branch of port443, work \(github\.com\/safeinsights\/sssb\)/)
+        pushTo(repo, 'port443')
+        expect(check()).toBeNull()
+    })
+
+    it(`packing refuses a starter or kit guide that differs from HEAD, unless ${UNPUSHED_PIN_ENV}=1`, () => {
+        const repo = standIn()
+        git(repo, ['remote', 'add', 'origin', 'https://github.com/safeinsights/sssb'])
+        pushTo(repo, 'origin')
+        const script = path.join(repo, 'packages/create/scripts/build-template.js')
+        const prepack = (env: Record<string, string> = {}) =>
+            spawnSync(process.execPath, [script], { encoding: 'utf8', env: cleanEnv(env) })
+        const refusedFor = (file: string) => {
+            const result = prepack()
+            expect(result.status, file).toBe(1)
+            expect(result.stderr, file).toContain(`the template's sources differ from HEAD`)
+            expect(result.stderr, file).toContain(`\n  ${file}.\n`)
+            expect(existsSync(path.join(repo, 'packages/create/template')), file).toBe(false)
+        }
+        expect(prepack().status).toBe(0)
+        expect(uncommittedSources(repo)).toBeNull()
+
+        const appTs = path.join(repo, 'apps/starter/config/app.ts')
+        const original = readFileSync(appTs, 'utf8')
+        writeFileSync(appTs, `${original}// local\n`)
+        refusedFor('apps/starter/config/app.ts')
+        git(repo, ['add', 'apps/starter/config/app.ts'])
+        refusedFor('apps/starter/config/app.ts')
+        const optedOut = prepack({ [UNPUSHED_PIN_ENV]: '1' })
+        expect(optedOut.status).toBe(0)
+        expect(optedOut.stderr).toContain(`WARNING (${UNPUSHED_PIN_ENV}=1): the template's sources differ from HEAD`)
+        git(repo, ['restore', '--staged', '--', 'apps/starter/config/app.ts'])
+        writeFileSync(appTs, original)
+
+        writeFileSync(path.join(repo, 'apps/starter/new.ts'), 'export {}\n')
+        refusedFor('apps/starter/new.ts')
+        rmSync(path.join(repo, 'apps/starter/new.ts'))
+
+        writeFileSync(path.join(repo, 'packages/kit/src/guide.md'), '# another guide\n')
+        refusedFor('packages/kit/src/guide.md')
+    })
+
     it(`packing refuses an unpushed pin, unless ${UNPUSHED_PIN_ENV}=1`, () => {
         const repo = standIn()
         git(repo, ['remote', 'add', 'origin', 'https://github.com/safeinsights/sssb'])
         const script = path.join(repo, 'packages/create/scripts/build-template.js')
         const template = path.join(repo, 'packages/create/template')
         const prepack = (env: Record<string, string> = {}) =>
-            spawnSync(process.execPath, [script], { encoding: 'utf8', env: { ...process.env, ...env } })
+            spawnSync(process.execPath, [script], { encoding: 'utf8', env: cleanEnv(env) })
 
         const refused = prepack()
         expect(refused.status).toBe(1)
@@ -171,7 +258,7 @@ describe('@sssb/create: the command, run from a checkout', () => {
         const tmp = makeTestTmpDir('create-cli-tmp-')
         const result = spawnSync(process.execPath, [path.join(repo, 'packages/create/bin/create.js'), ...args], {
             encoding: 'utf8',
-            env: { ...process.env, TMPDIR: tmp },
+            env: cleanEnv({ TMPDIR: tmp }),
         })
         return { ...result, leftInTmp: readdirSync(tmp) }
     }

@@ -7,6 +7,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline/promises'
+import { setImmediate } from 'node:timers'
 import { CreateError, parseArgs, PLACEHOLDER_OWNER, PLACEHOLDER_REPO, USAGE } from '../src/args.js'
 import { generate } from '../src/generate.js'
 import { buildTemplate, META_FILE, unpushedPin } from '../src/template.js'
@@ -84,6 +85,9 @@ async function main() {
         })
     const packed = path.join(PACKAGE, 'template')
     const result = existsSync(path.join(packed, META_FILE)) ? create(packed) : fromCheckout(options.workflowRef, create)
+    // One turn of the event loop: a Ctrl-C that came while the workspace was written is seen here, undoes it and ends
+    // the process (generate.js), before anything says it was created.
+    await new Promise((resolve) => setImmediate(resolve))
 
     const fromHere = path.relative(process.cwd(), result.root)
     const relative = fromHere === '' ? '.' : fromHere.startsWith('..') ? result.root : fromHere

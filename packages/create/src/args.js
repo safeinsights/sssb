@@ -23,9 +23,9 @@ own infra/), the workspace's config on SSSB's presets, the owner files and a CI 
                          links (default: ${PLACEHOLDER_OWNER}/${PLACEHOLDER_REPO}, for you to replace)
   --owner <@handle>      a code owner for CODEOWNERS, a user or an @org/team; repeat for several (default: a
                          placeholder, for you to replace)
-  --sssb <version|dir>   the @sssb/* packages to depend on: a version or range (default: ^<this generator's
-                         version>), or a directory of their packed tarballs (sssb-kit-*.tgz and the rest), which
-                         are then depended on by file: path
+  --sssb <version|dir>   the @sssb/* packages to depend on, at this generator's version: that version, exact or
+                         with ^ or ~ (default: ^<this generator's version>), or a directory of their packed tarballs
+                         (sssb-kit-*.tgz and the rest), which are then depended on by file: path
   --workflow-ref <sha>   the commit of SSSB's reusable workflow to pin (default: the commit this generator was
                          packed from)
   --yes                  do not ask before writing
@@ -110,10 +110,20 @@ export function columns(text) {
 /**
  * The characters a display name may hold. It lands in TypeScript and JSON strings, an HTML `<title>`, markdown (a
  * heading, the middle of a sentence) and the app's message catalogs, which next-intl reads as ICU messages; each of the
- * characters left out means something in one of them (`* _ \` [ ] # < > |` in markdown or HTML, `{ } #` and `<tag>`
- * in ICU, `\` and `$` in strings).
+ * characters left out means something in one of them (`* \` [ ] < > |` in markdown or HTML, `{ }` and `<tag>` in ICU,
+ * `\` and `$` in strings). `_`, `~` and `#` are let in where they mean nothing (displayName's NAME_RULES).
  */
-const NAME_CHARACTERS = /[^\p{L}\p{M}\p{N}\p{Extended_Pictographic} '’".,&()!?:/+-]/gu
+const NAME_CHARACTERS = /[^\p{L}\p{M}\p{N}\p{Extended_Pictographic} '’".,&()!?:/+%;=~_#-]/gu
+
+/**
+ * Where `_`, `~` and `#` would mean something in markdown, each with why. `#` at the start is the start rule's.
+ * @type {[RegExp, string][]}
+ */
+const NAME_RULES = [
+    [/(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/u, 'has a "_" that is not inside a word (markdown reads it as emphasis)'],
+    [/~.*~/u, 'has more than one "~" (markdown reads a pair as strikethrough)'],
+    [/\s#+$/u, 'ends in a "#" of its own (a markdown heading drops it)'],
+]
 
 /** The joiners an emoji sequence is built with (a zero-width joiner, an emoji presentation selector). */
 const JOINERS = /\u200D|\uFE0F/gu
@@ -121,7 +131,7 @@ const JOINERS = /\u200D|\uFE0F/gu
 /**
  * The display name, as every file it lands in can carry it, Prettier-stable: control characters (a newline, a tab, a
  * bidirectional override) refused, whitespace trimmed and each run of it made one space, only the characters
- * NAME_CHARACTERS allows, from a letter or a digit (a leading `-`, `1.` or `#` would make a markdown line a list or a
+ * NAME_CHARACTERS allows and where NAME_RULES allows them, from a letter or a digit (a leading `-`, `1.` or `#` would make a markdown line a list or a
  * heading), no `''` (an ICU message reads it as one apostrophe), at most NAME_COLUMNS wide.
  * @param {string} raw
  * @returns {string}
@@ -137,12 +147,13 @@ export function displayName(raw) {
     if (refused.length > 0) {
         throw new CreateError(
             `--name "${name}" uses ${refused.map((char) => `"${char}"`).join(' ')}: a display name is letters, digits, ` +
-                `spaces and . , ' ’ " & ( ) ! ? : / + -, because the others mean something in the markdown, HTML and ` +
-                'message catalogs it lands in',
+                `spaces and . , ' ’ " & ( ) ! ? : / + % ; = ~ _ # -, because the others mean something in the ` +
+                'markdown, HTML and message catalogs it lands in',
         )
     }
     if (!/^[\p{L}\p{N}]/u.test(name))
         throw new CreateError(`--name "${name}" must start with a letter or a digit (it starts lines of markdown)`)
+    for (const [pattern, why] of NAME_RULES) if (pattern.test(name)) throw new CreateError(`--name "${name}" ${why}`)
     if (name.includes("''"))
         throw new CreateError(`--name "${name}" has two apostrophes in a row, which the app's messages read as one`)
     if (columns(name) > NAME_COLUMNS) {

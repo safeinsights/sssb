@@ -18,6 +18,7 @@ import {
     writeFileSync,
 } from 'node:fs'
 import path from 'node:path'
+import { setImmediate } from 'node:timers'
 import { columns, CreateError, displayName } from './args.js'
 import * as files from './files.js'
 import { formatJson, packageJson } from './json.js'
@@ -80,11 +81,30 @@ function resolveSssb(sssb, version) {
                     .join('; ')}); the @sssb packages are released together at one version`,
             )
         }
+        checkVersion(sssb, /** @type {string} */ ([...versions.keys()][0]), version)
         return { spec: (pkg) => `file:${tarballs[pkg]}`, tarballs }
     }
     if (!/^[\^~]?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(sssb))
         throw new CreateError(`--sssb ${sssb} is neither a directory of tarballs nor a version`)
+    checkVersion(sssb, sssb.replace(/^[\^~]/, ''), version)
     return { spec: () => sssb, tarballs: null }
+}
+
+/**
+ * The @sssb packages a workspace installs must be the generator's own version: the workspace's copy of the app guide
+ * (.claude/sssb-guide.md) is stamped with the hash of the guide packed into the generator, and `sssb doctor` fails on
+ * the first `pnpm verify` when the installed @sssb/kit's guide differs.
+ * @param {string} sssb the flag's value
+ * @param {string} given the version it names
+ * @param {string} version the generator's
+ */
+function checkVersion(sssb, given, version) {
+    if (given !== version) {
+        throw new CreateError(
+            `--sssb ${sssb} is @sssb ${given}, and this generator writes workspaces of @sssb ${version} (its copy of ` +
+                `the app guide is ${version}'s): run @sssb/create@${given} instead`,
+        )
+    }
 }
 
 /**
@@ -182,8 +202,9 @@ function asCreateError(error) {
 }
 
 /**
- * The slug names the app's packages; refused when one of those names is a package the workspace installs, which pnpm
- * would then mistake for the app (an app named `ws` was handed the `ws` package's optional peers).
+ * The slug names the app's packages; refused when one of those names is a package the workspace installs (the
+ * template's `dependencyNames`, from pack and consume's lockfile seed), which pnpm would then mistake for the app (an
+ * app named `ws` was handed the `ws` package's optional peers).
  * @param {string} slug
  * @param {import('./template.js').TemplateMeta} meta
  */
@@ -199,9 +220,53 @@ function checkPackageNames(slug, meta) {
     }
 }
 
+/** How to undo each generation under way, for the signal handler below. @type {Set<() => void>} */
+const underWay = new Set()
+
 /**
- * Writes a new workspace. Refuses a target that exists and is not an empty directory, or is a symlink. The workspace
- * is written into a sibling directory and renamed into place at the end, so a failure part-way leaves nothing behind.
+ * SIGINT or SIGTERM while a generation is under way. The generation is synchronous, so the signal is only seen once it
+ * has finished or failed (a listener defers it, where the default would kill the process part-way): what it wrote is
+ * undone, and the signal is raised again, for the process to end as it asked.
+ * @param {NodeJS.Signals} signal
+ */
+function onSignal(signal) {
+    for (const undo of underWay) undo()
+    underWay.clear()
+    process.off('SIGINT', onSignal)
+    process.off('SIGTERM', onSignal)
+    process.kill(process.pid, signal)
+}
+
+/** @param {() => void} undo */
+function holdSignals(undo) {
+    if (underWay.size === 0) {
+        process.on('SIGINT', onSignal)
+        process.on('SIGTERM', onSignal)
+    }
+    underWay.add(undo)
+}
+
+/**
+ * Lets the signals go again, on the event loop's next turn: a signal that arrived during the (synchronous) generation
+ * is dispatched before then, and still finds what to undo.
+ * @param {() => void} undo
+ */
+function releaseSignals(undo) {
+    setImmediate(() => {
+        underWay.delete(undo)
+        if (underWay.size > 0) return
+        process.off('SIGINT', onSignal)
+        process.off('SIGTERM', onSignal)
+    })
+}
+
+/**
+ * Writes a new workspace. Refuses a target that exists and is not an empty directory, or is a symlink. An existing
+ * target is never removed or replaced (it may be the shell's working directory, a mount point, or in a directory this
+ * user cannot write; its mode, owner and ACLs are the user's): the workspace is written into a stage INSIDE it,
+ * `<target>/.sssb-create-<hex>/`, whose entries are moved up into the target at the end. A failure part-way, or a
+ * SIGINT or SIGTERM, leaves nothing behind: the stage and whatever was moved up are removed, and the target and its
+ * parents too when this run created them (and they are empty).
  * @param {GenerateOptions} options
  * @returns {{ root: string, appDir: string, files: string[], workflowRef: string, tarballs: Record<string, string> | null }}
  */
@@ -224,27 +289,58 @@ export function generate({
     /** @type {import('./files.js').Context} */
     const c = { slug, name: displayName(name), repo, owners, meta, sssbSpec: spec, tarballs, workflowRef: ref }
 
-    /** @type {string | undefined} */
-    let createdParent
-    /** @type {string | undefined} */
-    let stage
+    /** What this run made: the first directory it created on the way to the target (maybe the target), the stage. */
+    const made = {
+        created: /** @type {string | undefined} */ (undefined),
+        stage: '',
+        moved: /** @type {string[]} */ ([]),
+    }
+    // Only what this run made goes: the stage, the entries it moved up, then each directory it created, while empty.
+    const undo = () => {
+        if (made.stage) rmSync(made.stage, { recursive: true, force: true })
+        for (const entry of made.moved.splice(0)) rmSync(path.join(root, entry), { recursive: true, force: true })
+        for (let dir = root; made.created; dir = path.dirname(dir)) {
+            try {
+                rmdirSync(dir)
+            } catch {
+                break
+            }
+            if (dir === made.created) break
+        }
+    }
+    holdSignals(undo)
     try {
         const existing = lstatSync(root, { throwIfNoEntry: false })
         if (existing?.isSymbolicLink())
             throw new CreateError(`${root} is a symbolic link: name a new directory, or an empty one`)
         if (existing && (!existing.isDirectory() || readdirSync(root).length > 0))
             throw new CreateError(`${root} already exists and is not an empty directory: name a new one`)
-        createdParent = mkdirSync(path.dirname(root), { recursive: true })
-        stage = path.join(path.dirname(root), `.${path.basename(root)}.sssb-create-${randomBytes(4).toString('hex')}`)
-        mkdirSync(stage)
-        const files = writeWorkspace(stage, c, templateDir)
-        if (existing) rmdirSync(root)
-        renameSync(stage, root)
+        if (!existing) {
+            made.created = mkdirSync(path.dirname(root), { recursive: true })
+            mkdirSync(root)
+            made.created ??= root
+        }
+        const stageName = `.sssb-create-${randomBytes(4).toString('hex')}`
+        made.stage = path.join(root, stageName)
+        mkdirSync(made.stage)
+        const files = writeWorkspace(made.stage, c, templateDir)
+        const arrived = readdirSync(root).filter((entry) => entry !== stageName)
+        if (arrived.length > 0)
+            throw new CreateError(
+                `${root} gained ${arrived.join(', ')} while the workspace was written: name a new one`,
+            )
+        for (const entry of readdirSync(made.stage)) {
+            renameSync(path.join(made.stage, entry), path.join(root, entry))
+            made.moved.push(entry)
+        }
+        rmdirSync(made.stage)
+        made.stage = ''
         return { root, appDir: path.join(root, 'apps', slug), files, workflowRef: ref, tarballs }
     } catch (error) {
-        if (stage) rmSync(stage, { recursive: true, force: true })
-        if (createdParent) rmSync(createdParent, { recursive: true, force: true })
+        undo()
         throw asCreateError(error)
+    } finally {
+        releaseSignals(undo)
     }
 }
 

@@ -62,12 +62,19 @@ describe('@sssb/create: arguments', () => {
         [['ws', '--name', 'Line\nBreak'], /control character/],
         [['ws', '--name', 'Tab\there'], /control character/],
         [['ws', '--name', 'Bidi\u202Eoverride'], /control character/],
-        [['ws', '--name', '*Emph* _und_ `code`'], /uses "\*" "_" "`"/],
+        [['ws', '--name', '*Emph* _und_ `code`'], /uses "\*" "`"/],
         [['ws', '--name', 'A & B <script>x</script>'], /uses "<" ">"/],
         [['ws', '--name', '${injection}'], /uses "\$" "\{" "\}"/],
         [['ws', '--name', 'Back\\slash'], /uses "\\"/],
         [['ws', '--name', '[link](http://evil)'], /uses "\[" "\]"/],
-        [['ws', '--name', '# Heading'], /uses "#"/],
+        [['ws', '--name', 'a|b'], /uses "\|"/],
+        [['ws', '--name', '# Heading'], /must start with a letter or a digit/],
+        // `_`, `~` and `#` only where markdown reads them as text.
+        [['ws', '--name', 'Data _und_ Lab'], /a "_" that is not inside a word/],
+        [['ws', '--name', 'Lab_'], /a "_" that is not inside a word/],
+        [['ws', '--name', 'A ~ B ~ C'], /more than one "~"/],
+        [['ws', '--name', 'Lab #'], /ends in a "#" of its own/],
+        [['ws', '--name', 'Lab ##'], /ends in a "#" of its own/],
         [['ws', '--name', '-leading'], /must start with a letter or a digit/],
         [['ws', '--name', `''"x"`], /must start with a letter or a digit/],
         [['ws', '--name', "Rock''n roll"], /two apostrophes in a row/],
@@ -88,6 +95,14 @@ describe('@sssb/create: arguments', () => {
             `O'Brien "Labs" R&D: 1/2 (beta)!`,
         )
     })
+
+    // Each lands Prettier-clean and parseable in every file (tests/tooling/create-generate.test.ts generates them).
+    it.each(['50% Study', 'A; B', 'Q&A = Help', 'Acme ~ Lab', 'Lab_1', 'snake_case_name', 'C# Lab', 'Lab #1', 'C#'])(
+        'accepts %j',
+        (name) => {
+            expect(parseArgs(['ws', '--name', name]).name).toBe(name)
+        },
+    )
 
     // `npm create @sssb <dir> -- --slug x`: npm hands the `--` through.
     it('ignores a bare --', () => {
