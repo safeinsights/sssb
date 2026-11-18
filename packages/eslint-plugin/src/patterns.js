@@ -71,7 +71,7 @@ export const appRealAdapterStaticPattern = {
         "`await import('./real/index')` when !isSimulated. A static import loads the vendor SDK in simulated " +
         'mode too (docs/recipes/app-owned-adapter.md).',
 }
-// SSSB publishes a few of its own real adapters (`@sssb/kit/adapters/real/*`: the LLM client, S3 storage, the
+// SSSB publishes a few of its own real adapters (`@sssb/kit/adapters/real/*`: the real-adapter set, the LLM client, S3 storage, the
 // real-mode forms and providers, the migrate handler). Importing one loads its vendor SDK, so outside the app's own
 // real adapters (which may build on one, as an app-owned storage adapter builds on `createS3Storage`) a module
 // reaches one only by import(), the way the sign-in page loads SSSB's sign-in form when !isSimulated. DECLARATIONS

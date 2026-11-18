@@ -4908,7 +4908,8 @@ Found while publishing `@sssb/kit/adapters/real/s3-storage`: `sssb/no-kit-real-a
   with `export type * as …` to typecheck the whole surface. Rejected: rewriting that file to `typeof import()`, which
   would have kept a ban on code that loads nothing.
 - **Not covered, by design parity.** A `require()` of one is not this rule's (it is a declaration rule, so `import()`
-  stays open); `@typescript-eslint/no-require-imports` reports a top-level `require` in TypeScript, but that is a base
+  stays open); `@typescript-eslint/no-require-imports` reports a `require()` call, nested ones too (seen in `.ts`, `.js`, `.mjs`
+  and `.cts` files), but that is a base
   rule, not a fence `sssb check-fences` holds. The app's own real-adapter rule has the same gap.
 - **Existing code.** Every reach into `@sssb/kit/adapters/real/*` from either app's `src/` was already an `import()`;
   the one declaration was the showcase's fixture recorder (above), and the starter-built template has none. The

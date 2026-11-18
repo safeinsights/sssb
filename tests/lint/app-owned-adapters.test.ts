@@ -260,10 +260,11 @@ describe('an app’s real adapters are reached through its registry', () => {
     })
 })
 
-// SSSB's published real adapters (`@sssb/kit/adapters/real/*`: the LLM client, S3 storage, the real-mode forms and
-// providers, the migrate handler) load their vendor SDK when imported. Outside the app's own real adapters, a module
-// reaches one only with import(), so a simulated run never loads the SDK: DENY BY DEFAULT over src/ and config/, a
-// directory nobody has named yet included, tests and stories too.
+// SSSB's published real adapters (`@sssb/kit/adapters/real/*`: the real-adapter set, the LLM client, S3 storage, the
+// real-mode forms and providers, the migrate handler) load their vendor SDK when imported. Outside the app's own real
+// adapters and the vendor ban's carve-outs, a module reaches one only with import(), so a simulated run never loads
+// the SDK: DENY BY DEFAULT over every file of the app, a directory nobody has named yet included, tests, stories and
+// scripts too.
 describe('SSSB’s real adapters are loaded only by import(), outside the app’s own real adapters', () => {
     const KIT_REAL_ZONES = [
         `${APP}/src/domain/storage.ts`,

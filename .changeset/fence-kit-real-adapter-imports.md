@@ -10,7 +10,7 @@
 
 **What changed.** `sssb/no-kit-real-adapter-import` now covers every module of an app (tests, stories and `scripts/`
 included), not only its adapter registry and fakes. Outside `src/adapters/real/` and the vendor ban's carve-outs
-(`next.config.*`, `tests/contract/`, `infra/`), an import declaration of `@sssb/kit/adapters/real/*` (the LLM client,
+(`next.config.*`, `tests/contract/`, `infra/`), an import declaration of `@sssb/kit/adapters/real/*` (the real-adapter set, the LLM client,
 S3 storage, the real-mode forms and providers, the migrate handler) fails lint, re-exports (`export … from`) included,
 because importing one loads its vendor SDK in simulated mode too. `import()` stays allowed, so does a type-only
 `import type` or `export type` (it loads nothing), and `src/adapters/real/` may still build on one. `sssb check-fences`
