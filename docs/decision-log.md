@@ -3208,9 +3208,12 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   failing without the alias: the bundle then names neither the app's migration registry nor any of its four migrations,
   and the synth fails on each.
 - **Kit resolution and the assembly checks come from `@sssb/tools`** (P4's `kitDirOf`, `resolveAppsKit`,
-  `migratorBundleProblems`, `failClosedEnvironmentProblems`, the grant and Data API checks), copied into
-  `packages/cdk/src/_p4/` until P4 lands. Rejected: a second resolver in `@sssb/cdk`, which would split rule 4's one
-  shared check in two. `@sssb/tools` is asked to publish its resolver as `./kit`.
+  `migratorBundleProblems`, `failClosedEnvironmentProblems`, the grant and Data API checks): `@sssb/cdk` depends on
+  `@sssb/tools`. The resolver is not a published subpath yet, so `packages/cdk/src/_p4/kit.js` is a marked copy of
+  `@sssb/tools`' `src/kit.js` until it is (`./kit`, asked of P4). Rejected: a resolver of `@sssb/cdk`'s own, which
+  would split rule 4's one shared check in two. P4's walks `node_modules` from the app rather than calling
+  `require.resolve`, which matters here: the construct runs under `pnpm exec`, which sets `NODE_PATH` to the
+  hoisted store.
 - **`check-shapes` became `packages/cdk/src/sssb-app.test.js`, a Vitest project of its own (`cdk`)**, which discovers
   every `apps/*/infra` and synthesizes both shapes for each. It reads `DATABASE_ENV` from the `@sssb/kit` each app
   resolves (by file, since it is not a published subpath), so it keeps the runtime and the infra from drifting on a

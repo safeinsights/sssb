@@ -884,5 +884,6 @@ P9 built `@sssb/cdk` and moved the root `infra/` into each app. Details the body
   synth with both versions named. The environment and bundle checks run as a construct validation, so they read
   the final rendered template, escape-hatch overrides included. The bundle check is skipped only when the synth does
   not bundle the stack at all (`cdk deploy OtherStack`), the one case in which there is no bundle to read.
-- **Until P4 merges**, `packages/cdk/src/_p4/` holds a copy of `@sssb/tools`'s assembly checks and its kit resolver;
-  the PR that brings P4 in deletes it in favour of `@sssb/tools`.
+- **`@sssb/cdk` depends on `@sssb/tools`** for the assembly checks (`@sssb/tools/assembly-checks`) and for rule 4's
+  resolver. Until `@sssb/tools` publishes the resolver as a subpath, `packages/cdk/src/_p4/kit.js` is a marked copy
+  of its `src/kit.js`.
