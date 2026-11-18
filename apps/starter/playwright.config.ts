@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 import { originFor } from '../../scripts/ports.mjs'
+import { assertNoLiveDevTicker } from '../../scripts/ticker-marker.mjs'
+
+// A dev server started with `DEV_TICK_SECONDS` set would be ADOPTED by `reuseExistingServer` below and tick under the
+// suite; the ticker leaves a marker while it runs, and this refuses to load past it (scripts/ticker-marker.mjs).
+assertNoLiveDevTicker()
 
 /**
  * A different port from the showcase's: two apps in one repo must be able to run (and be tested) side

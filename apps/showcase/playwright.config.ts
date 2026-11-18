@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 import { originFor } from '../../scripts/ports.mjs'
+import { assertNoLiveDevTicker } from '../../scripts/ticker-marker.mjs'
+
+// A dev server started with `DEV_TICK_SECONDS` set would be ADOPTED by `reuseExistingServer` below and tick under the
+// suite; the ticker leaves a marker while it runs, and this refuses to load past it (scripts/ticker-marker.mjs).
+assertNoLiveDevTicker()
 
 // Derived, not literal: a linked worktree under .claude/worktrees/ gets its own port, so a second
 // agent session's dev server can never be silently adopted by this one's suite (scripts/ports.mjs).

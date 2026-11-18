@@ -458,12 +458,14 @@ the showcase carries the same route over the same function.
       reach a server that is not on this machine (`--url` takes only `localhost`, `127.0.0.1` or `[::1]`). A server in
       real mode checks `WEBHOOK_SECRET` and never reads that file, so `pnpm dev:real` is not something it ticks.
     - **`DEV_TICK_SECONDS=30 pnpm dev`** also runs that call every 30 seconds while the server is up (any whole number
-      of seconds from 1). It says nothing while nothing is due, and speaks when a job was spawned, a delivery moved, or
+      of seconds, 1 to 86400). It says nothing while nothing is due, and speaks when a job was spawned, a delivery moved, or
       the server stopped answering. It is **off unless you set the variable**: the Simulator controls the world clock in a
       demo, the e2e suites expect a scheduler that does nothing until a test asks, and hermetic dev does not do work nobody
       asked for. The e2e servers are started with the variable blanked, and a ticker asked for while `E2E_BUILD` or
-      `DEMO_MODE` is set is refused. If you keep it exported in your shell, stop that dev server before `pnpm test:e2e`
-      (Playwright adopts a server already on the port, and that server would still be ticking).
+      `DEMO_MODE` is set is refused. While a ticker runs it leaves `apps/<app>/.data/dev-ticker.json`, and the playwright
+      configs refuse to load while its process is alive, because Playwright adopts a dev server already on the app's port
+      and that one would still be ticking: stop it before `pnpm test:e2e`. (A wrapper that was killed outright leaves a
+      stale marker; one whose process is gone is ignored.)
 
     The answer is `{"ok":true,"spawned":0,"failed":0,"deliveries":{…}}`, which `pnpm tick` prints as one line. In a
     simulated world "now" is the Simulator's world clock (real time plus whatever offset a demo advanced), so a tick

@@ -23,11 +23,15 @@ export const TICK_PATH = '/api/webhooks/cron'
 /** The route answers in well under a second on a warm server; a cold `next dev` compiles it on first hit. */
 export const DEFAULT_TIMEOUT_SECONDS = 60
 
+/** Bounds that keep `AbortSignal.timeout` meaningful: a value that rounds to 0 times out at once, a huge one throws. */
+export const MIN_TIMEOUT_SECONDS = 0.1
+export const MAX_TIMEOUT_SECONDS = 3600
+
 const USAGE = `usage: pnpm tick [--url <origin>] [--timeout <seconds>]
        (per app: pnpm tick = showcase, pnpm tick:starter = starter; direct: node scripts/tick.mjs <${TICK_APPS.join('|')}> ...)
 
   --url <origin>       the dev server's origin, loopback only (default: this checkout's port for the app)
-  --timeout <seconds>  give up on the request after this long (default ${DEFAULT_TIMEOUT_SECONDS})`
+  --timeout <seconds>  give up on the request after this long, ${MIN_TIMEOUT_SECONDS} to ${MAX_TIMEOUT_SECONDS} (default ${DEFAULT_TIMEOUT_SECONDS})`
 
 /** A failure with a message meant for the person at the terminal. `usage` marks a bad command line, not a bad tick. */
 export class TickError extends Error {
@@ -88,10 +92,11 @@ export function parseTickArgs(argv) {
                 url = value
             } else {
                 const parsed = Number(value)
-                if (!Number.isFinite(parsed) || parsed <= 0) {
-                    throw new TickError(`--timeout must be a positive number of seconds, got "${value}"`, {
-                        usage: true,
-                    })
+                if (!Number.isFinite(parsed) || parsed < MIN_TIMEOUT_SECONDS || parsed > MAX_TIMEOUT_SECONDS) {
+                    throw new TickError(
+                        `--timeout must be between ${MIN_TIMEOUT_SECONDS} and ${MAX_TIMEOUT_SECONDS} seconds, got "${value}"`,
+                        { usage: true },
+                    )
                 }
                 timeoutSeconds = parsed
             }
@@ -155,10 +160,13 @@ function unreachable(error, endpoint) {
  * The first request to a checkout's server is what creates its secret file, so with none on disk yet one request
  * goes out with a throwaway bearer (a 401, by design) to make the server write it, then the real one follows.
  *
- * @param {{ origin: string, timeoutMs: number, secretFile?: string, fetchImpl?: typeof fetch }} options
+ * `signal` ends a tick early (the dev ticker passes the one that stops it, so a tick in flight does not outlive the
+ * server it was for).
+ *
+ * @param {{ origin: string, timeoutMs: number, secretFile?: string, fetchImpl?: typeof fetch, signal?: AbortSignal }} options
  * @returns {Promise<Record<string, unknown>>}
  */
-export async function tickOnce({ origin, timeoutMs, secretFile = secretFilePath(), fetchImpl = fetch }) {
+export async function tickOnce({ origin, timeoutMs, secretFile = secretFilePath(), fetchImpl = fetch, signal }) {
     const endpoint = `${origin}${TICK_PATH}`
     /** @param {string} bearer */
     const post = async (bearer) => {
@@ -166,7 +174,9 @@ export async function tickOnce({ origin, timeoutMs, secretFile = secretFilePath(
             return await fetchImpl(endpoint, {
                 method: 'POST',
                 headers: { authorization: `Bearer ${bearer}` },
-                signal: AbortSignal.timeout(timeoutMs),
+                signal: signal
+                    ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+                    : AbortSignal.timeout(timeoutMs),
             })
         } catch (error) {
             throw unreachable(error, endpoint)
@@ -184,7 +194,16 @@ export async function tickOnce({ origin, timeoutMs, secretFile = secretFilePath(
         }
     }
 
-    const response = await post(readFileSync(secretFile, 'utf8'))
+    /** @type {string} */
+    let secret
+    try {
+        secret = readFileSync(secretFile, 'utf8')
+    } catch (error) {
+        throw new TickError(
+            `could not read the dev secret at ${secretFile}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+    }
+    const response = await post(secret)
     const text = await response.text()
     if (response.status === 401) {
         throw new TickError(

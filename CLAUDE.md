@@ -161,7 +161,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - **Scheduled work in dev only runs when something ticks it.** `pnpm tick` (`pnpm tick:starter`) calls the running
   dev server's `/api/webhooks/cron` once with the dev secret (`scripts/tick.mjs`); `DEV_TICK_SECONDS=<n> pnpm dev`
   does it every n seconds (`scripts/dev-tick.mjs`, which `pnpm dev` runs `next dev` through). The ticker is **off by
-  default** and stays off under e2e (the playwright configs blank the variable) and the demo. Never add a bypass to the
+  default** and stays off under e2e (the playwright configs blank the variable, and refuse to load while a ticking
+  dev server's marker is live) and the demo. The ticking is `scripts/ticker.mjs` (start, stop, status), policy-free. Never add a bypass to the
   route for either: it stays `withWebhookSecret`.
 - Before opening a PR, run `/pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.

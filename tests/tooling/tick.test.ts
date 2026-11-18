@@ -1,10 +1,10 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     DEFAULT_TIMEOUT_SECONDS,
     TICK_PATH,
@@ -16,7 +16,15 @@ import {
     tickDidWork,
     tickOnce,
 } from '../../scripts/tick.mjs'
-import { parseDevArgs, resolveDevTick, runTicker } from '../../scripts/dev-tick.mjs'
+import { parseDevArgs, resolveDevTick } from '../../scripts/dev-tick.mjs'
+import { MAX_INTERVAL_SECONDS, createTicker, intervalProblem } from '../../scripts/ticker.mjs'
+import {
+    assertNoLiveDevTicker,
+    liveTickerMarker,
+    removeTickerMarker,
+    tickerMarkerPath,
+    writeTickerMarker,
+} from '../../scripts/ticker-marker.mjs'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
@@ -81,7 +89,11 @@ describe('parseTickArgs', () => {
         expect(() => parseTickArgs(['showcase', '--url'])).toThrow(/--url needs a value/)
         expect(() => parseTickArgs(['showcase', '--url', '--timeout', '5'])).toThrow(/--url needs a value/)
         expect(() => parseTickArgs(['showcase', '--timeout='])).toThrow(/--timeout needs a value/)
-        expect(() => parseTickArgs(['showcase', '--timeout', 'soon'])).toThrow(/positive number of seconds/)
+        for (const bad of ['soon', '0', '0.0001', '3601', '99999999', '-1']) {
+            expect(() => parseTickArgs(['showcase', '--timeout', bad]), bad).toThrow(
+                /--timeout must be between 0.1 and 3600/,
+            )
+        }
     })
 })
 
@@ -344,10 +356,11 @@ describe('resolveDevTick: off unless asked, and not where it must not run', () =
     it('is on for a whole number of seconds', () => {
         expect(resolveDevTick({ DEV_TICK_SECONDS: '30' })).toEqual({ mode: 'on', seconds: 30 })
         expect(resolveDevTick({ DEV_TICK_SECONDS: '1' })).toEqual({ mode: 'on', seconds: 1 })
+        expect(resolveDevTick({ DEV_TICK_SECONDS: String(MAX_INTERVAL_SECONDS) })).toMatchObject({ mode: 'on' })
     })
 
     it('is invalid for anything else, rather than quietly off', () => {
-        for (const bad of ['0', '-5', '1.5', 'soon', 'true', '30s']) {
+        for (const bad of ['0', '-5', '1.5', 'soon', 'true', '30s', String(MAX_INTERVAL_SECONDS + 1), '9999999']) {
             expect(resolveDevTick({ DEV_TICK_SECONDS: bad }), bad).toMatchObject({ mode: 'invalid' })
         }
     })
@@ -377,54 +390,216 @@ describe('the e2e servers are started with the ticker blanked', () => {
     })
 })
 
-describe('runTicker', () => {
-    /** Runs `ticks` rounds, answering each from `answers`, then stops. */
-    async function drive(answers: (Record<string, unknown> | Error)[]) {
-        const stop = new AbortController()
+describe('createTicker: one object owns start, stop, the interval and whether it is running', () => {
+    const idle = { ok: true, spawned: 0, failed: 0, deliveries: { delivered: 0, failed: 0, dead: 0 } }
+
+    /**
+     * A ticker whose sleeps and ticks are scripted: each `sleep` waits for `step()` (so a test steps the rounds by
+     * hand), and each tick answers from `answers` in turn.
+     */
+    function scripted(answers: (Record<string, unknown> | Error)[], markerFile?: string) {
         const log: string[] = []
+        const waiting: (() => void)[] = []
+        const signals: AbortSignal[] = []
         let round = 0
-        await runTicker({
+        const ticker = createTicker({
             origin: 'http://localhost:1',
-            seconds: 5,
-            signal: stop.signal,
+            markerFile,
             log: (line) => log.push(line),
-            sleep: async () => {
-                if (round === answers.length) stop.abort()
-            },
-            tick: (async () => {
+            now: () => new Date('2026-11-17T12:00:00.000Z'),
+            sleep: (_ms, signal) =>
+                new Promise<void>((resolve) => {
+                    waiting.push(resolve)
+                    signal.addEventListener(
+                        'abort',
+                        () => {
+                            const at = waiting.indexOf(resolve)
+                            if (at >= 0) waiting.splice(at, 1)
+                            resolve()
+                        },
+                        { once: true },
+                    )
+                }),
+            tick: (async ({ signal }: { signal: AbortSignal }) => {
+                signals.push(signal)
                 const answer = answers[round++]
                 if (answer instanceof Error) throw answer
                 return answer
             }) as never,
         })
-        return log
+        /** Lets the pending sleep finish, then waits for the loop to reach its next sleep. */
+        const step = async () => {
+            waiting.shift()?.()
+            await new Promise((resolve) => setImmediate(resolve))
+        }
+        return { ticker, log, step, signals }
     }
 
-    const idle = { ok: true, spawned: 0, failed: 0, deliveries: { delivered: 0, failed: 0, dead: 0 } }
+    it('is not running until started, and reports its interval and what it has done', async () => {
+        const { ticker, step } = scripted([idle, GOOD_BODY])
+        expect(ticker.status()).toEqual({ running: false, seconds: null, ticks: 0, lastTickAt: null, lastError: null })
+        expect(ticker.start(30)).toMatchObject({ running: true, seconds: 30, ticks: 0 })
+        await step()
+        await step()
+        expect(ticker.status()).toEqual({
+            running: true,
+            seconds: 30,
+            ticks: 2,
+            lastTickAt: '2026-11-17T12:00:00.000Z',
+            lastError: null,
+        })
+        await ticker.stop()
+        expect(ticker.status()).toMatchObject({ running: false, ticks: 2 })
+    })
 
     it('stays quiet while nothing is due, and speaks when something ran', async () => {
-        const log = await drive([idle, GOOD_BODY, idle])
+        const { ticker, log, step } = scripted([idle, GOOD_BODY, idle])
+        ticker.start(5)
+        await step()
+        await step()
+        await step()
+        await ticker.stop()
         expect(log).toEqual([`[tick] ${summarizeTick(GOOD_BODY)}`])
     })
 
     it('says an unreachable server once, then that it recovered, rather than once per interval', async () => {
         const down = new TickError('could not reach http://localhost:1/api/webhooks/cron (ECONNREFUSED)')
-        const log = await drive([down, down, down, idle])
+        const { ticker, log, step } = scripted([down, down, down, idle])
+        ticker.start(5)
+        for (let i = 0; i < 4; i++) await step()
+        expect(ticker.status().lastError).toBeNull()
+        await ticker.stop()
         expect(log).toEqual([`[tick] ${down.message} (will keep trying every 5s)`, '[tick] ok again'])
     })
 
-    it('does not tick at all once told to stop', async () => {
-        const stop = new AbortController()
-        stop.abort()
-        let ticks = 0
-        await runTicker({
-            origin: 'http://localhost:1',
-            seconds: 5,
-            signal: stop.signal,
-            tick: (async () => (ticks++, idle)) as never,
-        })
-        expect(ticks).toBe(0)
+    it('start is idempotent while running, and refuses an interval that cannot work', async () => {
+        const { ticker } = scripted([])
+        ticker.start(5)
+        expect(ticker.start(60)).toMatchObject({ running: true, seconds: 5 })
+        await ticker.stop()
+        for (const bad of [0, -1, 1.5, MAX_INTERVAL_SECONDS + 1, Number.NaN, 2 ** 31]) {
+            expect(() => ticker.start(bad), String(bad)).toThrow(RangeError)
+        }
+        expect(ticker.status().running).toBe(false)
+        expect(intervalProblem(30)).toBeNull()
     })
+
+    it('can be stopped and started again, and stopping when stopped is harmless', async () => {
+        const { ticker, step } = scripted([idle, idle])
+        await ticker.stop()
+        ticker.start(5)
+        await step()
+        await ticker.stop()
+        ticker.start(10)
+        await step()
+        expect(ticker.status()).toMatchObject({ running: true, seconds: 10, ticks: 1 })
+        await ticker.stop()
+    })
+
+    it('stop ticks no more, and cancels a tick in flight', async () => {
+        const stepped = scripted([idle])
+        stepped.ticker.start(5)
+        await stepped.step()
+        expect(stepped.signals).toHaveLength(1)
+        await stepped.ticker.stop()
+        await new Promise((resolve) => setImmediate(resolve))
+        expect(stepped.signals).toHaveLength(1)
+
+        // a tick that never answers: stop() must still resolve, by aborting the signal it was handed
+        let handed: AbortSignal | undefined
+        const hang = createTicker({
+            origin: 'http://localhost:1',
+            sleep: async () => {},
+            log: () => {},
+            tick: ((options: { signal: AbortSignal }) =>
+                new Promise((_resolve, reject) => {
+                    handed = options.signal
+                    options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+                })) as never,
+        })
+        hang.start(5)
+        await new Promise((resolve) => setImmediate(resolve))
+        await Promise.race([
+            hang.stop(),
+            new Promise((_resolve, reject) => setTimeout(() => reject(new Error('stop() did not resolve')), 2000)),
+        ])
+        expect(handed?.aborted).toBe(true)
+    })
+
+    it('records a live ticker in its marker file while it runs, and removes it on stop', async () => {
+        const marker = path.join(makeTestTmpDir('sssb-ticker-'), '.data', 'dev-ticker.json')
+        const { ticker } = scripted([], marker)
+        expect(liveTickerMarker(marker)).toBeNull()
+        ticker.start(30)
+        expect(liveTickerMarker(marker)).toMatchObject({ pid: process.pid, seconds: 30 })
+        await ticker.stop()
+        expect(existsSync(marker)).toBe(false)
+    })
+})
+
+describe('the ticker marker: what keeps a ticking dev server out of the e2e suite', () => {
+    it('is ignored when its process is gone (a SIGKILLed wrapper cannot clean up) and when it is not JSON', () => {
+        const file = path.join(makeTestTmpDir('sssb-marker-'), 'dev-ticker.json')
+        writeFileSync(file, JSON.stringify({ pid: 2 ** 22 + 12345, seconds: 5, startedAt: 'x' }))
+        expect(liveTickerMarker(file)).toBeNull()
+        writeFileSync(file, 'not json')
+        expect(liveTickerMarker(file)).toBeNull()
+        expect(liveTickerMarker(path.join(path.dirname(file), 'absent.json'))).toBeNull()
+    })
+
+    it('is live for a running process, and only its owner removes it', () => {
+        const file = path.join(makeTestTmpDir('sssb-marker-'), 'dev-ticker.json')
+        writeFileSync(file, JSON.stringify({ pid: process.ppid, seconds: 5, startedAt: 'x' }))
+        expect(liveTickerMarker(file)).toMatchObject({ pid: process.ppid })
+        removeTickerMarker(file)
+        expect(existsSync(file)).toBe(true)
+        writeTickerMarker(file, 7)
+        expect(liveTickerMarker(file)).toMatchObject({ pid: process.pid, seconds: 7 })
+        removeTickerMarker(file)
+        expect(existsSync(file)).toBe(false)
+    })
+
+    it('puts the file under APP_DATA_DIR, else .data in the app directory', () => {
+        expect(tickerMarkerPath({}, '/apps/x')).toBe(path.join('/apps/x', '.data', 'dev-ticker.json'))
+        expect(tickerMarkerPath({ APP_DATA_DIR: '/data' }, '/apps/x')).toBe(path.join('/data', 'dev-ticker.json'))
+    })
+
+    it('makes a playwright config refuse to load while a ticker is live, and not otherwise', () => {
+        const dataDir = makeTestTmpDir('sssb-marker-')
+        expect(() => assertNoLiveDevTicker({ APP_DATA_DIR: dataDir }, '/nowhere')).not.toThrow()
+        writeTickerMarker(path.join(dataDir, 'dev-ticker.json'), 30)
+        expect(() => assertNoLiveDevTicker({ APP_DATA_DIR: dataDir }, '/nowhere')).toThrow(/a dev ticker is running/)
+    })
+
+    it.each(['showcase', 'starter'])(
+        'apps/%s/playwright.config.ts really does refuse (the config as Playwright loads it)',
+        async (app) => {
+            const dataDir = makeTestTmpDir('sssb-marker-pw-')
+            const list = () =>
+                new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
+                    execFile(
+                        path.join(REPO_ROOT, 'node_modules/.bin/playwright'),
+                        ['test', '--list'],
+                        {
+                            cwd: path.join(REPO_ROOT, 'apps', app),
+                            env: {
+                                PATH: process.env.PATH ?? '',
+                                APP_DATA_DIR: dataDir,
+                            } as unknown as NodeJS.ProcessEnv,
+                        },
+                        (error, out, err) =>
+                            resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, out, err }),
+                    )
+                })
+            const without = await list()
+            expect(without.err, 'the config loads and lists with no ticker running').not.toContain('dev ticker')
+            expect(without.code).toBe(0)
+            writeTickerMarker(path.join(dataDir, 'dev-ticker.json'), 30)
+            const refused = await list()
+            expect(refused.code).not.toBe(0)
+            expect(refused.out + refused.err).toContain('a dev ticker is running')
+        },
+    )
 })
 
 describe('node scripts/dev-tick.mjs', () => {
@@ -438,7 +613,14 @@ describe('node scripts/dev-tick.mjs', () => {
         }
     })
 
-    const SLEEP_AND_EXIT = ['showcase', '--', process.execPath, '-e', 'setTimeout(() => process.exit(7), 1600)']
+    const sleepAndExit = (ms: number) => [
+        'showcase',
+        '--',
+        process.execPath,
+        '-e',
+        `setTimeout(() => process.exit(7), ${ms})`,
+    ]
+    const SLEEP_AND_EXIT = sleepAndExit(1600)
 
     it('is a pass-through when the variable is unset: runs the command, exits with its code, and never calls the route', async () => {
         const dataDir = makeTestTmpDir('sssb-devtick-')
@@ -449,10 +631,15 @@ describe('node scripts/dev-tick.mjs', () => {
         expect(hits).toEqual([])
     })
 
-    it('with DEV_TICK_SECONDS set, ticks the route while the command runs, and stops when it exits', async () => {
+    it('with DEV_TICK_SECONDS set, ticks while the command runs (marker live), and leaves nothing behind when it exits', async () => {
         const dataDir = makeTestTmpDir('sssb-devtick-')
-        const { port, hits } = await listen(dataDir, () => ({ status: 200, body: JSON.stringify(GOOD_BODY) }))
-        const result = await run(DEV_TICK, SLEEP_AND_EXIT, {
+        const markerFile = path.join(dataDir, 'dev-ticker.json')
+        const markerSeenByServer: boolean[] = []
+        const { port, hits } = await listen(dataDir, () => {
+            markerSeenByServer.push(liveTickerMarker(markerFile) !== null)
+            return { status: 200, body: JSON.stringify(GOOD_BODY) }
+        })
+        const result = await run(DEV_TICK, sleepAndExit(3000), {
             APP_DATA_DIR: dataDir,
             SHOWCASE_PORT: String(port),
             DEV_TICK_SECONDS: '1',
@@ -461,10 +648,37 @@ describe('node scripts/dev-tick.mjs', () => {
         expect(result.out).toContain(`DEV_TICK_SECONDS=1`)
         expect(result.out).toContain('2 job(s) spawned')
         expect(hits.some((hit) => hit.authorization === 'Bearer abc123')).toBe(true)
+        expect(markerSeenByServer.length).toBeGreaterThan(0)
+        expect(markerSeenByServer.every(Boolean), 'the marker is live whenever a tick arrives').toBe(true)
+        expect(existsSync(markerFile), 'removed on exit').toBe(false)
         const seen = hits.length
         await new Promise((resolve) => setTimeout(resolve, 1200))
-        expect(hits.length, 'a ticker that outlives the server it wraps').toBe(seen)
+        expect(hits.length, 'a ticker that outlives the process it wrapped').toBe(seen)
     })
+
+    it.each(['SIGINT', 'SIGTERM', 'SIGHUP'] as const)(
+        'passes %s sent to the wrapper alone on to the command, and exits with the command’s code',
+        async (signal) => {
+            const child = spawn(
+                process.execPath,
+                [
+                    DEV_TICK,
+                    'showcase',
+                    '--',
+                    process.execPath,
+                    '-e',
+                    `process.on('${signal}', () => process.exit(5)); console.log('ready'); setInterval(() => {}, 1000)`,
+                ],
+                { cwd: REPO_ROOT, env: { PATH: process.env.PATH ?? '' } as unknown as NodeJS.ProcessEnv },
+            )
+            let out = ''
+            child.stdout.on('data', (chunk) => (out += chunk))
+            await vi.waitFor(() => expect(out).toContain('ready'), { timeout: 10_000 })
+            const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)))
+            child.kill(signal)
+            expect(await exited).toBe(5)
+        },
+    )
 
     it('does not tick under E2E_BUILD or DEMO_MODE, and says why', async () => {
         for (const blocker of ['E2E_BUILD', 'DEMO_MODE']) {
@@ -489,7 +703,7 @@ describe('node scripts/dev-tick.mjs', () => {
             DEV_TICK_SECONDS: 'soon',
         })
         expect(result.code).toBe(2)
-        expect(result.err).toContain('DEV_TICK_SECONDS must be a whole number')
+        expect(result.err).toContain('DEV_TICK_SECONDS must be a whole number of seconds from 1 to 86400')
         expect(result.out).not.toContain('started')
     })
 })

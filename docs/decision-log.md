@@ -2948,11 +2948,14 @@ This is the "next step if it is wanted" that "`pnpm dev` without the Simulator h
   A schedule or delivery that FAILED inside a successful tick is printed and exits 0: the tick ran, and the next one
   retries it.
 - **The ticker is a wrapper around `next dev`, not code in the app.** `pnpm dev` runs `next dev` through
-  `scripts/dev-tick.mjs` in both apps; with `DEV_TICK_SECONDS` unset it only starts the command, forwards SIGTERM and
-  SIGHUP, and exits with its code. Putting it in the app would have meant reading `process.env` in `src` (lint-banned)
+  `scripts/dev-tick.mjs` in both apps; with `DEV_TICK_SECONDS` unset it only starts the command, forwards SIGINT, SIGTERM and
+  SIGHUP, and exits with its code. (SIGINT is forwarded even though a terminal's Ctrl-C also reaches the server directly:
+  the wrapper is now the pid a supervisor holds, and swallowing it left `kill -INT` unable to stop `pnpm dev`; found by
+  review, and the SIGINT case seen failing with it unforwarded.) Putting it in the app would have meant reading `process.env` in `src` (lint-banned)
   or an `instrumentation` hook that also runs in the production build. The name is a count of seconds rather than a
   `=1` flag like `E2E_BUILD` and `DEMO_MODE` because those pick a build and this takes a number; anything that is not a
-  whole number of 1 or more is an error before the server starts, not a silent no.
+  whole number of 1 to 86400 is an error before the server starts, not a silent no (a larger one overflows a timer and
+  would tick continuously).
 - **Off by default, and why.** (1) The showcase's Simulator controls the world clock in a demo: a ticker firing digests
   on real time underneath it changes when a presenter sees them fire. (2) The e2e suites expect a scheduler that does
   nothing until a test asks, so a background tick could land between a test's two steps. (3) Hermetic dev should not
@@ -2961,9 +2964,19 @@ This is the "next step if it is wanted" that "`pnpm dev` without the Simulator h
 - **It cannot run where it must not.** Both playwright configs start `pnpm dev` with `DEV_TICK_SECONDS` blanked, so a
   value exported in a developer's shell never reaches an e2e server; a test reads the configs for it. A ticker asked
   for with `E2E_BUILD` or `DEMO_MODE` set is refused with a message. The e2e and demo servers (`start:e2e`,
-  `start:demo`) do not go through the wrapper at all, and the `file://` static demo has no server to tick. Known gap:
-  Playwright adopts a dev server already listening on its port (`reuseExistingServer`), so a developer's own ticking
-  server would be tested against; `docs/adopting.md` says to stop it first.
+  `start:demo`) do not go through the wrapper at all, and the `file://` static demo has no server to tick. The blank
+  cannot reach a server Playwright did not start, and off CI it adopts one already on its port
+  (`reuseExistingServer`), so a ticking server you left running would be tested against. While a ticker runs it
+  leaves `<data dir>/dev-ticker.json` (pid, interval), and both playwright configs throw at load if that pid is alive;
+  a marker whose process is gone (a SIGKILLed wrapper) is ignored. Found by review; a test loads the real configs both
+  ways. The marker lives in the data directory, which e2e prep wipes: a wipe under a running ticker is already a broken
+  setup, and the marker is then simply absent.
+- **The ticker is one module with start, stop and status, for a Simulator control later.** `scripts/ticker.mjs`
+  (`createTicker`) owns the loop, the interval bounds, the dedup of repeated errors and the marker; it reads no
+  environment. `scripts/dev-tick.mjs` is the policy for `pnpm dev` and its only caller. JP asked whether the Simulator
+  can start it from its UI: not in this change (the panel is in `packages/kit`, which P3 is editing), but the shape is
+  there for it, and `.claude/future-tasks/simulator-ticker-control.md` has the design, including why the control must
+  keep it off by default and out of e2e and the static demo.
 - **`init-app` learned the second root script.** Root `tick:starter` is renamed with the app (`tick:<slug>`) and, when
   the showcase is ejected, dropped as a duplicate of `tick`, as `dev:starter` already was; each seen failing against the
   old `init-app` in `tests/docs/adopter-identity.test.ts`.
