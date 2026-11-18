@@ -11,7 +11,9 @@
 // `src/**/*.test.{ts,tsx}`, it runs in happy-dom with jest-dom's matchers, and, as every SSSB builder does, it passes
 // the seam explicitly (`@sssb/app-config` to the app's `src/app-config`), beside the app's own `@` alias. The React
 // plugin and jest-dom are the app's own copies, loaded from the app's directory.
+// A guard plugin (framework-guard.js) fails a test file that loads framework source from any instance but the app's.
 import path from 'node:path'
+import { frameworkGuard } from './framework-guard.js'
 import { importFromApp, resolveFromApp } from './kit.js'
 
 /**
@@ -31,7 +33,7 @@ export async function appTestProject({ appDir, name, include = [], alias = {}, e
     // through Node's `require` conditions, it would be the CommonJS build, which cannot load Vitest.
     resolveFromApp(root, '@testing-library/jest-dom/vitest', "the app's DOM assertions need")
     return {
-        plugins: [react()],
+        plugins: [frameworkGuard(root), react()],
         resolve: {
             alias: {
                 '@sssb/app-config': path.join(root, 'src', 'app-config'),

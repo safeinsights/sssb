@@ -1,5 +1,8 @@
-import * as engine from '@sssb/tools/doc-paths'
-import type { Citation } from '@sssb/tools/doc-paths'
+import { fileURLToPath } from 'node:url'
+// By relative path, not `@sssb/tools/doc-paths`: `scripts/init-app.ts` imports this file, and the adopter-identity test
+// runs init-app in a copy of the checkout that has no node_modules. The engine needs only Node's built-ins.
+import * as engine from '../../packages/tools/src/doc-paths.js'
+import type { Citation } from '../../packages/tools/src/doc-paths.js'
 
 /**
  * WHICH MARKDOWN THIS REPO HOLDS TO ITS PATH CITATIONS.
@@ -37,8 +40,12 @@ export type { Citation }
 const root = () => process.cwd()
 const config = () => engine.readDocPathsConfig(root())
 
-/** Exempt prefixes, for `init-app`, which must not rewrite what the gate does not read. */
-export const EXEMPT: string[] = engine.readDocPathsConfig(process.cwd()).exempt
+/**
+ * Exempt prefixes, for `init-app`, which must not rewrite what the gate does not read. Read when this module loads,
+ * from the checkout this file sits in, never from the working directory: `init-app` imports this before it changes
+ * into the repository root, so a run started from a subdirectory would otherwise read the wrong package.json.
+ */
+export const EXEMPT: string[] = engine.readDocPathsConfig(fileURLToPath(new URL('../..', import.meta.url))).exempt
 
 /** Every gated markdown file, as repo-relative paths. Call with the repo root as the cwd. */
 export function doctrineDocs(): string[] {

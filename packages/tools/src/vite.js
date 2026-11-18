@@ -16,9 +16,13 @@
 // resolve against this app's registrations rather than another's. `@` is the app's own `src`. The framework itself
 // resolves as a package, through its `exports` map.
 //
+// The framework itself resolves as a package; a guard plugin (framework-guard.js) fails the build if any module it
+// loads is framework source from an instance other than the app's own.
+//
 // Vite loads this file with Node, which is why it is JavaScript (part 2), and the Vite plugins it configures are
 // the app's own copies, loaded from the app's directory, so the preset never brings a second Vite of its own.
 import path from 'node:path'
+import { frameworkGuard } from './framework-guard.js'
 import { importFromApp } from './kit.js'
 import { pruneMantineCss } from './prune-mantine-css.js'
 
@@ -43,7 +47,7 @@ export async function staticDemoConfig({ appDir, alias = {}, plugins = [], css }
         base: './',
         // The pruning runs before vite-plugin-singlefile, the other `post` plugin, so the inlined stylesheet is the
         // pruned one (prune-mantine-css.js says why the order is load-bearing).
-        plugins: [react(), ...plugins, pruneMantineCss(), viteSingleFile()],
+        plugins: [frameworkGuard(root), react(), ...plugins, pruneMantineCss(), viteSingleFile()],
         ...(css === undefined ? {} : { css }),
         resolve: {
             alias: {

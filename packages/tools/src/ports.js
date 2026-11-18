@@ -29,17 +29,19 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
-/** @param {string} start */
+/**
+ * The checkout's root: the nearest directory holding `pnpm-workspace.yaml`, else (a repository that is one package,
+ * with no workspace file) the nearest holding `.git`, else the working directory itself.
+ * @param {string} start
+ */
 function findCheckoutRoot(start) {
-    let dir = path.resolve(start)
-    for (;;) {
-        if (existsSync(path.join(dir, 'pnpm-workspace.yaml'))) return dir
-        const parent = path.dirname(dir)
-        if (parent === dir) {
-            throw new Error(`ports: no pnpm-workspace.yaml above ${start}: run this from inside the workspace`)
+    for (const marker of ['pnpm-workspace.yaml', '.git']) {
+        for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
+            if (existsSync(path.join(dir, marker))) return dir
+            if (path.dirname(dir) === dir) break
         }
-        dir = parent
     }
+    return path.resolve(start)
 }
 
 /**

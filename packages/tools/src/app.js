@@ -99,3 +99,23 @@ export function workspaceApps(root) {
         .map((entry) => `apps/${entry.name}`)
         .sort()
 }
+
+/**
+ * A short, unique label for each app directory (relative to `root`), for names a person reads: CI shard and job
+ * names, the browser pane's configurations. The directory's own name (`showcase`), or, when two apps share one, the
+ * whole relative path with `/` as `-` (`services-web`). An app at the root is named by the root's directory.
+ * @param {string} root
+ * @param {string[]} apps
+ * @returns {Map<string, string>}
+ */
+export function appLabels(root, apps) {
+    const base = (/** @type {string} */ app) => path.basename(path.resolve(root, app))
+    const counts = new Map()
+    for (const app of apps) counts.set(base(app), (counts.get(base(app)) ?? 0) + 1)
+    return new Map(
+        apps.map((app) => [
+            app,
+            counts.get(base(app)) > 1 && app !== '.' ? app.replace(/^\.\//, '').split('/').join('-') : base(app),
+        ]),
+    )
+}

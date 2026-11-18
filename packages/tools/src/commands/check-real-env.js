@@ -3,14 +3,16 @@
 // still lacks, instead of letting the server crash on its first request.
 //
 // THROUGH esbuild, NOT tsx OR NODE (ADR-0014 part 2). @sssb/kit ships TypeScript source, and Node refuses to strip
-// types from a file under node_modules, so the framework is bundled first. The bundle holds exactly two kinds of
-// code: the framework, and the app's own source (its seam, and what the seam imports through the app's `@/` alias).
-// Every other package stays EXTERNAL, imported by the absolute path esbuild resolved it to from the file that
-// imports it, so a framework dependency loads from the framework's own node_modules exactly as it would in the app.
+// types from a file under node_modules, so the framework is bundled first. The bundle holds the framework and every
+// file outside node_modules: the app's own source (its seam, and what the seam imports through the app's `@/` alias)
+// and any workspace package the seam reaches, which is TypeScript source too and may itself import the framework.
+// Every package under node_modules stays EXTERNAL, imported by the absolute path esbuild resolved it to from the file
+// that imports it, so a framework dependency loads from the framework's own node_modules as it would in the app.
 //
 // THE FRAMEWORK IS THE APP'S (rule 4). The entry imports the framework by the real paths the shared resolver
-// returns from the app's directory; every bare `@sssb/kit` specifier the seam writes is resolved and checked the
-// same way; and after the build every input from any `@sssb/kit` directory must be the app's instance. The seam is
+// returns from the app's directory; every bare `@sssb/kit` specifier is resolved and checked the same way; and every
+// bundled input and every external that is framework source (its nearest package.json is `@sssb/kit`, wherever it
+// sits, a copy of the framework's tree included) must be the app's own instance. The seam is
 // passed explicitly (`@sssb/app-config` aliased to the app's `src/app-config`), as every SSSB builder passes it:
 // in an adopter's app that is redundant with the seam link, and in SSSB's repository it is the only way, since there
 // the fallback would be the repo's tsconfig mapping to the framework's test fixture (ADR-0014 part 1).
@@ -19,9 +21,9 @@ import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { takeAppDir, UsageError } from '../app.js'
-import { assertAppsKitFile, kitDirOf, resolveAppsKit } from '../kit.js'
+import { assertAppsKitFile, assertNoForeignFramework, resolveAppsKit } from '../kit.js'
 
-const KIT_SEGMENT = `${path.sep}@sssb${path.sep}kit${path.sep}`
+const NODE_MODULES = `${path.sep}node_modules${path.sep}`
 /** The in-memory entry's name, as the metafile lists it. */
 const ENTRY = 'sssb-check-real-env.ts'
 
@@ -29,12 +31,10 @@ const ENTRY = 'sssb-check-real-env.ts'
 export async function run(args) {
     const appDir = realpathSync(takeAppDir(args))
     if (args.length > 0) throw new UsageError('usage: sssb check-real-env [--app <dir>]')
-    const kitDir = kitDirOf(appDir)
     const seam = path.join(appDir, 'src', 'app-config')
     if (!existsSync(seam)) throw new UsageError(`sssb check-real-env: ${appDir} has no seam at src/app-config`)
     const realIndex = resolveAppsKit(appDir, 'adapters/real/index')
     const errors = resolveAppsKit(appDir, 'ports/errors')
-    const appSource = path.join(appDir, 'src') + path.sep
 
     const { build } = await import('esbuild')
     const outDir = mkdtempSync(path.join(tmpdir(), 'sssb-check-real-env-'))
@@ -91,9 +91,7 @@ export async function run(args) {
                                 return { path: assertAppsKitFile(appDir, resolved.path) }
                             }
                             const real = realpathSync(resolved.path)
-                            const ownSource =
-                                real.startsWith(appSource) && !real.includes(`${path.sep}node_modules${path.sep}`)
-                            if (ownSource) return { path: real }
+                            if (!real.includes(NODE_MODULES)) return { path: real }
                             // An external package is loaded by plain Node, so it gets the entry Node can load: the
                             // `require` build where the package has one. Some packages' ES builds are written for
                             // bundlers only (@clerk/nextjs's imports directories, which Node refuses), and a CommonJS
@@ -104,19 +102,20 @@ export async function run(args) {
                                 resolveDir: args.resolveDir,
                                 pluginData: 'sssb-inner',
                             })
-                            const loadable = required.errors.length === 0 && !required.external ? required.path : real
-                            return { path: realpathSync(loadable), external: true }
+                            const loadable = realpathSync(
+                                required.errors.length === 0 && !required.external ? required.path : real,
+                            )
+                            assertNoForeignFramework(appDir, loadable)
+                            return { path: loadable, external: true }
                         })
                     },
                 },
             ],
         })
-        // Every bundled input that is framework code is the app's own instance: nothing reached another copy by a
-        // relative path or an alias the plugin above never saw.
+        // Every bundled input that is framework source is the app's own instance: nothing reached another copy by a
+        // relative path, an alias or a workspace package the plugin above never saw as a bare `@sssb/kit`.
         for (const input of Object.keys(result.metafile.inputs)) {
-            if (input === ENTRY) continue
-            const real = realpathSync(path.resolve(appDir, input))
-            if (real.includes(KIT_SEGMENT) || real.startsWith(kitDir + path.sep)) assertAppsKitFile(appDir, real)
+            if (input !== ENTRY) assertNoForeignFramework(appDir, path.resolve(appDir, input))
         }
         const run = spawnSync(process.execPath, [outfile], { stdio: 'inherit', env: process.env, cwd: appDir })
         if (run.error) throw run.error
