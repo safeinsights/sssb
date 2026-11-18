@@ -3225,9 +3225,14 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   had dropped with it. The static real-adapter pattern no longer applies to `packages/*/src` outside the app: a package
   has no registry, and in `packages/kit/src` the merge trap had already replaced it with the framework fence's list.
   `SSSB_LINT_EXCEPTIONS_ROOT` is gone: the tests point `configs.app` at a scratch tree directly.
-- **`vendors` is the app's own addition to the vendor ban** (`configs.app({ root, vendors })`). An app-owned adapter's
-  SDK used to go into `vendorSdkPattern` in a fork's `eslint.config.mjs`; once the list ships in the plugin, an adopter
-  cannot edit it, and the recipe's step would have had nowhere to go. The option only adds patterns.
+- **An app adds its own vendors in its `package.json`** (`"sssb": { "vendors": [...] }`, beside P4's `sssb.port`). An
+  app-owned adapter's SDK used to go into `vendorSdkPattern` in a fork's `eslint.config.mjs`; once the list ships in
+  the plugin, an adopter cannot edit it. The first cut was a `configs.app({ root, vendors })` option, and round 1 of
+  review (both reviewers) found it could narrow SSSB's list: `ignore` reads a leading `!` as a negation, and
+  check-fences skipped the vendor rules' options, so a later block could also swap the app's list for one directory.
+  Now the list is a file check-fences reads too, the options are compared exactly, and a leading `!` is refused in
+  the package.json and in the rules' schema. The alternative, keeping the option and teaching check-fences a superset
+  test, still needed check-fences to know the app's list, which only a file gives it.
 - **What the plugin depends on.** `eslint` is a peer; the base config's plugins (`@eslint/js`, `typescript-eslint`,
   `eslint-plugin-react`, `-react-hooks`, `-jsx-a11y`, `@next/eslint-plugin-next`, `eslint-config-prettier`) and
   `ignore` are dependencies, so `configs.app` needs nothing else installed. An adopter's own block that binds one of

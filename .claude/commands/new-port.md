@@ -39,5 +39,5 @@ Follow `docs/recipes/app-owned-adapter.md`; it carries the sketches. In short, w
 4. Write the registry, `apps/<app>/src/adapters/index.ts`: import `isSimulated` from `@sssb/kit/adapters/index`,
    `await import('./real/index')` only when it is false, and export each port as `real?.x ?? fakeX`.
 5. Callers import the registry (`@/adapters`), never `@/adapters/real/*`. Make sure the vendor's package is
-   matched by SSSB's `vendorSdkPattern` or by the app's own `vendors` (`configs.app({ root, vendors })` in
-   `eslint.config.mjs`), add unit tests for the fake, and run `pnpm verify`.
+   matched by SSSB's `vendorSdkPattern` or by the app's own `"sssb": { "vendors": [...] }` in
+   `apps/<app>/package.json`, add unit tests for the fake, and run `pnpm verify`.

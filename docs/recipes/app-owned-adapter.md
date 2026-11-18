@@ -102,9 +102,9 @@ project.
 
 - **The SDK goes in your app's `package.json`** (`pnpm --filter <app> add <sdk>`), never in SSSB's.
 - **The fence has to know it is a vendor SDK.** If the package is not already matched by
-  SSSB's list (`vendorSdkPattern` in `packages/eslint-plugin/src/patterns.js`), name it in the preset call that
-  lints your app, `configs.app({ root, vendors: ['<sdk>', '<sdk>/*'] })` in `eslint.config.mjs`; otherwise the
-  rest of your app could import it with a green lint. The option only adds to SSSB's list. (`@aws-sdk/*` already covers `@aws-sdk/client-cloudfront-keyvaluestore` and its
+  SSSB's list (`vendorSdkPattern` in `packages/eslint-plugin/src/patterns.js`), name it in your app's
+  `package.json`, `"sssb": { "vendors": ["<sdk>", "<sdk>/*"] }`, which the preset reads; otherwise the rest of your
+  app could import it with a green lint. The list only adds to SSSB's (a leading `!` is refused). (`@aws-sdk/*` already covers `@aws-sdk/client-cloudfront-keyvaluestore` and its
   SigV4A signer, `@aws-sdk/signature-v4a`.) An adapter that is plain `fetch` needs no entry;
   `docs/recipes/workspace-coder.md` §4 is that case.
 - **Configuration comes from `process.env`, read in `real/` only**, which is the channel SSSB's own real
@@ -223,5 +223,5 @@ the extensions other than `.ts` and `.tsx`).
   name built at runtime (`'get' + 'Db'`) is not.
 - A hand-written `.js` file in `apps/<app>/src/styles/generated/` is not linted at all: the `.js` and
   `.d.ts` files there are Panda's output, and ignored. Anything else in that directory is fenced.
-- To the fence, a vendor SDK is whatever `vendorSdkPattern` lists, plus the app's own `vendors`. A package
+- To the fence, a vendor SDK is whatever `vendorSdkPattern` lists, plus the app's own `sssb.vendors`. A package
   missing from both is ordinary code to it.

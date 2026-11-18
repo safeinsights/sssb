@@ -17,8 +17,9 @@
 // `no-restricted-syntax` block can replace a fence. What CAN change one (turning an sssb/* rule off, a later block's
 // `ignores`, a nested config file) is what `sssb check-fences` compares against this preset.
 //
-// It is async because it reads the app's own `lint-exceptions.mjs` (below), an ES module.
-import { existsSync, readdirSync, statSync } from 'node:fs'
+// It is async because it reads the app's own `lint-exceptions.mjs` (below), an ES module. It also reads the app's
+// `package.json` for the vendor SDKs the app's own adapters wrap (`"sssb": { "vendors": [...] }`, below).
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import js from '@eslint/js'
@@ -85,6 +86,39 @@ export async function loadAppLintExceptions(appDir) {
     return ignoresByRule
 }
 
+// THE APP'S OWN VENDORS. An adapter the app owns (docs/recipes/app-owned-adapter.md) wraps a vendor SDK SSSB's list
+// does not name, and the app adds it to the ban in its own package.json: `"sssb": { "vendors": ["stripe", "stripe/*"] }`,
+// in the gitignore-style patterns SSSB's list uses. A file, not a `configs.app` option, so `sssb check-fences` reads
+// the same list the preset does and compares the rules' options EXACTLY: a later block that sets the vendor rules'
+// options for some directory, replacing the app's list there, shows up as options the preset does not set. A pattern
+// that starts with `!` is refused: in gitignore syntax it is a negation, and it would take a vendor OFF SSSB's list.
+/**
+ * The app's own vendor patterns, from its package.json's `sssb.vendors`; [] when it names none.
+ * @param {string} appDir
+ * @returns {string[]}
+ */
+export function loadAppVendors(appDir) {
+    const manifest = join(appDir, 'package.json')
+    if (!existsSync(manifest)) return []
+    const vendors = JSON.parse(readFileSync(manifest, 'utf8')).sssb?.vendors
+    if (vendors === undefined) return []
+    const fail = (why) => {
+        throw new Error(`${manifest}: sssb.vendors ${why}`)
+    }
+    if (!Array.isArray(vendors)) fail('must be a list of package patterns, such as ["stripe", "stripe/*"]')
+    for (const vendor of vendors) {
+        if (typeof vendor !== 'string' || vendor.trim() === '' || vendor !== vendor.trim()) {
+            fail(`holds ${JSON.stringify(vendor)}: each entry is a package pattern, such as "stripe" or "stripe/*"`)
+        }
+        if (vendor.startsWith('!')) {
+            fail(
+                `holds ${JSON.stringify(vendor)}: a leading ! un-bans a vendor, and the app's list only adds to SSSB's`,
+            )
+        }
+    }
+    return vendors
+}
+
 /**
  * Where the preset's blocks are anchored, and the apps under it: `{ basePath, prefix, apps }`, where `prefix` is
  * prepended to every app-relative glob and `apps` lists each app's directory and its prefix.
@@ -106,7 +140,11 @@ function resolveRoot(root) {
               .filter((entry) => entry.isDirectory())
               .map((entry) => entry.name)
               .sort()
-              .map((name) => ({ dir: join(parent, name), prefix: `${name}/` }))
+              .map((name) => ({
+                  dir: join(parent, name),
+                  // The directory's name is matched literally, as an exception's file is.
+                  prefix: `${name.replace(GLOB_SPECIALS, '\\$&')}/`,
+              }))
         : []
     return { basePath: parent, prefix: '*/', apps }
 }
@@ -116,21 +154,18 @@ const NEXT_CONFIG = 'next.config.{ts,mts,js,mjs}'
 
 /**
  * @param {import('eslint').ESLint.Plugin} plugin the one plugin object (./index.js)
- * @param {{ root: string, vendors?: string[] }} options `vendors`: the app's own adapters' SDKs, added to SSSB's vendor
- *     list in the same gitignore-style patterns (`stripe`, `stripe/*`). It only ever adds.
+ * @param {{ root: string }} options
  * @returns {Promise<import('eslint').Linter.Config[]>}
  */
-export async function appConfig(plugin, { root, vendors } = /** @type {any} */ ({})) {
-    const { basePath, prefix: P, apps } = resolveRoot(root)
-    if (
-        vendors !== undefined &&
-        (!Array.isArray(vendors) || !vendors.every((v) => typeof v === 'string' && v.trim()))
-    ) {
+export async function appConfig(plugin, options = /** @type {any} */ ({})) {
+    const { root, ...rest } = options
+    if (Object.keys(rest).length > 0) {
         throw new Error(
-            '@sssb/eslint-plugin: configs.app({ vendors }) takes a list of package patterns, such as ["stripe", "stripe/*"]',
+            `@sssb/eslint-plugin: configs.app takes { root } and nothing else, not ${Object.keys(rest).join(', ')}: ` +
+                'an app\'s own vendor SDKs go in its package.json, as "sssb": { "vendors": [...] }',
         )
     }
-    const vendorBan = vendors?.length ? ['error', { vendors }] : 'error'
+    const { basePath, prefix: P, apps } = resolveRoot(root)
     const exceptions = { 'sssb/no-raw-db-handle': [] }
     for (const app of apps) {
         const loaded = await loadAppLintExceptions(app.dir)
@@ -264,11 +299,29 @@ export async function appConfig(plugin, { root, vendors } = /** @type {any} */ (
         // (`withSentryConfig`), a bundler wrapper rather than an SDK call (ADR-0010); `tests/contract/**` drives real
         // Postgres through `pg` on purpose, which IS the anti-drift proof. The registry and fakes are NOT carved out:
         // they are what keep `pnpm dev` hermetic, so they keep the ban.
+        //
+        // SSSB's list holds for every app, an app directory not yet created included. An app that names its own vendors
+        // (loadAppVendors) gets a second block after it, over that app's files alone, whose options carry the app's list:
+        // a later block's options replace an earlier one's for the files both match.
         at('vendor', {
             files: files(''),
             ignores: [`${src('adapters/real')}/**`, `${P}${NEXT_CONFIG}`, `${P}tests/contract/**`],
             plugins: sssb,
-            rules: { 'sssb/no-vendor-import': vendorBan, 'sssb/no-dynamic-vendor-import': vendorBan },
+            rules: { 'sssb/no-vendor-import': 'error', 'sssb/no-dynamic-vendor-import': 'error' },
+        }),
+        ...apps.flatMap((app) => {
+            const vendors = loadAppVendors(app.dir)
+            if (vendors.length === 0) return []
+            const A = app.prefix
+            const ban = ['error', { vendors }]
+            return [
+                at(`vendor/${A ? A.slice(0, -1) : 'app'}`, {
+                    files: [`${A}**/*.${SRC_EXT}`],
+                    ignores: [`${A}src/adapters/real/**`, `${A}${NEXT_CONFIG}`, `${A}tests/contract/**`],
+                    plugins: sssb,
+                    rules: { 'sssb/no-vendor-import': ban, 'sssb/no-dynamic-vendor-import': ban },
+                }),
+            ]
         }),
         // Hermetic dev, everywhere in the app.
         at('next-font', { files: files(''), plugins: sssb, rules: { 'sssb/no-next-font-google': 'error' } }),

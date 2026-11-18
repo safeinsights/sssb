@@ -370,8 +370,10 @@ stopped using the raw client) is still yours to delete. Every other module stays
 file when it loads its config, so restart your editor's ESLint server after you edit it.
 
 **A vendor SDK your app owns an adapter for** (`docs/recipes/app-owned-adapter.md`) is added to the vendor ban by
-your app, not by editing SSSB's list: pass it to the preset, `sssb.configs.app({ root, vendors: ['stripe',
-'stripe/*'] })`, in the same gitignore-style patterns SSSB's own list uses. The option only ever adds to SSSB's list.
+your app, not by editing SSSB's list: name it in your app's `package.json`, `"sssb": { "vendors": ["stripe",
+"stripe/*"] }`, in the gitignore-style patterns SSSB's own list uses. The preset reads it, and so does
+`checkFences`, which compares the vendor rules' options with it exactly. A pattern that starts with `!` is refused:
+your list adds to SSSB's and cannot take a vendor off it.
 
 **Every fence is a rule with an id of its own**, so a `no-restricted-imports` or `no-restricted-syntax` block of
 your own, after the preset, adds your bans without replacing SSSB's. What can still switch a fence off (turning an

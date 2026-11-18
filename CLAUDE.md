@@ -72,7 +72,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   tests), so the app's registry and fakes cannot read it; reading the run mode in an app's real adapters;
   a static import of an app's `adapters/real` anywhere in the app outside `real/` itself; and any import of
   `real/` from a fake. That the registry uses `isSimulated` is convention: lint cannot follow a value. An
-  app-owned adapter's SDK is added to the ban by the app (`configs.app({ root, vendors })`), never to SSSB's list.
+  app-owned adapter's SDK is added to the ban by the app, in its own `package.json` (`"sssb": { "vendors": [...] }`),
+  never to SSSB's list.
 - **The lint fences are `@sssb/eslint-plugin`** (`packages/eslint-plugin`, ADR-0014 P6): ONE plugin object
   with every `sssb/*` rule, internal ones included. **Every fence is a rule with an id of its own**, never a
   `no-restricted-imports` or `no-restricted-syntax` setting, which a later config block REPLACES for the files it

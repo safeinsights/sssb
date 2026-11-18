@@ -898,9 +898,10 @@ fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are t
   fence's and core's declaration halves moved as well (`sssb/no-app-import`, `sssb/no-framework-import-in-core`), so
   `eslint.config.mjs` sets neither `no-restricted-imports` nor `no-restricted-syntax`. `react/jsx-no-literals` is
   `sssb/no-jsx-literals`, react's rule with SSSB's options fixed.
-- **`configs.app({ root, vendors })`** lets an app add its own adapter's SDK to the vendor ban, which part 4 did not
-  provide for: the recipe for an app-owned adapter told the adopter to edit `vendorSdkPattern`, which now ships in
-  the plugin. The option only adds.
+- **An app adds its own adapters' SDKs to the vendor ban in its `package.json`** (`"sssb": { "vendors": [...] }`),
+  which part 4 did not provide for: the recipe for an app-owned adapter told the adopter to edit `vendorSdkPattern`,
+  which now ships in the plugin. A file, not a preset option, so `sssb check-fences` reads the same list; a leading
+  `!` is refused.
 - **`sssb check-fences` compares, and probes.** The comparison is the half part 3 did not name: for every source file
   in the app, every `sssb/*` rule the preset alone enables at `error` must be enabled at `error` with the same options
   through the app's config (`calculateConfigForFile` on both). That is what sees a later block narrowing a fence to

@@ -3,21 +3,24 @@
 // itself, through the app's real config, four questions:
 //
 //  1. For every source file the app has, is every sssb/* rule the preset enables there still enabled, at `error`,
-//     with the preset's options? It compares `calculateConfigForFile` through the app's config with the same call
-//     through the preset alone. A later block that turns a rule off or down, a later `ignores` that drops the file,
-//     a global ignore, a nested config file that takes over a directory: each shows up here as a file the preset
-//     fences and the app's config does not.
-//  2. Does every fence still REPORT? The probes (./probes.js) are linted as virtual files at paths in the app, so a
-//     rule that is on but cannot fire (another parser, another `sssb` plugin, a processor) shows up here.
+//     with the preset's options, under the preset's parser, processor and language? It compares
+//     `calculateConfigForFile` through the app's config with the same call through the preset alone. A later block
+//     that turns a rule off or down, swaps the app's vendor list, adds a processor or a parser for one directory, a
+//     later `ignores`, a global ignore, a nested config file that takes over a directory: each shows up here.
+//  2. Does every fence still REPORT? The probes (./probes.js) are linted as virtual files at paths in the app.
 //  3. Does each `lint-exceptions.mjs` entry exempt exactly the file it names? The named file must pass the tenancy
 //     ban and a sibling beside it must not.
-//  4. Does any source file switch a fence off inline? An `eslint-disable` naming an sssb/* rule, an inline
-//     `/* eslint sssb/… */` config, or a disable that names no rule at all (which disables every rule) is reported:
-//     an app's exceptions belong in lint-exceptions.mjs, where they are named and reasoned.
+//  4. Does an inline comment hide a fence's finding? The app's files are linted twice through its config, once as
+//     they are and once with inline configuration off, and ESLint itself reads every directive: a finding an
+//     `eslint-disable` suppressed (one naming the fence, or naming no rule), or one only the second run reports (an
+//     inline `/* eslint sssb/…: off */`), is reported. An app's exceptions belong in lint-exceptions.mjs, named and
+//     reasoned. A directive over code that breaks no fence hides nothing yet, and ESLint reports it as unused.
 //
-// What it cannot see: flags on the app's lint command (`--rule`, `--config`, `--no-config-lookup`), and a parse-time
-// failure that only typed linting hits (a probe file outside the app's TypeScript project) is reported as one.
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
+// What it cannot see: flags on the app's lint command (`--rule`, `--config`, `--no-config-lookup`); a config that
+// behaves differently when it detects which tool loaded it (it is code); a directory ESLint does not enter (a
+// symlinked one, which is reported instead). Typed linting (parserOptions.project or projectService) cannot parse the
+// probe files, which are not in the app's TypeScript project, and is reported as such.
+import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -27,16 +30,22 @@ import plugin from './index.js'
 import { EXCEPTION_PROBE_CODE, PROBE, PROBES } from './probes.js'
 
 const LINTED = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
-// Never walked: where a package manager, git or a build put files nobody writes by hand.
-const SKIPPED_DIRS = new Set(['node_modules', '.git', '.next', '.data', '.turbo', 'dist-demo', 'coverage'])
+// Never walked: where a package manager or git put files, and what the preset itself ignores. Anything else is walked,
+// and the preset's own ignores (isPathIgnored) decide.
+const SKIPPED_DIRS = new Set(['node_modules', '.git', '.next', '.data', 'dist-demo', 'coverage'])
 const SEVERITY = { off: 0, warn: 1, error: 2 }
 const severityOf = (entry) => {
     const level = Array.isArray(entry) ? entry[0] : entry
     return typeof level === 'number' ? level : (SEVERITY[level] ?? 0)
 }
 const optionsOf = (entry) => (Array.isArray(entry) ? entry.slice(1) : [])
-// Rules whose options can only ADD to what they fence (the app's own vendors): any options are a tightening.
-const ADDITIVE_OPTIONS = new Set(['sssb/no-vendor-import', 'sssb/no-dynamic-vendor-import'])
+// What parses and pre-processes a file: a later block's parser or processor can blank a file or drop a fence's findings.
+const nameOf = (thing) =>
+    thing === undefined
+        ? 'none'
+        : typeof thing === 'string'
+          ? thing
+          : (thing.meta?.name ?? thing.name ?? 'an unnamed one') + (thing.meta?.version ? `@${thing.meta.version}` : '')
 
 /**
  * ESLint as the app's directory finds it: the copy the app's lint script runs. WALKED up the app's `node_modules`
@@ -53,31 +62,30 @@ async function eslintOf(appDir) {
     return /** @type {typeof import('eslint').ESLint} */ ((await import(pathToFileURL(resolved).href)).ESLint)
 }
 
-function* sourceFiles(dir) {
+/**
+ * Every file ESLint would lint under `dir`, a symlinked file included (ESLint lints one); `linkedDirs` collects the
+ * symlinked directories, which ESLint does not enter, so a fence never sees their files.
+ * @param {string} dir
+ * @param {string[]} linkedDirs
+ * @returns {Generator<string>}
+ */
+function* sourceFiles(dir, linkedDirs) {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
         if (entry.isDirectory()) {
-            if (!SKIPPED_DIRS.has(entry.name)) yield* sourceFiles(join(dir, entry.name))
-        } else if (entry.isFile() && LINTED.has(extname(entry.name)) && !entry.name.endsWith('.d.ts')) {
-            yield join(dir, entry.name)
+            if (!SKIPPED_DIRS.has(entry.name)) yield* sourceFiles(full, linkedDirs)
+        } else if (entry.isSymbolicLink()) {
+            const target = existsSync(full) ? statSync(full) : undefined
+            if (target?.isDirectory()) linkedDirs.push(full)
+            else if (target?.isFile() && LINTED.has(extname(entry.name))) yield full
+        } else if (entry.isFile() && LINTED.has(extname(entry.name))) {
+            yield full
         }
     }
 }
 
-// A directive comment that switches an sssb/* rule off, configures one inline, or disables every rule.
-const DISABLE = /\/[*/]\s*eslint-disable(?:-next-line|-line)?\b([^\n]*?)(?:\*\/|$)/gm
-const INLINE_CONFIG = /\/\*\s*eslint\s+([^*]*?)\*\//g
-function inlineSwitches(text) {
-    const found = []
-    for (const [comment, rest] of text.matchAll(DISABLE)) {
-        const ruleList = rest.split('--')[0].trim()
-        if (ruleList === '') found.push(`${comment.trim()} (names no rule, so it disables every fence too)`)
-        else if (/(^|[\s,])sssb\//.test(ruleList)) found.push(comment.trim())
-    }
-    for (const [comment, body] of text.matchAll(INLINE_CONFIG)) {
-        if (/(^|[\s,])sssb\//.test(body)) found.push(comment.trim())
-    }
-    return found
-}
+const sssbOnly = (messages) => messages.filter((m) => m.ruleId?.startsWith('sssb/'))
+const where = (m) => `${m.ruleId}@${m.line}:${m.column}`
 
 /**
  * Probe an app's composed lint config. Resolves ESLint from the app's directory unless one is passed.
@@ -88,6 +96,7 @@ export async function checkFences({ appDir: given, ESLint: passed }) {
     const appDir = realpathSync(resolve(given))
     const ESLint = passed ?? (await eslintOf(appDir))
     const composed = new ESLint({ cwd: appDir })
+    const noInlineConfig = new ESLint({ cwd: appDir, allowInlineConfig: false })
     const preset = new ESLint({
         cwd: appDir,
         overrideConfigFile: true,
@@ -97,33 +106,71 @@ export async function checkFences({ appDir: given, ESLint: passed }) {
     const at = (file) => relative(appDir, file)
 
     // 1. the effective config, file by file
-    let files = 0
-    for (const file of sourceFiles(appDir)) {
+    const linkedDirs = []
+    let unloadable = false
+    const walked = []
+    for (const file of sourceFiles(appDir, linkedDirs)) {
         if (await preset.isPathIgnored(file)) continue
-        files += 1
-        const wanted = (await preset.calculateConfigForFile(file))?.rules ?? {}
-        let actual
+        walked.push(file)
+        const wantedConfig = await preset.calculateConfigForFile(file)
+        const wanted = wantedConfig?.rules ?? {}
+        let actualConfig
         try {
-            actual = (await composed.calculateConfigForFile(file))?.rules
+            actualConfig = await composed.calculateConfigForFile(file)
         } catch (error) {
             problems.push(`${at(file)}: the app's config does not load for it (${String(error).split('\n')[0]})`)
+            unloadable = true
             continue
         }
+        const actual = actualConfig?.rules
         if (!actual) {
             problems.push(`${at(file)}: the app's config ignores it, and the preset lints it`)
             continue
+        }
+        for (const [what, of] of /** @type {const} */ ([
+            ['parser', (c) => c?.languageOptions?.parser],
+            ['processor', (c) => c?.processor],
+            ['language', (c) => c?.language],
+        ])) {
+            const [want, got] = [nameOf(of(wantedConfig)), nameOf(of(actualConfig))]
+            if (want !== got) problems.push(`${at(file)}: its ${what} is ${got}, and the preset's is ${want}`)
         }
         for (const [rule, entry] of Object.entries(wanted)) {
             if (!rule.startsWith('sssb/') || severityOf(entry) !== 2) continue
             const got = actual[rule]
             if (severityOf(got) !== 2) {
                 problems.push(`${at(file)}: ${rule} is ${got === undefined ? 'not enabled' : 'switched off or down'}`)
-            } else if (!ADDITIVE_OPTIONS.has(rule) && !isDeepStrictEqual(optionsOf(got), optionsOf(entry))) {
+            } else if (!isDeepStrictEqual(optionsOf(got), optionsOf(entry))) {
                 problems.push(`${at(file)}: ${rule} runs with options the preset does not set`)
             }
         }
-        for (const found of inlineSwitches(readFileSync(file, 'utf8'))) {
-            problems.push(`${at(file)}: ${found} — an app's exceptions belong in lint-exceptions.mjs`)
+    }
+    for (const dir of linkedDirs) {
+        problems.push(`${at(dir)}: a symlinked directory, which ESLint does not enter, so no fence sees its files`)
+    }
+    // A config that does not load fails every lint the steps below would run: that one problem is the answer.
+    if (unloadable) return { problems, files: walked.length, probes: 0 }
+
+    // 4. inline directives, as ESLint itself reads them
+    if (walked.length > 0) {
+        const asWritten = await composed.lintFiles(walked)
+        const withoutInline = new Map((await noInlineConfig.lintFiles(walked)).map((r) => [r.filePath, r]))
+        for (const result of asWritten) {
+            for (const m of sssbOnly(result.suppressedMessages ?? [])) {
+                problems.push(
+                    `${at(result.filePath)}:${m.line}: an eslint-disable comment hides ${m.ruleId}; an app's exceptions belong in lint-exceptions.mjs`,
+                )
+            }
+            const seen = new Set(
+                [...sssbOnly(result.messages), ...sssbOnly(result.suppressedMessages ?? [])].map(where),
+            )
+            for (const m of sssbOnly(withoutInline.get(result.filePath)?.messages ?? [])) {
+                if (!seen.has(where(m))) {
+                    problems.push(
+                        `${at(result.filePath)}:${m.line}: an inline /* eslint */ comment switches ${m.ruleId} off there`,
+                    )
+                }
+            }
         }
     }
 
@@ -132,7 +179,11 @@ export async function checkFences({ appDir: given, ESLint: passed }) {
         const [result] = await composed.lintText(code, { filePath: join(appDir, path) })
         const unlinted = result.messages.filter((m) => !m.ruleId)
         if (unlinted.length > 0) {
-            problems.push(`${path}: not linted as an app file would be (${unlinted[0].message.split('\n')[0]})`)
+            const why = unlinted[0].message.split('\n')[0]
+            const typed = /project service|parserOptions\.project|TSConfig/i.test(unlinted[0].message)
+                ? ': typed linting cannot parse a file outside the TypeScript project, so check-fences needs the probes untyped'
+                : ''
+            problems.push(`${path}: not linted as an app file would be (${why})${typed}`)
             return undefined
         }
         return new Set(result.messages.map((m) => m.ruleId))
@@ -164,5 +215,5 @@ export async function checkFences({ appDir: given, ESLint: passed }) {
         }
     }
 
-    return { problems, files, probes: PROBES.length + exceptionProbes }
+    return { problems, files: walked.length, probes: PROBES.length + exceptionProbes }
 }
