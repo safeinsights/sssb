@@ -27,7 +27,8 @@ import type { CheckImpl } from './types'
  * check's tests (`setDataRoot`), never `vi.stubEnv`, which an adopter's `unstubEnvs: true` undoes before every test,
  * and every test that reaches the adapters first proves the scratch dir is still in effect (`inScratchWorld`),
  * failing rather than replaying anywhere else. Its teardown closes the fake database the replay opened there before
- * deleting the dir, so a file run after it without isolation opens its own.
+ * deleting the dir, so a file run after it without isolation opens its own, and before any of that waits for a replay
+ * that outlived its test's timeout to stop (see `demoPresets`), so it never runs on into the developer's world.
  *
  * THE MOCKS. A test file's `vi.mock` is hoisted above its imports; a library's is not, so `setup` registers them
  * with `vi.doMock` while the suite is collected, before any test runs, and every module that reaches them (the
@@ -93,45 +94,99 @@ async function registries() {
     return { presets, definitions: composePresetOperations(appPresetOperations) }
 }
 
-/** The check's scratch data dir while its tests run; undefined outside them. */
-let scratch: string | undefined
+/** One file's scratch world: the dir, the APP_DATA_DIR it replaced, and the replay running in it, if one is. */
+interface ScratchWorld {
+    dir: string
+    previous: string | undefined
+    /** Set when the file's teardown begins: a replay still running stops before its next preset. */
+    stopping: boolean
+    /** The replay test's body, settled or not, which runs on past a timeout of its test (Vitest cannot stop it). */
+    replay?: Promise<void>
+}
 
-/** Fails loudly, before any adapter is touched, when the fake adapters would not write into the scratch dir. */
-function inScratchWorld(): void {
+/** The check's scratch world while its tests run; undefined outside them. */
+let world: ScratchWorld | undefined
+
+/** The scratch world; fails loudly, before any adapter is touched, when the fake adapters would not write into it. */
+function inScratchWorld(): ScratchWorld {
     const root = dataRoot()
-    if (scratch === undefined || root !== scratch) {
+    if (world === undefined || root !== world.dir) {
         throw new Error(
-            `demo-presets: the fake adapters' data dir is ${root}, not the check's scratch dir (${scratch ?? 'not made'}), ` +
+            `demo-presets: the fake adapters' data dir is ${root}, not the check's scratch dir (${world?.dir ?? 'not made'}), ` +
                 'so a replay would reset and reseed that world. Something reassigned APP_DATA_DIR after the check set it.',
         )
     }
+    return world
 }
 
-export const demoPresets: CheckImpl = {
+const REPLAY_TEST =
+    'replay on the server host: every operation performed, every invite pending, every hold set, the viewpoint signed in'
+
+/** Whether `promise` settles within `ms`. */
+async function settlesWithin(promise: Promise<void>, ms: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), ms)))
+    try {
+        return await Promise.race([promise.then(() => true), timedOut])
+    } finally {
+        clearTimeout(timer)
+    }
+}
+
+/**
+ * Leaves `own`: closes the database the replay opened there, points the adapters back, then deletes the dir. In this
+ * order, in one function: without isolation the next file shares this one's globals, and a client left cached on
+ * `globalThis` would serve it this world; and tmp-dir's own cleanup belongs to the first file that loaded it, so the
+ * check removes its directory itself. `onlyIfStillOurs` (a teardown deferred past the file) closes the database only
+ * while the adapters still point here: by then a later file may have opened its own.
+ */
+async function leaveWorld(own: ScratchWorld, onlyIfStillOurs: boolean): Promise<void> {
+    try {
+        if (!onlyIfStillOurs || dataRoot() === own.dir) await (await import('../../adapters/fake/db')).closeFakeDb()
+    } finally {
+        if (dataRoot() === own.dir) setDataRoot(own.previous)
+        removeTestTmpDir(own.dir)
+        if (world === own) world = undefined
+    }
+}
+
+/**
+ * THE REPLAY OUTLIVING ITS TEST. A test that times out fails, but its body runs on: Vitest cannot stop a promise. A
+ * replay still running when the file tears down would, once APP_DATA_DIR is restored, reopen the database and write
+ * its files under the working directory's `.data`, the developer's world. So the teardown first marks the world as
+ * stopping (the replay goes no further than the preset it is in) and waits for the replay to settle, up to
+ * `replayStopWaitMs`. If it still has not, the teardown fails, saying so, and leaves APP_DATA_DIR on the scratch dir
+ * for the replay to finish in; the dir is closed and removed once it settles. Tests of the check set the wait (and
+ * the replay's timeout, in `timeouts`) before registering the suite; nothing an adopter configures reaches either.
+ */
+export const demoPresets: CheckImpl & { replayStopWaitMs: number } = {
+    replayStopWaitMs: 30_000,
     setup: () => {
         mockServerOnlyWorld()
-        let previous: string | undefined
+        const stopWaitMs = demoPresets.replayStopWaitMs
         beforeAll(() => {
-            scratch = makeTestTmpDir('app-demo-presets-seam-')
-            previous = setDataRoot(scratch)
+            const dir = makeTestTmpDir('app-demo-presets-seam-')
+            world = { dir, previous: setDataRoot(dir), stopping: false }
         })
-        // ONE hook, in this order whatever `sequence.hooks` says: close the database the replay opened in the
-        // scratch world, point the adapters back, then delete the world. Without isolation the next file shares
-        // this one's globals, and a client left cached on `globalThis` would serve it this world; and tmp-dir's own
-        // cleanup belongs to the first file that loaded it, so the check removes its directory itself.
+        // ONE hook, so the order holds whatever `sequence.hooks` says (see `leaveWorld`).
         afterAll(async () => {
-            try {
-                await (await import('../../adapters/fake/db')).closeFakeDb()
-            } finally {
-                if (scratch !== undefined && dataRoot() === scratch) setDataRoot(previous)
-                if (scratch !== undefined) removeTestTmpDir(scratch)
-                scratch = undefined
+            const own = world
+            if (own === undefined) return
+            own.stopping = true
+            if (own.replay !== undefined && !(await settlesWithin(own.replay, stopWaitMs))) {
+                // Its failure has nowhere to be reported by then; the error below has already said what is left behind.
+                void own.replay.then(() => leaveWorld(own, true)).catch(() => undefined)
+                throw new Error(
+                    `demo-presets: the replay was still running ${stopWaitMs / 1000} s after its test ended (it ` +
+                        `times out at ${(demoPresets.timeouts?.[REPLAY_TEST] ?? 0) / 1000} s), so APP_DATA_DIR ` +
+                        `stays on the check's scratch dir (${own.dir}) until it stops, and the dir is removed ` +
+                        'then: pointing the adapters back now would let it write into the developer world.',
+                )
             }
-        })
+            await leaveWorld(own, false)
+        }, stopWaitMs + 30_000)
     },
-    timeouts: {
-        'replay on the server host: every operation performed, every invite pending, every hold set, the viewpoint signed in': 60_000,
-    },
+    timeouts: { [REPLAY_TEST]: 60_000 },
     tests: {
         'describe only worlds the product could reach': async () => {
             const { presets, definitions } = await registries()
@@ -186,41 +241,52 @@ export const demoPresets: CheckImpl = {
             }
             expect(missing).toEqual([])
         },
-        'replay on the server host: every operation performed, every invite pending, every hold set, the viewpoint signed in':
-            async () => {
-                inScratchWorld()
-                await mockedRegistry()
-                const { presets } = await registries()
-                const { expandPreset } = await import('../../core/presets')
-                const { applyDemoPreset } = await import('../../server-lib/demo-presets')
-                const { fakeAuth } = await import('../../adapters/fake/auth')
-                const { readActorHolds } = await import('../../adapters/fake/simulator')
-                for (const preset of presets) {
-                    // What replays is the EXPANDED preset (`extends` chain flattened): a child's inherited invites
-                    // and viewpoint are as much its world as its own.
-                    const expanded = expandPreset(preset.id, presets)
-                    if (!expanded) throw new Error(`${preset.id} does not expand (unknown base or a cycle)`)
-                    inScratchWorld()
-                    const result = await applyDemoPreset(preset.id, { baseUrl: 'http://localhost:3000/' })
-                    expect(result, preset.id).toEqual({ signedIn: expanded.viewpoint !== undefined })
-                    // The replay reset the world first, so the hold file is exactly the script's last word per actor.
-                    const expectedHolds: Record<string, boolean> = {}
-                    for (const operation of expanded.operations) {
-                        if (operation.op === 'actor.hold') expectedHolds[operation.actor] = operation.held
-                    }
-                    expect(readActorHolds(), `${preset.id}: actor holds`).toEqual(expectedHolds)
-                    for (const operation of expanded.operations) {
-                        if (operation.op !== 'invite') continue
-                        const members = await fakeAuth.listMembers(operation.org)
-                        expect(
-                            members.some((member) => member.status === 'invited' && member.email === operation.email),
-                            `${preset.id}: invite to ${operation.email}`,
-                        ).toBe(true)
-                    }
-                    if (expanded.viewpoint !== undefined) {
-                        expect((await fakeAuth.getCurrentUser())?.id, preset.id).toBe(expanded.viewpoint)
-                    }
-                }
-            },
+        [REPLAY_TEST]: async () => {
+            const own = inScratchWorld()
+            const replay = replayEveryPreset(own)
+            own.replay = replay.then(
+                () => undefined,
+                () => undefined,
+            )
+            await replay
+        },
     },
+}
+
+/** The replay test's body: every registered preset, replayed in `own` and held to its expanded script. */
+async function replayEveryPreset(own: ScratchWorld): Promise<void> {
+    await mockedRegistry()
+    const { presets } = await registries()
+    const { expandPreset } = await import('../../core/presets')
+    const { applyDemoPreset } = await import('../../server-lib/demo-presets')
+    const { fakeAuth } = await import('../../adapters/fake/auth')
+    const { readActorHolds } = await import('../../adapters/fake/simulator')
+    for (const preset of presets) {
+        // What replays is the EXPANDED preset (`extends` chain flattened): a child's inherited invites
+        // and viewpoint are as much its world as its own.
+        const expanded = expandPreset(preset.id, presets)
+        if (!expanded) throw new Error(`${preset.id} does not expand (unknown base or a cycle)`)
+        if (own.stopping)
+            throw new Error(`demo-presets: the file is tearing down, so the replay stops before ${preset.id}`)
+        inScratchWorld()
+        const result = await applyDemoPreset(preset.id, { baseUrl: 'http://localhost:3000/' })
+        expect(result, preset.id).toEqual({ signedIn: expanded.viewpoint !== undefined })
+        // The replay reset the world first, so the hold file is exactly the script's last word per actor.
+        const expectedHolds: Record<string, boolean> = {}
+        for (const operation of expanded.operations) {
+            if (operation.op === 'actor.hold') expectedHolds[operation.actor] = operation.held
+        }
+        expect(readActorHolds(), `${preset.id}: actor holds`).toEqual(expectedHolds)
+        for (const operation of expanded.operations) {
+            if (operation.op !== 'invite') continue
+            const members = await fakeAuth.listMembers(operation.org)
+            expect(
+                members.some((member) => member.status === 'invited' && member.email === operation.email),
+                `${preset.id}: invite to ${operation.email}`,
+            ).toBe(true)
+        }
+        if (expanded.viewpoint !== undefined) {
+            expect((await fakeAuth.getCurrentUser())?.id, preset.id).toBe(expanded.viewpoint)
+        }
+    }
 }

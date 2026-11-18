@@ -291,6 +291,61 @@ describe('the demo-presets replay, in a real run', () => {
         CHILD_TIMEOUT,
     )
 
+    /**
+     * A test timing out does not stop its body: the replay runs on after its test has failed, through the file's
+     * teardown, for as long as the worker lives. The probe shortens that one test's timeout (through the check's own
+     * `timeouts`, which the suite reads when it registers the test) and parks the first preset's first operation
+     * (an invite, which writes a file under the data root) for `parkMs`, so the timeout fires while the replay is
+     * inside it, and a second file keeps the worker alive afterwards (one worker, no isolation, the probe file first:
+     * Vitest runs the larger file first).
+     */
+    const timedOutReplay = (parkMs: number, stopWaitMs?: number) =>
+        `import { demoPresets } from ${kit('testing/conformance/demo-presets.ts')}\n` +
+        `import { fakeAuth } from ${kit('adapters/fake/auth.ts')}\n` +
+        `const replay = Object.keys(demoPresets.timeouts)[0]\n` +
+        `demoPresets.timeouts[replay] = 300\n` +
+        (stopWaitMs === undefined ? '' : `demoPresets.replayStopWaitMs = ${stopWaitMs}\n`) +
+        `const createInvite = fakeAuth.createInvite\n` +
+        `fakeAuth.createInvite = async (...args) => {\n` +
+        `    await new Promise((done) => setTimeout(done, ${parkMs}))\n` +
+        `    return createInvite.apply(fakeAuth, args)\n` +
+        `}\n${ONLY_DEMO_PRESETS}\n//${'x'.repeat(4000)}\n`
+    const KEEP_WORKER_ALIVE = `import { it } from 'vitest'
+it('keeps the worker alive while a replay could still be running', () => new Promise((done) => setTimeout(done, 6000)), 20000)
+`
+    const ONE_WORKER = { isolate: false, maxWorkers: 1, fileParallelism: false }
+
+    it(
+        "when its test times out mid-replay: tears down only after the replay stops, so the working directory's .data stays untouched",
+        async () => {
+            const probe = project({ 'a.test.ts': timedOutReplay(1500), 'b.test.ts': KEEP_WORKER_ALIVE }, ONE_WORKER)
+            const { status, output } = await run(probe, ['--reporter=verbose', '--sequence.shuffle=false'])
+            expect(status, output).not.toBe(0)
+            expect(output).toMatch(/replay on the server host.*\n.*timed out in 300ms/)
+            expect(output).toMatch(/✓ b\.test\.ts > keeps the worker alive/)
+            expect(readdirSync(probe.data), output).toEqual(['sentinel'])
+            expect(leftovers(probe), output).toEqual([])
+        },
+        CHILD_TIMEOUT,
+    )
+
+    it(
+        'when the replay outlasts the wait too: fails the teardown, keeps the replay in its scratch dir, and removes it once the replay stops',
+        async () => {
+            const probe = project(
+                { 'a.test.ts': timedOutReplay(2500, 500), 'b.test.ts': KEEP_WORKER_ALIVE },
+                ONE_WORKER,
+            )
+            const { status, output } = await run(probe, ['--reporter=verbose', '--sequence.shuffle=false'])
+            expect(status, output).not.toBe(0)
+            expect(output).toMatch(/demo-presets: the replay was still running 0\.5 s after its test ended/)
+            expect(output).toMatch(/✓ b\.test\.ts > keeps the worker alive/)
+            expect(readdirSync(probe.data), output).toEqual(['sentinel'])
+            expect(leftovers(probe), output).toEqual([])
+        },
+        CHILD_TIMEOUT,
+    )
+
     it(
         'fails, touching nothing, when something else takes APP_DATA_DIR away from it between tests',
         async () => {

@@ -729,6 +729,63 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
     )
 
     it(
+        "reports, and does not fail, the bare `vitest` from the app's directory when the root's is the main run and it would not run the suite",
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-app-dir-bare-', 'packed', ['web'])
+            // Root-relative globs: from the root they reach the app's files; a bare `vitest` from apps/web (the app's
+            // own `vitest run` script, which a `pnpm -r test` CI runs) walks up to this config, globs from apps/web,
+            // finds nothing, and passes on `passWithNoTests`.
+            write(
+                path.join(ws, 'vitest.config.mjs'),
+                "export default { test: { include: ['apps/*/src/**/*.test.ts'], passWithNoTests: true } }\n",
+            )
+            const web = path.join(ws, 'apps', 'web')
+            write(
+                path.join(web, 'setup.ts'),
+                "import { writeFileSync } from 'node:fs'\nexport default function () { writeFileSync(new URL('./GLOBAL_SETUP_RAN', import.meta.url), 'ran') }\n",
+            )
+            const { code, out } = await doctor(ws, 'apps/web')
+            expect(out).toMatch(
+                /^ok +apps\/web: the conformance suite would run: all 3 tests listed \(vitest list from the workspace root --config vitest\.config\.mjs\)$/m,
+            )
+            expect(out).toMatch(
+                /^report +apps\/web: a bare `vitest` from apps\/web loads vitest\.config\.mjs and runs none of its src\/ test files, so not src\/sssb\.conformance\.test\.ts: if CI runs it there \(the app's own scripts, `pnpm -r`\) instead of vitest\.config\.mjs from the root, the conformance checks do not run$/m,
+            )
+            expect(code, out).toBe(0)
+
+            // That run is only reported: when it reaches the app's tests/contract/ files (its second glob does, from
+            // apps/web), it does not join the contract configs, which doctor lists in full.
+            write(
+                path.join(ws, 'vitest.config.mjs'),
+                "export default { test: { include: ['apps/*/src/**/*.test.ts', 'tests/contract/**/*.test.ts'] } }\n",
+            )
+            const contract = await doctor(ws, 'apps/web')
+            expect(contract.out).toMatch(
+                /^report +apps\/web: a bare `vitest` from apps\/web loads vitest\.config\.mjs/m,
+            )
+            expect(contract.out).not.toMatch(/the contract runner's checks would run: .*\(vitest list from apps\/web/)
+            expect(contract.code, contract.out).toBe(0)
+
+            // The same, when it runs some of the app's src/ files but not the suite (a globalSetup it must not run).
+            write(
+                path.join(web, 'vitest.config.mjs'),
+                "export default { test: { include: ['src/thing.test.ts'], globalSetup: ['./setup.ts'] } }\n",
+            )
+            write(
+                path.join(ws, 'vitest.config.mjs'),
+                "export default { test: { include: ['apps/*/src/**/*.test.ts'] } }\n",
+            )
+            const partial = await doctor(ws, 'apps/web')
+            expect(partial.out).toMatch(
+                /^report +apps\/web: a bare `vitest` from apps\/web loads apps\/web\/vitest\.config\.mjs and runs 1 of its src\/ test files but not src\/sssb\.conformance\.test\.ts: if CI runs it there/m,
+            )
+            expect(partial.code, partial.out).toBe(0)
+            expect(existsSync(path.join(web, 'GLOBAL_SETUP_RAN'))).toBe(false)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
         "reports, never runs in full, other configs that run some of the app's src/ tests (browser, integration with a globalSetup)",
         async () => {
             const ws = doctorWorkspace('sssb-doctor-e2e-other-configs-', 'packed', ['web'])

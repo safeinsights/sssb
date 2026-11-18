@@ -107,4 +107,26 @@ describe('seam-map, through a seam package', () => {
         const appDir = appWithSeam({ './identity': ['../identity.ts', './identity.ts'] })
         expect(run(appDir)).not.toThrow()
     })
+
+    // Each expectation below is what Node 24's own resolver gives for the same map (`import.meta.resolve`, checked by
+    // hand against fixture packages when these were written).
+    it('goes past a null item in a fallback array, as Node does', () => {
+        const appDir = appWithSeam({ './identity': [null, './identity.ts'] })
+        expect(run(appDir)).not.toThrow()
+    })
+
+    it('reports the invalid item when a fallback array ends on one after a null, as Node does', () => {
+        const appDir = appWithSeam({ './identity': [null, '../identity.ts'] })
+        expect(run(appDir)).toThrow(/maps \.\/identity to \.\.\/identity\.ts, which Node refuses/)
+    })
+
+    it('falls through a condition whose array matches nothing, to the next condition, as Node does', () => {
+        const appDir = appWithSeam({ './seed': { import: [{ browser: './browser-seed.ts' }], default: './seed.ts' } })
+        expect(run(appDir)).not.toThrow()
+    })
+
+    it('matches `module-sync`, which Node 24 matches by default', () => {
+        const appDir = appWithSeam({ './jobs': { 'module-sync': './missing.ts', default: './jobs.ts' } })
+        expect(run(appDir)).toThrow(/maps \.\/jobs to \.\/missing\.ts, which is not a file/)
+    })
 })

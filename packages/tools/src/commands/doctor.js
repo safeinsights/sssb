@@ -23,7 +23,8 @@
 //
 // It REPORTS, without failing: every other Vitest config (`vitest*.config.*` at the root or in an app) that runs some of
 // an app's `src/` tests but not its suite, or its `tests/contract/` files without listing every contract check, or that
-// doctor cannot list (any of them CI might run instead); each opt-out with its reason; the flags and file filters the root's and the apps'
+// doctor cannot list (any of them CI might run instead); a bare `vitest` from the app's directory, when the root's is
+// the main run, that would not run the app's suite (even one that runs none of its tests); each opt-out with its reason; the flags and file filters the root's and the apps'
 // package.json scripts pass to vitest (doctor proves what each configuration would run, never what a CI step's own
 // command line adds); which script runs each app's contract config (doctor lists the contract checks, it never runs
 // them); `dedupePeerDependents: false` missing from pnpm-workspace.yaml (advice); framework cutover rows the
@@ -75,8 +76,9 @@ const RUNNERS = /** @type {const} */ (['unit', 'contract'])
  *   any of its `src/` test files
  * @property {VitestRun[]} tried the bare runs tried for it, in order
  * @property {string[]} mainErrors a bare run doctor could not list before it found the main one
- * @property {{ run: VitestRun, files: number }[]} partial other configs that run some of the app's `src/` test files
- *   and not its `src/sssb.conformance.test.ts`
+ * @property {{ run: VitestRun, files: number, bare: boolean }[]} partial other configs that run some of the app's
+ *   `src/` test files and not its `src/sssb.conformance.test.ts`, and the bare runs past the main one (`bare`) that do
+ *   not run it, even running none of those files
  * @property {Selected[]} contract every config that runs any of the app's `tests/contract/` files
  * @property {{ run: VitestRun, error: string }[]} unlisted other configs doctor could not list
  * @property {string[]} nested the workspace packages inside the app, whose files are not the app's
@@ -429,7 +431,9 @@ function listOnce(run, options, cache) {
  *     runs any of its `src/` test files, with the projects that run them selected. It must list every unit check. A
  *     bare run doctor cannot list stops the search (doctor cannot tell whether that one is the main run);
  *   - every OTHER config (root's and app's) that runs some of its `src/` test files but not its
- *     `src/sssb.conformance.test.ts`: reported, since CI might run it instead of the main one;
+ *     `src/sssb.conformance.test.ts`, and every bare run past the main one (the app directory's, when the root's is
+ *     main) that does not run that file, even one that runs none of them: reported, since CI might run it instead of
+ *     the main one;
  *   - every config (the main run's too) that runs any of its `tests/contract/` files: one of them must list every
  *     contract check (Vitest's defaults are no contract config);
  *   - every other config doctor cannot list: reported.
@@ -470,10 +474,23 @@ function planFor(root, app, nested, cache) {
 
     const main = plan.main?.run
     const tried = new Set(plan.tried.map(runKey))
+    // The bare runs past the main one (the root's was main: a bare `vitest` from the app's directory, as the app's own
+    // scripts and a `pnpm -r` run it). Each is held to the unit area like any other config, and reported even when it
+    // runs NONE of the app's src/ files: a config whose globs reach the app only from the root finds nothing there,
+    // and passes when it sets `passWithNoTests`. One that is not also a config file run from its own directory (the
+    // root's config, run from the app) is only reported: it never joins the contract configs, which are listed in full.
+    const untried = new Set(bare.filter((run) => !tried.has(runKey(run))).map(runKey))
+    const isConfig = (/** @type {VitestRun} */ run) => configs.some((r) => runKey(r) === runKey(run))
     const suite = path.join(app, 'src', 'sssb.conformance.test.ts')
-    const runs = [...configs, ...(main?.config && !configs.some((r) => runKey(r) === runKey(main)) ? [main] : [])]
+    const runs = [
+        ...configs,
+        ...(main?.config && !isConfig(main) ? [main] : []),
+        ...bare.filter((run) => untried.has(runKey(run)) && !isConfig(run)),
+    ]
     for (const run of runs) {
         const isMain = main !== undefined && runKey(run) === runKey(main)
+        const isBare = untried.has(runKey(run))
+        const reportOnly = isBare && !isConfig(run)
         const files = filesOf(run)
         if (!files.ok) {
             // A bare run tried for the main one already failed the unit check; any other is reported.
@@ -481,9 +498,9 @@ function planFor(root, app, nested, cache) {
             continue
         }
         const unit = inArea(files.listed, 'unit')
-        if (!isMain && unit.length > 0 && !unit.some((entry) => path.resolve(entry.file) === suite))
-            plan.partial.push({ run, files: new Set(unit.map((entry) => path.resolve(entry.file))).size })
-        const contract = inArea(files.listed, 'contract')
+        if (!isMain && (unit.length > 0 || isBare) && !unit.some((entry) => path.resolve(entry.file) === suite))
+            plan.partial.push({ run, files: new Set(unit.map((entry) => path.resolve(entry.file))).size, bare: isBare })
+        const contract = reportOnly ? [] : inArea(files.listed, 'contract')
         if (contract.length > 0) plan.contract.push({ run, projects: select(contract) })
     }
     return plan
@@ -562,13 +579,22 @@ function conformance(root, app, runner, plans, cache) {
             const c = check(plan.main)
             results.push(c.passes ? passed(c) : failed(c))
         }
-        for (const { run, files } of plan.partial)
+        for (const { run, files, bare } of plan.partial) {
+            const runs =
+                files === 0
+                    ? 'runs none of its src/ test files, so not src/sssb.conformance.test.ts'
+                    : `runs ${files} of its src/ test files but not src/sssb.conformance.test.ts`
             results.push({
                 status: 'report',
-                title:
-                    `${rel(app)}: ${configName(root, run)} runs ${files} of its src/ test files but not ` +
-                    `src/sssb.conformance.test.ts: if CI runs it instead of ${mainName}, the conformance checks do not run`,
+                title: bare
+                    ? `${rel(app)}: a bare \`vitest\` from ${rel(run.cwd)} loads ` +
+                      `${run.config ? path.relative(root, run.config) : "no config (Vitest's defaults)"} and ${runs}: ` +
+                      `if CI runs it there (the app's own scripts, \`pnpm -r\`) instead of ${mainName} from the root, ` +
+                      'the conformance checks do not run'
+                    : `${rel(app)}: ${configName(root, run)} ${runs}: if CI runs it instead of ${mainName}, the ` +
+                      'conformance checks do not run',
             })
+        }
         for (const { run, error } of plan.unlisted)
             results.push({
                 status: 'report',

@@ -24,17 +24,18 @@ const SEAM = '@sssb/app-config'
 type ExportsTarget = string | null | { [condition: string]: ExportsTarget } | ExportsTarget[]
 
 /**
- * The conditions matched, NODE'S OWN for an ES `import` of the seam (`node`, `import`, `default`): every tool that
- * imports it outside a bundler (Node, tsx, a migration script) matches exactly these, and a bundler matches them plus
- * its own (`module`, `browser`, `development`, ...), which belong to one environment and so cannot stand in for the
- * rest. `types` is never one: it resolves for the type checker only, and a target behind it loads nothing at run time.
+ * The conditions matched, NODE'S OWN for an ES `import` of the seam (`node`, `import`, `module-sync`, `default`;
+ * Node 22.12+ and 24 match `module-sync` by default): every tool that imports it outside a bundler (Node, tsx, a
+ * migration script) matches these, and a bundler matches its own (`module`, `browser`, `development`, ...), which
+ * belong to one environment and so cannot stand in for the rest. `types` is never one: it resolves for the type
+ * checker only, and a target behind it loads nothing at run time.
  */
-const CONDITIONS: ReadonlySet<string> = new Set(['node', 'import', 'default'])
+const CONDITIONS: ReadonlySet<string> = new Set(['node', 'import', 'module-sync', 'default'])
 
 /**
  * What resolving one target gives: a file (relative to the package), a target Node refuses (`invalid`, why; Node
- * throws ERR_INVALID_PACKAGE_TARGET), `null` for an explicit exclusion, which stops the search, or `undefined` for
- * "no condition matched", which the caller falls through.
+ * throws ERR_INVALID_PACKAGE_TARGET), `null` for an explicit exclusion, which stops a conditions object's search (an
+ * array goes on to its next item), or `undefined` for "no condition matched", which the caller falls through.
  */
 type Resolved = { file: string } | { target: string; invalid: string } | null | undefined
 
@@ -67,19 +68,21 @@ function stringTarget(target: string, match: string | undefined): Resolved {
 /**
  * A conditional export target, resolved as Node does (PACKAGE_TARGET_RESOLVE): an object's conditions in its OWN key
  * order, the first that matches and yields something winning, and one whose nested target matches no condition
- * falling through to the next; an array's items in order, an invalid or unmatched one falling through, the first
- * other result (a `null` included) winning, and the last invalid one reported when nothing else is left.
+ * falling through to the next; an array's items in order, an invalid, `null` or unmatched one falling through, the
+ * first file winning, and when none does, the last invalid-or-`null` item's result (an empty array is `null`, and
+ * one whose items all matched nothing is unmatched, so the condition holding it falls through too).
  */
 function resolveTarget(target: ExportsTarget | undefined, match: string | undefined): Resolved {
     if (typeof target === 'string') return stringTarget(target, match)
     if (target === null) return null
     if (target === undefined) return undefined
     if (Array.isArray(target)) {
-        let last: Resolved = null
+        if (target.length === 0) return null
+        let last: Resolved = undefined
         for (const item of target) {
             const resolved = resolveTarget(item, match)
             if (resolved === undefined) continue
-            if (resolved !== null && 'invalid' in resolved) {
+            if (resolved === null || 'invalid' in resolved) {
                 last = resolved
                 continue
             }
