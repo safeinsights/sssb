@@ -338,6 +338,11 @@ describe('a path into app code crosses the framework/app fence too', () => {
             ['a test the allowlist names back', '../i18n/namespaces.test', 0],
             ['shipped source', '../core/state-machine', 0],
             ['a shipped catalog', '../i18n/messages/en.json', 0],
+            ['a test, with a query', '../core/state-machine.test.ts?raw', 1],
+            ['a test, with a hash', '../core/state-machine.test#a', 1],
+            ['a sibling of a suite named back, by its own extension', '../i18n/namespaces.test.tsx', 1],
+            ['a suite named back, by its extension', '../i18n/namespaces.test.ts', 0],
+            ["the package's own manifest, which always ships", '../../package.json', 0],
         ] as const
         it.each(reaches)('from shipped source, %s', async (_what, to, expected) => {
             expect(fired(await lint(shipped, `import x from '${to}'\nexport { x }\n`), UNSHIPPED_PATH)).toBe(expected)
@@ -361,6 +366,16 @@ describe('a path into app code crosses the framework/app fence too', () => {
             expect(
                 fired(await lint(shipped, '/// <reference types="node" />\nexport const x = 1\n'), UNSHIPPED_PATH),
             ).toBe(0)
+        })
+        it.each([
+            ['a relative types=', '/// <reference types="../../test-fixture/app-config/seed" />'],
+            [
+                'path= after another attribute',
+                '/// <reference preserve="true" path="../../test-fixture/app-config/seed.ts" />',
+            ],
+            ['in capitals', '/// <REFERENCE PATH="../../test-fixture/app-config/seed.ts" />'],
+        ])('through %s', async (_form, reference) => {
+            expect(fired(await lint(shipped, `${reference}\nexport const x = 1\n`), UNSHIPPED_PATH)).toBe(1)
         })
     })
 

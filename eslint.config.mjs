@@ -719,19 +719,28 @@ const appCodeDirOfPath = (filename, specifier) => {
 // rule id; the two exemptions are named in the block that applies it.
 const KIT_DIR = 'packages/kit'
 const kitFiles = JSON.parse(readFileSync(join(import.meta.dirname, `${KIT_DIR}/package.json`), 'utf8')).files
-const withoutScriptExt = (file) => file.replace(/\.[cm]?[jt]sx?$/, '')
+const SCRIPT_EXT = /\.[cm]?[jt]sx?$/
 const reincludedKitFiles = new Set(
     kitFiles
         .filter((entry) => !entry.startsWith('!') && entry !== 'src')
-        .map((entry) => withoutScriptExt(`${KIT_DIR}/${entry}`.toLowerCase())),
+        .map((entry) => `${KIT_DIR}/${entry}`.toLowerCase()),
 )
+// A suite named back is shipped by its exact name, or by its name less the extension when a specifier omits it.
+const isReincluded = (fromRoot) =>
+    reincludedKitFiles.has(fromRoot) ||
+    (!SCRIPT_EXT.test(fromRoot) && [...reincludedKitFiles].some((file) => file.replace(SCRIPT_EXT, '') === fromRoot))
 const TEST_OR_STORY = /\.(test|stories)(\.[cm]?[jt]sx?)?$/
+// npm and pnpm ship a package's own package.json (and its LICENSE) whatever `files` says.
+const ALWAYS_SHIPPED = new Set([`${KIT_DIR}/package.json`, `${KIT_DIR}/license`])
 const isShippedKitFile = (fromRoot) =>
-    isUnder(fromRoot, `${KIT_DIR}/src`) &&
-    (!TEST_OR_STORY.test(fromRoot) || reincludedKitFiles.has(withoutScriptExt(fromRoot)))
+    ALWAYS_SHIPPED.has(fromRoot) ||
+    (isUnder(fromRoot, `${KIT_DIR}/src`) && (!TEST_OR_STORY.test(fromRoot) || isReincluded(fromRoot)))
 const isAbsoluteSpecifier = (specifier) => /^file:/i.test(specifier) || /^[\\/]/.test(specifier)
-// The message id and landing for a specifier that crosses the package's edge, or undefined when it does not.
-const packageEdgeFinding = (filename, specifier) => {
+// The message id and landing for a specifier that crosses the package's edge, or undefined when it does not. A
+// relative path's `?query` or `#hash` is dropped first: Vite and Vitest load the file it names (a `file:` URL's are
+// URL syntax, which fileURLToPath reads).
+const packageEdgeFinding = (filename, rawSpecifier) => {
+    const specifier = /^file:/i.test(rawSpecifier) ? rawSpecifier : rawSpecifier.replace(/[?#].*$/, '')
     const landing = landingOfPath(filename, specifier)
     if (landing === undefined || APP_CODE_DIRS.some((dir) => isUnder(landing, dir))) return undefined
     if (!isUnder(landing, KIT_DIR)) return { messageId: 'outside', landing: landing || '.' }
@@ -740,7 +749,9 @@ const packageEdgeFinding = (filename, specifier) => {
     if (isShippedKitFile(importer) && !isShippedKitFile(landing)) return { messageId: 'unshipped', landing }
     return undefined
 }
-const REFERENCE_PATH = /^\/\s*<reference\s+path\s*=\s*(["'])(.+?)\1/
+// A triple-slash `path=` or `types=` reference, in any case and with its attributes in any order; a `types=` that names
+// a package is not a path, and pathTarget leaves it alone.
+const REFERENCE_PATH = /^\/\s*<reference\s[^>]*?\b(?:path|types)\s*=\s*(["'])(.+?)\1/i
 /** @type {import('eslint').Rule.RuleModule} */
 const sssbNoPathOutOfPackageRule = {
     meta: {
