@@ -4850,3 +4850,38 @@ installed once, on selected repositories, but which repositories are selected ne
 - **The first entry:** Integration 4038189 on `require-pr`, canopycms-release-bot, installed on
   `safeinsights/canopycms` only, vouched for by JP on 2026-11-18. It has to be re-vouched or removed if that App is
   ever installed on more repositories.
+
+## An app names the cluster-wide roles its migrations create (2026-11-18, `fix/owner-pass-app-roles`)
+
+Reported by Pages: the contract suite's owner pass (`packages/kit/src/db/owner-pass.ts`) gave a later owner ADMIN on
+`app_user` only. Pages' migration 1003 creates a role of its own, `pages_maintainer`, and on the pass after the first,
+where the role already exists, the new owner holds no membership in it, so the migration's statements that need ADMIN
+on it fail (`permission denied to alter role`). Pages made 1003 warn instead of fail to get past it. Roles are
+cluster-wide, so a real cluster takes that branch too: any owner after the one that created the role.
+
+- **Chosen: an optional `appRoles` export** (`readonly string[]`) from the app's `@sssb/app-config/db/migrations`
+  module, beside `appMigrations`, because migrations are what create roles. Optional, so an app that creates none
+  changes nothing. The kit reads it with `in` on the module namespace (`packages/kit/src/db/app-roles.ts`), which
+  compiles against a seam that lacks it (the starter's, under `packages/kit/tsconfig.strict.json`), and validates it
+  when read: an array of distinct lowercase unquoted role names, never `app_user`, `pg_*` or `rds_*`.
+- **The owner pass grants the creator's membership** (`GRANT <role> TO <owner> WITH ADMIN TRUE, INHERIT FALSE, SET
+FALSE`, what it already grants on `app_user`) on each NAMED role that already exists; one that does not exist yet is
+  created by the owner's own migration, which gives it that membership. It grants on nothing unnamed, and refuses,
+  before granting anything, a named role that is a superuser or has BYPASSRLS, REPLICATION or CREATEROLE: ADMIN on such
+  a role is more than ADMIN on an app's ordinary role. After the migrations it checks the owner holds ADMIN on every
+  named role, whichever branch each took. Teardown is unchanged: a role a migration creates is the cluster's.
+- **The conformance check `app-roles`** (unit, `packages/kit/src/testing/conformance/db.ts`) migrates a fresh pglite,
+  the framework's migrations alone first and then the app's, and diffs `pg_roles` after each: what the framework's
+  add is the framework's (today `app_user`, derived, not listed), and what the app's add must be exactly `appRoles`.
+  A created role left unnamed fails, and so does a named role no migration creates, so a stale or hostile name never
+  reaches the owner pass's grant.
+- **The fixture is the case**: `packages/kit/test-fixture/app-config/db/migrations/1004_fixture_docket_clerk.ts`
+  creates `fixture_docket_clerk` idempotently, grants it SELECT on `dockets` and sets its `statement_timeout` (the
+  ALTER needs ADMIN), each statement one Data API call. With the grant removed, the second `pg` pass and the Data API
+  pass fail with `permission denied to alter role`, as Pages saw, and the first pass passes.
+- **Rejected: a new required seam module `@sssb/app-config/db/roles`.** Every adopter would have to add a file, a
+  breaking seam change for the apps (both of SSSB's included) that create no role, and the roles would live apart from
+  the migrations that create them.
+- **Rejected: an option on `contractSuite`.** The conformance check, and any production code that needs the list (a
+  migrator granting a second owner, say), could not see it, and the list would be kept in step with the migrations in
+  two places with nothing to compare them.

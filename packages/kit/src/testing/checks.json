@@ -46,6 +46,16 @@
             ]
         },
         {
+            "id": "app-roles",
+            "runner": "unit",
+            "title": "the app names every cluster-wide role its migrations create",
+            "tests": [
+                "appRoles, where the app exports it, lists distinct role names the app may own",
+                "every role the app's migrations create is named in appRoles",
+                "every role appRoles names is created by the app's migrations"
+            ]
+        },
+        {
             "id": "demo-presets",
             "runner": "unit",
             "title": "registered demo presets",

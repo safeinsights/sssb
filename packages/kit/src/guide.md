@@ -45,6 +45,14 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - App migrations live in `src/app-config/db/migrations/`, numbered 1001 and up (0001–0999 are the framework's), and
   are listed in `src/app-config/db/migrations/index.ts`. A new tenant table copies the RLS pattern of
   `src/app-config/db/migrations/1001_items.ts`, and its isolation proofs go in `src/app-config/db/rls-proofs.ts`.
+- A role is cluster-wide, so a migration that creates one of the app's own creates it only where it does not exist
+  yet: a `DO` block that runs `CREATE ROLE reviewer NOLOGIN` only when
+  `NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'reviewer')`. Make it an ordinary role (never SUPERUSER, BYPASSRLS,
+  REPLICATION or CREATEROLE), and name it in `appRoles`, exported beside `appMigrations` from
+  `src/app-config/db/migrations/index.ts`: `export const appRoles = ['reviewer'] as const`. The contract tests' owner
+  pass grants a later database owner ADMIN on exactly those roles, as Aurora's master user holds on a role it created;
+  the conformance suite's `app-roles` check fails a role the migrations create and `appRoles` does not name, and a
+  name they do not create. Never name `app_user` or a `pg_*` or `rds_*` role.
 - After any migration or database change, run the contract tests on real Postgres (`pnpm test:contract` from the
   workspace root). After renumbering or renaming a migration, wipe
   the local `.data` first.

@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto'
 import { migrateToLatest } from '../../db/migrate'
 import { up as grantAppUser } from '../../db/migrations/0015_app_user_grant'
 import { runWithTenant } from '../../db/with-tenant'
-import { runOwnerPass } from '../../db/owner-pass'
+import { appRoles } from '../../db/app-roles'
+import { grantAppRoles, runOwnerPass } from '../../db/owner-pass'
 import { runRlsProofs } from '../../db/rls-proof-runner'
 import type { DbPort } from '../../ports/db'
 import { createRealDb } from './db'
@@ -107,6 +108,15 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                 n: number
             }>`SELECT count(*)::int AS n FROM pg_roles WHERE rolname = 'app_user'`.execute(admin)
             expect(existing.rows[0]!.n).toBe(1)
+            // ...and so does the fixture's own role, which its migration 1004 alters: the owner needs ADMIN on it too.
+            const named = await appRoles()
+            expect(named).toEqual(['fixture_docket_clerk'])
+            for (const role of named) {
+                const { rows } = await sql<{
+                    n: number
+                }>`SELECT count(*)::int AS n FROM pg_roles WHERE rolname = ${role}`.execute(admin)
+                expect(rows[0]!.n).toBe(1)
+            }
             await runOwnerPass(
                 {
                     admin,
@@ -154,6 +164,9 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
             await sql`CREATE ROLE ${sql.id(second)} LOGIN CREATEROLE CREATEDB NOSUPERUSER PASSWORD ${sql.lit(login.password)}`.execute(
                 admin,
             )
+            // The fixture's own role (its 1004 alters it) is granted as the owner pass grants it: this case is about
+            // app_user, and a second owner needs the app's roles from whoever holds ADMIN on them just the same.
+            await grantAppRoles(admin, second, await appRoles())
             const bootstrap = connect({ ...login, database: maintenance })
             try {
                 await sql`CREATE DATABASE ${sql.id(database)}`.execute(bootstrap)
@@ -197,6 +210,43 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
             await sql`DROP DATABASE IF EXISTS ${sql.id(database)} WITH (FORCE)`.execute(admin).catch(() => undefined)
             await sql`DROP ROLE IF EXISTS ${sql.id(second)}`.execute(admin).catch(() => undefined)
             await sql`DROP ROLE IF EXISTS ${sql.id(creator)}`.execute(admin).catch(() => undefined)
+            await admin.destroy()
+        }
+    })
+
+    // The owner pass grants ADMIN on the roles an app names, and on nothing more: a named role that holds more than an
+    // app's ordinary role may is refused before anything is granted, so a hostile or mistaken name cannot lift the owner.
+    test('the owner pass refuses ADMIN on a named role that is a superuser, or has BYPASSRLS, REPLICATION or CREATEROLE', async () => {
+        const server = new URL(serverUrl)
+        const admin = connect({
+            database: server.pathname.slice(1) || 'postgres',
+            user: decodeURIComponent(server.username),
+            password: decodeURIComponent(server.password),
+        })
+        const stamp = Date.now()
+        const owner = `sssb_refused_owner_${stamp}`
+        const created: string[] = [owner]
+        try {
+            await sql`CREATE ROLE ${sql.id(owner)} NOLOGIN NOSUPERUSER CREATEROLE`.execute(admin)
+            for (const attribute of ['SUPERUSER', 'BYPASSRLS', 'REPLICATION', 'CREATEROLE']) {
+                const role = `fixture_${attribute.toLowerCase()}_${stamp}`
+                created.push(role)
+                await sql`CREATE ROLE ${sql.id(role)} NOLOGIN ${sql.raw(attribute)}`.execute(admin)
+                // Named beside the fixture's ordinary role: the refusal grants neither.
+                await expect(grantAppRoles(admin, owner, ['fixture_docket_clerk', role]), attribute).rejects.toThrow(
+                    new RegExp(`refusing to grant ADMIN on "${role}" \\(${attribute}\\)`),
+                )
+            }
+            // A named role that does not exist is the owner's migration's to create: nothing to grant, nothing refused.
+            await grantAppRoles(admin, owner, [`fixture_absent_${stamp}`])
+            const memberships = await sql<{ n: number }>`
+                SELECT count(*)::int AS n FROM pg_auth_members m
+                JOIN pg_roles me ON me.oid = m.member AND me.rolname = ${owner}`.execute(admin)
+            expect(memberships.rows[0]!.n).toBe(0)
+        } finally {
+            for (const role of created.reverse()) {
+                await sql`DROP ROLE IF EXISTS ${sql.id(role)}`.execute(admin).catch(() => undefined)
+            }
             await admin.destroy()
         }
     })

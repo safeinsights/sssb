@@ -83,6 +83,83 @@ export async function buildPreUpdate(
     }
 }
 
+/** The roles a pglite cluster holds, by name. */
+const roleNames = async (db: Kysely<DB>): Promise<Set<string>> =>
+    new Set((await sql<{ rolname: string }>`SELECT rolname FROM pg_roles`.execute(db)).rows.map((row) => row.rolname))
+
+/**
+ * The cluster-wide roles the APP's migrations create, measured on a fresh pglite: the framework's migrations run first,
+ * alone, and whatever roles they add (`app_user`) are the framework's; then the app's run, and whatever roles THEY add
+ * are the app's. Nothing is assumed about the framework's roles but what its own migrations do.
+ */
+async function rolesTheAppCreates(): Promise<string[]> {
+    const { migrateRegistryToLatest } = await migrate()
+    const { frameworkMigrations, migrations } = await registry()
+    const db = pglite()
+    try {
+        const server = await roleNames(db)
+        await migrateRegistryToLatest(db, frameworkMigrations)
+        const framework = await roleNames(db)
+        await migrateRegistryToLatest(db, migrations)
+        const after = await roleNames(db)
+        return [...after].filter((role) => !server.has(role) && !framework.has(role)).sort()
+    } finally {
+        await db.destroy()
+    }
+}
+
+/**
+ * `app-roles`: the roles the app's migrations create are exactly the ones it names in `appRoles`
+ * (../../db/app-roles.ts). A role it creates and does not name breaks the owner pass's second run, where a later owner
+ * has no ADMIN on it; a name it does not create is one the owner pass would grant ADMIN on all the same, so a stale or
+ * hostile name is refused here before any server sees it. Measured once per file, on one pglite.
+ */
+export const appRolesCheck: CheckImpl = (() => {
+    let measured: Promise<string[]> | undefined
+    const created = () => (measured ??= rolesTheAppCreates())
+    const named = async () => {
+        const { appRolesOf } = await import('../../db/app-roles')
+        return appRolesOf(await import('@sssb/app-config/db/migrations'))
+    }
+    return {
+        // A fresh measurement for each file that registers the check, even where one worker runs several.
+        setup: () => {
+            measured = undefined
+        },
+        timeouts: {
+            "every role the app's migrations create is named in appRoles": 60_000,
+            "every role appRoles names is created by the app's migrations": 60_000,
+        },
+        tests: {
+            'appRoles, where the app exports it, lists distinct role names the app may own': async () => {
+                await named()
+            },
+            "every role the app's migrations create is named in appRoles": async () => {
+                const { APP_ROLES_HOME } = await import('../../db/app-roles')
+                const names = await named()
+                const unnamed = (await created()).filter((role) => !names.includes(role))
+                expect(
+                    unnamed,
+                    `the app's migrations create ${unnamed.map((role) => `role "${role}"`).join(', ')}, which ` +
+                        `appRoles does not name: ${APP_ROLES_HOME}, listing every role they create, so the contract ` +
+                        "suite's owner pass can grant a later owner the ADMIN on it its creator holds",
+                ).toEqual([])
+            },
+            "every role appRoles names is created by the app's migrations": async () => {
+                const { APP_ROLES_HOME } = await import('../../db/app-roles')
+                const roles = await created()
+                const stale = (await named()).filter((role) => !roles.includes(role))
+                expect(
+                    stale,
+                    `appRoles names ${stale.map((role) => `role "${role}"`).join(', ')}, which no migration of the app ` +
+                        `creates: the owner pass grants ADMIN on every role named, so name only the roles the app's ` +
+                        `migrations create (${APP_ROLES_HOME})`,
+                ).toEqual([])
+            },
+        },
+    }
+})()
+
 /** `rls-pglite`: the app's own tables through SSSB's composed proof runner, on the in-process database. */
 export const rlsPglite: CheckImpl = {
     timeouts: { 'the full RLS proof suite passes': 30_000 },
