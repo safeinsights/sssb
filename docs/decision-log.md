@@ -4733,3 +4733,30 @@ because the generator wrote `sssb doctor --app apps/<slug>` into it.
   disk (packed and in-repo), from an app, with an explicit `--app`, with `sssb.apps` reordering the first app, from a
   root with no apps and outside a workspace; and pack-and-consume runs the bare form from the real generated
   workspace's root before it reads doctor's pin report. A changeset (`@sssb/tools`, `@sssb/create`, scaffold, optional).
+
+## A vouched-for bypass actor on an organisation ruleset passes `release-app verify` (2026-11-18, `fix/release-app-verify-org-bypass`)
+
+JP created the release app (App 5820735), and `pnpm release-app verify --app-id 5820735` failed on one thing: the
+organisation ruleset `require-pr` (7484436) also lets App 4038189, canopycms-release-bot, bypass it always, and
+`release.yml` assumes the release app is the only actor that can push to `main` past it. JP says that App is installed
+on `safeinsights/canopycms` only, so it cannot reach this repository. The API shows only part of that: the
+organisation's installation list (which `verify` already reads with the operator's own token) says the App is
+installed once, on selected repositories, but which repositories are selected needs a token this tool does not have.
+
+- **A checked-in list, not a flag.** `VOUCHED_ORG_BYPASSES` in `scripts/release-app/rulesets.ts` names each actor a
+  person has vouched for: the organisation ruleset's id, the actor's type and id, its name, a one-line reason, who
+  vouched and the date. `verify` and `bypass` report each as a ✓ with that reason, and anything else on an
+  organisation ruleset the release meets still fails. A command-line flag was rejected: it would widen the check for
+  whatever it named, a typo included, with no record of who decided or why.
+- **Exact matches only, and Apps only.** An entry covers one App (`Integration` and its id) on one ruleset; the same
+  App on another ruleset, another actor type with the same id, or a neighbouring id is not covered. An organisation
+  admin, a team or a role cannot be vouched for: "cannot reach this repository" is never true of one.
+- **The vouch holds only while the installation list agrees.** `verify` and `bypass` read the organisation's
+  installations and accept the vouch only while the App is installed exactly once, on selected repositories, and not
+  suspended; otherwise it is a ✗ that says what changed. So the drift nobody would notice (the App moved to all
+  repositories, a second installation) turns the check red; the part the tool cannot see (which repositories are
+  selected) stays the person's word. The review of this change found the tool already read that list, which the
+  first version of this entry said it could not.
+- **The first entry:** Integration 4038189 on `require-pr`, canopycms-release-bot, installed on
+  `safeinsights/canopycms` only, vouched for by JP on 2026-11-18. It has to be re-vouched or removed if that App is
+  ever installed on more repositories.
