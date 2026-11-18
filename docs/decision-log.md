@@ -2932,3 +2932,40 @@ Dependabot's #1.
 - **`@axe-core/playwright` stays held at `~4.12.1`.** The other half of #1 is not decided:
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
   hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
+
+## `pnpm tick`, and a dev ticker that is opt-in (2026-11-17, `feat/pnpm-tick`)
+
+JP asked for both on 2026-11-17, with the ticker as an option, and asked whether it should be the default. It is not.
+This is the "next step if it is wanted" that "`pnpm dev` without the Simulator has no tick source" (above) left.
+
+- **`pnpm tick` calls the route; it adds nothing to it.** `scripts/tick.mjs` POSTs the app's `/api/webhooks/cron` with
+  `Authorization: Bearer <the per-checkout dev secret>` from `<app>/.data/auth/webhook-secret`, which is how
+  `withWebhookSecret` authorizes any caller in a simulated world. No bypass, no flag the server reads, and nothing in
+  `packages/kit` or an app's `src` changed. The first request to a server is what creates the secret, so with none on
+  disk it sends one throwaway bearer first. `--url` accepts only loopback hosts over http, so the secret cannot be sent
+  anywhere but this machine, and a server in real mode (`WEBHOOK_SECRET`, no secret file) answers 401 with the reason.
+  Exit codes: 0 ticked, 1 the tick failed (unreachable, 401, non-2xx, a body that is not JSON), 2 a bad command line.
+  A schedule or delivery that FAILED inside a successful tick is printed and exits 0: the tick ran, and the next one
+  retries it.
+- **The ticker is a wrapper around `next dev`, not code in the app.** `pnpm dev` runs `next dev` through
+  `scripts/dev-tick.mjs` in both apps; with `DEV_TICK_SECONDS` unset it only starts the command, forwards SIGTERM and
+  SIGHUP, and exits with its code. Putting it in the app would have meant reading `process.env` in `src` (lint-banned)
+  or an `instrumentation` hook that also runs in the production build. The name is a count of seconds rather than a
+  `=1` flag like `E2E_BUILD` and `DEMO_MODE` because those pick a build and this takes a number; anything that is not a
+  whole number of 1 or more is an error before the server starts, not a silent no.
+- **Off by default, and why.** (1) The showcase's Simulator controls the world clock in a demo: a ticker firing digests
+  on real time underneath it changes when a presenter sees them fire. (2) The e2e suites expect a scheduler that does
+  nothing until a test asks, so a background tick could land between a test's two steps. (3) Hermetic dev should not
+  do work nobody asked for. Opt-in costs one environment variable for someone who wants it; default-on would put every
+  one of those three at the mercy of a timer.
+- **It cannot run where it must not.** Both playwright configs start `pnpm dev` with `DEV_TICK_SECONDS` blanked, so a
+  value exported in a developer's shell never reaches an e2e server; a test reads the configs for it. A ticker asked
+  for with `E2E_BUILD` or `DEMO_MODE` set is refused with a message. The e2e and demo servers (`start:e2e`,
+  `start:demo`) do not go through the wrapper at all, and the `file://` static demo has no server to tick. Known gap:
+  Playwright adopts a dev server already listening on its port (`reuseExistingServer`), so a developer's own ticking
+  server would be tested against; `docs/adopting.md` says to stop it first.
+- **`init-app` learned the second root script.** Root `tick:starter` is renamed with the app (`tick:<slug>`) and, when
+  the showcase is ejected, dropped as a duplicate of `tick`, as `dev:starter` already was; each seen failing against the
+  old `init-app` in `tests/docs/adopter-identity.test.ts`.
+- **Lint.** The `scripts/**` block gained the globals these two scripts use (`fetch`, `URL`, `AbortController`,
+  `AbortSignal`, `setTimeout`, `clearTimeout`).

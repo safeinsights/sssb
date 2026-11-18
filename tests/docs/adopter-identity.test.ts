@@ -247,6 +247,24 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
         })
     })
 
+    describe('the root `tick` scripts follow the app the way the `dev` ones do', () => {
+        const rootScripts = (probe: Probe) =>
+            (JSON.parse(readProbe('package.json', probe)) as { scripts: Record<string, string> }).scripts
+
+        it('renamed only: `tick:starter` becomes `tick:<slug>`, still delegating to the renamed app', () => {
+            const scripts = rootScripts(named)
+            expect(scripts['tick:starter']).toBeUndefined()
+            expect(scripts[`tick:${SLUG}`]).toBe(`pnpm --filter ${SLUG} tick`)
+            expect(scripts.tick).toBe('pnpm --filter showcase tick')
+        })
+
+        it('ejected: `tick` reaches the surviving app, and no second `tick:*` is left saying the same thing', () => {
+            const scripts = rootScripts(ejected)
+            expect(scripts.tick).toBe(`pnpm --filter ${SLUG} tick`)
+            expect(Object.keys(scripts).filter((name) => name.startsWith('tick:'))).toEqual([])
+        })
+    })
+
     describe('after `pnpm init-app --eject-showcase`, the adopter repo does not inherit the maintainer identity', () => {
         it.each(IDENTITY_FILES)('%s no longer names the maintainer', (relative) => {
             const text = readProbe(relative)

@@ -3,7 +3,7 @@
 //     DEV_TICK_SECONDS=30 pnpm dev        # also tick the scheduler every 30 seconds
 //     pnpm dev                            # as before: nothing ticks it
 //
-// OFF BY DEFAULT, and not by oversight (docs/decision-log.md, "pnpm tick and the opt-in dev ticker"). The showcase's
+// OFF BY DEFAULT, and not by oversight (docs/decision-log.md, "`pnpm tick`, and a dev ticker that is opt-in"). The showcase's
 // Simulator controls the world clock in a demo and says when a digest fires; the e2e suites expect a scheduler
 // that does nothing until a test asks; and hermetic dev does not do work nobody asked for. So the ticker is a
 // variable you set, never a default, and the places that must stay quiet say so themselves:

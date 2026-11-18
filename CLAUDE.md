@@ -158,6 +158,11 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   worlds are separate: across apps locally, across CI shards. Read
   `.claude/future-tasks/e2e-shared-world-blocks-parallelism.md` before raising it.
 - Component workshop: `pnpm ladle` (screens AND react-email templates).
+- **Scheduled work in dev only runs when something ticks it.** `pnpm tick` (`pnpm tick:starter`) calls the running
+  dev server's `/api/webhooks/cron` once with the dev secret (`scripts/tick.mjs`); `DEV_TICK_SECONDS=<n> pnpm dev`
+  does it every n seconds (`scripts/dev-tick.mjs`, which `pnpm dev` runs `next dev` through). The ticker is **off by
+  default** and stays off under e2e (the playwright configs blank the variable) and the demo. Never add a bypass to the
+  route for either: it stays `withWebhookSecret`.
 - Before opening a PR, run `/pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.
   **Never squash a PR another PR is stacked on**: squashing rewrites the commits, the stacked branch then
