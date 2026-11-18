@@ -3102,3 +3102,61 @@ JP's call on 2026-11-17: "address the transitive dependencies appropriately with
   unfixable `picomatch` entry, and with that one ignored it would still turn every open PR red on the day any new
   advisory is published, whatever the PR touches. Advisories reach SSSB through Dependabot and through review
   instead (the Next upgrade advisor is off; see "Next's upgrade advisor is switched off" above).
+
+## `pnpm tick`, and a dev ticker that is opt-in (2026-11-17, `feat/pnpm-tick`)
+
+JP asked for both on 2026-11-17, with the ticker as an option, and asked whether it should be the default. It is not.
+This is the "next step if it is wanted" that "`pnpm dev` without the Simulator has no tick source" (above) left.
+
+- **`pnpm tick` calls the route; it adds nothing to it.** `scripts/tick.mjs` POSTs the app's `/api/webhooks/cron` with
+  `Authorization: Bearer <the per-checkout dev secret>` from `<app>/.data/auth/webhook-secret`, which is how
+  `withWebhookSecret` authorizes any caller in a simulated world. No bypass, no flag the server reads, and nothing in
+  `packages/kit` or an app's `src` changed. The first request to a server is what creates the secret, so with none on
+  disk it sends one throwaway bearer first. `--url` accepts only loopback hosts over http, so the secret cannot be sent
+  anywhere but this machine, and a server in real mode (`WEBHOOK_SECRET`, no secret file) answers 401 with the reason.
+  Exit codes: 0 ticked, 1 the tick failed (unreachable, 401, non-2xx, a body that is not JSON), 2 a bad command line.
+  A schedule or delivery that FAILED inside a successful tick is printed and exits 0: the tick ran, and the next one
+  retries it.
+- **The ticker is a wrapper around `next dev`, not code in the app.** `pnpm dev` runs `next dev` through
+  `scripts/dev-tick.mjs` in both apps; with `DEV_TICK_SECONDS` unset it only starts the command, forwards SIGINT, SIGTERM and
+  SIGHUP, and exits with its code. (SIGINT is forwarded even though a terminal's Ctrl-C also reaches the server directly:
+  the wrapper is now the pid a supervisor holds, and swallowing it left `kill -INT` unable to stop `pnpm dev`; found by
+  review, and the SIGINT case seen failing with it unforwarded.) Putting it in the app would have meant reading `process.env` in `src`, which is lint-banned. The name is a count of seconds rather than a
+  `=1` flag like `E2E_BUILD` and `DEMO_MODE` because those pick a build and this takes a number; anything that is not a
+  whole number of 1 to 86400 is an error before the server starts, not a silent no (a typo for another unit, and far below the ~24.8 days
+  where `setTimeout`'s 32-bit limit overflows and the loop would tick continuously; seen with 9999999).
+- **Off by default, and why.** (1) The showcase's Simulator controls the world clock in a demo: a ticker firing digests
+  on real time underneath it changes when a presenter sees them fire. (2) The e2e suites expect a scheduler that does
+  nothing until a test asks, so a background tick could land between a test's two steps. (3) Hermetic dev should not
+  do work nobody asked for. Opt-in costs one environment variable for someone who wants it; default-on would put every
+  one of those three at the mercy of a timer.
+- **It cannot run where it must not.** Both playwright configs start `pnpm dev` with `DEV_TICK_SECONDS` blanked, so a
+  value exported in a developer's shell never reaches an e2e server; a test reads the configs for it. A ticker asked
+  for with `E2E_BUILD` or `DEMO_MODE` set is refused with a message. The e2e and demo servers (`start:e2e`,
+  `start:demo`) do not go through the wrapper at all, and the `file://` static demo has no server to tick. The blank
+  cannot reach a server Playwright did not start, and off CI it adopts one already on its port
+  (`reuseExistingServer`), so a ticking server you left running would be tested against. While a ticker runs it
+  leaves `<data dir>/dev-ticker.json` (pid, interval), and both playwright configs throw at load if that pid is alive;
+  a marker whose process is gone (a SIGKILLed wrapper) is ignored. Found by review; a test loads the real configs both
+  ways. The marker lives in the data directory, so wiping `.data` under a running ticker removes it too; that is already a
+  broken setup (the showcase's destructive spec wipes `.data` itself, `apps/showcase/playwright.config.ts:72`), and the
+  guard then has nothing to see.
+- **The ticker is one module with start, stop and status, for a Simulator control later.** `scripts/ticker.mjs`
+  (`createTicker`) owns the loop, the interval bounds, the dedup of repeated errors and the marker; it reads no
+  environment. `scripts/dev-tick.mjs` is the policy for `pnpm dev` and its only caller. JP asked whether the Simulator
+  can start it from its UI: not in this change (the panel is in `packages/kit`, which P3 is editing), but the shape is
+  there for it, and `.claude/future-tasks/simulator-ticker-control.md` has the design, including why the control must
+  keep it off by default and out of e2e and the static demo.
+- **`init-app` learned the second root script.** Root `tick:starter` is renamed with the app (`tick:<slug>`) and, when
+  the showcase is ejected, dropped as a duplicate of `tick`, as `dev:starter` already was; each seen failing against the
+  old `init-app` in `tests/docs/adopter-identity.test.ts`.
+- **Two things CI found that the local run could not.** (1) The adoption probe runs the whole suite in a tree `init-app`
+  has renamed and ejected, where `apps/showcase` and `apps/starter` do not exist; the tick tests named them. They now
+  read the app directories of the tree they run in (and the PORT key from the app's own `dev` script, which `init-app` does
+  not rename), and ran green in an `init-app acme --eject-showcase` copy. (2) Pack and consume's consumer workspace
+  holds only the scripts it is told to copy, and the starter's Playwright config now imports `scripts/ticker-marker.mjs`:
+  typecheck failed with "Cannot find module". A new named workaround, `tick-scripts-copied`, copies the four tick scripts,
+  removed by P4 with the rest (`sssb tick` in `@sssb/tools`); ADR-0014's table of what moves to `@sssb/tools`
+  (`scripts/ports.mjs` and the like) has no row for them yet.
+- **Lint.** The `scripts/**` block gained the globals these two scripts use (`fetch`, `URL`, `AbortController`,
+  `AbortSignal`, `setTimeout`, `clearTimeout`).

@@ -363,7 +363,8 @@ function renameApp(current: Identity, slug: string, displayName: string): void {
         if (!pkg.scripts) return
         const scripts: Record<string, string> = {}
         for (const [name, command] of Object.entries(pkg.scripts)) {
-            const renamed = name === `dev:${dir}` ? `dev:${slug}` : name
+            // `dev:<app>` and `tick:<app>` are the root's way to reach the SECOND app past the showcase-bound ones.
+            const renamed = name === `dev:${dir}` || name === `tick:${dir}` ? name.replace(`:${dir}`, `:${slug}`) : name
             scripts[renamed] = command.split(`--filter ${oldPackage} `).join(`--filter ${slug} `)
         }
         pkg.scripts = scripts
@@ -462,9 +463,11 @@ function ejectShowcase(survivor: string, onDisk: string): void {
                 note(skipped, `root script "${name}" dropped — apps/${survivor} has no ${delegated[1]} script`)
                 continue
             }
-            // `dev:<survivor>` existed only to reach the second app past the showcase-bound `dev`.
-            if (name === `dev:${survivor}` && scripts.dev === next) {
-                note(skipped, `root script "${name}" dropped — "dev" now means the same thing`)
+            // `dev:<survivor>` and `tick:<survivor>` existed only to reach the second app past the showcase-bound
+            // `dev` and `tick`.
+            const sibling = /^(dev|tick):/.exec(name)?.[1]
+            if (sibling && name === `${sibling}:${survivor}` && scripts[sibling] === next) {
+                note(skipped, `root script "${name}" dropped — "${sibling}" now means the same thing`)
                 continue
             }
             scripts[name] = next

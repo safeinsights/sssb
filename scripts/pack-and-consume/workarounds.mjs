@@ -21,6 +21,10 @@ export const WORKAROUNDS = {
         removedBy: 'P4',
         what: "scripts/ports.mjs and scripts/print-port.mjs are copied into the consumer, because the apps' dev scripts and Playwright config import them (P4: `sssb port` and the ports module in @sssb/tools)",
     },
+    'tick-scripts-copied': {
+        removedBy: 'P4',
+        what: "scripts/tick.mjs, dev-tick.mjs, ticker.mjs and ticker-marker.mjs are copied into the consumer, because the apps' dev and tick scripts run them and their Playwright config imports ticker-marker (P4: `sssb tick` and the ticker module in @sssb/tools)",
+    },
     'check-demo-size-copied': {
         removedBy: 'P4',
         what: "scripts/check-demo-size.mjs is copied into the consumer, because the apps' check:demo-size script runs it (P4: `sssb check-demo-size`)",

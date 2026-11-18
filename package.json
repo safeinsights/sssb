@@ -14,6 +14,8 @@
         "dev": "pnpm --filter showcase dev",
         "dev:starter": "pnpm --filter starter dev",
         "dev:real": "pnpm --filter showcase dev:real",
+        "tick": "pnpm --filter showcase tick",
+        "tick:starter": "pnpm --filter starter tick",
         "llm:record": "pnpm --filter showcase llm:record",
         "build": "pnpm --filter './apps/*' --workspace-concurrency=1 build",
         "start": "pnpm --filter showcase start",
