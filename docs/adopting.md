@@ -374,8 +374,8 @@ The generated root's scripts are `dev`, `tick` and `start` (your app, by `pnpm -
 `typecheck`, `test:e2e`, `check:e2e`, `check:fences` (`sssb check-fences` in each app, as SSSB's reusable workflow
 runs it) and the demo-static trio, fanned out over `apps/*` with `--fail-if-no-match`; `synth`, over
 `apps/*/infra`; `lint`, `lint:fix`, `test:unit`, `test:coverage`, `test:contract`, `knip` and `jscpd`; `prepare`
-(husky, then `sssb launch-json`); `sssb:doctor`, which is `sssb doctor --app apps/<slug>` because your root does
-not install `@sssb/kit` and doctor starts from a directory that resolves it (one run still checks every app); and
+(husky, then `sssb launch-json`); `sssb:doctor`, which is `sssb doctor`: your root does not install `@sssb/kit`, so with no `--app` doctor starts from
+the workspace's first app (`sssb.apps`, else `apps/*`), and one run checks every app; and
 `verify`, which runs what the workspace's CI runs but the secret scan: typecheck, lint, the unit tests with
 coverage, knip, jscpd, the fences, doctor, check-e2e and synth side by side, then the contract tests on their own
 (`VERIFY` in `packages/create/src/files.js` says why), the e2e suites and the static demo.

@@ -4709,3 +4709,27 @@ cause, in pnpm's source). Each decision, and what was rejected:
   there), `pnpm import`, Renovate and Dependabot themselves, and a kit from a registry.
 - **Not covered: `nodeLinker: hoisted`.** One hoisted `@sssb/kit` cannot hold two apps' seams; with two apps doctor
   fails it ("runs on a seam not its own"), as it did before this change.
+
+## `sssb doctor` works from the root with no `--app`, rather than every instruction learning `--app` (2026-11-18, `fix/doctor-from-root`)
+
+Found by the seam-link session: the files `@sssb/create` generates, its README among them, tell people to run
+`pnpm exec sssb doctor`, which failed at a generated workspace's root ("does not resolve @sssb/kit"), because that root
+takes no framework and doctor resolved the kit from the working directory. The root script `sssb:doctor` worked only
+because the generator wrote `sssb doctor --app apps/<slug>` into it.
+
+- **Chosen: the short form works.** With no `--app`, doctor starts from the working directory when it resolves
+  `@sssb/kit` (an app, or this repository's root, as before). At a workspace root that does not, it starts from the
+  workspace's first app (`sssb.apps`, else `apps/*`) and says so in its first line. Doctor already ran ONE time for the
+  whole workspace once given any app, so the start does not change what it finds, with one addition: when doctor chose
+  the start itself, its workspace walk must also reach every app the workspace names, because the walk only had to reach
+  the one doctor runs for, and `--app <an app the walk drops>` fails where the bare form would have passed. An explicit `--app` is never replaced, and a root with no apps refuses, saying what to pass. People and
+  agents type the short form, so the short form has to be the one that works.
+- **Rejected: change every instruction to `--app apps/<name>`.** That is a longer command to remember, every doc, guide
+  line and generated comment would carry an app name that is wrong for the next workspace, and the next person to write
+  `pnpm exec sssb doctor` in a README repeats the bug.
+- **The generated root script is now `sssb doctor`**, with the `--app` form still valid for workspaces generated
+  before. `docs/adopting.md`, `CLAUDE.md` and the generator's comment said why `--app` was there and no longer do.
+- **Pinned where it matters:** end-to-end tests run doctor as a child process from the root of a workspace laid out on
+  disk (packed and in-repo), from an app, with an explicit `--app`, with `sssb.apps` reordering the first app, from a
+  root with no apps and outside a workspace; and pack-and-consume runs the bare form from the real generated
+  workspace's root before it reads doctor's pin report. A changeset (`@sssb/tools`, `@sssb/create`, scaffold, optional).

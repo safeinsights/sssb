@@ -1429,11 +1429,17 @@ function contractGenerated() {
  */
 function pinsGenerated() {
     const plugin = readJson(path.join(REPO, 'plugins/sssb/.claude-plugin/plugin.json')).name
-    const doctor = run('pnpm', ['exec', 'sssb', 'doctor', '--app', path.join('apps', GEN_APP)], {
+    // The short form, which is what the generated files and the guide tell people to run, from the workspace's root: a
+    // root that takes no @sssb/kit starts doctor from the first app.
+    const doctor = run('pnpm', ['exec', 'sssb', 'doctor'], {
         cwd: GEN,
         env: generatedEnv(),
         capture: true,
     })
+    if (!doctor.stdout.includes('no --app, and the working directory'))
+        fail(
+            `sssb doctor from the generated workspace's root did not start from an app:\n${doctor.stdout}${doctor.stderr}`,
+        )
     const { commit, problems } = generatedPinProblems({
         workflow: readFileSync(path.join(GEN, '.github/workflows/checks.yml'), 'utf8'),
         settings: readFileSync(path.join(GEN, '.claude/settings.json'), 'utf8'),
