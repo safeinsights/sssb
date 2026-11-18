@@ -363,7 +363,9 @@ function tsconfigRoutes(appDir) {
         if (!key.startsWith(SEAM)) continue
         for (const target of targets) {
             const to = path.resolve(base, target)
-            routes.push({ find: key, to, resolved: [realish(key.includes('*') ? to.replace('*', PROBE) : to)] })
+            // Every `*` in the target takes the matched text, as TypeScript substitutes it (it allows one per pattern,
+            // so this is the same answer for any config it accepts, and the right one for a target it does not).
+            routes.push({ find: key, to, resolved: [realish(key.includes('*') ? to.replaceAll('*', PROBE) : to)] })
         }
     }
     return routes

@@ -80,14 +80,20 @@ describe('resolveAppsKit', () => {
         // pnpm's bin shims (which `pnpm exec <bin>` and package scripts run) set NODE_PATH to pnpm's hoisted `.pnpm/node_modules`, which Node's resolver honours
         // as a last resort. Resolved that way, an app with no framework of its own would get the hoisted one: another
         // app's instance. So the child runs with NODE_PATH pointing straight at a hoisted copy, and must still refuse.
+        // The module and the app reach the child as arguments, never written into its code.
         const script = [
-            `import { kitDirOf, resolveAppsKit } from ${JSON.stringify(KIT_JS)}`,
-            `for (const f of [() => kitDirOf(${JSON.stringify(lonely)}), () => resolveAppsKit(${JSON.stringify(lonely)}, 'ports/errors')]) {`,
+            "import { pathToFileURL } from 'node:url'",
+            'const [kitJs, app] = process.argv.slice(1)',
+            'const { kitDirOf, resolveAppsKit } = await import(pathToFileURL(kitJs).href)',
+            "for (const f of [() => kitDirOf(app), () => resolveAppsKit(app, 'ports/errors')]) {",
             "    try { f(); console.log('no error') } catch (e) { console.log(e.message) }",
             '}',
         ].join('\n')
         const env = { ...process.env, NODE_PATH: path.dirname(path.dirname(kitHoisted)) }
-        const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env })
+        const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, KIT_JS, lonely], {
+            encoding: 'utf8',
+            env,
+        })
         const lines = result.stdout.trim().split('\n')
         expect(lines).toHaveLength(2)
         for (const line of lines) expect(line).toContain('does not resolve @sssb/kit')

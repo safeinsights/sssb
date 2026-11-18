@@ -26,7 +26,7 @@ function shippedBy(files: readonly string[]): (rel: string) => boolean {
                 re += '(?:.*/)?'
                 i += 2
             } else if (glob[i] === '*') re += '[^/]*'
-            else re += glob[i]!.replace(/[.+?^${}()|[\]\\]/, '\\$&')
+            else re += glob[i]!.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
         }
         return new RegExp(`^${re}$`)
     }

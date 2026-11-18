@@ -309,7 +309,8 @@ describe('@sssb/create: the generated workspace', () => {
                 if (!key.includes('*')) continue
                 const [before, after] = key.split('*') as [string, string]
                 if (subpath.startsWith(before) && subpath.endsWith(after))
-                    return value.replace('*', subpath.slice(before.length, subpath.length - after.length))
+                    // Every `*` in the target takes the matched text, as Node resolves a pattern export.
+                    return value.replaceAll('*', subpath.slice(before.length, subpath.length - after.length))
             }
             return undefined
         }
@@ -398,7 +399,7 @@ describe('@sssb/create: the generated workspace', () => {
         expect(run(other)).toThrow(CreateError)
         expect(run(other)).toThrow(
             new RegExp(
-                `is @sssb 0\\.9\\.0, and this generator writes workspaces of @sssb ${VERSION.replace(/\./g, '\\.')}`,
+                `is @sssb 0\\.9\\.0, and this generator writes workspaces of @sssb ${VERSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
             ),
         )
         for (const version of ['0.9.0', '^0.9.0', `${VERSION}-rc.1`])
