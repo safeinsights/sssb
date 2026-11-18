@@ -1990,8 +1990,10 @@ rewrites (`deps/react-19-3` did so by hand). The job stays green meanwhile, by d
 resolution whose specifier still matches and resolves afresh only what moved, so the consumer still installs and
 the framework is still proved against what the ranges allow. What the drift costs is a standing notice and a
 re-resolution on every run: the script compares the seed with what the install resolved and, when they differ,
-prints the line "the consumer's resolution moved from its seed" (a `::notice` annotation on CI). The script's own
-comment already says that a Dependabot PR cannot refresh the seed and that this is "a prompt", not a failure.
+prints the line "the consumer's resolution moved from its seed" (a `::notice` annotation on CI;
+`scripts/pack-and-consume.mjs:1040-1043`). The script's own comment already says that a Dependabot PR cannot refresh
+the seed and that this is "a prompt", not a failure (`scripts/pack-and-consume.mjs:1038-1039`). Why a moved range is
+re-resolved and nothing else is: `scripts/pack-and-consume.mjs:622-625`.
 Nothing makes anyone act on it.
 
 Proposed, not built, since either changes how the check behaves:
@@ -2002,4 +2004,5 @@ Proposed, not built, since either changes how the check behaves:
   exists to avoid for third-party releases, so it should stay a notice if that matters more.
 - **The Dependabot-side fix:** a workflow on Dependabot's pull requests that runs `pnpm pack-and-consume
 --update-lockfile` and pushes the result to the branch. It needs a token able to push to a Dependabot branch, which
-  is a repository settings decision for JP, and its push starts the checks again.
+  is a repository settings decision for JP: a push made with the workflow's default token does not start the checks
+  again, so it takes a personal access token or an app token.

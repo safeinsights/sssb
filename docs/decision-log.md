@@ -2938,8 +2938,8 @@ Dependabot's #1.
 JP's call on 2026-11-17: the `sssb` npm organization and its packages keep `safeinsights-bot` as their only owner,
 and no second owner is added. The account's credentials are shared among the maintainers and its email is a group
 address, so losing one person does not lose the account. That answers the known risk ADR-0014 recorded on
-2026-11-17 ("The npm names have a single owner"), which assumed JP alone could reach it and that a second, human
-owner would be added once a maintainer had a personal npm account.
+2026-11-17 ("The npm names have a single owner"), which rested on JP having no personal npm account and said a
+second, human owner would be added once a maintainer had one.
 
 - **ADR-0014 gets a dated addendum, and its body is untouched.** The addendum says the Consequences bullet no
   longer describes a risk to carry and that the follow-up "add a second, human owner" is dropped.
