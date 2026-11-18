@@ -13,8 +13,8 @@
 #     tests and stories, plus the seam-conformance tests the allowlist names (the list below; tests/tooling/
 #     changesets.test.ts fails if it drifts from the manifest);
 #   - apps/starter: the scaffold an adopter keeps and edits, which becomes @sssb/create's template (P12).
-# Not shipped: apps/showcase, packages/seed (`@app/seed`), tests, scripts, docs, infra, the lockfile. Known gaps are
-# listed in .changeset/README.md.
+# Not gated: apps/showcase, packages/seed (`@app/seed`), tests, scripts, docs, infra, the lockfile. A forking adopter
+# receives some of those too; .changeset/README.md lists the known gaps.
 #
 # Inputs, all environment: BASE_REF (the PR's base branch), HEAD_REF (its head branch), CREATED_AT (the PR's creation
 # time, ISO 8601), ACTOR (who opened it), HEAD_REPO and REPO (the head's repository and this one; the release-merge
@@ -27,8 +27,7 @@
 #     peer floor is breaking, ADR-0014 part 10);
 #   - a PR opened before this script reached its base branch (the first-parent commit that added it is the cutover,
 #     so no date is written here).
-# A file the PR carries only because it merged `main` in (it equals origin/main's copy, and main changed it since the
-# branches diverged) is not the PR's own change.
+# A file the PR carries only because it merged `main` in is not the PR's own change (`from_main` below).
 set -euo pipefail
 
 : "${BASE_REF:?BASE_REF is required}"
@@ -63,13 +62,12 @@ fi
 
 base=$(git merge-base "origin/$BASE_REF" HEAD)
 
-# `-z` and quotePath off: without them git prints a path with a non-ASCII character or a quote as a C-quoted string,
-# which no pattern below matches, so a shipped file would read as not shipped. Paths are matched with `[[ =~ ]]`,
-# never `grep` on a here-string, because grep reads a path with a newline as several lines. `--no-renames` so a file moved out of
-# the shipped set still counts as changed. Captured, not piped into `grep -q`: under pipefail an early-exiting grep
-# can SIGPIPE git and turn a match into a silent pass.
+# `-z`: git then prints each path verbatim and NUL-terminated. Without it a path with a non-ASCII character or a quote
+# comes out as a C-quoted string, which no pattern below matches, so a shipped file would read as not shipped. Paths
+# are matched with `[[ =~ ]]`, never `grep` on a here-string, because grep reads a path with a newline as several
+# lines. `--no-renames` so a file moved out of the shipped set still counts as changed.
 changed=()
-while IFS= read -r -d '' f; do changed+=("$f"); done < <(git -c core.quotePath=false diff --no-renames --name-only -z "$base" HEAD)
+while IFS= read -r -d '' f; do changed+=("$f"); done < <(git diff --no-renames --name-only -z "$base" HEAD)
 
 # Which packages/<dir> are `@sssb/*`: either side of the PR names one (so renaming a package away from `@sssb/*`, or
 # deleting it, is a change to what ships), and a manifest that does not parse counts as shipped rather than as not
@@ -86,8 +84,9 @@ sssb_package() {
 }
 
 # A file this PR carries only because it merged `main` in: the newest commit on main (since main and the base
-# diverged) that touched it is in this PR's history, and the PR's copy is main's copy as of that commit. A hand-applied
-# copy of a hotfix is not that, and neither is a file main changed after the PR last merged it.
+# diverged) that touched it AND is in this PR's history, and the PR's copy is main's copy as of that commit. A
+# hand-applied copy of a hotfix is not that. A file main changed again after the PR last merged it is still exempt:
+# only the commits the PR has are looked at.
 from_main() {
   [ -n "$mainbase" ] || return 1
   local c
@@ -164,7 +163,7 @@ fi
 # ADDS counts; editing one that is already pending does not (`--diff-filter=A` with `--no-renames`, so deleting one
 # and adding a similar one is an add, not a rename).
 added=()
-while IFS= read -r -d '' f; do added+=("$f"); done < <(git -c core.quotePath=false diff --no-renames --name-only -z --diff-filter=A "$base" HEAD -- '.changeset/*.md')
+while IFS= read -r -d '' f; do added+=("$f"); done < <(git diff --no-renames --name-only -z --diff-filter=A "$base" HEAD -- '.changeset/*.md')
 real=0
 for f in ${added[@]+"${added[@]}"}; do
   case "$f" in

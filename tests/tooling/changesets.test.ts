@@ -343,6 +343,7 @@ describe('require-changeset gate', () => {
         ['a kit unit test', { 'packages/kit/src/core/x.test.ts': 'a' }],
         ['a kit story', { 'packages/kit/src/components/x.stories.tsx': 'a' }],
         ['the kit test fixture', { 'packages/kit/test-fixture/x.ts': 'a' }],
+        ['a kit file the `files` allowlist leaves out', { 'packages/kit/tsconfig.json': '{}' }],
         ['the showcase', { 'apps/showcase/src/x.ts': 'a' }],
         ['docs, scripts and CI', { 'docs/x.md': 'a', 'scripts/x.mjs': 'a', '.github/workflows/x.yml': 'a' }],
         ['the lockfile', { 'pnpm-lock.yaml': 'a' }],
@@ -461,7 +462,8 @@ describe('require-changeset gate', () => {
             // into any other base
             expect(runGate({ files: KIT_SRC, headRef: 'integration', baseRef: 'integration' }).status).toBe(1)
             // an environment that does not say which repository it is
-            expect(runGate({ files: KIT_SRC, headRef: 'integration', baseRef: 'main', repo: '' }).status).toBe(1)
+            const unknown = { files: KIT_SRC, headRef: 'integration', baseRef: 'main', repo: '', headRepo: '' }
+            expect(runGate(unknown).status).toBe(1)
         })
 
         it('exempts dependabot unless it changes the kit peer floor', () => {

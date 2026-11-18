@@ -69,7 +69,7 @@ jobs:
             - run: pnpm install --frozen-lockfile --ignore-scripts
             - run: pnpm release:check
 
-    # A PR that changes what SSSB hands an adopter (the kit's shipped files, the starter) adds a changeset: its
+    # A PR that changes what SSSB hands an adopter (every `@sssb/*` package's shipped files, today the kit, and the starter) adds a changeset: its
     # release-note entry, which ADR-0014 P7's notes are assembled from. Path-based, because every package is private
     # until P14 and `changeset status` ignores private packages. The script, its exemptions and its tests:
     # .github/scripts/require-changeset.sh, tests/tooling/changesets.test.ts. A newer push to the PR re-runs it, so
