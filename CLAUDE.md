@@ -170,10 +170,12 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - Component workshop: `pnpm ladle` (screens AND react-email templates).
 - **Scheduled work in dev only runs when something ticks it.** `pnpm tick` (`pnpm tick:starter`) calls the running
   dev server's `/api/webhooks/cron` once with the dev secret (`scripts/tick.mjs`); `DEV_TICK_SECONDS=<n> pnpm dev`
-  does it every n seconds (`scripts/dev-tick.mjs`, which `pnpm dev` runs `next dev` through). The ticker is **off by
+  does it every n seconds (`scripts/dev-tick.mjs`, which `pnpm dev` runs `next dev` through), and the showcase's Simulator
+  (Jobs tab) starts and stops it inside the dev server (`apps/showcase/src/app/api/simulator/ticker`, 404 outside a simulated
+  `next dev`: kit's `isSimulatedDevServer`). The ticker is **off by
   default** and stays off under e2e (the playwright configs blank the variable, and refuse to load while a ticking
   dev server's marker is live) and the demo. The ticking is `scripts/ticker.mjs` (start, stop, status), policy-free. Never add a bypass to the
-  route for either: it stays `withWebhookSecret`.
+  route for any of them: it stays `withWebhookSecret`.
 - **A PR that changes what ships to adopters adds a changeset** (`.changeset/README.md` has the template and what
   counts): every `@sssb/*` package's shipped files (today the kit) and `apps/starter`. It is the release-note entry, with a "Now deletable" part,
   and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset.

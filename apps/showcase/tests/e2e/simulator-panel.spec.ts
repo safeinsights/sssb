@@ -1,6 +1,7 @@
 import { rmSync } from 'node:fs'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
+import { simulatorNotice } from '../catalog'
 import { openSimulatorPanel } from './support/simulator'
 import { pickOrg } from './support/org-switcher'
 import { signInAs } from './support/people'
@@ -77,4 +78,53 @@ test('signed-out: the pill still renders on the sign-in page, and picking a pers
 
     await page.waitForURL('**/dashboard')
     await expect(page.getByTestId('signed-in-as')).toContainText('Gale Bennett')
+})
+
+test('opening and hiding the panel by keyboard moves focus to the control that replaces the one pressed', async ({
+    page,
+}) => {
+    // WCAG 2.4.3: the pill unmounts when the panel opens and Hide is hidden with it, so without the focus effect in
+    // simulator-panel.tsx both presses leave focus on <body> and the next Tab starts from the top of the page.
+    await page.goto('/en/signin')
+    const pill = page.locator('[data-testid="simulator-pill"][data-hydrated]')
+    const hide = page.getByTestId('simulator-collapse')
+
+    await pill.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('simulator-panel')).toBeVisible()
+    await expect(hide).toBeFocused()
+
+    // A panel restored open from localStorage on load must not take focus: only a toggle moves it.
+    await page.reload()
+    await expect(page.locator('[data-testid="simulator-panel"][data-hydrated]')).toBeVisible()
+    await expect(hide).not.toBeFocused()
+
+    await hide.focus()
+    await page.keyboard.press('Enter')
+    await expect(pill).toBeFocused()
+})
+
+test('the dev ticker control is on a dev server only, stopped until started, and absent from the e2e build', async ({
+    page,
+}) => {
+    // CI runs this suite against the E2E_BUILD production build, where the route answers 404 and the Jobs tab has no
+    // control; a local run uses `pnpm dev`, where the control is there and stopped. Nothing here starts it: the suite
+    // expects a scheduler that does nothing until a test asks (scripts/ticker-marker.mjs).
+    const e2eBuild = process.env.E2E_BUILD === '1'
+    await page.goto('/en/signin')
+    await openSimulatorPanel(page)
+    const asked = page.waitForResponse(
+        (response) =>
+            new URL(response.url()).pathname === '/api/simulator/ticker' && response.request().method() === 'GET',
+    )
+    await page.getByTestId('simulator-tab-jobs').click()
+    expect((await asked).status()).toBe(e2eBuild ? 404 : 200)
+
+    await expect(page.getByTestId('simulator-clock')).toBeVisible()
+    if (e2eBuild) {
+        await expect(page.getByTestId('simulator-ticker')).toHaveCount(0)
+    } else {
+        await expect(page.getByTestId('simulator-ticker-status')).toHaveText(simulatorNotice('en', 'tickerStopped', ''))
+        await expect(page.getByTestId('simulator-ticker-toggle')).toHaveText(simulatorNotice('en', 'tickerStart', ''))
+    }
 })

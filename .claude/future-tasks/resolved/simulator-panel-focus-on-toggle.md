@@ -1,6 +1,14 @@
 # Opening or hiding the Simulator panel drops keyboard focus
 
-**Priority:** P2 · **Status:** open
+**Priority:** P2 · **Status:** resolved 2026-11-18 (`feat/simulator-ticker-control`)
+
+## Resolution
+
+As designed: `simulator-panel.tsx` focuses the Hide button after the panel opens and the pill after it closes, in an
+effect keyed on `collapsed` and gated on a ref that only `toggle()` sets, so the first render and a state restored from
+`localStorage` never move focus. `apps/showcase/tests/e2e/simulator-panel.spec.ts` presses Enter on each and asserts
+`toBeFocused()`, and asserts that a reload with the panel restored open leaves Hide unfocused. Seen failing both ways:
+with the `focus()` call removed (Hide not focused after opening) and with the ref gate removed (Hide focused on reload).
 **Found by:** the `/a11y-review` keyboard pass on `fix/axe-label-in-name`, 2026-11-18.
 
 ## What happens
@@ -24,4 +32,4 @@ so the panel's first render and a restored collapsed state from `localStorage` n
 Keep the coachmark's dismiss button out of it. Pin both directions in `apps/showcase/tests/e2e/simulator-panel.spec.ts`
 (`toBeFocused()` after `keyboard.press('Enter')`), and see the spec fail with the effect removed.
 
-The Simulator panel is also getting a ticker control (`simulator-ticker-control.md`); either can land first.
+The Simulator panel is also getting a ticker control (`simulator-ticker-control.md`); they landed together.
