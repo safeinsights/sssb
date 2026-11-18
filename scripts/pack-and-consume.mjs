@@ -1,5 +1,5 @@
 // PACK AND CONSUME (ADR-0014 part 7, rule 5, step P2): proves the framework the way an adopter gets
-// it. Packs @sssb/kit, @sssb/tools and @sssb/eslint-plugin, builds an adopter-shaped pnpm workspace OUTSIDE this repository from copies
+// it. Packs @sssb/kit, @sssb/tools, @sssb/eslint-plugin and @sssb/cdk (packed and checked, not installed: P12), builds an adopter-shaped pnpm workspace OUTSIDE this repository from copies
 // of apps/starter, installs the TARBALLS there (never `workspace:`), and runs that workspace's verify.
 //
 //   pnpm pack-and-consume [--dir <path>] [--skip-build-and-e2e]
@@ -55,6 +55,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
+    cdkPackProblems,
     checkE2eFailProblems,
     checkE2eOkProblems,
     expectedConformanceTests,
@@ -348,7 +349,8 @@ export default [...(await sssb.configs.app({ root: import.meta.dirname }))]
     // subpath, so every `exports` key (the JSON catalogs aside) is re-exported here, type-only, and both
     // typechecks cover each one against this app's seam. Nothing imports this file, so no bundle sees it.
     const surface = Object.keys(KIT_MANIFEST.exports)
-        .filter((key) => key !== './package.json' && !key.endsWith('.json'))
+        // Data files have no types to import: the catalogs (`.json`) and the app guide (`guide.md`).
+        .filter((key) => key !== './package.json' && !key.endsWith('.json') && !key.endsWith('.md'))
         .map((key, i) => `export type * as m${i} from '@sssb/kit/${key.slice(2)}'`)
     if (surface.length < 100)
         fail(`the framework's exports map lists only ${surface.length} modules; expected its whole public surface`)
@@ -1111,6 +1113,11 @@ function staticDemo() {
  * config with Playwright's error, naming the kit file it reaches.
  */
 function doctorAndCheckE2e() {
+    // The app guide the tarball ships (ADR-0014 P7), copied as an adopter copies it, once for the workspace: doctor
+    // fails an adopter's app whose copy is missing or stale, and this workspace is an adopter's.
+    run('pnpm', ['exec', 'sssb', 'guide'], { cwd: appDir('console') })
+    const guideCheck = run('pnpm', ['exec', 'sssb', 'guide', '--check'], { cwd: appDir('ledger'), capture: true })
+    console.log(guideCheck.stdout.trim())
     for (const app of ['console', 'ledger']) {
         const doctor = run('pnpm', ['run', 'sssb:doctor'], { cwd: appDir(app), capture: true })
         console.log(doctor.stdout)
@@ -1327,7 +1334,7 @@ const packedManifest = (file) =>
 let toolsTarball = ''
 /** @type {string} */
 let pluginTarball = ''
-step('pack @sssb/kit, @sssb/tools and @sssb/eslint-plugin', () => {
+step('pack @sssb/kit, @sssb/tools, @sssb/eslint-plugin and @sssb/cdk', () => {
     rmSync(TARBALLS, { recursive: true, force: true })
     tarball = pack('packages/kit')
     const manifest = packedManifest(tarball)
@@ -1365,6 +1372,20 @@ step('pack @sssb/kit, @sssb/tools and @sssb/eslint-plugin', () => {
         fail(`the packed @sssb/eslint-plugin is not what it must be:\n  ${pluginProblems.join('\n  ')}`)
     console.log(
         `${path.basename(pluginTarball)}: ${pluginFiles.length} files, ${Math.round(statSync(pluginTarball).size / 1024)} KB; JavaScript and declarations only, no SSSB dependency`,
+    )
+
+    // @sssb/cdk: packed with the rest so the set a release candidate attaches is the set this job packed (ADR-0014 P7),
+    // and its packed shape checked. The consumer does not install or synthesize it yet; that is P12's, when the
+    // generator ships the starter's infra.
+    const cdkTarball = pack('packages/cdk')
+    const cdkFiles = run('tar', ['-tzf', cdkTarball], { cwd: BASE, capture: true })
+        .stdout.split('\n')
+        .filter(Boolean)
+        .map((file) => file.replace(/^package\//, ''))
+    const cdkProblems = cdkPackProblems(packedManifest(cdkTarball), cdkFiles)
+    if (cdkProblems.length > 0) fail(`the packed @sssb/cdk is not what it must be:\n  ${cdkProblems.join('\n  ')}`)
+    console.log(
+        `${path.basename(cdkTarball)}: ${cdkFiles.length} files, ${Math.round(statSync(cdkTarball).size / 1024)} KB; JavaScript and declarations, no dependency on the framework`,
     )
 })
 step('scaffold the consumer workspace', () => scaffold(tarball, toolsTarball, pluginTarball))

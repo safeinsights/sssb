@@ -67,8 +67,11 @@ type Workflow = { jobs: Record<string, Job>; on?: unknown; env?: Record<string, 
     unknown
 >
 
-/** What starts release.yml. A new trigger is a new way to reach the job that holds the key, so it is pinned. */
-const TRIGGERS = { push: { branches: ['main'], tags: ['v[0-9]+.[0-9]+.[0-9]+'] } }
+/**
+ * What starts release.yml. A new trigger is a new way to reach the job that holds the key, so it is pinned. The second
+ * tag is a release candidate's (ADR-0014 P7); a tag never reaches `push`, whose `if` admits only `main`.
+ */
+const TRIGGERS = { push: { branches: ['main'], tags: ['v[0-9]+.[0-9]+.[0-9]+', 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'] } }
 
 /** Commands that need no permission and reach nothing: they run on the runner and stop there. */
 const LOCAL_COMMANDS = new Set(['echo', 'printf', 'base64', 'mktemp', 'true', 'test', '['])
@@ -110,7 +113,9 @@ const REDIRECT_TARGETS = new Set(['$GITHUB_STEP_SUMMARY', '/dev/null', '&1', '&2
  * instrument. When this goes red: re-read every use of the token in the job against those rules and
  * `RELEASE_APP_PERMISSIONS`, and only then update the hash (the failure message prints the new one).
  */
-const PUSH_JOB_SHA256 = '8f5d2e9ecb28391502f37e5fae5cc54fa4b9a28675ffc1dee9b5422d2501ff71'
+// Re-reviewed for ADR-0014 P7: the one change is the version check before `git apply`, which now also admits a
+// release candidate's `0.x.y-rc.N`; every use of the token, and the push itself, are as they were.
+const PUSH_JOB_SHA256 = '3ee60ad934665378f54c41ac19d93181fd0b0068e4b0faf7d7346c40d4ee5e6d'
 
 /** Variables the token step may assign, as release.yml does: the commit, the scratch repository, the header. */
 const ALLOWED_ASSIGNMENTS = new Set(['sha', 'pusher', 'auth'])

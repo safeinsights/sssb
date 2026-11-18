@@ -42,9 +42,19 @@ function writeJson(file: string, value: unknown) {
 /**
  * A workspace with these packages and changesets (`{ id: frontmatter lines }`), committed when `git` is set.
  * `installed` runs `pnpm install --ignore-scripts` first, as the `plan` job does, under a root `prepare` script
- * that leaves a `prepare-ran` file wherever a later step runs scripts after all.
+ * that leaves a `prepare-ran` file wherever a later step runs scripts after all. `pre` writes `.changeset/pre.json` in
+ * pre mode with the tag `rc`; by default it is written when the fixed group is private, as this repository has it
+ * until P14 (a private group's releases are candidates, ADR-0014 P7).
  */
-function workspace(pkgs: Pkg[], changesets: Record<string, string[]> = {}, { git = false, installed = false } = {}) {
+function workspace(
+    pkgs: Pkg[],
+    changesets: Record<string, string[]> = {},
+    {
+        git = false,
+        installed = false,
+        pre = pkgs.filter((p) => p.name.startsWith('@sssb/')).every((p) => p.private),
+    } = {},
+) {
     const root = makeTestTmpDir('sssb-release-')
     writeJson(path.join(root, 'package.json'), {
         name: 'fixture',
@@ -64,6 +74,7 @@ function workspace(pkgs: Pkg[], changesets: Record<string, string[]> = {}, { git
     }
     mkdirSync(path.join(root, '.changeset'))
     copyFileSync(CONFIG, path.join(root, '.changeset', 'config.json'))
+    if (pre) writeJson(path.join(root, '.changeset', 'pre.json'), { mode: 'pre', tag: 'rc' })
     for (const [id, lines] of Object.entries(changesets)) {
         // A body in the shape the release notes are assembled from (scripts/release-notes.mjs); `check` and `prepare`
         // refuse any other.
@@ -115,22 +126,52 @@ function tarball(dir: string, file: string, manifest: Record<string, unknown>) {
 }
 
 describe('release check (every PR)', () => {
-    it('refuses a major changeset on 0.x, though Changesets plans nothing for a private package', async () => {
+    it('refuses a major changeset on 0.x, in a release candidate as in a release', async () => {
         const root = workspace([KIT('0.1.0'), APP], { breaking: ['"@sssb/kit": major'] })
         const { problems, plan } = await check(root)
         expect(problems.join('\n')).toMatch(/breaking\.md files a major for @sssb\/kit, which is on 0\.1\.0/)
-        expect(problems.join('\n')).toMatch(/takes @sssb\/kit from 0\.1\.0 to 1\.0\.0/)
-        // Judged as published: the kit alone, never the private app that depends on it.
+        expect(problems.join('\n')).toMatch(/takes @sssb\/kit from 0\.1\.0 to 1\.0\.0-rc\.0/)
+        // The kit alone, never the private app that depends on it: the config ignores every unscoped package.
         expect(plan.map((r: { name: string; newVersion: string }) => [r.name, r.newVersion])).toEqual([
-            ['@sssb/kit', '1.0.0'],
+            ['@sssb/kit', '1.0.0-rc.0'],
         ])
     })
 
-    it('accepts a minor, the breaking channel on 0.x', async () => {
-        const root = workspace([KIT('0.1.0'), APP], { breaking: ['"@sssb/kit": minor'] })
-        const { problems, plan } = await check(root)
-        expect(problems).toEqual([])
-        expect(plan.map((r: { newVersion: string }) => r.newVersion)).toEqual(['0.2.0'])
+    it('accepts a minor, the breaking channel on 0.x: a candidate while private, a release once public', async () => {
+        const candidate = workspace([KIT('0.1.0'), APP], { breaking: ['"@sssb/kit": minor'] })
+        expect(await check(candidate)).toMatchObject({ problems: [], plan: [{ newVersion: '0.2.0-rc.0' }] })
+        const release = workspace([KIT('0.1.0', false), APP], { breaking: ['"@sssb/kit": minor'] })
+        expect(await check(release)).toMatchObject({ problems: [], plan: [{ newVersion: '0.2.0' }] })
+    })
+
+    it('ties pre mode to privacy: a private group cuts candidates, a public one leaves pre mode', async () => {
+        // Without pre mode a merge to main would cut a plain version of a private group, which nothing can publish.
+        const unmarked = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { pre: false })
+        expect((await check(unmarked)).problems).toEqual([expect.stringMatching(/pre\.json must be \{"mode": "pre"/)])
+        // npm sees no candidate: a public group's release is plain.
+        const publicPre = workspace([KIT('0.1.0', false)], { feature: ['"@sssb/kit": minor'] }, { pre: true })
+        expect((await check(publicPre)).problems).toEqual([
+            expect.stringMatching(/the fixed group is public: leave pre mode/),
+        ])
+    })
+
+    it('reads pre.json strictly: exactly pre mode with the tag rc, or nothing', async () => {
+        for (const state of [
+            { mode: 'exit', tag: 'rc' },
+            { mode: 'pre', tag: 'beta' },
+            { mode: 'pre', tag: 'rc', x: 1 },
+        ]) {
+            const root = workspace([KIT('0.1.0')])
+            writeJson(path.join(root, '.changeset', 'pre.json'), state)
+            await expect(check(root)).rejects.toThrow(/pre\.json must be exactly \{"mode": "pre", "tag": "rc"\}/)
+        }
+    })
+
+    it('requires a config that versions private packages while the group is private', async () => {
+        const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] })
+        const file = path.join(root, '.changeset', 'config.json')
+        writeJson(file, { ...JSON.parse(readFileSync(file, 'utf8')), privatePackages: { version: false, tag: false } })
+        expect((await check(root)).problems).toEqual([expect.stringMatching(/must version private packages/)])
     })
 
     it('refuses any plan reaching 1.0.0, even with no major changeset', async () => {
@@ -188,12 +229,78 @@ describe('release check (every PR)', () => {
 })
 
 describe('release prepare (the plan job)', () => {
-    it('releases nothing while every package is private, and consumes no changeset', async () => {
+    it('cuts a release candidate while the group is private: rc versions, the changesets moved to pre/', async () => {
         const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
         const result = await prepare(root, { fetchImpl: registry() })
-        expect(result).toEqual({ release: false, reason: expect.stringMatching(/name only private packages/) })
-        expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(true)
-        expect(JSON.parse(readFileSync(path.join(root, 'packages/kit/package.json'), 'utf8')).version).toBe('0.1.0')
+        expect(result).toEqual({
+            release: true,
+            version: '0.2.0-rc.0',
+            packages: ['@sssb/kit'],
+            notes: 'docs/releases/v0.2.0-rc.0.md',
+        })
+        const manifest = (dir: string) => JSON.parse(readFileSync(path.join(root, dir, 'package.json'), 'utf8'))
+        expect(manifest('packages/kit')).toMatchObject({ version: '0.2.0-rc.0', private: true })
+        // the app the config ignores keeps its version
+        expect(manifest('apps/app').version).toBe('0.1.0')
+        // consumed, but kept until pre mode ends: Changesets 3 moves it, byte for byte
+        expect(existsSync(path.join(root, '.changeset', 'feature.md'))).toBe(false)
+        expect(readFileSync(path.join(root, '.changeset', 'pre', 'feature.md'), 'utf8')).toMatch(
+            /^---\n"@sssb\/kit": minor/,
+        )
+        expect(readFileSync(path.join(root, 'docs/releases/v0.2.0-rc.0.md'), 'utf8')).toMatch(
+            /^# Release notes: v0\.2\.0-rc\.0\n/,
+        )
+    })
+
+    it('numbers the next candidate on from the last, and keeps the version it is heading for', async () => {
+        // Cut rc.0 from a minor, then a patch and a minor in turn: both are already inside 0.2.0, so only N moves.
+        const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        const commit = (message: string) => {
+            execFileSync('git', ['add', '-A'], { cwd: root })
+            execFileSync(
+                'git',
+                [
+                    '-c',
+                    'user.name=t',
+                    '-c',
+                    'user.email=t@example.invalid',
+                    'commit',
+                    '-q',
+                    '--no-verify',
+                    '-m',
+                    message,
+                ],
+                { cwd: root },
+            )
+        }
+        await prepare(root, { fetchImpl: registry() })
+        commit('rc.0')
+        for (const [id, type, expected] of [
+            ['fix', 'patch', '0.2.0-rc.1'],
+            ['more', 'minor', '0.2.0-rc.2'],
+        ]) {
+            const body = `### ${id}\n\n**Kind.** none\n\n**Action.** none\n\n**What changed.** ${id}\n`
+            writeFileSync(path.join(root, '.changeset', `${id}.md`), `---\n"@sssb/kit": ${type}\n---\n\n${body}`)
+            commit(`add ${id}`)
+            expect(await prepare(root, { fetchImpl: registry() })).toMatchObject({ release: true, version: expected })
+            commit(expected)
+        }
+        // nothing new pending: no release, though the consumed changesets are still in .changeset/pre/
+        expect(await prepare(root, { fetchImpl: registry() })).toEqual({
+            release: false,
+            reason: 'no changesets are pending',
+        })
+    })
+
+    it('refuses a candidate whose tag already exists, or that is not ahead of the latest release', async () => {
+        const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] }, { git: true })
+        execFileSync('git', ['tag', 'v0.2.0-rc.0'], { cwd: root })
+        await expect(prepare(root, { fetchImpl: registry() })).rejects.toThrow(/the tag v0\.2\.0-rc\.0 already exists/)
+        execFileSync('git', ['tag', '-d', 'v0.2.0-rc.0'], { cwd: root, stdio: 'ignore' })
+        execFileSync('git', ['tag', 'v0.2.0'], { cwd: root })
+        await expect(prepare(root, { fetchImpl: registry() })).rejects.toThrow(
+            /not newer than the latest stable tag \(0\.2\.0\)/,
+        )
     })
 
     it('versions a public fixed group with Changesets and leaves the commit to the workflow', async () => {

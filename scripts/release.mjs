@@ -37,7 +37,8 @@
 // Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout carries only the result.
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -46,6 +47,10 @@ import { fileURLToPath } from 'node:url'
 const { fetch } = globalThis
 
 const PLAIN_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+/** A release candidate, `x.y.z-rc.N` (ADR-0014 P7): Changesets' pre mode with the tag `rc`. */
+const RC_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-rc\.(0|[1-9]\d*)$/
+/** The pre-mode tag every release candidate carries; `.changeset/pre.json` must name it. */
+const RC_TAG = 'rc'
 const SHA = /^[0-9a-f]{40}$/
 const REPOSITORY_URL = /^git\+https:\/\/github\.com\/[\w.-]+\/[\w.-]+\.git$/
 const REGISTRY = 'https://registry.npmjs.org'
@@ -56,6 +61,9 @@ const USAGE = [
     '       release.mjs preflight <version> <sha> <tarball>...',
     '       release.mjs verify-release <version>',
     '       release.mjs wait-for-checks <sha>',
+    '       release.mjs checks-run <sha>',
+    '       release.mjs candidate <version> <tarball>...',
+    '       release.mjs candidate-notes <version> <owner/repo> <sha> <assets.json>',
 ].join('\n')
 
 const major = (version) => Number(version.split('.')[0])
@@ -73,6 +81,78 @@ function compareVersions(a, b) {
     const y = b.split('.').map(Number)
     for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]
     return 0
+}
+
+/**
+ * `.changeset/pre.json` as Changesets 3 writes it (`changeset pre enter rc`): exactly `{"mode": "pre", "tag": "rc"}`,
+ * read without a dependency (the `push` job installs none). Absent means no pre mode. Anything else, `exit` mode
+ * included, fails: SSSB enters pre mode for its release candidates while the packages are private and leaves it at
+ * P14, and nothing between is a state a release should guess at.
+ * @param {string | null} text the file's contents, or null when there is none
+ * @returns {{ mode: 'pre', tag: 'rc' } | null}
+ */
+function preStateOf(text) {
+    if (text === null) return null
+    let state
+    try {
+        state = JSON.parse(text)
+    } catch {
+        throw new Error('.changeset/pre.json is not JSON')
+    }
+    const keys = state && typeof state === 'object' ? Object.keys(state).sort().join(',') : ''
+    if (keys !== 'mode,tag' || state.mode !== 'pre' || state.tag !== RC_TAG) {
+        throw new Error(`.changeset/pre.json must be exactly {"mode": "pre", "tag": "${RC_TAG}"}`)
+    }
+    return state
+}
+
+/** The working tree's pre state (see preStateOf). */
+function readPreState(root) {
+    const file = path.join(root, '.changeset', 'pre.json')
+    return preStateOf(existsSync(file) ? readFileSync(file, 'utf8') : null)
+}
+
+/**
+ * Semver's `inc` for the three bumps Changesets files, on a version that may be a prerelease: a prerelease is
+ * already on its way to the version it bumps to, so `0.2.0-rc.1` patched or minored is `0.2.0`, and only a bump past
+ * that moves it further. This is `semver/functions/inc` (which Changesets 3 calls, then appends `-rc.N`) for these
+ * inputs, written out so the `push` job, which installs nothing, can compute it.
+ * @param {string} version `x.y.z` or `x.y.z-rc.N`
+ * @param {'major' | 'minor' | 'patch'} type
+ */
+export function bump(version, type) {
+    const [core, pre] = version.split('-')
+    const [ma, mi, pa] = core.split('.').map(Number)
+    const isPre = pre !== undefined
+    if (type === 'major') return `${!isPre || mi !== 0 || pa !== 0 ? ma + 1 : ma}.0.0`
+    if (type === 'minor') return `${ma}.${!isPre || pa !== 0 ? mi + 1 : mi}.0`
+    return `${ma}.${mi}.${isPre ? pa : pa + 1}`
+}
+
+/**
+ * The next release candidate's number for a group now at these versions: one past the highest `-rc.N` among them,
+ * or 0 when none is a candidate. Changesets 3's `getPreVersion`, taken over a fixed group.
+ * @param {string[]} versions
+ */
+export function nextCandidate(versions) {
+    return Math.max(-1, ...versions.map((v) => Number(RC_VERSION.exec(v)?.[4] ?? -1))) + 1
+}
+
+/**
+ * The version a fixed group at `current` releases for these pending bumps, as Changesets computes it: the highest
+ * bump applied once to the group's version, and in pre mode `-rc.N` after it. Null when no bump releases anything.
+ * Throws when the group is at more than one version, which a fixed group never is.
+ * @param {string[]} current the group's versions
+ * @param {string[]} bumps the pending changesets' bumps for the group (`none` releases nothing)
+ * @param {boolean} pre whether pre mode is on
+ */
+export function impliedVersion(current, bumps, pre) {
+    const versions = [...new Set(current)]
+    if (versions.length !== 1) throw new Error(`the fixed group is at several versions: ${versions.join(', ')}`)
+    const rank = Math.max(-1, ...bumps.map((b) => ['patch', 'minor', 'major'].indexOf(b)))
+    if (rank < 0) return null
+    const next = bump(versions[0], /** @type {'patch' | 'minor' | 'major'} */ (['patch', 'minor', 'major'][rank]))
+    return pre ? `${next}-${RC_TAG}.${nextCandidate(versions)}` : next
 }
 
 /**
@@ -100,15 +180,16 @@ async function loadWorkspace(root) {
         .map((p) => p.packageJson.name)
         .filter((name) => name.startsWith('@sssb/') && !fixed.has(name))
     if (outside.length > 0) throw new Error(`outside the fixed group: ${outside.join(', ')}`)
-    // Prereleases are GitHub-release tarballs (ADR-0014 P7), never Changesets' pre mode, whose plans this
-    // script does not read.
-    if (existsSync(path.join(root, '.changeset', 'pre.json'))) {
-        throw new Error('.changeset/pre.json exists; SSSB does not use Changesets pre mode')
-    }
+    // Release candidates are Changesets' pre mode with the tag `rc` (ADR-0014, addendum 2026-11-18, P7): every plan
+    // here is assembled with the same pre state `changeset version` reads, so `check`, `prepare` and the CLI agree.
+    const pre = readPreState(root)
     const changesets = await readChangesets(root)
     const plan = (cfg) =>
-        assembleReleasePlan(changesets, packages, cfg, undefined).releases.filter((r) => r.type !== 'none')
-    return { packages: packages.packages, config, fixed, changesets, plan }
+        assembleReleasePlan(changesets, packages, cfg, pre ?? undefined).releases.filter((r) => r.type !== 'none')
+    // In pre mode Changesets moves each changeset it consumes to `.changeset/pre/` (id `pre/<name>`) and keeps it
+    // until pre mode ends; only the others are pending.
+    const pending = changesets.filter((c) => !c.id.startsWith('pre/'))
+    return { packages: packages.packages, config, fixed, changesets, pending, pre, plan }
 }
 
 /**
@@ -138,6 +219,30 @@ export async function check(root) {
     // name the rest pending forever, which stops every later release.
     const privacy = new Set(group.map((p) => isPrivate(p.packageJson, `${p.relativeDir}/package.json`)))
     if (privacy.size > 1) problems.push('the fixed group must be all private or all public')
+    // RELEASE CANDIDATES WHILE PRIVATE (ADR-0014 P7, JP 2026-11-18: a merge to main is the release decision). While
+    // the group is private it never reaches npm, so every release is a candidate, `x.y.z-rc.N`, cut by a merge to main
+    // and shipped as a GitHub prerelease. That takes pre mode with the tag `rc`, and a config that versions private
+    // packages; without either, a merge would cut a plain version nothing can publish, or nothing at all. Once the group
+    // is public (P14), pre mode is left, and a release is a plain version on npm.
+    if (privacy.has(true) && privacy.size === 1) {
+        if (!ws.pre) {
+            problems.push(
+                `the fixed group is private, so its releases are release candidates: .changeset/pre.json must be ` +
+                    `{"mode": "pre", "tag": "${RC_TAG}"} (\`changeset pre enter ${RC_TAG}\`)`,
+            )
+        }
+        if (!ws.config.privatePackages.version) {
+            problems.push(
+                '.changeset/config.json must version private packages ("privatePackages": { "version": true }) ' +
+                    'while the fixed group is private, or a merge to main cuts no release candidate',
+            )
+        }
+    } else if (ws.pre) {
+        problems.push(
+            `the fixed group is public: leave pre mode (\`changeset pre exit\`) before releasing it to npm; release ` +
+                'candidates are GitHub prereleases of the private group only',
+        )
+    }
     for (const changeset of ws.changesets) {
         for (const release of changeset.releases) {
             // A changeset that names a package outside the group is never consumed while that package is
@@ -161,19 +266,26 @@ export async function check(root) {
     // and `publish` jobs run a lone copy of this file with no sibling modules.
     const { lintChangesets } = await import('./release-notes.mjs')
     problems.push(...lintChangesets(root, { judgePackages: false }))
-    // Only the fixed group is ever published; the apps that depend on it would be planned too, and are noise.
+    // A changeset naming an ignored package beside the group is one Changesets refuses to plan at all ("mixed
+    // changeset"), so with that already reported there is no plan to judge.
+    if (ws.changesets.some((c) => c.releases.some((r) => !ws.fixed.has(r.name)))) {
+        return { problems, plan: [], changesets: ws.pending.length }
+    }
+    // Only the fixed group is ever released; anything else in the plan (an app the config does not ignore) is reported
+    // by `prepare`, which refuses it. A candidate is `0.x.y-rc.N`, a release `0.x.y`: nothing reaches 1.0.0.
     const asPublished = ws
         .plan({ ...ws.config, privatePackages: { version: true, tag: false } })
         .filter((r) => ws.fixed.has(r.name))
+    const shape = ws.pre ? RC_VERSION : PLAIN_VERSION
     for (const release of asPublished) {
-        if (!PLAIN_VERSION.test(release.newVersion) || major(release.newVersion) >= 1) {
+        if (!shape.test(release.newVersion) || major(release.newVersion) >= 1) {
             problems.push(
                 `the release plan takes ${release.name} from ${release.oldVersion} to ${release.newVersion}; ` +
-                    'nothing reaches 1.0.0 from an ordinary PR',
+                    `nothing reaches 1.0.0 from an ordinary PR, and ${ws.pre ? 'a candidate is 0.x.y-rc.N' : 'a release is 0.x.y'}`,
             )
         }
     }
-    return { problems, plan: asPublished, changesets: ws.changesets.length }
+    return { problems, plan: asPublished, changesets: ws.pending.length }
 }
 
 /** npm's `latest` for a package, or null when the registry has never heard of it. */
@@ -219,12 +331,8 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
     const ws = await loadWorkspace(root)
     const releases = ws.plan(ws.config)
     if (releases.length === 0) {
-        // Until P14 every package is private and Changesets versions none of them, so this is the answer on
-        // every push to main. The changesets stay pending, and nothing is consumed or tagged.
-        return {
-            release: false,
-            reason: 'the pending changesets release nothing: they name only private packages, or are empty',
-        }
+        // Every pending changeset is empty (`---` `---`), so nothing is versioned, consumed or tagged.
+        return { release: false, reason: 'the pending changesets release nothing: they are empty' }
     }
     const strays = releases.filter((r) => !ws.fixed.has(r.name)).map((r) => r.name)
     if (strays.length > 0) {
@@ -232,10 +340,25 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
     }
     const planned = new Set(releases.map((r) => r.newVersion))
     const [version] = planned
-    if (planned.size !== 1 || !PLAIN_VERSION.test(version) || major(version) !== 0) {
+    const shape = ws.pre ? RC_VERSION : PLAIN_VERSION
+    if (planned.size !== 1 || !shape.test(version) || major(version) !== 0) {
         throw new Error(
-            `the plan must release one 0.x version, got ${releases.map((r) => `${r.name}@${r.newVersion}`).join(', ')}`,
+            `the plan must release one 0.x ${ws.pre ? 'release candidate' : 'version'}, got ` +
+                releases.map((r) => `${r.name}@${r.newVersion}`).join(', '),
         )
+    }
+    // The `push` job recomputes the version from the commit alone (verifyRelease), with no Changesets to ask, so the
+    // two must agree before anything is changed: a disagreement found there would come after the plan was accepted.
+    const expected = impliedVersion(
+        releases.map((r) => r.oldVersion),
+        ws.pending.flatMap((c) => c.releases.filter((r) => ws.fixed.has(r.name)).map((r) => r.type)),
+        ws.pre !== null,
+    )
+    if (expected !== version) {
+        throw new Error(`Changesets plans ${version}, but the release's own check would expect ${expected}`)
+    }
+    if (git(root, ['tag', '--list', `v${version}`]).trim()) {
+        throw new Error(`the tag v${version} already exists; a release is never cut twice`)
     }
     const repo = process.env.GITHUB_REPOSITORY
     if (repo) {
@@ -248,10 +371,12 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
             throw new Error(`npm's provenance needs repository.url ${expected} in ${wrongRepo.join(', ')}`)
         }
     }
+    // A candidate is judged by the release it leads to (`0.2.0-rc.1` by `0.2.0`), which must be newer than any release.
+    const target = version.split('-')[0]
     const floors = [['the latest stable tag', latestStableTag(root)]]
     for (const r of releases) floors.push([`npm's latest ${r.name}`, await npmLatest(r.name, fetchImpl)])
     for (const [what, floor] of floors) {
-        if (floor !== null && PLAIN_VERSION.test(floor) && compareVersions(version, floor) <= 0) {
+        if (floor !== null && PLAIN_VERSION.test(floor) && compareVersions(target, floor) <= 0) {
             throw new Error(
                 `the changesets plan ${version}, which is not newer than ${what} (${floor}); a release never goes backwards`,
             )
@@ -286,7 +411,8 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
     const wrong = after.packages
         .filter((p) => releases.some((r) => r.name === p.packageJson.name) && p.packageJson.version !== version)
         .map((p) => `${p.packageJson.name} is at ${p.packageJson.version}`)
-    if (after.changesets.length > 0) wrong.push(`changesets remain: ${after.changesets.map((c) => c.id).join(', ')}`)
+    // Consumed means deleted, or in pre mode moved to `.changeset/pre/`: either way, no longer pending.
+    if (after.pending.length > 0) wrong.push(`changesets remain: ${after.pending.map((c) => c.id).join(', ')}`)
     if (wrong.length > 0) throw new Error(`after \`changeset version\` to ${version}: ${wrong.join('; ')}`)
     return { release: true, version, packages: releases.map((r) => r.name).sort(), notes: notesPath(version) }
 }
@@ -356,6 +482,33 @@ function fixedGroupMatcher(root, rev) {
 }
 
 /**
+ * A packed tarball's own manifest, or null when it is not laid out as `pnpm pack` lays one out. npm reads the manifest
+ * from whatever the first directory is called, so a tarball laid out any other way could show a check one manifest
+ * and an installer another. Every entry must be a file or a directory at a normalized path under `package/`: no `..`,
+ * `.` or empty segment that an extractor could resolve onto another entry, and no link.
+ * @param {string} file
+ * @returns {Record<string, unknown> | null}
+ */
+function packedManifest(file) {
+    const tar = (args) => execFileSync('tar', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 2] })
+    const entries = tar(['-tzf', file]).split('\n').filter(Boolean)
+    const kinds = tar(['-tvzf', file])
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => line[0])
+    const strays = entries.filter((e) => !e.startsWith('package/') || path.posix.normalize(e) !== e)
+    if (
+        strays.length > 0 ||
+        kinds.length !== entries.length ||
+        kinds.some((k) => k !== '-' && k !== 'd') ||
+        entries.filter((e) => e === 'package/package.json').length !== 1
+    ) {
+        return null
+    }
+    return JSON.parse(tar(['-xzOf', file, 'package/package.json']))
+}
+
+/**
  * The tarballs still to publish for this release, as `[{name, file}]`. Throws, before any publish, on anything
  * that must not go out: a tarball outside the fixed group, at another version, or private; a version already
  * on npm from another commit; or a `latest` newer than this release, which a late re-run must not move back.
@@ -368,28 +521,12 @@ export async function preflight(root, version, sha, files, fetchImpl = fetch) {
     const todo = []
     const problems = []
     const seen = new Set()
-    const tar = (args) => execFileSync('tar', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 2] })
     for (const file of files) {
-        // npm reads the manifest from whatever the first directory is called, so a tarball laid out any other way
-        // than `pnpm pack`'s could show this check one manifest and npm another.
-        // Every entry is a file or a directory at a normalized path under `package/`: no `..`, `.` or empty
-        // segment that an extractor could resolve onto another entry, and no link.
-        const entries = tar(['-tzf', file]).split('\n').filter(Boolean)
-        const kinds = tar(['-tvzf', file])
-            .split('\n')
-            .filter(Boolean)
-            .map((line) => line[0])
-        const strays = entries.filter((e) => !e.startsWith('package/') || path.posix.normalize(e) !== e)
-        if (
-            strays.length > 0 ||
-            kinds.length !== entries.length ||
-            kinds.some((k) => k !== '-' && k !== 'd') ||
-            entries.filter((e) => e === 'package/package.json').length !== 1
-        ) {
+        const manifest = packedManifest(file)
+        if (manifest === null) {
             problems.push(`${file} is not laid out as one package/ of plain files with one package/package.json`)
             continue
         }
-        const manifest = JSON.parse(tar(['-xzOf', file, 'package/package.json']))
         const { name } = manifest
         if (typeof name !== 'string' || !inFixedGroup(name)) {
             problems.push(`${file} holds ${name}, which is not in the fixed group`)
@@ -416,11 +553,118 @@ export async function preflight(root, version, sha, files, fetchImpl = fetch) {
     return todo
 }
 
+/**
+ * THE RELEASE CANDIDATE'S ASSETS, checked before anything is attested or attached (ADR-0014 P7). The tarballs are
+ * the ones `checks`' pack-and-consume job packed and tested on this very commit, handed over as that run's artifact,
+ * never packed again here. They must be exactly the fixed group as this commit's `packages/` holds it, one tarball
+ * each, laid out as `pnpm pack` lays one out, each at the candidate's version. Private is expected: a candidate is
+ * cut only of the private group. Returns `[{name, file, size, sha256, sha512}]` by name, `sha512` in the
+ * `sha512-<base64>` form a lockfile's `integrity` takes. Needs no installed dependency.
+ * @param {string} root the release commit's checkout
+ * @param {string} version
+ * @param {string[]} files
+ */
+export function candidate(root, version, files) {
+    if (!RC_VERSION.test(version) || major(version) !== 0) throw new Error(`not a release candidate: '${version}'`)
+    if (files.length === 0) throw new Error('no tarballs to attach')
+    const inFixedGroup = fixedGroupMatcher(root)
+    const group = new Map()
+    for (const dir of readdirSync(path.join(root, 'packages'), { withFileTypes: true })) {
+        const file = path.join(root, 'packages', dir.name, 'package.json')
+        if (!dir.isDirectory() || !existsSync(file)) continue
+        const manifest = JSON.parse(readFileSync(file, 'utf8'))
+        if (inFixedGroup(manifest.name)) group.set(manifest.name, manifest.version)
+    }
+    const problems = []
+    const assets = []
+    for (const file of files) {
+        const manifest = packedManifest(file)
+        if (manifest === null) {
+            problems.push(`${file} is not laid out as one package/ of plain files with one package/package.json`)
+            continue
+        }
+        const { name } = manifest
+        if (typeof name !== 'string' || !group.has(name)) {
+            problems.push(`${file} holds ${String(name)}, which is not in this commit's fixed group`)
+            continue
+        }
+        if (assets.some((a) => a.name === name)) problems.push(`${name} is packed twice`)
+        if (manifest.version !== version) problems.push(`${file} holds ${name}@${manifest.version}, not ${version}`)
+        if (group.get(name) !== version) problems.push(`this commit has ${name} at ${group.get(name)}, not ${version}`)
+        const bytes = readFileSync(file)
+        assets.push({
+            name,
+            file: path.basename(file),
+            size: bytes.length,
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+            sha512: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+        })
+    }
+    for (const name of group.keys()) {
+        if (!assets.some((a) => a.name === name)) problems.push(`no tarball holds ${name}, which this commit releases`)
+    }
+    if (new Set(assets.map((a) => a.file)).size !== assets.length) problems.push('two tarballs share a file name')
+    if (problems.length > 0) throw new Error(problems.join('\n'))
+    return assets.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * The GitHub prerelease's notes: the release notes the release commit carries (`docs/releases/v<version>.md`, written
+ * by `prepare` and checked by `verify-release`), then how to install each tarball by URL, its sha512, and how to
+ * verify the attestation. An adopter commits the lockfile and installs with `--frozen-lockfile`: a release asset can be
+ * replaced under the same URL, and the lockfile's integrity is what pins the bytes (ADR-0014 part 10).
+ * @param {string} root the release commit's checkout
+ * @param {string} version
+ * @param {string} repo `owner/name`
+ * @param {string} sha the release commit
+ * @param {{ name: string, file: string, sha512: string }[]} assets as `candidate` returns them
+ */
+export function candidateNotes(root, version, repo, sha, assets) {
+    if (!RC_VERSION.test(version)) throw new Error(`not a release candidate: '${version}'`)
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`not a repository: '${repo}'`)
+    if (!SHA.test(sha)) throw new Error(`not a commit: '${sha}'`)
+    const notes = readFileSync(path.join(root, notesPath(version)), 'utf8')
+    if (!notes.startsWith(`# Release notes: v${version}\n`)) {
+        throw new Error(`${notesPath(version)} is not the release notes of v${version}`)
+    }
+    const url = (/** @type {string} */ file) => `https://github.com/${repo}/releases/download/v${version}/${file}`
+    const out = [
+        notes.trimEnd(),
+        '',
+        '## Installing this release candidate',
+        '',
+        `A release candidate is a GitHub prerelease of \`${repo}\`, cut from \`${sha}\`; nothing is on npm. Each package`,
+        'is a tarball installed by URL. Commit the lockfile and install with `--frozen-lockfile`: a release asset can be',
+        "replaced under the same URL, and the lockfile's `integrity`, checked against the sha512 below, is what pins the",
+        'bytes.',
+        '',
+        'In `pnpm-workspace.yaml`, map every package to its tarball, so that a package that depends on another (`@sssb/cdk`',
+        'on `@sssb/tools`) resolves it here rather than on npm, which has no release candidate:',
+        '',
+        '```yaml',
+        'overrides:',
+        ...assets.map((a) => `    '${a.name}': ${url(a.file)}`),
+        '```',
+        '',
+        'and in each workspace package that uses one, depend on the same URL:',
+        '',
+        '```json',
+        JSON.stringify(Object.fromEntries(assets.map((a) => [a.name, url(a.file)])), null, 4),
+        '```',
+        '',
+        '| Package | Tarball | sha512 |',
+        '| --- | --- | --- |',
+        ...assets.map((a) => `| \`${a.name}\` | [\`${a.file}\`](${url(a.file)}) | \`${a.sha512}\` |`),
+        '',
+        `Each tarball is attested by this repository's release workflow: \`gh attestation verify <tarball> --repo ${repo}\`.`,
+        '',
+    ]
+    return out.join('\n')
+}
+
 const CHANGESET_FILE = /^\.changeset\/[^/]+\.md$/
 const MANIFEST = /^packages\/[^/]+\/package\.json$/
 const CHANGELOG = /^packages\/[^/]+\/CHANGELOG\.md$/
-
-const BUMPS = ['patch', 'minor', 'major']
 
 /** Where a release's notes live in its release commit. */
 const notesPath = (/** @type {string} */ version) => `docs/releases/v${version}.md`
@@ -469,41 +713,52 @@ export function changesetReleases(text, where) {
  */
 export function verifyRelease(root, version) {
     const problems = []
-    if (!PLAIN_VERSION.test(version) || major(version) !== 0) problems.push(`not a 0.x release version: '${version}'`)
+    const tracked = git(root, ['ls-tree', '-r', '--name-only', '-z', 'HEAD']).split('\0').filter(Boolean)
+    const atHead = (file) => git(root, ['show', `HEAD:${file}`])
+    // Pre mode as HEAD has it: a release candidate (`x.y.z-rc.N`) of the private group, or a plain release.
+    const pre = preStateOf(tracked.includes('.changeset/pre.json') ? atHead('.changeset/pre.json') : null)
+    const shape = pre ? RC_VERSION : PLAIN_VERSION
+    if (!shape.test(version) || major(version) !== 0) {
+        problems.push(`not a 0.x ${pre ? 'release candidate' : 'release'} version: '${version}'`)
+    }
     if (git(root, ['diff', '--name-only']).trim() || git(root, ['ls-files', '--others', '--exclude-standard']).trim()) {
         problems.push('the tree holds changes that are not staged')
     }
     const inFixedGroup = fixedGroupMatcher(root, 'HEAD')
-    const atHead = (file) => git(root, ['show', `HEAD:${file}`])
-    const tracked = git(root, ['ls-tree', '-r', '--name-only', '-z', 'HEAD']).split('\0').filter(Boolean)
 
-    // What HEAD says the release is.
+    // What HEAD says the release is: the public group's release, or, in pre mode, the private group's candidate.
     const released = new Map()
     for (const file of tracked.filter((f) => MANIFEST.test(f))) {
         const manifest = JSON.parse(atHead(file))
-        if (inFixedGroup(manifest.name) && !isPrivate(manifest, file)) released.set(file, manifest.version)
+        if (!inFixedGroup(manifest.name)) continue
+        const priv = isPrivate(manifest, file)
+        if (pre && !priv) problems.push(`${file} is public, and a release candidate is cut only of the private group`)
+        if (pre || !priv) released.set(file, manifest.version)
     }
+    // Pending is `.changeset/<name>.md`; in pre mode the ones already consumed sit in `.changeset/pre/` and are not.
     const pending = tracked.filter((f) => CHANGESET_FILE.test(f) && isChangesetName(path.basename(f)))
-    let bump = -1
+    const bumps = []
     for (const file of pending) {
         for (const r of changesetReleases(atHead(file), file)) {
             if (!inFixedGroup(r.name)) problems.push(`${file} names ${r.name}, which is not in the fixed group`)
-            else bump = Math.max(bump, BUMPS.indexOf(r.type))
+            else bumps.push(r.type)
         }
     }
-    const current = [...new Set(released.values())]
     if (released.size === 0) problems.push('no fixed-group package is public, so there is nothing to release')
-    else if (current.length !== 1) problems.push(`the fixed group is at several versions: ${current.join(', ')}`)
-    else if (bump < 0) problems.push('the pending changesets release nothing')
     else {
-        const [ma, mi, pa] = current[0].split('.').map(Number)
-        const expected = [`${ma}.${mi}.${pa + 1}`, `${ma}.${mi + 1}.0`, `${ma + 1}.0.0`][bump]
-        if (expected !== version) problems.push(`the pending changesets release ${expected}, not ${version}`)
+        try {
+            const expected = impliedVersion([...released.values()], bumps, pre !== null)
+            if (expected === null) problems.push('the pending changesets release nothing')
+            else if (expected !== version) problems.push(`the pending changesets release ${expected}, not ${version}`)
+        } catch (error) {
+            problems.push(error instanceof Error ? error.message : String(error))
+        }
     }
 
     // What the index holds. `--raw` gives old mode, new mode, status and path, so a symlink, an executable or a
     // gitlink cannot pass as a plain file.
     const deleted = new Set()
+    const moved = new Set()
     const bumped = new Set()
     let notes = false
     const plain = (mode) => mode === '100644'
@@ -514,6 +769,16 @@ export function verifyRelease(root, version) {
         const dir = path.posix.dirname(file)
         if (status === 'D' && pending.includes(file)) {
             deleted.add(file)
+            continue
+        }
+        // In pre mode a consumed changeset is moved, not deleted: `.changeset/pre/<name>.md`, a new plain file holding
+        // exactly what `.changeset/<name>.md` held at HEAD, which must itself be deleted (checked below).
+        const original = `.changeset/${path.posix.basename(file)}`
+        if (pre && status === 'A' && dir === '.changeset/pre' && plain(newMode) && pending.includes(original)) {
+            if (git(root, ['show', `:${file}`]) !== atHead(original)) {
+                problems.push(`${file} must hold exactly what ${original} held`)
+            }
+            moved.add(original)
             continue
         }
         // The release notes: one new plain file, at exactly this path. Its words come from reviewed changesets, and
@@ -557,10 +822,18 @@ export function verifyRelease(root, version) {
         problems.push(`the release may not change ${file} (${status} ${oldMode} → ${newMode})`)
     }
     if (!notes) problems.push(`the release notes ${notesPath(version)} are not staged`)
-    for (const file of pending) if (!deleted.has(file)) problems.push(`${file} is not consumed`)
+    for (const file of pending) {
+        if (!deleted.has(file)) problems.push(`${file} is not consumed`)
+        else if (pre && !moved.has(file)) problems.push(`${file} is deleted, not moved to .changeset/pre/`)
+    }
     for (const file of released.keys()) if (!bumped.has(file)) problems.push(`${file} is not moved to ${version}`)
+    // Judged by the release it leads to: `0.2.0-rc.0` must still be ahead of every release, as `0.2.0` would be.
     const tag = latestStableTag(root)
-    if (tag !== null && compareVersions(version, tag) <= 0) problems.push(`${version} is not newer than v${tag}`)
+    const target = version.split('-')[0]
+    if (tag !== null && PLAIN_VERSION.test(target) && compareVersions(target, tag) <= 0) {
+        problems.push(`${version} is not newer than v${tag}`)
+    }
+    if (git(root, ['tag', '--list', `v${version}`]).trim()) problems.push(`the tag v${version} already exists`)
     if (problems.length > 0) throw new Error(problems.join('\n'))
 }
 
@@ -596,7 +869,8 @@ export async function waitForChecks({
             const run = res.ok ? (await res.json()).workflow_runs?.[0] : undefined
             last = res.ok ? `${run?.status ?? 'no run'} ${run?.conclusion ?? ''}`.trim() : `HTTP ${res.status}`
             if (run?.status === 'completed') {
-                if (run.conclusion === 'success') return
+                // The run's id is handed back for `checks-run`, which downloads that run's tarballs.
+                if (run.conclusion === 'success') return run.id
                 throw Object.assign(new Error(`checks concluded '${run.conclusion}' on ${sha}; refusing to release`), {
                     final: true,
                 })
@@ -648,6 +922,24 @@ async function main(argv) {
         await waitForChecks({ repo, sha: rest[0], token })
         // As above: the workflow requires this line.
         console.log(`passed ${rest[0]}`)
+        return
+    }
+    if (command === 'checks-run' && rest.length === 1) {
+        // The gate, then the id of the run that passed it, whose artifact holds the tarballs it tested.
+        const { GITHUB_REPOSITORY: repo, GH_TOKEN: token } = process.env
+        const id = await waitForChecks({ repo, sha: rest[0], token })
+        if (!Number.isSafeInteger(id) || id <= 0) throw new Error(`the run that passed checks on ${rest[0]} has no id`)
+        console.log(`run ${id}`)
+        return
+    }
+    if (command === 'candidate' && rest.length >= 2) {
+        const [version, ...files] = rest
+        console.log(JSON.stringify(candidate(root, version, files)))
+        return
+    }
+    if (command === 'candidate-notes' && rest.length === 4) {
+        const [version, repo, sha, assets] = rest
+        process.stdout.write(candidateNotes(root, version, repo, sha, JSON.parse(readFileSync(assets, 'utf8'))))
         return
     }
     throw new Error(USAGE)
