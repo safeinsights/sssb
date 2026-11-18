@@ -531,7 +531,7 @@ export function kitImporters(root, packages = workspacePackages(root)) {
  * ONE SSSB PER IMPORTER, WITH ITS OWN SEAM (ADR-0014 part 5): every package of the workspace that depends on
  * `@sssb/kit` (the root included) must declare its seam link, and the instance it resolves must have that very seam
  * linked, a seam no other importer has. The link must be a workspace package (`workspace:<name>@*`), not a `link:`,
- * which pnpm's next `add`, `remove` or `update` unlinks. A package that slips is by definition not an app, so the walk
+ * which pnpm's next `add <pkg>`, `remove` or `update <pkg>` for the importer unlinks. A package that slips is by definition not an app, so the walk
  * is the whole workspace, whatever package doctor runs from. `resolveKit` is the shared resolver's kitDirOf.
  * @param {string} root
  * @param {(dir: string) => string} resolveKit
