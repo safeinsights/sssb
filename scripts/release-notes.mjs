@@ -330,14 +330,53 @@ function git(root, args) {
 }
 
 /**
- * Names under `.changeset/` as of a revision, optionally only those a diff from `since` adds (`A`) or edits (`M`) and
- * that are still there.
+ * Whether a `.changeset/pre.json` (its text, or null when there is none) puts Changesets in pre mode, where a changeset
+ * in `.changeset/pre/` is consumed. Out of it (ADR-0014 P14 deleted the file) Changesets releases those too, so they
+ * are pending, and in the notes. `release.mjs` judges the file's exact shape; this reads only its mode.
+ * @param {string | null} text
+ */
+function preModeOf(text) {
+    if (text === null) return false
+    try {
+        return JSON.parse(text)?.mode === 'pre'
+    } catch {
+        throw new Error('.changeset/pre.json is not JSON')
+    }
+}
+
+/**
+ * The changesets Changesets would consume, as paths relative to `.changeset/` (`name.md`, or `pre/name.md` once pre
+ * mode is left), from a listing of `.changeset/` and, out of pre mode, of `.changeset/pre/`.
+ * @param {string[]} top the names directly in `.changeset/`
+ * @param {() => string[]} consumed the names in `.changeset/pre/`, read only when they count
+ * @param {boolean} pre
+ */
+function pendingNames(top, consumed, pre) {
+    const names = top.filter(isChangesetName)
+    if (!pre)
+        names.push(
+            ...consumed()
+                .filter(isChangesetName)
+                .map((name) => `pre/${name}`),
+        )
+    return names
+}
+
+/**
+ * Pending changesets under `.changeset/` as of a revision (relative to `.changeset/`), optionally only those a diff
+ * from `since` adds (`A`) or edits (`M`) and that are still there.
  * @param {string} root
  * @param {{ since?: string, at: string, filter?: 'A' | 'M' }} where
  */
 function namesAt(root, { since, at, filter }) {
-    const listed = git(root, ['ls-tree', '-z', '--name-only', at, '.changeset/']).split('\0').filter(Boolean)
-    const names = listed.map((f) => path.posix.basename(f)).filter(isChangesetName)
+    const list = (/** @type {string} */ dir) =>
+        git(root, ['ls-tree', '-z', '--name-only', at, `${dir}/`])
+            .split('\0')
+            .filter(Boolean)
+            .map((f) => path.posix.basename(f))
+    const top = list('.changeset')
+    const pre = top.includes('pre.json') && preModeOf(git(root, ['show', `${at}:.changeset/pre.json`]))
+    const names = pendingNames(top, () => list('.changeset/pre'), pre)
     if (since === undefined || filter === undefined) return names
     const changed = new Set(
         git(root, [
@@ -353,7 +392,7 @@ function namesAt(root, { since, at, filter }) {
         ])
             .split('\0')
             .filter(Boolean)
-            .map((f) => path.posix.basename(f)),
+            .map((f) => path.posix.relative('.changeset', f)),
     )
     return names.filter((n) => changed.has(n))
 }
@@ -371,7 +410,14 @@ export function readChangesets(root, { since, at, edited = false } = {}) {
     }
     if (at === undefined && since === undefined) {
         const dir = path.join(root, '.changeset')
-        const names = existsSync(dir) ? readdirSync(dir).filter(isChangesetName) : []
+        const preJson = path.join(dir, 'pre.json')
+        const names = existsSync(dir)
+            ? pendingNames(
+                  readdirSync(dir),
+                  () => (existsSync(path.join(dir, 'pre')) ? readdirSync(path.join(dir, 'pre')) : []),
+                  preModeOf(existsSync(preJson) ? readFileSync(preJson, 'utf8') : null),
+              )
+            : []
         return names
             .sort()
             .map((name) => ({ file: `.changeset/${name}`, text: readFileSync(path.join(dir, name), 'utf8') }))

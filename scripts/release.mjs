@@ -99,8 +99,9 @@ function compareVersions(a, b) {
 /**
  * `.changeset/pre.json` as Changesets 3 writes it (`changeset pre enter rc`): exactly `{"mode": "pre", "tag": "rc"}`,
  * read without a dependency (the `push` job installs none). Absent means no pre mode. Anything else, `exit` mode
- * included, fails: SSSB enters pre mode for its release candidates while the packages are private and leaves it at
- * P14, and nothing between is a state a release should guess at.
+ * included, fails: SSSB entered pre mode for its release candidates while the packages were private and left it at
+ * P14 by deleting this file (not by `changeset pre exit`, whose `"mode": "exit"` would leave one more state for every
+ * reader to know; docs/decision-log.md, 2026-11-18, P14), and nothing between is a state a release should guess at.
  * @param {string | null} text the file's contents, or null when there is none
  * @returns {{ mode: 'pre', tag: 'rc' } | null}
  */
@@ -200,8 +201,11 @@ async function loadWorkspace(root) {
     const plan = (cfg) =>
         assembleReleasePlan(changesets, packages, cfg, pre ?? undefined).releases.filter((r) => r.type !== 'none')
     // In pre mode Changesets moves each changeset it consumes to `.changeset/pre/` (id `pre/<name>`) and keeps it
-    // until pre mode ends; only the others are pending.
-    const pending = changesets.filter((c) => !c.id.startsWith('pre/'))
+    // until pre mode ends; only the others are pending. OUT of pre mode (ADR-0014 P14 left it by deleting
+    // `.changeset/pre.json`) Changesets counts every one, `pre/` included, and its next `changeset version` releases and
+    // deletes them all: the first plain release carries the whole series of candidates
+    // (`@changesets/assemble-release-plan` 7.0.0, `getRelevantChangesets`).
+    const pending = pre ? changesets.filter((c) => !c.id.startsWith('pre/')) : changesets
     return { packages: packages.packages, config, fixed, changesets, pending, pre, plan }
 }
 
@@ -268,20 +272,20 @@ export async function check(root) {
         )
     }
     // In pre mode Changesets moves a consumed changeset to `.changeset/pre/<name>.md`, so a pending one with a name
-    // already there would overwrite it, which `verify-release` refuses after merge. Names are never reused.
-    if (ws.pre) {
-        const consumed = new Set(ws.changesets.filter((c) => c.id.startsWith('pre/')).map((c) => c.id.slice(4)))
-        for (const c of ws.pending) {
-            if (consumed.has(c.id)) {
-                problems.push(
-                    `.changeset/${c.id}.md has the name of a changeset an earlier release candidate consumed ` +
-                        `(.changeset/pre/${c.id}.md); give it another name`,
-                )
-            }
+    // already there would overwrite it, which `verify-release` refuses after merge. Out of pre mode both are pending and
+    // both would be released, but the notes would list two entries under one name. Names are never reused.
+    const consumed = new Set(ws.changesets.filter((c) => c.id.startsWith('pre/')).map((c) => c.id.slice(4)))
+    for (const c of ws.changesets) {
+        if (consumed.has(c.id)) {
+            problems.push(
+                `.changeset/${c.id}.md has the name of a changeset an earlier release candidate consumed ` +
+                    `(.changeset/pre/${c.id}.md); give it another name`,
+            )
         }
     }
-    // Only the PENDING ones: a consumed changeset (`pre/`) was released with its candidate, and a rule or a group that
-    // changed since must not turn that record red on every later PR.
+    // Only the PENDING ones: in pre mode a consumed changeset (`pre/`) was released with its candidate, and a rule or a
+    // group that changed since must not turn that record red on every later PR. Out of pre mode the `pre/` ones are
+    // pending again, and the next release reads them: they are judged like any other.
     for (const changeset of ws.pending) {
         for (const release of changeset.releases) {
             // A changeset that names a package outside the group is never consumed while that package is
@@ -808,6 +812,8 @@ export function candidateNotes(root, version, repo, sha, assets) {
 const GENERATOR = '@sssb/create'
 
 const CHANGESET_FILE = /^\.changeset\/[^/]+\.md$/
+/** A changeset an earlier release candidate consumed: pending again once pre mode is left (ADR-0014 P14). */
+const PRE_CHANGESET_FILE = /^\.changeset\/pre\/[^/]+\.md$/
 const MANIFEST = /^packages\/[^/]+\/package\.json$/
 const CHANGELOG = /^packages\/[^/]+\/CHANGELOG\.md$/
 
@@ -882,8 +888,11 @@ export function verifyRelease(root, version) {
         if (pre && !priv) problems.push(`${file} is public, and a release candidate is cut only of the private group`)
         if (pre || !priv) released.set(file, manifest.version)
     }
-    // Pending is `.changeset/<name>.md`; in pre mode the ones already consumed sit in `.changeset/pre/` and are not.
-    const pending = tracked.filter((f) => CHANGESET_FILE.test(f) && isChangesetName(path.basename(f)))
+    // Pending is `.changeset/<name>.md`; in pre mode the ones already consumed sit in `.changeset/pre/` and are not. Out
+    // of pre mode (from P14) Changesets releases those too, and the release deletes them as it deletes the others.
+    const pending = tracked.filter(
+        (f) => (CHANGESET_FILE.test(f) || (!pre && PRE_CHANGESET_FILE.test(f))) && isChangesetName(path.basename(f)),
+    )
     const bumps = []
     for (const file of pending) {
         for (const r of changesetReleases(atHead(file), file)) {

@@ -1,7 +1,6 @@
 {
     "name": "@sssb/eslint-plugin",
     "version": "0.2.0-rc.2",
-    "private": true,
     "license": "MIT",
     "repository": {
         "type": "git",
