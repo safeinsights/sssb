@@ -3,6 +3,7 @@ import {
     appendFileSync,
     existsSync,
     mkdirSync,
+    readdirSync,
     readFileSync,
     realpathSync,
     statSync,
@@ -273,7 +274,9 @@ describe('sssb guide', () => {
     // The real thing: the starter's installed @sssb/kit publishes `./guide.md` (ADR-0014 P7), so the command finds it
     // through the exports map and copies it byte for byte under the stamp. --out keeps the copy out of the repository.
     it('copies the guide @sssb/kit ships, from the starter, and --check agrees', () => {
-        const starter = path.resolve(__dirname, '../../apps/starter')
+        // The tree's own app: `apps/starter` here, renamed in an adopted tree (the adoption probe's `init-app acme`).
+        const apps = readdirSync(path.resolve(__dirname, '../../apps')).filter((app) => app !== 'showcase')
+        const starter = path.resolve(__dirname, '../../apps', apps.includes('starter') ? 'starter' : apps[0]!)
         const out = path.join(makeTestTmpDir('sssb-cli-guide-starter-'), 'sssb-guide.md')
         expect(sssb(starter, ['guide', '--out', out]).status).toBe(0)
         const shipped = readFileSync(path.resolve(__dirname, '../../packages/kit/src/guide.md'), 'utf8')

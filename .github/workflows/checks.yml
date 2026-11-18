@@ -216,8 +216,10 @@ jobs:
                   restore-keys: pack-and-consume-playwright-${{ runner.os }}-
             # --ignore-scripts: the root's `prepare` (husky, launch-json, panda codegen) needs the whole repo installed,
             # and the pack needs no install script (esbuild's binary arrives as an optional dependency).
-            - name: install the kit's own dependencies, for its prepack build
-              run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit
+            # @sssb/cdk too: its `workspace:*` dependency on @sssb/tools is resolved to a version when packed, which
+            # needs the link an install makes.
+            - name: install the kit's dependencies, for its prepack build, and the cdk's workspace link
+              run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit --filter @sssb/cdk
             - run: node scripts/pack-and-consume.mjs --dir "$RUNNER_TEMP/pack-and-consume"
             # ADR-0014 P7: on a push to main, the tarballs this job just packed and tested are this run's artifact. A
             # release candidate's tag run (release.yml's `candidate`) waits for this run to pass on the release commit
