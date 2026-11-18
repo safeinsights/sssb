@@ -223,4 +223,5 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   the app's own catalog via `apps/*/tests/catalog.ts`. See `docs/adopting.md`.
 - At the end of a slice or before a PR, run the `doc-steward` agent on the branch diff — it
   proposes updates to development-approach, an ADR addendum, decision-log, build-notes, and the
-  cutover checklist so the docs keep telling the truth.
+  cutover checklist so the docs keep telling the truth. It also reports the net line delta of each doctrine doc
+  the diff touches, and superseded text is deleted in the same pass (the dated records excepted).
