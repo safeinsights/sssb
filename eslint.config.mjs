@@ -843,7 +843,17 @@ const eslintConfig = [
     {
         files: ['scripts/**/*.{mjs,ts}'],
         languageOptions: {
-            globals: { process: 'readonly', console: 'readonly' },
+            globals: {
+                process: 'readonly',
+                console: 'readonly',
+                // tick.mjs and dev-tick.mjs: an HTTP client with a timeout, and a stoppable timer
+                URL: 'readonly',
+                fetch: 'readonly',
+                AbortController: 'readonly',
+                AbortSignal: 'readonly',
+                setTimeout: 'readonly',
+                clearTimeout: 'readonly',
+            },
         },
     },
     // Kysely migrations are conventionally typed Kysely<any> (schema evolves under them), and

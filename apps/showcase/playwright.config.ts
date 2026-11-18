@@ -99,6 +99,9 @@ export default defineConfig({
         command: E2E_BUILD ? 'pnpm run build:e2e && pnpm run start:e2e' : 'pnpm dev',
         url: BASE_URL,
         reuseExistingServer: !process.env.CI,
+        // `pnpm dev` ticks the scheduler on a timer when DEV_TICK_SECONDS is set (scripts/dev-tick.mjs). The e2e suite expects a
+        // scheduler that does nothing until a test asks, so whatever is in the caller's shell, the server it starts is not ticked.
+        env: { DEV_TICK_SECONDS: '' },
         // A production build has to compile before it can serve; dev serves immediately and compiles
         // per-route as tests hit it.
         timeout: E2E_BUILD ? 420_000 : 120_000,
