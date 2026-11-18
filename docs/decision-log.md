@@ -4061,7 +4061,7 @@ Resolves `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
   `describe` body belongs to that `describe` and removed directories the rest of the file still used, and that it runs
   before any `afterAll` the file registered earlier, so the cleanup could precede the file closing what lives in the
   directory. Registering a hook per suite instead still removed a nested `describe`'s directory before an outer test
-  used it. The kit's copy is unchanged here and has the first two: `.claude/future-tasks/kit-tmp-dir-cleanup-order.md`.
+  used it. The kit's copy is unchanged here and has the first two: `.claude/future-tasks/resolved/kit-tmp-dir-cleanup-order.md`.
 - **A setup module carries the file's hook,** and is the supported path under `isolate: false`. Vitest runs a setup
   file before every test file even with `isolate: false`, and an `afterAll` it registers runs after the file's own
   (checked with Vitest 4.1.12, three files in one worker). `@sssb/tools/testing/tmp-dir-setup` calls
@@ -4146,3 +4146,40 @@ names what was rejected; ADR-0014's addendum of the same date summarises them.
     - The prerelease notes are unwrapped (`unwrap`): a release body renders each newline as a line break, seen through
       GitHub's markdown API in `gfm` mode; with soft breaks joined, the rendered sample had none.
       Left for P14: leaving pre mode (`.claude/future-tasks/p14-leave-pre-mode.md`).
+
+## The kit's tmp-dir helper under `isolate: false`: the suites register its hook (2026-11-18, `fix/kit-tmp-dir-cleanup`)
+
+Resolves `.claude/future-tasks/resolved/kit-tmp-dir-cleanup-order.md`, the kit's half of
+`.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
+
+- **`conformanceSuite` and `contractSuite` register the file's cleanup hook first.** The kit's helper
+  (`packages/kit/src/testing/tmp-dir.ts`) is not in the package's `exports`, so an adopter reaches it only through those
+  two. Both must already be called at a file's top level, so a hook they register is the file's own, and registered
+  before their own `afterAll` (the contract server's stop, the demo-presets teardown), so it runs after them. The kit's
+  P5 fix registered the hook at the helper's first call instead. Under `isolate: false` that call came from the suites'
+  `beforeAll`, where Vitest drops a hook, so a later file's contract-server directory was left behind. Seen red with
+  the suite's call removed, once for each suite.
+- **Rejected: a kit setup module that the app's Vitest config lists** (`@sssb/kit/testing/tmp-dir-setup`, mirroring
+  `@sssb/tools/testing/tmp-dir-setup`). Every app's unit and contract configs would have to list it, or the tools preset
+  would have to carry a `@sssb/kit` specifier. A string resolved from the app's directory keeps rule 4's letter, that
+  `@sssb/tools` imports no kit module, and breaks its point, that `@sssb/tools` knows nothing of the kit. It would also
+  run a second setup module before every file of every app. The suites registering their own hook needs nothing from
+  the adopter.
+- **A replay that outlives its file keeps its directory, out of the file's cleanup.** When the demo-presets replay
+  outlasts its teardown's wait, the teardown fails and leaves the replay its scratch directory, to be removed when it
+  stops. Vitest still ran the file's cleanup hook after that teardown failed, which deleted the directory under the
+  running replay. The replay recreated it without its marker, so the leak gate could not see it. The old
+  `removeTestTmpDir`, which removed any path, then removed it, hiding all of this; with the new guard the case
+  "when the replay outlasts the wait too" went red. `keepTestTmpDir(dir)` now takes the directory out of the file's
+  cleanup, and `removeTestTmpDir` removes it, with its marker, when the replay stops. Seen red with the call removed.
+- **Limit: one suite call, at the file's top level,** as both suites' docs already say. Under `isolate: false`, a later
+  file that calls a suite inside a `describe` gets that `describe`'s hook. A second call in another `describe` then
+  gets none, so its directory waits for the next file. Nothing in use is removed.
+- **The rest follows `@sssb/tools`' copy**, for the same reasons (its entry above):
+    - a later file with no hook removes only earlier files' directories, never its own, and the helper says so once per
+      worker;
+    - a file's first registration removes what earlier files left;
+    - `removeTestTmpDir` ignores a path it did not make, where the kit's used to remove any path, recursively.
+
+    The two copies stay separate files (rule 4), so the same change lands twice. jscpd does not compare them: its pattern
+    takes `.ts`, and `@sssb/tools`' copy is `.js`.
