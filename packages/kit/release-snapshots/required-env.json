@@ -1,0 +1,33 @@
+{
+    "$comment": "The environment variables a real deployment must set (assertRealEnv), per DATABASE_TRANSPORT, from packages/kit/src/adapters/real/index.test.ts. A new one breaks every deployment that lacks it: change this file only with a 'minor' changeset (ADR-0014 part 10; .github/scripts/require-changeset.sh).",
+    "pg": [
+        "ANTHROPIC_API_KEY",
+        "AWS_REGION",
+        "CLERK_SECRET_KEY",
+        "DATABASE_URL",
+        "EMAIL_FROM",
+        "JOBS_CODEBUILD_PROJECT",
+        "MAILGUN_API_KEY",
+        "MAILGUN_DOMAIN",
+        "MAILGUN_WEBHOOK_SIGNING_KEY",
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+        "STORAGE_BUCKET",
+        "WEBHOOK_SECRET"
+    ],
+    "data-api": [
+        "ANTHROPIC_API_KEY",
+        "AWS_REGION",
+        "CLERK_SECRET_KEY",
+        "DATABASE_CLUSTER_ARN",
+        "DATABASE_NAME",
+        "DATABASE_SECRET_ARN",
+        "EMAIL_FROM",
+        "JOBS_CODEBUILD_PROJECT",
+        "MAILGUN_API_KEY",
+        "MAILGUN_DOMAIN",
+        "MAILGUN_WEBHOOK_SIGNING_KEY",
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+        "STORAGE_BUCKET",
+        "WEBHOOK_SECRET"
+    ]
+}
