@@ -4,7 +4,7 @@
 // the tree.
 import path from 'node:path'
 import process from 'node:process'
-import { citedPaths, docFiles, readDocPathsConfig, resolves } from '../doc-paths.js'
+import { citedPaths, docFiles, missingIncludes, readDocPathsConfig, resolves } from '../doc-paths.js'
 import { takeOption, UsageError, workspaceRootOf } from '../app.js'
 
 /**
@@ -24,6 +24,15 @@ export async function run(args) {
     const files = docFiles(root, config)
     let checked = 0
     let broken = 0
+    // A missing include entry or an empty doc set would make the gate pass by checking nothing.
+    for (const rel of missingIncludes(root, config)) {
+        broken++
+        process.stdout.write(`${rel}: in sssb.docPaths.include, but not in the tree\n`)
+    }
+    if (files.length === 0) {
+        broken++
+        process.stdout.write('sssb.docPaths.include names no markdown file: the gate would check nothing\n')
+    }
     for (const file of files) {
         for (const { path: cited, line } of citedPaths(file, config, root)) {
             checked++

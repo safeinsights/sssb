@@ -1,6 +1,8 @@
 import { fileURLToPath } from 'node:url'
-import * as engine from '@sssb/tools/doc-paths'
-import type { Citation } from '@sssb/tools/doc-paths'
+// By relative path, not `@sssb/tools/doc-paths`: `scripts/init-app.ts` imports this file, and the adopter-identity test
+// runs init-app in a copy of the checkout that has no node_modules. The engine needs only Node's built-ins.
+import * as engine from '../../packages/tools/src/doc-paths.js'
+import type { Citation } from '../../packages/tools/src/doc-paths.js'
 
 /**
  * WHICH MARKDOWN THIS REPO HOLDS TO ITS PATH CITATIONS.
