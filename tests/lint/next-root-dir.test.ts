@@ -18,24 +18,28 @@ const APPS = readdirSync(path.join(repoRoot, 'apps'), { withFileTypes: true })
 const require = createRequire(import.meta.url)
 const ESLINT_BIN = path.join(path.dirname(require.resolve('eslint/package.json')), 'bin', 'eslint.js')
 
-/** The root layout of each app, linted from the workspace root by a fresh ESLint process (Next warns once a process). */
-function lintFromRoot(app: string) {
-    return spawnSync(process.execPath, [ESLINT_BIN, `apps/${app}/src/app/[locale]/layout.tsx`], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-    })
+/** A file linted from the workspace root by a fresh ESLint process (Next warns once a process). */
+function lintFromRoot(file: string) {
+    return spawnSync(process.execPath, [ESLINT_BIN, file], { cwd: repoRoot, encoding: 'utf8' })
 }
 
 describe("Next's root dir", () => {
     it.each(APPS)(
         'lints %s from the workspace root without "Pages directory cannot be found"',
         (app) => {
-            const result = lintFromRoot(app)
+            const result = lintFromRoot(`apps/${app}/src/app/[locale]/layout.tsx`)
             expect(`${result.stdout}${result.stderr}`).not.toMatch(/Pages directory cannot be found/)
             expect(result.status, result.stdout).toBe(0)
         },
         60_000,
     )
+
+    // This repository's own config gives the framework's screens Next's rules too, with the apps as their root dir.
+    it('lints a framework screen from the workspace root without the warning', () => {
+        const result = lintFromRoot('packages/kit/src/components/app-header.tsx')
+        expect(`${result.stdout}${result.stderr}`).not.toMatch(/Pages directory cannot be found/)
+        expect(result.status, result.stdout).toBe(0)
+    }, 60_000)
 
     it('names each app in the block that runs Next’s rules, as the directories Next then finds', async () => {
         const configs = await sssb.configs.app({ root: path.join(repoRoot, 'apps', '*') })

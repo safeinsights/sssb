@@ -25,9 +25,8 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.
 
 it('refuses to synth beside an @sssb/tools that is not its own version', async () => {
     const { SssbApp } = await import('./index.js')
-    const own = JSON.parse(
-        (await vi.importActual('node:fs')).readFileSync(path.join(REPO, 'packages/cdk/package.json'), 'utf8'),
-    ).version
+    const fs = /** @type {typeof import('node:fs')} */ (await vi.importActual('node:fs'))
+    const own = JSON.parse(fs.readFileSync(path.join(REPO, 'packages/cdk/package.json'), 'utf8')).version
     expect(
         () =>
             new SssbApp(new cdk.Stack(new cdk.App()), 'Default', {
