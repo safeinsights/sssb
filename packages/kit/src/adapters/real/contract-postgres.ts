@@ -1,15 +1,15 @@
-import EmbeddedPostgres from 'embedded-postgres'
 import { Kysely, PostgresDialect, sql } from 'kysely'
 import { Pool } from 'pg'
-import type { Login } from '@sssb/kit/db/owner-pass'
-import type { DB } from '@sssb/kit/db/schema'
-import { portFor } from '@sssb/tools/ports'
-import { makeTestTmpDirAsync } from './tmp-dir'
+import type { Login } from '../../db/owner-pass'
+import type { DB } from '../../db/schema'
+import { makeTestTmpDir } from '../../testing/tmp-dir'
 
 /**
- * A real Postgres for a contract suite, and a database of its own on it. Generic: it names no app, no seam and no
- * migration, so the suite that uses it (contract-suite.ts) runs unchanged for any app, and so does the framework's
- * fixture. It is also where the "embedded-postgres or CI's service container" decision lives, once.
+ * TEST ONLY: a real Postgres for a contract suite, and the databases of its own on it. The contract runner
+ * (`@sssb/kit/testing/contract`) and the framework's own contract tests (./db.contract.test.ts,
+ * ./rds-data.contract.test.ts) start their server here. It lives in `adapters/` because it drives `pg`, which only
+ * an adapters directory may import; nothing in an app's request path or a deployment imports it. Generic: it names
+ * no app, no seam and no migration. It is also where the "embedded-postgres or a server you run" decision lives, once.
  *
  * WHY EVERY SUITE NEEDS A DATABASE OF ITS OWN. Two migration sets share the framework's 0001-0999 and differ from
  * 1001 up, so running the second set's `migrateToLatest` over a database the first has migrated makes Kysely report
@@ -17,11 +17,11 @@ import { makeTestTmpDirAsync } from './tmp-dir'
  * app's per-app migrations meet real Postgres without meeting each other's.
  *
  * Two modes, picked by the environment and the same for every caller:
- *  - CONTRACT_DATABASE_URL set (CI): that server, which several suites share, each in its own database. The URL
- *    must be a SUPERUSER's, to a database that already exists (`postgres`).
- *  - unset (a developer's machine): an embedded-postgres of the suite's own, on the port derived per checkout
- *    (`contractPg` in @sssb/tools/ports), stopped when the suite ends. `vitest.contract.config.ts` runs files one at
- *    a time, so two never hold that port together.
+ *  - CONTRACT_DATABASE_URL set (CI's service container): that server, which several suites share, each in its own
+ *    database. The URL must be a SUPERUSER's, to a database that already exists (`postgres`).
+ *  - unset (a developer's machine): an embedded-postgres of the suite's own, on `port` (or CONTRACT_PG_PORT), its
+ *    data in a scratch directory, stopped when the suite ends. `embedded-postgres` is an OPTIONAL peer of
+ *    @sssb/kit, loaded only in this mode (docs/decision-log.md, "The contract runner ships in @sssb/kit/testing").
  */
 
 export interface ContractServer {
@@ -31,6 +31,8 @@ export interface ContractServer {
     readonly superuser: { user: string; password: string }
     /** A database that already exists on the server (the one `url` names). */
     readonly maintenanceDatabase: string
+    /** The URL of `database` on this server, as the superuser, or as `login` when given. */
+    urlFor(database: string, login?: { user: string; password: string }): string
     /** A pooled connection for a login to a database, through `pg`. Closed by its caller, or by `stop`. */
     connect(login: Login): Kysely<DB>
     /** The superuser's connection to `database`. */
@@ -43,20 +45,9 @@ export interface ContractServer {
     stop(): Promise<void>
 }
 
-/**
- * The database name a suite uses for an app: `<slug>_contract`, the slug folded to what an unquoted Postgres
- * identifier may hold. `acme-corp` becomes `acme_corp_contract`, so an app renamed by `pnpm init-app` gets its own
- * name with no edit here.
- */
-export function contractDatabaseName(slug: string): string {
-    // 63 is Postgres's identifier limit; "_contract" is 9 of it.
-    const folded = slug
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .slice(0, 50)
-    const base = /^[a-z]/.test(folded) ? folded : `app_${folded}`
-    return `${base}_contract`
+export interface ContractServerOptions {
+    /** The embedded server's port; CONTRACT_PG_PORT when omitted. Unused when CONTRACT_DATABASE_URL is set. */
+    port?: number | undefined
 }
 
 /** The name goes into an identifier. It is built by contractDatabaseName or is a fixed literal, never client input, but
@@ -66,20 +57,50 @@ function checkedName(database: string): string {
     return database
 }
 
-export async function startContractServer(label: string): Promise<ContractServer> {
-    let embedded: InstanceType<typeof EmbeddedPostgres> | null = null
+/** The embedded server's port: the caller's, else CONTRACT_PG_PORT, else a refusal that says how to give one. */
+function embeddedPort(port: number | undefined): number {
+    const raw = port ?? process.env['CONTRACT_PG_PORT']
+    const value = Number(raw)
+    if (raw === undefined || raw === '' || !Number.isInteger(value) || value <= 0 || value > 65_535) {
+        throw new Error(
+            `the contract suite needs a port for its embedded Postgres (got ${String(raw)}): pass { port } ` +
+                "(portFor('contractPg') from @sssb/tools/ports), set CONTRACT_PG_PORT, or set CONTRACT_DATABASE_URL " +
+                "to a superuser's URL on a server you run",
+        )
+    }
+    return value
+}
+
+/** `embedded-postgres`, loaded only when no server was named: an optional peer, so it may not be installed. */
+async function loadEmbeddedPostgres() {
+    try {
+        return (await import('embedded-postgres')).default
+    } catch (error) {
+        throw new Error(
+            'the contract suite starts its own Postgres with `embedded-postgres`, an optional peer of @sssb/kit that ' +
+                "this app does not have: add it to the app's devDependencies (and its platform packages to the " +
+                "workspace's allowBuilds), or set CONTRACT_DATABASE_URL to a superuser's URL on a server you run",
+            { cause: error },
+        )
+    }
+}
+
+export async function startContractServer(label: string, options: ContractServerOptions = {}): Promise<ContractServer> {
+    let embedded: { stop(): Promise<void> } | null = null
     let serverUrl = process.env['CONTRACT_DATABASE_URL'] ?? ''
     if (!serverUrl) {
-        const port = portFor('contractPg')
-        embedded = new EmbeddedPostgres({
-            databaseDir: await makeTestTmpDirAsync(`${label}-pg-`),
+        const port = embeddedPort(options.port)
+        const EmbeddedPostgres = await loadEmbeddedPostgres()
+        const server = new EmbeddedPostgres({
+            databaseDir: makeTestTmpDir(`${label}-pg-`),
             user: 'postgres',
             password: 'postgres',
             port,
             persistent: false,
         })
-        await embedded.initialise()
-        await embedded.start()
+        await server.initialise()
+        await server.start()
+        embedded = server
         serverUrl = `postgres://postgres:postgres@localhost:${port}/postgres`
     }
 
@@ -88,17 +109,22 @@ export async function startContractServer(label: string): Promise<ContractServer
     const maintenanceDatabase = parsed.pathname.slice(1) || 'postgres'
     const open: Kysely<DB>[] = []
 
-    const connect = (login: Login): Kysely<DB> => {
+    const urlFor = (database: string, login?: { user: string; password: string }): string => {
         const url = new URL(serverUrl)
-        url.username = encodeURIComponent(login.user)
-        url.password = encodeURIComponent(login.password)
-        url.pathname = `/${login.database}`
-        const pool = new Pool({ connectionString: url.toString(), max: 3 })
+        if (login) {
+            url.username = encodeURIComponent(login.user)
+            url.password = encodeURIComponent(login.password)
+        }
+        url.pathname = `/${database}`
+        return url.toString()
+    }
+
+    const connect = (login: Login): Kysely<DB> => {
+        const pool = new Pool({ connectionString: urlFor(login.database, login), max: 3 })
         // A server that ends a connection (a CI container's hiccup, an idle-session timeout) is an 'error' EVENT on
         // that client, and an event with no listener is an uncaught exception: it would take the whole run down
         // instead of failing the one test that was using the connection. The client's own listener covers it idle
-        // or checked out, as in the real adapter (@sssb/kit/adapters/real/db.ts); the pool's re-emit of an idle one is
-        // already logged by it.
+        // or checked out, as in the real adapter (./db.ts); the pool's re-emit of an idle one is already logged by it.
         pool.on('connect', (client) => client.on('error', (error) => console.warn(`contract db: ${error.message}`)))
         pool.on('error', () => undefined)
         const db = new Kysely<DB>({ dialect: new PostgresDialect({ pool }) })
@@ -110,6 +136,7 @@ export async function startContractServer(label: string): Promise<ContractServer
         url: serverUrl,
         superuser,
         maintenanceDatabase,
+        urlFor,
         connect,
         connectAsSuperuser: (database) => connect({ ...superuser, database }),
         async createDatabase(database) {

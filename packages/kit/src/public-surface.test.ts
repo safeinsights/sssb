@@ -14,16 +14,20 @@ import { describe, expect, it } from 'vitest'
  *   publish every module in the package again while every check in the repo stayed green — the exact regression
  *   this surface exists to prevent, and the one nothing else can see.
  */
-// Resolved from the repo root (vitest's cwd) rather than from import.meta.url, which the happy-dom
-// environment reports as an http: URL — the same reason authorized-mutations.test.ts walks from cwd.
+// Resolved from the repo root (vitest's cwd): this test is about this repository's package, and is never shipped.
 const packageDir = path.resolve(process.cwd(), 'packages/kit')
 const exportsMap = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8')).exports as Record<
     string,
     string | string[] | null
 >
 
+// A target under `./dist/` is a COMPILED entry (`./testing/e2e`, ADR-0014 part 2), built from `./src/<same path>.ts`
+// by `scripts/build-testing-e2e.mjs` only when the package is packed. Nothing in this repo resolves it (the
+// aliases go to source), so here the module a key publishes is that source; pack and consume loads the compiled
+// file from the tarball.
+const sourceOf = (file: string): string => file.replace(/^\.\/dist\/(.+)\.js$/, './src/$1.ts')
 const targetsFor = (target: string | string[] | null): string[] =>
-    target === null ? [] : Array.isArray(target) ? target : [target]
+    (target === null ? [] : Array.isArray(target) ? target : [target]).map(sourceOf)
 
 describe('SSSB public surface', () => {
     it('publishes only targets that exist', () => {

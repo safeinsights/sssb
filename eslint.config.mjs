@@ -57,6 +57,8 @@ const eslintConfig = [
             'out/**',
             'build/**',
             'dist/**',
+            // @sssb/kit's compiled e2e entry, written by `pnpm pack` (packages/kit/scripts/build-testing-e2e.mjs).
+            'packages/kit/dist/**',
             '.*',
             '!.ladle',
             '!.ladle/**',
@@ -237,16 +239,12 @@ const eslintConfig = [
             'sssb/no-path-to-app-code': ['error', REPO],
         },
     },
-    // THE PACKAGE'S EDGE: no framework file, fixture included, reaches outside packages/kit by path. Two named
-    // exemptions, both P5's: the real-Postgres contract tests start their server through the repo's
-    // tests/support/contract-postgres.ts, which reads @sssb/tools/ports and embedded-postgres. P5 moves the contract
-    // runner into @sssb/kit/testing; neither file ships (the `files` allowlist keeps tests out).
+    // THE PACKAGE'S EDGE: no framework file, fixture included, reaches outside packages/kit by path. No exemptions:
+    // the real-Postgres contract tests that had two start their server through
+    // packages/kit/src/adapters/real/contract-postgres.ts, inside the package, since P5 moved the contract runner into
+    // @sssb/kit/testing.
     {
         files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
-        ignores: [
-            'packages/kit/src/adapters/real/db.contract.test.ts',
-            'packages/kit/src/adapters/real/rds-data.contract.test.ts',
-        ],
         plugins: { sssb },
         rules: { 'sssb/no-path-out-of-package': ['error', REPO] },
     },

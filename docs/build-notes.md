@@ -2214,3 +2214,49 @@ Two things review found in the first version of the notes file, both about what 
   with its own small reader. When the lint was widened to what Changesets reads (a BOM, `#` comments, a quoted bump)
   the reader was not, and a changeset the PR checks accepted would have failed in `push`. The reader is now the same
   grammar and a test feeds both the same forms.
+
+## The contract runner in `@sssb/kit/testing/contract` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+- **The Data API pass catches what the `pg` passes cannot.** Probe: the starter's migration 1001 with its two
+  `ALTER TABLE … ROW LEVEL SECURITY` statements joined into one `sql` call. `contract-owner-pass` and `contract-rls`
+  stayed green (the `pg` driver runs a multi-statement simple query), and both `contract-data-api` tests went red with
+  the emulator's "more than one statement in one call". Before P5 no app's tables met the Data API at all.
+- **Two more gates seen red**: an opt-out typo in an app's contract test fails at collection naming the check ids,
+  and an `it.only` beside `contractSuite` fails the file through the shared skip guard, listing the checks that did
+  not run (a valid opt-out is listed as `[sssb:opt-out:<id>]`).
+- **A seam-reaching module must not be imported at the top of the testing entry.** The repo's scaffold gate imports
+  `contractDatabaseName` from `@sssb/kit/testing/contract` in the alias-free `repo` project, where no seam resolves;
+  the runner therefore loads the migrations, the proofs, the Data API passes and `@sssb/app-config/identity` with
+  `import()` inside its hooks and tests, as the unit suite's db checks already did.
+
+## Vitest and Playwright behaviour the conformance tooling leans on (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+Each measured on Vitest 4.1.12 or Playwright 1.65.1; a shipped test helper runs under the ADOPTER's config, so these
+bite there first.
+
+- **A throwing `afterAll` abandons the file's remaining `afterAll` hooks.** Anything that must run after cleanup goes
+  in an `aroundAll` (teardown after every `afterAll`). Vitest reads `aroundAll`'s second parameter as fixtures and
+  refuses anything but a destructuring pattern, so an unused one is `{}` (with a justified `no-empty-pattern`).
+- **`vi.stubEnv` is undone before every test under `unstubEnvs: true`**; a value that must hold for a whole check is
+  assigned (`setDataRoot`). **`vi.doMock` hands the REAL module to an import made while its factory is still running**,
+  so two concurrent tests importing a mocked module race (`describe.sequential` fixes it).
+- **Under `isolate: false` a module loads once per worker**: a hook it registers at load belongs to the first file,
+  and a client it caches on `globalThis` outlives the file.
+- **`vitest list`**: `--json=<file>` writes the list (`--outputFile` is ignored); a file that throws while collected
+  makes it exit 1 and write nothing; `--filesOnly` runs no `globalSetup`, a full list does. A bare `vitest` walks up
+  to the first `vitest.config.*` or `vite.config.*`, and never reads a `vite.config.*` beside a `vitest.config.*`.
+- **`playwright test --list`** starts no `webServer`, runs no global setup and needs no browser, but one spec that fails
+  to load makes it list nothing. Its JSON report holds only the first entry of a `globalSetup` array; write it with
+  `PLAYWRIGHT_JSON_OUTPUT_FILE`, since a spec's own output shares stdout.
+- **`sssb doctor` found two copies of `next` in the ejected adoption probe**, which nothing had seen: the lockfile
+  held two `next@16.4.6` variants, one per `@opentelemetry/api` (1.9.1 and 1.10.0, `next`'s optional peer, pulled in
+  by different SDKs), and `init-app --eject-showcase` plus `pnpm install --no-frozen-lockfile` gave the app one and
+  the kit the other. Two `next` instances mean two `next/headers` request stores. `pnpm dedupe` left one
+  `@opentelemetry/api` and so one `next`; `pnpm dedupe --check` shows whether a lockfile has drifted back.
+- **`knip.json` names `packages/kit/src/testing/e2e.ts` as an entry of the kit.** Its `exports` target is the compiled
+  `dist/testing/e2e.js`, which exists only in a packed tarball, so knip cannot map the export to the source, and once
+  the showcase (its one importer) is ejected the file reads as unused. An entry, not an `ignore`, so its own imports
+  are still checked.
+- **The pack-and-consume job installs the kit's own dependencies** (`pnpm install --frozen-lockfile --ignore-scripts
+--filter @sssb/kit`) because the kit's `prepack` builds that entry with esbuild and typescript; the root's
+  `prepare` needs the whole repo, hence `--ignore-scripts`.

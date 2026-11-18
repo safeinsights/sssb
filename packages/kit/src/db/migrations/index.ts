@@ -26,8 +26,9 @@ import * as m0016 from './0016_audit_detail'
  * AFTER them (../migrate.ts runs unordered for exactly that), while a fresh database runs it before
  * them. So a framework migration must have the same effect in either position. It names the objects it
  * touches, and never sweeps the catalog (`GRANT … ON ALL TABLES`, `ALTER DEFAULT PRIVILEGES`), which
- * would reach app tables on one path and not the other. ../migrate.test.ts compares the two schemas, and
- * it holds every app to its side of the numbering: ≥1001, colliding with no framework name.
+ * would reach app tables on one path and not the other. The conformance suite's `migration-order` check
+ * (../../testing/conformance/db.ts) compares the two schemas, and holds every app to its side of the numbering:
+ * ≥1001, colliding with no framework name.
  */
 export const frameworkMigrations: Record<string, Migration> = {
     '0001_tenants': m0001,

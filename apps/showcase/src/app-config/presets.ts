@@ -9,10 +9,10 @@
  * Dana manages the Frontline Desk and the Platform Team, so she does the inviting; tickets arrive the
  * way the desk's real front door receives them, as email from a member.
  *
- * ONE FILE PER PRESET, in `./presets/`, listed here — the registry is expected to grow, and a preset is
- * its own subject. A preset may `extends` another (single inheritance): `mid-demo` builds on `fresh`,
- * `multi-tenant` on `mid-demo`, so a variant states only what differs. List a base anywhere in the array;
- * order here is the order the Snapshots tab shows. PURE TypeScript — shared by the server glue and the
+ * ONE FILE PER PRESET, in `./presets/`, listed in `./presets/list.ts` and re-exported here — the registry is
+ * expected to grow, and a preset is its own subject. A preset may `extends` another (single inheritance):
+ * `mid-demo` builds on `fresh`, `multi-tenant` on `mid-demo`, so a variant states only what differs. List a
+ * base anywhere in the array; its order is the order the Snapshots tab shows. PURE TypeScript — shared by the server glue and the
  * static-demo twin, which is why nothing here may reach a server half.
  *
  * The app's own OPERATION KINDS register here too, beside SSSB's `invite`/`inbound`/`flag`/`actor.hold`: one directory
@@ -22,10 +22,7 @@
  * scaffolds all three.
  */
 
-import type { DemoPreset, PresetOperationDefinition } from '@sssb/kit/core/presets'
-import { fresh } from './presets/fresh'
-import { midDemo } from './presets/mid-demo'
-import { multiTenant } from './presets/multi-tenant'
+import type { PresetOperationDefinition } from '@sssb/kit/core/presets'
 import { ticketAssign, type TicketAssignOperation } from './presets/operations/ticket-assign/definition'
 
 /** The app's operation kinds, as preset authors write them — composed into SSSB's PresetOperation. */
@@ -34,4 +31,5 @@ export type AppPresetOperation = TicketAssignOperation
 /** The app's operation DEFINITIONS — composed over SSSB's by kind (`composePresetOperations`). */
 export const appPresetOperations: PresetOperationDefinition[] = [ticketAssign]
 
-export const presets: DemoPreset[] = [fresh, midDemo, multiTenant]
+/** The registered presets: one file each in `./presets/`, listed in `./presets/list.ts` (kit-free, for the e2e). */
+export { presets } from './presets/list'

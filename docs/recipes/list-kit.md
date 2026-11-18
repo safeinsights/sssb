@@ -140,7 +140,7 @@ Selection state belongs to TanStack Table; the ACTION belongs to a route, and th
 like any other:
 
 - Every bulk endpoint calls `authorize(...)` per item, not once for the batch — the build-time scan
-  (`packages/kit/src/authz/authorized-mutations.test.ts`) enforces the call, but only per-item
+  (the conformance suite's `authz-mutations` check, `packages/kit/src/authz/app-exemptions.ts`) enforces the call, but only per-item
   authorization is actually correct when a selection spans rows with different owners.
 - A bulk action over a paged list must operate on **explicitly selected ids**, never on "everything
   matching the current filter" evaluated server-side, unless you are prepared to re-derive the filter

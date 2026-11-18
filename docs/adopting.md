@@ -270,9 +270,13 @@ the starter survives.
 ### What ejecting the showcase costs
 
 `apps/starter` already owns the two things that are not the demo and that were once the showcase's alone: the **RLS
-contract suite** (`apps/<app>/tests/contract/`, which runs SSSB's composed proof suite on real Postgres, in a database
-of the app's own, by a non-superuser owner as Aurora's master user is (twice: on a fresh server, and where `app_user`
-already exists) and by a superuser: the anti-drift gate CI depends on) and **`apps/<app>/config/params.ts`**. So ejecting rescues nothing and deletes no gate:
+contract suite** (`apps/<app>/tests/contract/rls-contract.test.ts`, one call of `contractSuite` from
+`@sssb/kit/testing/contract`, which runs SSSB's composed proof suite on real Postgres, in a database of the app's own,
+by a non-superuser owner as Aurora's master user is (twice: on a fresh server, and where `app_user` already exists),
+by a superuser, and over the RDS Data API transport through its emulator: the anti-drift gate CI depends on; a check is
+left out only by a named `optOut`, as in the conformance suite) and **`apps/<app>/config/params.ts`**. Run locally, the
+suite starts its own Postgres with `embedded-postgres`, which the starter carries as a devDependency (an optional peer
+of `@sssb/kit`); with `CONTRACT_DATABASE_URL` set it uses that server instead. So ejecting rescues nothing and deletes no gate:
 `pnpm test:contract` runs your app's suite, and `tests/tooling/app-scaffold.test.ts` fails if an app registers
 migrations without one, or the apps' params carry different keys (each `apps/<app>/infra/` hands its own to the same
 `SssbApp` construct, which reads the same keys from every app).
@@ -286,8 +290,8 @@ want it.
 
 One gate is relaxed on the way out. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 132 published subpaths from its source (37
-counting its tests), so the same setting would start demanding you delete the other 97 — capabilities you merely have not
+nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 137 published subpaths from its source (39
+counting its tests), so the same setting would start demanding you delete the other 102 — capabilities you merely have not
 reached yet, not dead code. `--eject-showcase` therefore turns it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration.
@@ -303,10 +307,39 @@ it. Nothing in that fixture is deletable by adoption, and its vocabulary is deli
 apps' — so a framework test that reacquires a dependency on YOUR world fails loudly instead of passing
 by coincidence. `pnpm verify` is green on a freshly ejected repo, end to end.
 
-The one thing that DOES stay app-shaped is the seam-conformance set — the i18n partition/parity tests,
-the pglite RLS suite and the demo-presets check — which keep running under every app's own vitest
-project, against your catalog, your tables and your presets. That is what stops the fixture becoming the only world the framework is ever
-proved against.
+The one thing that DOES stay app-shaped is the conformance suite, `@sssb/kit/testing` — the authorization scan of
+your route tree, the i18n partition/parity checks, the pglite RLS suite, migration order, the demo-presets check and
+the seam map — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
+`conformanceSuite({ appDir, optOut })`, against your catalog, your tables, your routes and your presets. Leaving a
+check out takes a named opt-out with a reason (the check ids are in `@sssb/kit/testing/checks.json`); a typo in one
+fails the run, and so does a check that is skipped without one. That is what stops the fixture becoming the only world
+the framework is ever proved against.
+
+Two `sssb` commands guard that suite and the install around it, and `pnpm verify` and CI run both (`pnpm sssb:doctor`,
+`pnpm check:e2e`; the scripts are `sssb:doctor` and `check:e2e` because `pnpm doctor` is pnpm's own command).
+**`sssb doctor`** checks every app of the workspace in one run. It asks `vitest list` what would actually run with the
+config a bare `vitest` would load for each app (the root's `vitest.config.*` when it runs the app's unit tests,
+else the one Vitest finds walking up from the app, its own or the root's, else Vitest's defaults), and fails naming
+every unit conformance test that would not, unless its check is opted out by name in the app's own
+`apps/<app>/src/sssb.conformance.test.ts`; some config that runs your `apps/<app>/tests/contract/` files must list
+every contract check. So an `.only` beside the suite, a `testNamePattern` in that config, or a config that stops
+picking the file up is red before it silently drops a check (a `-t` a CI step adds is not doctor's to see: the suite
+fails a run that drops only some of its checks, and a filter that drops all of them leaves the file skipped). Any other
+Vitest config (a browser, integration or CI config) that runs some of an app's tests but not the suite is reported, not
+failed, and so is a bare `vitest` from the app's own directory (what the app's scripts and `pnpm -r` run) when the main
+run is the root's and that one would not run the suite, even if it runs none of the app's tests; so are the narrowing
+flags your package.json scripts pass to vitest and which script runs each contract config: doctor cannot see which config or flags your CI uses, so make
+sure CI runs the config doctor names. It also fails a second copy of any peer `@sssb/kit` declares (React, Next,
+Kysely...), an importer of the framework anywhere in the workspace that does not run on its own seam, and an
+`@sssb/*` package out of step with the framework's version, and it reports framework cutover rows your
+`docs/cutover-checklist.md` never mentions. Inside SSSB's own repository it says "in-repo mode" and checks each app's
+seam aliases instead of links. **`sssb check-e2e`** asks your own Playwright which files your configs load
+(`playwright test --list`, which starts no server and needs no browser), bundles each, and fails, naming spec and
+framework file, if a spec reaches the framework other than through `@sssb/kit/testing/e2e`, the one entry Node can
+load; reaching it through your own domain module or a workspace package counts. A spec that reaches the framework's
+TypeScript stops Playwright listing its config at all (Node will not load TypeScript under `node_modules`), so
+check-e2e then fails the config with Playwright's error and names the framework file. A config Playwright cannot list,
+or that lists no test, fails too; a config kept outside the app's directory is named with `--config <file>`.
 
 ## Layout
 
@@ -328,12 +361,16 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 ### What you may import from SSSB
 
-`packages/kit/package.json`'s `exports` map is the contract: it lists the 132 subpaths your app may
+`packages/kit/package.json`'s `exports` map is the contract: it lists the 137 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 49 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 62 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
-`pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. If you find yourself
+`pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
+less: Node loads a spec without your seam and without compiling anything under `node_modules`, so a spec reaches
+SSSB only through `@sssb/kit/testing/e2e`, which ships compiled and seam-free (today, the webhook signature
+verifier). A spec that needs one of your app's constants reads it from a module that imports nothing from SSSB
+but types, as the showcase's pagination spec reads `apps/showcase/src/domain/ticket-page-size.ts`. If you find yourself
 reaching for an internal, that is a signal the capability needs a seam, not a wider fence; if a module
 really is part of the contract and merely has no importer yet, that is an SSSB change: add the line upstream
 (ADR-0013, "Sending an SSSB fix back upstream") and take it back by merge, because in your fork the map is a
@@ -446,9 +483,8 @@ there.
 **How a second app keeps the seam honest**: `apps/starter/tsconfig.json` includes the whole of
 `packages/kit/src` (minus tests and stories), so `pnpm typecheck` compiles the ENTIRE framework
 against the starter's registrations — a framework module that assumed the showcase's tables or
-vocabulary fails there and nowhere else. `vitest.config.ts` then runs SSSB's seam-conformance tests
-(the i18n partition/parity pair, the composed pglite RLS suite and the demo-presets check) a second
-time under the starter's aliases. Each was watched failing before being trusted.
+vocabulary fails there and nowhere else. `apps/starter/src/sssb.conformance.test.ts` then runs SSSB's
+conformance suite a second time, under the starter's aliases. Each check was watched failing before being trusted.
 
 ### The scheduled tick
 
@@ -460,8 +496,8 @@ the showcase carries the same route over the same function.
 
 - **Who may call it** is a machine, not a person. The route is guarded by the shared webhook secret
   (`Authorization: Bearer …`, compared in constant time; anything else is an opaque 401 before the tick runs). The
-  authorization scan (`authorized-mutations.test.ts`) exempts a `webhooks/` route only if its file calls
-  `withWebhookSecret(`, so if you edit the route keep that call, and keep the logic in SSSB's function.
+  authorization scan (the conformance suite's `authz-mutations` check) exempts a `webhooks/` route only if its handler
+  is the `withWebhookSecret(…)` call, so if you edit the route keep that wrapper, and keep the logic in SSSB's function.
 - **In a deployment** nothing calls it until you set up the scheduler: that is the `scheduled-tick` row of the
   [cutover checklist](cutover-checklist.md).
 - **In `pnpm dev`** nothing ticks it unless you ask. The dev server runs no scheduler, and the starter's server app has

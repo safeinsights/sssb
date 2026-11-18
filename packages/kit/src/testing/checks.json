@@ -1,0 +1,91 @@
+{
+    "checks": [
+        {
+            "id": "authz-mutations",
+            "runner": "unit",
+            "title": "every mutating route handler is authorized",
+            "tests": [
+                "the app's src/app is really walked",
+                "every mutating handler reaches authorize(...) or passes its exemption's gate",
+                "the app's own exemptions are well formed, collide with no framework entry, and are not stale"
+            ]
+        },
+        {
+            "id": "i18n-partition",
+            "runner": "unit",
+            "title": "i18n namespace partition",
+            "tests": [
+                "FRAMEWORK and APP namespaces are disjoint",
+                "the framework catalog's top-level keys are exactly FRAMEWORK_NAMESPACES",
+                "the app catalog's top-level keys are exactly APP_NAMESPACES",
+                "the MERGED catalog's top-level keys are exactly FRAMEWORK ∪ APP"
+            ]
+        },
+        {
+            "id": "i18n-parity",
+            "runner": "unit",
+            "title": "message catalogs: en vs es",
+            "tests": [
+                "the framework catalog has identical key sets and ICU placeholders",
+                "the MERGED catalog (framework + app) has identical key sets and ICU placeholders"
+            ]
+        },
+        {
+            "id": "rls-pglite",
+            "runner": "unit",
+            "title": "tenant isolation on pglite (framework + app migrations)",
+            "tests": ["the full RLS proof suite passes"]
+        },
+        {
+            "id": "migration-order",
+            "runner": "unit",
+            "title": "migration numbering and upgrade order",
+            "tests": [
+                "every app migration is numbered ≥1001 and none shares a name with a framework one",
+                "applies a framework migration that arrives after app migrations already ran, to the same schema as a fresh database"
+            ]
+        },
+        {
+            "id": "demo-presets",
+            "runner": "unit",
+            "title": "registered demo presets",
+            "tests": [
+                "describe only worlds the product could reach",
+                "use only operation kinds the registry defines",
+                "have a server half for every defined operation kind, and no server half without a definition",
+                "resolve their title and summary in BOTH catalogs",
+                "replay on the server host: every operation performed, every invite pending, every hold set, the viewpoint signed in"
+            ]
+        },
+        {
+            "id": "seam-map",
+            "runner": "unit",
+            "title": "every seam module the kit imports resolves",
+            "tests": ["through the exports map of the app's seam package, when it has one", "from the kit's own code"]
+        },
+        {
+            "id": "contract-owner-pass",
+            "runner": "contract",
+            "title": "a non-superuser owner on real Postgres",
+            "tests": [
+                "a non-superuser owner migrates, and switches to app_user inside withTenant",
+                "a non-superuser owner migrates where app_user already exists, and switches too"
+            ]
+        },
+        {
+            "id": "contract-rls",
+            "runner": "contract",
+            "title": "tenant isolation on real Postgres",
+            "tests": ["the full RLS proof suite passes"]
+        },
+        {
+            "id": "contract-data-api",
+            "runner": "contract",
+            "title": "the app's tables over the RDS Data API transport (through the emulator)",
+            "tests": [
+                "the full RLS proof suite passes through the Data API",
+                "a non-superuser owner migrates, and switches to app_user inside withTenant, through the Data API"
+            ]
+        }
+    ]
+}

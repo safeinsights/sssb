@@ -944,6 +944,42 @@ fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are t
   the app's directory.
 - **The e2e import ban of part 2 is not in P6.** It needs `@sssb/kit/testing/e2e`, which P5 builds.
 
+## Addendum — 2026-11-18: P5 as built
+
+P5 built the conformance suite, `sssb doctor` and `sssb check-e2e` as the plan row says. Where it decided
+differently from the body, or more precisely (each in `docs/decision-log.md`, the four P5 entries):
+
+- **The contract runner is its own subpath, `@sssb/kit/testing/contract`** (`contractSuite`), registered, opted out
+  and guarded by the same code as the unit suite. `embedded-postgres` is an optional peer, loaded only when
+  `CONTRACT_DATABASE_URL` is unset, and every app's migrations now also run over the RDS Data API through its emulator.
+- **Opt-outs are markers in the listing.** An opted-out check registers one test, `[sssb:opt-out:<id>] <reason>`, so
+  `vitest list` shows the decision; doctor honours a marker, and counts a check's tests, only from the app's own
+  suite files (`src/sssb.conformance.test.ts`, `tests/contract/`), and reports each opt-out with its reason.
+- **The skip guard is a file-level `aroundAll`, not an `afterAll`**, because Vitest abandons a file's remaining
+  `afterAll` hooks at the first that throws, which left the contract server running. Each check's tests run in order
+  (`describe.sequential`) under any adopter config.
+- **One doctor run checks every app of the workspace**, not each app's verify its own; it fails when its walk does not
+  reach the app it runs for. The root's script and each app's are `sssb:doctor`, since `pnpm doctor` is pnpm's own.
+- **"The way CI runs Vitest" became the main-run rule.** Doctor finds files with `vitest list --filesOnly`, which runs
+  no `globalSetup`. The config a bare `vitest` would load for the app (the root's when it runs the app's `src/`
+  tests, else the one Vitest finds walking up from the app, else its defaults) must list every unit check, and some
+  config that runs the app's `tests/contract/` every contract check. Any other config that runs the app's tests
+  without them is REPORTED, not failed, and so is a bare `vitest` from the app's directory, when the root's is the
+  main run, that would not run the suite, even one that runs none of the app's tests.
+- **What doctor cannot see, it reports.** It cannot see which config CI runs or the flags a CI step adds, so it
+  names the other configs, the narrowing flags the package.json scripts pass to vitest, and which script runs each
+  app's contract config (it lists the contract checks and never runs them). A CI step running a config other than
+  the main one can therefore go green without the checks; the report is the guard.
+- **check-e2e asks Playwright which files it loads** (`playwright test --list --reporter=json` per config, which
+  starts no server and needs no browser) and then bundles them, following sibling workspace packages as Playwright
+  does. Where the report falls short: any load error lists nothing, so in an adopter's workspace a spec reaching the
+  kit's TypeScript fails its config, with the kit file named but not the spec; only the first entry of a
+  `globalSetup` array is checked; a matched file holding no test is not.
+- **The seam-free entry's build also scans what esbuild emitted** for any loader (`import()`, `require`,
+  `globalThis`, ...), since esbuild sees only literal specifiers.
+- **The cutover rows carry a `scope` field**; `"scope": "sssb"` (`release-app`) is not looked for in an adopter's
+  checklist.
+
 ## Addendum — 2026-11-18: release notes are assembled from the changesets
 
 Part 10 says the notes' "Seam changes" and "Framework migrations" sections are written by hand "until Changesets
