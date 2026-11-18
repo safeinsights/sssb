@@ -121,8 +121,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   lists every unit conformance test, and some config running its `apps/<app>/tests/contract/` lists every contract
   one, less named opt-outs; and on a second copy of a kit peer, an @sssb package out of step, a workspace walk that
   misses the app, or (in this repo, "in-repo mode") a tsconfig or Vitest alias sending an app's seam anywhere but its
-  own. Any other Vitest config that runs an app's tests without the checks, and the flags package.json scripts pass to
-  vitest, are reported, not failed: doctor cannot see what CI runs. **`sssb check-e2e`** (`pnpm check:e2e`, per app) asks
+  own. Any other Vitest config that runs an app's tests without the checks, a bare `vitest` from the app's directory
+  that would not run the suite, and the flags package.json scripts pass to vitest, are reported, not failed: doctor
+  cannot see what CI runs. **`sssb check-e2e`** (`pnpm check:e2e`, per app) asks
   Playwright which files each config loads, and fails a spec that reaches the kit other than through
   `@sssb/kit/testing/e2e`, directly or through an app module or a workspace package.
 - `pnpm verify` does NOT run `test:contract`, jscpd, coverage, gitleaks or pack and consume — CI runs those

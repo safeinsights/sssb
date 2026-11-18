@@ -964,7 +964,8 @@ differently from the body, or more precisely (each in `docs/decision-log.md`, th
   no `globalSetup`. The config a bare `vitest` would load for the app (the root's when it runs the app's `src/`
   tests, else the one Vitest finds walking up from the app, else its defaults) must list every unit check, and some
   config that runs the app's `tests/contract/` every contract check. Any other config that runs the app's tests
-  without them is REPORTED, not failed.
+  without them is REPORTED, not failed, and so is a bare `vitest` from the app's directory, when the root's is the
+  main run, that would not run the suite, even one that runs none of the app's tests.
 - **What doctor cannot see, it reports.** It cannot see which config CI runs or the flags a CI step adds, so it
   names the other configs, the narrowing flags the package.json scripts pass to vitest, and which script runs each
   app's contract config (it lists the contract checks and never runs them). A CI step running a config other than

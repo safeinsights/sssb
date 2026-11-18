@@ -101,7 +101,8 @@ tour can start from it. The contract and every operation kind's rules are in
    tour's first step should say what the preset already set up. The rest is `/new-tour`.
 10. **Verify.**
     - Fast loop: `pnpm exec vitest run apps/showcase/src/sssb.conformance.test.ts` (the conformance suite, whose
-      `demo-presets` check replays every preset); `pnpm test:unit` adds `tours.test.ts` and the i18n parity pair.
+      `demo-presets` check replays every preset, and whose i18n checks hold the copy); `pnpm test:unit` adds
+      `tours.test.ts`.
     - Assert what the preset VISIBLY did, on both hosts: the server in the `presets:` test of
       `apps/showcase/tests/e2e/destructive/simulator-snapshots.spec.ts` (destructive: it resets the world),
       the static demo in the load test beside the loop in `static-shell.spec.ts`. Run the first with

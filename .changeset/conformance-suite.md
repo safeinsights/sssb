@@ -16,8 +16,9 @@ Postgres as a non-superuser owner and as a superuser, and over the RDS Data API 
 longer ships its seam-conformance test files. `sssb doctor`, one run for every app of the workspace, fails unless
 each singleton peer has one copy, every importer of `@sssb/kit` links its own seam, the `@sssb/*` packages share one
 version, the Vitest config a bare `vitest` would load for each app runs every unit check, and some config runs every
-contract check. It reports, without failing, any other Vitest config that runs an app's tests without the checks, the
-narrowing flags the package.json scripts pass to vitest, and which script runs each contract config, since it cannot
+contract check. It reports, without failing, any other Vitest config that runs an app's tests without the checks, a
+bare `vitest` from an app's directory that would not run its suite when the root's run is the main one, the narrowing
+flags the package.json scripts pass to vitest, and which script runs each contract config, since it cannot
 see what CI runs. Playwright specs may reach the framework only through `@sssb/kit/testing/e2e`, which ships compiled
 and seam-free, and `sssb check-e2e`, asking Playwright which files each config loads, fails a spec that reaches any
 other framework file.
@@ -33,7 +34,7 @@ other framework file.
   `embedded-postgres` to the app's devDependencies for local runs (CI can set `CONTRACT_DATABASE_URL` instead). Keep
   `test:contract` in CI: doctor proves the contract checks would run, not that CI runs them.
 - An authorization exemption of the app's own goes in `authz-exemptions.mjs` at the app's root, each entry with a
-  `reason` and a `mustMatch` gate; one that matches no route in the app, overlaps a framework entry, or is a prefix
+  `reason` and a `mustMatch` gate; one that matches no mutating route in the app, overlaps a framework entry, or is a prefix
   nested in another of the app's prefixes, fails.
 - In Playwright specs, import webhook-signature helpers from `@sssb/kit/testing/e2e`, not `@sssb/kit/core/…`, and
   read app constants from modules that import nothing from SSSB but types.

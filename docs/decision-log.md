@@ -3738,6 +3738,22 @@ map, the cutover rows as data) was set before the work; these are the calls it d
   file whose first call comes while it is collected. Rejected: `process.on('exit')` (pool teardown may not fire it)
   and pushing into Vitest's runner hooks (internals, in a shipped file). `@sssb/tools/testing/tmp-dir` has the same
   single-hook flaw, left for `.claude/future-tasks/tools-tmp-dir-without-isolation.md`.
+- **The demo-presets check's teardown waits for a replay that outlived its test.** A Vitest timeout fails the test
+  but cannot stop its body: the replay ran on into `afterAll`, which closed the db and restored APP_DATA_DIR, and the
+  replay then wrote `auth/`, `pglite/` and `simulator/` into the working directory's `.data` (reproduced: a probe that
+  parks the first preset's invite for 1.5 s past a 300 ms timeout, with a second file keeping the worker alive). Now
+  the replay test's body is recorded on the file's scratch world; `afterAll` marks the world stopping (the replay stops
+  before its next preset) and waits for the body to settle, up to 30 s (`demoPresets.replayStopWaitMs`); only then
+  closes the db, restores APP_DATA_DIR and removes the dir. If the body is still running after the wait, the teardown
+  FAILS saying so and leaves APP_DATA_DIR on the scratch dir, closing and removing it once the replay settles (the db
+  only if the adapters still point there). The hook's own timeout is the wait plus 30 s (it was the adopter's
+  `hookTimeout`). Pinned by the two timed-out-replay cases of `packages/kit/src/testing/conformance/adopter-config.test.ts`,
+  both seen red with the wait removed. Rejected: waiting on simulator-admin's world queue (`tail`): it covers
+  `applyDemoPreset`'s reset and script but not the test body's reads after it (`readActorHolds` makes its directory
+  under the data root, `listMembers` and `getCurrentUser` reach auth files and the db), which would then run against
+  `.data`; and keeping APP_DATA_DIR on the scratch dir unconditionally, which leaks the dir on every timeout. The
+  timeout and the wait are injectable only by mutating the exported `demoPresets` object before `conformanceSuite()`
+  registers (the kit's own test does); `@sssb/kit/testing` exports `conformanceSuite` alone, as before.
 - **An app's nested exemption prefixes are refused, both of them** (`hooks/` and `hooks/partner/` would leave a route
   under both to whichever the scan met first). Rejected: most-specific-wins in `exemptionFor`, which is shared with
   the framework's policy and would change its matching too.
@@ -3746,6 +3762,17 @@ map, the cutover rows as data) was set before the work; these are the calls it d
   match, and the targets Node refuses (`ERR_INVALID_PACKAGE_TARGET`) reported as such; the target must be a file, and
   a `types`-only entry fails. Rejected: adding a bundler's conditions (`module`, `browser`), which belong to one
   environment and cannot stand in for Node, tsx and migration scripts.
+- **`seam-map` matches `module-sync`, and resolves an `exports` array as Node does.** Measured against Node's own
+  resolver (`import.meta.resolve` on fixture packages, 12 cases, on Node 24.19 and 22.23: 0 mismatches, 5 before
+  this change). Node matches `module-sync` by default for an ES import, so
+  `{"module-sync": "./ms.js", "default": "./ok.js"}` loads `ms.js`; the conditions are now `node`, `import`,
+  `module-sync`, `default`. In an array a `null` item does NOT stop the search: Node goes on to the next item and keeps the null only as the answer if no later item
+  gives a file. An array whose items all match no condition is unmatched, so the condition holding it falls through to
+  the next one; an empty array is `null`; and when no item gives a file, the answer is the last null-or-invalid item's
+  (`[null, "../x"]` is invalid, `["../x", null]` is not found). A conditions object still stops at a `null` (the entry
+  above). `seam-map.test.ts` pins `module-sync`, the null item, the invalid item after a null, the unmatched array and
+  the empty array, each seen red with its line of `seam-map.ts` reverted. Rejected: nothing new; this
+  corrects reading an array's `null` as stopping the search, which holds only for a conditions object.
 - **Pack and consume** drops `conformance-by-include`: the consumer apps carry the starter's
   `src/sssb.conformance.test.ts`, their Vitest projects keep `configDefaults.exclude` (node_modules and all), and the
   job requires every unit check's every test, named from the PACKED `checks.json`, to pass in each app, with the
@@ -3799,8 +3826,10 @@ as it stands after three rounds of review (ADR-0014's addendum "P5 as built" lis
   list as empty and passed every workspace-wide check over nothing. Rejected: `pnpm --filter './apps/*' sssb:doctor`,
   which silently skips an app without the script; and a `--app apps/<x>` per app, which ejecting or renaming breaks.
 - **`pnpm-workspace.yaml` is read by a small reader that throws on what it does not understand**, naming the line
-  (anchors, aliases, tags such as an unquoted `!glob`, nested items, a duplicate key, a second document, a flow
-  collection still open at the end), and a file it cannot read is a FAIL that stops the run. Rejected: the `yaml`
+  (in `packages` or `dedupePeerDependents`: anchors, aliases, tags such as an unquoted `!glob`, nested items; anywhere:
+  a duplicate key, a second document, a flow collection still open at the end; any other key's value is skipped
+  unread, `parseWorkspaceYaml` in `packages/tools/src/commands/doctor-checks.js:34`), and a file it cannot read is a
+  FAIL that stops the run. Rejected: the `yaml`
   package, which `packages/tools` reaches only through the root's hoisting; and a reader that returns what it can,
   which is how the empty list happened.
 - **Doctor reads `vitest list --json=<file>`, never stdout.** Vitest 4 writes the list to the file when `--json` is given a
@@ -3825,6 +3854,19 @@ as it stands after three rounds of review (ADR-0014's addendum "P5 as built" lis
   config that does run the suite file is not listed by name, so a `testNamePattern` set there is not seen. Doctor
   cannot see which config CI runs, as it cannot see CI's flags; failing every config made legitimate ones impossible
   to keep.
+- **The bare `vitest` from the app's directory is reported when the root's bare run is the main one** and the app's
+  would not run `src/sssb.conformance.test.ts`, even when it runs none of the app's `src/` files: a root config with
+  root-relative globs finds nothing from the app and passes on `passWithNoTests`, so an app script `vitest run` under
+  `pnpm -r test` runs no check. Found with `--filesOnly` only (no `globalSetup`), and report-only: it never joins the
+  contract configs, which are listed in full and alias-checked (`planFor` in `packages/tools/src/commands/doctor.js`).
+  The report names the run (a bare `vitest` from `apps/web` loads `vitest.config.mjs`), what it runs ("none of its
+  src/ test files, so not src/sssb.conformance.test.ts"), and that if CI runs it there (the app's own scripts,
+  `pnpm -r`) instead of the main run from the root, the conformance checks do not run. Pinned by
+  `tests/tooling/tools-doctor.test.ts` ("reports, and does not fail, the bare `vitest` from the app's directory…"),
+  seen red with the report removed.
+  Rejected: failing it (doctor still cannot see which run CI makes; the main-run rule is unchanged), and adding it to
+  the contract configs: in SSSB's own repository the root config run from `apps/showcase` lists the showcase's
+  `tests/contract/` file under the `repo` project, which has no seam alias, and that turned `sssb doctor` red.
 - **CI's command line is reported, not checked.** Doctor reports every narrowing flag or file filter (`-t`, `--project`,
   `--exclude`, `--shard`, `--changed`, `related`, a positional path...) that the root's and the apps' package.json
   scripts pass to vitest, and, since it lists the contract checks and never runs them, which script runs each app's

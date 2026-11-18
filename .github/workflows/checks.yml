@@ -41,9 +41,10 @@ jobs:
             - name: coverage summary
               run: node -e "const s=require('./coverage/coverage-summary.json').total; console.log('| metric | % |\n|---|---|', ...Object.entries(s).map(([k,v])=>'\n| '+k+' | '+v.pct+' |'))" >> "$GITHUB_STEP_SUMMARY"
             - run: pnpm knip
-            # ADR-0014 parts 2, 3 and 5, per app: one copy of each singleton, each app on its own seam, the @sssb
-            # packages in step, every conformance check listed by `vitest list` (unit and contract); and no e2e spec
-            # reaching the kit other than through @sssb/kit/testing/e2e.
+            # ADR-0014 parts 2, 3 and 5, one doctor run over every app: one copy of each singleton, each app on its
+            # own seam, the @sssb packages in step, every unit check listed by `vitest list` under the config a bare
+            # `vitest` loads for the app and every contract check under some config (which config CI runs is only
+            # reported); and, per app, no e2e spec reaching the kit other than through @sssb/kit/testing/e2e.
             - run: pnpm sssb:doctor
             - run: pnpm check:e2e
             - run: pnpm jscpd

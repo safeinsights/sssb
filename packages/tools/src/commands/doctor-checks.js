@@ -47,9 +47,11 @@ export function packageDirFrom(start, name) {
  *   - a flow collection (any key's) opens only where a value starts with `[` or `{`; a bracket inside a plain scalar
  *     (`nodeOptions: --foo[bar`) is text.
  *
- * What it throws on, among others: anchors, aliases and tags (an unquoted `!glob` is a tag, an unquoted `*glob` an
- * alias), nested or multi-line items, a scalar where the list belongs, a duplicate key, a top-level flow mapping, a
- * flow collection of any key still open at the end of the file, and a second document.
+ * What it throws on, among others: in the two values it reads, anchors, aliases and tags (an unquoted `!glob` is a
+ * tag, an unquoted `*glob` an alias), nested or multi-line items and a scalar where the list belongs; anywhere at the
+ * top level, a duplicate key, a top-level flow mapping, a flow collection of any key still open at the end of the
+ * file, and a second document. Another key's value is skipped unread (an anchor there passes), but for its flow
+ * brackets.
  * @param {string} text
  * @returns {{ packages: string[], dedupePeerDependents: boolean | undefined }}
  */

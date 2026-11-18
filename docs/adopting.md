@@ -290,7 +290,7 @@ want it.
 
 One gate is relaxed on the way out. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 137 published subpaths from its source (38
+nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 137 published subpaths from its source (39
 counting its tests), so the same setting would start demanding you delete the other 102 — capabilities you merely have not
 reached yet, not dead code. `--eject-showcase` therefore turns it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
@@ -318,13 +318,17 @@ the framework is ever proved against.
 Two `sssb` commands guard that suite and the install around it, and `pnpm verify` and CI run both (`pnpm sssb:doctor`,
 `pnpm check:e2e`; the scripts are `sssb:doctor` and `check:e2e` because `pnpm doctor` is pnpm's own command).
 **`sssb doctor`** checks every app of the workspace in one run. It asks `vitest list` what would actually run with the
-config a bare `vitest` would load for each app (the root's `vitest.config.*` when it runs the app's tests, else the
-app's own, else Vitest's defaults), and fails naming every unit conformance test that would not, unless its check is
-opted out by name in the app's own `apps/<app>/src/sssb.conformance.test.ts`; some config that runs your
-`apps/<app>/tests/contract/` files must list every contract check. So an `.only`, a `testNamePattern` or a config that stops picking the file up is red
-before it silently drops a check. Any other Vitest config (a browser, integration or CI config) that runs some of an
-app's tests but not the suite is reported, not failed, and so are the narrowing flags your package.json scripts pass
-to vitest and which script runs each contract config: doctor cannot see which config or flags your CI uses, so make
+config a bare `vitest` would load for each app (the root's `vitest.config.*` when it runs the app's unit tests,
+else the one Vitest finds walking up from the app, its own or the root's, else Vitest's defaults), and fails naming
+every unit conformance test that would not, unless its check is opted out by name in the app's own
+`apps/<app>/src/sssb.conformance.test.ts`; some config that runs your `apps/<app>/tests/contract/` files must list
+every contract check. So an `.only` beside the suite, a `testNamePattern` in that config, or a config that stops
+picking the file up is red before it silently drops a check (a `-t` a CI step adds is not doctor's to see: the suite
+fails a run that drops only some of its checks, and a filter that drops all of them leaves the file skipped). Any other
+Vitest config (a browser, integration or CI config) that runs some of an app's tests but not the suite is reported, not
+failed, and so is a bare `vitest` from the app's own directory (what the app's scripts and `pnpm -r` run) when the main
+run is the root's and that one would not run the suite, even if it runs none of the app's tests; so are the narrowing
+flags your package.json scripts pass to vitest and which script runs each contract config: doctor cannot see which config or flags your CI uses, so make
 sure CI runs the config doctor names. It also fails a second copy of any peer `@sssb/kit` declares (React, Next,
 Kysely...), an importer of the framework anywhere in the workspace that does not run on its own seam, and an
 `@sssb/*` package out of step with the framework's version, and it reports framework cutover rows your

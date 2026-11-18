@@ -125,6 +125,11 @@ describe('seam-map, through a seam package', () => {
         expect(run(appDir)).not.toThrow()
     })
 
+    it('stops at an empty fallback array as at a null, as Node does', () => {
+        const appDir = appWithSeam({ './seed': { import: [], default: './seed.ts' } })
+        expect(run(appDir)).toThrow(/@sssb\/app-config\/seed: no `exports` entry/)
+    })
+
     it('matches `module-sync`, which Node 24 matches by default', () => {
         const appDir = appWithSeam({ './jobs': { 'module-sync': './missing.ts', default: './jobs.ts' } })
         expect(run(appDir)).toThrow(/maps \.\/jobs to \.\/missing\.ts, which is not a file/)

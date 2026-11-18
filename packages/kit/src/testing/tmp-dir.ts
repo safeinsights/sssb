@@ -33,7 +33,7 @@ import { TMP_DIR_MARKER_SUFFIX } from './tmp-dir-marker.mjs'
  * loads once per worker, in its first file, so that load-time hook is the first file's alone. A call
  * from a later file (Vitest's `expect.getState().testPath` names it) therefore registers that file's
  * own hook, which works when the call comes while the file is collected (its top level or a
- * `describe` body, as every test here makes them). Each hook removes every directory still queued:
+ * `describe` body; conformance/adopter-config.test.ts pins it). Each hook removes every directory still queued:
  * a worker runs its files one after another, so any left from an earlier file are that file's. A
  * later file whose first call comes from a hook or a test cannot register one (Vitest drops it), so
  * its directories wait for the next file's hook; a helper shipped to run there removes its own
