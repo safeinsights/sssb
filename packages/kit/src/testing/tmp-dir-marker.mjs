@@ -1,5 +1,5 @@
 // The suffix of the empty sibling file that tmp-dir.ts (beside it) drops next to every scratch
-// directory it creates (`<dir>` + this suffix). It lives in its own plain-.mjs module so the leak
-// guard (scripts/check-tmpdir-leak.mjs), which runs under bare node with no TypeScript loader, can
-// read the same constant the helper writes with — one spelling, two consumers, no drift.
+// directory it creates (`<dir>` + this suffix). The leak guard (`sssb check-tmpdir-leak`, @sssb/tools) reads
+// @sssb/tools' own copy of this constant, since no SSSB package depends on another; tests/tooling/tmp-dir.test.ts
+// holds the two spellings equal. Plain .mjs, so it needs no TypeScript loader.
 export const TMP_DIR_MARKER_SUFFIX = '.sssb-test-tmp'

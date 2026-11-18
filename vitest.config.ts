@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
+import { appTestProject } from '@sssb/tools/vitest'
 import react from '@vitejs/plugin-react'
-import { configDefaults, defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig, type ViteUserConfig } from 'vitest/config'
 
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 
@@ -17,22 +18,17 @@ const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url
 const APPS = ['showcase', 'starter'] as const
 
 /**
- * ONE ALIAS SET PER APP — the reason this file has projects at all.
+ * ONE PROJECT PER APP, from the preset every SSSB app uses (@sssb/tools/vitest), the reason this file has projects
+ * at all. `@sssb/app-config/*` is the seam the framework resolves app vocabulary through (ADR-0012), and it is a
+ * BARE SPECIFIER: a single global alias can only ever point at one app. With two apps a shared alias would silently
+ * bind the framework's tests to whichever app happened to be listed first, and the other app's registrations would
+ * never execute. So each app gets its own project, rooted at the app, with its own seam passed explicitly, and the
+ * framework's seam-conformance tests are included in BOTH.
  *
- * `@sssb/app-config/*` is the seam the framework resolves app vocabulary through (ADR-0012), and it is a
- * BARE SPECIFIER: a single global alias can only ever point at one app. With two apps a shared alias
- * would silently bind the framework's tests to whichever app happened to be listed first, and the
- * other app's registrations would never execute. So each app gets its own vitest project with its own
- * aliases, and the framework's seam-conformance tests are included in BOTH.
+ * What this repo adds to the preset: the conformance suites by path (below), and `@sssb/kit` aliased to the
+ * framework's source, so Vitest loads the SAME source files the app's tsconfig `paths` resolve to (ADR-0014 part 1:
+ * inside this repo resolution goes through aliases, an adopter's through the seam link).
  */
-const aliasesFor = (app: string) => ({
-    '@sssb/app-config': at(`./apps/${app}/src/app-config`),
-    // the framework package (ADR-0012) — aliased rather than resolved through its exports map so
-    // vitest loads the SAME source files the app's tsconfig paths resolve to
-    '@sssb/kit': at('./packages/kit/src'),
-    '@': at(`./apps/${app}/src`),
-})
-
 /**
  * The framework tests that must hold for EVERY app, re-run against each app's seam:
  * - the i18n pair proves the namespace partition and en/es parity over that app's MERGED catalog;
@@ -55,22 +51,18 @@ const SEAM_CONFORMANCE_TESTS = [
 // CI retry). 20s gives generous headroom without masking a genuinely hung test.
 const TEST_TIMEOUT_MS = 20_000
 
-const projectFor = (app: string) => ({
-    plugins: [react()],
-    resolve: { alias: aliasesFor(app) },
-    test: {
-        name: app,
-        environment: 'happy-dom',
-        include: [`apps/${app}/src/**/*.test.{ts,tsx}`, ...SEAM_CONFORMANCE_TESTS],
-        setupFiles: [at('./tests/vitest.setup.ts')],
-        // The fake LLM adapter resolves fixtures from the working directory, which for `next dev` is
-        // the app — but this suite runs from the REPO ROOT, so every project points the adapter at its
-        // OWN fixtures (same override shape as APP_DATA_DIR). An app with no fixtures dir simply never
-        // asks for one.
+const projectFor = (app: string) =>
+    appTestProject({
+        appDir: at(`./apps/${app}`),
+        // relative to the project's root, the app
+        include: SEAM_CONFORMANCE_TESTS.map((file) => `../../${file}`),
+        alias: { '@sssb/kit': at('./packages/kit/src') },
+        // The fake LLM adapter resolves fixtures from the working directory, which for `next dev` is the app, but
+        // this suite runs from the REPO ROOT, so every project points the adapter at its OWN fixtures (same
+        // override shape as APP_DATA_DIR). An app with no fixtures dir simply never asks for one.
         env: { APP_FIXTURES_DIR: at(`./apps/${app}/fixtures`) },
         testTimeout: TEST_TIMEOUT_MS,
-    },
-})
+    })
 
 /**
  * THE FRAMEWORK'S OWN PROJECT — SSSB's suite (and any other package's), run against SSSB's own
@@ -108,10 +100,10 @@ const kitProject = {
     },
 }
 
-export default defineConfig({
+export default defineConfig(async (): Promise<ViteUserConfig> => ({
     test: {
         projects: [
-            ...APPS.map(projectFor),
+            ...(await Promise.all(APPS.map(projectFor))),
             kitProject,
             {
                 // @sssb/cdk's own suite: plain JavaScript, alias-free (the construct resolves @sssb/kit from
@@ -154,4 +146,4 @@ export default defineConfig({
             // thresholds intentionally absent — a ratchet (thresholds + autoUpdate) lands after CI baselines
         },
     },
-})
+}))

@@ -11,11 +11,11 @@ import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../../../tests/support/tmp-dir'
-import { dataApiShapeProblems, lambdaBundles, lambdaFunction, secretGrantProblems } from './_p4/assembly-checks.js'
+import { dataApiShapeProblems, lambdaBundles, lambdaFunction, secretGrantProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf } from './_p4/kit.js'
 import { SssbApp } from './index.js'
 
-/** @typedef {import('./_p4/assembly-checks.d.ts').Resources} Resources */
+/** @typedef {import('@sssb/tools/assembly-checks').Resources} Resources */
 /** @typedef {'pg' | 'data-api'} Transport */
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')

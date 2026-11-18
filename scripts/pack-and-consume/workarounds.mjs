@@ -13,37 +13,13 @@
 
 /** @type {Record<string, Workaround>} */
 export const WORKAROUNDS = {
-    'prune-plugin-copied': {
-        removedBy: 'P4',
-        what: "scripts/vite-prune-mantine-css.ts is copied into the consumer, because the static demo's Vite config imports it from the repo's scripts/ (P4 moves it into @sssb/tools' Vite preset)",
-    },
-    'ports-copied': {
-        removedBy: 'P4',
-        what: "scripts/ports.mjs and scripts/print-port.mjs are copied into the consumer, because the apps' dev scripts and Playwright config import them (P4: `sssb port` and the ports module in @sssb/tools)",
-    },
     'tick-scripts-copied': {
         removedBy: 'P4',
         what: "scripts/tick.mjs, dev-tick.mjs, ticker.mjs and ticker-marker.mjs are copied into the consumer, because the apps' dev and tick scripts run them and their Playwright config imports ticker-marker (P4: `sssb tick` and the ticker module in @sssb/tools)",
     },
-    'check-demo-size-copied': {
-        removedBy: 'P4',
-        what: "scripts/check-demo-size.mjs is copied into the consumer, because the apps' check:demo-size script runs it (P4: `sssb check-demo-size`)",
-    },
-    'tmp-dir-helper-copied': {
-        removedBy: 'P4',
-        what: "the scratch-directory helper and its marker module (packages/kit/src/testing) are copied into the consumer's tests/support, because the starter's cron route test imports them by a repo-relative path (P4: makeTestTmpDir from @sssb/tools)",
-    },
-    'vitest-config-written': {
-        removedBy: 'P4',
-        what: "the consumer's root vitest.config.ts (a project per app, each with its own `@` alias) and its setup file (jest-dom's matchers) are written by the script (P4: the Vitest preset carries both)",
-    },
-    'tsconfig-written': {
-        removedBy: 'P4',
-        what: "each app's tsconfig.json is written by the script, at the ES2022 floor with only the app's `@/` path: the starter's extends this repo's root tsconfig and includes packages/kit/src. It also sets what @sssb/kit's source needs beyond the strict set and is written nowhere an adopter reads yet: strict, moduleResolution bundler, jsx react-jsx, dom in lib, skipLibCheck (packages/kit/tsconfig.strict.json's header) (P4: the app extends @sssb/tools' tsconfig base)",
-    },
-    'vite-aliases-removed': {
-        removedBy: 'P4',
-        what: "the `@sssb/app-config` and `@sssb/kit` aliases are cut out of each app's vite.demo.config.ts, which point into this repo in the starter (P4: the Vite preset)",
+    'in-repo-tsconfig-stripped': {
+        removedBy: 'P12',
+        what: "each app's tsconfig.json is the starter's, which extends @sssb/tools' base, with what reaches into this repo taken out: the `paths` that send @sssb/kit and the seam to source (inside this repo resolution goes through aliases, ADR-0014 part 1) and the include of packages/kit/src that makes the starter the framework's falsifier (P12: @sssb/create writes the template's tsconfig without them)",
     },
     'seam-package-written': {
         removedBy: 'P12',
@@ -52,10 +28,6 @@ export const WORKAROUNDS = {
     'root-devdeps-picked': {
         removedBy: 'P12',
         what: "the workspace root's devDependencies (typescript, vitest, esbuild, tsx, the @types and the rest) are picked by hand, at this repo's ranges (P12: @sssb/create writes them)",
-    },
-    'next-intl-request-path': {
-        removedBy: 'P4',
-        what: "each app's next.config.ts points next-intl at ./node_modules/@sssb/kit/src/i18n/request.ts, a path into the package's internal layout (P4: the Next preset resolves the published subpath)",
     },
     'contract-test-dropped': {
         removedBy: 'P5',

@@ -7,7 +7,7 @@
 // did not start, so the ticker leaves this marker, and both playwright configs refuse to run while one is live.
 //
 // Imported by playwright.config.ts, which Playwright compiles to CommonJS: no `import.meta`, no top-level await, nothing
-// but `node:` imports here (the constraint scripts/ports.mjs documents).
+// but `node:` imports here (the constraint @sssb/tools' ports module documents).
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 

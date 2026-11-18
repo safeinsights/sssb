@@ -1,30 +1,8 @@
-import path from 'node:path'
-import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
-import { viteSingleFile } from 'vite-plugin-singlefile'
-import { pruneMantineCss } from '../../scripts/vite-prune-mantine-css'
+import { staticDemoConfig } from '@sssb/tools/vite'
 
 /**
- * Builds the hash-routed static demo shell (src/demo-static) that runs from file://.
- * ALWAYS single-file: Chrome blocks external type="module" scripts on the file:// origin (CORS),
- * but inline module scripts run fine — so everything is inlined into one index.html.
- *
- * The aliases are the app's own: `@sssb/app-config` points at THIS app's seam, which is what makes the
- * framework bundle resolve against the starter's registrations rather than any other app's.
+ * Builds the hash-routed static demo shell (src/demo-static) that runs from file://, as one file. The preset
+ * (@sssb/tools/vite) passes this app's own seam explicitly, which is what makes the framework bundle resolve against
+ * the starter's registrations rather than any other app's.
  */
-export default defineConfig({
-    root: path.resolve(__dirname, 'src/demo-static'),
-    base: './',
-    plugins: [react(), pruneMantineCss(), viteSingleFile()],
-    resolve: {
-        alias: {
-            '@sssb/app-config': path.resolve(__dirname, 'src/app-config'),
-            '@sssb/kit': path.resolve(__dirname, '../../packages/kit/src'),
-            '@': path.resolve(__dirname, 'src'),
-        },
-    },
-    build: {
-        outDir: path.resolve(__dirname, 'dist-demo'),
-        emptyOutDir: true,
-    },
-})
+export default staticDemoConfig({ appDir: __dirname })

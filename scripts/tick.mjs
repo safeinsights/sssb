@@ -13,7 +13,7 @@
 // where the server keeps `.data` (`APP_DATA_DIR` overrides it, for both).
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { portFor } from './ports.mjs'
+import { portFor } from '@sssb/tools/ports'
 
 /** The apps that have a tick route. The key is the PORT key (`starter` stays `starter` after `init-app` renames it). */
 export const TICK_APPS = ['showcase', 'starter']

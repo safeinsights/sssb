@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 // CommonJS (tsx, under an app whose infra has no `"type": "module"`) hands it `module.exports` with no `default`.
 import * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
-import { failClosedEnvironmentProblems, migratorBundleProblems } from './_p4/assembly-checks.js'
+import { failClosedEnvironmentProblems, migratorBundleProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf, resolveAppsKit } from './_p4/kit.js'
 
 const { aws_budgets, aws_cloudfront, aws_cloudfront_origins, aws_cloudwatch, aws_ec2, aws_lambda } = cdk

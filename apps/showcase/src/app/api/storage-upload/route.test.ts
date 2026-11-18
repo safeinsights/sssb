@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '@sssb/tools/testing/tmp-dir'
 import { fakeStorage } from '@sssb/kit/adapters/fake/storage'
 import { POST } from './route'
 

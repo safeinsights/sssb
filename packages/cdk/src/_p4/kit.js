@@ -8,10 +8,13 @@
 // HERE, with the app's own directory as the base, and then runs the shared check: the real path of the file it
 // got must sit inside the real directory of the `@sssb/kit` that the app itself resolves. The lint rule
 // `sssb/no-bare-kit-import` keeps every other route out of this package's source.
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+// TEMPORARY (ADR-0014 P9): a copy of @sssb/tools' src/kit.js until that package publishes it as `./kit`; the one
+// change is UsageError, which lives in its src/app.js.
+class UsageError extends Error {}
 
 const KIT = '@sssb/kit'
 
@@ -21,23 +24,26 @@ function requireFrom(appDir) {
 }
 
 /**
- * The real directory of the `@sssb/kit` an app resolves. Throws, naming the app, when the app does not
- * install the framework at all.
+ * The real directory of the `@sssb/kit` an app resolves: the first `node_modules/@sssb/kit` walking up from the
+ * app's directory, which is where Node's own lookup finds it. Throws, naming the app, when there is none.
+ *
+ * WALKED, NOT `require.resolve`d: Node's resolver falls back to NODE_PATH when the app's own chain has no match, and
+ * `pnpm exec` and `pnpm run` set NODE_PATH to the workspace's hoisted `.pnpm/node_modules`. So for an app that
+ * installs no framework, `require.resolve('@sssb/kit/…')` would quietly return the hoisted copy, another app's
+ * instance: the slip rule 4 exists to prevent. The walk never consults NODE_PATH or the global folders.
  * @param {string} appDir
  * @returns {string}
  */
 export function kitDirOf(appDir) {
-    let manifest
-    try {
-        manifest = requireFrom(appDir).resolve(`${KIT}/package.json`)
-    } catch (error) {
-        throw new Error(
-            `sssb: ${path.resolve(appDir)} does not resolve ${KIT}. Run this from an app that depends on it, ` +
-                `or name one with --app (${error instanceof Error ? error.message.split('\n')[0] : String(error)})`,
-            { cause: error },
-        )
+    for (let dir = path.resolve(appDir); ; dir = path.dirname(dir)) {
+        const candidate = path.join(dir, 'node_modules', '@sssb', 'kit')
+        if (existsSync(path.join(candidate, 'package.json'))) return realpathSync(candidate)
+        if (path.dirname(dir) === dir) break
     }
-    return realpathSync(path.dirname(manifest))
+    throw new UsageError(
+        `sssb: ${path.resolve(appDir)} does not resolve ${KIT}: no node_modules/${KIT} in it or above it. Run this ` +
+            'from an app that depends on it, or name one with --app',
+    )
 }
 
 /**
@@ -51,7 +57,7 @@ export function assertAppsKitFile(appDir, file) {
     const kitDir = kitDirOf(appDir)
     const real = realpathSync(file)
     if (real !== kitDir && !real.startsWith(kitDir + path.sep)) {
-        throw new Error(
+        throw new UsageError(
             `sssb: ${real} is not part of the ${KIT} that ${path.resolve(appDir)} resolves (${kitDir}). ` +
                 'A tool reached the framework some other way than from the app, so it may be running on another ' +
                 "app's instance and seam (ADR-0014, rule 4).",
@@ -74,7 +80,7 @@ export function resolveAppsKit(appDir, subpath) {
     } catch (error) {
         // Distinguish "no framework here" from "the framework does not publish that subpath".
         kitDirOf(appDir)
-        throw new Error(
+        throw new UsageError(
             `sssb: the ${KIT} that ${path.resolve(appDir)} resolves does not publish \`${KIT}/${subpath}\``,
             { cause: error },
         )
@@ -94,7 +100,7 @@ export function resolveFromApp(appDir, specifier, why) {
     try {
         return requireFrom(appDir).resolve(specifier)
     } catch (error) {
-        throw new Error(
+        throw new UsageError(
             `sssb: ${path.resolve(appDir)} does not install \`${specifier}\`, which ${why}. Add it to the app's ` +
                 'devDependencies.',
             { cause: error },

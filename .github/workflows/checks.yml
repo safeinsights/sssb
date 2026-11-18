@@ -114,30 +114,13 @@ jobs:
             matrix: ${{ steps.discover.outputs.matrix }}
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - name: discover e2e shards from apps/*
+            - name: discover e2e shards from the workspace's apps
               id: discover
-              # One shard per app running its own `test:e2e` script — UNLESS the app declares a
-              # Playwright project literally named `destructive`, in which case it splits into two
-              # shards instead of one (see the `e2e` job comment for why). Detected from the tree so a
-              # renamed or newly added app needs no edit here, same promise `init-app` makes everywhere
-              # else it repoints.
-              run: |
-                  shards=()
-                  for dir in apps/*/; do
-                      app="${dir%/}"
-                      app="${app#apps/}"
-                      config="apps/$app/playwright.config.ts"
-                      [ -f "$config" ] || continue
-                      if grep -q "name: 'destructive'" "$config"; then
-                          shards+=("{\"name\":\"$app\",\"run\":\"pnpm --filter $app exec playwright test --project=chromium\"}")
-                          shards+=("{\"name\":\"$app-destructive\",\"run\":\"pnpm --filter $app exec playwright test --project=destructive --workers=1 --no-deps\"}")
-                      else
-                          shards+=("{\"name\":\"$app\",\"run\":\"pnpm --filter $app test:e2e\"}")
-                      fi
-                  done
-                  matrix=$(printf '%s\n' "${shards[@]}" | jq -s -c '.')
-                  echo "computed matrix: $matrix"
-                  echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+              # One shard per app running its own `test:e2e` script, UNLESS the app declares a Playwright
+              # project literally named `destructive`, in which case it splits into two shards instead of one
+              # (see the `e2e` job comment for why). The logic is `sssb ci e2e-shards` (@sssb/tools), which
+              # needs nothing installed, so it runs straight from the package's source before any install.
+              run: node packages/tools/bin/sssb.js ci e2e-shards
 
     # SHARDED, because parallelism is only safe where the worlds are separate.
     #
@@ -225,9 +208,8 @@ jobs:
               if: steps.playwright-cache.outputs.cache-hit != 'true'
             - run: pnpm exec playwright install-deps chromium
               if: steps.playwright-cache.outputs.cache-hit == 'true'
-            - run: pnpm build:demo-static
-            - run: pnpm check:demo-size
-            - run: pnpm e2e:demo-static
+            # Every app's static demo: build, its own size budget, then its e2e (`sssb ci demo-static`).
+            - run: pnpm exec sssb ci demo-static
             - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               if: failure()
               with:

@@ -23,7 +23,7 @@
 // the interval and its status and knows nothing of the environment: this file is the policy for `pnpm dev`.
 import { spawn } from 'node:child_process'
 import path from 'node:path'
-import { portFor } from './ports.mjs'
+import { portFor } from '@sssb/tools/ports'
 import { TICK_APPS } from './tick.mjs'
 import { createTicker, intervalProblem } from './ticker.mjs'
 import { tickerMarkerPath } from './ticker-marker.mjs'
