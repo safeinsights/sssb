@@ -435,6 +435,17 @@ describe('lockfileMoves', () => {
         expect(lockfileMoves(WITH_TOOLS, bumped)).toEqual({ added: 0, removed: 0 })
     })
 
+    it("ignores @sssb/eslint-plugin's entries the same way", () => {
+        const entry = TOOLS_ENTRY.replaceAll('sssb/tools', 'sssb/eslint-plugin')
+            .replaceAll('sssb-tools-', 'sssb-eslint-plugin-')
+            .replace('sha512-tools', 'sha512-plugin')
+        const withPlugin = GOOD_LOCKFILE.replace('snapshots:\n', `${entry}snapshots:\n`)
+        const bumped = withPlugin
+            .replaceAll('sssb-eslint-plugin-0.1.0', 'sssb-eslint-plugin-0.2.0')
+            .replace('sha512-plugin', 'sha512-x')
+        expect(lockfileMoves(withPlugin, bumped)).toEqual({ added: 0, removed: 0 })
+    })
+
     it('counts any other line that moved, including one that duplicates a line elsewhere', () => {
         // `      react: 19.2.9` already appears in the snapshot; a second copy is still a move.
         const moved = GOOD_LOCKFILE.replace(

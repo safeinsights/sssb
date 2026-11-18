@@ -383,9 +383,9 @@ export function lockfileMoves(seed, lockfile) {
         let inSssbBlock = false
         for (const line of text.split('\n')) {
             // A `packages:` or `snapshots:` entry for a packed SSSB package: its key and every line indented under it.
-            if (/^ {2}'@sssb\/(kit|tools)@/.test(line)) inSssbBlock = true
+            if (/^ {2}'@sssb\/(kit|tools|eslint-plugin)@/.test(line)) inSssbBlock = true
             else if (/^ {0,2}\S/.test(line)) inSssbBlock = false
-            if (inSssbBlock || /sssb-(kit|tools)-/.test(line)) continue
+            if (inSssbBlock || /sssb-(kit|tools|eslint-plugin)-/.test(line)) continue
             counts.set(line, (counts.get(line) ?? 0) + 1)
         }
         return counts
