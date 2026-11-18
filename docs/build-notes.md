@@ -2347,3 +2347,15 @@ pnpm-lock.yaml` counts the kit's peer suffix (2 for one app: its importer entry 
   module named in a comment above each section (`// ../installing/deps-resolver/lib/index.js`).
 - **A workspace package nested in another (`apps/<app>/src/app-config` inside `apps/<app>`) is a workspace of its own
   to knip**, which moves its files out of the outer workspace's entry patterns: give it its own entry.
+
+## A check that walks a generated directory has to be run over a tree the generator produced (2026-11-18, `fix/changeset-pre-dir`)
+
+`tests/tooling/changesets.test.ts` was written when `.changeset/` held only `config.json`, `README.md` and the changesets,
+and it asserted that the directory held no subdirectory. The release flow's pre mode then wrote `.changeset/pre/` into the
+tree, and the first release commit failed its own CI on that assertion. The release tooling itself had been taught about
+`pre/` and tested against fixtures that include it; this test, which reads the real tree, was not. The lesson is the
+fixture's, not the assertion's: when a tool writes into a directory other checks walk, the test that proves the tool
+works has to run the walkers over what it left. `tests/tooling/release-pre-mode.test.ts` does, and the first thing to do
+with a red release commit is to rebuild its tree in scratch and run the failing test over it (`rm -rf .changeset`, extract `git archive <sha> .changeset` in its place, and afterwards
+`git restore --staged --worktree .changeset && git clean -fd .changeset`; extracting over the old directory leaves the
+old pending files beside their `pre/` copies, which is not that tree).

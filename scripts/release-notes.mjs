@@ -11,7 +11,7 @@
 //                 to earlier notes", those EDITED since: a release candidate's notes are what is new since the previous
 //                 candidate. Read from git (`--at`, default HEAD), not the working tree
 //   --at <rev>    read `.changeset/` as of <rev> instead of the working tree. A release deletes the changesets it
-//                 consumes, so `--at <release commit>^` regenerates a release's notes after the fact
+//                 consumes (in pre mode, which is every release until P14, it moves them to `.changeset/pre/`), so `--at <release commit>^` regenerates a release's notes after the fact
 //   --version <v> the heading's version
 //   --out <file>  write the notes there instead of stdout
 //   --check       judge the changesets and print nothing but the problems
