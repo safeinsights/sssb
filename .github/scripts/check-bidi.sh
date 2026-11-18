@@ -7,7 +7,7 @@
 # legitimately in right-to-left copy. The filename half matches the same nine as raw UTF-8 bytes; keep
 # the two in step.
 #
-# Run it from the repository root, before any install: it needs only git, perl and bash, and fails in
+# Run it from anywhere in the repository (it moves to the root), before any install: it needs only git, perl and bash, and fails in
 # seconds. Adapted from CanopyCMS's ci.yml. It is a script, not inline YAML, so tests/tooling/check-bidi.test.ts
 # can run it against real scratch repositories and watch it fail.
 #
@@ -30,21 +30,51 @@ fail() {
     exit 1
 }
 
+# `git grep` and `git ls-files` are relative to the directory they run in, so from a subdirectory they scan
+# only that subdirectory. Always scan the whole repository. Not `cd "$(git rev-parse ...)"`: a failing
+# substitution there leaves `cd ""`, which succeeds.
+root=$(git rev-parse --show-toplevel) || fail 'not a git repository: the bidi scan did not run'
+cd "$root"
+
 bidi='[\x{202A}-\x{202E}\x{2066}-\x{2069}]'
 bidi_bytes='\xe2\x80[\xaa-\xae]|\xe2\x81[\xa6-\xa9]'
 
-# File CONTENTS. -I skips files git considers binary: a file marked binary via .gitattributes can opt
-# out, but without it an image fixture would false-positive on a stray E2 80 AA-AE byte run.
-status=0
-matches=$(git grep -P -I -l -e "$bidi") || status=$?
-case "$status" in
-    0)
-        echo "$matches"
-        fail 'Bidirectional unicode characters detected in file contents (CVE-2021-42574 Trojan Source)'
-        ;;
-    1) ;;
-    *) fail "bidi content scan did not run (git grep exited $status)" ;;
-esac
+# Source-type files, always read as TEXT. The PR author controls what git thinks is binary (a tracked
+# .gitattributes with `*.ts binary`, or a NUL byte in a text file), and `git grep -I` skips those files, so
+# a bidi character in one would pass. These are the files a compiler or a reader takes as text; `-a` reads
+# them as text whatever git thinks.
+source_paths=('*.ts' '*.tsx' '*.mts' '*.cts' '*.js' '*.jsx' '*.mjs' '*.cjs' '*.json' '*.md' '*.mdx' '*.yml'
+    '*.yaml' '*.sh' '*.css' '*.html' '*.txt' '*.toml')
+
+# Runs `git grep "$@"`. Exit 0 is a hit: list the files and fail with $1. Exit 1 is clean. Anything else
+# (128 is a fatal, such as the locale or a missing repository) means the scan did not run, which fails.
+scan_grep() {
+    local hit_message=$1 label=$2 status=0 matches
+    shift 2
+    matches=$(git grep "$@") || status=$?
+    case "$status" in
+        0)
+            echo "$matches"
+            fail "$hit_message"
+            ;;
+        1) ;;
+        *) fail "bidi $label scan did not run (git grep exited $status)" ;;
+    esac
+}
+
+# File CONTENTS. -I skips files git considers binary, so an image fixture does not false-positive on a stray
+# E2 80 AA-AE byte run. That is the general scan; the source-type scan below closes the hole it leaves.
+scan_grep 'Bidirectional unicode characters detected in file contents (CVE-2021-42574 Trojan Source)' \
+    content -P -I -l -e "$bidi"
+
+# Source-type files as text (-a), which .gitattributes and a NUL byte cannot hide from.
+scan_grep 'Bidirectional unicode characters detected in a source-type file, read as text (CVE-2021-42574 Trojan Source)' \
+    'source-type content' -a -P -l -e "$bidi" -- "${source_paths[@]}"
+
+# A UTF-16 file has a NUL in every ASCII character's place, and the UTF-8 pattern above cannot match its
+# bidi characters, so a source-type file holding a NUL is refused rather than scanned.
+scan_grep 'A source-type file holds a NUL byte (UTF-16 or binary data): the bidi scan cannot read it, so it is refused' \
+    'NUL' -a -P -l -e '\x00' -- "${source_paths[@]}"
 
 # FILENAMES. git grep reads contents only, so a file merely NAMED with an override, report<U+202E>gnp.ts,
 # which renders as "report st.png", would otherwise sail through. `-z` keeps paths raw: without it git

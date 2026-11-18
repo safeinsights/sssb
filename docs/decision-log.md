@@ -3202,11 +3202,14 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   codepoints (U+202A-202E, U+2066-2069), which let a reviewer read one program while the compiler builds another.
   It is CanopyCMS's step, kept fail-closed: the locale is pinned, because `git grep -P` dies with exit 128 outside
   a UTF-8 locale; the exit status is read with `case`, because `if git grep; then` reads 128 as "nothing found";
-  `pipefail` covers the filename pipeline; and the filename byte pattern is self-tested against all nine.
+  `pipefail` covers the filename pipeline; and the filename byte pattern is self-tested against all nine. It
+  scans from the repository root, and reads source-type files as text and refuses a NUL in one, because
+  `.gitattributes` or a NUL can make git call a file binary, which `git grep -I` skips.
 - **An action SHA-pin gate** (`tests/tooling/action-pins.test.ts`, finder in `tests/support/action-pins.ts`). It
   parses every workflow and local composite action and fails on a `uses:` that is not a full 40-hex SHA
   (`./` refs exempt, `docker://` flagged). Every action is already pinned today, so it prevents drift (a job merged
-  from a sibling branch, a Dependabot bump to a tag) rather than fixing anything.
+  from a sibling branch, a Dependabot bump to a tag) rather than fixing anything. It does not check
+  `jobs.*.container` or `services.*.image` tags, or what a symlink points at.
 - **A bash script and vitest tests, not `scripts/`.** P4 is moving `scripts/`, and P4, P5 and P6 own the root
   `package.json` and `knip.json`; neither piece needs a `package.json` script or a knip entry here. The script's
   tests (`tests/tooling/check-bidi.test.ts`) run it against real scratch repositories, including a repository

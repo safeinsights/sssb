@@ -51,6 +51,8 @@ describe('unpinnedActionRefs (mutations: each unpinned form is caught)', () => {
         ['a branch', 'actions/checkout@main'],
         ['no version at all', 'actions/checkout'],
         ['a docker image tag', 'docker://alpine:3'],
+        ['a docker image even with a 40-hex @ref (docker refs are never accepted)', `docker://x@${SHA}`],
+        ['a dot-prefixed path that is not ./ (only a local ./ ref is exempt)', '.github/actions/x@v1'],
         ['a 39-hex ref', `actions/checkout@${SHA.slice(1)}`],
         ['an uppercase-hex ref', `actions/checkout@${SHA.toUpperCase()}`],
         ['a 41-hex ref', `actions/checkout@${SHA}0`],
