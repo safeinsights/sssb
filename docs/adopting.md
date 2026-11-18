@@ -391,7 +391,7 @@ rest of this repository's are SSSB's own: the second app's (`dev:starter`, `tick
 One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
 nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 139 published subpaths from its source (39
-counting its tests), so the same setting would start demanding you delete the other 103 — capabilities you merely have not
+counting its tests), so the same setting would start demanding you delete the other 104 — capabilities you merely have not
 reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration. The generated `knip.json` carries a few narrow entries beside the app's entry files: at the root,
