@@ -530,8 +530,9 @@ export function kitImporters(root, packages = workspacePackages(root)) {
 /**
  * ONE SSSB PER IMPORTER, WITH ITS OWN SEAM (ADR-0014 part 5): every package of the workspace that depends on
  * `@sssb/kit` (the root included) must declare its seam link, and the instance it resolves must have that very seam
- * linked. A package that slips is by definition not an app, so the walk is the whole workspace, whatever package
- * doctor runs from. `resolveKit` is the shared resolver's kitDirOf.
+ * linked, a seam no other importer has. The link must be a workspace package (`workspace:<name>@*`), not a `link:`,
+ * which pnpm's next `add`, `remove` or `update` unlinks. A package that slips is by definition not an app, so the walk
+ * is the whole workspace, whatever package doctor runs from. `resolveKit` is the shared resolver's kitDirOf.
  * @param {string} root
  * @param {(dir: string) => string} resolveKit
  * @param {{ dir: string, manifest: Record<string, unknown> }[]} [found] the importers, when already walked
@@ -543,11 +544,11 @@ export function importerSeamProblems(root, resolveKit, found = kitImporters(root
     /** @type {string[]} */
     const importers = []
     const rel = (/** @type {string} */ dir) => path.relative(root, dir) || '(the workspace root)'
-    /** @type {Map<string, string>} each package's own seam (real path) -> the package */
+    /** @type {Map<string, string>} each package's own seam (real path) -> the first package that declares it */
     const seamOwners = new Map()
     for (const { dir, manifest } of found) {
         const own = ownSeam(dir, declared(manifest, SEAM))
-        if (own) seamOwners.set(own, rel(dir))
+        if (own && !seamOwners.has(own)) seamOwners.set(own, rel(dir))
     }
     for (const { dir, manifest } of found) {
         importers.push(rel(dir))
@@ -574,6 +575,21 @@ export function importerSeamProblems(root, resolveKit, found = kitImporters(root
             problems.push(
                 `${rel(dir)}: its @sssb/kit (${where}) has ${runsOn}, not its own ${path.relative(root, own)}`,
             )
+        } else if (seamOwners.get(own) !== rel(dir)) {
+            problems.push(
+                `${rel(dir)}: declares ${SEAM} as ${link}, which is ${seamOwners.get(own)}'s seam ${path.relative(root, own)}, not one of its own`,
+            )
+        }
+        if (link?.startsWith('link:') && own !== null) {
+            // Linked today, unlinked by the next partial install: pnpm keeps a `link:` dependency as the provider of
+            // @sssb/kit's peer only when it resolves every dependency (a fresh install), never on `add`, `remove` or
+            // `update`, which leave it unresolved (ADR-0014's 2026-11-18 addendum).
+            const name = `${typeof manifest.name === 'string' ? manifest.name : path.basename(dir)}-app-config`
+            problems.push(
+                `${rel(dir)}: declares ${SEAM} as ${link}, which the next \`pnpm add\`, \`remove\` or \`update\` unlinks from its @sssb/kit. ` +
+                    `Make the seam a workspace package: list ${path.relative(root, own)} in pnpm-workspace.yaml's packages, name it ${name} in its package.json, ` +
+                    `declare "${SEAM}": "workspace:${name}@*", and run pnpm install`,
+            )
         }
     }
     return { problems, importers }
@@ -593,7 +609,8 @@ function resolvesKit(resolveKit, dir) {
 }
 
 /**
- * A package's own seam: the target of its `link:` dependency, or what its node_modules links, real path.
+ * A package's own seam: the target of its `link:` dependency, or what its node_modules links (a `workspace:`
+ * dependency, the seam package of the package's own name), real path.
  * @param {string} dir
  * @param {string | undefined} spec
  */

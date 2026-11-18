@@ -323,7 +323,10 @@ describe('one copy of each singleton', () => {
  */
 function seamWorkspace(prefix: string, seamless: 'shared' | 'own-instance' | 'none') {
     const ws = realpathSync(makeTestTmpDir(prefix))
-    write(path.join(ws, 'pnpm-workspace.yaml'), 'packages:\n    - apps/*\n    - packages/*\n')
+    write(
+        path.join(ws, 'pnpm-workspace.yaml'),
+        'packages:\n    - apps/*\n    - apps/*/src/app-config\n    - packages/*\n',
+    )
     pkg(ws, { name: 'root', private: true, devDependencies: { '@sssb/tools': 'file:tools.tgz' } })
     const store = path.join(ws, 'node_modules', '.pnpm')
     const instance = (key: string, seam: string | null) => {
@@ -335,9 +338,9 @@ function seamWorkspace(prefix: string, seamless: 'shared' | 'own-instance' | 'no
     const app = (name: string) => {
         const dir = pkg(path.join(ws, 'apps', name), {
             name,
-            dependencies: { '@sssb/kit': 'file:../../kit.tgz', '@sssb/app-config': 'link:./src/app-config' },
+            dependencies: { '@sssb/kit': 'file:../../kit.tgz', '@sssb/app-config': `workspace:${name}-app-config@*` },
         })
-        const seam = pkg(path.join(dir, 'src', 'app-config'), { name: '@sssb/app-config' })
+        const seam = pkg(path.join(dir, 'src', 'app-config'), { name: `${name}-app-config` })
         link(path.join(dir, 'node_modules', '@sssb', 'kit'), instance(name, seam))
         link(path.join(dir, 'node_modules', '@sssb', 'app-config'), seam)
         return dir
@@ -394,6 +397,46 @@ describe('one SSSB per importer, with its own seam', () => {
             "apps/ledger: its @sssb/kit (node_modules/.pnpm/@sssb+kit@file+kit.tgz_console/node_modules/@sssb/kit) has apps/console's seam apps/console/src/app-config linked, not its own apps/ledger/src/app-config",
         )
         expect(problems.some((p) => p.startsWith('packages/orphan: depends on @sssb/kit but resolves none'))).toBe(true)
+    })
+
+    it('fails a seam declared as a `link:`, linked today, and says how to make it a workspace package', () => {
+        const ws = seamWorkspace('sssb-doctor-seams-link-', 'none')
+        const manifest = path.join(ws, 'apps', 'ledger', 'package.json')
+        writeFileSync(
+            manifest,
+            readFileSync(manifest, 'utf8').replace('"workspace:ledger-app-config@*"', '"link:./src/app-config"'),
+        )
+        expect(importerSeamProblems(ws, kitDirOf).problems).toEqual([
+            'apps/ledger: declares @sssb/app-config as link:./src/app-config, which the next `pnpm add`, `remove` or `update` unlinks from its @sssb/kit. ' +
+                "Make the seam a workspace package: list apps/ledger/src/app-config in pnpm-workspace.yaml's packages, name it ledger-app-config in its package.json, " +
+                'declare "@sssb/app-config": "workspace:ledger-app-config@*", and run pnpm install',
+        ])
+    })
+
+    it("fails an app that declares another app's seam as its own, with an instance of its own linked to it", () => {
+        const ws = seamWorkspace('sssb-doctor-seams-borrowed-', 'none')
+        const consoleSeam = path.join(ws, 'apps', 'console', 'src', 'app-config')
+        const ledger = path.join(ws, 'apps', 'ledger')
+        writeFileSync(
+            path.join(ledger, 'package.json'),
+            readFileSync(path.join(ledger, 'package.json'), 'utf8').replace(
+                'ledger-app-config@*',
+                'console-app-config@*',
+            ),
+        )
+        // pnpm links what the ledger declares: the console's seam, beside the ledger's own instance too.
+        rmSync(path.join(ledger, 'node_modules', '@sssb', 'app-config'))
+        link(path.join(ledger, 'node_modules', '@sssb', 'app-config'), consoleSeam)
+        const instanceSeam = path.join(
+            realpathSync(path.join(ledger, 'node_modules', '@sssb', 'kit')),
+            '..',
+            'app-config',
+        )
+        rmSync(instanceSeam)
+        link(instanceSeam, consoleSeam)
+        expect(importerSeamProblems(ws, kitDirOf).problems).toEqual([
+            "apps/ledger: declares @sssb/app-config as workspace:console-app-config@*, which is apps/console's seam apps/console/src/app-config, not one of its own",
+        ])
     })
 })
 
@@ -602,10 +645,12 @@ function addApp(ws: string, dir: string, mode: Mode, { conformance = true } = {}
         ...(dir === '.' ? { name: 'ws', private: true } : { name: path.basename(dir) }),
         dependencies: {
             '@sssb/kit': mode === 'in-repo' ? 'workspace:*' : 'file:kit.tgz',
-            '@sssb/app-config': 'link:./src/app-config',
+            '@sssb/app-config': `workspace:${dir === '.' ? 'ws' : path.basename(dir)}-app-config@*`,
         },
     })
-    const seam = pkg(path.join(app, 'src', 'app-config'), { name: '@sssb/app-config' })
+    const seam = pkg(path.join(app, 'src', 'app-config'), {
+        name: `${dir === '.' ? 'ws' : path.basename(dir)}-app-config`,
+    })
     write(path.join(seam, 'index.ts'), 'export const seam = true\n')
     json(path.join(app, 'tsconfig.json'), {
         compilerOptions: { paths: { '@sssb/app-config/*': ['./src/app-config/*'] } },

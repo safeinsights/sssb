@@ -1475,6 +1475,31 @@ function generatedUntouched() {
     console.log(`all ${generatedFiles.size} files the generator wrote are as it wrote them`)
 }
 
+/**
+ * THE SEAM SURVIVES pnpm's partial installs: `pnpm add`, `remove` and `update` in the app, as an author runs them,
+ * each followed by `sssb doctor` and the lockfile's seam link. A `link:` seam passed a fresh install and was unlinked by
+ * the first of these (ADR-0014's 2026-11-18 addendum). Last, because each rewrites the app's package.json and lockfile.
+ */
+function partialInstallsKeepSeam() {
+    const steps = /** @type {const} */ ([
+        ['pnpm add', ['--filter', GEN_APP, 'add', 'ms@2.1.3']],
+        ['pnpm remove', ['--filter', GEN_APP, 'remove', 'ms']],
+        ['pnpm update', ['--filter', GEN_APP, 'update', 'zod']],
+    ])
+    for (const [what, args] of steps) {
+        run('pnpm', [...args], { cwd: GEN })
+        const doctor = run('pnpm', ['exec', 'sssb', 'doctor', '--app', path.join('apps', GEN_APP)], {
+            cwd: GEN,
+            env: generatedEnv(),
+            capture: true,
+            allowFailure: true,
+        })
+        if (doctor.status !== 0) fail(`after ${what}, sssb doctor fails:\n${doctor.stdout}${doctor.stderr}`)
+        checkSeamLinks(readFileSync(path.join(GEN, 'pnpm-lock.yaml'), 'utf8'), [GEN_APP])
+        console.log(`after ${what}: sssb doctor passes, and the lockfile links the seam`)
+    }
+}
+
 /** @param {string} note */
 function notice(note) {
     console.log(process.env.GITHUB_ACTIONS ? `::notice title=pack and consume::${note}` : `NOTE: ${note}`)
@@ -1685,6 +1710,7 @@ if (RUN_GENERATED) {
     step('generated: pnpm jscpd (the workspace’s own job)', () => run('pnpm', ['jscpd'], { cwd: GEN }))
     step('generated: the workflow and plugin pins are the kit’s release commit, and the plugin is there', pinsGenerated)
     step('generated: every file the generator wrote is unchanged', generatedUntouched)
+    step('generated: pnpm add, remove and update keep the seam linked (sssb doctor)', partialInstallsKeepSeam)
 }
 
 const stale = unusedWorkarounds()
