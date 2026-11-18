@@ -2303,3 +2303,30 @@ bite there first.
   optional peers, so the generator refuses a slug that names a package the workspace installs.
 - **npm's packing drops some dotfiles** (`.gitignore`, `.npmrc`), so the template stores a leading `.` in a path
   segment as `_dot_` and the generator turns it back.
+
+## The Claude Code plugin (2026-11-18, ADR-0014 P13, `feat/claude-plugin`)
+
+- **An installed plugin is a copy at a commit, not your working tree.** With Claude Code 2.1.280,
+  `claude plugin marketplace add ./ --scope local` then `claude plugin install sssb@sssb --scope local` copies
+  `plugins/sssb` into the plugin cache under `HEAD`'s SHA (`installed_plugins.json`: `installPath`
+  `…/plugins/cache/sssb/sssb/<sha12>`, `gitCommitSha`). An uncommitted edit never reaches it:
+  `claude plugin update sssb@sssb --scope local` says "already at the latest version" until you commit, then moves to
+  the new SHA and asks for a restart. To run the tree as it is, start the session with
+  `claude --plugin-dir plugins/sssb` (`claude plugin list` then shows `sssb@sssb` and `sssb@inline`; the docs say the
+  `--plugin-dir` copy wins). Claude Code's docs ("In-place and copied plugins") describe a local marketplace's
+  relative-path plugin loading in place; 2.1.280 did not, so check `installPath` before trusting either. Reproduce
+  with a scratch `CLAUDE_CONFIG_DIR` in a scratch clone, never your own config.
+- **`pnpm add` in a generated workspace drops the kit's seam link.** `pnpm --filter <app> add <pkg>` (pnpm 11.14.0)
+  re-resolves the app's `@sssb/kit` without its optional `@sssb/app-config` peer: the lockfile loses the
+  `(@sssb/app-config@apps+<app>+src+app-config)` suffix, `sssb doctor` fails "has no seam linked" and typecheck fails
+  inside the kit. `pnpm install` and `--force` do not restore it. Edit the app's `package.json` and run
+  `pnpm install` instead; after an add, keep the manifest, `git checkout HEAD -- pnpm-lock.yaml`, and install.
+  `.claude/future-tasks/pnpm-add-drops-seam-link.md` has the repro and the candidate fixes.
+- **`claude plugin validate --strict` fails a plugin that declares no `version`**, on one warning
+  (`version: No version specified. Consider adding a version following semver`), and reports it again from the
+  marketplace (`plugins[0] plugin.json → version: …`). SSSB's plugin leaves `version` out on purpose (a pinned string
+  freezes users on the cached copy), so its gate filters exactly that line; any other warning still fails.
+- **A plugin's commands are instructions, so their facts drift like comments.** A claim check found a command naming
+  the showcase's ticket route as the producer of `ticket.assigned` when the route only calls `applyTicketChanges`
+  (`apps/showcase/src/domain/ticket-changes.ts`), and a job context missing its `llm` port. The plugin's gate proves
+  references exist, not what they do; open the referent.

@@ -11,8 +11,8 @@ SSSB's reference app is cited by URL, where `<ref>` is the commit your project's
 marketplace to (in SSSB's own repository, read its local showcase app instead).
 
 Actors are simulated external counterparties for dev and the demo: each is a tick loop on a card in the Simulator's
-Actors tab. The runtime (`ActorShell`, `ActorsApp`, and the job-runner shapes `builderTick` and `serviceTick` in
-`@sssb/kit/components/simulator/actor-runtime`) is the framework's; each actor is app content.
+Actors tab. The runtime (`ActorShell`, `ActorsApp`, and the job-runner shapes `builderTick` and `serviceTick`; step 3 names
+each one's subpath) is the framework's; each actor is app content.
 
 **What a generated app has.** A workspace `pnpm create @sssb` generated has a Simulator panel ONLY in its static
 demo: `src/demo-static/app.tsx` hands the framework's `DemoShell` an empty `extraTabs`, so that panel shows SSSB's

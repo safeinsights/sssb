@@ -7,7 +7,7 @@ pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research --ow
 cd acme
 git init                                # first, so the install's `prepare` (husky) has a repository to hook
 pnpm install
-pnpm exec playwright install chromium   # once, for the e2e suites
+pnpm --filter './apps/*' exec playwright install chromium   # once, for the e2e suites
 pnpm verify                             # hermetic: no docker, no credentials, no network
 ```
 
@@ -340,7 +340,7 @@ is protected, not that your proofs exercise two tenants — so it is yours to ke
 **The Items slice is a worked example, so take what it teaches before you delete it.**
 `apps/<app>/src/app-config/db/migrations/1001_items.ts` is a worked RLS migration — in a generated workspace, the only one there — and its
 section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it. Build your first real slice
-from them (`/new-slice`), then remove Items the way "To remove a demo slice" below describes. There is
+from them (`/sssb:new-slice`), then remove Items the way "To remove a demo slice" below describes. There is
 no flag that does this for you yet; `.claude/future-tasks/create-blank-option.md` carries the design.
 
 **Wire the static demo last, and look at it.** A shell or a home screen you build in
@@ -529,32 +529,33 @@ The framework never imports your code directly; it imports the registration seam
 a lint fence enforces the direction. Each module there is the app-side half of one capability. The
 "empty" column is what `apps/starter` registers — read it as the off switch for that capability:
 
-| Seam module                                   | You register                                                                                       | Empty looks like                           |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `abilities.ts`                                | subject types + staff org + credential kinds + person and machine (`appMachineAbilityRules`) rules | (starter registers one)                    |
-| `db/schema.ts`, `db/migrations/`              | your tables (`AppTables`) + migrations named `NNNN_name`, four digits, numbered ≥ 1001             | (starter registers one)                    |
-| `db/rls-proofs.ts`                            | tenant-isolation proofs for those tables                                                           | an empty async body                        |
-| `jobs.ts`                                     | your background job kinds + handlers                                                               | `[] as const`, `{}`                        |
-| `digest.ts`                                   | the rows the framework's scheduled digest summarizes                                               | `async () => []`                           |
-| `actors.ts`                                   | your simulated counterparties for dev/demo                                                         | `actors = []`, `type ActorId = never`      |
-| `simulator.ts`                                | your extra Simulator tabs + feature flags                                                          | `flags = []`                               |
-| `presets.ts`                                  | demo presets (`/new-preset`): starting worlds every host can load, and your own kinds' definitions | `presets = []`, `appPresetOperations = []` |
-| `preset-operations.ts`                        | server halves of your own preset operation kinds (`/new-preset-operation`)                         | `{}`                                       |
-| `tours.ts`                                    | scripted Simulator walkthroughs of your product                                                    | `tours = []` (no Tours tab)                |
-| `notifications.ts`, `webhooks.ts`, `audit.ts` | your event vocabularies                                                                            | `[] as const` / `never`                    |
-| `inbound-email.ts`                            | your `<org>+<slug>@domain` email handlers                                                          | `{}`                                       |
-| `assistant.ts`                                | your LLM tools + system prompt                                                                     | omit the module and its route              |
-| `messages.ts`                                 | your i18n namespaces + catalog loader (partitioned)                                                | (every app registers some)                 |
-| `identity.ts`                                 | `APP_SLUG`, re-exported from the app's app config                                                  | (every app registers it)                   |
-| `seed.ts`                                     | your seed data re-export                                                                           | (every app registers it)                   |
+| Seam module                                   | You register                                                                                            | Empty looks like                           |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `abilities.ts`                                | subject types + staff org + credential kinds + person and machine (`appMachineAbilityRules`) rules      | (starter registers one)                    |
+| `db/schema.ts`, `db/migrations/`              | your tables (`AppTables`) + migrations named `NNNN_name`, four digits, numbered ≥ 1001                  | (starter registers one)                    |
+| `db/rls-proofs.ts`                            | tenant-isolation proofs for those tables                                                                | an empty async body                        |
+| `jobs.ts`                                     | your background job kinds + handlers                                                                    | `[] as const`, `{}`                        |
+| `digest.ts`                                   | the rows the framework's scheduled digest summarizes                                                    | `async () => []`                           |
+| `actors.ts`                                   | your simulated counterparties for dev/demo                                                              | `actors = []`, `type ActorId = never`      |
+| `simulator.ts`                                | your extra Simulator tabs + feature flags                                                               | `flags = []`                               |
+| `presets.ts`                                  | demo presets (`/sssb:new-preset`): starting worlds every host can load, and your own kinds' definitions | `presets = []`, `appPresetOperations = []` |
+| `preset-operations.ts`                        | server halves of your own preset operation kinds (`/sssb:new-preset-operation`)                         | `{}`                                       |
+| `tours.ts`                                    | scripted Simulator walkthroughs of your product                                                         | `tours = []` (no Tours tab)                |
+| `notifications.ts`, `webhooks.ts`, `audit.ts` | your event vocabularies                                                                                 | `[] as const` / `never`                    |
+| `inbound-email.ts`                            | your `<org>+<slug>@domain` email handlers                                                               | `{}`                                       |
+| `assistant.ts`                                | your LLM tools + system prompt                                                                          | omit the module and its route              |
+| `messages.ts`                                 | your i18n namespaces + catalog loader (partitioned)                                                     | (every app registers some)                 |
+| `identity.ts`                                 | `APP_SLUG`, re-exported from the app's app config                                                       | (every app registers it)                   |
+| `seed.ts`                                     | your seed data re-export                                                                                | (every app registers it)                   |
 
 The one place an empty registration is not free: `AppSubjectFields` in `abilities.ts` must be an
 `interface` (the framework's `AbilitySubject` extends it), and an app with no extra subject fields
 therefore declares an empty one and suppresses `@typescript-eslint/no-empty-object-type` on that line.
 `apps/starter` shows the suppression and why.
 
-**To add a feature slice**: run `/new-slice` (and the per-capability scaffolds `/new-entity`,
-`/new-job`, `/new-actor`, `/new-notification-kind`, `/new-webhook-event`, `/new-tour`, `/new-preset`, `/new-preset-operation`). Each walks the house way:
+**To add a feature slice**: run `/sssb:new-slice` (and the per-capability scaffolds `/sssb:new-entity`,
+`/sssb:new-job`, `/sssb:new-actor`, `/sssb:new-notification-kind`, `/sssb:new-webhook-event`, `/sssb:new-tour`,
+`/sssb:new-preset`, `/sssb:new-preset-operation`: SSSB's Claude Code plugin). Each walks the house way:
 screen in your app's `apps/<app>/src/components` (yours) or `packages/kit/src/components` (framework-generic),
 thin route, seam registrations, an RLS migration copied from the reference
 (`apps/starter/src/app-config/db/migrations/1001_items.ts`), colocated tests, e2e, then `pnpm verify` +

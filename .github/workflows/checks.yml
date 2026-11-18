@@ -2,7 +2,7 @@
 #
 # pull_request validates every PR (against the merge commit, and for forks); push covers
 # post-merge validation on main. Feature branches without a PR rely on the local `pnpm verify`
-# gate (see /pre-pr) — this avoids running the whole suite twice on same-repo PRs.
+# gate (see /sssb:pre-pr) — this avoids running the whole suite twice on same-repo PRs.
 name: checks
 
 on:

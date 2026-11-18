@@ -37,7 +37,7 @@ deliberately (the `sssb/public-surface` lint rule reads that map). The port itse
 names no backend and no product, the way `llm` names no model vendor — so it belongs there; anything
 about _what your workspaces are for_ stays in `apps/<app>/src/domain`.
 
-Size it to what the app needs, not to Coder's API. Ask `/new-port` for these four operations and no more:
+Size it to what the app needs, not to Coder's API. Ask `/new-kit-port` (or `/sssb:new-port`) for these four operations and no more:
 
 ```ts
 // packages/kit/src/ports/workspace.ts (SKETCH)

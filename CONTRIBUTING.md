@@ -64,7 +64,8 @@ in your app instead: `docs/recipes/app-owned-adapter.md`.)
    flow if user-visible.
 
 **Adding a port**: only when the app needs a new capability — size the interface to the app's need,
-never to a vendor's API. `/new-port` (Claude command) scaffolds the layout.
+never to a vendor's API. `/new-kit-port` (a Claude Code command in `.claude/commands/`) scaffolds the layout; a
+port only an app calls is the app's, scaffolded by the plugin's `/sssb:new-port`.
 
 ## Everyday conventions
 

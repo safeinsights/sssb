@@ -1112,3 +1112,45 @@ shapes and the `adoption-probe` job"):
 - **Generation is all or nothing, in place.** The workspace is staged inside the target and moved up; an existing
   target is never removed or replaced, and a failure or a SIGINT, SIGTERM or SIGHUP part-way leaves nothing this run
   wrote.
+
+## Addendum — 2026-11-18: P13, the plugin, as built
+
+P13 built the plugin and cut this repository's `CLAUDE.md`, as the plan row says. Where it decided differently from
+part 9, or more precisely (each argued in `docs/decision-log.md`, "The Claude Code plugin, and CLAUDE.md cut to the
+maintainer half"):
+
+- **The plugin's shape.** The marketplace is `sssb`, at the repository root (`.claude-plugin/marketplace.json`); it
+  lists one plugin, `sssb`, at `plugins/sssb/`, so a workspace enables `sssb@sssb` and runs its commands as
+  `/sssb:<command>` and its agent as `sssb:doc-steward`. It carries more than part 9 lists: the capability scaffolds,
+  `/sssb:new-slice`, `/sssb:verify`, `/sssb:pre-pr`, `/sssb:a11y-review`, `/sssb:design-review`, and
+  `/sssb:new-port` for a port the APP owns. The maintainer's framework-port command part 9 calls `/new-port` is
+  `/new-kit-port` in `.claude/commands/`, renamed so the two are never confused. The plugin declares no `version`,
+  so Claude Code versions it by commit and raising the pin moves it; `claude plugin validate --strict` then fails on
+  that one warning, which the plugin's gate (`tests/tooling/plugin.test.ts`) tolerates and nothing else.
+- **"The app" is the root `package.json`'s `sssb.apps`**, as part 9's last bullet says, and SSSB's own root now
+  declares it. Commands cite SSSB's reference app only by URL at `<ref>`, the commit the workspace's settings pin the
+  marketplace to, so the plugin and what it cites are read at one commit. They are written for the app a generated
+  workspace has, which has no server Simulator: the static demo is the host they scaffold into.
+- **The pin needs Claude Code 2.1.324 or later.** A commit SHA as a `github` marketplace source's `ref` needs that
+  release (Claude Code's marketplace reference, "Fields by type", `ref`, read on 2026-11-18), and the commit must be
+  on a branch or tag, which `@sssb/create`'s refusal of an unpushed `HEAD` already ensures for the default pin.
+  Enabling a plugin in the project's settings installs nothing: each person runs
+  `claude plugin install sssb@sssb --scope project` once per clone, after trusting the folder.
+- **Doctor's pin report, as built.** Part 5's "reported rather than failed" holds, against a release stamp the kit
+  now carries: `@sssb/kit`'s `prepack` writes `dist/release.json`, the commit it is packed from, and refuses shipped
+  sources that differ from it (under `@sssb/create`'s `SSSB_CREATE_UNPUSHED_PIN`). Part 9 says doctor compares the pin
+  with "the installed keel"; it compares every workflow `uses:` of SSSB's repository and every `.claude/settings.json`
+  marketplace of it with the stamp's commit, and also reports a pinned marketplace no plugin is enabled from. SSSB's
+  repository is read from the kit's `package.json` `repository`, not hardcoded. In this repository the pins are not
+  checked (the kit is source, with no stamp). `release.mjs candidate` refuses a candidate whose kit names another
+  commit, and pack and consume's generated shape proves the workflow pin, the marketplace pin and the stamp are one
+  commit that holds the plugin.
+- **`@sssb/create` writes the `.claude/settings.json` and a `CLAUDE.md`.** The settings pin SSSB's marketplace to the
+  workflow's commit and enable the plugin; the `CLAUDE.md` imports `.claude/sssb-guide.md`. This reverses the P12
+  addendum's "Not written: `CLAUDE.md`".
+- **This repository's `CLAUDE.md` imports the guide from its source** (`@packages/kit/src/guide.md`), not a stamped
+  copy, which nothing can make stale; doctor's in-repo guide check counts that import as `ok`. App-facing rules that
+  lived only in `CLAUDE.md` moved into the guide (the cutover rule and a "dev loop" section), a seam-kind release note
+  because doctor fails a stale copy.
+- **A plugin change takes a changeset.** `plugins/` and `.claude-plugin/` join the paths `changeset-required` gates:
+  adopters load them at the pin they raise at a release.

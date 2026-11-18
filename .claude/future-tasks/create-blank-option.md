@@ -67,7 +67,7 @@ lint fail the gate otherwise — and the "items route" comment in `apps/starter/
    With zero app tables, `pnpm test:contract` runs only the framework half; say so rather than letting
    it look like coverage.
 3. **It deletes the worked RLS example.** `1001_items.ts` is the only worked RLS migration
-   in a generated workspace: the adopting guide cites it, while `/new-slice`, `/new-entity` and
+   in a generated workspace: the adopting guide cites it, while `/sssb:new-slice`, `/sssb:new-entity` and
    `CLAUDE.md` cite the showcase's `1001_tickets.ts`, which a generated workspace never had. A blank app
    has nothing to copy from. Either the reference moves into a recipe
    under `docs/recipes/`, or `--blank` leaves the migration behind as an unregistered template, or the

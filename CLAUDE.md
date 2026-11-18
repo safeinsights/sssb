@@ -244,7 +244,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `claude plugin marketplace add ./ --scope local`, then `claude plugin install sssb@sssb --scope local`. That is a
   copy at the commit then checked out (Claude Code 2.1.280 copies it into its plugin cache under that SHA); after
   committing a change to it, `claude plugin update sssb@sssb --scope local` and a restart load it, and an uncommitted
-  edit never does. **The working tree's**, uncommitted edits included: start the session with
+  edit never does. (Claude Code's plugin docs, "In-place and copied plugins", describe a later release that loads a
+  local marketplace's relative-path plugin in place, uninstalled; check `installPath` in your config's
+  `plugins/installed_plugins.json` before trusting either.) **The working tree's**, uncommitted edits included: start the session with
   `claude --plugin-dir plugins/sssb`, which loads `plugins/sssb` as it is for that session and replaces an installed
   plugin of the same name (Claude Code's plugin docs, "Name conflicts"; `claude plugin list` still shows both). Adopters enable it at a pinned commit: `/sssb:verify`, `/sssb:pre-pr`, `/sssb:new-slice`, `/sssb:new-port` (a port
   the APP owns), `/sssb:a11y-review`, `/sssb:design-review`, and the capability scaffolds `/sssb:new-entity`,

@@ -46,7 +46,7 @@ exemption.
 **Open question: how far to apply the `applyTicketChanges` shape.** Extracting a route's post-authorize body
 into a named function, with a static twin, is what makes a mutation recordable — and it has a payoff of its
 own, since a script step and a click can no longer drift apart. It costs a refactor per mutation
-(`/new-preset-operation` step 5 is the recipe). The default stays **per kind, when a preset needs it**.
+(`/sssb:new-preset-operation` step 5 is the recipe). The default stays **per kind, when a preset needs it**.
 Sweeping a whole screen's mutations in advance, for the recorder's sake alone, is the version to resist.
 
 **Sketch.** A Record / Stop control in the Snapshots tab, on both hosts, that ends in "copy as preset
@@ -81,6 +81,6 @@ record the viewer's walk over it.
 
 ## Trigger
 
-Presets or tours being authored often enough that the typing is the cost. Until then `/new-preset` and
-`/new-tour` are cheap enough. The tour converter is a script with no framework change; the preset recorder
+Presets or tours being authored often enough that the typing is the cost. Until then `/sssb:new-preset` and
+`/sssb:new-tour` are cheap enough. The tour converter is a script with no framework change; the preset recorder
 needs the Simulator-panel routing first, and neither depends on the other.

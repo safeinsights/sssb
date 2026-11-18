@@ -88,7 +88,7 @@ anything reached past a port, it could not build.
 **Simulator → Snapshots → Start from a preset → Load** resets the world to a scripted starting point and
 signs you in as the right person; **Simulator → Tours → Start** hands the wheel to a narrated walkthrough,
 which may itself begin from a preset. [docs/runbooks/demo.md](docs/runbooks/demo.md) is the story to tell;
-`/new-preset` and `/new-tour` are how you write your own.
+`/sssb:new-preset` and `/sssb:new-tour` (SSSB's Claude Code plugin) are how you write your own.
 
 ## Architecture in one paragraph
 

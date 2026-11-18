@@ -22,9 +22,10 @@ register:
 2. **Produce** it at the mutation choke point that causes it: call the framework's notify helper
    (`@sssb/kit/server-lib/notify`) after your route's write commits. Pick the recipient shape deliberately:
    `notifyAdmins` for a team's managers, `notifyMember` for one named person (exclude the actor, so acting on
-   yourself is silent). The reference app's
-   `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/api/tickets/[id]/route.ts` produces
-   `ticket.assigned` with `notifyMember`.
+   yourself is silent). The reference app produces
+   `ticket.assigned` with `notifyMember` in `applyTicketChanges`
+   (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/domain/ticket-changes.ts`), which its ticket
+   route (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/api/tickets/[id]/route.ts`) calls.
 3. **Prefs ride free**: every registered kind appears in notification preferences (`NOTIFICATION_KINDS` composes
    framework ∪ app), with no extra wiring, wherever the app shows preferences.
 4. **Test**: assert produce → fan-out (the reference app's

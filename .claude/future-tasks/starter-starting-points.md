@@ -23,8 +23,8 @@ and every Snapshots feature are therefore reachable in the starter only through 
 registration seam is there (`apps/starter/src/app-config/presets.ts` and `tours.ts` register nothing today),
 and a server host for it is not.
 
-The consequence lands on the adopter the day after generating. A preset or tour written with `/new-preset` or
-`/new-tour` is watchable only in the static demo; `pnpm dev` has no panel to load it from, and no org screen
+The consequence lands on the adopter the day after generating. A preset or tour written with `/sssb:new-preset` or
+`/sssb:new-tour` is watchable only in the static demo; `pnpm dev` has no panel to load it from, and no org screen
 or accept route for an `invite` step to lead into.
 
 ## The question to decide

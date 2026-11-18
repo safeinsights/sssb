@@ -14,7 +14,7 @@ Jobs are the framework's async-execution seam (the port is `@sssb/kit/ports/jobs
 are the framework's). You register the app side, and never edit a framework union:
 
 1. **Handler**: create `src/jobs/<kind>.ts`, a `JobHandler` (`@sssb/kit/ports/jobs`): `(payload, ctx)`, where ctx
-   carries the `db`/`storage`/`email` ports and the tenant, org and job ids. Follow the reference app's
+   carries the `db`/`storage`/`email`/`llm` ports and the tenant, org (or `null`) and job ids. Follow the reference app's
    `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/jobs/export-tickets.ts`. Result keys must live
    under `exportKeyPrefix(...)` (`@sssb/kit/core/jobs`), the storage-isolation contract; validate payloads
    defensively (they arrive as `unknown`).

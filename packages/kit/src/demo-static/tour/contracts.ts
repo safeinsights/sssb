@@ -18,7 +18,7 @@
  *
  * SELECTOR CONVENTION: any CSS selector resolves, but prefer a role-named hook that survives a
  * restyle. Existing `data-testid` attributes ARE such hooks and are reused rather than duplicated;
- * `data-tour="..."` is added only where a screen has no stable hook (see docs/recipes or /new-tour).
+ * `data-tour="..."` is added only where a screen has no stable hook (see docs/recipes or /sssb:new-tour).
  */
 export type TourAction =
     /** Glide the ghost cursor to an element (scrolls it into view first). */
