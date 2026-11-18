@@ -2052,6 +2052,7 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   `packages/kit/tsconfig.strict.json`'s header. Options that gave no error in the same measurement, and none over
   the strict set either: `verbatimModuleSyntax`, `jsx: "preserve"`, `noUncheckedSideEffectImports`,
   `module: "preserve"`, `target: "es2020"`, `strictBuiltinIteratorReturn`, `allowImportingTsExtensions`.
+
 ## Transitive advisories (2026-11-17, `deps/advisories`)
 
 - **`pnpm update -r --depth Infinity <names>` does not always move a transitive dependency.** It refreshed

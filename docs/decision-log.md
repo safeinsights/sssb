@@ -3001,6 +3001,7 @@ second, human owner would be added once a maintainer had one.
   tsconfig base is where an adopter gets them. `dedupePeerDependents: false`, which the consumer's workspace sets,
   is a registered workaround now (`dedupe-peer-dependents-written`, `workarounds.mjs:68`, P12). `src/authz/route-scan.ts` and `src/adapters/real/rds-data-emulator.ts` ship
   but nothing shipped reaches them; P5's `@sssb/kit/testing` is what will.
+
 ## The release app, made by a script (2026-11-17, `ci/release-app-setup`)
 
 `release.yml` (P1b) needs a GitHub App whose token pushes the release commit and its tag. JP asked to make it the

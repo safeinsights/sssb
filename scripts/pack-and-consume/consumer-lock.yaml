@@ -1550,7 +1550,7 @@ packages:
     engines: {node: '>=18.0.0'}
 
   '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz':
-    resolution: {integrity: sha512-2QmW/9i7DrKnMgyiJLf79I2kdTbaTCbh8rvMWOjs99325hHoB50h2QePX1o2OK3rjQmS6G4hW7oq27pCjVfLRw==, tarball: file:../tarballs/sssb-kit-0.1.0.tgz}
+    resolution: {integrity: sha512-VeaHjlroy1RkxJZ06mi2np4pBwRGAqCeYT5jhXpowsK/7hhGq7vtdiMvKiySvJ3qpKD2t44gw3rFA/+MsJ8KmQ==, tarball: file:../tarballs/sssb-kit-0.1.0.tgz}
     version: 0.1.0
     peerDependencies:
       '@mantine/core': ^9.7.3
