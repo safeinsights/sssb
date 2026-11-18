@@ -37,7 +37,8 @@ half registers on its own server-only seam module and never on `presets.ts`. Aft
       Ask the SAME question the route's `authorize(...)` asks, through `defineAbilitiesFor`
       (`@sssb/kit/core/abilities`), as the explicit actor acting in the explicit team. `world` is derived from
       the seed by the seam test; if you need a field it lacks, add it to `PresetWorld` and derive it in
-      `packages/kit/src/server-lib/demo-presets-seam.test.ts`, never hand-list values;
+      the conformance suite's `demo-presets` check (`packages/kit/src/testing/conformance/demo-presets.ts`), never
+      hand-list values;
     - `consumes(args)`: every argument that is a NAME from an earlier step's `as`.
 3. **Register the definition** in `apps/showcase/src/app-config/presets.ts`: add it to
    `appPresetOperations` and its operation type to the `AppPresetOperation` union.
@@ -63,8 +64,9 @@ half registers on its own server-only seam module and never on `presets.ts`. Aft
    under `useDemoWorld({ presetOperations: { … } })`.
 7. **Use it** in a preset under `apps/showcase/src/app-config/presets/`, and update that preset's summary
    copy in BOTH catalogs and the runbook paragraph (`docs/runbooks/demo.md`) if it is a shown preset.
-8. **Gates**: `pnpm exec vitest run packages/kit/src/server-lib/demo-presets-seam.test.ts` (definitions vs
-   server halves, every preset replayed on the server); the static-shell e2e loads every registered
+8. **Gates**: `pnpm exec vitest run apps/showcase/src/sssb.conformance.test.ts` (the conformance suite, whose
+   `demo-presets` check holds definitions to server halves and replays every preset on the server; run the whole
+   file, since a `-t` filter that skips its other checks fails it by design); the static-shell e2e loads every registered
    preset from `file://` and waits for its "Preset loaded" notice, so a missing static half fails there.
    Assert the kind's visible effect in the preset specs on both hosts. Then `pnpm check:demo-size` and
    `pnpm verify`.

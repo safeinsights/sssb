@@ -116,16 +116,15 @@ describe('changeset shape', () => {
             files: string[]
         }
         const gate = readFileSync(GATE, 'utf8')
-        const shippedTests = manifest.files.filter((f) => /\.test\./.test(f) && !f.startsWith('!'))
-        expect(shippedTests.length).toBeGreaterThan(0)
-        for (const f of shippedTests) {
-            // the gate spells a path as a regex alternative under `src/`: `i18n/namespaces\.test\.ts`
-            const alternative = f.replace(/^src\//, '').replace(/\./g, '\\.')
-            expect(gate, f).toContain(alternative)
-        }
-        // The gate knows `src`, its exclusions and those tests. A new entry (an app guide, a bin) ships files the
-        // gate does not look at, so it fails here until the gate and this list both learn it.
-        const known = (f: string) => f === 'src' || f.startsWith('!src/') || shippedTests.includes(f)
+        // No test file ships since ADR-0014 P5 (the conformance suite is `@sssb/kit/testing`, ordinary source), so
+        // the gate's test-file exclusion holds for the whole of `src`.
+        expect(manifest.files.filter((f) => /\.test\./.test(f) && !f.startsWith('!'))).toEqual([])
+        // `dist` is built when the package is packed and is gitignored, so it is never in a diff; what builds it,
+        // packages/kit/scripts/, is what the gate counts in its place.
+        expect(gate).toContain('packages/kit/scripts/*')
+        // The gate knows `src`, its exclusions and `dist`. A new entry (an app guide, a bin) ships files the gate does
+        // not look at, so it fails here until the gate and this list both learn it.
+        const known = (f: string) => f === 'src' || f.startsWith('!src/') || f === 'dist'
         expect(manifest.files.filter((f) => !known(f))).toEqual([])
     })
 })
@@ -284,7 +283,8 @@ describe('require-changeset gate', () => {
     it.each([
         ['a kit source change', KIT_SRC],
         ['a kit manifest change', { 'packages/kit/package.json': '{"name":"@sssb/kit","version":"1"}' }],
-        ['a kit seam-conformance test (it ships)', { 'packages/kit/src/db/rls-pglite.test.ts': 'a' }],
+        ['a conformance check (ordinary kit source)', { 'packages/kit/src/testing/conformance/db.ts': 'a' }],
+        ['the build of the compiled e2e entry (it makes dist)', { 'packages/kit/scripts/build-testing-e2e.mjs': 'a' }],
         ['a starter change', { 'apps/starter/src/app-config/x.ts': 'a' }],
         ['a starter test (the scaffold carries it)', { 'apps/starter/tests/e2e/x.spec.ts': 'a' }],
         ['a message catalog edit', { 'packages/kit/src/i18n/messages/en.json': '{}' }],
@@ -341,6 +341,7 @@ describe('require-changeset gate', () => {
 
     it.each([
         ['a kit unit test', { 'packages/kit/src/core/x.test.ts': 'a' }],
+        ['a test of the conformance suite (no test file ships)', { 'packages/kit/src/db/migrate.test.ts': 'a' }],
         ['a kit story', { 'packages/kit/src/components/x.stories.tsx': 'a' }],
         ['the kit test fixture', { 'packages/kit/test-fixture/x.ts': 'a' }],
         ['a kit file the `files` allowlist leaves out', { 'packages/kit/tsconfig.json': '{}' }],

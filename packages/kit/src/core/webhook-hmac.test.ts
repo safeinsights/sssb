@@ -8,10 +8,10 @@ import {
     verifyMailgunSignature,
     verifyWebhookSignature,
     webhookSignatureHeader,
-} from './webhook-signing'
+} from './webhook-hmac'
 
 /**
- * The pure isomorphic HMAC-SHA256 in webhook-signing.ts can't use node:crypto (it must bundle into the
+ * The pure isomorphic HMAC-SHA256 in webhook-hmac.ts can't use node:crypto (it must bundle into the
  * file:// twin), so its correctness is pinned HERE by cross-checking every signature against
  * node:crypto — the canonical implementation. A test may import node:crypto freely.
  */

@@ -58,6 +58,15 @@ const COMMANDS = {
         load: () => import('../src/commands/dev-tick.js'),
         summary: "run the app's dev server, ticking the scheduler on a timer only when DEV_TICK_SECONDS asks",
     },
+    doctor: {
+        load: () => import('../src/commands/doctor.js'),
+        summary:
+            "fail unless the app's SSSB is one copy, on its own seam, in step, and its conformance checks would run",
+    },
+    'check-e2e': {
+        load: () => import('../src/commands/check-e2e.js'),
+        summary: 'fail when a Playwright spec reaches @sssb/kit other than through @sssb/kit/testing/e2e',
+    },
     ci: {
         load: () => import('../src/commands/ci.js'),
         summary: "a CI job's logic: e2e-shards, e2e, demo-static",

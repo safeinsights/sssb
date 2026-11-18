@@ -5,7 +5,7 @@ import type { MessageTree } from '@sssb/kit/i18n/messages'
  * PHYSICALLY split along the namespace partition: the framework owns FRAMEWORK_NAMESPACES in
  * `packages/kit/src/i18n/messages/*.json`; this app owns APP_NAMESPACES in `apps/showcase/messages/*.json`.
  * Together they partition the merged catalog (DISJOINT + exhaustive), enforced by
- * @sssb/kit/i18n/namespaces.test.ts.
+ * the conformance suite's `i18n-partition` check (src/sssb.conformance.test.ts).
  *
  * `actors`, `appNotifications`, `tours` and `presets` are here because the copy for an app-registered
  * Simulator actor, notification kind, walkthrough and demo preset belongs to the app that

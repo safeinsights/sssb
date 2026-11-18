@@ -3610,3 +3610,330 @@ init-app my-app` in a copy of the repository followed by its real `cdk synth` (`
 - **Typed linting cannot pass check-fences yet.** Its probe files are virtual and outside the app's TypeScript
   project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
   with that reason (a false red, not a hole).
+
+## `@sssb/kit/testing/e2e`: compiled when packed, source in the repo (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+ADR-0014 part 2: Playwright loads e2e specs with Node, so a spec reaches the kit only through
+`@sssb/kit/testing/e2e`, shipped compiled and seam-free, and packing fails if that entry imports the seam.
+
+- **The split.** `core/webhook-signing.ts` read `APP_SLUG` from the seam when it loaded. The pure half (SHA-256,
+  HMAC, sign/verify, the replay tolerance, the Mailgun recompute) moved to `core/webhook-hmac.ts`, which imports
+  nothing; `webhook-signing.ts` keeps the three `APP_SLUG` header names and `export *`s the rest, so its published
+  surface and every importer are unchanged. The `node:crypto` cross-check moved with the code
+  (`webhook-hmac.test.ts`). `webhook-hmac.ts` gets no `exports` line: only `webhook-signing` and the e2e entry
+  import it, so it is one more internal module.
+- **The mechanism: `exports` names the compiled file, and a `prepack` script builds it.**
+  `"./testing/e2e": "./dist/testing/e2e.js"`, with `dist` in the `files` allowlist and gitignored.
+  `packages/kit/scripts/build-testing-e2e.mjs` (the kit's `prepack`; `pnpm pack`, and so pack and consume, runs
+  it) bundles `src/testing/e2e.ts` with esbuild into one ES2022 module with no imports, and emits its declarations
+  with the TypeScript API (`dist/testing/e2e.d.ts`, found by the sibling rule, so the map keeps one string per key;
+  relative specifiers get `.js` so `nodenext` resolves them too). esbuild became a kit devDependency (the root already had it).
+- **Why not the alternatives.** `publishConfig.exports` replaces the whole map, so it would repeat 130-odd entries.
+  Conditions (`"sssb-source"` in the repo, `default` for Node) would make the map's values objects, which the
+  public-surface test reads as strings, and would need the condition passed to tsc, Vitest and
+  Playwright. A `prepare` script was not needed: **nothing in this repo resolves through `exports`.** Every tool
+  aliases `@sssb/kit/*` to `packages/kit/src` (tsconfig `paths`, both Vitest configs, each app's Vite build), and
+  Playwright honours tsconfig `paths` too: `playwright test --list` loads `simulator-webhooks.spec.ts` with no
+  `dist/` on disk. So in the repo a spec runs the entry's source through Playwright's transform, and building on
+  every install would only add a step that can fail an install. `public-surface.test.ts` reads a `./dist/<p>.js`
+  target as its source `./src/<p>.ts`, for both the "target exists" check and the internal-module count.
+- **The seam guard is the build.** It fails, naming the importer, if the closure imports `@sssb/app-config/*` or
+  any other package (a plugin records every bare specifier before esbuild resolves it; no tsconfig is read, since
+  the root one maps the seam to the test fixture), or if the bundle or the declarations reach a file outside an
+  explicit allowed set (`src/testing/e2e.ts`, `src/core/webhook-hmac.ts`). A failed build deletes `dist/`, so a
+  half-built entry is never packed. Seen failing: with the entry re-exporting from `../core/webhook-signing`, the
+  build exited 1 with `@sssb/app-config/identity (imported by src/core/webhook-signing.ts)`; with
+  `../core/state-machine` added, it exited 1 naming that file; restored, it passed. Review added a second half:
+  esbuild sees only literal specifiers, so the EMITTED file is parsed with TypeScript and must hold no module import
+  or export, no `import()`, no `import.meta`, and no free reference to a loader (`require`, `module`, `globalThis`,
+  `eval`, `Function`, ...), since `globalThis['req'+'uire']` never spells require. Rejected: a regex over the output
+  (misses the computed key), and an allowlist of free identifiers (needs a binder, for an output that uses no
+  globals). Not closed, deliberately: `[].filter.constructor(...)` reaches `Function` through a property chain; the
+  scan catches the accidental loader a contributor writes, and a deliberate bypass in SSSB's own source is code
+  review's to catch. The script takes `--entry`/`--out-dir` so its tests build into scratch dirs, and refuses (exit 2,
+  before touching anything) an `--out-dir` that is neither the package's `dist/`, a new path, nor an empty directory,
+  since it wipes its output on failure.
+- **Proven from the tarball.** Pack and consume gained a step: plain Node, from the consumer's `seamless` package
+  (the one with no seam), imports `@sssb/kit/testing/e2e`, checks it resolved to `dist/testing/e2e.js`, and calls
+  the verifier. The consumer's whole-surface typecheck now covers the entry's declarations.
+- **The apps' specs moved onto it.** Bundling every file under `apps/*/tests/{e2e,demo-static}` (and the Playwright
+  configs) with esbuild, through each app's tsconfig, found three that reached the kit at run time:
+  `simulator-webhooks.spec.ts` (`core/webhook-signing`, now `@sssb/kit/testing/e2e`), `tickets-pagination.spec.ts`
+  (`src/domain/tickets` imports `core/state-machine`; `TICKET_PAGE_SIZE` moved to `src/domain/ticket-page-size.ts`,
+  which `tickets.ts` re-exports) and the static demo's `static-shell.spec.ts` (`src/app-config/presets` imports the
+  `ticket.assign` definition, which runs `core/abilities` and `core/roles`; the preset list moved to
+  `src/app-config/presets/list.ts`, which `presets.ts` re-exports). `tours.spec.ts` reads `src/app-config/tours`,
+  whose kit import is type-only and erased. The starter's specs reach nothing. That check is now the gate
+  `sssb check-e2e` (below); the lint ban on other `@sssb/kit/*` imports from specs is P6's preset (ADR-0014 part 4).
+
+## The conformance suite's unit half: what moved, what stayed, and the choices the design left open (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+`@sssb/kit/testing` (`conformanceSuite({ appDir, optOut })`) replaces the five seam-conformance test files and the
+authorization scan's walk of `apps/*`; each app calls it from `src/sssb.conformance.test.ts`. The design (checks as
+data in `checks.json`, fixed test names, named opt-outs, the file-level skip guard, app-owned exemptions, the seam
+map, the cutover rows as data) was set before the work; these are the calls it did not pin down.
+
+- **The app file passes `appDir: path.resolve(import.meta.dirname, '..')`.** Measured under the app projects'
+  happy-dom environment (Vitest 4.1.12): `import.meta.dirname` and `import.meta.url` are the file's real path and
+  `file:` URL, in the app and in kit code alike; only the global `URL` mis-resolves a relative reference. So the
+  suite takes a directory, never reads `process.cwd()`, and resolves nothing with `new URL`.
+- **An app's `authz-exemptions.mjs` is loaded with Node's `require`, not `import()`.** Under happy-dom, Vite reads an
+  absolute path as a URL under the project root and refuses a `file:` URL, so a dynamic import of the file failed
+  ("Cannot find module") for any app outside the Vitest root. `require` of an ES module is Node's own (22.12+), and
+  the file is plain JavaScript, as `lint-exceptions.mjs` is.
+- **"Collides with a framework entry" means overlaps, not only equals.** An app entry fails if its key equals a
+  framework exemption or required-alongside key, sits under a framework prefix, or is a prefix over one: an exact
+  entry wins over a prefix in the scan, and an exemption is checked before the `service/` gate, so an app file entry
+  at `webhooks/x/route.ts` or `service/x/route.ts` would otherwise weaken a framework gate. A malformed or colliding
+  entry is reported AND not applied.
+- **The per-handler results are one assertion.** The test names are fixed (doctor computes them), so
+  `every mutating handler reaches authorize(...) or passes its exemption's gate` lists every failing
+  `<app>: <rel> <VERB> …` line; likewise the numbering, catalog-key and preset-copy checks list every offender instead
+  of stopping at the first (`expect.soft` for the ICU placeholders).
+- **Three migration cases stay the kit's own** (`packages/kit/src/db/migrate.test.ts`): `outOfSequence`'s unit case,
+  the synthetic-registry case, and the refuse/renamed cases. The last two exercise the guard on the FRAMEWORK
+  sequence (the first and second framework migrations), and nothing an app registers changes the outcome: the
+  app's migrations only ride along in `migrateToLatest`, and if they fail, `rls-pglite` and `migration-order` fail
+  first. Moving them would add two pglite migrations to every app's run for no new coverage. `migration-order` keeps
+  the numbering and the upgrade-to-the-same-schema case, which are about how the two sequences compose.
+- **The demo-presets mocks are `vi.doMock`, registered while the file is collected, and proven applied.** A
+  library's `vi.mock` is not hoisted; `doMock` (resolved relative to the calling module, measured) applies to every
+  later import, and the suite imports everything that reaches the adapter registry inside a test. The mocked
+  registry carries a marker, and the two tests that replay check it first, so a mock that silently did not apply
+  fails with a sentence instead of replaying on the real adapters.
+- **The replay's data dir is ASSIGNED, not `vi.stubEnv`ed** (`setDataRoot` in
+  `packages/kit/src/adapters/fake/data-dir.ts`, where the lint allows an env write, restored in the check's
+  `afterAll`), and each test that reaches the adapters first proves `dataRoot()` is still the scratch dir. Under an
+  adopter's `unstubEnvs: true` Vitest unstubs before every test, so the replay fell back to `<cwd>/.data` and reset
+  the developer's dev world (reproduced). Rejected: a lint exemption for `demo-presets.ts`, and re-stubbing in a
+  `beforeEach` (a concurrent test's unstub still undoes it mid-test).
+- **`seam-specifiers.json` is checked against the `files` allowlist read in order** (npm's last-match-wins), and a
+  seam module's spelling anywhere other than an import specifier (a template, a string) fails the scan. Today the
+  shipped source imports 18 specifiers, all literal.
+- **`cutover/rows.json` holds `{ id, what }` verbatim from the "## Rows" table**, markdown and all, including
+  `release-app`, which is SSSB's own repository's row: equality with the doc is the rule. That row carries
+  `"scope": "sssb"`, which doctor reads (below).
+- **The contract checks are in `checks.json` too** (`contract-owner-pass`, `contract-rls`, `contract-data-api`,
+  `runner: "contract"`), named from the old `tests/support/contract-suite.ts` tests and two of
+  `rds-data.contract.test.ts`'s; `contractSuite` (next entry) registers them. The unit suite refuses an opt-out
+  naming one.
+- **The skip guard is a file-level `aroundAll`, checked after the whole file has run.** It began as an `afterAll`;
+  Vitest abandons a suite's remaining `afterAll` hooks at the first that throws, so a guard that fired skipped
+  `server.stop()` and the scratch-dir cleanup. `aroundAll`'s teardown runs after every `afterAll` of the file under
+  any `sequence.hooks` (Vitest >= 4.1, inside the peer range). Rejected: registering the guard first (right only under
+  `stack`), wrapping the checks in an enclosing `describe` (changes every full name doctor computes), and having the
+  guard run the cleanups itself. The guard tells three causes apart: a check kept from running by a failed setup hook,
+  one that was to run when the file started and did not (a cancelled run: `--bail`, an interrupt), and only the rest
+  as an `.only`, `.skip` or name filter.
+- **Each check's tests run in order, whatever the adopter's config says** (`describe.sequential`, which changes no
+  name). Under `sequence.concurrent: true` the demo-presets replay always failed: Vitest's mocker hands an import made
+  while a `vi.doMock` factory is still running the REAL module, and two of the check's tests imported the registry at
+  once; the checks' shared state (the data root, the fake world) wants order too. Rejected: warming the mock in a
+  `beforeAll` (fixes the race, not the shared state) and documenting "don't use `sequence.concurrent`" (a false red
+  with no escape but an opt-out).
+- **Without isolation the suite cleans up per file.** Under `isolate: false` the replay's pglite client stayed cached
+  on `globalThis` pointing at the scratch world, and the kit's `tmp-dir.ts` registered its one cleanup hook in the
+  first file only. Now the demo-presets check's `afterAll` closes the fake db, restores the data root and removes its
+  scratch dir (`removeTestTmpDir`), in one hook so the order holds; and `tmp-dir.ts` registers a hook for each later
+  file whose first call comes while it is collected. Rejected: `process.on('exit')` (pool teardown may not fire it)
+  and pushing into Vitest's runner hooks (internals, in a shipped file). `@sssb/tools/testing/tmp-dir` has the same
+  single-hook flaw, left for `.claude/future-tasks/tools-tmp-dir-without-isolation.md`.
+- **The demo-presets check's teardown waits for a replay that outlived its test.** A Vitest timeout fails the test
+  but cannot stop its body: the replay ran on into `afterAll`, which closed the db and restored APP_DATA_DIR, and the
+  replay then wrote `auth/`, `pglite/` and `simulator/` into the working directory's `.data` (reproduced: a probe that
+  parks the first preset's invite for 1.5 s past a 300 ms timeout, with a second file keeping the worker alive). Now
+  the replay test's body is recorded on the file's scratch world; `afterAll` marks the world stopping (the replay stops
+  before its next preset) and waits for the body to settle, up to 30 s (`demoPresets.replayStopWaitMs`); only then
+  closes the db, restores APP_DATA_DIR and removes the dir. If the body is still running after the wait, the teardown
+  FAILS saying so and leaves APP_DATA_DIR on the scratch dir, closing and removing it once the replay settles (the db
+  only if the adapters still point there). The hook's own timeout is the wait plus 30 s (it was the adopter's
+  `hookTimeout`). Pinned by the two timed-out-replay cases of `packages/kit/src/testing/conformance/adopter-config.test.ts`,
+  both seen red with the wait removed. Rejected: waiting on simulator-admin's world queue (`tail`): it covers
+  `applyDemoPreset`'s reset and script but not the test body's reads after it (`readActorHolds` makes its directory
+  under the data root, `listMembers` and `getCurrentUser` reach auth files and the db), which would then run against
+  `.data`; and keeping APP_DATA_DIR on the scratch dir unconditionally, which leaks the dir on every timeout. The
+  timeout and the wait are injectable only by mutating the exported `demoPresets` object before `conformanceSuite()`
+  registers (the kit's own test does); `@sssb/kit/testing` exports `conformanceSuite` alone, as before.
+- **An app's nested exemption prefixes are refused, both of them** (`hooks/` and `hooks/partner/` would leave a route
+  under both to whichever the scan met first). Rejected: most-specific-wins in `exemptionFor`, which is shared with
+  the framework's policy and would change its matching too.
+- **`seam-map` resolves an `exports` target as Node does**, measured against Node: Node's own conditions for an ES
+  import, in the target's key order, `null` stopping a conditions object, Node's pattern-key order, a non-empty `*`
+  match, and the targets Node refuses (`ERR_INVALID_PACKAGE_TARGET`) reported as such; the target must be a file, and
+  a `types`-only entry fails. Rejected: adding a bundler's conditions (`module`, `browser`), which belong to one
+  environment and cannot stand in for Node, tsx and migration scripts.
+- **`seam-map` matches `module-sync`, and resolves an `exports` array as Node does.** Measured against Node's own
+  resolver: each array and condition case in `packages/kit/src/testing/conformance/seam-map.test.ts` gives what Node
+  24.19's `import.meta.resolve` gives for a fixture package holding the same map. Node matches `module-sync` by default for an ES import, so
+  `{"module-sync": "./ms.js", "default": "./ok.js"}` loads `ms.js`; the conditions are now `node`, `import`,
+  `module-sync`, `default`. In an array a `null` item does NOT stop the search: Node goes on to the next item and keeps the null only as the answer if no later item
+  gives a file. An array whose items all match no condition is unmatched, so the condition holding it falls through to
+  the next one; an empty array is `null`; and when no item gives a file, the answer is the last null-or-invalid item's
+  (`[null, "../x"]` is invalid, `["../x", null]` is not found). A conditions object still stops at a `null` (the entry
+  above). `seam-map.test.ts` pins `module-sync`, the null item, the invalid item after a null, the unmatched array and
+  the empty array, each seen red with its line of `seam-map.ts` reverted. Rejected: nothing new; this
+  corrects reading an array's `null` as stopping the search, which holds only for a conditions object.
+- **Pack and consume** drops `conformance-by-include`: the consumer apps carry the starter's
+  `src/sssb.conformance.test.ts`, their Vitest projects keep `configDefaults.exclude` (node_modules and all), and the
+  job requires every unit check's every test, named from the PACKED `checks.json`, to pass in each app, with the
+  file itself not failed by the skip guard. The tarball must ship `checks.json` and `seam-specifiers.json` and no
+  test file at all.
+
+## The contract runner ships in `@sssb/kit/testing` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+- **`contractSuite` from `@sssb/kit/testing/contract`** replaces the repo's `tests/support/contract-suite.ts` and
+  `contract-postgres.ts`. Each app's `tests/contract/rls-contract.test.ts` is one call,
+  `contractSuite({ port: portFor('contractPg'), optOut: {} })`; the database defaults to `contractDatabaseName` of the
+  seam's `APP_SLUG` (`database` overrides it). Its checks are the `contract` checks of `checks.json`
+  (`contract-owner-pass`, `contract-rls`, `contract-data-api`), registered, opted out and guarded against skipping by the
+  same code as the unit suite's (`packages/kit/src/testing/conformance/register.ts`), in the old order: owner pass
+  twice, then the superuser proofs. New: `contract-data-api` runs the app's migrations and proofs, and the owner pass,
+  over the RDS Data API transport through the emulator, in `<slug>_contract_data_api`, made empty first so the
+  migrations really run through the dialect. Before, only SSSB's fixture met the Data API.
+- **The server half is `packages/kit/src/adapters/real/contract-postgres.ts`** (and the Data API passes
+  `contract-data-api.ts` beside it), because it drives `pg` and only an adapters directory may import a vendor SDK; the
+  testing module imports it, and loads everything that reaches the seam lazily, so `contractDatabaseName` imports with no
+  seam (the repo's scaffold gate uses it). No lint exemption was widened; the package-edge rule lost its two named
+  exemptions (the kit's own contract tests no longer reach `tests/support`). The emulator ships, as before, under `src`;
+  it gets no `exports` subpath because nothing outside the runner needs it.
+- **`embedded-postgres` is an OPTIONAL peer of `@sssb/kit`**, imported with `import()` only when
+  `CONTRACT_DATABASE_URL` is unset, with an error naming the package when it is missing. It is also the kit's
+  devDependency, and both apps' (so the template, and pack and consume's consumer, carry it); the root's, and the root's
+  `pg` and `@types/pg`, went (knip). Rejected: a plain dependency, which would put Postgres binaries in every adopter's
+  production install for a test-only path; an adopter whose CI brings its own server needs none of it. Like `vitest`,
+  it is optional at run time, not to the type checker: an app that keeps `tests/contract` keeps the package.
+- **The port is the caller's**: `port` (the apps pass `portFor('contractPg')` from `@sssb/tools/ports`), else
+  `CONTRACT_PG_PORT`, else a refusal that says which to set. The framework takes no `@sssb/tools` (rule 4), so the kit's
+  own contract tests get `CONTRACT_PG_PORT` from `vitest.contract.config.ts`. Rejected: importing `scripts/ports.mjs`
+  or `@sssb/tools/ports` from the kit. Scratch directories are the kit's `makeTestTmpDir` (its copy has no async
+  variant, and none is needed).
+- **Pack and consume runs it.** `contract-test-dropped` is gone: the consumer apps keep `tests/contract`, the workspace
+  gets a `vitest.contract.config.ts` built from the preset as an adopter would write one, and a step runs it on
+  embedded Postgres on a free port (CONTRACT_DATABASE_URL blanked) and holds each app to every `contract` test of the
+  packed `checks.json` (`expectedConformanceTests(registry, 'contract')`, `conformanceProblems`). No service was added
+  to the workflow.
+
+## `sssb doctor` and `sssb check-e2e` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+ADR-0014 part 5 names doctor's three checks and part 3 its `vitest list`; part 2 names check-e2e. What they left open,
+as it stands after three rounds of review (ADR-0014's addendum "P5 as built" lists where this departs from its body):
+
+- **One doctor run checks the whole workspace.** Doctor walks `pnpm-workspace.yaml` for every importer of `@sssb/kit`
+  (in any dependency field, `peerDependencies` included) and every APP (in-repo, `sssb.apps` or `apps/*`; otherwise
+  every importer with its own `src/app-config`), and gives each app the per-app checks. So the root's `sssb:doctor` is
+  one `sssb doctor`, and an app's own `sssb:doctor` checks every app too. It fails unless the app it runs for is among
+  the importers it found and, when that app has a seam, among the apps: the first walk read a column-0 `packages`
+  list as empty and passed every workspace-wide check over nothing. Rejected: `pnpm --filter './apps/*' sssb:doctor`,
+  which silently skips an app without the script; and a `--app apps/<x>` per app, which ejecting or renaming breaks.
+- **`pnpm-workspace.yaml` is read by a small reader that throws on what it does not understand**, naming the line
+  (in `packages` or `dedupePeerDependents`: anchors, aliases, tags such as an unquoted `!glob`, nested items; anywhere:
+  a duplicate key, a second document, a flow collection still open at the end; any other key's value is skipped
+  unread, `parseWorkspaceYaml` in `packages/tools/src/commands/doctor-checks.js:58`), and a file it cannot read is a
+  FAIL that stops the run. Rejected: the `yaml`
+  package, which `packages/tools` reaches only through the root's hoisting; and a reader that returns what it can,
+  which is how the empty list happened.
+- **Doctor reads `vitest list --json=<file>`, never stdout.** Vitest 4 writes the list to the file when `--json` is given a
+  path (`--outputFile` is ignored by `list`), so Vite's warnings on stdout cannot corrupt it. When a test file throws
+  while it is collected (an opt-out typo), Vitest exits 1 and writes NO file; doctor then names Vitest's error line
+  (never its `Collect Error` banner) and every expected test as not listed. Rejected: parsing stdout between brackets.
+- **Which Vitest runs hold an app to which checks.** Discovery is `vitest list --filesOnly`, which loads each config and
+  globs but runs no `globalSetup` (measured, Vitest 4.1.12). The MAIN unit run is the first run a bare `vitest` would
+  make for the app that runs any of its `src/` test files: from the root with the root's own config, then from the app
+  with the config Vitest finds walking up (the app's, else the root's, else Vitest's defaults). It must list every unit
+  check; no such run, or a bare run doctor cannot list, fails. Some config that runs the app's `tests/contract/` files
+  must list every contract check. Every other config (each `vitest*.config.*` at the root and in the app, and the
+  `vite.config.*` Vitest itself would load) that runs some of the app's `src/` tests but not its suite file, runs its
+  contract files without every contract check, or cannot be listed, is a REPORT that names it. Only the main run and
+  the contract configs are listed in full. The projects are the ones that run a file inside the app, asked rather than
+  assumed by name (here the contract projects are rooted at the repo). Rejected: holding every config that runs any of
+  the app's tests to every check (round 1), which failed a browser, integration or env-gated config beside a passing
+  main one with no escape but deleting it, held a build-only `vite.config.ts` to the suite, and ran every such
+  config's `globalSetup`; and guessing CI's config from workflow files.
+- **What that rule does not catch, accepted.** A CI step that runs a non-main config (a `vitest.ci.config.ts` excluding
+  `**/sssb.*`) is a report, not a failure, so CI can go green without the checks if nobody reads it; and a non-main
+  config that does run the suite file is not listed by name, so a `testNamePattern` set there is not seen. Doctor
+  cannot see which config CI runs, as it cannot see CI's flags; failing every config made legitimate ones impossible
+  to keep.
+- **The bare `vitest` from the app's directory is reported when the root's bare run is the main one** and the app's
+  would not run `src/sssb.conformance.test.ts`, even when it runs none of the app's `src/` files: a root config with
+  root-relative globs finds nothing from the app and passes on `passWithNoTests`, so an app script `vitest run` under
+  `pnpm -r test` runs no check. Found with `--filesOnly` only (no `globalSetup`), and report-only: it never joins the
+  contract configs, which are listed in full and alias-checked (`planFor` in `packages/tools/src/commands/doctor.js`).
+  The report names the run (a bare `vitest` from `apps/web` loads `vitest.config.mjs`), what it runs ("none of its
+  src/ test files, so not src/sssb.conformance.test.ts"), and that if CI runs it there (the app's own scripts,
+  `pnpm -r`) instead of the main run from the root, the conformance checks do not run. Pinned by
+  `tests/tooling/tools-doctor.test.ts` ("reports, and does not fail, the bare `vitest` from the app's directory…"),
+  seen red with the report removed.
+  Rejected: failing it (doctor still cannot see which run CI makes; the main-run rule is unchanged), and adding it to
+  the contract configs: in SSSB's own repository the root config run from `apps/showcase` lists the showcase's
+  `tests/contract/` file under the `repo` project, which has no seam alias, and that turned `sssb doctor` red.
+- **CI's command line is reported, not checked.** Doctor reports every narrowing flag or file filter (`-t`, `--project`,
+  `--exclude`, `--shard`, `--changed`, `related`, a positional path...) that the root's and the apps' package.json
+  scripts pass to vitest, and, since it lists the contract checks and never runs them, which script runs each app's
+  contract config, or that none does. Rejected: failing on a narrowing flag (a sharded CI is legitimate, and doctor
+  cannot see the other shards).
+- **Check names and opt-out markers count only from the app's own suite files**: the unit ones from
+  `<app>/src/sssb.conformance.test.ts`, the contract ones from `<app>/tests/contract/`, never from a workspace package
+  nested in the app. Each opt-out prints as a report with its reason. Rejected: a marker from any listed test (round
+  1), which let an ordinary test file opt a check out.
+- **Optional peers** (`vitest`, `embedded-postgres`): neither side has it is a note (not installed); only the kit finds
+  it is a note (not the app's to share); only the app finds it fails, because the kit would load another copy or none.
+  A required peer the app cannot find fails. Peers are compared as real package DIRECTORIES found by walking
+  `node_modules` up from each side, never NODE_PATH (the shared resolver's reason).
+- **In-repo mode is detected, not configured**: the kit the app resolves is in-repo when its real directory is one of
+  the workspace's package directories. There the per-importer seam check is replaced by an alias check over every
+  app: each target of every tsconfig `paths` key that is or starts with `@sssb/app-config` (read by the app's own
+  TypeScript, so `extends` and `baseUrl` count), and every alias, string or RegExp, that would match a seam specifier
+  in the Vitest projects of the app's main unit run and contract configs (read through `createVitest`), must land in
+  the app's own `src/app-config`. Every matching alias counts, not only the one that wins today; a tsconfig key that
+  matches only by wildcard (`@sssb/*`) is not covered. The other importers (the root, `packages/seed`) are named as
+  not checked: in-repo each compiles within a program that names a seam. Rejected: a flag or environment variable,
+  which an adopter could set.
+- **The per-importer walk includes the workspace ROOT** (pnpm treats it as an importer). The seam an instance runs on
+  is `@sssb/app-config` as Node's lookup finds it from the kit's own directory, and doctor names whose seam that is.
+- **Versions in step** cover every `@sssb/*` the app resolves (nearest `node_modules/@sssb` first), the seam left out.
+  The workflow-SHA and plugin-pin comparisons print "not checked" with the reason: nothing to compare yet (no release
+  stamp, no reusable workflow until P10, no plugin until P13). Doctor runs `sssb guide --check` once the kit ships a
+  guide (`guide.js` already promised it), and reports that it does not until then.
+- **SSSB-only cutover rows**: a row marked `"scope": "sssb"` in `rows.json` (`release-app`) is not looked for in an
+  adopter's checklist, and doctor says it skipped it. `tests/docs/cutover-rows.test.ts` holds the field to the
+  checklist's own wording (exactly the rows whose "What it is" begins "SSSB's own repository only"). Rejected: doctor
+  matching that wording itself, which made a sentence in a doc the switch.
+- **The scripts are `sssb:doctor` and `check:e2e`, not `doctor`**: `pnpm doctor` is pnpm's own command and shadows a
+  script of that name (measured: the root's `pnpm doctor` ran pnpm's environment check and exited 0). The root's
+  `check:e2e` fans out over `apps/*`.
+- **check-e2e asks Playwright which files it loads.** Each config (`playwright*.config.*` in the app, plus each
+  `--config <file>`) is listed by the app's own Playwright from the app's directory, `playwright test --list
+--reporter=json`, the report written to a file (`PLAYWRIGHT_JSON_OUTPUT_FILE`: a spec's own output shares stdout).
+  Measured on Playwright 1.65.1, `--list` starts no `webServer`, runs no global setup and needs no browser. The checked
+  files are each config, the global setup and teardown the report names, and every file holding a listed test; each
+  is then bundled. A config Playwright cannot list fails with Playwright's error (and the kit file, when the error
+  names one); a config that lists no test fails. Rejected, in order: reading the configs' text with regexes (a
+  template literal, `path.join`, a project-level `testDir` or an array `globalSetup` each defeated it); loading them
+  ourselves through an esbuild bundle (any `require` broke it, Playwright's own CommonJS scaffold and
+  `globalSetup: require.resolve(...)` included, while Playwright loaded both); re-implementing Playwright's file
+  selection; and the hidden `test-server` command's `listFiles`.
+- **What Playwright's report cannot say.** Any load error makes `--list` list nothing, and Node's error for TypeScript
+  under `node_modules` names the kit file but not the spec, so in an adopter's workspace a spec reaching the kit's
+  source fails its CONFIG, with the kit file named; the per-spec import chain is reported wherever Playwright can load
+  the spec (this repository, where the kit is workspace source). The report holds only the FIRST entry of a
+  `globalSetup`/`globalTeardown` array, so a second is not checked; and a matched file holding no test is not listed.
+- **check-e2e follows what Playwright transforms**: a bare specifier is bundled when its real path is outside
+  `node_modules` (the app's files, a sibling workspace package such as Pages' `packages/gate`, and what they import)
+  or is framework source in any copy (`isFrameworkFile`); every other package stays external. The allowed set comes
+  from bundling `@sssb/kit/testing/e2e` alone from the app: in-repo its source closure, from a tarball the compiled
+  file only. A failure names the file, the kit file where it ENTERS the kit, and the import chain. Rejected: bundling
+  only the app's own files (the first version), which left a workspace package external and missed a spec reaching the
+  kit through it.
+- **`createRequire` is checked by the app's own TypeScript parser**: a followed file outside the kit whose code names
+  `createRequire` fails for each `@sssb/kit` string literal in its code that esbuild did not resolve, except the entry
+  and `@sssb/kit/package.json`. Rejected: a regex over the text, which matched comments and failed
+  `createRequire(import.meta.url)('@sssb/kit/package.json')`.
+- **Pack and consume proves both from the tarball.** The negative fixture joins after the verify, with a second
+  install: doctor walks every package, so with `packages/seamless` installed from the start the verify's doctor could
+  not be green. The consumer's console carries `tests/e2e/kit-entry.spec.ts`, which imports `@sssb/kit/testing/e2e`
+  and an app domain module; check-e2e must pass it, `playwright test --list` must load it (even with
+  `--skip-build-and-e2e`), and with two specs dropped in that reach `@sssb/kit/core/webhook-signing` (directly and
+  through an app module) check-e2e must exit 1, failing `playwright.config.ts` as unlistable and naming
+  `@sssb/kit:src/core/webhook-signing.ts`. Rejected: adding the spec to `apps/starter` itself, whose one e2e spec is
+  its tenancy claim.

@@ -41,6 +41,12 @@ jobs:
             - name: coverage summary
               run: node -e "const s=require('./coverage/coverage-summary.json').total; console.log('| metric | % |\n|---|---|', ...Object.entries(s).map(([k,v])=>'\n| '+k+' | '+v.pct+' |'))" >> "$GITHUB_STEP_SUMMARY"
             - run: pnpm knip
+            # ADR-0014 parts 2, 3 and 5, one doctor run over every app: one copy of each singleton, each app on its
+            # own seam, the @sssb packages in step, every unit check listed by `vitest list` under the config a bare
+            # `vitest` loads for the app and every contract check under some config (which config CI runs is only
+            # reported); and, per app, no e2e spec reaching the kit other than through @sssb/kit/testing/e2e.
+            - run: pnpm sssb:doctor
+            - run: pnpm check:e2e
             - run: pnpm jscpd
             # Each app's infra/ and spikes/ sit outside the root TS program and jscpd, and each one STATES a
             # verification bar: apps/<app>/infra/README.md calls `synth` its bar, and infra is the one tree
@@ -102,7 +108,7 @@ jobs:
     # The anti-drift job: the SAME migrations + RLS proof suite that unit tests run on pglite,
     # against real Postgres (locally that's embedded-postgres; here a service container). One server, and a
     # database of its own for every app under apps/ (discovered, so an ejected app is covered) and for SSSB's
-    # fixture: two migration sets cannot share a database (tests/support/contract-postgres.ts).
+    # fixture: two migration sets cannot share a database (packages/kit/src/adapters/real/contract-postgres.ts).
     contract:
         runs-on: ubuntu-latest
         permissions:
@@ -333,7 +339,9 @@ jobs:
     # framework and the seam, which hides exactly what an adopter would hit; every step's logic is in
     # scripts/pack-and-consume.mjs, so `pnpm pack-and-consume` reproduces this job locally.
     #
-    # No `pnpm install` of this repo: the job needs only `pnpm pack`. The consumer installs from its own
+    # No `pnpm install` of the whole repo: the job needs only `pnpm pack`, and of this repo's packages only the kit has
+    # a pack-time build (its `prepack` compiles @sssb/kit/testing/e2e with esbuild and typescript, its devDependencies),
+    # so the step before the script installs the kit's own dependencies and nothing else. The consumer installs from its own
     # committed lockfile seed (scripts/pack-and-consume/consumer-lock.yaml), so its caches are keyed on
     # that file, under prefixes of their own: sharing setup-node's pnpm cache key would let this job save
     # a store holding only the consumer's packages for every other job to restore.
@@ -361,6 +369,10 @@ jobs:
                   path: ~/.cache/ms-playwright
                   key: pack-and-consume-playwright-${{ runner.os }}-${{ hashFiles('scripts/pack-and-consume/consumer-lock.yaml') }}
                   restore-keys: pack-and-consume-playwright-${{ runner.os }}-
+            # --ignore-scripts: the root's `prepare` (husky, launch-json, panda codegen) needs the whole repo installed,
+            # and the pack needs no install script (esbuild's binary arrives as an optional dependency).
+            - name: install the kit's own dependencies, for its prepack build
+              run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit
             - run: node scripts/pack-and-consume.mjs --dir "$RUNNER_TEMP/pack-and-consume"
             # On CI the starter's Playwright reporter is `github`, so the evidence on a failure is the
             # traces under test-results/ (trace: on-first-retry), not an HTML report.

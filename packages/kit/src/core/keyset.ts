@@ -177,7 +177,7 @@ function comparePositions(a: KeysetPosition, b: KeysetPosition): number {
 
 // ---- base64url, hand-rolled ----
 //
-// Hand-rolled for the same reason webhook-signing.ts hand-rolls SHA-256: this module must run
+// Hand-rolled for the same reason webhook-hmac.ts hand-rolls SHA-256: this module must run
 // unchanged on the server AND inside a `file://` bundle, so it may not reach for a node builtin, and
 // `btoa`/`atob` are latin1-oriented globals whose availability is an environment assumption rather
 // than a property of the code. The payload is ASCII BY CONSTRUCTION — both fields are pattern-checked

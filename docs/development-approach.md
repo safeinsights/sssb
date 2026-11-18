@@ -423,7 +423,7 @@ one function that either allows the action or throws `ForbiddenError` → 403. T
 (`packages/kit/src/core/abilities.ts`, pure `packages/kit/src/core`, shared verbatim by the server
 and the static demo twin) is deny-by-default and org-scoped: role alone (`canManageOrg`) still gates coarse,
 whole-route decisions via `requireRole`, but resource-level decisions — can THIS user create THIS ticket in THIS
-org — go through the ability layer instead of a rank check. A build-time scan (`authorized-mutations.test.ts`)
+org — go through the ability layer instead of a rank check. A build-time scan (the conformance suite's `authz-mutations` check, which every app runs over its own routes)
 makes skipping the choke point loud: every mutating handler must reach `authorize(...)` on its own path, or sit
 under a justified exemption and pass that exemption's gate, the same discipline `withTenant`'s lint ban on raw `getDb()` gives the tenant boundary. The caller
 need not be a person: `authorize(actor, action, subject)` also judges a **machine** (a service key, or a token
