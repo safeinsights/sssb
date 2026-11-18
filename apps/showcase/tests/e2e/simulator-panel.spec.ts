@@ -109,7 +109,7 @@ test('the dev ticker control is on a dev server only, stopped until started, and
 }) => {
     // CI runs this suite against the E2E_BUILD production build, where the route answers 404 and the Jobs tab has no
     // control; a local run uses `pnpm dev`, where the control is there and stopped. Nothing here starts it: the suite
-    // expects a scheduler that does nothing until a test asks (scripts/ticker-marker.mjs).
+    // expects a scheduler that does nothing until a test asks (@sssb/tools/ticker-marker).
     const e2eBuild = process.env.E2E_BUILD === '1'
     await page.goto('/en/signin')
     await openSimulatorPanel(page)

@@ -18,7 +18,7 @@ completion in CI (`pnpm e2e:demo-static`), so it cannot quietly stop being true.
 ### 1. You are walking into a shift already in progress
 
 Open `http://localhost:3000` → `/en`, the public welcome page. (In a linked worktree the port is
-derived per checkout — `pnpm dev` prints it, or ask `node scripts/print-port.mjs showcase`.) The dark **Simulator pill** sits
+derived per checkout — `pnpm dev` prints it, or ask `pnpm exec sssb port showcase`.) The dark **Simulator pill** sits
 bottom-right; that is the simulated world's control panel, not part of the product. Open
 **Simulator → People** and click **Dana Okoye** — clicking a person signs you in as them instantly,
 no password. (The sign-in screen with the person picker is the "real" login UX if you want to show

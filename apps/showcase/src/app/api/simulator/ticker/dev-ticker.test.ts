@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../../../../tests/support/tmp-dir'
-import { createTicker } from '../../../../../../../scripts/ticker.mjs'
-import { liveTickerMarker, tickerMarkerPath } from '../../../../../../../scripts/ticker-marker.mjs'
+import { makeTestTmpDir } from '@sssb/tools/testing/tmp-dir'
+import { createTicker } from '@sssb/tools/ticker'
+import { liveTickerMarker, tickerMarkerPath } from '@sssb/tools/ticker-marker'
 import { createDevTickerControl, DEFAULT_INTERVAL_SECONDS, type DevTickerControl, devTickerControl } from './dev-ticker'
 
 const stops: DevTickerControl[] = []

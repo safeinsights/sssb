@@ -777,15 +777,15 @@ function readDemoBudget(onDisk: string): DemoBudget {
     const file = `apps/${onDisk}/package.json`
     if (!existsSync(abs(file))) return null
     const script = readJson<PackageJson>(file).scripts?.['check:demo-size']
-    const bytes = /check-demo-size\.mjs\s+(\d+)\s*$/.exec(script ?? '')?.[1]
+    const bytes = /\bsssb check-demo-size\s+(\d+)\s*$/.exec(script ?? '')?.[1]
     return bytes ? { bytes, hasNote: existsSync(abs(`apps/${onDisk}/DEMO-SIZE.md`)) } : null
 }
 
 /**
  * Why this is in "WHAT THIS DID NOT TOUCH" and not something init-app does: the budget is a number the
- * adopter has to own. And why it says where to record a change: the obvious place is the header of
- * scripts/check-demo-size.mjs, which is SSSB's, so a note written there is a conflict on every later upstream
- * merge (ADR-0013). The history lives beside the number, in the app's own DEMO-SIZE.md where it has one.
+ * adopter has to own. And why it says where to record a change: the command, `sssb check-demo-size`, is SSSB's
+ * (@sssb/tools), so nothing about the app's number can live in it. The history lives beside the number, in the
+ * app's own DEMO-SIZE.md where it has one.
  */
 function demoBudgetBullet(survivor: string, budget: DemoBudget): string {
     if (budget === null) return ''
@@ -796,8 +796,8 @@ function demoBudgetBullet(survivor: string, budget: DemoBudget): string {
             ? ` apps/${survivor}/DEMO-SIZE.md says what the number was set for, and is where you record each change ` +
               'and why.'
             : '') +
-        " scripts/check-demo-size.mjs is SSSB's, and an upstream merge will change it: re-set the number in " +
-        "package.json, never in the script. When it goes red, that script's header says what to look at first."
+        " The command, `sssb check-demo-size`, is SSSB's (@sssb/tools): re-set the number in package.json. When " +
+        'it goes red, its message says what to look at first.'
     return `\n${wrapBullet(paragraph)}`
 }
 

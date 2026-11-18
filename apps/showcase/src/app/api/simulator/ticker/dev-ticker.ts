@@ -1,7 +1,7 @@
 // The dev ticker, owned by the dev server: what the Simulator's ticker control starts, stops and reads.
 //
-// `scripts/ticker.mjs` is the ticker (start, stop, status, the interval bounds and the marker); this is the policy for
-// starting it from the UI, as `scripts/dev-tick.mjs` is the policy for starting it from `DEV_TICK_SECONDS`
+// `@sssb/tools/ticker` is the ticker (start, stop, status, the interval bounds and the marker); this is the policy for
+// starting it from the UI, as `sssb dev-tick` is the policy for starting it from `DEV_TICK_SECONDS`
 // (.claude/future-tasks/resolved/simulator-ticker-control.md has the design, docs/decision-log.md the decisions):
 //
 //   * one ticker per server process, kept on `globalThis` so a hot reload of this module does not orphan a running
@@ -15,14 +15,9 @@
 //
 // Nothing here decides WHETHER the control exists: the route answers 404 unless `isSimulatedDevServer`, and imports
 // this module only after that, so a production build (deployed, demo, e2e) never evaluates it.
-import { portFor } from '../../../../../../../scripts/ports.mjs'
-import {
-    createTicker,
-    intervalProblem,
-    MAX_INTERVAL_SECONDS,
-    MIN_INTERVAL_SECONDS,
-} from '../../../../../../../scripts/ticker.mjs'
-import { liveTickerMarker, removeTickerMarker, tickerMarkerPath } from '../../../../../../../scripts/ticker-marker.mjs'
+import { portFor } from '@sssb/tools/ports'
+import { createTicker, intervalProblem, MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS } from '@sssb/tools/ticker'
+import { liveTickerMarker, removeTickerMarker, tickerMarkerPath } from '@sssb/tools/ticker-marker'
 
 /** What the Start field offers first: often enough to see a digest fire in a demo, rare enough to stay quiet. */
 export const DEFAULT_INTERVAL_SECONDS = 30
@@ -54,7 +49,7 @@ export interface DevTickerControl {
 
 /**
  * @param ticker the server's one ticker
- * @param markerFile where tickers record themselves (scripts/ticker-marker.mjs)
+ * @param markerFile where tickers record themselves (@sssb/tools/ticker-marker)
  * @param pid this process; a live marker with any other pid is someone else's ticker
  * @param readMarker the marker reader, injectable for tests (it probes the pid with `process.kill(pid, 0)`)
  */

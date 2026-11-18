@@ -1,8 +1,9 @@
-// `pnpm tick` — calls the running dev server's scheduled-tick route once and says what ran.
+// @ts-check
+// `sssb tick <app>` (an app's `pnpm tick`) — calls the running dev server's scheduled-tick route once and says what ran.
 //
 // In a deployment an external scheduler POSTs each app's `/api/webhooks/cron` (the `scheduled-tick` cutover row).
 // In `pnpm dev` nothing does, so a due digest or a webhook retry sits there until somebody does it by hand. This is
-// the by-hand, as one command; `scripts/dev-tick.mjs` is the same call on a timer, opt-in.
+// the by-hand, as one command; `sssb dev-tick` (dev-tick.js) is the same call on a timer, opt-in.
 //
 // What this is NOT: a way around the route's guard. The route is `withWebhookSecret(...)`, and this sends it the
 // per-checkout dev secret (`<app>/.data/auth/webhook-secret`, the file the simulated server generates) as a bearer,
@@ -13,7 +14,7 @@
 // where the server keeps `.data` (`APP_DATA_DIR` overrides it, for both).
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { portFor } from './ports.mjs'
+import { portFor } from '../ports.js'
 
 /** The apps that have a tick route. The key is the PORT key (`starter` stays `starter` after `init-app` renames it). */
 export const TICK_APPS = ['showcase', 'starter']
@@ -24,11 +25,11 @@ export const TICK_PATH = '/api/webhooks/cron'
 export const DEFAULT_TIMEOUT_SECONDS = 60
 
 /** Bounds that keep `AbortSignal.timeout` meaningful: a value that rounds to 0 times out at once, a huge one throws. */
-export const MIN_TIMEOUT_SECONDS = 0.1
-export const MAX_TIMEOUT_SECONDS = 3600
+const MIN_TIMEOUT_SECONDS = 0.1
+const MAX_TIMEOUT_SECONDS = 3600
 
-const USAGE = `usage: pnpm tick [--url <origin>] [--timeout <seconds>]
-       (per app: pnpm tick = showcase, pnpm tick:starter = starter; direct: node scripts/tick.mjs <${TICK_APPS.join('|')}> ...)
+const USAGE = `usage: pnpm tick [--url <origin>] [--timeout <seconds>]   (sssb tick also takes --app <dir>)
+       (per app: pnpm tick = showcase, pnpm tick:starter = starter; direct: sssb tick <${TICK_APPS.join('|')}> ...)
 
   --url <origin>       the dev server's origin, loopback only (default: this checkout's port for the app)
   --timeout <seconds>  give up on the request after this long, ${MIN_TIMEOUT_SECONDS} to ${MAX_TIMEOUT_SECONDS} (default ${DEFAULT_TIMEOUT_SECONDS})`
@@ -273,8 +274,4 @@ export async function main(argv) {
         if (error.usage) console.error(USAGE)
         return error.usage ? 2 : 1
     }
-}
-
-if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
-    process.exitCode = await main(process.argv.slice(2))
 }

@@ -39,7 +39,7 @@ const appProject = (app: string) => ({
 
 export default defineConfig({
     test: {
-        // Every project defaults to one embedded-postgres port (scripts/ports.mjs), so their files run
+        // Every project defaults to one embedded-postgres port (@sssb/tools/ports), so their files run
         // one at a time rather than racing for it.
         fileParallelism: false,
         projects: [
