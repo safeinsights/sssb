@@ -1,5 +1,9 @@
 # @sssb/tools
 
+## 0.2.0-rc.2
+
+No changes in this release.
+
 ## 0.2.0-rc.1
 
 ### Minor Changes

@@ -1,5 +1,127 @@
 # @sssb/kit
 
+## 0.2.0-rc.2
+
+### Minor Changes
+
+- b4770eb: ### An app names the cluster-wide roles its migrations create: `appRoles`
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** An app whose migrations create a role of their own (beside the framework's `app_user`) now names it
+    in an optional `appRoles` export of its `@sssb/app-config/db/migrations` module. The contract suite's owner pass grants a
+    later owner ADMIN on exactly those roles, as it does on `app_user`, so a migration that alters such a role passes on
+    every pass, not only the first. It grants on an ordinary role only: it refuses, before granting anything, a named role
+    that can log in, has CREATEDB, CREATEROLE, SUPERUSER, BYPASSRLS or REPLICATION, holds a privilege on a server parameter
+    (`pg_parameter_acl`), owns a database or tablespace, or is a member, at any depth, of any role but `app_user` and the
+    app's other named roles (ADMIN lets the owner grant itself SET on the role and act as it and as all of those), and it
+    fails when the owner's own migrations leave a named role more than ordinary. It holds `app_user`, on which every later
+    owner gets ADMIN too, to the same attributes, privileges and ownerships, before granting and after the migrations:
+    `app_user` may be a member of the app's named roles and of other roles ordinary in shape (another app's, on a shared
+    server), never of a `pg_*` or `rds_*` role or one with any of those attributes, privileges or ownerships. A new conformance check, `app-roles`, fails a role the
+    migrations create that `appRoles` does not name, a name no migration creates, and a named role or `app_user` the
+    migrations leave more than ordinary, on pglite in the unit run. The owner pass's teardown now also revokes what
+    its owner granted (`DROP OWNED BY`), so a migration that grants a role TO `app_user` no longer leaves the owner behind,
+    and an owner it cannot drop fails the pass instead of staying on the server. An app that creates no role changes
+    nothing.
+
+    **To adopt.** If your migrations create a role, export its name beside `appMigrations`, from the module
+    `@sssb/app-config/db/migrations` resolves to (`src/app-config/db/migrations.ts`, or `migrations/index.ts`):
+
+    ```ts
+    export const appRoles = ['app_maintainer'] as const
+    ```
+
+    Create the role only where it does not exist yet, as an ordinary role, and keep it one in every later migration:
+    NOLOGIN, no other attribute, no privilege on a server parameter, no database or tablespace of its own, and no membership
+    but `app_user` and your other named roles (granting it TO `app_user` is fine):
+
+    ```sql
+    DO $$ BEGIN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_maintainer') THEN
+            CREATE ROLE app_maintainer NOLOGIN;
+        END IF;
+    END $$
+    ```
+
+    Leave `app_user` ordinary as well: never change its attributes, give it no parameter privilege, database or tablespace, and grant
+    it only your named roles.
+
+    Then make a migration that only warned when it lacked ADMIN on its role fail again: the owner pass now gives a later
+    owner that ADMIN, so a failure there is real.
+
+    **Now deletable.** A migration that catches `permission denied` on its own role and warns instead of failing, to get
+    past the contract suite's second owner pass.
+
+- 3c9d89a: ### Correction: keep the `.gitleaks.toml` entry for keel's `webhook.test.ts`
+
+    **Kind.** scaffold
+
+    **Action.** required
+
+    **What changed.** v0.2.0-rc.0's notes ("Since keel 24b0589: scaffold changes to apply by hand", under `.gitleaks.toml`)
+    said to remove the allowlist entry for `packages/keel/src/service-auth/webhook\.test\.ts` along with the directory.
+    That was wrong for a workspace that was forked from keel: CI's gitleaks scans the whole history, not the tree
+    (`gitleaks git` over a checkout with `fetch-depth: 0`), and the commits that hold that file still carry its
+    placeholder secret, so a scan without the entry reports it. Deleting the directory takes the file out of the tree,
+    not out of history. A workspace `pnpm create @sssb` generated has no keel history and no such entry.
+
+    **To adopt.** Keep the entry, scoped as it was (`condition = "AND"`, the path and the one string), and say in its
+    comment that it covers history only, so nobody removes it later because the file is gone. If you removed it, restore
+    it:
+
+    ```toml
+    # History only: packages/keel is gone from the tree, but its webhook.test.ts and the placeholder secret below are
+    # still in this repository's history, which gitleaks scans.
+    [[allowlists]]
+    description = "keel's webhook.test.ts WEBHOOK_SECRET fixture, in history only"
+    condition = "AND"
+    paths = ['''packages/keel/src/service-auth/webhook\.test\.ts''']
+    regexes = ['''env-secret-abcdef0123456789''']
+    regexTarget = "line"
+    ```
+
+    The rest of that item stands: give any entry of the app's own that pairs `paths` with `regexes` `condition = "AND"`.
+
+### Patch Changes
+
+- 3c9d89a: ### The real S3 storage adapter is published: `@sssb/kit/adapters/real/s3-storage`
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** The storage adapter SSSB's real-mode registry builds is now published as
+    `createS3Storage(options)` from `@sssb/kit/adapters/real/s3-storage`, so an app that needs storage outside SSSB's
+    registry (a simulated app run against a real bucket or an S3-compatible endpoint, say) uses the same adapter rather
+    than a copy. The options are `bucket` (required), and `region`, `endpoint`, `credentials` (values or a provider) and
+    `forcePathStyle`, each passed to the S3 client as the AWS SDK names it; or `client`, an `S3Client` you built, used as it
+    is. A `client` together with any of the four client options is refused, since they would be ignored. Left out, region
+    and credentials come from the AWS SDK's own lookup. The storage port (`@sssb/kit/ports/storage`) is unchanged.
+
+    **To adopt.** Where the app builds the storage port itself, import the factory from a module in its own
+    `src/adapters/real/` (elsewhere on the app's request path SSSB's real adapters are loaded only with `import()`):
+
+    ```ts
+    import { createS3Storage } from '@sssb/kit/adapters/real/s3-storage'
+
+    // adapters/real/ is where an app reads process.env
+    const storage = createS3Storage({
+        bucket: process.env.STORAGE_BUCKET as string,
+        region: 'us-east-1',
+        endpoint: 'http://127.0.0.1:9000', // an S3-compatible endpoint; leave out for AWS
+        forcePathStyle: true, // as most S3-compatible endpoints need
+    })
+    ```
+
+    `credentials` takes what the AWS SDK's `S3Client` takes, static keys or a provider such as `fromIni()` from
+    `@aws-sdk/credential-providers` (a dependency of the app's own).
+
+    **Now deletable.** A copy of SSSB's S3 storage adapter (a `StoragePort` built on `@aws-sdk/client-s3`, its presigned
+    download URLs forced to `attachment`) kept in the app's `adapters/real/` because the kit did not publish one.
+
 ## 0.2.0-rc.1
 
 No changes in this release.
