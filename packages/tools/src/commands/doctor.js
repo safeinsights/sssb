@@ -9,6 +9,9 @@
 // workspace's first app; the walk then also has to reach every app the workspace names, so starting from the first
 // finds what starting from any other would. It fails, naming every problem, on:
 //
+//   - FIRST, and alone: a layout pnpm installed with a `nodeLinker` other than `isolated` (`pnp`, `hoisted`), or a
+//     `.pnp.cjs` at the root or in doctor's own NODE_OPTIONS, which the checks below are not built for, and under which
+//     (Plug'n'Play) Vitest's listing never finishes;
 //   - a workspace walk that cannot read pnpm-workspace.yaml, or that does not reach the app doctor runs for (or, when it
 //     chose its own start, any app the workspace names);
 //   - two copies of a singleton: a peer of @sssb/kit found from the kit's directory and from an app's must be ONE
@@ -50,6 +53,7 @@ import {
     importerSeamProblems,
     kitPeers,
     missingTests,
+    nodeLinkerProblem,
     ownTests,
     packageDirFrom,
     parseWorkspaceYaml,
@@ -135,6 +139,13 @@ export async function run(args) {
         console.log(
             `sssb doctor: no --app, and the working directory (${root}) takes no @sssb/kit: starting from ${rel(appDir)}. One run checks every app of the workspace.`,
         )
+    }
+    // First: under another layout nothing below holds, and under Plug'n'Play (`.pnp.cjs` in NODE_OPTIONS) Vitest's
+    // listing never finishes until the limit stops it.
+    const layout = nodeLinkerProblem(root)
+    if (layout !== null) {
+        console.log(`sssb doctor: ${rel(appDir)}`)
+        return print([{ status: 'FAIL', title: `installed layout: ${layout}. Nothing else is checked until it is` }])
     }
     const kitDir = kitDirOf(appDir)
     const version = kitVersionOf(appDir)
@@ -493,10 +504,22 @@ function listOnce(run, options, cache) {
     const key = [run.cwd, run.config ?? '', options.filesOnly ? 'files' : 'tests', ...(options.projects ?? [])].join(
         '\0',
     )
-    const listed = cache.get(key) ?? vitestList(run, options)
+    // After one listing ran out of time, the rest are not waited on: each would likely hang the same way, and the
+    // limit is per listing, so one app's configs could each spend it.
+    const listed = cache.get(key) ?? cache.get(STOPPED) ?? vitestList(run, options)
     cache.set(key, listed)
+    if (!listed.ok && listed.timedOut && !cache.has(STOPPED)) {
+        cache.set(STOPPED, {
+            ok: false,
+            timedOut: true,
+            error: `not listed, since an earlier listing ran out of time (${listed.error})`,
+        })
+    }
     return listed
 }
+
+/** The cache key of the error every listing after one that ran out of time returns. */
+const STOPPED = '\0stopped'
 
 /**
  * WHICH RUNS HOLD AN APP TO WHICH CHECKS, found with `vitest list --filesOnly` alone (it loads each config and globs
