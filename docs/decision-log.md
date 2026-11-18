@@ -3200,15 +3200,15 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 JP asked what is worth borrowing from CanopyCMS's documentation setup. Two things, and not the rest.
 
 - **Taken: the net-line-delta rule.** Canopy measured that its doc-update steps only ever added: four root docs grew
-  by 2,154 lines in a month and none shrank. SSSB has the same shape (every `doc-steward` step appends), so the
+  by 2,154 lines in a month and none shrank. SSSB has the same shape (every `doc-steward` step is written to add), so the
   agent now reports the net line delta of each doctrine doc the diff touches, says why any grew, and proposes
   deleting what the diff supersedes in the same pass. The dated records are exempt from deletion: they are
   append-only, so for them it only notes growth. `CLAUDE.md` carries one sentence pointing at it.
 - **Taken: the task-to-doc table.** `docs/README.md` lists documents; it now also has a "Read this for X" table by
-  task, so an agent starting a job finds the doc to read first. Every path in it is gated like the rest of the
-  doctrine.
+  task, so an agent starting a job finds the doc to read first. Its backticked paths are gated
+  (`doc-paths.test.ts`); its links are not.
 - **Not taken: Canopy's four per-document maintainer agents.** `doc-steward` already walks SSSB's doc set in order,
   and it is one agent to keep current instead of four whose scopes can drift.
 - **Not taken: `CODEBASE_GUIDE.md` and its codebase-guide agents.** A file-by-file map of the code is a second copy to
-  keep true, and navigation is already planned: ADR-0014's P4 has `sssb guide` copy the framework's agent
-  instructions into an adopter's repo.
+  keep true. The agent instructions do have a planned home (ADR-0014's P4 `sssb guide`, content from P7, which
+  copies the app guide into an adopter's repo), but a file map like `CODEBASE_GUIDE.md` is deliberately not planned.

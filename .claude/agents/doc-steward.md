@@ -30,9 +30,10 @@ these against what actually changed, in this order:
 5. `docs/cutover-checklist.md` — any newly authored-but-unverified real-adapter code must
    appear in (or extend) a row.
 6. `CLAUDE.md` — only if the diff adds a rule agents must follow or retires one it states.
-7. **Line deltas** — the steps above only ever add, so close by measuring. For every DOCTRINE doc the
-   diff touches (anything `tests/docs/doc-set.ts` gates: `CLAUDE.md`, `docs/development-approach.md`,
-   `docs/cutover-checklist.md`, the recipes, runbooks, `docs/adopting.md`) run
+7. **Line deltas** — the steps above are written to add, so close by measuring. For every DOCTRINE doc the
+   diff touches (every doc `doctrineDocs()` in `tests/docs/doc-set.ts` returns: for example `CLAUDE.md`,
+   `README.md`, `docs/development-approach.md`, `docs/adopting.md`, `docs/cutover-checklist.md`, the recipes
+   and runbooks, and anything under `.claude/` outside the exempt paths) run
    `git diff --numstat <base>...HEAD -- <doc>` and report added, removed and net. If one grew, say by how
    much and why. If the diff supersedes text in a doctrine doc, propose deleting it in the same pass.
    The dated records (`docs/decision-log.md`, `docs/build-notes.md`, ADR bodies and anything appended to

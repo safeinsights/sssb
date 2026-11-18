@@ -34,7 +34,7 @@ By task. The list under Doctrine is by document.
 | Deciding whether the template should ship a thing | [app-coverage-gaps.md](app-coverage-gaps.md)                                                                                 |
 | Cutting over to real credentials                  | [cutover-checklist.md](cutover-checklist.md)                                                                                 |
 | Running or showing the demo                       | [runbooks/demo.md](runbooks/demo.md)                                                                                         |
-| Releasing                                         | [runbooks/release-app.md](runbooks/release-app.md) and `.changeset/README.md`                                                |
+| Releasing                                         | `.changeset/README.md`, and [runbooks/release-app.md](runbooks/release-app.md) (setting up the release App)                  |
 | Looking for what was decided without a plan       | [decision-log.md](decision-log.md)                                                                                           |
 | Debugging something that behaves strangely        | [build-notes.md](build-notes.md)                                                                                             |
 | Looking for designed-but-unbuilt work             | `.claude/future-tasks/index.md`                                                                                              |
