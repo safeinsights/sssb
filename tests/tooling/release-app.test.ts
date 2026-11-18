@@ -30,8 +30,10 @@ import {
     MAIN_HISTORY,
     TAGS_CREATE,
     TAGS_IMMUTABLE,
+    VOUCHED_ORG_BYPASSES,
     externalGates,
     planBypass,
+    vouchedFor,
     type Ruleset,
 } from '../../scripts/release-app/rulesets'
 
@@ -577,6 +579,43 @@ describe('release-app verify and bypass', () => {
         expect(h.text()).toContain('All checks passed')
     })
 
+    // The live organisation ruleset also lists canopycms-release-bot. It cannot reach this repository (JP vouched, in
+    // VOUCHED_ORG_BYPASSES), so it passes and is reported with its reason; an actor nobody vouched for still fails.
+    const withOrgActors = async (others: { actor_id: number; actor_type: string; bypass_mode: string }[]) => {
+        const gh = fakeGh({ secret: true, variable: CLIENT_ID })
+        const apply = harness({ gh, answers: ['apply'] })
+        await bypassCommand(apply.deps, { appId: APP_ID, apply: true })
+        const org = gh.state.rulesets.get(7484436)
+        if (org) org.bypass_actors = [{ actor_id: APP_ID, actor_type: 'Integration', bypass_mode: 'always' }, ...others]
+        const h = harness({ gh })
+        return { code: await verifyCommand(h.deps, { appId: APP_ID, privateKey: PEM }), text: h.text() }
+    }
+
+    it('verify passes beside an organisation bypass actor someone vouched for, and says who and why', async () => {
+        const { code, text } = await withOrgActors([
+            { actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' },
+        ])
+        expect(code, text).toBe(0)
+        expect(text).toContain(
+            '✓ organisation ruleset "require-pr" (7484436) also lets Integration 4038189 (always) bypass it, vouched for: ' +
+                'canopycms-release-bot, installed on safeinsights/canopycms only, so it cannot push to safeinsights/sssb ' +
+                '(JP, 2026-11-18)',
+        )
+        expect(text).not.toContain('✗')
+    })
+
+    it('verify still fails an organisation bypass actor nobody vouched for, beside one who is', async () => {
+        const { code, text } = await withOrgActors([
+            { actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' },
+            { actor_id: 4038190, actor_type: 'Integration', bypass_mode: 'always' },
+        ])
+        expect(code).toBe(1)
+        expect(text).toContain('vouched for: canopycms-release-bot')
+        expect(text).toContain(
+            '✗ organisation ruleset "require-pr" (7484436) also lets Integration 4038190 (always) bypass it; the release app must be the only one',
+        )
+    })
+
     it("verify fails on a client id that is not the App's", async () => {
         const h = harness({ gh: fakeGh({ secret: true, variable: 'Iv23other' }) })
         expect(await verifyCommand(h.deps, { appId: APP_ID, privateKey: PEM })).toBe(1)
@@ -703,17 +742,25 @@ describe('externalGates', () => {
 
     it('reports the org ruleset on main, whether it lists the App always, and who else bypasses it', () => {
         const rulesets = liveRulesets()
-        expect(externalGates(onMain(rulesets), rulesets, APP_ID)).toEqual({
+        const bot = { actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' }
+        // With no vouches, the other App is a bypass actor that fails the check.
+        expect(externalGates(onMain(rulesets), rulesets, APP_ID, [])).toEqual({
             org: [
                 {
                     id: 7484436,
                     name: 'require-pr',
                     types: ['deletion', 'non_fast_forward', 'pull_request'],
                     app: 'missing',
-                    others: [{ actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' }],
+                    others: [bot],
+                    vouched: [],
                 },
             ],
             problems: [],
+        })
+        // With the checked-in vouches, it is reported as vouched for, and is no longer one of the others.
+        expect(externalGates(onMain(rulesets), rulesets, APP_ID).org[0]).toMatchObject({
+            others: [],
+            vouched: [{ actor: bot, vouch: VOUCHED_ORG_BYPASSES[0] }],
         })
         rulesets[0].bypass_actors = [{ actor_id: APP_ID, actor_type: 'Integration', bypass_mode: 'pull_request' }]
         expect(externalGates(onMain(rulesets), rulesets, APP_ID).org[0]).toMatchObject({
@@ -781,6 +828,31 @@ describe('externalGates', () => {
         }
         const rulesets = [history, otherTags]
         expect(externalGates(onMain(rulesets), rulesets, APP_ID)).toEqual({ org: [], problems: [] })
+    })
+})
+
+describe('vouched organisation bypass actors', () => {
+    const bot = { actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' }
+
+    it('match one actor on one ruleset exactly: its type, its id and the ruleset', () => {
+        expect(vouchedFor(7484436, bot)).toBe(VOUCHED_ORG_BYPASSES[0])
+        expect(vouchedFor(7484436, { ...bot, bypass_mode: 'pull_request' })).toBe(VOUCHED_ORG_BYPASSES[0])
+        // Another ruleset, another actor type with the same id, a neighbouring id: none is vouched for.
+        expect(vouchedFor(7484437, bot)).toBeUndefined()
+        expect(vouchedFor(7484436, { ...bot, actor_type: 'Team' })).toBeUndefined()
+        expect(vouchedFor(7484436, { ...bot, actor_id: 4038188 })).toBeUndefined()
+        expect(vouchedFor(7484436, { ...bot, actor_id: null })).toBeUndefined()
+    })
+
+    it.each(VOUCHED_ORG_BYPASSES)('$name on ruleset $ruleset says who vouched, when, and why', (entry) => {
+        expect(Number.isInteger(entry.ruleset) && entry.ruleset > 0).toBe(true)
+        expect(Number.isInteger(entry.actorId) && entry.actorId > 0).toBe(true)
+        expect(['Integration', 'Team', 'RepositoryRole', 'OrganizationAdmin', 'DeployKey']).toContain(entry.actorType)
+        expect(entry.name.trim()).not.toBe('')
+        expect(entry.reason.trim()).not.toBe('')
+        expect(entry.vouchedBy.trim()).not.toBe('')
+        expect(entry.on).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+        expect(Number.isNaN(Date.parse(entry.on))).toBe(false)
     })
 })
 

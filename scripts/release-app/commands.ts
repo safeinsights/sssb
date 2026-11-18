@@ -549,7 +549,17 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
             )
         }
     }
-    // release.yml assumes nothing else can push to main or create a release tag past these rules.
+    // release.yml assumes nothing else can push to main or create a release tag past these rules. An actor a person has
+    // vouched cannot reach this repository (VOUCHED_ORG_BYPASSES in rulesets.ts) is reported, with who said so and why.
+    for (const gate of gates.org) {
+        for (const { actor, vouch } of gate.vouched) {
+            io.out(
+                `  ✓ organisation ruleset "${gate.name}" (${gate.id}) also lets ${actor.actor_type} ${actor.actor_id} ` +
+                    `(${actor.bypass_mode}) bypass it, vouched for: ${vouch.name}, ${vouch.reason} ` +
+                    `(${vouch.vouchedBy}, ${vouch.on})`,
+            )
+        }
+    }
     const crowded = gates.org.filter((gate) => gate.others.length > 0)
     for (const gate of crowded) {
         io.err(

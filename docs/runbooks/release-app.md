@@ -114,7 +114,14 @@ in rulesets the App does not bypass. The org's `require-pr` also forbids both, b
    `require-pr`, 7484436), add the App to the bypass list as **Always allow** (not "For pull requests only",
    which `verify` reports as not done) and change nothing else. `verify` also fails while any other actor is
    on that list: `release.yml` assumes the release app is the only one that can push to `main` without a
-   reviewed PR. Today `require-pr` also lists the App with id 4038189.
+   reviewed PR. The one exception is an actor a person has vouched cannot reach this repository, checked in
+   as an entry of `VOUCHED_ORG_BYPASSES` in `scripts/release-app/rulesets.ts`: the ruleset's id, the actor's
+   type and id, its name, a one-line reason, who vouched and the date. `verify` and `bypass` then report it as
+   a ✓ with that reason; an entry matches only that actor on that ruleset, so a typo fails rather than passes.
+   The API cannot check the claim (listing the organisation's App installations needs `admin:org`), so vouch
+   only for what you know, and remove the entry when it stops being true. Today `require-pr` also lists the
+   App with id 4038189, canopycms-release-bot, which is installed on `safeinsights/canopycms` only (JP
+   vouched, 2026-11-18).
 7. Check it all, changing nothing:
 
     ```bash
