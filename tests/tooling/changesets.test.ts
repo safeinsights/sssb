@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { changesetDir } from '../support/changeset-files'
 import { lintChangeset } from '../support/changeset-shape'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
@@ -39,21 +40,34 @@ const GOOD = `---
 describe('changeset shape', () => {
     it('every changeset in this tree is well formed', () => {
         const dir = path.join(ROOT, '.changeset')
-        const entries = readdirSync(dir)
-        // Changesets reads `.changeset/pre/` too, and nothing here uses it (scripts/release.mjs refuses a pre.json):
-        // a subdirectory would be consumed unlinted, so it is not allowed.
-        expect(entries.filter((e) => statSync(path.join(dir, e)).isDirectory())).toEqual([])
-        // Changesets' own rule for what is not a changeset: README in any case, the agent files by exact case,
-        // and dotfiles.
-        const files = entries.filter(
-            (f) =>
-                /^[^.].*\.md$/.test(f) &&
-                !/^readme\.md$/i.test(f) &&
-                !['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'].includes(f),
-        )
-        for (const file of files) {
+        // In pre mode `.changeset/pre/` holds the changesets a candidate consumed: Changesets' own record, moved byte for
+        // byte, not linted again (see tests/support/changeset-files.ts). Anything else that is a directory is a stray.
+        const { pending, problems } = changesetDir(dir)
+        expect(problems).toEqual([])
+        for (const file of pending) {
             expect(lintChangeset(readFileSync(path.join(dir, file), 'utf8')), file).toEqual([])
         }
+    })
+
+    it('reads a tree in pre mode: the consumed changesets in pre/ are not strays, and anything else there is', () => {
+        const dir = makeTestTmpDir('changeset-dir-')
+        mkdirSync(path.join(dir, 'pre'))
+        writeFileSync(path.join(dir, 'a.md'), GOOD)
+        writeFileSync(path.join(dir, 'README.md'), 'x')
+        writeFileSync(path.join(dir, 'pre.json'), '{"mode":"pre","tag":"rc"}')
+        writeFileSync(path.join(dir, 'pre', 'b.md'), GOOD)
+        expect(changesetDir(dir)).toEqual({ pending: ['a.md'], consumed: ['pre/b.md'], problems: [] })
+        // what does not belong: another directory, a non-markdown file or a subdirectory inside pre/
+        mkdirSync(path.join(dir, 'other'))
+        writeFileSync(path.join(dir, 'pre', 'notes.txt'), 'x')
+        mkdirSync(path.join(dir, 'pre', 'deeper'))
+        mkdirSync(path.join(dir, 'pre', 'folder.md'))
+        expect(changesetDir(dir).problems).toEqual([
+            expect.stringMatching(/\.changeset\/other\/ is a directory/),
+            expect.stringMatching(/\.changeset\/pre\/deeper is not a consumed changeset/),
+            expect.stringMatching(/\.changeset\/pre\/folder\.md is not a consumed changeset/),
+            expect.stringMatching(/\.changeset\/pre\/notes\.txt is not a consumed changeset/),
+        ])
     })
 
     it('accepts the template, an empty changeset, and a none-kind patch', () => {
@@ -403,6 +417,23 @@ describe('require-changeset gate', () => {
         expect(r.status, r.out).toBe(0)
         // the PR's own kit change alongside the merge still needs one
         expect(runGate({ files: KIT_SRC, mergedFromMain: fromMain }).status).toBe(1)
+    })
+
+    it("lets the release commit come back from main: its version bumps and the changesets it moved to pre/ are not the PR's", () => {
+        // `changeset version` in pre mode bumps every package's version, writes the changelogs, moves each consumed
+        // changeset to `.changeset/pre/`, and the release flow adds the notes: the commit on `main` that is then merged
+        // back into the integration branch.
+        const release = {
+            'packages/kit/package.json': JSON.stringify({ name: '@sssb/kit', version: '0.2.0-rc.0' }),
+            'packages/kit/CHANGELOG.md': '# @sssb/kit\n',
+            '.changeset/pre/a-change.md': GOOD,
+            'docs/releases/v0.2.0-rc.0.md': '# Release notes: v0.2.0-rc.0\n',
+        }
+        const r = runGate({ files: { 'docs/x.md': 'a' }, mergedFromMain: release, headRef: 'main' })
+        expect(r.status, r.out).toBe(0)
+        // a file moved into pre/ is Changesets' own record: it is never the changeset a shipped change must add
+        const added = runGate({ files: { ...KIT_SRC, '.changeset/pre/a-change.md': GOOD } })
+        expect(added.status, added.out).toBe(1)
     })
 
     it('does not exempt a hand-applied copy of a main change the PR never merged', () => {

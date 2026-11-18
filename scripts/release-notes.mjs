@@ -4,7 +4,7 @@
 // an adopter reads: "Seam changes", "Framework migrations", "Operator actions" and "Scaffold changes to apply by hand"
 // (the Kind of each entry), then "Other changes", each entry with its What changed, To adopt and Now deletable.
 //
-//   node scripts/release-notes.mjs [--version <v>] [--since <ref>] [--at <rev>] [--out <file>] [--check]
+//   node scripts/release-notes.mjs [--version <v>] [--since <ref>] [--at <rev>] [--consumed] [--out <file>] [--check]
 //
 //   (no flags)    every changeset in the working tree's `.changeset/`, to stdout
 //   --since <ref> only the changesets ADDED after <ref> (a tag or a commit) that are still there, and, as "Corrections
@@ -12,6 +12,9 @@
 //                 candidate. Read from git (`--at`, default HEAD), not the working tree
 //   --at <rev>    read `.changeset/` as of <rev> instead of the working tree. A release deletes the changesets it
 //                 consumes, so `--at <release commit>^` regenerates a release's notes after the fact
+//   --consumed    also read `.changeset/pre/`: in Changesets' pre mode (release candidates) `changeset version` moves each
+//                 changeset it consumes there, byte for byte, and only the ones still in `.changeset/` are pending. With
+//                 `--since` that is what a candidate cut since was made from; alone, everything the series carried
 //   --version <v> the heading's version
 //   --out <file>  write the notes there instead of stdout
 //   --check       judge the changesets and print nothing but the problems
@@ -330,14 +333,20 @@ function git(root, args) {
 }
 
 /**
- * Names under `.changeset/` as of a revision, optionally only those a diff from `since` adds (`A`) or edits (`M`) and
- * that are still there.
+ * Paths under `.changeset/` as of a revision (`x.md`, and with `consumed`, `pre/x.md`), optionally only those a diff from
+ * `since` adds (`A`) or edits (`M`) and that are still there. Compared by whole path, so `x.md` and `pre/x.md` are two.
  * @param {string} root
- * @param {{ since?: string, at: string, filter?: 'A' | 'M' }} where
+ * @param {{ since?: string, at: string, filter?: 'A' | 'M', consumed?: boolean }} where
  */
-function namesAt(root, { since, at, filter }) {
-    const listed = git(root, ['ls-tree', '-z', '--name-only', at, '.changeset/']).split('\0').filter(Boolean)
-    const names = listed.map((f) => path.posix.basename(f)).filter(isChangesetName)
+function namesAt(root, { since, at, filter, consumed = false }) {
+    /** @param {string} dir */
+    const listed = (dir) =>
+        git(root, ['ls-tree', '-z', '--name-only', at, `.changeset/${dir}`])
+            .split('\0')
+            .filter(Boolean)
+            .map((f) => path.posix.relative('.changeset', f))
+            .filter((rel) => isChangesetName(path.posix.basename(rel)))
+    const names = [...listed(''), ...(consumed ? listed('pre/') : [])]
     if (since === undefined || filter === undefined) return names
     const changed = new Set(
         git(root, [
@@ -353,31 +362,42 @@ function namesAt(root, { since, at, filter }) {
         ])
             .split('\0')
             .filter(Boolean)
-            .map((f) => path.posix.basename(f)),
+            .map((f) => path.posix.relative('.changeset', f)),
     )
     return names.filter((n) => changed.has(n))
 }
 
 /**
  * The changesets to read, as `{ file, text }`: the working tree's, or `at`'s, or those added after `since` that are
- * still there (`edited: true`: those edited since instead).
+ * still there (`edited: true`: those edited since instead). In Changesets' pre mode `changeset version` moves each
+ * changeset it consumes to `.changeset/pre/`, byte for byte, where it is no longer pending: those are read only with
+ * `consumed` (the notes of everything a series of candidates carried; or, with `since`, of what the candidates cut
+ * since were made from).
  * @param {string} root
- * @param {{ since?: string, at?: string, edited?: boolean }} [options]
+ * @param {{ since?: string, at?: string, edited?: boolean, consumed?: boolean }} [options]
  */
-export function readChangesets(root, { since, at, edited = false } = {}) {
+export function readChangesets(root, { since, at, edited = false, consumed = false } = {}) {
     for (const ref of [since, at]) {
         // a value starting with `-` would be read by git as an option
         if (ref !== undefined && ref.startsWith('-')) throw new Error(`not a revision: ${ref}`)
     }
     if (at === undefined && since === undefined) {
         const dir = path.join(root, '.changeset')
-        const names = existsSync(dir) ? readdirSync(dir).filter(isChangesetName) : []
-        return names
+        /** @param {string} sub */
+        const read = (sub) => {
+            const where = path.join(dir, sub)
+            return existsSync(where)
+                ? readdirSync(where, { withFileTypes: true })
+                      .filter((e) => e.isFile() && isChangesetName(e.name))
+                      .map((e) => path.posix.join(sub, e.name))
+                : []
+        }
+        return [...read(''), ...(consumed ? read('pre') : [])]
             .sort()
             .map((name) => ({ file: `.changeset/${name}`, text: readFileSync(path.join(dir, name), 'utf8') }))
     }
     const rev = at ?? 'HEAD'
-    return namesAt(root, { since, at: rev, filter: edited ? 'M' : 'A' })
+    return namesAt(root, { since, at: rev, filter: edited ? 'M' : 'A', consumed })
         .sort()
         .map((name) => ({ file: `.changeset/${name}`, text: git(root, ['show', `${rev}:.changeset/${name}`]) }))
 }
@@ -385,7 +405,7 @@ export function readChangesets(root, { since, at, edited = false } = {}) {
 /**
  * Every problem with the changesets under `root` (the working tree's, or `at`'s), one line each naming its file.
  * @param {string} root
- * @param {{ since?: string, at?: string, judgePackages?: boolean }} [options]
+ * @param {{ since?: string, at?: string, judgePackages?: boolean, consumed?: boolean }} [options]
  */
 export function lintChangesets(root, options) {
     const { judgePackages, ...where } = options ?? {}
@@ -397,14 +417,14 @@ export function lintChangesets(root, options) {
 /**
  * The release notes for the changesets under `root`. Throws `ChangesetProblems` if any is malformed.
  * @param {string} root
- * @param {{ since?: string, at?: string, version?: string, judgePackages?: boolean }} [options]
+ * @param {{ since?: string, at?: string, version?: string, judgePackages?: boolean, consumed?: boolean }} [options]
  */
-export function releaseNotes(root, { since, at, version, judgePackages } = {}) {
-    return assembleNotes(readChangesets(root, { since, at }), {
+export function releaseNotes(root, { since, at, version, judgePackages, consumed } = {}) {
+    return assembleNotes(readChangesets(root, { since, at, consumed }), {
         version,
         since,
         judgePackages,
-        corrections: since === undefined ? [] : readChangesets(root, { since, at, edited: true }),
+        corrections: since === undefined ? [] : readChangesets(root, { since, at, edited: true, consumed }),
     })
 }
 
@@ -415,6 +435,7 @@ function parseArgs(argv) {
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i]
         if (arg === '--check') opts.check = true
+        else if (arg === '--consumed') opts.consumed = true
         else if (['--version', '--since', '--at', '--out'].includes(arg)) {
             const value = argv[++i]
             if (value === undefined || value.startsWith('-')) throw new Error(`${arg} needs a value`)
@@ -432,6 +453,7 @@ export function main(argv, root = path.resolve(path.dirname(fileURLToPath(import
             since: /** @type {string | undefined} */ (opts.since),
             at: /** @type {string | undefined} */ (opts.at),
             version: /** @type {string | undefined} */ (opts.version),
+            consumed: opts.consumed === true,
         }
         if (opts.check) {
             const problems = lintChangesets(root, options)

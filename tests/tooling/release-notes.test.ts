@@ -308,7 +308,10 @@ function repo(initial: Record<string, string>) {
         mkdirSync(path.join(dir, '.changeset'), { recursive: true })
         for (const [name, text] of Object.entries(files)) {
             if (text === null) rmSync(path.join(dir, '.changeset', name))
-            else writeFileSync(path.join(dir, '.changeset', name), text)
+            else {
+                mkdirSync(path.dirname(path.join(dir, '.changeset', name)), { recursive: true })
+                writeFileSync(path.join(dir, '.changeset', name), text)
+            }
         }
     }
     const commit = (message: string) => {
@@ -637,5 +640,80 @@ describe('a fence closes only on a bare fence of its own character', () => {
         expect(lintChangeset(changeset({ kind: 'seam', action: 'required', adopt: `See:\n\n${block}` }))).toEqual([
             expect.stringMatching(/code fence is never closed/),
         ])
+    })
+})
+
+describe('pre mode: the changesets a candidate consumed are moved to .changeset/pre/, and are read only with --consumed', () => {
+    it('in the working tree: pending alone by default; with consumed, both, each by its path', () => {
+        const r = repo({ 'new.md': SEAM('New one'), 'pre/old.md': SEAM('Old one') })
+        expect(readChangesets(r.dir).map((c: { file: string }) => c.file)).toEqual(['.changeset/new.md'])
+        expect(readChangesets(r.dir, { consumed: true }).map((c: { file: string }) => c.file)).toEqual([
+            '.changeset/new.md',
+            '.changeset/pre/old.md',
+        ])
+        expect(releaseNotes(r.dir).markdown).not.toMatch(/Old one/)
+        const all = releaseNotes(r.dir, { consumed: true }).markdown
+        expect(all).toMatch(/### New one/)
+        expect(all).toMatch(/### Old one/)
+    })
+
+    it('does not read pre/ as a changeset directory of its own: only .md files directly in it, nothing deeper', () => {
+        const r = repo({ 'a.md': SEAM('A'), 'pre/b.md': SEAM('B'), 'pre/notes.txt': 'x', 'pre/deeper/c.md': SEAM('C') })
+        expect(readChangesets(r.dir, { consumed: true }).map((c: { file: string }) => c.file)).toEqual([
+            '.changeset/a.md',
+            '.changeset/pre/b.md',
+        ])
+        expect(readChangesets(r.dir, { at: 'HEAD', consumed: true }).map((c: { file: string }) => c.file)).toEqual([
+            '.changeset/a.md',
+            '.changeset/pre/b.md',
+        ])
+    })
+
+    it('judges what it reads: a consumed changeset with the wrong shape is refused only with --consumed', () => {
+        const r = repo({ 'a.md': SEAM('A'), 'pre/bad.md': '### no frontmatter' })
+        expect(lintChangesets(r.dir)).toEqual([])
+        expect(lintChangesets(r.dir, { consumed: true })).toEqual([
+            expect.stringMatching(/^\.changeset\/pre\/bad\.md: no frontmatter/),
+        ])
+        expect(main(['--check'], r.dir)).toBe(0)
+        expect(main(['--check', '--consumed'], r.dir)).toBe(1)
+    })
+
+    it('--since with --consumed lists what moved into pre/ since the ref, and `x.md` is not `pre/x.md`', () => {
+        const r = repo({ 'x.md': SEAM('X, first') })
+        r.git('tag', 'rc0')
+        // the candidate cut after rc0 consumed x.md (moved byte for byte) and a new x.md arrived afterwards
+        r.write({ 'x.md': null, 'pre/x.md': SEAM('X, first') })
+        r.commit('chore: release rc1')
+        r.git('tag', 'rc1')
+        r.write({ 'x.md': SEAM('X, second, a new changeset of the same name') })
+        r.commit('later')
+        const consumed = releaseNotes(r.dir, { since: 'rc0', at: 'rc1', consumed: true }).markdown
+        expect(consumed).toMatch(/### X, first/)
+        // at HEAD the pending x.md is new since rc0, and pre/x.md too: two entries, not one confused by the name
+        const both = releaseNotes(r.dir, { since: 'rc0', consumed: true }).markdown
+        expect(both).toMatch(/### X, first/)
+        expect(both).toMatch(/### X, second/)
+        // and without consumed, only the pending one
+        const pending = releaseNotes(r.dir, { since: 'rc0' }).markdown
+        expect(pending).toMatch(/### X, second/)
+        expect(pending).not.toMatch(/### X, first/)
+    })
+
+    it('--since with --consumed also lists a consumed changeset edited since the ref, as a correction', () => {
+        const r = repo({ 'pre/old.md': SEAM('Old one') })
+        r.git('tag', 'rc0')
+        r.write({ 'pre/old.md': SEAM('Old one, corrected') })
+        r.commit('edit')
+        const withConsumed = releaseNotes(r.dir, { since: 'rc0', consumed: true }).markdown
+        expect(withConsumed).toMatch(/## Corrections to earlier notes[\s\S]*### Old one, corrected/)
+        expect(releaseNotes(r.dir, { since: 'rc0' }).markdown).not.toMatch(/Corrections/)
+    })
+
+    it('--consumed on the command line, with --since and --at', () => {
+        const r = repo({ 'pre/old.md': SEAM('Old one') })
+        expect(main(['--check', '--consumed'], r.dir)).toBe(0)
+        expect(main(['--consumed', '--at', 'HEAD', '--out', path.join(r.dir, 'o.md')], r.dir)).toBe(0)
+        expect(readFileSync(path.join(r.dir, 'o.md'), 'utf8')).toMatch(/### Old one/)
     })
 })

@@ -4733,3 +4733,36 @@ because the generator wrote `sssb doctor --app apps/<slug>` into it.
   disk (packed and in-repo), from an app, with an explicit `--app`, with `sssb.apps` reordering the first app, from a
   root with no apps and outside a workspace; and pack-and-consume runs the bare form from the real generated
   workspace's root before it reads doctor's pin report. A changeset (`@sssb/tools`, `@sssb/create`, scaffold, optional).
+
+## `.changeset/pre/` and `pre.json` are Changesets' own state, and every tool that walks `.changeset/` says what it does with them (2026-11-18, `fix/changeset-pre-dir`)
+
+The first release candidate (`v0.2.0-rc.0`, commit 28a04c1) was cut by the release flow, and CI failed on it in
+`tests/tooling/changesets.test.ts` ("every changeset in this tree is well formed": `expected [ 'pre' ] to deeply equal
+[]`). In pre mode `changeset version` moves each changeset it consumes to `.changeset/pre/`, byte for byte, and keeps
+`.changeset/pre.json`; that test read `pre` as a stray subdirectory. The tag run's `candidate` job refused to publish
+because `checks` had failed on the commit, which is what it is for, and nothing was published. Reproduced first on the
+`.changeset/` directory of 28a04c1: that test failed, and `release.mjs check`, `release-notes.mjs --check` and the
+`changeset-required` gate (run over a merge of `main` into `integration`) all passed. `release.mjs` already knew about
+`pre/` (P7); only that test, and nothing that ran the tools together over such a tree, did not.
+
+What each tool does with the moved files, decided one by one (`.changeset/README.md`, "What reads `.changeset/pre/`"):
+
+- **The shape lint over the tree** reads `.changeset/*.md` only, and does not lint `pre/`: they were linted when they
+  were pending, and a rule tightened since must not turn a shipped candidate's record red. It does fail on anything in
+  `pre/` that is not a `.md` file and on any other subdirectory, so a stray is still caught. The enumeration is one
+  helper, `tests/support/changeset-files.ts`, which the whole-flow test uses too. Rejected: lint `pre/` as well (it
+  would pin every old rule forever), and skip every subdirectory (a stray directory would pass).
+- **`release.mjs` `check`, `prepare`, `verify-release`**: unchanged; they already treat `pre/` as consumed.
+- **`release-notes.mjs`**: pending only by default, so a candidate's notes hold what is new. A new `--consumed` also reads
+  `pre/`, by whole path (a pending `x.md` and a consumed `pre/x.md` are two), for the notes of the whole series (what
+  the final release will want at P14) and, with `--since <tag>`, to regenerate a candidate's notes after its release
+  commit moved the changesets. It lints what it reads, `pre/` files included, only on request.
+- **The `changeset-required` gate**: unchanged; it counts only `.changeset/<name>.md`, so what a release commit adds to
+  `pre/` never satisfies it, and a release commit merged back from `main` is not charged to the PR (a test pins both).
+- **Added: `tests/tooling/release-pre-mode.test.ts`**, which prepares a fixture workspace (the `plan` job), stages and
+  checks it (`verify-release`), commits and tags it as a candidate, then runs every tool over the committed tree and cuts
+  the next candidate from it, checking its notes carry only what is new and regenerate from the commit before it and from
+  the tag after it.
+- **No changeset in this PR**: nothing it changes is a gated path. The changeset on `integration` already (`@sssb/tools`,
+  `@sssb/create`: doctor from the root) is what lets the next merge to `main` cut `rc.1`; the simulated merge-back
+  above planned `0.2.0-rc.0 -> 0.2.0-rc.1` from it.
