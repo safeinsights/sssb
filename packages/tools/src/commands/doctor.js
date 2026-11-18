@@ -366,7 +366,13 @@ function tsconfigRoutes(appDir) {
         if (!key.startsWith(SEAM)) continue
         for (const target of targets) {
             const to = path.resolve(base, target)
-            routes.push({ find: key, to, resolved: [realish(key.includes('*') ? to.replace('*', PROBE) : to)] })
+            // The FIRST `*` in the target takes the matched text and any later one stays literal, exactly as
+            // TypeScript's resolver substitutes it (`replaceFirstStar`). TypeScript rejects a second `*` only when it
+            // builds a program (TS5062), so the parsed config doctor reads still carries such a target, and doctor must
+            // follow it where TypeScript would.
+            const star = to.indexOf('*')
+            const probed = key.includes('*') && star >= 0 ? `${to.slice(0, star)}${PROBE}${to.slice(star + 1)}` : to
+            routes.push({ find: key, to, resolved: [realish(probed)] })
         }
     }
     return routes

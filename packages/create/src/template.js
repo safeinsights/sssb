@@ -225,9 +225,13 @@ function workflowCommit(repoRoot) {
  */
 export function remotePath(url) {
     const match = /^[a-z][a-z0-9+.-]*:\/\/[^/]+\/(.+)$/i.exec(url) ?? /^(?:[^@/:]+@)?[^/:]+:(?!\/\/)(.+)$/.exec(url)
+    // Trailing slashes trimmed by a loop: `/\/+$/` backtracks quadratically on a long run of slashes followed by
+    // anything else, and the URL is the caller's.
+    let end = match?.[1]?.length ?? 0
+    while (end > 0 && match?.[1]?.[end - 1] === '/') end--
     return match?.[1]
         ? match[1]
-              .replace(/\/+$/, '')
+              .slice(0, end)
               .replace(/\.git$/i, '')
               .replace(/^\/+/, '')
               .toLowerCase()

@@ -314,11 +314,19 @@ export function workspacePackages(root) {
     const include = packages.filter((glob) => !glob.startsWith('!'))
     const exclude = packages.filter((glob) => glob.startsWith('!')).map((glob) => glob.slice(1))
     const found = new Set()
+    // Trailing slashes trimmed by a loop: `/\/+$/` backtracks quadratically on a long run of slashes followed by
+    // anything else.
+    /** @param {string} glob */
+    const trimSlashes = (glob) => {
+        let end = glob.length
+        while (end > 0 && glob[end - 1] === '/') end--
+        return glob.slice(0, end)
+    }
     for (const glob of include) {
-        for (const match of globSync(glob.replace(/\/+$/, ''), { cwd: root })) {
+        for (const match of globSync(trimSlashes(glob), { cwd: root })) {
             const rel = match.split(path.sep).join('/')
             if (rel.split('/').includes('node_modules')) continue
-            if (exclude.some((negated) => path.matchesGlob(rel, negated.replace(/\/+$/, '')))) continue
+            if (exclude.some((negated) => path.matchesGlob(rel, trimSlashes(negated)))) continue
             if (existsSync(path.join(root, match, 'package.json'))) found.add(path.join(root, match))
         }
     }
