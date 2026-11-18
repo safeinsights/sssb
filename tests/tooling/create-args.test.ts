@@ -58,12 +58,44 @@ describe('@sssb/create: arguments', () => {
         [['ws', '--slug'], /--slug needs a value/],
         [['ws', '--slug', 'a', '--slug', 'b'], /given twice/],
         [['ws', '--name', ' '], /--name is empty/],
+        // The display name: one line, the characters every file it lands in can carry, from a letter or a digit.
+        [['ws', '--name', 'Line\nBreak'], /control character/],
+        [['ws', '--name', 'Tab\there'], /control character/],
+        [['ws', '--name', 'Bidi\u202Eoverride'], /control character/],
+        [['ws', '--name', '*Emph* _und_ `code`'], /uses "\*" "_" "`"/],
+        [['ws', '--name', 'A & B <script>x</script>'], /uses "<" ">"/],
+        [['ws', '--name', '${injection}'], /uses "\$" "\{" "\}"/],
+        [['ws', '--name', 'Back\\slash'], /uses "\\"/],
+        [['ws', '--name', '[link](http://evil)'], /uses "\[" "\]"/],
+        [['ws', '--name', '# Heading'], /uses "#"/],
+        [['ws', '--name', '-leading'], /must start with a letter or a digit/],
+        [['ws', '--name', `''"x"`], /must start with a letter or a digit/],
+        [['ws', '--name', "Rock''n roll"], /two apostrophes in a row/],
+        [['ws', '--name', 'x'.repeat(61)], /too long: at most 60 columns/],
+        [['ws', '--name', '研究'.repeat(16)], /too long/],
         [['ws', '--frobnicate'], /unknown option/],
         [['ws', 'Acme Research'], /--name "Acme Research"/],
         [[], /name the directory/],
     ])('refuses %j', (argv, message) => {
         expect(() => parseArgs(argv)).toThrow(CreateError)
         expect(() => parseArgs(argv)).toThrow(message)
+    })
+
+    it('makes a display name one line of single spaces', () => {
+        expect(parseArgs(['ws', '--name', '  Acme   Research\u00A0Hub  ']).name).toBe('Acme Research Hub')
+        expect(parseArgs(['ws', '--name', 'Ünïcødé 研究 🚀']).name).toBe('Ünïcødé 研究 🚀')
+        expect(parseArgs(['ws', '--name', `O'Brien "Labs" R&D: 1/2 (beta)!`]).name).toBe(
+            `O'Brien "Labs" R&D: 1/2 (beta)!`,
+        )
+    })
+
+    // `npm create @sssb <dir> -- --slug x`: npm hands the `--` through.
+    it('ignores a bare --', () => {
+        expect(parseArgs(['ws', '--', '--slug', 'console', '--yes'])).toMatchObject({
+            dir: 'ws',
+            slug: 'console',
+            yes: true,
+        })
     })
 
     it('asks for nothing else with --help', () => {

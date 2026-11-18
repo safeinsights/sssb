@@ -4,6 +4,19 @@
 // identity into the adopter's. Each function returns a file's text, laid out as the workspace's own Prettier would.
 import { PLACEHOLDER_OWNER, PLACEHOLDER_REPO } from './args.js'
 import { formatJson, packageJson } from './json.js'
+import { yamlString } from './yaml.js'
+
+/**
+ * `pnpm verify`: everything CI runs that can run on a laptop, so a local green is a CI green. SSSB's reusable
+ * workflow's jobs (lint, typecheck and the coverage run, each app's fences, doctor and e2e-import check; the contract
+ * tests; the e2e suites; the static demo; the synth) and the workspace's own (knip, jscpd). Only the secret scan
+ * (gitleaks, a binary CI downloads) is CI's alone. The contract tests run on their own, after the parallel group:
+ * embedded Postgres starting under a loaded machine is the one step here that times out.
+ */
+const VERIFY =
+    "concurrently --kill-others-on-fail --group 'pnpm:typecheck' 'pnpm:lint' 'pnpm:test:coverage' 'pnpm:knip' " +
+    "'pnpm:jscpd' 'pnpm:check:fences' 'pnpm:sssb:doctor' 'pnpm:check:e2e' 'pnpm:synth' && pnpm test:contract && " +
+    'pnpm test:e2e && pnpm build:demo-static && pnpm check:demo-size && pnpm e2e:demo-static'
 
 /**
  * @typedef {{
@@ -55,15 +68,14 @@ export function rootPackageJson(c) {
             jscpd: 'jscpd',
             // One run checks every app of the workspace; it starts from an app, because the root takes no @sssb/kit.
             'sssb:doctor': `sssb doctor --app ${app(c)}`,
+            // Each app's lint fences as its own config composes them (SSSB's reusable workflow runs this per app).
+            'check:fences': `pnpm ${apps} --fail-if-no-match exec sssb check-fences`,
             'check:e2e': `pnpm ${apps} check:e2e`,
             'build:demo-static': `pnpm ${apps} build:demo-static`,
             'check:demo-size': `pnpm ${apps} check:demo-size`,
             'e2e:demo-static': `pnpm ${apps} e2e:demo-static`,
             synth: "pnpm --filter './apps/*/infra' --fail-if-no-match synth",
-            verify:
-                "concurrently --kill-others-on-fail --group 'pnpm:typecheck' 'pnpm:lint' 'pnpm:test:unit' 'pnpm:knip' " +
-                "'pnpm:sssb:doctor' 'pnpm:check:e2e' && pnpm test:e2e && pnpm build:demo-static && pnpm check:demo-size " +
-                '&& pnpm e2e:demo-static',
+            verify: VERIFY,
         },
         devDependencies: Object.fromEntries(
             Object.entries({ ...c.meta.ranges, '@sssb/tools': c.sssbSpec('tools') }).sort(([a], [b]) =>
@@ -82,9 +94,13 @@ export function pnpmWorkspace(c) {
         '    - apps/*/infra',
         '    - packages/*',
         '',
-        "# pnpm blocks dependencies' install scripts unless they are approved here. These are the approvals SSSB's own",
-        '# workspace grants for the dependencies its packages and the app bring.',
-        c.meta.allowBuilds.trimEnd(),
+        "# pnpm blocks dependencies' install scripts unless they are approved here: these are the ones the app and SSSB's",
+        '# packages bring. Every platform embedded-postgres ships is approved, not only the one you work on: the block is',
+        '# silent, and on a platform left out `pnpm test:contract` fails with an error that never mentions it.',
+        'allowBuilds:',
+        ...Object.entries(c.meta.allowBuilds).map(
+            ([pkg, allowed]) => `    ${/^[a-z0-9][a-z0-9._-]*$/.test(pkg) ? pkg : yamlString(pkg)}: ${allowed}`,
+        ),
         '',
         '# Each importer of @sssb/kit gets an instance of its own, linked to its own @sssb/app-config, or none (ADR-0014',
         "# part 5). Without it a package that takes the framework and links no seam silently shares an app's; after",
@@ -108,7 +124,7 @@ export function pnpmWorkspace(c) {
             '# another (@sssb/cdk on @sssb/tools), which would otherwise be looked for in the registry. Remove this block',
             '# when you move to published versions.',
             'overrides:',
-            ...Object.entries(c.tarballs).map(([pkg, file]) => `    '@sssb/${pkg}': 'file:${file}'`),
+            ...Object.entries(c.tarballs).map(([pkg, file]) => `    '@sssb/${pkg}': ${yamlString(`file:${file}`)}`),
         )
     }
     return `${lines.join('\n')}\n`
@@ -345,9 +361,9 @@ paragraph.
 
 ## Built on SSSB
 
-${c.name} is built on SSSB's packages (\`@sssb/*\`). If the root cause is a shape SSSB gave this app (tenant isolation,
-authorization, the fail-closed production guard), please report it to SSSB as well, through the security policy of
-the repository its packages name in their \`package.json\`: every app built on SSSB has the same shape.
+This app, ${c.name}, is built on SSSB's packages (\`@sssb/*\`). If the root cause is a shape SSSB gave it (tenant
+isolation, authorization, the fail-closed production guard), please report it to SSSB as well, through the security
+policy of the repository its packages name in their \`package.json\`: every app built on SSSB has the same shape.
 `
 }
 
@@ -527,11 +543,12 @@ git init
 pnpm install
 pnpm exec playwright install chromium   # once, for the e2e suites
 pnpm dev                                # the app, seeded, offline, no credentials
-pnpm verify                             # typecheck, lint, unit, knip, doctor, e2e and the static demo
+pnpm verify                             # what CI runs, but the secret scan
 \`\`\`
 
-\`pnpm test:contract\` runs the same tenancy proofs on real Postgres (an embedded server locally), and \`pnpm synth\`
-synthesizes the app's deployment offline.
+\`pnpm verify\` runs what this workspace's CI runs, so a green here is a green there: typecheck, lint, the unit tests
+with coverage, knip, jscpd, the lint fences, doctor, the contract tests on real Postgres (an embedded server locally),
+the e2e suites, the static demo and the offline CDK synth. Only the secret scan (gitleaks) is CI's alone.
 
 ## Layout
 
@@ -540,6 +557,9 @@ synthesizes the app's deployment offline.
   \`config/params.ts\` its deployment parameters.
 - \`${app(c)}/infra/\`: the app's deployment, a CDK app composing SSSB's \`SssbApp\` construct (\`@sssb/cdk\`).
 - \`docs/cutover-checklist.md\`: what the app defers until it has real accounts.
+- \`.claude/sssb-guide.md\`: SSSB's app guide (the rules an app on SSSB follows), a stamped copy of the one
+  \`@sssb/kit\` ships. Import it from your \`CLAUDE.md\` with \`@.claude/sssb-guide.md\`. After an upgrade,
+  \`pnpm exec sssb guide\` refreshes it; \`pnpm exec sssb doctor\` fails until you do, so the change reaches your diff.
 - The root: the workspace's config on SSSB's presets (\`@sssb/tools\`, \`@sssb/eslint-plugin\`).
 
 ## CI, and the settings only you can make

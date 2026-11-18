@@ -85,6 +85,74 @@ function titleCase(slug) {
         .join(' ')
 }
 
+/** The widest a display name may be, in columns (a wide character counts two): its longest line stays in 120. */
+const NAME_COLUMNS = 60
+
+/**
+ * The columns a string takes on a line, as Prettier counts them: a wide character (CJK, an emoji) takes two, a
+ * combining mark or a joiner none.
+ * @param {string} text
+ */
+export function columns(text) {
+    let width = 0
+    for (const char of text) {
+        if (/^(?:\p{M}|\u200D|\uFE0F)$/u.test(char)) continue
+        const wide =
+            /\p{Extended_Pictographic}/u.test(char) ||
+            /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{20000}-\u{3FFFD}]/u.test(
+                char,
+            )
+        width += wide ? 2 : 1
+    }
+    return width
+}
+
+/**
+ * The characters a display name may hold. It lands in TypeScript and JSON strings, an HTML `<title>`, markdown (a
+ * heading, the middle of a sentence) and the app's message catalogs, which next-intl reads as ICU messages; each of the
+ * characters left out means something in one of them (`* _ \` [ ] # < > |` in markdown or HTML, `{ } #` and `<tag>`
+ * in ICU, `\` and `$` in strings).
+ */
+const NAME_CHARACTERS = /[^\p{L}\p{M}\p{N}\p{Extended_Pictographic} '’".,&()!?:/+-]/gu
+
+/** The joiners an emoji sequence is built with (a zero-width joiner, an emoji presentation selector). */
+const JOINERS = /\u200D|\uFE0F/gu
+
+/**
+ * The display name, as every file it lands in can carry it, Prettier-stable: control characters (a newline, a tab, a
+ * bidirectional override) refused, whitespace trimmed and each run of it made one space, only the characters
+ * NAME_CHARACTERS allows, from a letter or a digit (a leading `-`, `1.` or `#` would make a markdown line a list or a
+ * heading), no `''` (an ICU message reads it as one apostrophe), at most NAME_COLUMNS wide.
+ * @param {string} raw
+ * @returns {string}
+ */
+export function displayName(raw) {
+    if (/[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069]/u.test(raw))
+        throw new CreateError(
+            `--name ${JSON.stringify(raw)} holds a control character (a newline, a tab): one line of text`,
+        )
+    const name = raw.trim().replace(/\s+/gu, ' ')
+    if (name === '') throw new CreateError('--name is empty')
+    const refused = [...new Set(name.replace(JOINERS, '').match(NAME_CHARACTERS) ?? [])]
+    if (refused.length > 0) {
+        throw new CreateError(
+            `--name "${name}" uses ${refused.map((char) => `"${char}"`).join(' ')}: a display name is letters, digits, ` +
+                `spaces and . , ' ’ " & ( ) ! ? : / + -, because the others mean something in the markdown, HTML and ` +
+                'message catalogs it lands in',
+        )
+    }
+    if (!/^[\p{L}\p{N}]/u.test(name))
+        throw new CreateError(`--name "${name}" must start with a letter or a digit (it starts lines of markdown)`)
+    if (name.includes("''"))
+        throw new CreateError(`--name "${name}" has two apostrophes in a row, which the app's messages read as one`)
+    if (columns(name) > NAME_COLUMNS) {
+        throw new CreateError(
+            `--name "${name}" is too long: at most ${NAME_COLUMNS} columns, a wide character counting two`,
+        )
+    }
+    return name
+}
+
 /**
  * The GitHub repository, `owner/name`, in the characters GitHub allows.
  * @param {string} repo
@@ -150,6 +218,8 @@ export function parseArgs(argv) {
     const seen = new Set()
     for (let index = 0; index < argv.length; index += 1) {
         const arg = /** @type {string} */ (argv[index])
+        // `npm create @sssb <dir> -- --slug x` hands the `--` through; nothing here is a positional after it.
+        if (arg === '--') continue
         const [flag, inline] = arg.startsWith('--') && arg.includes('=') ? arg.split(/=(.*)/s, 2) : [arg, undefined]
         const setter = flag === undefined ? undefined : takesValue[flag]
         if (setter && flag) {
@@ -176,12 +246,11 @@ export function parseArgs(argv) {
     if (options.repo !== null) checkRepo(options.repo)
     if (options.workflowRef !== null && !/^[0-9a-f]{40}$/.test(options.workflowRef))
         throw new CreateError(`--workflow-ref "${options.workflowRef}" is not a full commit SHA (40 hex characters)`)
-    if (options.name !== null && options.name.trim() === '') throw new CreateError('--name is empty')
     return {
         ...options,
         dir: options.dir,
         slug,
-        name: options.name ?? titleCase(slug),
+        name: displayName(options.name ?? titleCase(slug)),
         owners: [...new Set(options.owners.map(normalOwner))],
     }
 }

@@ -1,10 +1,21 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+    chmodSync,
+    cpSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    symlinkSync,
+    writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
+import ts from 'typescript'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { parse as parseYaml } from 'yaml'
 import { CreateError } from '../../packages/create/src/args.js'
 import { generate } from '../../packages/create/src/generate.js'
-import { buildTemplate, EXCLUDED, filesUnder, fromStored, ROOT_FILES } from '../../packages/create/src/template.js'
+import { buildTemplate, filesUnder, fromStored, ROOT_FILES } from '../../packages/create/src/template.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
@@ -22,6 +33,13 @@ const SEAM_SPECIFIERS: string[] = JSON.parse(
 
 const read = (root: string, file: string) => readFileSync(path.join(root, file), 'utf8')
 const readJson = (root: string, file: string) => JSON.parse(read(root, file))
+
+/** What `prettier --check .` says in a generated workspace, under its own config: '' when it is clean. */
+function prettierCheck(root: string) {
+    const prettier = path.join(REPO, 'node_modules/.bin/prettier')
+    const result = spawnSync(prettier, ['--check', '--log-level', 'warn', '.'], { cwd: root, encoding: 'utf8' })
+    return `${result.stdout}${result.stderr}${result.status === 0 ? '' : `exit ${result.status}`}`
+}
 
 let template = ''
 let ws = ''
@@ -44,69 +62,21 @@ beforeAll(() => {
 })
 
 describe('@sssb/create: the template', () => {
-    it("holds the starter's files, the generic workspace files and a stamp of the workflow commit", () => {
-        const starter = filesUnder(path.join(REPO, 'apps/starter'), (name) => EXCLUDED.has(name))
+    // What it leaves out, and what it refuses, is tests/tooling/create-template.test.ts', on stand-in repositories.
+    it("holds the starter's tracked files, the generic workspace files and a stamp of the workflow commit", () => {
         const app = filesUnder(path.join(template, 'app')).map(fromStored)
-        // The starter's tracked files are all there (a local, untracked file may be too, which is the next test's).
         const tracked = execFileSync('git', ['ls-files', 'apps/starter'], { cwd: REPO, encoding: 'utf8' })
             .split('\n')
             .filter(Boolean)
             .map((file) => path.relative('apps/starter', file))
-            .filter((file) => existsSync(path.join(REPO, 'apps/starter', file)))
-        expect(app).toEqual(expect.arrayContaining(tracked))
-        expect(app).toEqual(starter.filter((file) => !file.endsWith('.tsbuildinfo') && !file.startsWith('.env')))
+        expect(app).toEqual(tracked.sort())
         expect(filesUnder(path.join(template, 'root')).map(fromStored).sort()).toEqual([...ROOT_FILES].sort())
         const meta = readJson(template, 'meta.json')
         expect(meta.workflow).toEqual({ repository: 'safeinsights/sssb', ref: HEAD })
         expect(meta.version).toBe(readJson(REPO, 'packages/create/package.json').version)
         expect(meta.seamSpecifiers).toEqual(SEAM_SPECIFIERS)
-    })
-
-    it('leaves out dependencies, build and test output, local state and secrets', () => {
-        // A stand-in repository: the files the template reads, and a starter with every kind of local junk in it.
-        const repo = makeTestTmpDir('create-junk-')
-        for (const file of [
-            'package.json',
-            'pnpm-workspace.yaml',
-            '.github/workflows/app-checks.yml',
-            '.github/workflows/checks.yml',
-            'packages/create/package.json',
-            'packages/kit/src/testing/seam-specifiers.json',
-            'packages/kit/src/cutover/rows.json',
-            ...ROOT_FILES,
-        ]) {
-            mkdirSync(path.dirname(path.join(repo, file)), { recursive: true })
-            cpSync(path.join(REPO, file), path.join(repo, file))
-        }
-        cpSync(path.join(REPO, 'apps/starter'), path.join(repo, 'apps/starter'), {
-            recursive: true,
-            filter: (source) => !source.includes(`${path.sep}node_modules`),
-        })
-        const junk = [
-            'node_modules/pkg/index.js',
-            '.next/server/page.js',
-            '.data/pglite/PG_VERSION',
-            'dist-demo/index.html',
-            'test-results/run/trace.zip',
-            'playwright-report/index.html',
-            'coverage/lcov.info',
-            'infra/cdk.out/manifest.json',
-            'src/.data/nested',
-            'next-env.d.ts',
-            'tsconfig.tsbuildinfo',
-            '.env.local',
-            '.DS_Store',
-        ]
-        for (const file of junk) {
-            mkdirSync(path.dirname(path.join(repo, 'apps/starter', file)), { recursive: true })
-            writeFileSync(path.join(repo, 'apps/starter', file), 'junk')
-        }
-        const out = path.join(makeTestTmpDir('create-junk-out-'), 'template')
-        const meta = buildTemplate({ repoRoot: repo, outDir: out, workflowRef: 'f'.repeat(40) })
-        const copied = filesUnder(path.join(out, 'app')).map(fromStored)
-        for (const file of junk) expect(copied).not.toContain(file)
-        expect(copied).toContain('src/sssb.conformance.test.ts')
-        expect(meta.workflow.ref).toBe('f'.repeat(40))
+        expect(meta.dependencyNames).toEqual(expect.arrayContaining(['ws', 'react', 'next', 'kysely']))
+        expect(meta.dependencyNames.some((name: string) => name.startsWith('@'))).toBe(false)
     })
 })
 
@@ -116,6 +86,7 @@ describe('@sssb/create: the generated workspace', () => {
         const root = all.filter((file) => !file.startsWith('apps/'))
         expect(root.sort()).toEqual(
             [
+                '.claude/sssb-guide.md',
                 '.editorconfig',
                 '.github/ISSUE_TEMPLATE/bug_report.yml',
                 '.github/ISSUE_TEMPLATE/config.yml',
@@ -315,6 +286,15 @@ describe('@sssb/create: the generated workspace', () => {
             generate({ templateDir: template, target: again, slug: 'a', name: 'A', sssb })
         expect(run(partial)).toThrow(/expected one sssb-tools-<version>\.tgz/)
         expect(run('latest')).toThrow(/neither a directory of tarballs nor a version/)
+        // Tarballs of two releases: the @sssb packages are one fixed group.
+        const mixed = makeTestTmpDir('create-mixed-')
+        for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk'])
+            writeFileSync(path.join(mixed, `sssb-${pkg}-${pkg === 'tools' ? '0.9.1' : '0.9.0'}.tgz`), '')
+        expect(run(mixed)).toThrow(CreateError)
+        expect(run(mixed)).toThrow(
+            /different versions \(@sssb\/kit, @sssb\/eslint-plugin, @sssb\/cdk 0\.9\.0; @sssb\/tools 0\.9\.1\)/,
+        )
+        expect(existsSync(again)).toBe(false)
         generate({ templateDir: template, target: again, slug: 'a', name: 'A', sssb: '0.3.0-rc.1' })
         expect(readJson(again, 'apps/a/package.json').dependencies['@sssb/kit']).toBe('0.3.0-rc.1')
     })
@@ -336,10 +316,176 @@ describe('@sssb/create: the generated workspace', () => {
 
     // Its first `pnpm lint` runs `prettier --check .`, under the workspace's own .prettierrc.json and .editorconfig.
     it("is formatted as the workspace's own Prettier would format it", () => {
-        const prettier = path.join(REPO, 'node_modules/.bin/prettier')
-        const result = spawnSync(prettier, ['--check', '--log-level', 'warn', '.'], { cwd: ws, encoding: 'utf8' })
-        expect(result.stdout + result.stderr).toBe('')
-        expect(result.status).toBe(0)
+        expect(prettierCheck(ws)).toBe('')
+    })
+
+    /**
+     * A LOCAL GREEN IS A CI GREEN: `pnpm verify` runs every script SSSB's reusable workflow's jobs run (read from
+     * `sssb ci`'s source: the root scripts its jobs look up, the checks it runs in each app) and every script the
+     * workspace's own workflow job runs. Only the secret scan is CI's alone.
+     */
+    it("verifies what CI runs: every job of SSSB's reusable workflow, and the workspace's own", () => {
+        const scripts: Record<string, string> = readJson(ws, 'package.json').scripts
+        const ran = new Set([...scripts['verify']!.matchAll(/'pnpm:([^']+)'|pnpm ([\w:-]+)/g)].map((m) => m[1] ?? m[2]))
+        for (const name of ran) expect(scripts, `verify runs ${name}`).toHaveProperty([name!])
+
+        const ci = read(REPO, 'packages/tools/src/commands/ci.js')
+        const rootScripts = [...ci.matchAll(/rootScript\(root, job, \[([^\]]+)\]\)/g)].map((m) =>
+            [...m[1]!.matchAll(/'([^']+)'/g)].map((n) => n[1]!).find((name) => name in scripts),
+        )
+        expect(rootScripts).toEqual(['lint', 'typecheck', 'test:coverage', 'test:contract'])
+        const inApps = [...ci.matchAll(/checks\.push\(\['([\w-]+)'/g)].map((m) => m[1])
+        expect(inApps).toEqual(['check-fences', 'doctor', 'check-e2e'])
+        const demoSteps = /for \(const step of (\[[^\]]+\])\)/.exec(ci)?.[1]
+        expect(demoSteps).toBe("['build:demo-static', 'check:demo-size', 'e2e:demo-static']")
+        const workspaceJob = [
+            ...read(ws, '.github/workflows/checks.yml').matchAll(/^ +- run: pnpm (?!install)(\S+)$/gm),
+        ]
+        expect(workspaceJob.map((m) => m[1])).toEqual(['knip', 'jscpd'])
+        for (const name of [
+            ...rootScripts,
+            'check:fences', // check-fences, in each app
+            'sssb:doctor',
+            'check:e2e',
+            'test:e2e', // the e2e job
+            'build:demo-static', // the demo-static job
+            'check:demo-size',
+            'e2e:demo-static',
+            'synth', // the synth job
+            ...workspaceJob.map((m) => m[1]),
+        ])
+            expect([...ran], `verify runs ${name}`).toContain(name)
+        expect(scripts['check:fences']).toBe("pnpm --filter './apps/*' --fail-if-no-match exec sssb check-fences")
+    })
+
+    it("typechecks each app's infra/, as the starter's own typecheck does in SSSB's repository", () => {
+        for (const app of [path.join(REPO, 'apps/starter'), path.join(ws, 'apps/acme')])
+            expect(readJson(app, 'package.json').scripts.typecheck).toMatch(/ && tsc --noEmit -p infra$/)
+        expect(readJson(ws, 'package.json').scripts.typecheck).toMatch(/^pnpm --filter '\.\/apps\/\*' typecheck /)
+        expect(read(ws, 'apps/acme/infra/tsconfig.json')).toBe(read(REPO, 'apps/starter/infra/tsconfig.json'))
+        const program = execFileSync(
+            path.join(REPO, 'node_modules/.bin/tsc'),
+            ['-p', 'apps/starter/infra', '--listFilesOnly'],
+            { cwd: REPO, encoding: 'utf8' },
+        ).split('\n')
+        for (const file of ['infra/app.ts', 'infra/lib/tags.ts', 'config/params.ts'])
+            expect(program).toContain(path.join(REPO, 'apps/starter', file))
+        // Not the app's own program: `next build` typechecks that one, and the CDK's declarations have no place there.
+        expect(program.filter((file) => file.startsWith(path.join(REPO, 'apps/starter/src/')))).toEqual([])
+    })
+
+    it('writes YAML that reads back as what it holds, quoted as Prettier quotes it', () => {
+        const tarballs = path.join(makeTestTmpDir('create-yaml-'), `it's "odd" #1: here`)
+        mkdirSync(tarballs)
+        for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk'])
+            writeFileSync(path.join(tarballs, `sssb-${pkg}-0.9.0.tgz`), '')
+        const out = path.join(makeTestTmpDir('create-yaml-out-'), 'ws')
+        generate({ templateDir: template, target: out, slug: 'acme', name: 'Acme', sssb: tarballs })
+        const workspace = parseYaml(read(out, 'pnpm-workspace.yaml'))
+        for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk'])
+            expect(workspace.overrides[`@sssb/${pkg}`]).toBe(`file:${path.join(tarballs, `sssb-${pkg}-0.9.0.tgz`)}`)
+        expect(workspace.allowBuilds).toEqual(parseYaml(read(REPO, 'pnpm-workspace.yaml')).allowBuilds)
+        expect(prettierCheck(out)).toBe('')
+        for (const file of filesUnder(out).filter((f) => /\.ya?ml$/.test(f)))
+            expect(() => parseYaml(read(out, file))).not.toThrow()
+        // The approvals' comments were SSSB's, about SSSB's repository; the generated block speaks for itself.
+        expect(read(ws, 'pnpm-workspace.yaml')).not.toMatch(/this repo|adopter/)
+    })
+
+    it('carries a display name into every file it lands in, Prettier-stable and parseable', () => {
+        for (const name of [
+            'O\'Brien "Labs"',
+            'Ünïcødé 研究 🚀',
+            '1. Numbered',
+            'R&D: Portal (Beta)!',
+            'W'.repeat(60),
+        ]) {
+            const out = path.join(makeTestTmpDir('create-name-'), 'ws')
+            generate({ templateDir: template, target: out, slug: 'acme', name })
+            expect(prettierCheck(out), name).toBe('')
+            const layout = path.join(out, 'apps/acme/src/app/[locale]/layout.tsx')
+            const source = ts.createSourceFile(
+                layout,
+                read(out, 'apps/acme/src/app/[locale]/layout.tsx'),
+                ts.ScriptTarget.Latest,
+                true,
+                ts.ScriptKind.TSX,
+            )
+            expect((source as unknown as { parseDiagnostics: unknown[] }).parseDiagnostics, name).toEqual([])
+            expect(readJson(out, 'apps/acme/messages/es.json').welcome.appName).toBe(name)
+            expect(read(out, 'README.md')).toMatch(new RegExp(`^# ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\n`))
+        }
+        // generate holds the same line as the command line does.
+        const run = (name: string) => () =>
+            generate({
+                templateDir: template,
+                target: path.join(makeTestTmpDir('create-name-'), 'ws'),
+                slug: 'a',
+                name,
+            })
+        expect(run('Line\nBreak')).toThrow(CreateError)
+        expect(run('*Emph*')).toThrow(/uses "\*"/)
+    })
+
+    it('refuses a slug that would name a package like a dependency the workspace installs', () => {
+        const run = (slug: string) => () =>
+            generate({
+                templateDir: template,
+                target: path.join(makeTestTmpDir('create-slug-'), 'ws'),
+                slug,
+                name: 'A',
+            })
+        expect(run('ws')).toThrow(CreateError)
+        expect(run('ws')).toThrow(/the slug "ws" would name a package "ws", which is also a dependency/)
+        expect(run('react')).toThrow(/would name a package "react"/)
+    })
+
+    // `sssb doctor` fails a workspace without the app guide's stamped copy, so it is written as `sssb guide` writes it.
+    it("carries the app guide's copy, byte for byte what `sssb guide` writes", () => {
+        const out = path.join(makeTestTmpDir('create-guide-'), 'sssb-guide.md')
+        const sssb = spawnSync(
+            process.execPath,
+            [path.join(REPO, 'packages/tools/bin/sssb.js'), 'guide', '--app', 'apps/starter', '--out', out],
+            { cwd: REPO, encoding: 'utf8' },
+        )
+        expect(sssb.status, sssb.stderr).toBe(0)
+        expect(read(ws, '.claude/sssb-guide.md')).toBe(readFileSync(out, 'utf8'))
+    })
+
+    it('claims no licence for the workspace’s packages', () => {
+        for (const file of filesUnder(ws).filter((f) => path.basename(f) === 'package.json'))
+            expect(readJson(ws, file), file).not.toHaveProperty('license')
+    })
+
+    it('leaves nothing behind when it fails part-way, and turns filesystem surprises into a message', () => {
+        // A template whose identity moved: generation fails after the app is copied.
+        const broken = path.join(makeTestTmpDir('create-broken-'), 'template')
+        cpSync(template, broken, { recursive: true })
+        writeFileSync(path.join(broken, 'app/config/app.ts'), 'export {}\n')
+        const parent = makeTestTmpDir('create-partway-')
+        const into = (templateDir: string, target: string) => () =>
+            generate({ templateDir, target: path.join(parent, target), slug: 'acme', name: 'Acme' })
+        expect(into(broken, 'ws')).toThrow(/declares no APP_SLUG/)
+        expect(readdirSync(parent)).toEqual([])
+        expect(into(broken, 'made/for/it/ws')).toThrow(/declares no APP_SLUG/)
+        expect(readdirSync(parent)).toEqual([])
+        mkdirSync(path.join(parent, 'empty'))
+        expect(into(broken, 'empty')).toThrow(/declares no APP_SLUG/)
+        expect(readdirSync(parent)).toEqual(['empty'])
+        expect(readdirSync(path.join(parent, 'empty'))).toEqual([])
+
+        symlinkSync(path.join(parent, 'nowhere'), path.join(parent, 'dangling'))
+        expect(into(template, 'dangling')).toThrow(CreateError)
+        expect(into(template, 'dangling')).toThrow(/is a symbolic link/)
+
+        const locked = path.join(parent, 'locked')
+        mkdirSync(locked, { mode: 0o555 })
+        try {
+            expect(into(template, 'locked/ws')).toThrow(CreateError)
+            expect(into(template, 'locked/ws')).toThrow(/could not write the workspace: EACCES/)
+        } finally {
+            chmodSync(locked, 0o755)
+        }
     })
 })
 
@@ -347,11 +493,22 @@ describe('@sssb/create: the command', () => {
     const cli = (args: string[]) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' })
 
     it('generates from a checkout of SSSB, building the template on the way', () => {
-        const target = path.join(makeTestTmpDir('create-cli-'), 'research-hub')
-        const result = cli([target, '--repo', 'acme/hub', '--yes'])
-        expect(result.stderr).toBe('')
+        const target = path.join(makeTestTmpDir('create-cli-'), 'research hub')
+        const result = cli([target, '--slug', 'research-hub', '--repo', 'acme/hub', '--yes'])
+        // Only warnings (an unpushed pin, a file the template leaves out), never an error.
+        expect(
+            result.stderr
+                .split('\n')
+                .filter(
+                    (line) =>
+                        line.startsWith('@sssb/create:') &&
+                        !/^@sssb\/create: (WARNING: |left out of the template)/.test(line),
+                ),
+        ).toEqual([])
+        expect(result.stderr).not.toMatch(/\n\s+at /)
         expect(result.status).toBe(0)
         expect(result.stdout).toContain('Created Research Hub in')
+        expect(result.stdout).toContain(`  cd '${target}'\n`)
         expect(result.stdout).toContain('`sssb / all-checks`')
         expect(result.stdout).toContain('Still to fill in: the code owner in CODEOWNERS (--owner)')
         expect(readJson(target, 'apps/research-hub/package.json').name).toBe('research-hub')

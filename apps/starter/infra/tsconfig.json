@@ -1,0 +1,13 @@
+{
+    // The deployment's own TypeScript program: the app's options (the `extends`, so a compiler option the app sets
+    // holds here too), over infra/ only. Not part of the app's program, which `next build` typechecks: the CDK's
+    // declarations have no place in the app's build. The app's `typecheck` script runs this one after its own.
+    "extends": "../tsconfig.json",
+    "compilerOptions": {
+        "incremental": false,
+        // A CDK app runs in Node (cdk.json runs it with tsx).
+        "types": ["node"]
+    },
+    "include": ["**/*.ts"],
+    "exclude": ["node_modules", "cdk.out"]
+}

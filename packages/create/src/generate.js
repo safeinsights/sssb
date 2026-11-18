@@ -3,12 +3,25 @@
 // empty. The app is the template's (SSSB's starter) under apps/<slug>/, renamed where its identity lives; the
 // workspace around it is written by files.js. Nothing in the output names SSSB's repository, its other app, its
 // framework package's path or its maintainers, which tests/tooling/create-generate.test.ts greps for.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
+import {
+    cpSync,
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    rmdirSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
-import { CreateError } from './args.js'
+import { columns, CreateError, displayName } from './args.js'
 import * as files from './files.js'
 import { formatJson, packageJson } from './json.js'
-import { filesUnder, fromStored, readTemplate } from './template.js'
+import { filesUnder, fromStored, GUIDE_FILE, readTemplate } from './template.js'
 
 /** The @sssb packages the workspace installs (the seam, @sssb/app-config, is the app's own and never installed). */
 const SSSB_PACKAGES = ['kit', 'tools', 'eslint-plugin', 'cdk']
@@ -44,6 +57,8 @@ function resolveSssb(sssb, version) {
         const names = readdirSync(dir)
         /** @type {Record<string, string>} */
         const tarballs = {}
+        /** @type {Map<string, string[]>} */
+        const versions = new Map()
         for (const pkg of SSSB_PACKAGES) {
             const found = names.filter((name) => new RegExp(`^sssb-${pkg}-\\d[^/]*\\.tgz$`).test(name))
             if (found.length !== 1) {
@@ -51,7 +66,19 @@ function resolveSssb(sssb, version) {
                     `--sssb ${sssb}: expected one sssb-${pkg}-<version>.tgz there, found ${found.join(', ') || 'none'}`,
                 )
             }
-            tarballs[pkg] = path.join(dir, /** @type {string} */ (found[0]))
+            const file = /** @type {string} */ (found[0])
+            tarballs[pkg] = path.join(dir, file)
+            const version = file.slice(`sssb-${pkg}-`.length, -'.tgz'.length)
+            versions.set(version, [...(versions.get(version) ?? []), `@sssb/${pkg}`])
+        }
+        // The @sssb packages are one fixed group, released together at one version (ADR-0014 part 7): tarballs of two
+        // versions are two releases mixed, which no published install could ever be.
+        if (versions.size > 1) {
+            throw new CreateError(
+                `--sssb ${sssb}: the tarballs are of different versions (${[...versions]
+                    .map(([version, pkgs]) => `${pkgs.join(', ')} ${version}`)
+                    .join('; ')}); the @sssb packages are released together at one version`,
+            )
         }
         return { spec: (pkg) => `file:${tarballs[pkg]}`, tarballs }
     }
@@ -142,7 +169,39 @@ function seamExports(seamDir, specifiers) {
  */
 
 /**
- * Writes a new workspace. Refuses a target that exists and is not an empty directory.
+ * A filesystem failure (no permission, no space, a name that cannot be made) as a CreateError, for the person at the
+ * terminal; anything else, a bug, as it is.
+ * @param {unknown} error
+ */
+function asCreateError(error) {
+    if (error instanceof CreateError) return error
+    const err = /** @type {NodeJS.ErrnoException} */ (error)
+    if (typeof err?.code === 'string' && typeof err.syscall === 'string')
+        return new CreateError(`could not write the workspace: ${err.message}`)
+    return error
+}
+
+/**
+ * The slug names the app's packages; refused when one of those names is a package the workspace installs, which pnpm
+ * would then mistake for the app (an app named `ws` was handed the `ws` package's optional peers).
+ * @param {string} slug
+ * @param {import('./template.js').TemplateMeta} meta
+ */
+function checkPackageNames(slug, meta) {
+    const names = new Set(meta.dependencyNames)
+    for (const pkg of [slug, `${slug}-infra`, `${slug}-workspace`]) {
+        if (names.has(pkg)) {
+            throw new CreateError(
+                `the slug "${slug}" would name a package "${pkg}", which is also a dependency the workspace installs ` +
+                    `(npm's ${pkg}): pnpm mistakes one for the other. Pass another --slug`,
+            )
+        }
+    }
+}
+
+/**
+ * Writes a new workspace. Refuses a target that exists and is not an empty directory, or is a symlink. The workspace
+ * is written into a sibling directory and renamed into place at the end, so a failure part-way leaves nothing behind.
  * @param {GenerateOptions} options
  * @returns {{ root: string, appDir: string, files: string[], workflowRef: string, tarballs: Record<string, string> | null }}
  */
@@ -158,14 +217,46 @@ export function generate({
 }) {
     const meta = readTemplate(templateDir)
     const root = path.resolve(target)
-    if (existsSync(root) && (!statSync(root).isDirectory() || readdirSync(root).length > 0))
-        throw new CreateError(`${root} already exists and is not an empty directory: name a new one`)
     const ref = workflowRef ?? meta.workflow.ref
     if (!/^[0-9a-f]{40}$/.test(ref)) throw new CreateError(`the workflow ref "${ref}" is not a full commit SHA`)
+    checkPackageNames(slug, meta)
     const { spec, tarballs } = resolveSssb(sssb, meta.version)
-
     /** @type {import('./files.js').Context} */
-    const c = { slug, name, repo, owners, meta, sssbSpec: spec, tarballs, workflowRef: ref }
+    const c = { slug, name: displayName(name), repo, owners, meta, sssbSpec: spec, tarballs, workflowRef: ref }
+
+    /** @type {string | undefined} */
+    let createdParent
+    /** @type {string | undefined} */
+    let stage
+    try {
+        const existing = lstatSync(root, { throwIfNoEntry: false })
+        if (existing?.isSymbolicLink())
+            throw new CreateError(`${root} is a symbolic link: name a new directory, or an empty one`)
+        if (existing && (!existing.isDirectory() || readdirSync(root).length > 0))
+            throw new CreateError(`${root} already exists and is not an empty directory: name a new one`)
+        createdParent = mkdirSync(path.dirname(root), { recursive: true })
+        stage = path.join(path.dirname(root), `.${path.basename(root)}.sssb-create-${randomBytes(4).toString('hex')}`)
+        mkdirSync(stage)
+        const files = writeWorkspace(stage, c, templateDir)
+        if (existing) rmdirSync(root)
+        renameSync(stage, root)
+        return { root, appDir: path.join(root, 'apps', slug), files, workflowRef: ref, tarballs }
+    } catch (error) {
+        if (stage) rmSync(stage, { recursive: true, force: true })
+        if (createdParent) rmSync(createdParent, { recursive: true, force: true })
+        throw asCreateError(error)
+    }
+}
+
+/**
+ * The workspace's files, written under `root`.
+ * @param {string} root
+ * @param {import('./files.js').Context} c
+ * @param {string} templateDir
+ * @returns {string[]} the files written, relative to `root`
+ */
+function writeWorkspace(root, c, templateDir) {
+    const { slug, name, meta, sssbSpec: spec } = c
     const appDir = path.join(root, 'apps', slug)
     const inApp = (/** @type {string} */ relative) => path.join(appDir, relative)
 
@@ -201,11 +292,20 @@ export function generate({
     }
     replaceOnce(inApp('src/app/[locale]/layout.tsx'), `title: ${tsString(oldName)}`, `title: ${tsString(name)}`)
     replaceOnce(inApp('src/demo-static/index.html'), `<title>${oldName} `, `<title>${htmlText(name)} `)
+    // Prettier wraps an HTML line past the print width, so the title line must fit (displayName caps the name; `&`
+    // grows as it is escaped).
+    const titleLine = readFileSync(inApp('src/demo-static/index.html'), 'utf8')
+        .split('\n')
+        .find((line) => line.includes('<title>'))
+    if (titleLine && columns(titleLine) > 120)
+        throw new CreateError(`--name "${name}" is too long for the static demo's <title> line: shorten it`)
 
     // The app's manifest: its name, the @sssb packages it installs, the seam linked as a package of the app's own
-    // (ADR-0014 part 1), and the lint fences' plugin and ESLint beside it.
+    // (ADR-0014 part 1), and the lint fences' plugin and ESLint beside it. No `license`: the packages are private, and
+    // which licence the workspace takes (a LICENSE at its root) is the adopter's to choose, not the starter's to claim.
     const manifest = readJson(inApp('package.json'))
     manifest.name = slug
+    delete manifest.license
     manifest.description = `${name}: the app.`
     pinSssb(manifest, spec)
     manifest.dependencies = sorted({ ...manifest.dependencies, [SEAM]: 'link:./src/app-config' })
@@ -220,6 +320,7 @@ export function generate({
 
     const infra = readJson(inApp('infra/package.json'))
     infra.name = `${slug}-infra`
+    delete infra.license
     pinSssb(infra, spec)
     writeFileSync(inApp('infra/package.json'), packageJson(infra))
 
@@ -272,6 +373,13 @@ export function generate({
         '.github/ISSUE_TEMPLATE/config.yml': files.issueConfig(c),
         '.github/ISSUE_TEMPLATE/bug_report.yml': files.BUG_REPORT,
     }
+    // The app guide's stamped copy, as `sssb guide` writes it (@sssb/tools' guide.js; the generator depends on no SSSB
+    // package): `sssb doctor` fails a workspace without it, and fails it again once an upgrade's guide differs.
+    const guide = readFileSync(path.join(templateDir, GUIDE_FILE))
+    written['.claude/sssb-guide.md'] =
+        `<!-- sssb-guide sha256:${createHash('sha256').update(guide).digest('hex')} (copied from @sssb/kit ` +
+        `${meta.version} by \`sssb guide\`: edit nothing here; rerun it after an upgrade and review the diff) -->\n\n` +
+        guide.toString('utf8')
     for (const [relative, text] of Object.entries(written)) {
         const file = path.join(root, relative)
         mkdirSync(path.dirname(file), { recursive: true })
@@ -284,5 +392,5 @@ export function generate({
         if (readFileSync(path.join(root, file), 'utf8').includes('"workspace:'))
             throw new CreateError(`${file} still depends on a package by workspace: protocol`)
     }
-    return { root, appDir, files: all, workflowRef: ref, tarballs }
+    return all
 }
