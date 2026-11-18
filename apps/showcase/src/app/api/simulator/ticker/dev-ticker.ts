@@ -29,7 +29,7 @@ export const DEFAULT_INTERVAL_SECONDS = 30
 
 type Ticker = ReturnType<typeof createTicker>
 
-export interface DevTickerStatus {
+interface DevTickerStatus {
     running: boolean
     seconds: number | null
     ticks: number
@@ -42,7 +42,7 @@ export interface DevTickerStatus {
     defaultSeconds: number
 }
 
-export type StartResult =
+type StartResult =
     | { ok: true; status: DevTickerStatus }
     | { ok: false; error: 'invalid-interval' | 'running-elsewhere'; status: DevTickerStatus }
 
