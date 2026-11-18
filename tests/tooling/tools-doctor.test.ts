@@ -1391,7 +1391,7 @@ describe('pinReport: the workflow and plugin pins against the kit’s release st
 })
 
 /**
- * The short form, `sssb doctor` with no `--app`, is what READMEs, the guide and the generated files tell people to
+ * The short form, `sssb doctor` with no `--app`, is what the generated files and READMEs tell people to
  * type (`pnpm exec sssb doctor`), and people type it at the workspace root. A generated workspace's root takes no
  * @sssb/kit, so it used to fail there ("does not resolve @sssb/kit"). One run checks every app, so it now starts from
  * the workspace's first app.
@@ -1523,6 +1523,25 @@ describe.concurrent('sssb doctor with no --app, from the root of a workspace who
             const { code, out } = await doctorIn(ws)
             expect(code).toBe(1)
             expect(out).toMatch(/starting from apps\/a\.[\s\S]*apps\/a does not resolve @sssb\/kit/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'fails when the walk drops an app the workspace names, as `--app <that app>` would, instead of passing from the first',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-root-dropped-', 'packed')
+            // pnpm-workspace.yaml no longer lists apps/b: the walk reaches a, not b, though apps/b exists and names a seam
+            write(
+                path.join(ws, 'pnpm-workspace.yaml'),
+                'packages:\n    - apps/a\n    - apps/a/src/app-config\n    - packages/*\n',
+            )
+            const fromRoot = await doctorIn(ws)
+            const withApp = await doctor(ws, 'apps/b')
+            expect(withApp.code, withApp.out).toBe(1)
+            expect(fromRoot.code, fromRoot.out).toBe(1)
+            expect(fromRoot.out).toMatch(/FAIL +workspace walk: it does not reach every app the workspace names/)
+            expect(fromRoot.out).toMatch(/apps\/b is named by the workspace/)
         },
         E2E_TIMEOUT,
     )

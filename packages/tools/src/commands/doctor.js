@@ -4,11 +4,13 @@
 // WORKSPACE: it walks pnpm-workspace.yaml for every importer of @sssb/kit and every APP (in-repo, the apps the
 // workspace's commands fan out over, `sssb.apps` or apps/*; otherwise every importer with a seam of its own,
 // `src/app-config`), and gives each app the per-app checks, the one it runs for (`--app`, or the working directory)
-// among them. WHERE IT STARTS does not change what it finds: `--app <dir>`, or the working directory when it resolves
-// @sssb/kit (an app, or an in-repo root), or, at the root of a workspace whose root takes no @sssb/kit (a generated
-// workspace's), the workspace's first app. It fails, naming every problem, on:
+// among them. WHERE IT STARTS: `--app <dir>`, or the working directory when it resolves @sssb/kit (an app, or an
+// in-repo root), or, at the root of a workspace whose root takes no @sssb/kit (a generated workspace's), the
+// workspace's first app; the walk then also has to reach every app the workspace names, so starting from the first
+// finds what starting from any other would. It fails, naming every problem, on:
 //
-//   - a workspace walk that cannot read pnpm-workspace.yaml, or that does not reach the app doctor runs for;
+//   - a workspace walk that cannot read pnpm-workspace.yaml, or that does not reach the app doctor runs for (or, when it
+//     chose its own start, any app the workspace names);
 //   - two copies of a singleton: a peer of @sssb/kit found from the kit's directory and from an app's must be ONE
 //     real directory (the `readlink -f` check build-notes tells a dependency PR to run by hand);
 //   - an importer of @sssb/kit, anywhere in the workspace, without its own seam: it must declare its
@@ -98,13 +100,14 @@ const RUNNERS = /** @type {const} */ (['unit', 'contract'])
  * no framework) starts from the workspace's first app.
  * @param {string[]} args
  * @param {string} [cwd]
- * @returns {{ dir: string, defaulted: boolean }}
+ * @returns {{ dir: string, defaulted: boolean, named: string[] }} `named`: when doctor chose the app, every app the
+ *   workspace names (absolute), which the walk must all reach: the person did not name one to hold it to
  */
 export function doctorApp(args, cwd = process.cwd()) {
-    if (args.includes('--app')) return { dir: takeAppDir(args, cwd), defaulted: false }
+    if (args.includes('--app')) return { dir: takeAppDir(args, cwd), defaulted: false, named: [] }
     const here = path.resolve(cwd)
     if (existsSync(path.join(here, 'package.json')) && packageDirFrom(here, '@sssb/kit') !== null) {
-        return { dir: here, defaulted: false }
+        return { dir: here, defaulted: false, named: [] }
     }
     if (existsSync(path.join(here, 'pnpm-workspace.yaml')) && existsSync(path.join(here, 'package.json'))) {
         const apps = workspaceApps(here)
@@ -114,10 +117,10 @@ export function doctorApp(args, cwd = process.cwd()) {
                     'package.json, or apps/<name>): pass --app <dir>',
             )
         }
-        return { dir: path.resolve(here, apps[0]), defaulted: true }
+        return { dir: path.resolve(here, apps[0]), defaulted: true, named: apps.map((a) => path.resolve(here, a)) }
     }
     // Neither: the usual refusal, which says to run from an app or pass --app.
-    return { dir: takeAppDir(args, cwd), defaulted: false }
+    return { dir: takeAppDir(args, cwd), defaulted: false, named: [] }
 }
 
 /** @param {string[]} args */
@@ -168,7 +171,12 @@ export async function run(args) {
 
     /** @type {Result[]} */
     const results = [
-        walk(root, appDir, workspace),
+        walk(
+            root,
+            appDir,
+            workspace,
+            chosen.named.map((dir) => realpathSync(dir)),
+        ),
         ...targets.map((target) => singletons(root, target)),
         inRepo ? await inRepoAliases(root, workspace, plans) : importers(root, workspace),
         ...targets.map((target) => versions(root, target)),
@@ -227,9 +235,11 @@ const nestedIn = (packages, app) =>
  * @param {string} root
  * @param {string} appDir
  * @param {Workspace} workspace
+ * @param {string[]} [named] the apps the workspace names, when doctor chose its own start: each must be reached too,
+ *   or the bare form would pass a workspace whose walk drops an app that `--app <it>` would fail
  * @returns {Result}
  */
-function walk(root, appDir, workspace) {
+function walk(root, appDir, workspace, named = []) {
     const rel = relativeTo(root)
     const importerDirs = workspace.importers.map(({ dir }) => dir)
     const importers = importerDirs.map(rel).join(', ') || 'none'
@@ -246,11 +256,30 @@ function walk(root, appDir, workspace) {
             `${rel(appDir)} has a seam (src/app-config) but is not among the apps the walk found (${apps})` +
                 (workspace.inRepo ? ": in-repo, the apps are the root package.json's sssb.apps, or apps/*" : ''),
         )
+    /** @type {string[]} */
+    const unreached = []
+    for (const dir of named) {
+        if (dir === appDir) continue
+        if (!importerDirs.includes(dir) || !workspace.apps.includes(dir)) {
+            unreached.push(
+                `${rel(dir)} is named by the workspace (\`sssb.apps\`, or apps/*) but the walk does not reach it as an app that ` +
+                    `takes @sssb/kit (importers: ${importers}; apps: ${apps}): check pnpm-workspace.yaml's packages globs, and that ` +
+                    `${rel(dir)}'s package.json declares @sssb/kit`,
+            )
+        }
+    }
+    if (problems.length === 0 && unreached.length > 0) {
+        return {
+            status: 'FAIL',
+            title: 'workspace walk: it does not reach every app the workspace names, so the checks below do not cover them',
+            lines: unreached,
+        }
+    }
     return problems.length > 0
         ? {
               status: 'FAIL',
               title: `workspace walk: it does not reach ${rel(appDir)}, the app doctor runs for, so the checks below do not cover it`,
-              lines: problems,
+              lines: [...problems, ...unreached],
           }
         : {
               status: 'ok',
