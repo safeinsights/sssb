@@ -5,7 +5,7 @@
 ## Resolution
 
 Built differently from the design below. Review found that design, which is also the kit's, removes too early
-(`.claude/future-tasks/kit-tmp-dir-cleanup-order.md`):
+(`.claude/future-tasks/resolved/kit-tmp-dir-cleanup-order.md`):
 
 - **A hook registered at a later file's first call, from a `describe` body, belongs to that `describe`.** It removed
   everything queued, so a directory the rest of the file still used was gone when that `describe` finished.

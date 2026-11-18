@@ -3,6 +3,7 @@ import { afterAll, beforeAll, expect } from 'vitest'
 import { startContractServer, type ContractServer } from '../adapters/real/contract-postgres'
 import { checkOptOut, registerChecks, runsAny } from './conformance/register'
 import type { CheckImpl } from './conformance/types'
+import { registerTestTmpDirCleanup } from './tmp-dir'
 
 /**
  * `@sssb/kit/testing/contract`: THE CONTRACT RUNNER (ADR-0014 part 3, step P5). The migrations and the
@@ -147,6 +148,9 @@ const IMPLEMENTATIONS: Readonly<Record<string, CheckImpl<ContractContext>>> = {
 
 /** Registers the contract suite in the calling test file. Call it once, at the file's top level. */
 export function contractSuite(options: ContractOptions = {}): void {
+    // First, before the server's own afterAll: the server's data directory is a scratch directory, removed only after
+    // the server has stopped, and this file's own, even under `isolate: false` (./tmp-dir.ts).
+    registerTestTmpDirCleanup()
     const optOut = options.optOut ?? {}
     checkOptOut('contractSuite', 'contract', optOut)
     if (options.database !== undefined && !/^[a-z][a-z0-9_]{0,62}$/.test(options.database)) {

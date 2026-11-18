@@ -250,20 +250,153 @@ it('finds no fake database left open by an earlier file', () => {
         CHILD_TIMEOUT,
     )
 
-    it(
-        "without isolation: every file's scratch directories are removed, not only the first file's",
-        async () => {
-            const made = (name: string, padding: number) =>
-                counted(
-                    `import { it } from 'vitest'\nimport { makeTestTmpDir } from ${kit('testing/tmp-dir.ts')}\n` +
-                        `makeTestTmpDir('probe-${name}-')\nit('${name}', () => {})\n`,
-                    padding,
-                )
+    /**
+     * The scratch-directory helper's cleanup, file by file. Each child test checks that its own directory still exists
+     * when it runs, and a file's own afterAll writes into its directory, so a cleanup that runs too early fails the run;
+     * a.test.ts, b.test.ts and c.test.ts run in that order (asserted), and what a case pins is in c, the last file,
+     * which nothing comes after.
+     */
+    const HELPER = kit('testing/tmp-dir.ts')
+    const NO_HOOK = /has no cleanup hook of its own/
+    const withDir = (prefix: string) =>
+        `import { existsSync, writeFileSync } from 'node:fs'\nimport path from 'node:path'\n` +
+        `import { afterAll, beforeAll, describe, expect, it } from 'vitest'\n` +
+        `import { makeTestTmpDir, removeTestTmpDir } from ${HELPER}\n` +
+        `let dir = ''\nbeforeAll(() => { dir = makeTestTmpDir('${prefix}') })\n` +
+        `afterAll(() => writeFileSync(path.join(dir, 'flushed'), 'closed before the directory went'))\n` +
+        `it('${prefix} exists', () => expect(existsSync(dir)).toBe(true))\n`
+    const CONTRACT_OPTED_OUT = `
+import { contractSuite } from ${kit('testing/contract.ts')}
+import registry from ${kit('testing/checks.json')}
+contractSuite({
+    optOut: Object.fromEntries(
+        registry.checks.filter((check) => check.runner === 'contract').map((check) => [check.id, 'not under test here']),
+    ),
+})
+`
+    async function runInOrder(probe: Project): Promise<{ left: string[]; output: string }> {
+        const { status, output } = await run(probe, ['--reporter=verbose', '--sequence.shuffle=false'])
+        expect(status, output).toBe(0)
+        const at = (name: string) => output.search(new RegExp(`[✓↓] ${name}\\.test\\.ts`))
+        expect(at('a'), output).toBeGreaterThan(-1)
+        expect(at('b'), output).toBeGreaterThan(at('a'))
+        expect(at('c'), output).toBeGreaterThan(at('b'))
+        return { left: anyLeftovers(probe), output }
+    }
+
+    it.each([
+        ['conformanceSuite', ONLY_DEMO_PRESETS],
+        ['contractSuite', CONTRACT_OPTED_OUT],
+    ])(
+        "without isolation: %s gives a later file its own cleanup, at its top level and after the file's own afterAll",
+        async (_, suite) => {
             const probe = project(
-                { 'x.test.ts': made('x', 3000), 'y.test.ts': made('y', 2000), 'z.test.ts': made('z', 1000) },
+                {
+                    'a.test.ts': counted(`${suite}\n${withDir('probe-a-')}`, 6000),
+                    'b.test.ts': counted(`${suite}\n${withDir('probe-b-')}`, 4000),
+                    'c.test.ts': `${suite}\n${withDir('probe-c-')}`,
+                },
                 NO_ISOLATION,
             )
-            const { status, output } = await run(probe, ['--sequence.shuffle=false'])
+            const { left, output } = await runInOrder(probe)
+            expect(left, output).toEqual([])
+            expect(output).not.toMatch(NO_HOOK)
+        },
+        CHILD_TIMEOUT,
+    )
+
+    it(
+        'without isolation and no suite to register a hook: nothing in use is removed, and only the last file is left, said once',
+        async () => {
+            const direct = (name: string) =>
+                `import { existsSync } from 'node:fs'\nimport { describe, expect, it } from 'vitest'\n` +
+                `import { makeTestTmpDir } from ${HELPER}\n` +
+                `let shared = ''\ndescribe('outer', () => {\n` +
+                `    describe('inner', () => {\n        shared = makeTestTmpDir('probe-${name}-')\n` +
+                `        it('inner', () => expect(existsSync(shared)).toBe(true))\n    })\n` +
+                `    it('outer, after inner', () => expect(existsSync(shared)).toBe(true))\n})\n`
+            const probe = project(
+                {
+                    'a.test.ts': counted(direct('a'), 6000),
+                    'b.test.ts': counted(direct('b'), 4000),
+                    'c.test.ts': direct('c'),
+                },
+                NO_ISOLATION,
+            )
+            const { left, output } = await runInOrder(probe)
+            expect(left.length, output).toBeGreaterThan(0)
+            expect(
+                left.filter((entry) => !entry.startsWith('probe-c-')),
+                output,
+            ).toEqual([])
+            expect(output.match(new RegExp(NO_HOOK, 'g')), output).toHaveLength(1)
+        },
+        CHILD_TIMEOUT,
+    )
+
+    it(
+        'without isolation: a skipped file runs no afterAll, so the next file removes its directories when it registers, even when that file is skipped too and only its own are left',
+        async () => {
+            const skipped = (name: string) =>
+                `import { it } from 'vitest'\nimport { makeTestTmpDir, registerTestTmpDirCleanup } from ${HELPER}\n` +
+                `registerTestTmpDirCleanup()\nmakeTestTmpDir('probe-${name}-')\nit.skip('${name}', () => {})\n`
+            const probe = project(
+                {
+                    'a.test.ts': counted(withDir('probe-a-'), 6000),
+                    'b.test.ts': counted(skipped('b'), 4000),
+                    'c.test.ts': skipped('c'),
+                },
+                NO_ISOLATION,
+            )
+            const { left, output } = await runInOrder(probe)
+            expect(left.length, output).toBeGreaterThan(0)
+            expect(
+                left.filter((entry) => !entry.startsWith('probe-c-')),
+                output,
+            ).toEqual([])
+        },
+        CHILD_TIMEOUT,
+    )
+
+    it(
+        'with isolation: a directory made in a beforeAll is removed after the file’s own afterAll, with no warning',
+        async () => {
+            const probe = project(
+                {
+                    'a.test.ts': counted(withDir('probe-a-'), 6000),
+                    'b.test.ts': counted(withDir('probe-b-'), 4000),
+                    'c.test.ts': withDir('probe-c-'),
+                },
+                { maxWorkers: 1, fileParallelism: false },
+            )
+            const { left, output } = await runInOrder(probe)
+            expect(left, output).toEqual([])
+            expect(output).not.toMatch(NO_HOOK)
+        },
+        CHILD_TIMEOUT,
+    )
+
+    it(
+        'removeTestTmpDir removes a directory and its marker at once, and leaves a path it did not make alone',
+        async () => {
+            const probe = project(
+                `import { existsSync, mkdtempSync, rmSync } from 'node:fs'\nimport { tmpdir } from 'node:os'\n` +
+                    `import path from 'node:path'\nimport { expect, it } from 'vitest'\n` +
+                    `import { makeTestTmpDir, removeTestTmpDir } from ${HELPER}\n` +
+                    `it('removes its own now', () => {\n` +
+                    `    const dir = makeTestTmpDir('probe-now-')\n` +
+                    `    removeTestTmpDir(dir)\n` +
+                    `    expect(existsSync(dir)).toBe(false)\n` +
+                    `    expect(existsSync(dir + '.sssb-test-tmp')).toBe(false)\n` +
+                    `})\n` +
+                    `it('leaves a directory it did not make', () => {\n` +
+                    `    const other = mkdtempSync(path.join(tmpdir(), 'not-mine-'))\n` +
+                    `    removeTestTmpDir(other)\n` +
+                    `    expect(existsSync(other)).toBe(true)\n` +
+                    `    rmSync(other, { recursive: true })\n` +
+                    `})\n`,
+            )
+            const { status, output } = await run(probe)
             expect(status, output).toBe(0)
             expect(anyLeftovers(probe), output).toEqual([])
         },

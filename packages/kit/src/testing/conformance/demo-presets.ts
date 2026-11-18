@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, vi } from 'vitest'
 import { dataRoot, setDataRoot } from '../../adapters/fake/data-dir'
 import type { MessageTree } from '../../i18n/messages'
-import { makeTestTmpDir, removeTestTmpDir } from '../tmp-dir'
+import { keepTestTmpDir, makeTestTmpDir, removeTestTmpDir } from '../tmp-dir'
 import type { CheckImpl } from './types'
 
 /**
@@ -136,9 +136,9 @@ async function settlesWithin(promise: Promise<void>, ms: number): Promise<boolea
 /**
  * Leaves `own`: closes the database the replay opened there, points the adapters back, then deletes the dir. In this
  * order, in one function: without isolation the next file shares this one's globals, and a client left cached on
- * `globalThis` would serve it this world; and tmp-dir's own cleanup belongs to the first file that loaded it, so the
- * check removes its directory itself. `onlyIfStillOurs` (a teardown deferred past the file) closes the database only
- * while the adapters still point here: by then a later file may have opened its own.
+ * `globalThis` would serve it this world; and the check removes its directory itself, because a teardown deferred
+ * past the file (`keepTestTmpDir`) outlives the file's cleanup. `onlyIfStillOurs` (that deferred teardown) closes the
+ * database only while the adapters still point here: by then a later file may have opened its own.
  */
 async function leaveWorld(own: ScratchWorld, onlyIfStillOurs: boolean): Promise<void> {
     try {
@@ -174,6 +174,9 @@ export const demoPresets: CheckImpl & { replayStopWaitMs: number } = {
             if (own === undefined) return
             own.stopping = true
             if (own.replay !== undefined && !(await settlesWithin(own.replay, stopWaitMs))) {
+                // The file's own cleanup still runs after this teardown fails (Vitest runs every afterAll), and would
+                // delete the dir under the running replay: it is the replay's now, removed when the replay stops.
+                keepTestTmpDir(own.dir)
                 // Its failure has nowhere to be reported by then; the error below has already said what is left behind.
                 void own.replay.then(() => leaveWorld(own, true)).catch(() => undefined)
                 throw new Error(
