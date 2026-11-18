@@ -27,45 +27,52 @@ import { appLabels, readJson, takeAppDir, takeOption, UsageError, workspaceApps,
 const PLAYWRIGHT_CONFIGS = [
     'playwright.config.ts',
     'playwright.config.mts',
+    'playwright.config.cts',
     'playwright.config.js',
     'playwright.config.mjs',
+    'playwright.config.cjs',
 ]
 
 /**
  * @param {string} cwd
  * @param {string[]} command
- * @param {Record<string, string>} [env]
  */
-function sh(cwd, command, env) {
+function sh(cwd, command) {
     console.log(`\n$ (${cwd}) ${command.join(' ')}`)
-    const result = spawnSync(command[0] ?? '', command.slice(1), {
-        cwd,
-        stdio: 'inherit',
-        env: env ? { ...process.env, ...env } : process.env,
-    })
+    const result = spawnSync(command[0] ?? '', command.slice(1), { cwd, stdio: 'inherit' })
     if (result.error) throw result.error
     return result.status ?? 1
 }
 
 /**
  * The apps a job covers, relative to the workspace root: `--apps`'s list when given, each of which must be a package,
- * or the workspace's apps.
+ * or the workspace's apps. A listed app is normalised (`./apps/a/` is `apps/a`) and named once. A workspace app the
+ * list leaves out is named in a warning (a GitHub Actions annotation on CI): the caller chose the list, and a list
+ * that went stale when an app was added is the way an app goes unchecked with every check green.
  * @param {string} root
  * @param {string | undefined} listed
  * @returns {string[]}
  */
 export function appsOf(root, listed) {
     if (listed === undefined || listed.trim() === '') return workspaceApps(root)
-    const apps = listed.split(/\s+/).filter(Boolean)
-    for (const app of apps) {
+    /** @type {string[]} */
+    const apps = []
+    for (const app of listed.split(/\s+/).filter(Boolean)) {
         if (path.isAbsolute(app) || app.split(/[\\/]/).includes('..')) {
             throw new UsageError(`sssb ci: --apps names ${app}: each app is a directory inside the workspace`)
         }
         if (!existsSync(path.join(root, app, 'package.json'))) {
             throw new UsageError(`sssb ci: --apps names ${app}, which is not a package (no package.json)`)
         }
+        const normal = path.posix.normalize(app.split(path.sep).join('/')).replace(/\/+$/, '')
+        if (!apps.includes(normal)) apps.push(normal)
     }
-    return apps.map((app) => app.replace(/\/+$/, ''))
+    const left = workspaceApps(root).filter((app) => !apps.includes(app))
+    if (left.length > 0) {
+        const note = `--apps leaves out ${left.join(', ')}, which the workspace lists as apps: their e2e, static demo and check-fences do not run`
+        console.log(process.env['GITHUB_ACTIONS'] ? `::warning title=sssb ci::${note}` : `WARNING: ${note}`)
+    }
+    return apps
 }
 
 /**
@@ -163,8 +170,21 @@ export async function run(args) {
             output(`matrix=${matrix}`)
             return 0
         }
-        // A matrix with no entries fails its job in GitHub Actions without saying why; say it here instead.
+        // EVERY app the job covers has e2e and a static demo: one that lacks either would drop out of the matrix with
+        // every check still green. (A matrix with no entries would fail its job in GitHub Actions without saying why.)
         const demos = demoApps(root, apps)
+        const noE2e = apps.filter((app) => !shards.some((shard) => shard.app === app))
+        const noDemo = apps.filter((app) => !demos.some((demo) => demo.app === app))
+        if (noE2e.length > 0) {
+            throw new UsageError(
+                `sssb ci matrix: ${noE2e.join(', ')} has no Playwright config (${PLAYWRIGHT_CONFIGS.join(', ')}), so its e2e would not run`,
+            )
+        }
+        if (noDemo.length > 0) {
+            throw new UsageError(
+                `sssb ci matrix: ${noDemo.join(', ')} has no build:demo-static script, so its static demo would not be checked`,
+            )
+        }
         if (shards.length === 0)
             throw new UsageError(`sssb ci matrix: no app among ${apps.join(', ')} has a Playwright config`)
         if (demos.length === 0)
@@ -196,7 +216,16 @@ export async function run(args) {
         const { run: checkFences } = await import('./check-fences.js')
         for (const app of apps) {
             console.log(`\n$ (${root}) sssb check-fences --app ${app}`)
-            const result = await checkFences(['--app', path.join(root, app)])
+            // Each app is checked even when one before it cannot be: a usage error (an app that does not resolve the
+            // plugin) fails this app and the job, and the next app is still checked.
+            let result
+            try {
+                result = await checkFences(['--app', path.join(root, app)])
+            } catch (error) {
+                if (!(error instanceof UsageError)) throw error
+                console.error(error.message)
+                result = 1
+            }
             status ||= result
         }
         return status
@@ -210,7 +239,25 @@ export async function run(args) {
         const filter = takeOption(rest, '--filter')
         if (filter === undefined || rest.length > 0) throw new UsageError('usage: sssb ci synth --filter <selector>')
         const root = workspaceRootOf(process.cwd())
-        // --fail-if-no-match: a selector that names no package fails, rather than synthesizing nothing and passing.
+        // EVERY package the selector matches has a `synth` script: pnpm's recursive run skips one that does not, and
+        // fails only when none has it. --fail-if-no-match: a selector that names no package fails too.
+        const listing = spawnSync('pnpm', ['--filter', filter, 'list', '--depth', '-1', '--json'], {
+            cwd: root,
+            encoding: 'utf8',
+        })
+        if (listing.status !== 0)
+            throw new UsageError(`sssb ci synth: pnpm could not list --filter ${filter}\n${listing.stderr}`)
+        /** @type {{ path: string }[]} */
+        const matched = JSON.parse(listing.stdout || '[]')
+        if (matched.length === 0) throw new UsageError(`sssb ci synth: --filter ${filter} matches no package`)
+        const noSynth = matched.filter(
+            (pkg) => typeof readJson(path.join(pkg.path, 'package.json')).scripts?.synth !== 'string',
+        )
+        if (noSynth.length > 0) {
+            throw new UsageError(
+                `sssb ci synth: ${noSynth.map((pkg) => path.relative(root, pkg.path)).join(', ')} has no synth script`,
+            )
+        }
         return sh(root, ['pnpm', '--filter', filter, '--fail-if-no-match', 'run', 'synth'])
     }
     if (job === 'e2e') {

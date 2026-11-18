@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -55,16 +55,11 @@ describe('app-checks.yml, the reusable workflow', () => {
 
     // all-checks is the check an adopter requires. It must wait for every other job, run whatever they did, and judge
     // each one, so a job added later is either listed in both places or this goes red.
-    it('all-checks waits for and judges every other job, whatever happened to them', () => {
+    it('all-checks waits for every other job, whatever happened to them', () => {
         const allChecks = reusable.jobs['all-checks']!
         const others = Object.keys(reusable.jobs).filter((id) => id !== 'all-checks')
         expect(allChecks.if).toBe('always()')
         expect([allChecks.needs].flat().sort()).toEqual([...others].sort())
-        const script = allChecks.steps?.map((step) => step.run ?? '').join('\n') ?? ''
-        const judged = /for \(const job of (\[[^\]]*\])\)/.exec(script)?.[1]
-        expect(JSON.parse(judged ?? '[]').sort()).toEqual([...others].sort())
-        // Only synth may be skipped, and only when no synth was asked for.
-        expect(script).toContain('job === "synth" && process.env.SYNTH === "" ? "skipped" : "success"')
         expect(
             Object.entries(reusable.jobs)
                 .filter(([, job]) => job.if)
@@ -73,28 +68,103 @@ describe('app-checks.yml, the reusable workflow', () => {
         ).toEqual(['all-checks', 'synth'])
     })
 
-    // Orchestration only (ADR-0014 part 7): every step that is not setup is one `sssb ci <job>` command, so its logic
-    // comes from the caller's lockfile. And no step interpolates an input or a matrix value into its shell text, where
-    // an app directory's name would become code; they arrive as environment variables.
-    it('runs each job through `pnpm exec sssb ci`, and never splices a value into a shell command', () => {
+    // Its script is RUN here, against every result a job can have, rather than read: a script edited to pass anything
+    // would still read like one that judges.
+    describe("all-checks' verdict", () => {
+        const step = reusable.jobs['all-checks']!.steps!.find((s) => s.run)!
+        const others = Object.keys(reusable.jobs).filter((id) => id !== 'all-checks')
+        const verdict = (results: Record<string, string>, synth: string) => {
+            const needs = Object.fromEntries(
+                Object.entries(results).map(([job, result]) => [job, { result, outputs: {} }]),
+            )
+            return spawnSync('bash', ['-c', step.run!], {
+                env: { ...process.env, NEEDS: JSON.stringify(needs), SYNTH: synth },
+                encoding: 'utf8',
+            }).status
+        }
+        const all = (result: string, synth: string) =>
+            Object.fromEntries(others.map((job) => [job, job === 'synth' && synth === '' ? 'skipped' : result]))
+
+        it('passes when every job succeeded, synth skipped when none was asked for', () => {
+            expect(verdict(all('success', ''), '')).toBe(0)
+            expect(verdict(all('success', './apps/*/infra'), './apps/*/infra')).toBe(0)
+        })
+
+        it.each(others)('fails when %s did not succeed, whatever else did', (job) => {
+            for (const result of ['failure', 'cancelled', 'skipped']) {
+                expect(verdict({ ...all('success', 'x'), [job]: result }, 'x'), `${job} ${result}`).toBe(1)
+            }
+            const missing = all('success', 'x')
+            delete missing[job]
+            expect(verdict(missing, 'x'), `${job} missing`).toBe(1)
+        })
+
+        it('fails when synth was skipped although asked for, or ran although not', () => {
+            expect(verdict({ ...all('success', 'x'), synth: 'skipped' }, 'x')).toBe(1)
+            expect(verdict({ ...all('success', ''), synth: 'success' }, '')).toBe(1)
+        })
+    })
+
+    // Orchestration only (ADR-0014 part 7): each job's work is one `sssb ci <job>` command, exactly, so its logic comes
+    // from the caller's lockfile; nothing may soften it (`|| true`, a step `if`, `continue-on-error`). No step splices an
+    // input or a matrix value into its shell text, where an app directory's name would become code: they arrive as
+    // environment variables. Setup steps are the only others, and inline Node only where named.
+    it('runs each job’s work as exactly one `pnpm exec sssb ci` command, and nothing softens it', () => {
+        const WORK: Record<string, string> = {
+            'lint-typecheck-unit': 'pnpm exec sssb ci lint-typecheck-unit --apps "$APPS"',
+            contract: 'pnpm exec sssb ci contract',
+            discover: 'pnpm exec sssb ci matrix --apps "$APPS"',
+            e2e: 'pnpm exec sssb ci e2e --app "$APP" ${PROJECT:+--project "$PROJECT"}',
+            'demo-static': 'pnpm exec sssb ci demo-static --app "$APP"',
+            synth: 'pnpm exec sssb ci synth --filter "$SYNTH"',
+        }
         const SETUP = [
             /^pnpm install --frozen-lockfile( --ignore-scripts)?$/,
             /^pnpm exec playwright install(-deps| --with-deps) chromium$/,
-            /^node -e "const s=require\('\.\/coverage\/coverage-summary\.json'\)/,
-            /^node -e '/,
         ]
-        const jobsThatRun: string[] = []
+        const INLINE_NODE: Record<string, RegExp> = {
+            'lint-typecheck-unit': /^node -e "const s=require\('\.\/coverage\/coverage-summary\.json'\)/,
+            'all-checks': /^node -e '/,
+        }
+        expect(Object.keys(WORK).sort()).toEqual(
+            Object.keys(reusable.jobs)
+                .filter((id) => id !== 'all-checks')
+                .sort(),
+        )
         for (const [id, job] of Object.entries(reusable.jobs)) {
+            expect((job as Record<string, unknown>)['continue-on-error'], id).toBeUndefined()
+            const work: Step[] = []
             for (const step of job.steps ?? []) {
+                expect((step as Record<string, unknown>)['continue-on-error'], id).toBeUndefined()
                 if (step.run === undefined) continue
                 expect(step.run, `${id}: ${step.run}`).not.toMatch(/\$\{\{/)
                 const command = step.run.trim()
                 if (SETUP.some((pattern) => pattern.test(command))) continue
-                expect(command, id).toMatch(/^pnpm exec sssb ci [a-z0-9-]+( |$)/)
-                jobsThatRun.push(/^pnpm exec sssb ci ([a-z0-9-]+)/.exec(command)![1]!)
+                if (INLINE_NODE[id]?.test(command)) continue
+                work.push(step)
             }
+            if (id === 'all-checks') {
+                expect(work, id).toEqual([])
+                continue
+            }
+            expect(
+                work.map((step) => step.run!.trim()),
+                id,
+            ).toEqual([WORK[id]])
+            expect(work[0]!.if, id).toBeUndefined()
         }
-        expect(jobsThatRun.sort()).toEqual(['contract', 'demo-static', 'e2e', 'lint-typecheck-unit', 'matrix', 'synth'])
+    })
+
+    // The matrices come from `discover`, never a hand-written list that an added app would not be in.
+    it('takes both matrices from discover', () => {
+        expect(reusable.jobs['e2e']!.strategy).toEqual({
+            'fail-fast': false,
+            matrix: { shard: '${{ fromJson(needs.discover.outputs.e2e) }}' },
+        })
+        expect(reusable.jobs['demo-static']!.strategy).toEqual({
+            'fail-fast': false,
+            matrix: { demo: '${{ fromJson(needs.discover.outputs.demo-static) }}' },
+        })
     })
 })
 
@@ -122,6 +192,17 @@ describe("checks.yml's call to it", () => {
         })
         const matched = (JSON.parse(listed) as { path: string }[]).map((pkg) => path.relative(ROOT, pkg.path)).sort()
         expect(matched).toEqual(infra.sort())
+        for (const dir of infra) {
+            const scripts = JSON.parse(readFileSync(path.join(ROOT, dir, 'package.json'), 'utf8')).scripts ?? {}
+            expect(typeof scripts.synth, `${dir} has a synth script`).toBe('string')
+        }
+        // Discovery is the root's `sssb.apps` when it has one: it must not leave an app out.
+        const sssbApps = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).sssb?.apps as
+            string[] | undefined
+        const apps = readdirSync(path.join(ROOT, 'apps'))
+            .filter((app) => existsSync(path.join(ROOT, 'apps', app, 'package.json')))
+            .map((app) => `apps/${app}`)
+        if (sssbApps !== undefined) expect([...sssbApps].sort()).toEqual(apps.sort())
     })
 
     // release.yml's CI gate (scripts/release.mjs, wait-for-checks) reads the runs of `checks.yml` by its file name.
