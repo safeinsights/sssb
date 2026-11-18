@@ -1,6 +1,28 @@
 # A Simulator start/stop control for the dev ticker
 
-**Priority:** P2 · **Status:** open
+**Priority:** P2 · **Status:** resolved 2026-11-18 (`feat/simulator-ticker-control`)
+
+## Resolution
+
+Built as designed below, with three refinements the code asked for (each in `docs/decision-log.md`, "A Simulator
+control for the dev ticker"):
+
+- **The gate is a run-mode flag, not `isSimulated` alone.** The design said "404 outside a simulated world", but the
+  hosted demo and CI's e2e build are simulated worlds with a server. `@sssb/kit/adapters/index` now exports
+  `isSimulatedDevServer` (simulated, `NODE_ENV === 'development'`, neither `DEMO_MODE` nor `E2E_BUILD`;
+  `packages/kit/src/adapters/dev-server.ts`), and the route (`apps/showcase/src/app/api/simulator/ticker/route.ts`)
+  answers 404 unless it holds, after the `isSimulated` 404 every simulator route opens with. The panel shows the control
+  only when that route answers, so it is absent in real mode, every production build and the static demo (whose twin
+  never wires it). A local `pnpm test:e2e` runs on `pnpm dev`, so there the control exists, stopped; the spec asserts
+  that, and on CI's E2E_BUILD that the route is 404 and the control absent.
+- **No `authorize(...)` call.** The route is exempt from the per-actor scan the way every `simulator/` route is, by
+  opening with the simulated-mode 404 that the scan's `opens-with-simulated-404` gate checks: the Simulator's controls
+  are reachable signed-out, so there is no actor to authorize.
+- **The origin is `portFor('showcase')`, not the request's host**, because the dev secret goes there as a bearer and a
+  Host header is the client's to choose. It is the same function `pnpm dev` takes its `--port` from.
+
+The ticker lives on `globalThis` in the dev server (`dev-ticker.ts` beside the route), so a hot reload does not orphan
+a running loop. The Start/Stop control is one button whose label changes, so keyboard focus stays on it.
 **Found by:** JP, 2026-11-17, while reviewing `pnpm tick` and the opt-in `DEV_TICK_SECONDS` ticker: can the Simulator
 start the ticking clock from its UI?
 

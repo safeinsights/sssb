@@ -90,3 +90,6 @@ export declare function generalizeAppCitations(
 
 /** Every broken citation under `root`, as `<file>:<line> cites \`<path>\``. */
 export declare function docPathProblems(root: string, config: DocPathsConfig): string[]
+
+/** The `include` entries that name nothing in the tree; `docPathProblems` and `sssb check-doc-paths` fail on each. */
+export declare function missingIncludes(root: string, config: DocPathsConfig): string[]

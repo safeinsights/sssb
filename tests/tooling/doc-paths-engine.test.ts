@@ -8,6 +8,7 @@ import {
     resolves,
     citationsIn,
     type DocPathsConfig,
+    missingIncludes,
 } from '@sssb/tools/doc-paths'
 import { run } from '../../packages/tools/src/commands/check-doc-paths.js'
 import { UsageError } from '../../packages/tools/src/app.js'
@@ -20,7 +21,7 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  */
 const config: DocPathsConfig = {
     roots: ['docs/', 'src/', 'apps/'],
-    include: ['docs', 'README.md'],
+    include: ['docs'],
     exempt: ['docs/adr/'],
 }
 
@@ -30,6 +31,7 @@ function workspace(files: Record<string, string>, docPaths: unknown = config): s
     writeFileSync(path.join(root, 'pnpm-workspace.yaml'), '')
     const manifest = docPaths === null ? { name: 'w' } : { name: 'w', sssb: { docPaths } }
     writeFileSync(path.join(root, 'package.json'), JSON.stringify(manifest))
+    // Every include entry exists unless a test removes it: a missing one is itself a problem now (below).
     for (const [file, content] of Object.entries(files)) {
         mkdirSync(path.dirname(path.join(root, file)), { recursive: true })
         writeFileSync(path.join(root, file), content)
@@ -65,15 +67,28 @@ describe('docFiles', () => {
             'docs/adr/0001.md': '',
             'README.md': '',
         })
-        expect(docFiles(root, { ...config, include: [...config.include, 'missing', 'CLAUDE.md'] })).toEqual([
-            'docs/a.md',
-            'docs/b.md',
-            'README.md',
-        ])
+        expect(
+            docFiles(root, { ...config, include: [...config.include, 'README.md', 'missing', 'CLAUDE.md'] }),
+        ).toEqual(['docs/a.md', 'docs/b.md', 'README.md'])
     })
 })
 
 describe('docPathProblems', () => {
+    it('fails an include entry that names nothing, so a typo cannot shrink the gate to nothing', () => {
+        const root = workspace({ 'docs/a.md': '' })
+        expect(docPathProblems(root, { ...config, include: [...config.include, 'doc'] })).toEqual([
+            'doc: in sssb.docPaths.include, but not in the tree',
+        ])
+        expect(missingIncludes(root, { ...config, include: ['doc', 'docs/adr/x'] })).toEqual(['doc'])
+    })
+
+    it('fails a doc set with no markdown in it', () => {
+        const root = workspace({ 'docs/notes.txt': '' })
+        expect(docPathProblems(root, config)).toEqual([
+            'sssb.docPaths.include names no markdown file: the gate would check nothing',
+        ])
+    })
+
     it('finds a broken citation, with file and line', () => {
         const root = workspace({ 'docs/a.md': 'fine\nsee `src/gone` here\n', 'src/there/x.ts': '' })
         expect(docPathProblems(root, config)).toEqual(['docs/a.md:2 cites `src/gone`'])
@@ -110,7 +125,7 @@ describe('docPathProblems', () => {
     })
 
     it('honours exempt', () => {
-        const root = workspace({ 'docs/adr/0001.md': '`src/gone`\n' })
+        const root = workspace({ 'docs/a.md': '', 'docs/adr/0001.md': '`src/gone`\n' })
         expect(docPathProblems(root, config)).toEqual([])
         expect(docPathProblems(root, { ...config, exempt: [] })).toEqual(['docs/adr/0001.md:1 cites `src/gone`'])
     })

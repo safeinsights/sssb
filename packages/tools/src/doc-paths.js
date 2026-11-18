@@ -95,6 +95,18 @@ export function docFiles(root, config) {
 }
 
 /**
+ * The `include` entries that name nothing in the tree. A typo there would silently shrink the gate (`"doc"` for
+ * `"docs"` checks no doc at all and passes), so the gate fails on one instead.
+ *
+ * @type {import('./doc-paths.d.ts').missingIncludes}
+ */
+export function missingIncludes(root, config) {
+    return config.include
+        .map((entry) => entry.replace(/\/+$/, ''))
+        .filter((rel) => !config.exempt.some((exempt) => rel.startsWith(exempt)) && !existsSync(path.join(root, rel)))
+}
+
+/**
  * The path-like tokens inside one backticked span.
  *
  * Usually the span IS the path, `apps/showcase/src/app-config`, and that stays one citation. But a doc set also
@@ -261,8 +273,10 @@ export function generalizeAppCitations(text, isMissing, config) {
 /** @type {import('./doc-paths.d.ts').docPathProblems} */
 export function docPathProblems(root, config) {
     /** @type {string[]} */
-    const problems = []
-    for (const file of docFiles(root, config)) {
+    const problems = missingIncludes(root, config).map((rel) => `${rel}: in sssb.docPaths.include, but not in the tree`)
+    const files = docFiles(root, config)
+    if (files.length === 0) problems.push('sssb.docPaths.include names no markdown file: the gate would check nothing')
+    for (const file of files) {
         for (const { path: cited, line } of citedPaths(file, config, root)) {
             if (!resolves(cited, root, config)) problems.push(`${file}:${line} cites \`${cited}\``)
         }

@@ -13,7 +13,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { declaredPortService } from '../app-port.js'
-import { readJson, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
+import { appLabels, readJson, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
 import { portForRoot } from '../ports.js'
 
 /** @param {string[]} args */
@@ -21,13 +21,15 @@ export async function run(args) {
     if (args.length > 0) throw new UsageError('usage: sssb launch-json')
     const root = workspaceRootOf(process.cwd())
     const configurations = []
-    for (const app of workspaceApps(root)) {
+    const apps = workspaceApps(root)
+    const labels = appLabels(root, apps)
+    for (const app of apps) {
         const appDir = path.join(root, app)
         const manifest = readJson(path.join(appDir, 'package.json'))
         const service = declaredPortService(appDir)
         if (!manifest.scripts?.dev || service === undefined) continue
         configurations.push({
-            name: `${path.basename(app)}-dev`,
+            name: `${labels.get(app) ?? app}-dev`,
             runtimeExecutable: 'pnpm',
             runtimeArgs: ['--filter', manifest.name, 'dev'],
             port: portForRoot(root, service),

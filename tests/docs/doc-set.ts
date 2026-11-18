@@ -1,6 +1,8 @@
 import { fileURLToPath } from 'node:url'
-import * as engine from '@sssb/tools/doc-paths'
-import type { Citation } from '@sssb/tools/doc-paths'
+// By relative path, not `@sssb/tools/doc-paths`: `scripts/init-app.ts` imports this file, and the adopter-identity test
+// runs init-app in a copy of the checkout that has no node_modules. The engine needs only Node's built-ins.
+import * as engine from '../../packages/tools/src/doc-paths.js'
+import type { Citation } from '../../packages/tools/src/doc-paths.js'
 
 /**
  * WHICH MARKDOWN THIS REPO HOLDS TO ITS PATH CITATIONS.
@@ -62,4 +64,9 @@ export function resolves(path: string, root = '.'): boolean {
 /** See the engine: rewrites citations of an app path `isMissing` reports gone into `apps/<app>/…`. */
 export function generalizeAppCitations(text: string, isMissing: (path: string) => boolean): string {
     return engine.generalizeAppCitations(text, isMissing, config())
+}
+
+/** The `sssb.docPaths.include` entries that name nothing in the tree. Call with the repo root as the cwd. */
+export function missingIncludes(): string[] {
+    return engine.missingIncludes(root(), config())
 }

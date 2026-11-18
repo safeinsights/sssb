@@ -348,7 +348,7 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 `packages/kit/package.json`'s `exports` map is the contract: it lists the 137 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 61 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 62 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -473,7 +473,7 @@ the showcase carries the same route over the same function.
   [cutover checklist](cutover-checklist.md).
 - **In `pnpm dev`** nothing ticks it unless you ask. The dev server runs no scheduler, and the starter's server app has
   no Simulator panel (its `file://` demo has one, in the browser; the showcase's server app has one too, and its Jobs
-  tab advances the world clock and runs what is due). Two ways to ask:
+  tab advances the world clock and runs what is due). Three ways to ask:
     - **`pnpm tick`** calls the running dev server's route once and prints what ran (`pnpm tick:starter` for the starter
       beside the showcase; once `init-app` has ejected the showcase, `pnpm tick` is your app). It exits 1 if the server is
       down, rejects the secret or answers an error, and 2 for a bad command line. It authenticates as any caller must: it
@@ -490,6 +490,14 @@ the showcase carries the same route over the same function.
       configs refuse to load while its process is alive, because Playwright adopts a dev server already on the app's port
       and that one would still be ticking: stop it before `pnpm test:e2e`. (A wrapper that was killed outright leaves a
       stale marker; one whose process is gone is ignored.)
+    - **The showcase's Simulator** (Jobs tab, "Scheduler ticker") starts and stops the same ticker inside the dev server,
+      with the interval in a field: the same call, the same marker under the server's pid, the same off-until-asked rule.
+      It exists only on a `pnpm dev` of a simulated world: its route
+      (`apps/showcase/src/app/api/simulator/ticker/route.ts`) answers 404 in real mode and in every production build (a
+      deployment, the hosted demo, the e2e build), and the panel shows the control only where the route answers. The
+      static demo has no server and never wires it. It will not start beside a ticker started outside it (`DEV_TICK_SECONDS`); it says
+      that one is running and leaves it to be stopped where it was started. The starter has no server-side Simulator, so
+      it has no such control; the route is app code, and an app that wants one copies it.
 
     The answer is `{"ok":true,"spawned":0,"failed":0,"deliveries":{…}}`, which `pnpm tick` prints as one line. In a
     simulated world "now" is the Simulator's world clock (real time plus whatever offset a demo advanced), so a tick

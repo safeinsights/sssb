@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../support/tmp-dir'
@@ -138,6 +138,91 @@ describe('sssb check-real-env', () => {
         const result = checkRealEnv(appD)
         expect(result.status).toBe(1)
         expect(result.output).toContain('missing for delta')
+    })
+
+    it('bundles a workspace package the seam imports, extensionless relative imports and all', () => {
+        const shared = path.join(root, 'packages/shared')
+        write(path.join(shared, 'package.json'), JSON.stringify({ name: 'shared', main: 'src/index.ts' }))
+        write(path.join(shared, 'src/index.ts'), "export { NAME } from './util'\n")
+        write(path.join(shared, 'src/util.ts'), "export const NAME: string = 'epsilon'\n")
+        const appE = writeApp(root, 'e', "import { NAME } from 'shared'\nexport const APP_SLUG = NAME\n")
+        mkdirSync(path.join(appE, 'node_modules'), { recursive: true })
+        symlinkSync(shared, path.join(appE, 'node_modules/shared'), 'dir')
+
+        const result = checkRealEnv(appE)
+
+        expect(result.status).toBe(1)
+        expect(result.output).toContain('missing for epsilon')
+    })
+
+    it('gives a bundled workspace file its own import.meta location, though the bundle is CommonJS', () => {
+        const shared = path.join(root, 'packages/shared-meta')
+        write(path.join(shared, 'package.json'), JSON.stringify({ name: 'shared-meta', main: 'src/index.ts' }))
+        write(path.join(shared, 'src/data.txt'), 'zeta-data')
+        write(
+            path.join(shared, 'src/index.ts'),
+            [
+                "import { readFileSync } from 'node:fs'",
+                "import path from 'node:path'",
+                "export const TEXT = readFileSync(new URL('./data.txt', import.meta.url), 'utf8')",
+                'export const DIR = path.basename(import.meta.dirname)',
+                // A string that mentions import.meta is text, not an expression: it must come through as written.
+                'export const NOTE = "see import.meta.url"',
+                // The destructured form reads the same object.
+                'const { filename } = import.meta',
+                'export const FILE = path.basename(filename)',
+                '',
+            ].join('\n'),
+        )
+        const appH = writeApp(
+            root,
+            'h',
+            "import { TEXT, DIR, NOTE, FILE } from 'shared-meta'\nexport const APP_SLUG = `${TEXT}@${DIR}|${NOTE}|${FILE}`\n",
+        )
+        mkdirSync(path.join(appH, 'node_modules'), { recursive: true })
+        symlinkSync(shared, path.join(appH, 'node_modules/shared-meta'), 'dir')
+
+        const result = checkRealEnv(appH)
+
+        expect(result.status).toBe(1)
+        expect(result.output).toContain('missing for zeta-data@src|see import.meta.url|index.ts')
+    })
+
+    it('refuses a workspace package that brings a framework copy of its own', () => {
+        const shared = path.join(root, 'packages/shared-kit')
+        write(path.join(shared, 'package.json'), JSON.stringify({ name: 'shared-kit', main: 'src/index.ts' }))
+        write(
+            path.join(shared, 'src/index.ts'),
+            "import { CutoverPendingError } from '@sssb/kit/ports/errors'\nexport const NAME = typeof CutoverPendingError\n",
+        )
+        writeKit(path.join(shared, 'node_modules/@sssb/kit'))
+        const appF = writeApp(root, 'f', "import { NAME } from 'shared-kit'\nexport const APP_SLUG = NAME\n")
+        symlinkSync(shared, path.join(appF, 'node_modules/shared-kit'), 'dir')
+
+        const result = checkRealEnv(appF)
+
+        expect(result.status).not.toBe(0)
+        expect(result.output).toContain('is not part of the @sssb/kit')
+        expect(result.output).not.toContain('missing for')
+    })
+
+    it('refuses a plain copy of the framework tree reached by a relative path', () => {
+        writeKit(path.join(root, 'vendor/kit'))
+        const appG = writeApp(
+            root,
+            'g',
+            [
+                "import { CutoverPendingError } from '../../../../vendor/kit/src/ports/errors'",
+                "export const APP_SLUG = typeof CutoverPendingError === 'function' ? 'eta' : 'unreachable'",
+                '',
+            ].join('\n'),
+        )
+
+        const result = checkRealEnv(appG)
+
+        expect(result.status).not.toBe(0)
+        expect(result.output).toContain('is not part of the @sssb/kit')
+        expect(result.output).not.toContain('missing for eta')
     })
 
     it('exits 1 with a clear message for an app with no seam', () => {

@@ -194,10 +194,12 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - Component workshop: `pnpm ladle` (screens AND react-email templates).
 - **Scheduled work in dev only runs when something ticks it.** `pnpm tick` (`pnpm tick:starter`) calls the running
   dev server's `/api/webhooks/cron` once with the dev secret (`sssb tick`); `DEV_TICK_SECONDS=<n> pnpm dev`
-  does it every n seconds (`sssb dev-tick`, which `pnpm dev` runs `next dev` through). The ticker is **off by
+  does it every n seconds (`sssb dev-tick`, which `pnpm dev` runs `next dev` through), and the showcase's Simulator
+  (Jobs tab) starts and stops it inside the dev server (`apps/showcase/src/app/api/simulator/ticker`, 404 outside a simulated
+  `next dev`: kit's `isSimulatedDevServer`). The ticker is **off by
   default** and stays off under e2e (the playwright configs blank the variable, and refuse to load while a ticking
   dev server's marker is live) and the demo. The ticking is `@sssb/tools/ticker` (start, stop, status), policy-free;
-  all of it lives in `packages/tools/src/tick`. Never add a bypass to the route for either: it stays `withWebhookSecret`.
+  all of it lives in `packages/tools/src/tick`. Never add a bypass to the route for any of them: it stays `withWebhookSecret`.
 - Before opening a PR, run `/pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.
   **Never squash a PR another PR is stacked on**: squashing rewrites the commits, the stacked branch then

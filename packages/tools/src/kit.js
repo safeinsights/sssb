@@ -9,7 +9,7 @@
 // got must sit inside the real directory of the `@sssb/kit` that the app itself resolves. The lint rule
 // `sssb/no-bare-kit-import` keeps every other route out of this package's source.
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { builtinModules, createRequire } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { UsageError } from './app.js'
@@ -19,6 +19,85 @@ const KIT = '@sssb/kit'
 /** @param {string} appDir */
 function requireFrom(appDir) {
     return createRequire(path.join(path.resolve(appDir), 'package.json'))
+}
+
+/**
+ * The real directory of the package `name` as Node's lexical lookup finds it from `fromDir`: the first
+ * `node_modules/<name>` walking up. Null when there is none. It never consults NODE_PATH (see kitDirOf).
+ * @param {string} fromDir
+ * @param {string} name
+ * @returns {string | null}
+ */
+function packageDirFrom(fromDir, name) {
+    for (let dir = path.resolve(fromDir); ; dir = path.dirname(dir)) {
+        const candidate = path.join(dir, 'node_modules', ...name.split('/'))
+        if (existsSync(path.join(candidate, 'package.json'))) return realpathSync(candidate)
+        if (path.dirname(dir) === dir) return null
+    }
+}
+
+/** @param {string} specifier `@scope/name/sub` or `name/sub` */
+const packageNameOf = (specifier) =>
+    specifier
+        .split('/')
+        .slice(0, specifier.startsWith('@') ? 2 : 1)
+        .join('/')
+
+/** @type {Map<string, string | null>} the `name` of each directory's nearest named package.json */
+const owningNames = new Map()
+
+/**
+ * The `name` in the nearest package.json at or above `dir` that has one (a nameless `{ "type": "module" }` is not a
+ * package), or null.
+ * @param {string} dir
+ * @returns {string | null}
+ */
+function owningPackageName(dir) {
+    const cached = owningNames.get(dir)
+    if (cached !== undefined) return cached
+    const manifest = path.join(dir, 'package.json')
+    /** @type {string | null} */
+    let name
+    // A package.json with no `name` (a nested `{ "type": "module" }`) does not make a package: keep walking, or a file
+    // under one inside a framework copy would read as nobody's and pass every guard.
+    /** @type {string | null} */
+    let named = null
+    if (existsSync(manifest)) {
+        try {
+            const parsed = JSON.parse(readFileSync(manifest, 'utf8'))
+            named = typeof parsed?.name === 'string' ? parsed.name : null
+        } catch {
+            named = null
+        }
+    }
+    if (named !== null) name = named
+    else {
+        const parent = path.dirname(dir)
+        name = parent === dir ? null : owningPackageName(parent)
+    }
+    owningNames.set(dir, name)
+    return name
+}
+
+/**
+ * Whether `file` is framework source: its nearest named package.json is `@sssb/kit`'s, wherever it sits (an installed
+ * instance, a workspace link, or a copy of the framework's tree reached by a relative path). Recognised by the
+ * package, not by an `@sssb/kit` segment in the path, which a copy outside node_modules does not have.
+ *
+ * @type {import('./kit.d.ts').isFrameworkFile}
+ */
+export function isFrameworkFile(file) {
+    return owningPackageName(path.dirname(realpathSync(file))) === KIT
+}
+
+/**
+ * The guard every loader runs on each file it loads for an app: framework source must be the app's own instance
+ * (`assertAppsKitFile`); anything else passes.
+ *
+ * @type {import('./kit.d.ts').assertNoForeignFramework}
+ */
+export function assertNoForeignFramework(appDir, file) {
+    if (isFrameworkFile(file)) assertAppsKitFile(appDir, file)
 }
 
 /**
@@ -33,11 +112,8 @@ function requireFrom(appDir) {
  * @type {import('./kit.d.ts').kitDirOf}
  */
 export function kitDirOf(appDir) {
-    for (let dir = path.resolve(appDir); ; dir = path.dirname(dir)) {
-        const candidate = path.join(dir, 'node_modules', '@sssb', 'kit')
-        if (existsSync(path.join(candidate, 'package.json'))) return realpathSync(candidate)
-        if (path.dirname(dir) === dir) break
-    }
+    const dir = packageDirFrom(appDir, KIT)
+    if (dir !== null) return dir
     throw new UsageError(
         `sssb: ${path.resolve(appDir)} does not resolve ${KIT}: no node_modules/${KIT} in it or above it. Run this ` +
             'from an app that depends on it, or name one with --app',
@@ -98,30 +174,31 @@ export function resolveAppsKit(appDir, subpath) {
 /**
  * Another package the APP installs, resolved from the app's directory: a preset configures the app's own copy
  * of a tool (next-intl's plugin, Vite's React plugin), never one of its own.
- * @param {string} appDir
- * @param {string} specifier
- * @param {string} why what the app is missing it for, for the error
- * @returns {string}
+ *
+ * @type {import('./kit.d.ts').resolveFromApp}
  */
 export function resolveFromApp(appDir, specifier, why) {
+    const missing = () =>
+        specifier.startsWith('#')
+            ? `sssb: ${path.resolve(appDir)} cannot resolve \`${specifier}\`, which ${why}: check the \`imports\` of the app's package.json.`
+            : `sssb: ${path.resolve(appDir)} does not install \`${specifier}\`, which ${why}. Add it to the app's devDependencies.`
+    // The package must be on the app's own lookup chain. Node's resolver would otherwise fall back to NODE_PATH, which
+    // pnpm points at the hoisted store, and hand back a copy installed for another package (see kitDirOf).
+    // Node's built-ins and package imports (`#x`) are not packages on a lookup chain.
+    const bare = !specifier.startsWith('node:') && !specifier.startsWith('#') && !builtinModules.includes(specifier)
+    if (bare && packageDirFrom(appDir, packageNameOf(specifier)) === null) throw new UsageError(missing())
     try {
         return requireFrom(appDir).resolve(specifier)
     } catch (error) {
-        throw new UsageError(
-            `sssb: ${path.resolve(appDir)} does not install \`${specifier}\`, which ${why}. Add it to the app's ` +
-                'devDependencies.',
-            { cause: error },
-        )
+        throw new UsageError(missing(), { cause: error })
     }
 }
 
 /**
  * Loads a package the APP installs (see resolveFromApp) and returns its module namespace. A CommonJS package's
  * `module.exports` arrives as `default`, and its named exports as Node's CJS lexer finds them.
- * @param {string} appDir
- * @param {string} specifier
- * @param {string} why
- * @returns {Promise<Record<string, unknown>>}
+ *
+ * @type {import('./kit.d.ts').importFromApp}
  */
 export async function importFromApp(appDir, specifier, why) {
     return await import(pathToFileURL(resolveFromApp(appDir, specifier, why)).href)

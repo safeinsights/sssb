@@ -4,14 +4,14 @@
 // checks.yml already does.
 //
 //   sssb ci e2e-shards                         print the e2e shard matrix (and write it to $GITHUB_OUTPUT)
-//   sssb ci e2e --app <dir> [--project <p>]    run one shard
+//   sssb ci e2e [--app <dir>] [--project <p>]  run one shard (the app in the working directory by default)
 //   sssb ci demo-static [--app <dir>]          build each app's static demo, check its size, run its e2e
 //
 // `e2e-shards` imports nothing outside Node, so it runs before `pnpm install`.
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { readJson, takeAppDir, takeOption, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
+import { appLabels, readJson, takeAppDir, takeOption, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
 
 const PLAYWRIGHT_CONFIGS = [
     'playwright.config.ts',
@@ -42,10 +42,12 @@ function sh(cwd, command) {
 export function e2eShards(root) {
     /** @type {{ name: string, app: string, run: string }[]} */
     const shards = []
-    for (const app of workspaceApps(root)) {
+    const apps = workspaceApps(root)
+    const labels = appLabels(root, apps)
+    for (const app of apps) {
         const config = PLAYWRIGHT_CONFIGS.map((name) => path.join(root, app, name)).find((file) => existsSync(file))
         if (!config) continue
-        const name = path.basename(app)
+        const name = labels.get(app) ?? app
         const base = `pnpm exec sssb ci e2e --app ${app}`
         if (/name:\s*['"]destructive['"]/.test(readFileSync(config, 'utf8'))) {
             shards.push({ name, app, run: `${base} --project chromium` })
@@ -53,6 +55,15 @@ export function e2eShards(root) {
         } else {
             shards.push({ name, app, run: base })
         }
+    }
+    // Shard names name CI jobs and their report artifacts, so they must be unique: an app's `-destructive` shard could
+    // meet another app labelled that way.
+    /** @type {Set<string>} */
+    const taken = new Set()
+    for (const shard of shards) {
+        const wanted = shard.name
+        for (let n = 2; taken.has(shard.name); n++) shard.name = `${wanted}-${n}`
+        taken.add(shard.name)
     }
     return shards
 }

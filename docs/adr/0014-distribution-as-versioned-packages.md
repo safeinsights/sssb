@@ -885,3 +885,8 @@ P4 built `packages/tools` as the plan row says. Where it refined what the body s
 - **`sssb ci` has the jobs this repository's CI needed first** (`e2e-shards`, `e2e`, `demo-static`); P10 adds the rest.
 - **`sssb guide`** looks for the guide at the published subpath `@sssb/kit/guide.md` and copies it to
   `.claude/sssb-guide.md`; P7 publishes the guide.
+- **Rule 4's check recognises the framework by its package**: a file is the framework's when its nearest named
+  package.json is `@sssb/kit`'s, wherever it sits, so a copy of the framework's tree outside `node_modules` is caught,
+  which a check on the path missed. Besides the resolver's users, the Vite and Vitest presets run it on every module
+  they load, and the `dev:real` preflight on everything it bundles or leaves external.
+- **The resolver is published as `@sssb/tools/kit`**, so `@sssb/cdk` (P9) runs the same check.
