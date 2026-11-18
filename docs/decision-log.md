@@ -3263,7 +3263,8 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
     - The VPC's `Name` tags carry the construct path (`…/Default/Vpc`), so they change in place on the first deploy
       after P9.
     - What synth cannot see (the server's uploaded zip, a synth with validation off, changes after synth, a seam
-      index that spreads another app's registry beside a literal key) is
+      index that brings in another app's registry, re-exported by an app with no migration files of its own or
+      spread beside a literal key) is
       `.claude/future-tasks/deployed-artifact-identity.md`.
     - A project whose only esbuild is a global one is refused, though CDK would bundle with it locally.
     - The migration-key regex reads text: a `//` or `/*` inside a key's string can hide later keys from the check

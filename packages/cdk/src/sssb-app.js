@@ -220,8 +220,10 @@ function stagedBundle(fn) {
  * AT SYNTH it asserts, and `cdk synth` fails otherwise. At construction:
  * - the `@sssb/kit` the app resolves is this construct's own version, installed under the project root (the lock
  *   file's directory), which also installs esbuild;
- * - the slug is the `APP_SLUG` the app's `config/app.ts` declares (where it has one), `production` is a boolean
- *   and the transport is `pg` or `data-api`;
+ * - the slug is lowercase letters, digits and dashes, and is the `APP_SLUG` the app's `config/app.ts` declares
+ *   (where it has one); `environment` is a non-empty name, `production` is a boolean and the transport is `pg` or
+ *   `data-api`;
+ * - the app has a lock file at or above it and a migration index at `src/app-config/db/migrations/index.ts`;
  * - a linked `@sssb/app-config` is the app's own `src/app-config`, whose migration index registers its migrations
  *   under literal keys.
  * Then, as a validation over the rendered template, overrides included:

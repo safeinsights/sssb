@@ -27,12 +27,12 @@ migration the app's registry names under a literal key. Each is seen failing in
 3. **Changes made after synth**: an environment edited in the console, a pipeline `run.sh` that exports a bypass,
    a CloudFormation macro or transform that rewrites the template at deploy time (`addTransform` synthesizes
    cleanly).
-4. **A seam index that also spreads another app's registry.** The check expects the names the index registers
-   under literal keys; an index with migration files and no literal key at all is refused, but one with a literal
-   key that also spreads another registry (`...otherApp`) would pass, carrying both sets (read from
-   `seamMigrationNames`, not run). Reproduced, with no literal
-   key, before that refusal existed: the bundle named the index file and the other app's migrations. Closing it
-   means reading the registry as the framework does, not as text.
+4. **A seam index that brings in another app's registry.** The check expects the names the index registers under
+   literal keys, and refuses an index with migration files beside it and no literal key at all. Two shapes still
+   pass: an app with no migration files of its own whose index re-exports another app's registry (reproduced by
+   the review: the bundle named the index file and the other app's migrations, and the check expected nothing),
+   and an index with a literal key that also spreads another registry (`...otherApp`), carrying both sets (read
+   from `seamMigrationNames`, not run). Closing it means reading the registry as the framework does, not as text.
 
 ## The design sketched
 
