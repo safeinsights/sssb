@@ -1227,3 +1227,19 @@ placeholders (`0.0.0`, `0.0.0-stage`) and no release candidate. Both reproduced 
 - **Pack and consume's pages shape installs the notes' recipe** (`notesRecipe`): the notes `candidateNotes` renders
   for the packed tarballs, their JSON of URLs taken verbatim, served from a local server, with pnpm's defaults but for
   the generated workspace's `minimumReleaseAge` guard, installed with `--ignore-scripts`.
+
+## Addendum — 2026-11-18: P15, ADR-0013 superseded
+
+P15 is done. ADR-0013's Status is now Superseded (by this ADR), with a dated addendum of its own saying what replaces
+each of its parts; its body is unchanged. The two conditions the body and the 2026-11-17 addendum named are met: the
+generator replaced fork and merge (P12), and Pages has switched (P8: `safeinsights/pages#11` took v0.2.0-rc.1 and
+`safeinsights/pages#14` v0.2.0-rc.2, merged into its `integration` branch). This ADR's header line "Supersedes, if
+accepted" now simply holds.
+
+`docs/adopting.md` was rewritten around the generator and upgrading by release, with its fork-era sections retired:
+taking updates by `git merge`, the advice that a local edit to the framework or to SSSB's lint config would conflict
+on the next merge, sending a fix "upstream" from a fork, and the layout and root scripts of SSSB's own repository
+presented as the adopter's. It says how a workspace is generated and upgraded both before SSSB's first npm release
+(P14), from a release candidate's tarballs, and after it, by version. Writing it found that `pnpm exec sssb guide`,
+which the generated `README.md` and `CLAUDE.md` tell people to run and the workspace root is where they run it, failed
+there; it now starts from the workspace's first app as `sssb doctor` does (`docs/decision-log.md`, 2026-11-18, P15).

@@ -1,6 +1,6 @@
 # ADR-0013 — Upstream updates: keel is publishable-shaped, distributed by fork and merge
 
-- Status: Accepted
+- Status: Superseded (by [ADR-0014](0014-distribution-as-versioned-packages.md))
 - Approver: JP Slavinsky
 - Date: 2026-08-01
 
@@ -181,3 +181,35 @@ landed in the scaffold, which the table lists as "real conflicts". 65 of the 176
 
 Until ADR-0014 is accepted and Pages has switched, this ADR stands as written, and adopters keep taking upstream
 by merge.
+
+## Addendum — 2026-11-18: superseded by ADR-0014
+
+This ADR is Superseded by [ADR-0014](0014-distribution-as-versioned-packages.md), as that ADR's Consequences said it
+would be once Pages had switched (its plan's P15). The Status line above changed from Accepted; nothing else in the body
+did.
+
+Both conditions are met. The generator exists: `@sssb/create` (ADR-0014 P12) writes an adopter's workspace, which
+depends on SSSB's packages by version and holds no copy of the framework, the scaffold or the docs, so there is
+nothing to merge. And the fork that fired this ADR's first trigger has switched: Pages took the first release candidate's packages in place of its
+merged keel (`safeinsights/pages#11`, v0.2.0-rc.1) and then moved to the next candidate by release
+(`safeinsights/pages#14`, v0.2.0-rc.2), both merged into its `integration` branch on 2026-11-18.
+
+What replaces each part of this ADR:
+
+- **Taking upstream into your fork** is now upgrading by release: move the `@sssb/*` packages together to the new
+  version, refresh the guide's copy, raise the reusable workflow's and the plugin's pins to the release commit, run
+  `sssb doctor`, and apply the release notes' "To adopt" steps. `docs/adopting.md` ("Upgrading by release") has the
+  steps. The release notes' four sections (ADR-0014 part 10) replace the merge-time discovery this ADR relied on.
+- **Where conflicts land** no longer applies. An adopter's workspace holds no SSSB file to conflict with, and the files
+  `@sssb/create` writes once are the adopter's, changed by hand when a release's "Scaffold changes to apply by hand"
+  says so.
+- **Sending a keel fix back upstream** becomes an ordinary pull request or issue in `safeinsights/sssb`, which ships in
+  a release. The rule behind it stands: a framework change is never carried locally. `pnpm patch` is the emergency
+  valve until the release arrives (ADR-0014's Consequences).
+- **Publishable-shaped** stands as written, now as the package's contract (ADR-0014's Decision): the explicit
+  `exports` map and its lint rule, private-by-default modules, no host escapes, and two consumers in this repository.
+- **The addendum of 2026-11-16** (a merged-in doc may cite the reference apps) now serves only this repository's own
+  doc gate, as ADR-0014's Consequences said it would.
+
+A repository that still adopts SSSB by fork has no supported upgrade path but the switch ADR-0014 part 11 describes
+for Pages.

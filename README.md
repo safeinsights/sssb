@@ -104,8 +104,8 @@ the single choke point for resource-level decisions. All UI copy flows through n
 
 ## Using it as a template
 
-Read **[docs/adopting.md](docs/adopting.md)**. The short version: the framework is `packages/kit`, your
-app extends it only through the `apps/<app>/src/app-config/` registration seam, and a capability you don't
+Read **[docs/adopting.md](docs/adopting.md)**. The short version: the framework is `@sssb/kit` (`packages/kit`
+here), your app extends it only through the `apps/<app>/src/app-config/` registration seam, and a capability you don't
 want is turned off by registering nothing for it.
 
 ```sh
@@ -114,23 +114,23 @@ pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research --ow
 
 That writes a new workspace in `acme/`: your app, generated from `apps/starter` and renamed, with its root config,
 its CI (a workflow calling SSSB's reusable one), its owner files and SSSB's packages as dependencies — the whole
-mechanical half of adoption. Until SSSB's packages are on npm, run the generator from a checkout of this repository
-against packed tarballs; [docs/adopting.md](docs/adopting.md) has the commands. Two example apps ship here: `apps/showcase` (a support desk — tickets, escalations, file
+mechanical half of adoption. Until SSSB's packages are on npm, run the generator from a release candidate's
+tarballs; [docs/adopting.md](docs/adopting.md) has the commands. Two example apps ship here: `apps/showcase` (a support desk — tickets, escalations, file
 attachments, an export job run by a simulated external service) so every framework capability has a living
 worked example, and `apps/starter`, the template the generator copies. Build against the showcase as your
 reference; it stays here and is never copied.
 
-A generated workspace depends on SSSB's packages by version and upgrades with `pnpm up` and the release notes
-([ADR-0014](docs/adr/0014-distribution-as-versioned-packages.md)). A repository adopted earlier as a fork of this
-one takes updates by `git merge` until it switches — see
-[ADR-0013](docs/adr/0013-upstream-updates-fork-and-merge.md).
+A generated workspace depends on SSSB's packages by version and upgrades by release: move the packages to the new
+version and follow its release notes ([docs/adopting.md](docs/adopting.md), "Upgrading by release";
+[ADR-0014](docs/adr/0014-distribution-as-versioned-packages.md)). Forking this repository and merging its changes
+([ADR-0013](docs/adr/0013-upstream-updates-fork-and-merge.md)) is superseded.
 
 ## What this is not, and what to expect
 
-**It is not a library.** You do not add it to an existing app; you start from it. It hands you the verify
-gate, the lint fences, the CI workflows and the docs doctrine along with the code, and `pnpm add` cannot
-deliver any of that. [ADR-0013](docs/adr/0013-upstream-updates-fork-and-merge.md) explains why it stays
-that way, and what would change the answer.
+**It is not a library.** You do not add it to an existing app; you start from it. `pnpm create @sssb` hands you
+the verify gate, the lint fences, the CI workflow and the agent guide along with the app, on SSSB's packages, and
+`pnpm add` alone cannot deliver that. [ADR-0014](docs/adr/0014-distribution-as-versioned-packages.md) explains the
+split between what the packages carry and what the generator writes once.
 
 **It is opinionated on purpose.** One component library, one data layer, one way to do tenancy. The
 decisions are written down in `docs/adr/` with their reasoning, and treated as settled for routine work.
