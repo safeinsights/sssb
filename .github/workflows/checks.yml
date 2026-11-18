@@ -216,9 +216,31 @@ jobs:
                   restore-keys: pack-and-consume-playwright-${{ runner.os }}-
             # --ignore-scripts: the root's `prepare` (husky, launch-json, panda codegen) needs the whole repo installed,
             # and the pack needs no install script (esbuild's binary arrives as an optional dependency).
-            - name: install the kit's own dependencies, for its prepack build
-              run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit
+            # @sssb/cdk too: its `workspace:*` dependency on @sssb/tools is resolved to a version when packed, which
+            # needs the link an install makes.
+            - name: install the kit's dependencies, for its prepack build, and the cdk's workspace link
+              run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit --filter @sssb/cdk
             - run: node scripts/pack-and-consume.mjs --dir "$RUNNER_TEMP/pack-and-consume"
+            # ADR-0014 P7: on a push to main, the tarballs this job just packed and tested are this run's artifact. A
+            # release candidate's tag run (release.yml's `candidate`) waits for this run to pass on the release commit
+            # and attaches exactly these, never a second pack. Flat, one per fixed-group package.
+            - name: keep the tested tarballs
+              if: github.event_name == 'push'
+              run: |
+                  set -euo pipefail
+                  mkdir -p "$RUNNER_TEMP/sssb-tarballs"
+                  cp "$RUNNER_TEMP"/pack-and-consume/tarballs/*/*.tgz "$RUNNER_TEMP/sssb-tarballs/"
+                  ls -l "$RUNNER_TEMP/sssb-tarballs"
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              if: github.event_name == 'push'
+              with:
+                  name: sssb-tarballs
+                  path: ${{ runner.temp }}/sssb-tarballs/*.tgz
+                  if-no-files-found: error
+                  retention-days: 7
+                  # A re-run of this job packs the same commit again; its tarballs replace the earlier attempt's, so
+                  # the run's artifact is always the last attempt's, the one whose result the gate reads.
+                  overwrite: true
             # On CI the starter's Playwright reporter is `github`, so the evidence on a failure is the
             # traces under test-results/ (trace: on-first-retry), not an HTML report.
             - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

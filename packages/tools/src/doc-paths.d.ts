@@ -37,6 +37,14 @@ export interface DocPathsConfig {
      * `playwright-report`, `test-results`, `node_modules`, `.data`.
      */
     buildOutputs?: string[]
+    /**
+     * Docs whose citations are relative to a directory rather than to the root: doc path (root-relative, as `include`
+     * finds it) to that directory. SSSB maps the app guide `@sssb/kit` ships, `packages/kit/src/guide.md`, to
+     * `apps/starter`; an adopter maps its copy, `.claude/sssb-guide.md`, to its own app. Every citation in such a doc
+     * is joined onto the directory before it is resolved, and the reference-app rule then applies to the result.
+     * Optional, default none. A doc is gated only if `include` reaches it; this says only how to read it.
+     */
+    relativeTo?: Record<string, string>
 }
 
 /** One path a doc cites. */
@@ -67,7 +75,10 @@ export declare function docFiles(root: string, config: DocPathsConfig): string[]
 /** The path citations in a markdown text, one per path token inside each backticked span. */
 export declare function citationsIn(text: string, config: DocPathsConfig): Citation[]
 
-/** `citationsIn` over a file; `file` is resolved against `root`. */
+/**
+ * `citationsIn` over a file; `file` is resolved against `root`. When `relativeTo` maps the file to a directory, each
+ * citation's `path` is joined onto that directory (its `raw` span is unchanged).
+ */
 export declare function citedPaths(file: string, config: DocPathsConfig, root: string): Citation[]
 
 /**

@@ -125,7 +125,17 @@ line, with `#` comments and a quoted bump allowed, as Changesets reads it; a fen
 read for structure, and one left open is refused.
 
 `release.yml`'s `plan` job runs `release.mjs prepare`, which assembles the notes from the pending changesets before
-`changeset version` deletes them and writes them to `docs/releases/v<version>.md`: a new file in the release commit,
-which `verify-release` accepts at exactly that path. The job also appends them to its run summary. Until P14 every
-package is private and nothing is prepared. Creating the GitHub release from the notes is the publishing step
-(ADR-0014 P7 for a release candidate, P14 for npm's), and is not automated here.
+`changeset version` consumes them and writes them to `docs/releases/v<version>.md`: a new file in the release commit,
+which `verify-release` accepts at exactly that path. The job also appends them to its run summary.
+
+## Release candidates, until P14
+
+While the packages are private, every release is a release candidate (ADR-0014 P7): `pre.json` holds Changesets' pre
+mode with the tag `rc`, and `config.json` versions private packages and ignores every package outside `@sssb/*`
+(`"*"` and `"@app/*"`), so a merge to `main` that carries changesets cuts `0.x.y-rc.N`. No one decides a release
+separately from the merge. In pre mode Changesets moves each changeset it consumes to `pre/` instead of deleting it;
+those are kept until pre mode ends at P14 and are not pending, so the next candidate's notes hold only what is new. The
+candidate's tag then attaches the tarballs CI tested to a GitHub prerelease, with these notes, the install lines and
+each tarball's sha512 (`docs/runbooks/release-app.md`). `pnpm release:check` fails a PR that takes the group out of pre
+mode while it is private, or into pre mode once it is public. The four `history-since-keel-*.md` changesets hold
+everything since keel's `24b0589` that predates changesets, and so appear once, in the first candidate's notes.

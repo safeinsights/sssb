@@ -337,6 +337,45 @@ export function toolsShippedFileProblems(files) {
 }
 
 /**
+ * The packed @sssb/cdk: named so, depending on no framework (ADR-0014 rule 4) and on `@sssb/tools` at exactly its own
+ * version (the fixed group's lockstep, which the pack resolved from `workspace:*`), shipping JavaScript, declarations
+ * and its Lambda placeholder asset, and no test. Returns the problems.
+ * @param {Record<string, unknown>} manifest
+ * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
+ */
+export function cdkPackProblems(manifest, files) {
+    const problems = []
+    if (manifest.name !== '@sssb/cdk') problems.push(`the packed manifest is named ${manifest.name}, not @sssb/cdk`)
+    for (const field of /** @type {const} */ ([
+        'dependencies',
+        'peerDependencies',
+        'optionalDependencies',
+        'peerDependenciesMeta',
+    ])) {
+        const deps = /** @type {Record<string, string> | undefined} */ (manifest[field]) ?? {}
+        for (const [dep, range] of Object.entries(deps)) {
+            if (dep === '@sssb/kit') problems.push(`${field} names @sssb/kit: @sssb/cdk depends on no framework`)
+            else if (dep.startsWith('@sssb/') && (field !== 'dependencies' || dep !== '@sssb/tools')) {
+                problems.push(`${field} names ${dep}: @sssb/cdk's one SSSB dependency is @sssb/tools`)
+            } else if (dep === '@sssb/tools' && range !== manifest.version) {
+                problems.push(
+                    `@sssb/tools is ${range}, not exactly ${String(manifest.version)}: the set moves together`,
+                )
+            }
+        }
+    }
+    for (const file of files) {
+        if (['package.json', 'README.md', 'LICENSE', 'CHANGELOG.md'].includes(file)) continue
+        if (/\.test\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test file is shipped`)
+        else if (/^src\/assets\//.test(file)) continue
+        else if (!/^src\/.*\.(js|d\.ts)$/.test(file))
+            problems.push(`${file}: neither JavaScript nor a declaration in src/`)
+    }
+    if (!files.includes('src/index.js')) problems.push('src/index.js: the construct is not shipped')
+    return problems
+}
+
+/**
  * The packed @sssb/eslint-plugin's manifest: named so, no dependency on any SSSB package (ADR-0014 rule 4), and ESLint a
  * peer, so the plugin runs inside the app's own ESLint. Returns the problems.
  * @param {Record<string, unknown>} manifest

@@ -290,8 +290,8 @@ want it.
 
 One gate is relaxed on the way out. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 137 published subpaths from its source (39
-counting its tests), so the same setting would start demanding you delete the other 102 — capabilities you merely have not
+nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 138 published subpaths from its source (39
+counting its tests), so the same setting would start demanding you delete the other 103 — capabilities you merely have not
 reached yet, not dead code. `--eject-showcase` therefore turns it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration.
@@ -361,7 +361,7 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 ### What you may import from SSSB
 
-`packages/kit/package.json`'s `exports` map is the contract: it lists the 137 subpaths your app may
+`packages/kit/package.json`'s `exports` map is the contract: it lists the 138 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 62 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
