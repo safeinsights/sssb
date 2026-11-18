@@ -26,7 +26,6 @@ import path from 'node:path'
 import { assistantConfig } from '@sssb/app-config/assistant'
 import { fakeDb } from '@sssb/kit/adapters/fake/db'
 import type { LlmFixtureFile } from '@sssb/kit/adapters/fake/llm'
-import { createRealLlm } from '@sssb/kit/adapters/real/llm'
 import { listOrgsInTenant, orgIdForSlug } from '@sssb/kit/db/org-lookup'
 import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 import type { LlmRequest, LlmToolLoopRequest } from '@sssb/kit/ports/llm'
@@ -38,8 +37,9 @@ if (!apiKey) {
     process.exit(1)
 }
 
+// Narrowed by the exit above, for main() to use.
+const key: string = apiKey
 const recordAll = process.argv.includes('--all')
-const llm = createRealLlm(apiKey)
 const dir = path.join(process.cwd(), 'fixtures', 'llm')
 
 type ToolLoopExecutor = (call: { name: string; input: unknown }) => Promise<string>
@@ -72,6 +72,10 @@ const TOOL_LOOP_RECORDERS: Record<string, () => Promise<ToolLoopExecutor>> = {
  * the transform but breaks `@sssb/app-config/seed`'s named-export interop; the wrapper is the fix.
  */
 async function main() {
+    // An app reaches SSSB's real adapters only with import() outside its own src/adapters/real/
+    // (sssb/no-kit-real-adapter-import), its scripts included.
+    const { createRealLlm } = await import('@sssb/kit/adapters/real/llm')
+    const llm = createRealLlm(key)
     for (const file of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
         const fixturePath = path.join(dir, file)
         const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as LlmFixtureFile
