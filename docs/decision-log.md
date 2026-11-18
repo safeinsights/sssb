@@ -3325,3 +3325,26 @@ JP asked what is worth borrowing from CanopyCMS's documentation setup. Two thing
   keep true. The agent instructions do have a planned home (ADR-0014's P4 `sssb guide`, content from P7, which
   copies the app guide into an adopter's repo), but a file map like `CODEBASE_GUIDE.md` is deliberately not planned.
   `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
+
+## Trojan Source scan and an action-pin gate, borrowed from CanopyCMS (2026-11-18, `ci/ci-hygiene`)
+
+- **A Trojan Source scan** (`.github/scripts/check-bidi.sh`, the first step after checkout in `checks.yml`, before
+  any install). It fails when a tracked file's contents or name holds one of the nine bidirectional reordering
+  codepoints (U+202A-202E, U+2066-2069), which let a reviewer read one program while the compiler builds another.
+  It is CanopyCMS's step, kept fail-closed: the locale is pinned, because `git grep -P` dies with exit 128 outside
+  a UTF-8 locale; the exit status is read with `case`, because `if git grep; then` reads 128 as "nothing found";
+  `pipefail` covers the filename pipeline; and the filename byte pattern is self-tested against all nine. It
+  scans from the repository root, and reads source-type files as text and refuses a NUL in one, because
+  `.gitattributes` or a NUL can make git call a file binary, which `git grep -I` skips.
+- **An action SHA-pin gate** (`tests/tooling/action-pins.test.ts`, finder in `tests/support/action-pins.ts`). It
+  parses every workflow and local composite action and fails on a `uses:` that is not a full 40-hex SHA
+  (`./` refs exempt, `docker://` flagged). Every action is already pinned today, so it prevents drift (a job merged
+  from a sibling branch, a Dependabot bump to a tag) rather than fixing anything. It does not check
+  `jobs.*.container` or `services.*.image` tags, or what a symlink points at.
+- **A bash script and vitest tests, not `scripts/`.** P4 is moving `scripts/`, and P4, P5 and P6 all
+  touch the root `package.json`, the lockfile and `knip.json` (ADR-0014, the paragraph after the step table), and P9's
+  row changes `pnpm-workspace.yaml` and the knip globs; neither piece needs a `package.json` script or a knip entry here. The script's
+  tests (`tests/tooling/check-bidi.test.ts`) run it against real scratch repositories, including a repository
+  that is not one, and a parent `LC_ALL=C`.
+- **Rejected: porting `check-action-pins.mjs` into `scripts/`** with a `package.json` script. It would grep for
+  `uses:` rather than parse, and would touch the files other work owns.
