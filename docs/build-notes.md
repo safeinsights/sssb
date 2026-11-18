@@ -1980,3 +1980,26 @@ the panel is the element that carries it.
 - **Timings.** A full local run with a warm pnpm store took 77–88s. On CI, with a cold cache, the script took
   163s inside a 3m12s job: install 22s, the two typechecks 33s, unit tests and conformance 26s, `next build`
   22s, e2e 54s (Playwright's browser and its OS packages included).
+
+## Dependabot does not refresh the pack-and-consume lockfile seed (2026-11-17, `chore/post-p2-cleanup`)
+
+`scripts/pack-and-consume/consumer-lock.yaml` is the lockfile seed the `pack-and-consume` job installs its
+adopter-shaped workspace from. A Dependabot PR bumps `pnpm-lock.yaml` and the manifests, never that file, so after
+one merges the seed is behind until a later PR runs `pnpm pack-and-consume --update-lockfile` and commits what it
+rewrites (`deps/react-19-3` did so by hand). The job stays green meanwhile, by design: pnpm keeps each seeded
+resolution whose specifier still matches and resolves afresh only what moved, so the consumer still installs and
+the framework is still proved against what the ranges allow. What the drift costs is a standing notice and a
+re-resolution on every run: the script compares the seed with what the install resolved and, when they differ,
+prints the line "the consumer's resolution moved from its seed" (a `::notice` annotation on CI). The script's own
+comment already says that a Dependabot PR cannot refresh the seed and that this is "a prompt", not a failure.
+Nothing makes anyone act on it.
+
+Proposed, not built, since either changes how the check behaves:
+
+- **A cheap gate:** fail the job on a pull request from someone other than Dependabot when the seed has drifted, so
+  the first human PR after a Dependabot merge carries the one-line refresh. It reuses the drift count the script
+  already computes. The cost is that an unrelated PR goes red for drift it did not cause, which is what the seed
+  exists to avoid for third-party releases, so it should stay a notice if that matters more.
+- **The Dependabot-side fix:** a workflow on Dependabot's pull requests that runs `pnpm pack-and-consume
+--update-lockfile` and pushes the result to the branch. It needs a token able to push to a Dependabot branch, which
+  is a repository settings decision for JP, and its push starts the checks again.
