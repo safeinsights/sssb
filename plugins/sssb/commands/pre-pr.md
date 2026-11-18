@@ -6,7 +6,8 @@ description: Verify, run a subagent branch review against the house rules, fix f
 several). Paths below are relative to an app's directory.
 
 1. From the workspace root, run `pnpm verify`. If anything fails, fix it and re-run until green. If Playwright
-   complains about a missing browser, run `pnpm exec playwright install chromium` once, then retry.
+   complains about a missing browser, run `pnpm --filter './apps/*' exec playwright install chromium` once
+   (Playwright is each app's dependency, not the workspace root's), then retry.
 2. Spawn a read-only review subagent on the full branch diff against the base branch. Give it this checklist, and
    the SSSB app guide as the rules it holds the diff to: `.claude/sssb-guide.md` at the workspace root, which the
    project's CLAUDE.md imports (in SSSB's own repository, CLAUDE.md imports the guide's source):

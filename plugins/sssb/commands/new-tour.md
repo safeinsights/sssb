@@ -13,12 +13,14 @@ marketplace to (in SSSB's own repository, read its local showcase app instead).
 A tour is a scripted walkthrough: a ghost cursor drives the REAL screens while a bar narrates, so the single-file
 demo (`pnpm build:demo-static` builds it) can be watched instead of read about. The _engine_ is the framework's
 (`@sssb/kit/demo-static/tour/contracts` and `@sssb/kit/demo-static/tour/use-tours`, with the Simulator's Tours tab);
-each tour is app content.
+each tour is app content. In a generated app the only Simulator is the static demo's, so that is where its tours
+run: `pnpm dev` has no panel (the server Simulator is SSSB's reference app's).
 
 1. **Register** in `src/app-config/tours.ts`: add a `TourDefinition` (`@sssb/kit/demo-static/tour/contracts`) with
    `id`, `titleKey`, `summaryKey`, usually `snapshot: 'reset'` or the id of a demo preset (`presets` in
    `src/app-config/presets.ts`, written with `/sssb:new-preset`) when the story should open mid-shift. Both work on
-   every host; a saved snapshot's name works only on a server and fails the `file://` walkthrough gate. Then its
+   every host. A saved snapshot's name does not: snapshots are saved on a server, through the server Simulator's
+   Snapshots tab, which a generated app does not have, and such a tour fails the `file://` walkthrough gate. Then its
    steps. An app with no tours renders no Tours tab at all, so an empty `tours` is a real off-switch.
 2. **Narration** goes in the APP catalog (`messages/en.json` and `messages/es.json`, a `tours` namespace listed in
    `APP_NAMESPACES` in `src/app-config/messages.ts`), referenced by FULLY-QUALIFIED key (`tours.myTourStep1`). Both
@@ -40,14 +42,17 @@ each tour is app content.
    `['panel', tab]`, which expands the panel if collapsed and is idempotent.
 5. **Assert as you go**: `['expect', sel]` and `['expectText', sel, text]` turn the tour into a test. Put one after
    every beat that produced something.
-6. **Reload safety** (server host only): a snapshot restore, a feature-flag flip and a person switch all reload the
-   page there. The engine resumes from a sessionStorage marker written at the `advance` boundary, so anything that
-   reloads belongs in `advance`, and anything in a `script` must be safe to re-run.
+6. **Reload safety** (the server host only, so only once the app has the reference's server Simulator): a snapshot
+   restore, a feature-flag flip and a person switch all reload the page there. The engine resumes from a
+   sessionStorage marker written at the `advance` boundary, so anything that reloads belongs in `advance`, and
+   anything in a `script` must be safe to re-run. Writing tours this way from the start costs nothing in the static
+   demo.
 7. **The gate**: a static-demo spec that runs EVERY registered tour to its last step from `file://` and fails unless
    the end-of-run report is `data-misses="0"`. The app was generated without one, because it had no tours: with
    your first, create `tests/demo-static/tours.spec.ts` from the reference app's
    (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/tests/demo-static/tours.spec.ts`). It iterates the
    registry, so it needs no editing for later tours. Run it with `pnpm build:demo-static && pnpm e2e:demo-static`.
-8. **Watch it yourself** at presentation speed (Simulator → Tours → Start, Fast off) before calling it done. A tour
+8. **Watch it yourself** at presentation speed (in the static demo, Simulator → Tours → Start, Fast off) before
+   calling it done. A tour
    that passes CI can still be unreadable; the fast run proves the selectors, your eyes prove the story. Then check
    the demo size budget (`pnpm check:demo-size`) and finish with `pnpm verify`.

@@ -11,7 +11,7 @@ SSSB's reference app is cited by URL, where `<ref>` is the commit your project's
 marketplace to (in SSSB's own repository, read its local showcase app instead).
 
 This is the entity core of a slice. Use `/sssb:new-slice` for the full screen-to-e2e flow; use this when the entity
-arrives without its own UI (or before it). The app's own `Item` is the worked example throughout, as the starter
+arrives without its own UI (or before it). The app's own `Item` is the worked example throughout, as `pnpm create @sssb`
 generated it: its subject in `src/app-config/abilities.ts`, its table in
 `src/app-config/db/migrations/1001_items.ts`, its proofs in `src/app-config/db/rls-proofs.ts` and its route in
 `src/app/api/items/route.ts`.
@@ -30,7 +30,8 @@ generated it: its subject in `src/app-config/abilities.ts`, its table in
    unfiltered selects, and a cross-tenant INSERT rejected by `WITH CHECK`. The coverage check only proves the table
    is protected; nothing else proves your proofs cross a tenant boundary
    (`https://github.com/safeinsights/sssb/blob/<ref>/docs/adr/0004-tenancy-rls.md`, addendum of 2026-11-16).
-3. **Data access** in `src/domain/db/<entity>.ts`, pure logic in `src/domain/<entity>.ts` (the reference app's
+3. **Data access**: create `src/domain/db/<entity>.ts`, and for the pure logic create `src/domain/<entity>.ts` (a
+   generated app has no `src/domain/` yet; the reference app's
    escalations are the pair:
    `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/domain/db/escalations.ts`
    and `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/domain/escalations.ts`). Tenant-scoped

@@ -10,7 +10,8 @@ the request names, or ask). Paths below are relative to that directory; run `pnp
 SSSB's reference app is cited by URL, where `<ref>` is the commit your project's Claude Code settings pin the `sssb`
 marketplace to (in SSSB's own repository, read its local showcase app instead).
 
-The notifications machinery (fan-out, prefs, bell) is the framework's; kinds are vocabulary you register:
+The notifications machinery (fan-out, prefs, the bell component) is the framework's; kinds are vocabulary you
+register:
 
 1. **Register** in `src/app-config/notifications.ts`: add the kind to `appNotificationKinds` (`<entity>.<event>`
    naming), its payload shape to `AppNotificationPayloadMap` (small + jsonb-serializable), and its copy to
@@ -25,8 +26,15 @@ The notifications machinery (fan-out, prefs, bell) is the framework's; kinds are
    `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/api/tickets/[id]/route.ts` produces
    `ticket.assigned` with `notifyMember`.
 3. **Prefs ride free**: every registered kind appears in notification preferences (`NOTIFICATION_KINDS` composes
-   framework ∪ app), with no extra wiring.
+   framework ∪ app), with no extra wiring, wherever the app shows preferences.
 4. **Test**: assert produce → fan-out (the reference app's
-   `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app-config/notifications.test.ts`); check the
-   bell and the prefs UI show it; mirror it in the static demo (`src/demo-static/app.tsx`) if the demo world produces
-   it. Finish with `pnpm verify`.
+   `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app-config/notifications.test.ts`). That test
+   is the server's proof: a generated app's header has no bell (`src/app/[locale]/(protected)/header-glue.tsx`
+   passes none) and it has no profile screen with preferences, so on `pnpm dev` nothing displays a notification. To
+   show them, add the reference app's: its header glue passes `bell` a `NotificationBell`
+   (`@sssb/kit/components/notifications/notification-bell`) fed by its notification routes
+   (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app/api/notifications`), and its profile
+   screen lists preferences through `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/api/notification-prefs/route.ts`.
+   The static demo already has both (the header bell and the profile screen's preferences): if the demo world
+   produces the kind, mirror it in `src/demo-static/app.tsx` with `world.notifyMemberOf` or `world.notifyAdminsOf`
+   and check it there. Finish with `pnpm verify`.

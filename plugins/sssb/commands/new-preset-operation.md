@@ -39,7 +39,11 @@ registers on its own server-only seam module and never on `src/app-config/preset
     - export the args interface and `export type <Kind>Operation = PresetOperationOf<'<kind>', <Args>>`;
     - `args`: the SHAPE, as a Valibot `v.strictObject(...)`, so a misspelled argument fails the gate rather than
       being dropped (any Standard Schema library works; it must validate synchronously). Types only: a value the
-      product would refuse is a rule, not a shape;
+      product would refuse is a rule, not a shape. A generated app does not depend on Valibot (the kit uses it but
+      does not re-export it), so add it to the app first: `pnpm --filter <app> add valibot`. Then run
+      `pnpm sssb:doctor`: a `pnpm add` in a workspace that is already installed can re-resolve SSSB's kit without the
+      app's seam (doctor fails "has no seam linked", and typecheck then fails inside `@sssb/kit`); the fix is a clean
+      install, deleting every `node_modules` directory and the lockfile, then `pnpm install`;
     - `check(args, world, earlier)`: the rules the product's route would enforce, as plain sentences. Ask the SAME
       question the route's `authorize(...)` asks, through `defineAbilitiesFor` (`@sssb/kit/core/abilities`), as the
       explicit actor acting in the explicit team. `world` is derived from the seed by the conformance suite; a field
@@ -52,7 +56,8 @@ registers on its own server-only seam module and never on `src/app-config/preset
    that consumes a name calls `ctx.refs.resolve(name)`. The gate requires every consumed name to be bound by an
    EARLIER step, and each name to be bound once.
 5. **The server half**: create `src/app-config/presets/operations/<kind>/server.ts`, copying the reference app's
-   `server.ts` beside its definition: resolve the team with `resolvePresetOrg`
+   `server.ts` beside its definition (its `@app/seed` import is `@/seed` in a generated app, which has no `@app/*`
+   alias; the same goes for its `static.ts`): resolve the team with `resolvePresetOrg`
    (`@sssb/kit/server-lib/preset-operations`), look the row up ORG-SCOPED the way the route does, then call the
    **same named domain operation the route calls**. If the route still holds that logic inline, first extract its post-authorize body into a function
    (create `src/domain/<operation>.ts`; the reference app's `applyTicketChanges`,
@@ -74,17 +79,20 @@ registers on its own server-only seam module and never on `src/app-config/preset
    `demo-presets` check holds definitions to server halves and replays every preset on the server; run the whole
    file, since a `-t` filter that skips its other checks fails it by design); the static demo's spec loads every
    registered preset from `file://` and waits for its "Preset loaded" notice, so a missing static half fails there
-   (`/sssb:new-preset` step 8 says how to add that loop). Assert the kind's visible effect in the preset specs on
-   both hosts. Then `pnpm check:demo-size` and `pnpm verify`.
+   (`/sssb:new-preset` step 8 says how to add that loop, and why it imports the preset list module rather than
+   `src/app-config/presets.ts`, which now imports your definition). Assert the kind's visible effect in the static
+   demo's preset load test; a server-side preset spec needs the server Simulator, which a generated app does not
+   have (`/sssb:new-preset` step 10). Then `pnpm check:demo-size` and `pnpm verify`.
 
 ## `--from <SSSB kind>`: replace one of SSSB's kinds
 
 To make a preset follow YOUR version of `invite` (a customized invite flow), register an app kind with SSSB's name.
 Start from SSSB's own three parts and keep the name:
 
-- **Definition**: copy the object SSSB's returns from `@sssb/kit/core/presets` (`inviteOperation`,
-  `inboundOperation`, `flagOperation`, `actorHoldOperation`: each is a function, `() => ({ ... })`, so SSSB's own
-  stay out of the static demo) into your kind's `definition.ts` as an exported constant, keeping `kind` identical,
+- **Definition**: copy SSSB's from the installed kit's source for `@sssb/kit/core/presets`, where the four are
+  module-private functions, `() => ({ ... })`, so SSSB's own stay out of the static demo (`inviteOperation`,
+  `inboundOperation`, `flagOperation`, `actorHoldOperation`; none is exported, so copy rather than import). Put the
+  object one returns into your kind's `definition.ts` as an exported constant, keeping `kind` identical,
   and register it in `appPresetOperations`. If your version keeps SSSB's argument shape, leave `AppPresetOperation`
   alone (SSSB's `FrameworkPresetOperation` already types that name); if it changes the shape, add yours to the
   union. Change the rules to match your route.

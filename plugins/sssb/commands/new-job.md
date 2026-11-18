@@ -20,14 +20,20 @@ are the framework's). You register the app side, and never edit a framework unio
    defensively (they arrive as `unknown`).
 2. **Register** in `src/app-config/jobs.ts`: add the kind to `appJobKinds` and the handler to `appJobHandlers`. The
    framework composes `framework ∪ app` for `isJobKind` and the handler map.
-3. **Submit path**: routes create jobs through the jobs port (the reference app's
-   `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/api/jobs/route.ts`, and its dashboard
-   glue for the submit and timeline pattern). Job authorization rides the framework's `Job` subject, so no new
-   ability rules unless your kind implies a new entity.
+3. **Submit path**: a route creates the job with `submitJob` (`@sssb/kit/db/jobs`) over the jobs port, after
+   `authorize(user, orgId, 'create', { type: 'Job', orgId })`. A generated app has no jobs route: create
+   `src/app/api/jobs/route.ts`, resolving the tenant and team the way `src/app/api/items/route.ts` does. The reference
+   app's (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/api/jobs/route.ts`, with its
+   dashboard glue for the submit and timeline pattern) is the fuller example; its `resolveOrgContext` is a helper of
+   that app's own, which a generated app does not have. Job authorization rides the framework's `Job` subject, so no
+   new ability rules unless your kind implies a new entity.
 4. **Recurring?** Seed a `job_schedules` row through the app seed's `jobSchedules` (`src/seed/index.ts`); the
    schedules machinery is the framework's and needs no registration.
 5. **Colocated test** beside the handler (fake ports; the reference app's
-   `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app-config/jobs.test.ts`), then exercise the
-   flow in the Simulator's Jobs tab (hold and release with the `jobs-held` flag), and mirror any new demo surface in
-   the static demo, `src/demo-static/app.tsx`.
+   `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app-config/jobs.test.ts`): it is what runs
+   your handler, since a generated app has no Simulator on `pnpm dev` to watch jobs in (the server panel is the
+   reference app's). The static demo's panel has a Jobs tab, but its jobs are the in-memory world's: a job the
+   composition root starts with `world.startJob('<kind>')` walks the status timeline (held while the `jobs-held` flag
+   is on) without running your handler. Mirror a new demo surface there, in `src/demo-static/app.tsx`, if the slice
+   has one.
 6. Finish with `pnpm verify`.

@@ -10,7 +10,7 @@ the request names, or ask). Paths below are relative to that directory; run `pnp
 SSSB's reference app is cited by URL, where `<ref>` is the commit your project's Claude Code settings pin the `sssb`
 marketplace to (in SSSB's own repository, read its local showcase app instead).
 
-Outbound webhooks (endpoint CRUD, signed delivery, retries and backoff, the Simulator's Hooks tab) are the
+Outbound webhooks (signed delivery, retries and backoff, the endpoint rows, the Simulator's Hooks tab) are the
 framework's; event kinds are vocabulary you register:
 
 1. **Register** in `src/app-config/webhooks.ts`: add the kind to `appWebhookEventKinds` (`<entity>.<event>`) and
@@ -23,6 +23,9 @@ framework's; event kinds are vocabulary you register:
 3. **Signature headers** derive from the app's slug (`WEBHOOK_*_HEADER` in `@sssb/kit/core/webhook-signing`): never
    hard-code them; receivers pin these names at integration time.
 4. **Test**: emit → drain → a caught delivery with a verifying signature (the reference app's
-   `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app-config/webhooks.test.ts`); inspect it in
-   the Simulator's Hooks tab (its failure toggle exercises the retry path); mirror it in the static demo
-   (`src/demo-static/app.tsx`) if the demo world emits it. Finish with `pnpm verify`.
+   `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app-config/webhooks.test.ts`). That test is the
+   server's proof: a generated app has no Simulator on `pnpm dev` (the server panel, with its Hooks tab, is the
+   reference app's) and no endpoint-management route. The static demo has both: its team screen registers
+   endpoints and its panel's Hooks tab shows deliveries (its failure toggle exercises the retry path). If the demo
+   world emits your kind, mirror the emit in `src/demo-static/app.tsx` with `world.enqueueWebhook(kind, payload)`
+   and inspect it there. Finish with `pnpm verify`.

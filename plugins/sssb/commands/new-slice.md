@@ -12,8 +12,8 @@ marketplace to (in SSSB's own repository, read its local showcase app instead).
 
 A slice is APP code. It registers new entities through the `src/app-config/` seam and imports the framework freely;
 the framework reaches your app only through the `@sssb/app-config/*` alias, so you never edit a framework union or
-switch to add a subject, kind or table: you register it. The app's own Items slice is the end-to-end example, as the
-starter generated it: `src/components/items-card.tsx`, `src/app/api/items/route.ts`,
+switch to add a subject, kind or table: you register it. The app's own Items slice is the end-to-end example, as
+`pnpm create @sssb` generated it: `src/components/items-card.tsx`, `src/app/api/items/route.ts`,
 `src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx`, and its seam registrations below. The reference app's
 tickets are the same shape at more size
 (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/components/tickets-card.tsx`).

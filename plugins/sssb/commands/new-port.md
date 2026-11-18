@@ -28,7 +28,8 @@ point's recipe instead.
    its unit test (create `src/adapters/fake/<name>.test.ts`).
 3. Create `src/adapters/real/<name>.ts`, the only file that imports the vendor SDK, marked
    `AUTHORED — CUTOVER (<row>)` until someone has watched it talk to the real service. Install the SDK in the app's
-   own `package.json` (`pnpm --filter <app> add <sdk>`). Read configuration from `process.env` only in
+   own `package.json` (`pnpm --filter <app> add <sdk>`), then run `pnpm sssb:doctor` (if it reports the kit has no
+   seam linked, `/sssb:new-preset-operation` step 2 has the fix). Read configuration from `process.env` only in
    `src/adapters/real/` (create `src/adapters/real/index.ts`, with a REQUIRED_ENV map from each variable to its
    cutover row that throws `CutoverPendingError` (`@sssb/kit/ports/errors`) naming every missing variable at once);
    never read `APP_MODE`, `DEMO_MODE` or `E2E_BUILD` there. Record non-secret params and secret NAMES (never values)
