@@ -256,6 +256,23 @@ per-adopter rename would add two more files to the rewrite surface for no functi
 half-applied one produces two servers on two ports — silent wrong-app adoption, the exact failure that
 whole module exists to prevent. Read `starter` as "the second slot", or set `STARTER_PORT` and forget it.
 
+**A workspace with two apps gives each its own slot.** Both made from the starter would declare `starter` and bind one
+port: the second dev server fails to start, or, worse, the second app's e2e run adopts the first app's server. The
+second app declares a slot of its own in its `package.json`, in place of the string:
+
+```json
+"sssb": { "port": { "name": "ledger", "default": 3700 } }
+```
+
+and its `playwright.config.ts` calls `originFor()` with no argument, which reads that declaration from the app's
+directory (Playwright runs from there). `sssb port`, `sssb tick` and `sssb dev-tick` read it the same way when given no
+app argument: in the second app's scripts drop the `starter` from `sssb dev-tick starter -- next dev …` and
+`sssb tick starter` (left in, they bind and tick the first app's port), or name the slot, `sssb tick ledger`. The
+override is `LEDGER_PORT` (`<NAME>_PORT`, with `-` as `_`), and a linked worktree derives the port from 20000-29999,
+keyed on the name as well as the checkout. The name is lowercase words joined by `-`; the default is an integer from 1024 to 49151
+outside the ports SSSB's own services use (3000, 3100, 3200-3599, 5439-5639, 20000-29999, 61000-61199).
+`sssb doctor` fails two apps that declare one slot, or two slots with one default, and a declaration that is not valid.
+
 Nothing the generator renames is a literal an adopter has to hunt for, and no test hard-codes the product's
 name: `apps/*/tests/catalog.ts` reads the app's own catalog and the specs assert against that. A rename
 cannot break the gate.

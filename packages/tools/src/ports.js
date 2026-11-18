@@ -20,6 +20,12 @@
 // An explicit env var always wins, which is what makes an isolated one-off run possible without editing
 // anything: `SHOWCASE_PORT=3210 pnpm dev`.
 //
+// A SERVICE is one of the built-ins below, named by a string, or a SLOT an app declares for itself in its package.json,
+// `"sssb": { "port": { "name": "ledger", "default": 3700 } }`, for a workspace whose apps are not SSSB's two: without
+// it two apps made from the starter share `starter`, and so one port. A custom slot follows the same three rules: its
+// variable is `LEDGER_PORT`, a main checkout gets its `default`, and a linked worktree derives from a band the
+// built-ins do not use (CUSTOM_BAND), keyed on the name as well as the checkout so two slots of one worktree differ.
+//
 // THIS MODULE MUST PARSE AS BOTH ESM AND CJS, which rules out `import.meta` and `__dirname` alike: Playwright
 // compiles `playwright.config.ts`, and everything it imports from outside node_modules, to CommonJS, where
 // `import.meta` is a syntax error at config-load time that takes the whole suite with it. Inside SSSB's own

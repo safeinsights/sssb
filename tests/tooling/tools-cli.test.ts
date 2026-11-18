@@ -124,13 +124,72 @@ describe('sssb port', () => {
         const wrong = app(root, 'apps/wrong', { name: 'wrong', sssb: { port: 'nonesuch' } })
         const result = sssb(wrong, ['port'], PORTS)
         expect(result.status).toBe(1)
-        expect(result.stderr).toContain('declares port service "nonesuch"')
+        expect(result.stderr).toContain('unknown service "nonesuch"')
     })
 
     it('exits 1 outside a package', () => {
         const result = sssb(path.join(root, 'apps'), ['port', 'ladle'], PORTS)
         expect(result.status).toBe(1)
         expect(result.stderr).toContain('is not a package')
+    })
+
+    describe('for an app with a port slot of its own', () => {
+        const slotRoot = workspace('port-slot')
+        const ledger = app(slotRoot, 'apps/ledger', {
+            name: 'ledger',
+            sssb: { port: { name: 'ledger', default: 3700 } },
+        })
+        const portal = app(slotRoot, 'apps/portal', {
+            name: 'portal',
+            sssb: { port: { name: 'portal', default: 3710 } },
+        })
+
+        it('prints each app’s own default, and its variable overrides it', () => {
+            expect(sssb(ledger, ['port'], PORTS).stdout).toBe('3700\n')
+            expect(sssb(portal, ['port'], PORTS).stdout).toBe('3710\n')
+            expect(sssb(ledger, ['port'], { ...PORTS, LEDGER_PORT: '3999', FORCE_COLOR: '1' }).stdout).toBe('3999\n')
+        })
+
+        it('accepts the app’s own slot by name, and no other app’s', () => {
+            expect(sssb(ledger, ['port', 'ledger'], PORTS).stdout).toBe('3700\n')
+            expect(sssb(ledger, ['port', 'starter'], PORTS).stdout).toBe('3123\n')
+            const other = sssb(ledger, ['port', 'portal'], PORTS)
+            expect(other.status).toBe(1)
+            expect(other.stderr).toContain(
+                'unknown service "portal" (known: showcase, starter, ladle, contractPg, ledger)',
+            )
+        })
+
+        it('exits 1 with the file named for a slot that is not valid', () => {
+            const wrong = app(slotRoot, 'apps/wrong', {
+                name: 'wrong',
+                sssb: { port: { name: 'Wrong', default: 3720 } },
+            })
+            const result = sssb(wrong, ['port'], PORTS)
+            expect(result.status).toBe(1)
+            expect(result.stderr).toContain(path.join(wrong, 'package.json'))
+            expect(result.stderr).toContain("a port slot's name is lowercase words")
+        })
+
+        it('writes the slot’s port to launch.json beside the built-in ones', () => {
+            const root = workspace('launch-slot')
+            app(root, 'apps/ledger', {
+                name: '@x/ledger',
+                scripts: { dev: 'next dev' },
+                sssb: { port: { name: 'ledger', default: 3700 } },
+            })
+            app(root, 'apps/web', { name: '@x/web', scripts: { dev: 'next dev' }, sssb: { port: 'starter' } })
+            expect(sssb(root, ['launch-json'], PORTS).status).toBe(0)
+            expect(JSON.parse(readFileSync(path.join(root, '.claude', 'launch.json'), 'utf8')).configurations).toEqual([
+                {
+                    name: 'ledger-dev',
+                    runtimeExecutable: 'pnpm',
+                    runtimeArgs: ['--filter', '@x/ledger', 'dev'],
+                    port: 3700,
+                },
+                { name: 'web-dev', runtimeExecutable: 'pnpm', runtimeArgs: ['--filter', '@x/web', 'dev'], port: 3123 },
+            ])
+        })
     })
 })
 
@@ -678,6 +737,28 @@ describe('sssb tick and dev-tick with --app', () => {
 
         expect(result.stderr).toContain('tick: request to http://127.0.0.1:1')
         expect(result.status).toBe(1)
+    })
+
+    it('`tick` and `dev-tick` take a slot the app declares for itself, from its declaration alone', () => {
+        const root = workspace('tick-slot')
+        const dir = app(root, 'apps/ledger', { name: 'ledger', sssb: { port: { name: 'ledger', default: 3700 } } })
+        const env = { LEDGER_PORT: '1' } // nothing listens on 1: a tick that reaches for the server proves the slot resolved
+
+        const defaulted = sssb(dir, ['tick', '--timeout', '2'], env)
+        expect(defaulted.stderr).toContain('tick: request to http://localhost:1')
+        const named = sssb(dir, ['tick', 'ledger', '--timeout', '2'], env)
+        expect(named.stderr).toContain('tick: request to http://localhost:1')
+        const elsewhere = sssb(root, ['tick', '--app', dir, '--timeout', '2'], env)
+        expect(elsewhere.stderr).toContain('tick: request to http://localhost:1')
+        // Another app's slot is not known to this one, and the message lists what is.
+        const other = sssb(dir, ['tick', 'portal', '--timeout', '2'], env)
+        expect(other.status).toBe(2)
+        expect(other.stderr).toContain('unknown app "portal" (known: showcase, starter, ledger)')
+
+        const dev = sssb(dir, ['dev-tick', '--', process.execPath, '-e', 'process.exit(4)'], env)
+        expect(dev.status).toBe(4)
+        const devNamed = sssb(dir, ['dev-tick', 'ledger', '--', process.execPath, '-e', 'process.exit(5)'], env)
+        expect(devNamed.status).toBe(5)
     })
 
     it('`tick <slot> --url …` from a directory with no package.json gets past argument parsing', () => {

@@ -5123,3 +5123,49 @@ _Accepted gap_ and adds to the rule.
   `packages/kit/tsconfig.strict.json`, is what compiles the kit against a seam without `appRoles` (the strict config
   resolves the seam to the fixture, which exports it): reading `.appRoles` directly fails `apps/starter` and
   `apps/showcase` with TS2339 and passes the strict config.
+
+## An app declares a port slot of its own (2026-11-18, `feat/app-declared-port-slots`)
+
+Built from `.claude/future-tasks/resolved/port-slots-for-adopter-apps.md` (the future task, moved there by this change; an
+earlier entry names its old path): a workspace with two apps of its own, both made from the starter, both declared
+`starter` and bound one port. The design stood as written (`"sssb": { "port": { "name": "ledger", "default": 3700 } }`
+beside the string form); the judgement calls it left open, each with what it beat:
+
+- **The override variable is `<NAME>_PORT`, from the slot's name with `-` as `_` (`LEDGER_PORT`, `BACK_OFFICE_PORT`).**
+  The built-ins already follow it (`STARTER_PORT`, `CONTRACT_PG_PORT`), and a name made of lowercase words and `-` maps
+  to exactly one variable. Rejected: an `env` field in the declaration, which is one more thing for two apps to
+  declare the same way by mistake (it is refused: a slot has `name` and `default` only). A name whose variable is a
+  built-in's (`contract-pg`) is refused too, since the two services would then read one variable.
+- **A worktree's port comes from 20000-29999, `20000 + sha1(root NUL name) % 10000`.** The design asked for a band the
+  four built-in slots do not use, keyed on the name as well as the checkout. It is clear of every built-in default and
+  derived band (3000, 3100, 3200-3599, 5439-5639, 61000-61199) and below the ephemeral ranges (Linux 32768, macOS 49152),
+  so the OS never hands one out. Ten thousand ports make two slots of one worktree collide about once in ten thousand,
+  and a collision is a loud EADDRINUSE, as it already is for the built-ins. Rejected: a band beside the built-ins
+  (3600-3999 holds 200 slots at best, and the built-in bands are 2 ports wide per slot so reusing their shape would
+  squeeze each app into a pair), and a scan for a free port, which the module's header refuses (two processes would
+  disagree).
+- **A declared default may not lie in a port band SSSB's own services use, nor above 49151 or below 1024.** In a main
+  checkout it is the port; if it sat in a built-in's derived band a linked worktree of SSSB could derive the very port
+  an adopter's main checkout binds, the collision the built-ins' separate bands exist to rule out. The task's own
+  example, 3300, is inside the showcase and starter band (3200-3599), so the examples use 3700 and 3710. Rejected: accepting
+  any port and leaving a collision to a loud bind failure, which the doctor cannot see in advance.
+- **Two apps on one slot, and two on distinct slots with one default, both fail `sssb doctor`.** The second is the
+  collision the first check cannot see: in a main checkout two distinct names with one default still bind one port. A
+  worktree's derived ports differ by name, so only the default needs checking. An app with no declaration is not
+  checked (launch-json already skips it), and an invalid declaration is a failure naming its package.json, where it was
+  a failure of `sssb port` alone before.
+- **`originFor()` and `portFor()` with no argument read the working directory's package.json, with no walk up.** A
+  Playwright config runs from its app's directory; a walk up to a nearest declaring package could silently pick the
+  workspace root's. With no declaration there it throws and says to name a service or run from the app.
+- **`tick` and `dev-tick` know a custom slot only for the app in the working directory (or `--app`).** A slot is the
+  declaring app's alone, so `sssb tick portal` run from the ledger app is an unknown app, listing the known ones, rather
+  than a guess at another app's default. Rejected: reading every app's declaration in the workspace, which the commands
+  (which run in one app's directory, and from a package script) do not otherwise do.
+- **The string form is untouched**: `portForRoot(…, 'starter')` takes the same code path to the same numbers (the
+  existing tests pass unchanged), and a built-in's derived port is still keyed on the checkout alone. One message
+  changed: a declaration naming an unknown service now says `unknown service "x"` with the known ones and the slot form,
+  where it said `declares port service "x"`.
+
+Not done: `.claude/future-tasks/neutral-app-port-service.md` (a neutral slot the generator writes in place of
+`starter`) still stands; this makes it buildable without a new built-in. The starter and the showcase keep their string
+declarations, so an app the generator writes is unchanged.

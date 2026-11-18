@@ -17,6 +17,7 @@ import {
     ownTests,
     parseWorkspaceYaml,
     pinReport,
+    portSlotProblems,
     PROBE,
     singletonProblems,
     sssbPackagesOf,
@@ -1260,6 +1261,62 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
         E2E_TIMEOUT,
     )
 
+    /** Declares `port` as the app's slot in `ws/<dir>/package.json`. */
+    function declarePort(ws: string, dir: string, port: unknown) {
+        const file = path.join(ws, dir, 'package.json')
+        const manifest = JSON.parse(readFileSync(file, 'utf8'))
+        manifest.sssb = { ...manifest.sssb, port }
+        json(file, manifest)
+    }
+
+    it(
+        'FAILS two apps that declare one port slot, and passes them once each declares its own',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-port-slots-', 'in-repo')
+            declarePort(ws, 'apps/a', 'starter')
+            declarePort(ws, 'apps/b', 'starter')
+            const same = await doctor(ws, 'apps/a')
+            expect(same.out).toMatch(/^FAIL +port slots: no two apps bind one port$/m)
+            expect(same.out).toMatch(/- apps\/a and apps\/b declare the same port slot "starter"/)
+            expect(same.code, same.out).toBe(1)
+
+            // The same two, each on a slot of its own: the check passes and says where each one binds.
+            declarePort(ws, 'apps/a', { name: 'ledger', default: 3700 })
+            declarePort(ws, 'apps/b', { name: 'portal', default: 3710 })
+            const distinct = await doctor(ws, 'apps/a')
+            expect(distinct.out).toMatch(/^ok +port slots: no two apps bind one port$/m)
+            expect(distinct.out).toMatch(/apps\/a: slot "ledger", port 3700 in a main checkout/)
+            expect(distinct.out).toMatch(/apps\/b: slot "portal", port 3710 in a main checkout/)
+            expect(distinct.code, distinct.out).toBe(0)
+
+            // A built-in beside a custom slot is fine too, and an app with no declaration is not checked.
+            declarePort(ws, 'apps/a', 'starter')
+            const mixed = await doctor(ws, 'apps/a')
+            expect(mixed.code, mixed.out).toBe(0)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        'FAILS an app whose port declaration is not valid, naming its package.json, and two slots on one default',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-port-bad-', 'in-repo')
+            declarePort(ws, 'apps/a', { name: 'Ledger', default: 3700 })
+            const invalid = await doctor(ws, 'apps/a')
+            expect(invalid.out).toMatch(/- apps\/a: .*apps\/a\/package\.json: a port slot's name is lowercase words/)
+            expect(invalid.code, invalid.out).toBe(1)
+
+            declarePort(ws, 'apps/a', { name: 'ledger', default: 3700 })
+            declarePort(ws, 'apps/b', { name: 'portal', default: 3700 })
+            const clash = await doctor(ws, 'apps/a')
+            expect(clash.out).toMatch(
+                /- apps\/a and apps\/b declare port slots \("ledger", "portal"\) with one default, 3700/,
+            )
+            expect(clash.code, clash.out).toBe(1)
+        },
+        E2E_TIMEOUT,
+    )
+
     it(
         'reads column-0 `packages` entries, so a seamless importer there is named',
         async () => {
@@ -1391,6 +1448,60 @@ describe.concurrent('sssb doctor, end to end over a workspace on disk', () => {
         },
         E2E_TIMEOUT,
     )
+})
+
+describe('portSlotProblems', () => {
+    function apps(declarations: Record<string, unknown>) {
+        const ws = realpathSync(makeTestTmpDir('sssb-doctor-ports-'))
+        const dirs = Object.entries(declarations).map(([name, port]) =>
+            pkg(path.join(ws, 'apps', name), { name, ...(port === undefined ? {} : { sssb: { port } }) }),
+        )
+        return { ws, dirs }
+    }
+
+    it('passes apps on distinct slots, built-in or their own, and an app that declares none', () => {
+        const { ws, dirs } = apps({
+            a: { name: 'ledger', default: 3700 },
+            b: { name: 'portal', default: 3710 },
+            c: 'starter',
+            d: undefined,
+        })
+        expect(portSlotProblems(ws, dirs)).toEqual({
+            problems: [],
+            slots: [
+                'apps/a: slot "ledger", port 3700 in a main checkout',
+                'apps/b: slot "portal", port 3710 in a main checkout',
+                'apps/c: slot "starter", port 3100 in a main checkout',
+            ],
+        })
+    })
+
+    it('names every app on a slot, whichever form declares it', () => {
+        const { ws, dirs } = apps({
+            a: { name: 'ledger', default: 3700 },
+            b: { name: 'ledger', default: 3710 },
+            c: 'starter',
+            d: 'starter',
+            e: 'starter',
+        })
+        const { problems } = portSlotProblems(ws, dirs)
+        expect(problems).toHaveLength(2)
+        expect(problems[0]).toContain('apps/a and apps/b declare the same port slot "ledger"')
+        expect(problems[1]).toContain('apps/c and apps/d and apps/e declare the same port slot "starter"')
+    })
+
+    it('reads a derived port in a worktree workspace as a main checkout’s default, never the derived one', () => {
+        const { ws, dirs } = apps({ a: { name: 'ledger', default: 3700 } })
+        const inWorktree = path.join(ws, '.claude', 'worktrees', 'x')
+        const moved = pkg(path.join(inWorktree, 'apps', 'a'), {
+            name: 'a',
+            sssb: { port: { name: 'ledger', default: 3700 } },
+        })
+        expect(dirs).toHaveLength(1)
+        expect(portSlotProblems(inWorktree, [moved]).slots).toEqual([
+            'apps/a: slot "ledger", port 3700 in a main checkout',
+        ])
+    })
 })
 
 describe('cutoverReport', () => {

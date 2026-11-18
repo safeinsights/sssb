@@ -55,6 +55,33 @@ describe('parseTickArgs', () => {
         expect(() => parseTickArgs(['showcase', 'starter'])).toThrow(/unexpected argument "starter"/)
     })
 
+    it('takes the slot the app declares for itself as a known app, with its own port, and no other custom slot', () => {
+        const ledger = { name: 'ledger', default: 3700 }
+        expect(parseTickArgs(['ledger'], ledger)).toEqual({
+            app: 'ledger',
+            origin: expect.stringMatching(/^http:\/\/localhost:\d+$/),
+            timeoutMs: DEFAULT_TIMEOUT_SECONDS * 1000,
+        })
+        const before = process.env.LEDGER_PORT
+        process.env.LEDGER_PORT = '3777'
+        try {
+            expect(parseTickArgs(['ledger'], ledger).origin).toBe('http://localhost:3777')
+            expect(parseTickArgs(['ledger', '--url', 'http://127.0.0.1:4000'], ledger).origin).toBe(
+                'http://127.0.0.1:4000',
+            )
+        } finally {
+            if (before === undefined) delete process.env.LEDGER_PORT
+            else process.env.LEDGER_PORT = before
+        }
+        expect(() => parseTickArgs(['ledger'])).toThrow(/unknown app "ledger" \(known: showcase, starter\)/)
+        expect(() => parseTickArgs(['portal'], ledger)).toThrow(
+            /unknown app "portal" \(known: showcase, starter, ledger\)/,
+        )
+        // A built-in declaration adds no name; the built-ins are known either way.
+        expect(() => parseTickArgs(['ledger'], 'starter')).toThrow(/known: showcase, starter\)/)
+        expect(parseTickArgs(['showcase'], ledger).app).toBe('showcase')
+    })
+
     it('marks a bad command line as usage, which is not the same failure as a tick that failed', () => {
         for (const argv of [[], ['nope'], ['showcase', '--bogus'], ['showcase', '--timeout', '0']]) {
             expect(() => parseTickArgs(argv)).toThrow(TickError)
@@ -632,6 +659,19 @@ describe('sssb dev-tick', () => {
         for (const bad of [[], ['showcase'], ['showcase', 'next', 'dev'], ['nope', '--', 'next'], ['showcase', '--']]) {
             expect(parseDevArgs(bad), bad.join(' ')).toHaveProperty('error')
         }
+    })
+
+    it('takes the slot the app declares for itself, and says so in its usage', () => {
+        const ledger = { name: 'ledger', default: 3700 }
+        expect(parseDevArgs(['ledger', '--', 'next', 'dev'], ledger)).toEqual({
+            app: 'ledger',
+            command: ['next', 'dev'],
+        })
+        expect(parseDevArgs(['ledger', '--', 'next', 'dev'])).toHaveProperty('error')
+        expect(parseDevArgs(['portal', '--', 'next', 'dev'], ledger)).toHaveProperty('error')
+        expect(parseDevArgs(['nope', '--', 'next'], ledger)).toEqual({
+            error: "usage: sssb dev-tick <showcase|starter|ledger> -- <the dev server's command...>",
+        })
     })
 
     const sleepAndExit = (ms: number) => [

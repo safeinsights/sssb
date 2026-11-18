@@ -195,7 +195,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   and `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last also isolates
   `pnpm test:contract` between worktrees). Each app declares its slot in its package.json
   (`"sssb": { "port": "starter" }`); the slot is a port band, not the app's name, so the app `@sssb/create` writes
-  keeps `starter` too.
+  keeps `starter` too. An app may instead declare a slot of its own, `{ "name": "<name>", "default": <port> }` (its
+  override `<NAME>_PORT`, its derived worktree port from 20000-29999 keyed on the name too); `sssb doctor` fails two apps
+  on one slot or one default.
 - **Scratch directories in this repo's tests**: `tests/support/tmp-dir.ts` re-exports `@sssb/tools/testing/tmp-dir`,
   and the framework's own tests use its copy, `packages/kit/src/testing/tmp-dir.ts`; `sssb/no-direct-mkdtemp` bans the
   raw calls in test files, and `test:unit`, `test:coverage` and `test:contract` run through `sssb check-tmpdir-leak`.
