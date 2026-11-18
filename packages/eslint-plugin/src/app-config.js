@@ -361,13 +361,23 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             plugins: sssb,
             rules: { 'sssb/no-real-adapter-import': 'error' },
         }),
+        // SSSB's real adapters load their vendor SDK, so they are reached only by import(), deny-by-default over every
+        // file of the app, tests and stories included: a module outside src/ (a `lib/`, a test helper, a script) could
+        // otherwise re-export one into src/ with every check green. Ignored where the vendor ban is: the app's own real
+        // adapters, which may build on one as they import a vendor, and the three carve-outs.
+        at('kit-real-adapters-by-import', {
+            files: files(''),
+            ignores: [`${src('adapters/real')}/**`, ...carveOuts(P)],
+            plugins: sssb,
+            rules: { 'sssb/no-kit-real-adapter-import': 'error' },
+        }),
         // Inside it, the registry and the fakes: no static import of real/ (the registry's import() is the only way
-        // in), and none of SSSB's real adapters.
+        // in).
         at('registry-and-fakes', {
             files: files('src/adapters'),
             ignores: [`${src('adapters/real')}/**`],
             plugins: sssb,
-            rules: { 'sssb/no-static-real-adapter-import': 'error', 'sssb/no-kit-real-adapter-import': 'error' },
+            rules: { 'sssb/no-static-real-adapter-import': 'error' },
         }),
         // ...and only the registry loads real/ dynamically. The registry is `index.ts` and nothing else, as the
         // recipe names it: an `index.mjs` beside it is one more module that may not load real/. Stories keep it: a

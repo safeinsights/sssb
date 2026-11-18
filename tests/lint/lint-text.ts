@@ -61,7 +61,7 @@ export const REAL_ADAPTER_DYNAMIC: Fence = {
 }
 export const KIT_REAL_ADAPTER: Fence = {
     rule: 'sssb/no-kit-real-adapter-import',
-    fragment: "never import SSSB's real adapters",
+    fragment: "SSSB's real adapters (@sssb/kit/adapters/real/*) are loaded only with import()",
 }
 export const NEXT_FONT: Fence = { rule: 'sssb/no-next-font-google', fragment: 'next/font/google phones home' }
 export const JSX_LITERAL: Fence = { rule: 'sssb/no-jsx-literals', fragment: '' }

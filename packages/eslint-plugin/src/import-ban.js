@@ -64,11 +64,21 @@ export const declarationVisitors = (check) => ({
 })
 
 /**
+ * A declaration that is type-only as a whole (`import type …`, `export type … from`, `export type * from`,
+ * `import type x = require(…)`): TypeScript erases it under every setting, so it loads nothing. An inline
+ * `import { type X } from …` is not one: under `verbatimModuleSyntax` it is emitted as `import {} from …`, which loads
+ * the module.
+ * @param {any} node
+ */
+const isTypeOnly = (node) => node.importKind === 'type' || node.exportKind === 'type'
+
+/**
  * A fence over import and export DECLARATIONS: one finding per matching pattern, reported on the declaration with
- * the pattern's own message.
+ * the pattern's own message. `allowTypeOnly` lets a type-only declaration through, for a fence about what a module
+ * LOADS rather than what it may name.
  * @returns {import('eslint').Rule.RuleModule}
  */
-export const declarationImportBan = ({ description, patterns }) => {
+export const declarationImportBan = ({ description, patterns, allowTypeOnly = false }) => {
     const matches = matchesPatterns(patterns)
     return {
         meta: {
@@ -79,6 +89,7 @@ export const declarationImportBan = ({ description, patterns }) => {
         },
         create(context) {
             return declarationVisitors((node, source) => {
+                if (allowTypeOnly && isTypeOnly(node)) return
                 const specifier = literalSpecifier(source)
                 if (typeof specifier !== 'string') return
                 for (const rule of matches(specifier.trim())) {
