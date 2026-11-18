@@ -15,7 +15,7 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  * Without isolation the helper's module loads once per worker, in its first file, so a hook it registers at load is
  * the first file's alone. The setup module (`@sssb/tools/testing/tmp-dir-setup`) registers one per file, and the run
  * ends clean. Without it a later file never removes its own directories, only earlier files', so every file's are
- * removed but the last one's, and the helper says so.
+ * removed but each worker's last file's, and the helper says so.
  */
 const TESTING = path.resolve(import.meta.dirname, '../../packages/tools/src/testing')
 const HELPER = JSON.stringify(path.join(TESTING, 'tmp-dir.js'))
@@ -190,11 +190,7 @@ describe("@sssb/tools' scratch directories, in a real run", () => {
             ],
             ["two describes: the first one's end leaves the second's directory alone", 'two-describes'],
             ['a nested describe, its directory used by an outer test', 'nested'],
-            [
-                "a file whose first call is in a test has no hook, and the next file's removes its directories",
-                'top',
-                'in-test',
-            ],
+            ['a file whose first call is in a test: the next file removes its directories', 'top', 'in-test'],
         ])(
             '%s',
             async (_, last, middle) => {

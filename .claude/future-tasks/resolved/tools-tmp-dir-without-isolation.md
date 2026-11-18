@@ -21,14 +21,14 @@ used it. No hook registered at a call can be both last in order and wide enough 
   once per file and its `afterAll` after the file's own). `appTestProject` (`@sssb/tools/vitest`) adds it to every app
   project. It is the supported path under `isolate: false`.
 - **Without it,** a later file never removes its own directories. Its first call registers a hook that removes earlier
-  files', which have finished, so every file's directories are removed except the last file's, which
+  files', which have finished, so every file's directories are removed except the last file's in each worker, which
   `sssb check-tmpdir-leak` reports. The helper says so once per worker, naming the setup module.
 - `removeTestTmpDir(dir)` is exported (and in the `.d.ts`) and ignores a path it did not make.
 - `registerTestTmpDirCleanup()` is exported for the setup module.
 
 `tests/tooling/tmp-dir-isolation.test.ts` runs a real Vitest per case, and every test in the child checks that its
 own directory still exists when it runs. With the setup module, and with isolation, nothing is left. Without it,
-everything is gone except the last file's directories, and the warning is printed. A last case pins the preset's
+everything is gone except the last file's directories (one worker), and the warning is printed. A last case pins the preset's
 `setupFiles`. Ten probes, each red in the cases it should be, are listed in the PR.
 
 **Found by:** review round 2 of ADR-0014 P5 (`feat/conformance-suite`), 2026-11-18, while fixing the kit's copy.

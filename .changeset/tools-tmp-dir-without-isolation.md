@@ -12,8 +12,7 @@
 test file's scratch directories in each worker, so `sssb check-tmpdir-leak` failed for every later file that made
 one. A new setup module, `@sssb/tools/testing/tmp-dir-setup`, registers each file's cleanup before the file's code, so
 every file's directories are removed after the file's own `afterAll` hooks. `appTestProject` from
-`@sssb/tools/vitest` adds it to the app's `setupFiles`. Without it, the helper removes every file's directories except
-the last file's, and says once that the setup module is missing. A new `removeTestTmpDir(dir)` removes one directory
+`@sssb/tools/vitest` adds it to the app's `setupFiles`. Without it, the helper removes every file's directories except each worker's last file's, and says once that the setup module is missing. A new `removeTestTmpDir(dir)` removes one directory
 the helper made, and its marker, at once.
 
 **To adopt.** Nothing, for an app project built with `appTestProject`. Any other Vitest project that sets

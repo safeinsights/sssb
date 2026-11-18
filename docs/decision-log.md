@@ -4070,7 +4070,7 @@ Resolves `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
   registers nothing).
 - **Without it, never too early, at the cost of the last file.** A later file's first call registers a hook that removes
   only EARLIER files' directories (a worker runs files one after another, so those files have finished). Every file's
-  directories are removed except the last file's, which `sssb check-tmpdir-leak` reports, and the helper says once per
+  directories are removed except each worker's last file's, which `sssb check-tmpdir-leak` reports, and the helper says once per
   worker which setup file is missing. A leak the gate names is recoverable; a directory removed under a running test
   is a false red.
 - **A file's first registration removes what earlier files left.** Vitest runs no `afterAll` for a file whose tests are

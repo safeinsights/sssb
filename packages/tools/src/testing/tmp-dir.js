@@ -32,7 +32,7 @@
 // `describe`, which may finish while another part of the file still uses a directory. So such a file never removes
 // its own directories. Its first call registers a hook that removes those of EARLIER files, which have finished (a
 // worker runs its files one after another): each file's directories go when the next file with a hook finishes, and the
-// last file's are left, for `sssb check-tmpdir-leak` to report. The first such call says so once per worker, naming the
+// worker's last file's are left, for `sssb check-tmpdir-leak` to report. The first such call says so once per worker, naming the
 // setup module. `removeTestTmpDir` removes one now. tests/tooling/tmp-dir-isolation.test.ts runs each case in a real
 // Vitest.
 //
