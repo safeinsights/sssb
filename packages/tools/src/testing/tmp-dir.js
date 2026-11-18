@@ -36,6 +36,11 @@
 // setup module. `removeTestTmpDir` removes one now. tests/tooling/tmp-dir-isolation.test.ts runs each case in a real
 // Vitest.
 //
+// LIMITS, both Vitest's: a file whose tests are all skipped (`it.skip`, a `-t` filter) runs no `afterAll`, so its
+// directories are left until the next file in the worker registers, and with isolation, where nothing carries to the
+// next file, for good. And the order above holds for `sequence.hooks: 'stack'`, Vitest's default; under `'list'` or
+// `'parallel'` the cleanup can run before the file's own `afterAll`.
+//
 // The kit keeps its own copy (packages/kit/src/testing/tmp-dir.ts), because the framework depends on no other SSSB
 // package; both write the same marker, which tests/tooling/tmp-dir.test.ts holds equal.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -79,10 +84,29 @@ function removeQueued(which) {
     }
 }
 
+/**
+ * A file's first registration: whatever is still queued or registered for another file is an earlier file's, which has
+ * finished (a worker runs its files one after another). Its directories go now, which also covers a file whose tests
+ * were all skipped, since Vitest runs no `afterAll` for a skipped suite; and its registry entries go, so a watch-mode
+ * rerun of that file registers again.
+ *
+ * @param {string} file
+ */
+function startFile(file) {
+    removeQueued((entry) => entry.file !== file)
+    for (const other of [...hookedFiles, ...sweepingFiles]) {
+        if (other !== file) {
+            hookedFiles.delete(other)
+            sweepingFiles.delete(other)
+        }
+    }
+}
+
 /** @type {import('./tmp-dir.d.ts').registerTestTmpDirCleanup} */
 export function registerTestTmpDirCleanup() {
     const file = currentFile()
     if (hookedFiles.has(file)) return
+    startFile(file)
     hookedFiles.add(file)
     afterAll(() => {
         // A watch-mode rerun of this file, in this worker, registers again.
@@ -110,6 +134,7 @@ function claim() {
         )
     }
     if (!sweepingFiles.has(file)) {
+        startFile(file)
         sweepingFiles.add(file)
         afterAll(() => {
             // A watch-mode rerun of this file, in this worker, registers again.

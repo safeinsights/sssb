@@ -29,7 +29,7 @@ used it. No hook registered at a call can be both last in order and wide enough 
 `tests/tooling/tmp-dir-isolation.test.ts` runs a real Vitest per case, and every test in the child checks that its
 own directory still exists when it runs. With the setup module, and with isolation, nothing is left. Without it,
 everything is gone except the last file's directories, and the warning is printed. A last case pins the preset's
-`setupFiles`. Nine probes, each red in the cases it should be, are listed in the PR.
+`setupFiles`. Ten probes, each red in the cases it should be, are listed in the PR.
 
 **Found by:** review round 2 of ADR-0014 P5 (`feat/conformance-suite`), 2026-11-18, while fixing the kit's copy.
 

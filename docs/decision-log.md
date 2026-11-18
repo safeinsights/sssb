@@ -4073,6 +4073,12 @@ Resolves `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
   directories are removed except the last file's, which `sssb check-tmpdir-leak` reports, and the helper says once per
   worker which setup file is missing. A leak the gate names is recoverable; a directory removed under a running test
   is a false red.
+- **A file's first registration removes what earlier files left.** Vitest runs no `afterAll` for a file whose tests are
+  all skipped (`it.skip`, a `-t` filter), so its directories stayed queued; they go when the next file in the worker
+  registers, and that file's stale registry entries go too, so a watch-mode rerun registers again. With isolation
+  nothing carries to the next file, so a skipped file's directories are left for good; that predates this change and
+  is Vitest's. The cleanup's place after the file's own `afterAll` also assumes `sequence.hooks: 'stack'`, Vitest's
+  default; `'list'` and `'parallel'` reverse it. Both limits are in the module's header.
 - **`removeTestTmpDir` removes only what the helper made.** The kit's removes any path it is given, recursively.
 - **A new `exports` subpath, so the changeset is a `seam` entry,** optional: an app on the preset gets the setup module,
   and another project with `isolate: false` adds it to `setupFiles`.

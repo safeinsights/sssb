@@ -66,6 +66,7 @@ type Call =
     | 'two-describes'
     | 'nested'
     | 'beforeAll'
+    | 'all-skipped'
     | 'in-test'
     | 'afterAll-before-call'
 
@@ -91,6 +92,8 @@ const BODIES: Record<Call, (make: string, makeAsync: string) => string> = {
         `    it('made at run time', () => expect(existsSync(${make})).toBe(true))\n})\n`,
     beforeAll: (make) =>
         `let dir = ''\nbeforeAll(() => { dir = ${make} })\nit('made', () => expect(existsSync(dir)).toBe(true))\n`,
+    // Vitest runs no afterAll for a file whose tests are all skipped.
+    'all-skipped': (make) => `const dir = ${make}\nit.skip('skipped', () => expect(existsSync(dir)).toBe(true))\n`,
     'in-test': (make) => `it('made', () => {\n    const dir = ${make}\n    expect(existsSync(dir)).toBe(true)\n})\n`,
     // The file's own afterAll, registered BEFORE its first call, still finds the directory: the cleanup runs after it.
     'afterAll-before-call': (make) =>
@@ -123,15 +126,19 @@ const three = (last: Call, middle: Call = 'top') => ({
 async function runAll(probe: { dir: string; tmp: string }): Promise<{ left: string[]; output: string }> {
     const { status, output } = await run(probe)
     expect(status, output).toBe(0)
-    const ranLast = output.lastIndexOf('✓ c.test.ts')
+    const at = (name: string) => output.search(new RegExp(`[✓↓] ${name}\\.test\\.ts`))
+    const ranLast = at('c')
     expect(ranLast, output).toBeGreaterThan(-1)
-    for (const earlier of ['a', 'b']) expect(output.indexOf(`✓ ${earlier}.test.ts`), output).toBeLessThan(ranLast)
+    for (const earlier of ['a', 'b']) {
+        expect(at(earlier), output).toBeGreaterThan(-1)
+        expect(at(earlier), output).toBeLessThan(ranLast)
+    }
     return { left: readdirSync(probe.tmp), output }
 }
 
 describe("@sssb/tools' scratch directories, in a real run", () => {
     describe('without isolation, with the setup module: the run ends clean', () => {
-        it.each<[string, Call]>([
+        it.each<[string, Call, Call?]>([
             ['a first call from a beforeAll', 'beforeAll'],
             [
                 "the file's own afterAll, registered before the first call, runs before the cleanup",
@@ -143,16 +150,32 @@ describe("@sssb/tools' scratch directories, in a real run", () => {
                 'makeTestTmpDirAsync in a describe body, its directory used after the body returned',
                 'describe-async-then',
             ],
+            ['a file before the last whose tests are all skipped, which runs no afterAll', 'top', 'all-skipped'],
         ])(
             '%s',
-            async (_, last) => {
-                const { left, output } = await runAll(project(three(last), { ...NO_ISOLATION, ...WITH_SETUP }))
+            async (_, last, middle) => {
+                const { left, output } = await runAll(project(three(last, middle), { ...NO_ISOLATION, ...WITH_SETUP }))
                 expect(left, output).toEqual([])
                 expect(output).not.toMatch(/has no cleanup hook of its own/)
             },
             CHILD_TIMEOUT,
         )
     })
+
+    it(
+        'without isolation, with the setup module: a skipped file runs no afterAll, so the next file removes its directories when it starts, even when that file is skipped too and only its own are left',
+        async () => {
+            const { left, output } = await runAll(
+                project(three('all-skipped', 'all-skipped'), { ...NO_ISOLATION, ...WITH_SETUP }),
+            )
+            expect(left.length, output).toBeGreaterThan(0)
+            expect(
+                left.filter((entry) => !entry.startsWith('probe-c-')),
+                output,
+            ).toEqual([])
+        },
+        CHILD_TIMEOUT,
+    )
 
     // A later file never removes its own directories here, only earlier files'. Each case ends on the kind of call it
     // pins, in the LAST file: a missing hook there leaves b's directories behind, and one that removed too much would
@@ -181,7 +204,11 @@ describe("@sssb/tools' scratch directories, in a real run", () => {
                     left.filter((entry) => !entry.startsWith('probe-c-')),
                     output,
                 ).toEqual([])
-                expect(output).toMatch(/has no cleanup hook of its own: .*'@sssb\/tools\/testing\/tmp-dir-setup'/)
+                // Once per worker, though b and c both lack a hook.
+                expect(
+                    output.match(/has no cleanup hook of its own: .*'@sssb\/tools\/testing\/tmp-dir-setup'/g),
+                    output,
+                ).toHaveLength(1)
             },
             CHILD_TIMEOUT,
         )
@@ -197,6 +224,7 @@ describe("@sssb/tools' scratch directories, in a real run", () => {
             }
             const { left, output } = await runAll(project(files, ONE_WORKER))
             expect(left, output).toEqual([])
+            expect(output).not.toMatch(/has no cleanup hook of its own/)
         },
         CHILD_TIMEOUT,
     )
