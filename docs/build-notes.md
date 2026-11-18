@@ -2006,3 +2006,20 @@ Proposed, not built, since either changes how the check behaves:
 --update-lockfile` and pushes the result to the branch. It needs a token able to push to a Dependabot branch, which
   is a repository settings decision for JP: a push made with the workflow's default token does not start the checks
   again, so it takes a personal access token or an app token.
+
+## Union merge for the two append-only records (2026-11-17, `chore/post-p2-cleanup`)
+
+`.gitattributes` gives `docs/decision-log.md` and `docs/build-notes.md` git's built-in `union` merge. Two branches
+that each append an entry at the end of one of them used to stop `git merge` on a conflict, which happened on nearly
+every PR on 2026-11-17; with `merge=union` git keeps the added lines of both sides and does not stop. Probed in a
+scratch repository: two appends to one file conflicted without the attribute and merged with it, and the entries came
+out joined without the blank line that separates them, which `pnpm lint:fix` restores.
+
+The one risk: union keeps both sides' lines wherever they overlap, so two edits of the SAME line leave both versions
+in the file, with no conflict to say so (the probe left `RIGHT` and `LEFT` one above the other). Both files are meant
+to be appended to and never edited, so this should only follow an edit of an existing entry. After a merge that
+touched an entry already in the file, read that entry again before committing.
+
+It applies to merges git performs: `git merge origin/main` on a branch, which is how this repository takes main in.
+Whether GitHub's own merge, for the mergeability check and the merge button, honours the attribute is not verified
+here, so a PR can still show a conflict there that a local merge of `main` resolves.
