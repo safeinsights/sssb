@@ -53,8 +53,9 @@ export interface ContractOptions {
 export function contractDatabaseName(slug: string): string {
     // 63 is Postgres's identifier limit; "_contract" is 9 of it.
     const underscored = slug.toLowerCase().replace(/[^a-z0-9]+/g, '_')
-    // The leading and trailing underscores trimmed by a loop: `/^_+|_+$/` backtracks quadratically on a long run of
-    // underscores followed by anything else, and the slug is the caller's.
+    // The leading and trailing underscore trimmed by a loop rather than `/^_+|_+$/`, a pattern that backtracks
+    // quadratically on a long run (CodeQL flags it on a caller's input); the collapse above already leaves at most one
+    // underscore at each end, so this changes no result.
     let from = 0
     let to = underscored.length
     while (from < to && underscored[from] === '_') from++

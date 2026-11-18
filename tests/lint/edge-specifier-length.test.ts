@@ -3,8 +3,9 @@ import { lint } from './lint-text'
 
 /**
  * `sssb/no-path-out-of-package` drops a relative specifier's `?query` or `#hash` before it judges where the path
- * lands. It used `/[?#].*$/`, which retried from every `?` in a long run whenever the specifier also held a newline,
- * so a linted file could make the rule take time quadratic in that run (seconds at 50,000). The cut is by index now.
+ * lands. It used `/[?#].*$/`, which retried from every `?` in a long run whenever a newline followed it inside the
+ * specifier (the rule trims the specifier first, so a trailing one does not count), and a linted file could make the
+ * rule take time quadratic in that run: 4.6 s at 50,000 before the change. The cut is by index now.
  */
 describe('the package-edge rule on a long query', () => {
     it('lints a specifier with a long run of ? before a newline in linear time', async () => {
