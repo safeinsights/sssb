@@ -4850,3 +4850,29 @@ installed once, on selected repositories, but which repositories are selected ne
 - **The first entry:** Integration 4038189 on `require-pr`, canopycms-release-bot, installed on
   `safeinsights/canopycms` only, vouched for by JP on 2026-11-18. It has to be re-vouched or removed if that App is
   ever installed on more repositories.
+
+## The real S3 storage adapter is published as a factory, and rc.0's gitleaks advice is corrected (2026-11-18, `feat/s3-storage-factory`)
+
+The first adopter, on `v0.2.0-rc.1`, kept a copy of the kit's real S3 storage adapter for a simulated app run against a
+real bucket (`dev:edge`), because the kit did not publish it; and found that rc.0's notes told it to drop a
+`.gitleaks.toml` entry that its full-history scan still needs.
+
+- **`@sssb/kit/adapters/real/s3-storage` exports `createS3Storage({ bucket, region?, endpoint?, credentials?,
+forcePathStyle?, client? })`**, the adapter the real-mode registry builds, moved from `adapters/real/storage.ts` to a
+  module of its own so the published surface is the factory and its options alone; `storage.ts` keeps the registry's
+  `createRealStorage(bucket, region)` as a two-line wrapper, so the registry, its mocks and its tests did not change. The
+  options are `S3ClientConfig`'s own keys, passed through when set. A `client` beside any of the others is refused,
+  since they would be ignored silently. Rejected: publishing `createRealStorage(bucket, region)` (no endpoint, path
+  style or credentials, which is what the copy needed), and an `S3ClientConfig` pass-through (it would publish the
+  SDK's whole configuration surface as the kit's). The port is unchanged, the SDK stays in `packages/kit/src/adapters/`,
+  and an app imports the factory from its own `src/adapters/real/` (`sssb/no-kit-real-adapter-import` bans it only in the
+  registry and the fakes). It passes the universality test: it is the real adapter of SSSB's own storage port.
+- **The gitleaks correction is a new changeset, and the consumed one is corrected in place.** The advice was in
+  `.changeset/pre/history-since-keel-scaffold.md`, consumed by rc.0. The notes tool's "Corrections to earlier notes"
+  lists changesets EDITED since a ref, but only `.changeset/*.md` and only under `--since`, and a candidate's notes are
+  built without `--since` from the pending changesets (`release.mjs prepare`), so an edit to a `pre/` file reaches no
+  candidate's notes. The README's rule for "more to say about a change a release candidate already carried" is a new
+  file, so `gitleaks-keep-keel-webhook-entry.md` (scaffold, required) is what rc.2's notes carry; the `pre/` file is
+  corrected too, so the record P14 reads for the whole series does not repeat the wrong advice. Rejected: editing only
+  the `pre/` file (rc.2's notes would say nothing) and teaching the notes tool to read edits in `pre/` (the
+  decision of 2026-11-18 above left reading `pre/` to P14).
