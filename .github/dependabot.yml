@@ -11,7 +11,35 @@ updates:
       groups:
           minor-and-patch:
               update-types: ['minor', 'patch']
+              # React moves only by hand, never inside this group (see the `ignore` rules below). Excluding it
+              # here keeps even a patch out of the group, so a patch arrives as a PR of its own.
+              exclude-patterns:
+                  - react
+                  - react-dom
+                  - '@types/react'
+                  - '@types/react-dom'
       open-pull-requests-limit: 5
+      ignore:
+          # React: no minor or major update from Dependabot. The apps, the root and `@sssb/kit`'s `react` peer
+          # range all sit on the same tilde (`~19.3.1`), and a bump that moves the apps without the peer forks
+          # React: an adopter's tree then holds two copies, which breaks hooks and context. That happened once
+          # (Dependabot #1, closed). A React minor is a deliberate PR that moves every declaration in one commit
+          # (the `deps/react-19-3` entry in docs/decision-log.md is the worked example). Patches within the
+          # tilde still arrive, and the peer range already accepts them. Lift this when the peer range is
+          # widened to cover a span of minors, so a bump of the apps can no longer leave it behind.
+          - dependency-name: react
+            update-types: ['version-update:semver-minor', 'version-update:semver-major']
+          - dependency-name: react-dom
+            update-types: ['version-update:semver-minor', 'version-update:semver-major']
+          - dependency-name: '@types/react'
+            update-types: ['version-update:semver-minor', 'version-update:semver-major']
+          - dependency-name: '@types/react-dom'
+            update-types: ['version-update:semver-minor', 'version-update:semver-major']
+          # `@axe-core/playwright` is held at `~4.12.1` (axe-core 4.14 fails four framework controls on "label in
+          # name"). Every Dependabot group that bumps it fails the showcase e2e until they are fixed. Lift this,
+          # and the `~` in apps/showcase/package.json, when .claude/future-tasks/label-in-name-axe-4-14.md is done.
+          - dependency-name: '@axe-core/playwright'
+            update-types: ['version-update:semver-minor', 'version-update:semver-major']
     - package-ecosystem: github-actions
       directory: /
       schedule:
