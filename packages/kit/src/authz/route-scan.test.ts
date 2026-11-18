@@ -865,7 +865,16 @@ describe("what counts as a handler's own path", () => {
             files: post(`return wrap(async function () { ${CALL} })`, 'declare const wrap: Function\n'),
             expect: 'authorized',
         },
-        { name: 'in a callback passed to a method', files: post(`;[1].forEach(() => ${CALL})`), expect: 'authorized' },
+        {
+            name: 'in a callback passed to a method whose result is dropped (the scan cannot tell forEach from a deferral)',
+            files: post(`;[1].forEach(() => ${CALL})`),
+            expect: 'open',
+        },
+        {
+            name: 'in a callback passed to a method whose result is returned',
+            files: post(`return [1].map(() => ${CALL})`),
+            expect: 'authorized',
+        },
         { name: 'in a Promise executor', files: post(`await new Promise(() => ${CALL})`), expect: 'authorized' },
         { name: 'in an IIFE', files: post(`;(() => { ${CALL} })()`), expect: 'authorized' },
         {
@@ -1130,6 +1139,186 @@ describe("what counts as a handler's own path", () => {
             ['POST', 'authorized'],
             ['DELETE', 'open'],
         ])
+    })
+})
+
+describe("a denial counts only when it reaches the handler's outcome", () => {
+    // `authorize` throws synchronously. Inside an async function that throw becomes a rejection of the function's
+    // promise, so it stops the handler only if the handler awaits or returns that promise. A floating one is an
+    // unhandled rejection, and the handler goes on to mutate (ADR-0012, addendum of 2026-11-18).
+    const ASYNC = `async function check() { ${CALL} }\n`
+    const SYNC = `function checkSync() { ${CALL} }\n`
+    const RELAY = `${ASYNC}function relay() { return check() }\n`
+    const OUTER = `${ASYNC}async function outer() { await check() }\n`
+    const EARLY = `async function early() { ${CALL}; await Promise.resolve() }\n`
+    const EXTERNS = 'declare const wrap: Function\ndeclare const load: () => Promise<unknown>\n'
+    const cases: Array<{ name: string; files: Record<string, string>; expect: Outcome }> = [
+        // Floating: the scan used to count every one of these.
+        { name: 'an async helper called and not awaited', files: post('check()', ASYNC), expect: 'open' },
+        {
+            name: 'an async helper that authorizes before its first await, not awaited',
+            files: post('early()', EARLY),
+            expect: 'open',
+        },
+        { name: 'an async helper behind void', files: post('void check()', ASYNC), expect: 'open' },
+        { name: 'an async helper chained with .then', files: post('check().then(() => 1)', ASYNC), expect: 'open' },
+        { name: 'an async helper chained with .catch', files: post('check().catch(() => {})', ASYNC), expect: 'open' },
+        {
+            name: 'an awaited .then chain on an async helper (a chain is not followed)',
+            files: post('await check().then(() => 1)', ASYNC),
+            expect: 'open',
+        },
+        {
+            name: 'an async helper whose promise is stored, then awaited later',
+            files: post('const pending = check()\nawait pending', ASYNC),
+            expect: 'open',
+        },
+        { name: 'an async helper left of ||', files: post('await (check() || 1)', ASYNC), expect: 'open' },
+        { name: 'an async IIFE not awaited', files: post(`;(async () => { ${CALL} })()`), expect: 'open' },
+        {
+            name: 'an async IIFE that awaits the helper, itself not awaited',
+            files: post(';(async () => { await check() })()', ASYNC),
+            expect: 'open',
+        },
+        {
+            name: 'an async closure called and not awaited',
+            files: post(`const run = async () => { ${CALL} }\nrun()`),
+            expect: 'open',
+        },
+        {
+            name: 'an async helper awaited inside an async helper the handler does not await',
+            files: post('outer()', OUTER),
+            expect: 'open',
+        },
+        {
+            name: "a sync helper returning an async helper's promise, not awaited",
+            files: post('relay()', RELAY),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to .then, not awaited',
+            files: post(`load().then(() => ${CALL})`, EXTERNS),
+            expect: 'open',
+        },
+        {
+            name: 'an async callback to a wrapper whose result is dropped',
+            files: post(`wrap(async () => { ${CALL} })`, EXTERNS),
+            expect: 'open',
+        },
+        {
+            name: 'a sync callback to a wrapper whose result is dropped (the wrapper may defer it)',
+            files: post(`wrap(() => { ${CALL} })`, EXTERNS),
+            expect: 'open',
+        },
+        {
+            name: 'an async helper by name to a wrapper whose result is dropped',
+            files: post('wrap(check)', ASYNC + EXTERNS),
+            expect: 'open',
+        },
+        {
+            name: 'an async helper returned from a callback whose wrapper is dropped',
+            files: post('wrap(() => check())', ASYNC + EXTERNS),
+            expect: 'open',
+        },
+        { name: 'a timer callback', files: post(`setTimeout(() => ${CALL}, 0)`), expect: 'open' },
+        { name: 'a Promise executor not awaited', files: post(`new Promise(() => ${CALL})`), expect: 'open' },
+        // Reaching the outcome.
+        { name: 'an async helper awaited', files: post('await check()', ASYNC), expect: 'authorized' },
+        { name: 'an async helper returned', files: post('return check()', ASYNC), expect: 'authorized' },
+        { name: 'an async helper returned awaited', files: post('return await check()', ASYNC), expect: 'authorized' },
+        {
+            name: 'an async helper awaited in a condition',
+            files: post('if (await check()) {}', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'an async helper awaited in a variable initializer',
+            files: post('const ok = await check()', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'an async helper in an awaited ternary arm',
+            files: post('await (cond ? check() : null)', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'an async helper right of an awaited &&',
+            files: post('await (cond && check())', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'an async helper right of a returned ??',
+            files: post('return cond ?? check()', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'an async helper right of a returned comma',
+            files: post('return (0, check())', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'an async helper behind a type assertion, awaited',
+            files: post('await (check() as Promise<void>)', ASYNC),
+            expect: 'authorized',
+        },
+        { name: 'an async IIFE awaited', files: post(`await (async () => { ${CALL} })()`), expect: 'authorized' },
+        {
+            name: 'an async helper awaited inside an async helper the handler awaits',
+            files: post('await outer()', OUTER),
+            expect: 'authorized',
+        },
+        {
+            name: "a sync helper returning an async helper's promise, returned",
+            files: post('return relay()', RELAY),
+            expect: 'authorized',
+        },
+        {
+            name: 'an awaited callback to .then',
+            files: post(`await load().then(() => ${CALL})`, EXTERNS),
+            expect: 'authorized',
+        },
+        {
+            name: 'an async callback to an awaited wrapper',
+            files: post(`await wrap(async () => { ${CALL} })`, EXTERNS),
+            expect: 'authorized',
+        },
+        {
+            name: 'a sync helper not awaited (it throws in place)',
+            files: post('checkSync()', SYNC),
+            expect: 'authorized',
+        },
+        { name: 'a sync helper behind void', files: post('void checkSync()', SYNC), expect: 'authorized' },
+        { name: 'authorize itself behind void', files: post(`void ${CALL}`), expect: 'authorized' },
+        { name: 'authorize itself chained with .then', files: post(`${CALL}.then(() => 1)`), expect: 'authorized' },
+        { name: 'a sync IIFE not awaited', files: post(`;(() => { ${CALL} })()`), expect: 'authorized' },
+        {
+            name: 'a sync closure called inside an async helper the handler awaits',
+            files: post(`await outerSync()`, `async function outerSync() { const c = () => ${CALL}; c() }\n`),
+            expect: 'authorized',
+        },
+    ]
+
+    it.each(cases)('$name', ({ files, expect: expected }) => {
+        expectVerdicts(verdicts(files), { POST: expected })
+    })
+
+    it('an arrow handler whose body is the async helper reaches it; the same call in a block does not', () => {
+        const route = (handler: string) => verdicts({ 'route.ts': `${AUTHORIZE}${DECLS}${ASYNC}${handler}` })
+        expectVerdicts(route('export const POST = async () => check()'), { POST: 'authorized' })
+        expectVerdicts(route('export const POST = async () => { check() }'), { POST: 'open' })
+    })
+
+    it("a wrapper handler's function must await the helper too: the wrapper is trusted, its body is not", () => {
+        const route = (handler: string) =>
+            verdicts({ 'route.ts': `${AUTHORIZE}${DECLS}${ASYNC}import { withX } from './wrappers'\n${handler}` })
+        expectVerdicts(route('export const POST = withX(async () => { await check() })'), { POST: 'authorized' })
+        expectVerdicts(route('export const POST = withX(async () => { check() })'), { POST: 'open' })
+        expectVerdicts(route('export const POST = withX(check)'), { POST: 'authorized' })
+    })
+
+    it('a helper reached on two paths counts when one of them reaches the outcome', () => {
+        expectVerdicts(verdicts(post('check()\nawait check()', ASYNC)), { POST: 'authorized' })
+        expectVerdicts(verdicts(post('check()\ncheck()', ASYNC)), { POST: 'open' })
     })
 })
 
