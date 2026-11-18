@@ -509,7 +509,8 @@ describe('createTicker: one object owns start, stop, the interval and whether it
         let handed: AbortSignal | undefined
         const hang = createTicker({
             origin: 'http://localhost:1',
-            sleep: async () => {},
+            // a real (macrotask) pause: an instant one would spin the loop in microtasks if a tick ever failed at once
+            sleep: () => new Promise((resolve) => setTimeout(resolve, 5)),
             log: () => {},
             tick: ((options: { signal: AbortSignal }) =>
                 new Promise((_resolve, reject) => {
@@ -518,7 +519,7 @@ describe('createTicker: one object owns start, stop, the interval and whether it
                 })) as never,
         })
         hang.start(5)
-        await new Promise((resolve) => setImmediate(resolve))
+        await vi.waitFor(() => expect(handed).toBeDefined())
         await Promise.race([
             hang.stop(),
             new Promise((_resolve, reject) => setTimeout(() => reject(new Error('stop() did not resolve')), 2000)),
