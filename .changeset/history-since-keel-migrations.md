@@ -49,8 +49,9 @@ Nothing to do. An app's own screen that shows audit rows renders `detail` as tex
 #### On the opt-in Data API transport (jpslav/keel#46)
 
 An app on `params.database.transport: 'data-api'` migrates every pending migration in one Data API transaction
-behind `pg_advisory_xact_lock`. A statement over 45 seconds, a run over an hour, or a lock wait over 45 seconds
-fails; such a migration runs on `pg`, from inside the VPC.
+behind `pg_advisory_xact_lock`. The transaction dies after an hour or three idle minutes, and any statement still running at 45 seconds (waiting for
+that lock included) is cancelled (AWS's Data API limits, `packages/kit/src/adapters/real/migrate-handler.ts`); a
+migration that cannot fit runs on `pg`, from inside the VPC.
 
 **Now deletable.** A migrator entry in the app's own infra that names `packages/keel/src/adapters/real/migrate-handler.ts`
 with the root `tsconfig.json`.

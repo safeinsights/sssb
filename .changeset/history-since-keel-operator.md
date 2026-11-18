@@ -57,4 +57,5 @@ storage port's `copy` or `head`. Each is proven against the real service.
 - A pooled `pg` connection the server ends (a failover, an idle timeout) is now logged as
   `SSSB db: a pooled database connection ended (<code>: <message>)` instead of crashing the Lambda. A metric filter
   on that text counts them.
-- Sentry 11 changes its own span names and attributes. Check any Sentry dashboard or alert that filters on v10's.
+- Sentry 11 changes its own span names and attributes (Sentry's v11 migration guide; safeinsights/sssb#8). Check any
+  Sentry dashboard or alert that filters on v10's.
