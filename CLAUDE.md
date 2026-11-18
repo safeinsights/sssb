@@ -71,7 +71,17 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `apps/*/config` and `packages/kit/src` (bar the per-file exemptions `eslint.config.mjs` names, and
   tests), so the app's registry and fakes cannot read it; reading the run mode in an app's real adapters;
   a static import of an app's `adapters/real` anywhere in the app outside `real/` itself; and any import of
-  `real/` from a fake. That the registry uses `isSimulated` is convention: lint cannot follow a value.
+  `real/` from a fake. That the registry uses `isSimulated` is convention: lint cannot follow a value. An
+  app-owned adapter's SDK is added to the ban by the app (`configs.app({ root, vendors })`), never to SSSB's list.
+- **The lint fences are `@sssb/eslint-plugin`** (`packages/eslint-plugin`, ADR-0014 P6): ONE plugin object
+  with every `sssb/*` rule, internal ones included. **Every fence is a rule with an id of its own**, never a
+  `no-restricted-imports` or `no-restricted-syntax` setting, which a later config block REPLACES for the files it
+  matches (the merge trap). Both apps get exactly what an adopter's app gets, `configs.app({ root })` (the root
+  `eslint.config.mjs` passes `apps/*`); that file adds only the framework's blocks. A rule that needs this repo's
+  files takes `{ root }` and reads it when it runs, never when the plugin loads. A new app-side fence goes in the
+  preset AND in `packages/eslint-plugin/src/probes.js`, which `checkFences` (`@sssb/eslint-plugin/check-fences`)
+  lints through an app's composed config, with an effective-config comparison against the preset for every
+  source file; `tests/lint/check-fences.test.ts` runs it on both apps and on scratch apps that weaken a fence.
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.
 - **Screens are router-agnostic** — framework screens in `packages/kit/src/components`, app
@@ -79,7 +89,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   demo buildable — don't put logic in route files.
 - **No hard-coded UI strings** — all copy goes through next-intl. The catalog is SPLIT: framework
   namespaces in `packages/kit/src/i18n/messages/{en,es}.json`, app namespaces in
-  `apps/*/messages/{en,es}.json`, deep-merged at every load site. Lint-enforced (`react/jsx-no-literals`).
+  `apps/*/messages/{en,es}.json`, deep-merged at every load site. Lint-enforced (`sssb/no-jsx-literals`, react's
+  `jsx-no-literals` with SSSB's options fixed).
 - **Deployment/service parameters exist only in `apps/<app>/config/params.ts`** — one file per app, the same keys in
   each (`tests/tooling/app-scaffold.test.ts` fails a drift), placeholders tracked in the cutover checklist. Secret
   values never enter the repo.

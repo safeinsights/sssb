@@ -7,6 +7,11 @@ export interface AppConfigOptions {
      * that directory.
      */
     root: string
+    /**
+     * The app's own adapters' SDKs, added to SSSB's vendor list in the same gitignore-style patterns
+     * (`['stripe', 'stripe/*']`). It only ever adds.
+     */
+    vendors?: string[]
 }
 
 export interface SssbPlugin extends ESLint.Plugin {

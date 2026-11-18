@@ -40,7 +40,7 @@ import { SRC_EXT, STORY_FILES, TEST_FILES } from './patterns.js'
 // exceptions, or a file that no longer exists. So an exception cannot quietly widen or outlive the file it names (one
 // that outlives its NEED is still the app's to delete). The path is matched literally (a Next route's `[locale]` is
 // not a glob).
-export const APP_EXCEPTION_RULES = ['sssb/no-raw-db-handle']
+const APP_EXCEPTION_RULES = ['sssb/no-raw-db-handle']
 const GLOB_SPECIALS = /[*?[\]{}()!+@]/g
 
 /**
@@ -90,7 +90,7 @@ export async function loadAppLintExceptions(appDir) {
  * prepended to every app-relative glob and `apps` lists each app's directory and its prefix.
  * @param {string} root
  */
-export function resolveRoot(root) {
+function resolveRoot(root) {
     if (typeof root !== 'string' || !isAbsolute(root)) {
         throw new Error(
             "@sssb/eslint-plugin: configs.app({ root }) takes the app's directory as an ABSOLUTE path " +
@@ -116,11 +116,21 @@ const NEXT_CONFIG = 'next.config.{ts,mts,js,mjs}'
 
 /**
  * @param {import('eslint').ESLint.Plugin} plugin the one plugin object (./index.js)
- * @param {{ root: string }} options
+ * @param {{ root: string, vendors?: string[] }} options `vendors`: the app's own adapters' SDKs, added to SSSB's vendor
+ *     list in the same gitignore-style patterns (`stripe`, `stripe/*`). It only ever adds.
  * @returns {Promise<import('eslint').Linter.Config[]>}
  */
-export async function appConfig(plugin, { root } = /** @type {any} */ ({})) {
+export async function appConfig(plugin, { root, vendors } = /** @type {any} */ ({})) {
     const { basePath, prefix: P, apps } = resolveRoot(root)
+    if (
+        vendors !== undefined &&
+        (!Array.isArray(vendors) || !vendors.every((v) => typeof v === 'string' && v.trim()))
+    ) {
+        throw new Error(
+            '@sssb/eslint-plugin: configs.app({ vendors }) takes a list of package patterns, such as ["stripe", "stripe/*"]',
+        )
+    }
+    const vendorBan = vendors?.length ? ['error', { vendors }] : 'error'
     const exceptions = { 'sssb/no-raw-db-handle': [] }
     for (const app of apps) {
         const loaded = await loadAppLintExceptions(app.dir)
@@ -156,7 +166,12 @@ export async function appConfig(plugin, { root } = /** @type {any} */ ({})) {
 
         // ---- the base config ---------------------------------------------------------------------------------
         at('js', js.configs.recommended),
-        ...typescriptEslint.configs.recommended.map((block, i) => at(`typescript-${i}`, block)),
+        // typescript-eslint's `configs.recommended` is a getter that records the calling config file's directory as a
+        // candidate tsconfigRootDir, and its parser refuses to guess once there are two (a workspace-root config and an
+        // app's own, loaded by one ESLint run). So the preset reads the same objects from the raw plugin, which records
+        // nothing, and names the root itself.
+        ...typescriptEslint.plugin.configs['flat/recommended'].map((block, i) => at(`typescript-${i}`, block)),
+        at('typescript-root', { languageOptions: { parserOptions: { tsconfigRootDir: basePath } } }),
         at('commonjs', {
             files: ['**/*.cjs'],
             languageOptions: {
@@ -253,7 +268,7 @@ export async function appConfig(plugin, { root } = /** @type {any} */ ({})) {
             files: files(''),
             ignores: [`${src('adapters/real')}/**`, `${P}${NEXT_CONFIG}`, `${P}tests/contract/**`],
             plugins: sssb,
-            rules: { 'sssb/no-vendor-import': 'error', 'sssb/no-dynamic-vendor-import': 'error' },
+            rules: { 'sssb/no-vendor-import': vendorBan, 'sssb/no-dynamic-vendor-import': vendorBan },
         }),
         // Hermetic dev, everywhere in the app.
         at('next-font', { files: files(''), plugins: sssb, rules: { 'sssb/no-next-font-google': 'error' } }),

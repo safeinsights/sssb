@@ -69,7 +69,10 @@ const eslintConfig = [
         ],
     },
     js.configs.recommended,
-    ...typescriptEslint.configs.recommended,
+    // The raw plugin's configs, not the `configs` getter, which records this file as a candidate tsconfigRootDir and
+    // makes the parser refuse to guess once another config loads in the same process (see the plugin's app-config.js).
+    ...typescriptEslint.plugin.configs['flat/recommended'],
+    { languageOptions: { parserOptions: { tsconfigRootDir: import.meta.dirname } } },
     {
         files: ['**/*.cjs'],
         languageOptions: {

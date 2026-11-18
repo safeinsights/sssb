@@ -20,7 +20,7 @@ a fork (ADR-0013), so in an adopted repo an app's port goes in the app.
 4. Write `packages/kit/src/adapters/real/<name>.ts` — mark `AUTHORED — CUTOVER (<row>)` in the header, register any
    required env vars in `packages/kit/src/adapters/real/index.ts` REQUIRED_ENV, and add the cutover-checklist row.
 5. Wire both into `packages/kit/src/adapters/index.ts`, add the vendor's package pattern to `vendorSdkPattern` in
-   `eslint.config.mjs`, add unit tests for the fake, and run `pnpm verify`.
+   `packages/eslint-plugin/src/patterns.js`, add unit tests for the fake, and run `pnpm verify`.
 
 ## An app's port
 
@@ -39,4 +39,5 @@ Follow `docs/recipes/app-owned-adapter.md`; it carries the sketches. In short, w
 4. Write the registry, `apps/<app>/src/adapters/index.ts`: import `isSimulated` from `@sssb/kit/adapters/index`,
    `await import('./real/index')` only when it is false, and export each port as `real?.x ?? fakeX`.
 5. Callers import the registry (`@/adapters`), never `@/adapters/real/*`. Make sure the vendor's package is
-   matched by `vendorSdkPattern` in `eslint.config.mjs`, add unit tests for the fake, and run `pnpm verify`.
+   matched by SSSB's `vendorSdkPattern` or by the app's own `vendors` (`configs.app({ root, vendors })` in
+   `eslint.config.mjs`), add unit tests for the fake, and run `pnpm verify`.

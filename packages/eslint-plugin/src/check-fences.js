@@ -35,6 +35,8 @@ const severityOf = (entry) => {
     return typeof level === 'number' ? level : (SEVERITY[level] ?? 0)
 }
 const optionsOf = (entry) => (Array.isArray(entry) ? entry.slice(1) : [])
+// Rules whose options can only ADD to what they fence (the app's own vendors): any options are a tightening.
+const ADDITIVE_OPTIONS = new Set(['sssb/no-vendor-import', 'sssb/no-dynamic-vendor-import'])
 
 /** ESLint, resolved from the app's own directory: the copy the app's lint script runs. */
 async function eslintOf(appDir) {
@@ -107,7 +109,7 @@ export async function checkFences({ appDir: given, ESLint: passed }) {
             const got = actual[rule]
             if (severityOf(got) !== 2) {
                 problems.push(`${at(file)}: ${rule} is ${got === undefined ? 'not enabled' : 'switched off or down'}`)
-            } else if (!isDeepStrictEqual(optionsOf(got), optionsOf(entry))) {
+            } else if (!ADDITIVE_OPTIONS.has(rule) && !isDeepStrictEqual(optionsOf(got), optionsOf(entry))) {
                 problems.push(`${at(file)}: ${rule} runs with options the preset does not set`)
             }
         }

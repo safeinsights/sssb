@@ -2,14 +2,15 @@
 
 **Priority:** P3 · **Status:** open
 **Found by:** the pre-PR review of `fix/lint-import-fences-getdb-default` (2026-11-16). Documented in
-`eslint.config.mjs` beside `isVendorSpecifier`, and in `docs/decision-log.md`.
+`packages/eslint-plugin/src/rules.js` beside `isVendorSpecifier`, and in `docs/decision-log.md`.
 
 ## What is true
 
 The vendor ban has two halves:
 
-- The static half is `no-restricted-imports` with `vendorSdkPattern`. It matches with the `ignore` package
-  (gitignore semantics, case-insensitive).
+- The static half is `sssb/no-vendor-import` with `vendorSdkPattern`. It matches with the `ignore` package
+  (gitignore semantics, case-insensitive), exactly as `no-restricted-imports` did before the fence got an id of its
+  own (ADR-0014, P6).
 - The declarationless half is `sssb/no-dynamic-vendor-import`. It matches with `isVendorSpecifier`, a
   hand-written reading of the same list.
 

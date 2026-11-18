@@ -864,3 +864,27 @@ address, so no one person's absence locks the names. This changes two things the
 
 Nothing else in the body changed. Publishing still goes through trusted publishing from GitHub Actions with no
 long-lived token (D11), so the shared account's credentials are not part of any release.
+
+## Addendum — 2026-11-18: P6, the ESLint plugin, as built
+
+P6 put the fences in `packages/eslint-plugin` (`@sssb/eslint-plugin`, JavaScript, `private: true` until P14, in the
+fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are the details it left open.
+
+- **The preset is async**: `...(await sssb.configs.app({ root: import.meta.dirname }))`, because it imports the app's
+  `lint-exceptions.mjs`. Every block it returns carries `basePath: root`, and `root` must be absolute. This repo's
+  config passes `join(import.meta.dirname, 'apps/*')`: a last segment of `*` means every app in that directory.
+- **Every fence has a rule id, the internal ones too.** Part 4 asked it of the preset's fences; the framework/app
+  fence's and core's declaration halves moved as well (`sssb/no-app-import`, `sssb/no-framework-import-in-core`), so
+  `eslint.config.mjs` sets neither `no-restricted-imports` nor `no-restricted-syntax`. `react/jsx-no-literals` is
+  `sssb/no-jsx-literals`, react's rule with SSSB's options fixed.
+- **`configs.app({ root, vendors })`** lets an app add its own adapter's SDK to the vendor ban, which part 4 did not
+  provide for: the recipe for an app-owned adapter told the adopter to edit `vendorSdkPattern`, which now ships in
+  the plugin. The option only adds.
+- **`sssb check-fences` compares, and probes.** The comparison is the half part 3 did not name: for every source file
+  in the app, every `sssb/*` rule the preset alone enables at `error` must be enabled at `error` with the same options
+  through the app's config (`calculateConfigForFile` on both). That is what sees a later block narrowing a fence to
+  one directory, a later `ignores`, and a nested config file, none of which a probe at a fixed path sees. The probes,
+  each `lint-exceptions.mjs` entry and its sibling, and a scan for inline disables of a fence (or of every rule)
+  complete it. The logic is the plugin's (`@sssb/eslint-plugin/check-fences`); the `sssb` command resolves it from
+  the app's directory.
+- **The e2e import ban of part 2 is not in P6.** It needs `@sssb/kit/testing/e2e`, which P5 builds.

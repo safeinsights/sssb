@@ -3186,3 +3186,43 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
   `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
+
+## `@sssb/eslint-plugin`: the fences as one plugin (2026-11-18, ADR-0014 P6, `feat/eslint-plugin`)
+
+- **Every fence is a rule with an id of its own.** The fences that were `no-restricted-imports` patterns or
+  `no-restricted-syntax` selectors are now `sssb/no-vendor-import`, `sssb/no-next-font-google`,
+  `sssb/no-real-adapter-import`, `sssb/no-static-real-adapter-import`, `sssb/no-kit-real-adapter-import`,
+  `sssb/no-dynamic-real-adapter-import`, `sssb/no-process-env`, `sssb/no-run-mode-env`, `sssb/no-literal-a11y-copy`,
+  and, SSSB-internal, `sssb/no-app-import` and `sssb/no-framework-import-in-core`. The declaration rules match exactly
+  as `no-restricted-imports` did (the `ignore` package with `allowRelativePaths` and `ignorecase`, a `regex` with
+  `iu`, the specifier trimmed, `import m = require()` included) and report each pattern's own message, so every
+  probe in `tests/lint` kept its message fragment and only its rule id changed. `eslint.config.mjs` no longer sets
+  either core rule. The alternative, keeping the core rules for SSSB's own repository and ids only in the preset,
+  would have left two readings of each fence.
+- **`react/jsx-no-literals` became `sssb/no-jsx-literals`**: react's rule, run with SSSB's options fixed and no
+  options of its own. The alternative, leaving `react/jsx-no-literals` in the preset, let an adopter's block that
+  configures that rule for its own reasons replace SSSB's options for every file it matched.
+- **`configs.app({ root })` is async**, because it imports the app's `lint-exceptions.mjs` (an ES module, re-read by
+  mtime as before). A synchronous factory through `require()` of ESM was the alternative; it cannot re-read an edited
+  file in a long-lived lint server. Adopters write `...(await sssb.configs.app({ root: import.meta.dirname }))`.
+- **`root` must be absolute, and every block carries `basePath: root`.** A relative root is refused: it would be
+  relative to wherever ESLint started (ADR-0014 part 4). A last segment of `*` means every app in that directory;
+  this repo's config passes `join(import.meta.dirname, 'apps/*')`, the ADR's `apps/*` anchored.
+- **The internal rules' anchors are a `{ root }` option**, read when the rule runs: `sssb/public-surface` and
+  `sssb/no-path-out-of-package` read `packages/kit/package.json` under it, and both path rules resolve landings
+  against it. Nothing in the plugin reads a file when it loads but its own `package.json` (for `meta.version`).
+- **Scope changes, each a tightening or a no-op.** The a11y-copy ban now covers the app's registry
+  (`src/adapters/index.ts`), which lost it only because the fakes block ignored the registry for the dynamic real/
+  ban. The `next/font/google` ban now covers `next.config.*` and `tests/contract/`, which the vendor block's carve-outs
+  had dropped with it. The static real-adapter pattern no longer applies to `packages/*/src` outside the app: a package
+  has no registry, and in `packages/kit/src` the merge trap had already replaced it with the framework fence's list.
+  `SSSB_LINT_EXCEPTIONS_ROOT` is gone: the tests point `configs.app` at a scratch tree directly.
+- **`vendors` is the app's own addition to the vendor ban** (`configs.app({ root, vendors })`). An app-owned adapter's
+  SDK used to go into `vendorSdkPattern` in a fork's `eslint.config.mjs`; once the list ships in the plugin, an adopter
+  cannot edit it, and the recipe's step would have had nowhere to go. The option only adds patterns.
+- **What the plugin depends on.** `eslint` is a peer; the base config's plugins (`@eslint/js`, `typescript-eslint`,
+  `eslint-plugin-react`, `-react-hooks`, `-jsx-a11y`, `@next/eslint-plugin-next`, `eslint-config-prettier`) and
+  `ignore` are dependencies, so `configs.app` needs nothing else installed. An adopter's own block that binds one of
+  those plugins to another copy gets ESLint's loud `Cannot redefine plugin`, never a silent change.
+- **The e2e import ban (ADR-0014 part 2) waits for P5.** The spec it allows, `@sssb/kit/testing/e2e`, does not exist
+  yet, and `apps/showcase/tests/e2e/destructive/simulator-webhooks.spec.ts` imports `@sssb/kit/core/webhook-signing`.

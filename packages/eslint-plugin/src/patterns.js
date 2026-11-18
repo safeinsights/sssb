@@ -98,7 +98,7 @@ export const nextFontPattern = {
 // empty segment, and an app's tsconfig maps `@/*` to `./src/*`, so `@//domain/tickets` reached app code past it.
 // So `@` followed by ANY slash is the alias, and `@app` then slashes then `seed` is the seed; nothing published is
 // named either way. A fuzz of some 7,000 spellings against TypeScript's resolver found no other alias spelling.
-export const appCodePattern = {
+const appCodePattern = {
     regex: String.raw`^(@[\\/]|@app[\\/]+seed([\\/]|$))`,
     message:
         'Framework code (packages/kit) must reach app content only through the seam — import from the ' +
@@ -127,7 +127,7 @@ export const appCodePattern = {
 // into app code (TypeScript's resolver does, and Node's `require()` when the specifier spells the file's
 // extension); no package specifier has a reason to say `..`. Banned in any specifier that is not a path (a `./`,
 // `../`, `/` or `\` path, or a `file:` URL, is (2)'s).
-export const bareTraversalPattern = {
+const bareTraversalPattern = {
     regex: String.raw`^(?!\.{1,2}([\\/]|$))(?![\\/])(?!file:)(.*[\\/])?\.\.([\\/]|$)`,
     message:
         'Framework code (packages/kit) must reach app content only through the seam — a `..` in a package or ' +

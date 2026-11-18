@@ -43,17 +43,43 @@ import {
 // THE APP-SIDE FENCES. Each was a no-restricted-imports pattern or a no-restricted-syntax selector until
 // ADR-0014's P6, and is now a rule of its own, so a later block that sets either core rule cannot drop it.
 
-const vendorStatic = declarationImportBan({
-    description: 'Vendor SDKs are imported only inside an adapters directory.',
-    patterns: [vendorSdkPattern],
-})
+// The vendor list is SSSB's, and an app adds its own adapters' SDKs to it with `configs.app({ root, vendors })`, which
+// sets this option on both halves. The option can only ADD patterns: SSSB's list is always part of the group, so no
+// value of it narrows the fence (`sssb check-fences` relies on that).
+const vendorsOption = {
+    type: 'object',
+    properties: { vendors: { type: 'array', items: { type: 'string', minLength: 1 } } },
+    additionalProperties: false,
+}
+const vendorGroupOf = (context) => [...vendorSdkPattern.group, ...(context.options[0]?.vendors ?? [])]
+// One rule module per distinct vendor list, built once: `build(group)` makes the rule that fences that group.
+const withAppVendors = (build) => {
+    const built = new Map()
+    const ruleFor = (group) => {
+        const key = JSON.stringify(group)
+        if (!built.has(key)) built.set(key, build(group))
+        return built.get(key)
+    }
+    const { meta } = ruleFor(vendorSdkPattern.group)
+    return {
+        meta: { ...meta, schema: [vendorsOption] },
+        create: (context) => ruleFor(vendorGroupOf(context)).create(context),
+    }
+}
+
+const vendorStatic = withAppVendors((group) =>
+    declarationImportBan({
+        description: 'Vendor SDKs are imported only inside an adapters directory.',
+        patterns: [{ ...vendorSdkPattern, group }],
+    }),
+)
 
 // The dynamic half keeps its OWN reading of the vendor list. The two disagree at the edges: the declaration half
 // matches a bare name at any depth and ignores case, so its `pg` flags a local `./pg` and its `@clerk/*` flags
 // `@CLERK/nextjs`; this rule flags neither. Bringing them together means anchoring the bare names in
 // vendorSdkPattern first, which changes the declaration half, so it is left for its own change.
-const isVendorSpecifier = (specifier) =>
-    vendorSdkPattern.group.some((pattern) =>
+const isVendorSpecifier = (group, specifier) =>
+    group.some((pattern) =>
         pattern.endsWith('/*')
             ? specifier.startsWith(pattern.slice(0, -1)) && specifier.length > pattern.length - 1
             : specifier === pattern || specifier.startsWith(`${pattern}/`),
@@ -61,11 +87,13 @@ const isVendorSpecifier = (specifier) =>
 const vendorDeclarationlessRule =
     "Vendor SDKs live only in packages/kit/src/adapters/ (SSSB's ports) or apps/<app>/src/adapters/real/ " +
     '(a port the app owns) — code against the port instead (docs/recipes/app-owned-adapter.md).'
-const vendorDynamic = declarationlessImportBan({
-    description: 'Vendor SDKs are not imported dynamically outside an adapters directory.',
-    what: 'a vendor SDK',
-    matches: (specifier) => (isVendorSpecifier(specifier) ? [vendorDeclarationlessRule] : []),
-})
+const vendorDynamic = withAppVendors((group) =>
+    declarationlessImportBan({
+        description: 'Vendor SDKs are not imported dynamically outside an adapters directory.',
+        what: 'a vendor SDK',
+        matches: (specifier) => (isVendorSpecifier(group, specifier) ? [vendorDeclarationlessRule] : []),
+    }),
+)
 
 const nextFontGoogle = declarationImportBan({
     description: 'next/font/google phones home at build; dev stays hermetic.',

@@ -164,7 +164,7 @@ The framework catalog holds NO product name at all: one shared catalog cannot na
 the optional version shipped a bug: SSSB's catalog carried a `shell.appName` fallback, the showcase never
 passed the prop, and every signed-in header in the demo rendered the fallback while the product called
 itself Northwind Support. Nothing failed, because a default that resolves looks exactly like a default
-that is right — and `react/jsx-no-literals`, the one rule that would have caught a raw string, cannot see
+that is right — and `sssb/no-jsx-literals`, the one rule that would have caught a raw string, cannot see
 a translated key that is merely the wrong one.
 
 **The port key keeps its old name, on purpose.** After `pnpm init-app acme`, the renamed app's
@@ -347,9 +347,9 @@ the migrator Lambda from `packages/kit/src/adapters/real/migrate-handler.ts`. No
 Some fences take named exceptions. Today one does: `sssb/no-raw-db-handle`, which bans `getDb()` in every
 module of your app (tenant-scoped data goes through `db.withTenant()`, ADR-0004). If a module of yours truly
 needs the raw client, say a maintenance job that runs as the system across every tenant, list it in your app's
-own `apps/<app>/lint-exceptions.mjs`. Don't edit SSSB's `eslint.config.mjs`: every later SSSB update to it
-would conflict with your edit, and a path you wrote there names your app's directory, which `pnpm init-app`
-renames without rewriting that file.
+own `apps/<app>/lint-exceptions.mjs`. Don't edit SSSB's `eslint.config.mjs` or the fences in
+`packages/eslint-plugin`: every later SSSB update to them would conflict with your edit, and a path you wrote there
+names your app's directory, which `pnpm init-app` renames without rewriting those files.
 
 ```js
 // apps/<app>/lint-exceptions.mjs
@@ -360,12 +360,23 @@ export default {
 }
 ```
 
-`eslint.config.mjs` reads the file for every app when it loads. Each entry names one existing file under
+The app preset of `@sssb/eslint-plugin` (`configs.app({ root })`, which `eslint.config.mjs` applies to every app)
+reads the file when the config loads. Each entry names one existing file under
 `apps/<app>/src`, by a path relative to the app, and gives a reason. A glob, a directory, a path out of the
 app, a missing reason, or a file that no longer exists fails `pnpm lint` itself, naming the entry. So an
 exception cannot quietly widen, and cannot outlive the file it names; one that outlives its need (the module
 stopped using the raw client) is still yours to delete. Every other module stays banned. ESLint reads the
 file when it loads its config, so restart your editor's ESLint server after you edit it.
+
+**A vendor SDK your app owns an adapter for** (`docs/recipes/app-owned-adapter.md`) is added to the vendor ban by
+your app, not by editing SSSB's list: pass it to the preset, `sssb.configs.app({ root, vendors: ['stripe',
+'stripe/*'] })`, in the same gitignore-style patterns SSSB's own list uses. The option only ever adds to SSSB's list.
+
+**Every fence is a rule with an id of its own**, so a `no-restricted-imports` or `no-restricted-syntax` block of
+your own, after the preset, adds your bans without replacing SSSB's. What can still switch a fence off (turning an
+`sssb/*` rule off or down, an `ignores` that drops a directory, a nested config file, an `eslint-disable` comment
+that names a fence or no rule at all) is what `checkFences` from `@sssb/eslint-plugin/check-fences` reports: it
+compares your app's effective config with the preset's for every source file, and lints probe files through it.
 
 ## Building your product — everything registers through `apps/<app>/src/app-config/`
 

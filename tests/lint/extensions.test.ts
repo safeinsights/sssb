@@ -250,4 +250,14 @@ describe('what the effective-config audit found', () => {
             expect(findings.filter((f) => f.rule === 'sssb/no-direct-mkdtemp')).toHaveLength(1)
         },
     )
+
+    // The apps' tests get the ban from the preset; every other test in the repo, the framework's and the repo's own,
+    // from the root config's block. Without these, switching that block off turned nothing red.
+    it.each(['packages/kit/src/server-lib/kv.test.ts', 'tests/tooling/kv.test.ts', 'packages/kit/test-fixture/kv.ts'])(
+        'a raw mkdtemp in %s is caught',
+        async (file) => {
+            const code = "import { mkdtempSync } from 'node:fs'\nexport const dir = mkdtempSync('x')\n"
+            expect((await lint(file, code)).filter((f) => f.rule === 'sssb/no-direct-mkdtemp')).toHaveLength(1)
+        },
+    )
 })

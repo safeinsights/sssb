@@ -2063,3 +2063,26 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 - **Prove what a bundle holds from the bundler's own module list.** Next's chunks name modules by their
   `node_modules/.pnpm/...` path; the static demo's list comes from Rollup's `this.getModuleIds()` in a scratch
   plugin; the migrator's from an esbuild metafile.
+
+## `@sssb/eslint-plugin` (2026-11-18, ADR-0014 P6, `feat/eslint-plugin`)
+
+- **`pnpm exec` installs when the workspace changed.** pnpm 11 checks the workspace before running a command and
+  installs if a package was added, so a gate-probe loop that runs `pnpm exec vitest` while you create a package
+  directory runs an install in the middle of a probe, and every probe after it errors instead of reporting. Finish the
+  workspace change (and one `pnpm install`) before probing.
+- **Flat config's `basePath` makes a preset work from anywhere.** Every block the app preset returns carries
+  `basePath: <the app's absolute directory>` and app-relative globs (`src/**`), so it means the same thing from the
+  app's own `eslint.config.mjs`, from a workspace root's, and whether ESLint was started in the app or the root. A
+  global-ignores object keeps `basePath` and is still global.
+- **To retire a core rule's setting, reproduce what it matches before changing what it is called.** The fences moved
+  from `no-restricted-imports` to rules of their own with the same matcher (eslint's own `ignore` options, `iu` for a
+  `regex`, the specifier trimmed, `TSImportEqualsDeclaration` visited) and the same messages, so each `tests/lint`
+  probe kept its fragment and only its rule id changed: a diff of the expectations is a diff of names alone.
+- **A third-party rule can be pinned to SSSB's options by delegation.** `sssb/no-jsx-literals` calls react's
+  `jsx-no-literals` `create()` with `Object.create(context, { options: { value: OPTIONS } })`: every other context
+  property comes through the prototype, and no later config block can change the options, because the rule has none.
+- **What a composed config does to a file is ESLint's answer, not the config's text.** `checkFences` asks
+  `calculateConfigForFile` for every source file, through the app's config and through the preset alone, and compares
+  the `sssb/*` rules. That one comparison sees a rule turned off or down, a later `ignores`, a global ignore and a
+  nested config file that takes over a directory (ESLint 10 looks up the config from each file's directory), none of
+  which a probe at a fixed path would see unless it happened to sit there.
