@@ -7,7 +7,7 @@
  * Identifiers that are purely origin- or process-scoped are instead given NEUTRAL names that
  * never need renaming. Human-facing DISPLAY copy lives in `messages/*.json`, never here.
  *
- * Adopting this template = change this one value, and `pnpm init-app <slug>` is what changes it
+ * Adopting this template = change this one value, and `pnpm create @sssb` is what sets it
  * (along with the display copy and the few files that name the app's directory).
  *
  * It is also what lets two apps in this repo run side by side in one browser: the slug prefixes the

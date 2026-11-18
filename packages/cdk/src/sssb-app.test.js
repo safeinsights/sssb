@@ -430,7 +430,7 @@ describe('the database name', () => {
     // A scratch app inside this repository, so the construct finds the repository's lock file, esbuild and framework
     // above it, as an app under apps/ does: not a makeTestTmpDir directory, which has no lock file above it and so no
     // project root (the construct refuses such an app). afterAll removes it, a failed run included. Its slug has a
-    // dash, which init-app accepts and Aurora's names do not.
+    // dash, which a slug may have and Aurora's names may not.
     const scratch = path.join(REPO, 'node_modules/.cache', `sssb-cdk-dashed-${process.pid}`, 'my-app')
     afterAll(() => rmSync(path.dirname(scratch), { recursive: true, force: true }))
 
@@ -463,7 +463,7 @@ describe('the database name', () => {
     )
 
     // The apps in this tree: SSSB's own (no dash, so the name is the slug and nothing is renamed), or, in an adopter's
-    // tree after `pnpm init-app acme-corp`, an app whose slug has a dash.
+    // tree, an app whose slug may have a dash (`acme-corp`).
     it.each(APPS)("names apps/%s's database from its slug, and an undashed slug's database the slug itself", (app) => {
         const appDir = path.join(REPO, 'apps', app)
         const slug = /** @type {string} */ (

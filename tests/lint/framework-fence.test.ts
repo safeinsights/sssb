@@ -33,7 +33,7 @@ import {
  * `sssb/no-dynamic-framework-import-in-core` existed, `import('@app/seed')` in SSSB's server-lib and
  * `export type T = import('@/domain/tickets').Ticket` in SSSB's fixture linted clean. The second is the
  * type-only escape the fixture's fence exists to stop: erased at runtime, resolved by the root tsc, and
- * broken only at `pnpm init-app --eject-showcase`.
+ * broken only once the showcase was deleted.
  *
  * The new rules read the same patterns through the same matchers as no-restricted-imports (eslint.config.mjs,
  * `patternMatcher`), and the parity table below holds them to it, specifier by specifier.

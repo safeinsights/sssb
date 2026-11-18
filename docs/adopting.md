@@ -1,25 +1,24 @@
 # Adopting this template
 
-Adoption is one command:
+Adoption is one command, which writes a new repository for your app:
 
 ```sh
-pnpm install                                # boots hermetically: no docker, no credentials, no network
-pnpm init-app acme --name "Acme Research" --repo acme-research   # rename the app you keep; --dry-run previews it
-pnpm install && pnpm verify                 # the workspace changed; prove it still holds
+pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research   # or: npm create @sssb acme ...
+cd acme
+pnpm install && pnpm verify                 # boots hermetically: no docker, no credentials, no network
 ```
 
-Commit `pnpm-lock.yaml` with the rest. That middle line changes the workspace, so the lockfile
-changes too — and CI installs with `--frozen-lockfile` by default, so a commit that leaves it behind
-fails your first push with an error that never mentions `init-app`.
+`@sssb/create` writes the workspace into a new directory: your app, generated from SSSB's `apps/starter` and
+renamed, its root config on SSSB's presets, its CI (a workflow calling SSSB's reusable one), and SSSB's packages as
+versioned dependencies. What it deliberately leaves for you (deployment params, seed data, cutover rows, repository
+settings) is listed under "What the generator leaves for you" below.
 
-That middle line renames the app you keep and repoints every file that named it. What it deliberately
-leaves for you — deployment params, seed data, cutover rows, your GitHub owner and repo name — it prints when
-it finishes.
+**Until SSSB's packages are published** (ADR-0014's P14), `pnpm create @sssb` cannot fetch the generator from npm.
+TODO(P12): how to run it from a checkout of this repository until then, and which `--sssb` to pass.
 
-Adding `--eject-showcase` also deletes the demo app, and the gate stays green when you do — SSSB's own
-tests run against SSSB's own fixture seam (`packages/kit/test-fixture`), not against the demo's world.
-**Still do it last**: the showcase is the worked example you will read most in week one. Build your
-first slices with it present; drop it when you stop reading it.
+The workspace has no showcase. The showcase stays in SSSB's repository as the worked example you will read most in
+week one: keep a checkout of SSSB beside your own (`pnpm install && pnpm dev` there), read the slice you need, and
+build its equivalent in your app.
 
 The rest of this document is what that command does not do: which parts of the tree are yours, how
 your product extends the framework, and the discipline that keeps the whole thing honest.
@@ -36,8 +35,8 @@ Three kinds of thing live in this repo (see
   requires it.)
 - **Two example apps.** `apps/showcase` — a support desk: tickets, escalations, attachments, two job kinds, two
   actors, six people — exists so every framework capability has a living worked example. Read it as
-  the reference, then eject it. `apps/starter` — one entity, one card, two tenants, and a seam whose
-  other eleven modules register nothing — is **the one you keep**. It is also the framework's second
+  the reference; the generator never copies it. `apps/starter` — one entity, one card, two tenants, and a seam
+  whose other eleven modules register nothing — is **the one you keep**: the generator's template. It is also the framework's second
   consumer, which is what makes the framework/app line falsifiable rather than merely asserted:
   anything SSSB reaches for that only exists because the showcase supplies it fails to compile there.
 - **The repo scaffold**: the verify gate, lint fences, CI, docs doctrine. You keep it. The infra draft is
@@ -53,104 +52,71 @@ Apps live under `apps/` — one per product, each with its own `package.json`, c
 `pnpm test:unit`, `pnpm test:e2e`, `pnpm build`, the demo-static trio) fan out with
 `pnpm --filter './apps/*'`, so they pick up an added or renamed app with no edit. The commands that
 must pick ONE app (`pnpm dev`, `pnpm tick`, `pnpm start`, and the showcase-only `pnpm ladle`, `pnpm build:demo`,
-`pnpm dev:real`, `pnpm llm:record`) name an app, and `init-app` repoints or removes them for you.
+`pnpm dev:real`, `pnpm llm:record`) name an app; in a workspace the generator writes, they name yours.
 
-## Fork and first boot
+## First boot
 
-1. Fork/clone. **Take it with `git clone` or GitHub's Fork — not "Use this template" and not a ZIP**,
-   because both of those give you a repository with no commit in common with SSSB, and
-   `git merge upstream/main` then fails with `fatal: refusing to merge unrelated histories`. Updates
-   here arrive by merge rather than by a version bump ([ADR-0013](adr/0013-upstream-updates-fork-and-merge.md)),
-   so shared history is the mechanism, not a detail. If you already started from a template copy, you
-   are not stuck — `git merge --allow-unrelated-histories upstream/main` once will graft the histories
-   together and later merges behave normally, but that first one resolves as though every file were
-   conflicting, so it is much cheaper to clone.
-   Then `pnpm install && pnpm dev` — the app must boot seeded and offline in under two minutes.
-   That hermetic boot is the repo's standing acceptance test; if it ever breaks, fix that first.
-2. Run the demo tour ([runbooks/demo.md](runbooks/demo.md)) once. Fifteen minutes here saves days
-   later: every capability you inherit is shown working, and Simulator is how you'll drive your own app
-   in dev.
-3. Then run `pnpm init-app`.
+1. In the directory the generator wrote, `pnpm install && pnpm dev`: the app must boot seeded and offline in under
+   two minutes. That hermetic boot is the standing acceptance test; if it ever breaks, fix that first.
+2. Run the demo tour ([runbooks/demo.md](runbooks/demo.md)) once, in a checkout of SSSB: it drives the showcase.
+   Fifteen minutes here saves days later: every capability you inherit is shown working, and Simulator is how
+   you'll drive your own app in dev.
+3. Push, then make the repository settings only you can make: require the check `sssb / all-checks` on your
+   default branch, and the two settings under "Identity and the owner files" below.
 
-## `pnpm init-app`
+## `pnpm create @sssb`
 
 ```
-pnpm init-app <slug> [options]        rename the app you keep
-pnpm init-app --eject-showcase        delete the demo app (slug optional; both can run at once)
-pnpm init-app --repo <name>           fill in the repository name on a tree adopted without it
+pnpm create @sssb <dir> [options]     (npm create @sssb <dir> [options] runs the same generator)
 
-  <slug>              the new APP_SLUG: lowercase letters, digits and dashes. Also becomes the app's
-                      directory name and package name (the workspace root becomes <slug>-workspace,
-                      so `pnpm --filter <slug>` can only ever mean the app).
-  --name "<Name>"     display name for UI copy and titles (default: title-cased <slug>)
-  --app <dir>         which directory under apps/ to rename (default: starter, else the only app)
-  --repo <name>       the GitHub repository NAME this will live in: not the owner, and not the app slug
-                      (an app can live in a repo of another name). Used in the advisory and discussions links of
-                      SECURITY.md, the issue-template config and CODE_OF_CONDUCT.md. Without it those
-                      links say PLACEHOLDER_GITHUB_REPO, next to PLACEHOLDER_GITHUB_OWNER, for you to replace
-  --eject-showcase    remove apps/showcase and every reference to it
-  --dry-run           print the plan and change nothing
-  --yes               skip the confirmation prompt (required when stdin is not a terminal)
+  <dir>                  where to write the workspace; refused unless it is new or empty
+  --slug <slug>          the app's APP_SLUG: lowercase letters, digits and dashes, from a letter. Also the app's
+                         directory (apps/<slug>) and package name
+  --name "<Name>"        display name for UI copy and titles
+  --repo <owner/name>    the GitHub repository this will live in, for the advisory and discussions links
+  --owner <@handle>      the code owner and maintainer contact
+  --sssb <version|dir>   which @sssb/* to depend on: default ^<the generator's own version>; a directory of
+                         packed tarballs writes file: dependencies instead (release candidates, pack and consume)
+  --workflow-ref <sha>   the commit of SSSB's reusable workflow your CI calls (default: the commit the
+                         generator was packed from)
+  --yes                  TODO(P12): what it confirms or skips
 ```
 
-It refuses to touch anything without a `y` at the prompt, or an explicit `--yes`; `--dry-run` prints
-the identical plan and writes nothing. It is **idempotent** — every edit replaces the value it found
-in the tree rather than a value hard-coded in the script, so re-running it is a no-op, and it works
-just as well on an app you already renamed once.
+TODO(P12): check every flag above against `@sssb/create`'s own usage text, and fill in the defaults of `--slug`
+(from `<dir>`?) and `--name` (title-cased slug?), the slugs it refuses (reserved names, Aurora's database-name
+rules), and whether `--owner` takes several handles.
 
-### The identity surface it covers
+### What it writes
+
+- **Your app**, `apps/<slug>/`: the starter, renamed. `APP_SLUG` in `apps/<app>/config/app.ts`, the package name,
+  the display name in its catalogs (`welcome.appName`, `welcome.title`) and its titles, its configs on SSSB's
+  presets with nothing pointing back into SSSB's repository, its seam package
+  (`apps/<app>/src/app-config/package.json`, named `@sssb/app-config`), its conformance test
+  (`apps/<app>/src/sssb.conformance.test.ts`) and its deployment, `apps/<app>/infra/`.
+- **The root**: `package.json` (its scripts, `verify` included, and `sssb.apps`), `pnpm-workspace.yaml`, and the
+  Vitest, TypeScript, knip, jscpd, gitleaks, Prettier and git-ignore configs.
+- **CI**: a workflow of your own under `.github/workflows/` that calls SSSB's reusable workflow
+  (`.github/workflows/app-checks.yml` in SSSB's repository) pinned to a commit, so your checks are named
+  `sssb / <job>` and `sssb / all-checks` is the one to require; plus a secret scan of your own.
+- **The owner files**, from `--owner` and `--repo`: `CODEOWNERS`, `SECURITY.md`, `CODE_OF_CONDUCT.md` and the
+  issue templates.
+- **A `README.md`** of your own.
+
+### Identity and the owner files
 
 `APP_SLUG` (in the app's `apps/<app>/config/app.ts`) is the single source of MECHANICAL identity — session and
 viewpoint cookies, the fake-auth JWT issuer, the service-token audience, webhook header names, CDK
 stack/DB/budget/tags all derive from it. Other identifiers are deliberately NEUTRAL and never need
 renaming (`APP_DATA_DIR`, the `app-simulator-*` browser keys, the `@app/*` workspace scope, and the
-dev-server port key — see below). What is left is display copy, package naming, and the handful of
-files that name the app's directory:
+dev-server port key — see below). What is left is display copy, package naming, and the owner files.
 
-| Where                                                                                  | What                                                                                             |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `apps/<app>/config/app.ts`                                                             | `APP_SLUG`                                                                                       |
-| `apps/<app>/package.json`                                                              | package `name` + `description`                                                                   |
-| `apps/<app>/messages/en.json` + `es.json`                                              | `welcome.appName` (the header prop) and the `welcome.title`                                      |
-| `apps/<app>/src/app/[locale]/layout.tsx`                                               | the document `metadata.title`                                                                    |
-| `apps/<app>/src/demo-static/index.html`                                                | the static demo's `<title>`                                                                      |
-| `package.json` (root)                                                                  | `name` (`<slug>-workspace`), `description`, `--filter` scripts                                   |
-| `knip.json`, `vitest.config.ts`                                                        | the workspace key; the app list (`APPS`)                                                         |
-| `apps/<app>/infra/package.json`                                                        | `name` (`<slug>-infra`); nothing else there names the app, which it reaches by `..`              |
-| `apps/<app>/` itself                                                                   | the directory, renamed last                                                                      |
-| `docs/`, `.claude/`, README, CLAUDE, CONTRIBUTING                                      | every backticked `apps/<app>/…` citation the path gate checks                                    |
-| `CODEOWNERS`, `SECURITY.md`, `.github/ISSUE_TEMPLATE/config.yml`, `CODE_OF_CONDUCT.md` | the maintainer's handle and links → `PLACEHOLDER_GITHUB_OWNER` and `--repo` (or its placeholder) |
+The owner files route YOUR users — a security report, a code-owner review, a conduct complaint — so they must
+name you, never SSSB's maintainer. The generator writes them from `--owner` and `--repo`. TODO(P12): what it
+writes when either is left out, and whether its closing output says so. A `CODEOWNERS` naming an account GitHub
+cannot resolve makes every PR unmergeable once "require review from Code Owners" is on.
 
-**The last row runs even on a rename-only adoption, with no `--eject-showcase`.** Those four files
-route YOUR users to the TEMPLATE maintainer — a security report, a code-owner review, a conduct
-complaint — and that is wrong the moment you fork, not only once you delete the showcase. `init-app`
-rewrites `@jpslav` to `PLACEHOLDER_GITHUB_OWNER`, and the `github.com/safeinsights/sssb` advisory and
-discussions links to `github.com/PLACEHOLDER_GITHUB_OWNER/<repo>`, and prints a "WHAT NOW NEEDS YOUR DETAILS" section naming
-exactly what to fill in. Left as `PLACEHOLDER_GITHUB_OWNER`, `CODEOWNERS` names an account GitHub cannot
-resolve, and turning on "require review from Code Owners" branch protection makes every PR unmergeable.
-`LICENSE` and the `docs/adr/` approver lines are the two places the maintainer's name correctly
-survives — the first because MIT requires the notice, the second because it is honest provenance for
-SSSB's own decisions.
-
-`tests/docs/adopter-identity.test.ts` ships with you and keeps guarding this, in a form that fits your
-repo. In the template it runs `init-app` on a scratch copy and checks the result. In yours, where the
-rewrite has already happened, it skips that half (you will see the skips) and runs one direct check: none
-of those four files may name the template's maintainer. That is what turns red if a later
-`git merge upstream/main` adds a line owned by `@jpslav` to your `CODEOWNERS`.
-
-**`<repo>` is the repository's name, which is not the app's slug.** An app called `console` can live in
-a repo called `pages`, and a link that says `…/console/security/advisories/new` 404s while looking
-right. So pass the name you will push to: `pnpm init-app console --repo pages`. It takes the NAME only
-— not `owner/name`, because the owner also fills `CODEOWNERS`, where it may be a team. Without `--repo`
-the links say `PLACEHOLDER_GITHUB_REPO` beside the owner placeholder, and the closing output says so;
-replace both (`git grep PLACEHOLDER_GITHUB -- CODEOWNERS SECURITY.md CODE_OF_CONDUCT.md .github` finds
-them). Forgot it? Run `pnpm init-app --repo pages` afterwards: it replaces `PLACEHOLDER_GITHUB_REPO` in those
-three files, whatever you have put for the owner by then, and does nothing else (no citation rewrite, no
-`pnpm install` to run). On a tree `init-app` has not adopted yet it refuses, because it would scrub the
-maintainer's identity and leave the rest. Once the links name a repository, a further `--repo` is reported
-as ignored (the run says so rather than claiming a change), so edit the files directly then. `init-app` does not
-read the name from `git remote`: at adoption time `origin` is often still the template, or a fork under
-its default name, and a derived value would be plausible and wrong.
+**`--repo` names the repository, which is not the app's slug.** An app called `console` can live in a repo called
+`pages`, and a link that says `…/console/security/advisories/new` 404s while looking right.
 
 Filling in the owner and repository is necessary and not sufficient: **two of those links depend on repository
 settings that are off by default.** `/security/advisories/new` resolves for a non-maintainer only once
@@ -162,38 +128,39 @@ honour.
 
 The framework catalog holds NO product name at all: one shared catalog cannot name two products, so
 `AppHeader` and `DemoShell` take a **required** `appName` prop and each app passes its own from its
-`welcome.appName` key. That key is what `init-app` writes. It is required rather than optional because
+`welcome.appName` key. That key is what the generator writes. It is required rather than optional because
 the optional version shipped a bug: SSSB's catalog carried a `shell.appName` fallback, the showcase never
 passed the prop, and every signed-in header in the demo rendered the fallback while the product called
 itself Northwind Support. Nothing failed, because a default that resolves looks exactly like a default
 that is right — and `sssb/no-jsx-literals`, the one rule that would have caught a raw string, cannot see
 a translated key that is merely the wrong one.
 
-**The port key keeps its old name, on purpose.** After `pnpm init-app acme`, the renamed app's
+**The port key keeps its old name, on purpose.** In the app the generator writes, the app's
 `package.json` still declares `"sssb": { "port": "starter" }`, its `playwright.config.ts` still calls
 `originFor('starter')`, and the override is still `STARTER_PORT`. That reads oddly and is correct: the
 keys in `@sssb/tools/ports` name a dev-server SLOT, not an app, and the app declares its slot in its own
-`package.json` (its scripts call `sssb port`, which reads the declaration), which `init-app` keeps when it renames the app.
+`package.json` (its scripts call `sssb port`, which reads the declaration), which the generator keeps when it renames the
+app. TODO(P12): confirm the generator keeps the `starter` slot.
 The declaration and the Playwright config that points at the server agree only because both spell the same literal. A
 per-adopter rename would add two more files to the rewrite surface for no functional gain, and a
 half-applied one produces two servers on two ports — silent wrong-app adoption, the exact failure that
 whole module exists to prevent. Read `starter` as "the second slot", or set `STARTER_PORT` and forget it.
 
-Nothing in that table is a literal an adopter has to hunt for, and no test hard-codes the product's
+Nothing the generator renames is a literal an adopter has to hunt for, and no test hard-codes the product's
 name: `apps/*/tests/catalog.ts` reads the app's own catalog and the specs assert against that. A rename
 cannot break the gate.
 
-### What `init-app` does NOT do
+### What the generator leaves for you
 
-It prints this list when it finishes, because these are the parts that take judgement:
+These are the parts that take judgement:
 
 - **Deployment parameters** — `apps/<app>/config/params.ts`, which every app carries (the starter's is yours from the start).
   Every `PLACEHOLDER_` value, and `sentry.org`. Each maps to a cutover row.
 - **The starter's content** — its seed world, its welcome copy, its one entity and its static-demo
-  wiring are all still there and all still on screen. `init-app` renamed the app around them. The next
+  wiring are all still there and all still on screen. The generator renamed the app around them. The next
   section lists each one and what to do about it.
 - **The cutover checklist** — [cutover-checklist.md](cutover-checklist.md) is yours: owners, dates, and
-  the proof each row owes.
+  the proof each row owes. TODO(P12): whether the generator writes a copy into your workspace.
 - **The demo size budget** — `apps/<app>/package.json`'s `check:demo-size` passes the static demo's byte
   budget. It is yours now. The starter ships it roomy on purpose, sized for an app's own screens and not as
   a pacing gate (it still fails on gross bloat); re-set it when you want a tighter gate, to what your app
@@ -201,21 +168,18 @@ It prints this list when it finishes, because these are the parts that take judg
   number was set for and how it got there, and is where you record each change and why; it still calls the
   app by its template name, and that history is SSSB's and stays as written.
   `sssb check-demo-size` is SSSB's (`@sssb/tools`) and holds no number: the number lives in the app's
-  `package.json`, so re-set it there. If you renamed the showcase
-  instead (`--app showcase`), its number is its own pace-setting one, thin on purpose, and it has no
-  `DEMO-SIZE.md`: SSSB keeps the showcase's history in `docs/decision-log.md`. When it goes red,
+  `package.json`, so re-set it there. When it goes red,
   the command's source (`packages/tools/src/commands/check-demo-size.js`, "WHEN IT GOES RED") says what to look at first.
 - **The licence** — this template is MIT, which means the product you build on it is yours with no
   copyleft obligation. Your own product's licence is still a decision you make; nothing here makes it
   for you.
-- **Prose.** `init-app` repoints path citations so the doc gate stays green, but the sentences around
-  them still describe a template with two example apps. It prints the list of files to reread; README
-  and `CLAUDE.md` are the two that matter, and `CLAUDE.md` is what teaches agent sessions your rules.
+- **Your README and agent guide.** The `README.md` the generator writes is yours to fill in. TODO(P12): what it
+  holds, and whether the workspace gets a `CLAUDE.md` before ADR-0014's P13 ships the app guide as a plugin.
 
 ### The starter's content is still wired into your UI
 
-A rename changes what the app is called, not what it shows. After `init-app`, four pieces of the
-starter are still reachable by anyone who opens your app or your static demo:
+A rename changes what the app is called, not what it shows. In the app the generator writes, four pieces
+of the starter are still reachable by anyone who opens your app or your static demo:
 
 | What survives                                    | Where it lives                                                                                                                                                                                                                                                                                                                                            | Where it shows                                                                                 |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -254,10 +218,10 @@ and keep the cross-tenant proofs. Nothing gates that last part — the RLS cover
 is protected, not that your proofs exercise two tenants — so it is yours to keep honest.
 
 **The Items slice is a worked example, so take what it teaches before you delete it.**
-`apps/<app>/src/app-config/db/migrations/1001_items.ts` is a worked RLS migration — after an eject, the only one left — and its
+`apps/<app>/src/app-config/db/migrations/1001_items.ts` is a worked RLS migration — in a generated workspace, the only one there — and its
 section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it. Build your first real slice
 from them (`/new-slice`), then remove Items the way "To remove a demo slice" below describes. There is
-no flag that does this for you yet; `.claude/future-tasks/init-app-blank-option.md` carries the design.
+no flag that does this for you yet; `.claude/future-tasks/create-blank-option.md` carries the design.
 
 **Wire the static demo last, and look at it.** A shell or a home screen you build in
 `apps/<app>/src/components` reaches the real app through its route files and reaches the static demo
@@ -267,7 +231,7 @@ When the sweep is done, run `pnpm build:demo-static`, open `apps/<app>/dist-demo
 That one look is the check: the picker, the first screen and the dashboard are exactly the three places
 the starter survives.
 
-### What ejecting the showcase costs
+### What the showcase's absence costs
 
 `apps/starter` already owns the two things that are not the demo and that were once the showcase's alone: the **RLS
 contract suite** (`apps/<app>/tests/contract/rls-contract.test.ts`, one call of `contractSuite` from
@@ -276,27 +240,28 @@ by a non-superuser owner as Aurora's master user is (twice: on a fresh server, a
 by a superuser, and over the RDS Data API transport through its emulator: the anti-drift gate CI depends on; a check is
 left out only by a named `optOut`, as in the conformance suite) and **`apps/<app>/config/params.ts`**. Run locally, the
 suite starts its own Postgres with `embedded-postgres`, which the starter carries as a devDependency (an optional peer
-of `@sssb/kit`); with `CONTRACT_DATABASE_URL` set it uses that server instead. So ejecting rescues nothing and deletes no gate:
+of `@sssb/kit`); with `CONTRACT_DATABASE_URL` set it uses that server instead. So leaving the showcase behind loses no gate:
 `pnpm test:contract` runs your app's suite, and `tests/tooling/app-scaffold.test.ts` fails if an app registers
 migrations without one, or the apps' params carry different keys (each `apps/<app>/infra/` hands its own to the same
 `SssbApp` construct, which reads the same keys from every app).
 
-Five root scripts are dropped, because the starter does not ship the capabilities behind them:
+Five of this repository's root scripts are not in the generated root, because the starter does not ship the
+capabilities behind them:
 `dev:real`, `llm:record`, `ladle`, `build:demo`, `start:demo`. They come back with the thing they
 drive — a Sentry/params-wired `next.config.ts` and a real-mode preflight for `dev:real`, an
 `@sssb/app-config/assistant` registration for `llm:record`, `@ladle/react` plus a `.ladle/` config for the
-workshop, Panda codegen for the demo build. Copy each from the showcase **before** you eject if you
-want it.
+workshop, Panda codegen for the demo build. Copy each from the showcase in SSSB's repository if you want it.
+TODO(P12): confirm the generated root's scripts.
 
-One gate is relaxed on the way out. SSSB's knip workspace carries `includeEntryExports: true`, which
+One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
 nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 137 published subpaths from its source (39
 counting its tests), so the same setting would start demanding you delete the other 102 — capabilities you merely have not
-reached yet, not dead code. `--eject-showcase` therefore turns it off. knip keeps reporting unused
+reached yet, not dead code. The generated `knip.json` therefore leaves it off (TODO(P12): confirm). knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration.
 
-**What ejecting does NOT cost you is the gate.** SSSB's own suite used to be welded to the demo's
+**What the showcase's absence does NOT cost you is the gate.** SSSB's own suite used to be welded to the demo's
 vocabulary — its seed slugs, its `tickets` table, its `export-tickets` job kind, its route tree — so
 deleting the demo took `pnpm test:unit` and `pnpm typecheck` down with it. The framework now carries a
 seam of its own, `packages/kit/test-fixture`: a conforming `@sssb/app-config/*` registration with its own
@@ -305,7 +270,8 @@ and a route tree that exists only to be read by the authorization scan. The root
 resolves `@sssb/app-config/*` there, and `vitest.config.ts` runs SSSB's suite in a `kit` project pointed at
 it. Nothing in that fixture is deletable by adoption, and its vocabulary is deliberately none of the
 apps' — so a framework test that reacquires a dependency on YOUR world fails loudly instead of passing
-by coincidence. `pnpm verify` is green on a freshly ejected repo, end to end.
+by coincidence. `pnpm verify` is green on a freshly generated workspace, end to end: CI's adoption probe generates one
+with the packed `@sssb/create` on every PR and runs its `pnpm verify`.
 
 The one thing that DOES stay app-shaped is the conformance suite, `@sssb/kit/testing` — the authorization scan of
 your route tree, the i18n partition/parity checks, the pglite RLS suite, migration order, the demo-presets check and
@@ -390,7 +356,7 @@ module of your app (tenant-scoped data goes through `db.withTenant()`, ADR-0004)
 needs the raw client, say a maintenance job that runs as the system across every tenant, list it in your app's
 own `apps/<app>/lint-exceptions.mjs`. Don't edit SSSB's `eslint.config.mjs` or the fences in
 `packages/eslint-plugin`: every later SSSB update to them would conflict with your edit, and a path you wrote there
-names your app's directory, which `pnpm init-app` renames without rewriting those files.
+names your app's directory, which a later rename of the app would silently stop matching.
 
 ```js
 // apps/<app>/lint-exceptions.mjs
@@ -491,7 +457,7 @@ conformance suite a second time, under the starter's aliases. Each check was wat
 SSSB's recurring work only advances when something ticks it. `job_schedules` (a digest, a reminder) and outbound
 webhook retries are drained by one function, `runScheduledTick` (`@sssb/kit/server-lib/scheduled-tick`), and the route
 that calls it lives in the app you keep: `apps/<app>/src/app/api/webhooks/cron/route.ts`,
-`export const POST = withWebhookSecret(…)`. `init-app` moves it with the rest of the app and nothing deletes it;
+`export const POST = withWebhookSecret(…)`. The generator writes it with the rest of the app and nothing deletes it;
 the showcase carries the same route over the same function.
 
 - **Who may call it** is a machine, not a person. The route is guarded by the shared webhook secret
@@ -504,7 +470,7 @@ the showcase carries the same route over the same function.
   no Simulator panel (its `file://` demo has one, in the browser; the showcase's server app has one too, and its Jobs
   tab advances the world clock and runs what is due). Three ways to ask:
     - **`pnpm tick`** calls the running dev server's route once and prints what ran (`pnpm tick:starter` for the starter
-      beside the showcase; once `init-app` has ejected the showcase, `pnpm tick` is your app). It exits 1 if the server is
+      beside the showcase in SSSB's repository; in a workspace the generator writes, `pnpm tick` is your app). It exits 1 if the server is
       down, rejects the secret or answers an error, and 2 for a bad command line. It authenticates as any caller must: it
       reads the per-checkout dev secret from `apps/<app>/.data/auth/webhook-secret` (the first request to a server creates
       the file, so a missing one is made that way) and sends it as the bearer. It adds nothing to the route and cannot
@@ -559,11 +525,11 @@ older server that migration cannot run. Everything SSSB targets already meets it
 
 ## Staying current with SSSB
 
-Adopting is a fork, not a dependency: SSSB ships as a workspace package inside the repo you took, so
-upstream improvements reach you through `git merge`, not `pnpm update`.
-[ADR-0013](adr/0013-upstream-updates-fork-and-merge.md) records why, and the exact
-`git remote add upstream` workflow — including which directories reliably conflict and what would make
-publishing to a registry worth the versioning cost.
+A workspace `pnpm create @sssb` writes depends on SSSB's packages by version, so an update is `pnpm up` and reading
+the release notes' "Seam changes" ([ADR-0014](adr/0014-distribution-as-versioned-packages.md)). A repository
+adopted earlier as a fork of this one takes updates by `git merge` until it switches:
+[ADR-0013](adr/0013-upstream-updates-fork-and-merge.md) records that workflow, including which directories reliably
+conflict.
 
 ### When an update changes what your seam must say
 

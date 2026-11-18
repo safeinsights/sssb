@@ -55,7 +55,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   (`harbor`/`lakeside`, `depot`/`annex`/`steward`/`wharf`, `fixture-*`, `dockets`) is deliberately
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
-  `pnpm init-app --eject-showcase` with a red gate.
+  deleting the showcase with a red gate.
 - **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 137 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it);
   the rest of the package is internal and reachable only by relative import inside it. Lint-enforced
@@ -263,17 +263,18 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   designed-but-unbuilt work in `.claude/future-tasks/` (one file per item, listed in its `index.md`).
   Amend an ADR by appending a dated addendum — never by editing what its body said.
 - **Doctrine docs are gated**: `tests/docs/doc-paths.test.ts` fails if a doctrine doc cites a repo path
-  that doesn't exist. The doc set and its exemptions live in `tests/docs/doc-set.ts`, shared with
-  `scripts/init-app.ts` so the gate and the adoption rewriter cannot disagree about scope. The dated
+  that doesn't exist. The doc set and its exemptions are `sssb.docPaths` in the root `package.json`, read by
+  `@sssb/tools/doc-paths` (`sssb check-doc-paths` runs the same engine) through `tests/docs/doc-set.ts`. The dated
   records (`build-notes.md`, `decision-log.md`, ADR bodies and anything appended to them) are exempt — see
   `docs/README.md` for the split. If you move a directory, the gate is what tells you which docs you
   just falsified. A citation of `apps/showcase` or `apps/starter` is checked strictly while that app
   exists and passes where it does not (it then names SSSB's reference app, and a doc merged in from
   upstream must not turn an adopter's gate red); write `apps/<app>/…` when you mean the reader's own app.
-- **The app's identity is a script, not a checklist**: `pnpm init-app <slug> [--repo <name>] [--eject-showcase]`
-  (`scripts/init-app.ts`). Anything that names an app directory or the product's display name belongs
-  in the surface that script covers — and **never hard-code the product name in a test**; specs read
-  the app's own catalog via `apps/*/tests/catalog.ts`. See `docs/adopting.md`.
+- **An adopter's workspace is generated, not forked**: `pnpm create @sssb <dir>` (`@sssb/create`, ADR-0014 P12)
+  writes it from `apps/starter` plus generated root config, renaming the app on the way. So anything in the starter
+  that names the app's directory or the product's display name is part of the generator's rewrite — and **never
+  hard-code the product name in a test**; specs read the app's own catalog via `apps/*/tests/catalog.ts`. See
+  `docs/adopting.md`.
 - At the end of a slice or before a PR, run the `doc-steward` agent on the branch diff — it
   proposes updates to development-approach, an ADR addendum, decision-log, build-notes, and the
   cutover checklist so the docs keep telling the truth. It also reports the net line delta of each doctrine doc

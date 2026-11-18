@@ -218,7 +218,7 @@ describe("checks.yml's call to it", () => {
         expect(sssb.permissions).toEqual({ contents: 'read' })
     })
 
-    // No `apps`: the workspace's apps are discovered, so `pnpm init-app`'s rename and eject need no edit here, and no
+    // No `apps`: the workspace's apps are discovered, so adding, renaming or removing an app needs no edit here, and no
     // app can be left out by a list that went stale.
     it('covers every app, and synthesizes every app’s infra', () => {
         expect(Object.keys(sssb.with ?? {})).toEqual(['synth'])
@@ -260,6 +260,8 @@ describe("checks.yml's call to it", () => {
 describe('the check names the rulesets require', () => {
     // The names that do not depend on which apps the tree holds: a job renamed or added fails this.
     const FIXED = [
+        // TODO(P12-adoption-probe): the init-app probe is gone; a job of the same name, which generates a workspace with
+        // the packed @sssb/create and runs its verify, replaces it. The name stays because the ruleset requires it.
         'adoption-probe',
         'changeset-required',
         'pack-and-consume',
@@ -272,8 +274,8 @@ describe('the check names the rulesets require', () => {
         'sssb / lint-typecheck-unit',
         'sssb / synth',
     ]
-    // One per e2e shard and one per static demo, named from the tree's own apps, so this holds in a tree `pnpm
-    // init-app` has renamed or ejected (the adoption probe runs it there). In SSSB's own tree they are
+    // One per e2e shard and one per static demo, named from the tree's own apps, so this holds whichever apps the tree
+    // holds. In SSSB's own tree they are
     // `sssb / e2e (showcase)`, `sssb / e2e (showcase-destructive)`, `sssb / e2e (starter)`,
     // `sssb / demo-static (showcase)` and `sssb / demo-static (starter)`.
     const PER_APP = ['sssb / e2e (<shard>)', 'sssb / demo-static (<app>)']
@@ -323,8 +325,8 @@ describe('the check names the rulesets require', () => {
     })
 
     // In SSSB's own tree the per-app names are pinned literally too: the rulesets require them by name, and a renamed
-    // Playwright project would otherwise change them with this test still green. (A renamed app skips this case, as the
-    // adoption probe's tree must; the ruleset change is then the adopter's.)
+    // Playwright project would otherwise change them with this test still green. (A tree without both reference apps
+    // skips this case.)
     it("are, in SSSB's own tree, the five the rulesets name", () => {
         const apps = readdirSync(path.join(ROOT, 'apps'))
             .filter((app) => existsSync(path.join(ROOT, 'apps', app, 'package.json')))

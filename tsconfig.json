@@ -14,8 +14,8 @@
         // src/app-config, which is what makes apps/starter the framework's falsifier.
         // There is deliberately NO `@/*` here. It is an app's own alias, the ADR-0012 fence bans it
         // inside packages/kit, and nothing else the root program compiles may use it — so mapping it
-        // could only ever point this program at a directory that `--eject-showcase` deletes. Leaving
-        // it out is also one fewer file adoption has to rewrite: no path below names an app.
+        // could only ever point this program at one app's directory, which may be renamed or removed.
+        // Leaving it out also means no path below names an app.
         "paths": {
             "@sssb/app-config/*": ["./packages/kit/test-fixture/app-config/*"],
             "@sssb/kit/*": ["./packages/kit/src/*"]
@@ -32,7 +32,10 @@
         "packages/kit/test-fixture/**/*.ts",
         "packages/kit/test-fixture/**/*.tsx",
         "packages/tools/**/*.js",
-        "packages/tools/**/*.ts"
+        "packages/tools/**/*.ts",
+        "packages/create/bin/**/*.js",
+        "packages/create/scripts/**/*.js",
+        "packages/create/src/**/*.js"
     ],
     "exclude": ["node_modules", "apps", "spikes"]
 }

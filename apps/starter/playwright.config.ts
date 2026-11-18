@@ -7,7 +7,7 @@ import { assertNoLiveDevTicker } from '@sssb/tools/ticker-marker'
 assertNoLiveDevTicker()
 
 /**
- * A different port from the showcase's: two apps in one repo must be able to run (and be tested) side
+ * A port of this app's own: two apps in one workspace must be able to run (and be tested) side
  * by side without one silently reusing the other's dev server — the exact failure mode build-notes
  * records for a foreign server squatting :3000.
  *
@@ -29,8 +29,8 @@ export default defineConfig({
     forbidOnly: !!process.env['CI'],
     retries: process.env['CI'] ? 2 : 1,
     // One worker, on CI too — this app's whole suite is one spec, so parallelism buys nothing here,
-    // and the showcase's config explains at length why more workers against one shared world costs
-    // reliability rather than saving time.
+    // and more workers against one shared world (one `.data` behind one dev server) cost reliability rather than
+    // saving time.
     workers: 1,
     reporter: process.env['CI'] ? 'github' : 'list',
     use: {

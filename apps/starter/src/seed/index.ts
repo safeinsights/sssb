@@ -1,23 +1,23 @@
 import type { SeedAgreement, SeedJobSchedule, SeedOrg, SeedPerson, SeedTenant } from '@sssb/kit/seed/contracts'
 
 /**
- * The starter's seed world — two tenants, two teams, three people.
+ * This app's seed world — two tenants, two teams, three people.
  *
- * WHY IT LIVES INSIDE THE APP (and not in a `packages/*-seed` workspace like the showcase's
- * `@app/seed`): the seed IS app content. The framework never imports it directly — it reads
+ * WHY IT LIVES INSIDE THE APP (and not in a `packages/*-seed` workspace like SSSB's reference
+ * app's `@app/seed`): the seed IS app content. The framework never imports it directly — it reads
  * `@sssb/app-config/seed`, which re-exports this file — so its location is entirely the app's choice, and
  * an app-local module is one fewer workspace for an adopter to find, rename and repoint. It also
  * proves `@sssb/kit/seed/contracts` is a real published surface rather than a private arrangement with one
  * package: this world fills the same contracts with no `@app/seed` anywhere in sight.
  *
- * Deliberately smaller than the showcase's: two tenants (the minimum that makes tenant isolation
+ * Deliberately smaller than SSSB's reference app's: two tenants (the minimum that makes tenant isolation
  * observable), one team each, and the roles the framework's own screens need to stay interesting —
  * an admin who can invite, a plain member, and a restricted member whose authoring surface is
- * reduced. `preAcceptedByAllInTenant` is unused because the starter seeds no agreements.
+ * reduced. `preAcceptedByAllInTenant` is unused because this app seeds no agreements.
  *
- * ADOPTING? This content is the starter's, and every sign-in picker lists all of it. Replace it with
- * your own world rather than adding yours beside it — docs/adopting.md, "The starter's content is
- * still wired into your UI".
+ * ADOPTING? This content is the template's, and every sign-in picker lists all of it. Replace it with
+ * your own world rather than adding yours beside it (SSSB's adoption guide says what else still shows
+ * the template's content).
  */
 
 export type {
@@ -81,7 +81,7 @@ export const people: SeedPerson[] = [
 /** No agreements: the access-gate capability is registered-but-empty, like most of this app's seam. */
 export const agreements: SeedAgreement[] = []
 
-/** No recurring work: the starter registers no job kinds, so nothing is scheduled. */
+/** No recurring work: this app registers no job kinds, so nothing is scheduled. */
 export const jobSchedules: SeedJobSchedule[] = []
 
 export function findTenant(slug: string): SeedTenant | undefined {

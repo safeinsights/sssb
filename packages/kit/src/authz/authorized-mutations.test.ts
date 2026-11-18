@@ -36,7 +36,7 @@ import { type ScanRoot, exemptionFor, judge, scanRoutes } from './route-scan'
  * scan asserts. "Is this exemption still real?" is a question about that tree, not about whichever apps
  * happen to be checked out: an adopter who ships no assistant route has not made the "stateless LLM call"
  * exemption a lie, they have merely stopped using it — and it is the only reading that survives
- * `pnpm init-app --eject-showcase`. An app's OWN exemptions are measured against the app's tree instead
+ * deleting the showcase. An app's OWN exemptions are measured against the app's tree instead
  * (./app-exemptions.ts).
  *
  * The "is really walked" case below is the walk guard: a wrong root finds nothing and fails loudly

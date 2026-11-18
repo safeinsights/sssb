@@ -27,7 +27,7 @@ jobs:
     # `sssb check-fences` and `sssb check-e2e` in each app and one `sssb doctor` run, the contract tests on real Postgres, the e2e shards, each app's static demo, each
     # app's CDK synth, and `all-checks`, which fails unless every one of them ran and passed. Called by its local path,
     # so it runs at the commit under test; an adopter pins it by commit SHA. No `apps` input: the workspace's apps are
-    # discovered (every apps/<name>), so `pnpm init-app`'s rename and eject need no edit here. Its checks are named
+    # discovered (every apps/<name>), so adding, renaming or removing an app needs no edit here. Its checks are named
     # `sssb / <job>`: GitHub prefixes a called workflow's jobs with the caller's job name.
     # tests/tooling/app-checks-workflow.test.ts holds this call to that shape.
     sssb:
@@ -102,80 +102,8 @@ jobs:
                   REPO: ${{ github.repository }}
               run: bash .github/scripts/require-changeset.sh
 
-    # Adoption is advertised as one command (docs/adopting.md) and had no automated coverage at all —
-    # this proves `pnpm init-app` actually works, end to end, on the harshest path it supports
-    # (renaming AND ejecting the showcase in one call).
-    #
-    # The copy lives OUTSIDE /tmp on purpose, to match the documented local reproduction exactly
-    # (.claude/future-tasks/resolved/adoption-probe-not-under-tmp.md): on macOS, /tmp is a symlink to
-    # /private/tmp, so a workspace package's module graph resolves under both spellings and the request
-    # handler ends up holding a different `next/headers` instance than the fake auth adapter, which
-    # breaks `cookies()`. `runner.temp` is never under /tmp on either GitHub-hosted OS, so this specific
-    # bug cannot bite Linux CI today — but probing this way keeps the job correct if it is ever run on a
-    # macOS runner, rather than quietly relying on a Linux-only accident.
-    adoption-probe:
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-        steps:
-            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-              with:
-                  node-version-file: .nvmrc
-                  cache: pnpm
-            # PROBE_DIR is exported here rather than declared in a job-level `env:`, because the
-            # `runner` context is NOT available at that level (only github/needs/strategy/matrix/
-            # vars/secrets/inputs are) and referencing it there fails the whole workflow at STARTUP —
-            # zero jobs, no checks on the PR, and a YAML parser reports nothing wrong.
-            - name: copy the checkout to a scratch dir outside /tmp
-              run: |
-                  echo "PROBE_DIR=$RUNNER_TEMP/adoption-probe" >> "$GITHUB_ENV"
-                  cp -R "$GITHUB_WORKSPACE" "$RUNNER_TEMP/adoption-probe"
-            - name: pnpm install
-              run: pnpm install
-              working-directory: ${{ env.PROBE_DIR }}
-            # Same cache the e2e/demo-static jobs use — `pnpm verify` below runs the full e2e suite.
-            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-              id: playwright-cache
-              with:
-                  path: ~/.cache/ms-playwright
-                  key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-            - run: pnpm exec playwright install --with-deps chromium
-              working-directory: ${{ env.PROBE_DIR }}
-              if: steps.playwright-cache.outputs.cache-hit != 'true'
-            - run: pnpm exec playwright install-deps chromium
-              working-directory: ${{ env.PROBE_DIR }}
-              if: steps.playwright-cache.outputs.cache-hit == 'true'
-            - name: pnpm init-app acme --eject-showcase --yes
-              run: pnpm init-app acme --eject-showcase --yes
-              working-directory: ${{ env.PROBE_DIR }}
-            # --no-frozen-lockfile is REQUIRED here and is not a workaround. `init-app` renames one
-            # app and deletes two packages, so the lockfile legitimately no longer matches the
-            # workspace — and pnpm defaults frozen-lockfile to TRUE whenever CI is set, which is why
-            # this step passes on a laptop and fails here. An adopter hits the benign version of this:
-            # they run init-app locally, pnpm rewrites the lockfile, and they commit it.
-            - name: pnpm install (the workspace changed)
-              run: pnpm install --no-frozen-lockfile
-              working-directory: ${{ env.PROBE_DIR }}
-            - name: pnpm verify
-              run: pnpm verify
-              working-directory: ${{ env.PROBE_DIR }}
-              env:
-                  NEXT_TELEMETRY_DISABLED: '1'
-                  E2E_BUILD: '1'
-            # `pnpm verify` does not synth the infra. After init-app's rename and eject, each surviving app's
-            # infra/ must still synth: SssbApp resolves the migrator from the app's directory and fails the
-            # synth unless its bundle carries that app's migrations (packages/cdk, ADR-0014 P9).
-            - name: pnpm --filter './apps/*/infra' --fail-if-no-match synth
-              run: pnpm --filter './apps/*/infra' --fail-if-no-match synth
-              working-directory: ${{ env.PROBE_DIR }}
-            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-              if: failure()
-              with:
-                  name: playwright-report-adoption-probe
-                  path: ${{ env.PROBE_DIR }}/apps/*/playwright-report/
-                  retention-days: 7
+    # TODO(P12-adoption-probe): the `adoption-probe` job goes here: it generates a workspace with the packed
+    # @sssb/create and runs its verify. The name is kept because the rulesets require a check called `adoption-probe`.
 
     # ADR-0014 rule 5 (P2): the framework as an adopter gets it. Packs @sssb/kit, installs the TARBALL
     # into an adopter-shaped workspace built outside this checkout from copies of apps/starter (two apps

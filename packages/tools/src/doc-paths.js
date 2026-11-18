@@ -183,10 +183,11 @@ function referenceAppPattern(config) {
  * its worked example, and the adoption guide describes `apps/starter`.
  *
  * In the TEMPLATE both exist, so a citation of either is checked like any other and a broken one fails. In an
- * ADOPTED tree they usually do not: `pnpm init-app --eject-showcase` deletes the showcase and a rename moves the
- * starter. `init-app` repoints the citations it finds on the day it runs, but an upstream merge (ADR-0013) later
- * brings in NEW text that names them again, and the gate went red on a citation nobody in the adopter's repo wrote,
- * the first time a recipe cited the starter's sign-in page.
+ * ADOPTED tree they usually do not: a forked adopter deleted the showcase and renamed the starter, and a workspace
+ * `@sssb/create` writes has neither. The adoption script that came before the generator repointed the citations it
+ * found on the day it ran, but an upstream merge (ADR-0013) later brought in NEW text that named them again, and the
+ * gate went red on a citation nobody in the adopter's repo wrote, the first time a recipe cited the starter's
+ * sign-in page.
  *
  * So a citation under `apps/<reference app>/` whose app is not in this tree is a reference to SSSB's own app, which
  * cannot be checked here and is not this repo's to fix. It resolves.
@@ -197,12 +198,11 @@ function referenceAppPattern(config) {
  * would otherwise switch this rule off and turn the gate red on the next doc. A local `apps/starter/node_modules`
  * left behind by a rename does the same. The package manifest is what makes it an app, and a stray file cannot fake
  * it. Everything else stays strict: the adopter's own app (`apps/console/...`), a path in `packages/kit`, and either
- * reference app for as long as it is present. The reference apps are a closed list on purpose: `init-app` reserves
- * `showcase` as an app slug, and an adopter who keeps the name `starter` has the directory, so their own citations
- * of it are still checked.
+ * reference app for as long as it is present. The reference apps are a closed list on purpose: an adopter who keeps
+ * the name `starter` has the directory, so their own citations of it are still checked.
  *
- * Here, and not in the test, because `init-app` asks `resolves` which citations are gone before it generalizes them
- * to `apps/<app>/...`: one rule means the rewriter and the gate cannot disagree.
+ * Here, and not in the test, so a rewriter that asks `resolves` which citations are gone before it generalizes them
+ * to `apps/<app>/...` (`generalizeAppCitations`) and the gate cannot disagree.
  *
  * @param {string} cited
  * @param {string} root

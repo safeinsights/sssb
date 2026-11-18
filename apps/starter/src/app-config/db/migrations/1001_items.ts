@@ -5,7 +5,7 @@ import { Kysely, sql } from 'kysely'
  * spikes/kysely-pglite (ADR-0004). It runs after every framework migration (name-sorted, 0001–0999
  * first), so it can reference `tenants` and `organizations` directly.
  *
- * Two deliberate differences from the showcase's reference `1001_tickets`: `org_id` is NOT NULL (this
+ * Two deliberate differences from SSSB's reference app's `1001_tickets`: `org_id` is NOT NULL (this
  * app has no legacy rows to keep valid), and DELETE is NOT granted — an item can be listed and created,
  * never erased, which is the posture most real tables want and is proved in ../rls-proofs.ts.
  */

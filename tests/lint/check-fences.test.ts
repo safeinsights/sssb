@@ -17,8 +17,7 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  * blocks, which used to replace the fences) must not.
  */
 const repoRoot = process.cwd()
-// The apps of the tree this runs in, never named: `pnpm init-app` renames the starter and can eject the showcase, and
-// the adoption probe runs this suite in such a tree.
+// The apps of the tree this runs in, never named, so a tree whose apps are renamed or removed needs no edit here.
 const APPS = readdirSync(path.join(repoRoot, 'apps'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(path.join(repoRoot, 'apps', entry.name, 'package.json')))
     .map((entry) => entry.name)

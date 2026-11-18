@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { portFor } from '../ports.js'
 
-/** The apps that have a tick route. The key is the PORT key (`starter` stays `starter` after `init-app` renames it). */
+/** The apps that have a tick route. The key is the PORT key (a slot, not the app's name, so it survives a rename of the app). */
 export const TICK_APPS = ['showcase', 'starter']
 
 export const TICK_PATH = '/api/webhooks/cron'

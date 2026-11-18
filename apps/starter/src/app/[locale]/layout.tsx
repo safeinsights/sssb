@@ -33,7 +33,7 @@ export default async function LocaleLayout({
 
     // The theming seam (ADR-0005): the ACTIVE tenant drives the theme. Signed-out pages fall back to
     // this app's FIRST seeded tenant rather than SSSB's DEFAULT_TENANT_SLUG, which names the
-    // showcase's world — see the seam notes in docs/adopting.md.
+    // world of SSSB's reference app — see the seam notes in SSSB's adoption guide.
     const user = await auth.getCurrentUser()
     const theme = getTenantTheme(user?.tenantSlug ?? tenants[0]!.slug)
 

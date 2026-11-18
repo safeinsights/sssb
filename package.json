@@ -10,7 +10,6 @@
         "pnpm": ">=11"
     },
     "scripts": {
-        "init-app": "tsx scripts/init-app.ts",
         "dev": "pnpm --filter showcase dev",
         "dev:starter": "pnpm --filter starter dev",
         "dev:real": "pnpm --filter showcase dev:real",

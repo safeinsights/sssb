@@ -39,8 +39,8 @@ const PACKAGE_FILES_GLOB = `packages/*/src/**/*.${SRC_EXT}`
 // SSSB's OWN app seam (ADR-0012): packages/kit/test-fixture is app-SHAPED code inside the framework package, and the
 // seam the root program resolves `@sssb/app-config/*` through. It is NOT under src/, so it is named explicitly
 // wherever a rule is about a FRAMEWORK invariant: it was once the one directory in packages/kit where importing an
-// app's `@/*` alias or `@app/seed` was legal, which passed lint, typecheck and vitest and broke only at
-// `pnpm init-app --eject-showcase`.
+// app's `@/*` alias or `@app/seed` was legal, which passed lint, typecheck and vitest and broke only once
+// the showcase was deleted.
 const FIXTURE_FILES_GLOB = `packages/kit/test-fixture/**/*.${SRC_EXT}`
 
 // The anchor the internal rules read when they run.
@@ -59,6 +59,8 @@ const eslintConfig = [
             'dist/**',
             // @sssb/kit's compiled e2e entry, written by `pnpm pack` (packages/kit/scripts/build-testing-e2e.mjs).
             'packages/kit/dist/**',
+            // @sssb/create's template, a copy of the starter written by its `prepack` (packages/create/scripts).
+            'packages/create/template/**',
             '.*',
             '!.ladle',
             '!.ladle/**',
@@ -95,10 +97,14 @@ const eslintConfig = [
             },
         },
     },
-    // @sssb/tools and @sssb/eslint-plugin are plain JavaScript that Node loads directly (ADR-0014 part 2), with Node's
-    // globals.
+    // @sssb/tools, @sssb/eslint-plugin and @sssb/create are plain JavaScript that Node loads directly (ADR-0014 part 2),
+    // with Node's globals.
     {
-        files: ['packages/tools/**/*.{js,mjs}', 'packages/eslint-plugin/**/*.{js,mjs}'],
+        files: [
+            'packages/tools/**/*.{js,mjs}',
+            'packages/eslint-plugin/**/*.{js,mjs}',
+            'packages/create/**/*.{js,mjs}',
+        ],
         languageOptions: {
             globals: {
                 process: 'readonly',

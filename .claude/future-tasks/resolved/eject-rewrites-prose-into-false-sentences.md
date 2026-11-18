@@ -1,10 +1,17 @@
 # `--eject-showcase` rewrites prose into sentences that are false, not merely stale
 
-**Priority:** P2 · **Status:** open
+**Priority:** P2 · **Status:** RESOLVED 2026-11-18, by retirement (ADR-0014, step P12)
 **Found by:** pre-open-sourcing pass, round four (fresh-eyes adopter lens against the published
 squash), 2026-08-02. Confirmed against a real `pnpm init-app acme --eject-showcase --yes`.
 
-## What happens
+## Resolution
+
+`init-app` is gone, and with it the eject and the citation rewrite that produced these sentences. An adopter's
+workspace is now written by `@sssb/create` (`pnpm create @sssb <dir>`) from `apps/starter`, and it carries no
+copy of SSSB's prose to rewrite. Nothing below was fixed; the code it describes no longer exists. See
+`docs/decision-log.md`, "Retiring init-app, the adoption probe and the adopter-identity test".
+
+## What happened
 
 `init-app` renames the app you keep and rewrites every citation of the app you delete onto it — so
 `apps/showcase` and `apps/starter` both become the SAME directory, `apps/<app>/`. Where a sentence

@@ -6,7 +6,7 @@
  * VALUES never live in the repo.
  *
  * WHAT IS LINT-ENFORCED (`sssb/no-process-env`, @sssb/eslint-plugin): `process.env` is read ONLY
- * inside packages/kit/src/adapters and an app's own real adapters (apps/<app>/src/adapters/real, which
+ * inside SSSB's own adapters (@sssb/kit/adapters) and an app's own real adapters (apps/<app>/src/adapters/real, which
  * may not read the run mode) — every other module imports the resolved value (this file for
  * deployment/service params; `isSimulated`/`isDemoMode` from @sssb/kit/adapters for run mode). Exemptions:
  * instrumentation files (NEXT_PUBLIC needs literal inlining) and the two secret readers

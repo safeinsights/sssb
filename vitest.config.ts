@@ -6,13 +6,12 @@ import { configDefaults, defineConfig, type ViteUserConfig } from 'vitest/config
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 
 /**
- * THE APP LIST — the whole of this file's app knowledge; everything below derives from it.
- * `scripts/init-app.ts` rewrites exactly this literal when an adopter renames an app or ejects the
- * showcase, which is why it is spelled out here rather than discovered from `apps/`.
+ * THE APP LIST — the whole of this file's app knowledge; everything below derives from it. This
+ * repository's own two apps; an adopter's workspace gets its own root config from `@sssb/create`.
  *
  * There used to be a second constant here, FRAMEWORK_SUITE_APP, naming the app SSSB's own suite ran
  * under. There is no such app any more: the framework's tests run against the framework's OWN seam
- * (packages/kit/test-fixture — see the `kit` project below), so ejecting the demo cannot take
+ * (packages/kit/test-fixture — see the `kit` project below), so deleting the demo cannot take
  * SSSB's suite down with it.
  */
 const APPS = ['showcase', 'starter'] as const
@@ -62,7 +61,7 @@ const projectFor = (app: string) =>
  *
  * That fixture is why this project exists and why it names no app: the framework's tests need a seed
  * world, an app table, an app job/webhook/notification kind and a route tree to assert against, and
- * borrowing a host app's meant `pnpm init-app --eject-showcase` left the suite red. The fixture's
+ * borrowing a host app's meant deleting the showcase left the suite red. The fixture's
  * vocabulary is deliberately none of the apps' (`harbor`/`dockets`/`fixture-*`), so a regression back
  * to app coupling fails loudly instead of passing by coincidence.
  *

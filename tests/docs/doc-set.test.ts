@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../support/tmp-dir'
-import { citedPaths, generalizeAppCitations, resolves } from './doc-set'
+import { citedPaths, resolves } from './doc-set'
 
 /**
  * The citation parser's own tests, because `doc-paths.test.ts` can only ever prove that TODAY's docs
@@ -54,7 +54,7 @@ describe('citedPaths', () => {
     })
 
     it('keeps a colon that is not a line reference', () => {
-        expect(citationsIn('`scripts/init-app.ts:latest`')).toEqual(['scripts/init-app.ts:latest'])
+        expect(citationsIn('`scripts/release.mjs:latest`')).toEqual(['scripts/release.mjs:latest'])
     })
 
     it('ignores build outputs, which depend on whether you happened to run a build', () => {
@@ -65,73 +65,13 @@ describe('citedPaths', () => {
         expect(citationsIn('`pnpm install` and `--filter showcase`')).toEqual([])
     })
 
-    it('keeps `raw` as the whole span, which is what init-app rewrites on', () => {
+    it('keeps `raw` as the whole span, which is what `generalizeAppCitations` rewrites on', () => {
         const dir = makeTestTmpDir('doc-set-')
         const file = path.join(dir, 'doc.md')
         writeFileSync(file, '`pnpm --filter showcase exec vitest apps/showcase/src`')
         expect(citedPaths(file)).toEqual([
             { path: 'apps/showcase/src', raw: 'pnpm --filter showcase exec vitest apps/showcase/src', line: 1 },
         ])
-    })
-})
-
-/**
- * The rewriter half, tested against the shape that broke it: several citations sharing ONE backticked
- * span. `init-app` used to rewrite per citation by replacing the span verbatim, so the first rewrite
- * made the span unfindable and every later path in it was skipped — a command left half-generalised,
- * and the doc-path gate red on the adopter's first command.
- *
- * `gone` stands in for the filesystem check `init-app` passes (`(cited) => !resolves(cited)`), so
- * these cases pin the rewriting rule without needing a tree on disk.
- */
-describe('generalizeAppCitations', () => {
-    const gone = (cited: string) => cited.startsWith('apps/showcase/')
-
-    it('rewrites EVERY app path in one backticked span', () => {
-        expect(
-            generalizeAppCitations(
-                'Run `cp apps/showcase/src/jobs/x.ts apps/showcase/src/domain/y.ts` to start.',
-                gone,
-            ),
-        ).toBe('Run `cp apps/<app>/src/jobs/x.ts apps/<app>/src/domain/y.ts` to start.')
-    })
-
-    it('rewrites a repeated path within the span, not just its first occurrence', () => {
-        expect(generalizeAppCitations('`diff apps/showcase/src/a.ts apps/showcase/src/a.ts`', gone)).toBe(
-            '`diff apps/<app>/src/a.ts apps/<app>/src/a.ts`',
-        )
-    })
-
-    it('rewrites every occurrence of a repeated span in the document', () => {
-        expect(generalizeAppCitations('`apps/showcase/src/jobs` twice: `apps/showcase/src/jobs`', gone)).toBe(
-            '`apps/<app>/src/jobs` twice: `apps/<app>/src/jobs`',
-        )
-    })
-
-    it('leaves paths that still resolve alone, even beside one that does not', () => {
-        expect(generalizeAppCitations('`cp apps/starter/src/a.ts apps/showcase/src/b.ts`', gone)).toBe(
-            '`cp apps/starter/src/a.ts apps/<app>/src/b.ts`',
-        )
-    })
-
-    it('generalises a glob citation at its static prefix', () => {
-        expect(generalizeAppCitations('`apps/showcase/src/jobs/*.ts`', gone)).toBe('`apps/<app>/src/jobs/*.ts`')
-    })
-
-    it('touches nothing when every citation resolves', () => {
-        const text = '`apps/starter/src` and `packages/kit/src`'
-        expect(generalizeAppCitations(text, gone)).toBe(text)
-    })
-
-    it('ignores paths outside apps/, which have no <app> to generalise to', () => {
-        const text = '`rm packages/kit/src/gone.ts`'
-        expect(generalizeAppCitations(text, () => true)).toBe(text)
-    })
-
-    it('generalises a brace expansion at its static prefix, keeping the braces', () => {
-        expect(generalizeAppCitations('`apps/showcase/messages/{en,es}.json`', gone)).toBe(
-            '`apps/<app>/messages/{en,es}.json`',
-        )
     })
 })
 
@@ -205,7 +145,7 @@ describe('resolves', () => {
     })
 
     it('keeps checking an app called starter that the adopter kept', () => {
-        const root = tree(['apps/starter/package.json'], ['apps/starter/src', 'packages/kit/src']) // `init-app starter --eject-showcase`
+        const root = tree(['apps/starter/package.json'], ['apps/starter/src', 'packages/kit/src']) // kept the name `starter`
         expect(resolves('apps/starter/src/no-such-dir', root)).toBe(false)
     })
 
@@ -224,15 +164,5 @@ describe('resolves', () => {
         expect(resolves('apps/showcase/src/domain/db/tickets.ts', root)).toBe(true)
         expect(resolves('apps/showcase/src/app-config', root)).toBe(true)
         expect(resolves('apps/starter/src/app/[locale]/signin/page.tsx', root)).toBe(true)
-    })
-
-    it('agrees with the rewriter: init-app does not generalize a citation the gate accepts', () => {
-        // init-app asks `(cited) => !resolves(cited)`; a citation of a reference app that is not here is
-        // SSSB's, so it is left as written instead of becoming `apps/<app>/…`.
-        const root = adopted()
-        const text = 'see `apps/starter/src/app/[locale]/signin/page.tsx` and `apps/console/src/no-such-dir`'
-        expect(generalizeAppCitations(text, (cited) => !resolves(cited, root))).toBe(
-            'see `apps/starter/src/app/[locale]/signin/page.tsx` and `apps/<app>/src/no-such-dir`',
-        )
     })
 })

@@ -8,7 +8,6 @@
 /packages/kit/src/authz/        @jpslav
 /packages/kit/src/adapters/     @jpslav
 /packages/kit/test-fixture/     @jpslav
-/scripts/init-app.ts             @jpslav
 /tests/docs/                     @jpslav
 /.github/workflows/              @jpslav
 /docs/adr/                       @jpslav

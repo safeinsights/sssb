@@ -21,7 +21,7 @@ Measured with concurrently 10.0.4 and two commands that both fail:
 
 The cost is a slower loop, not a wrong answer. A session fixes the lint error, reruns, and only then
 sees the unit failure that was already there. Each extra round costs a full `verify`. CI's
-`adoption-probe` job runs `pnpm verify` too, so its log can also show only the first failure.
+`adoption-probe` job runs a generated workspace's `pnpm verify` too, so its log can also show only the first failure.
 
 ## Why the flag is there
 

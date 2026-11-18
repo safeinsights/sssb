@@ -8,7 +8,7 @@ import { HeaderGlue } from './header-glue'
 /**
  * Everything in this group requires a signed-in user; signed-out visitors go to /signin.
  *
- * Deliberately shorter than the showcase's: no access-gate evaluation, because this app seeds no
+ * Deliberately shorter than SSSB's reference app's: no access-gate evaluation, because this app seeds no
  * agreements and registers no gates. The capability is not removed — it is simply unused, and an
  * unused capability needs no scaffolding (ADR-0012).
  */

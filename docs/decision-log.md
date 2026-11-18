@@ -4051,3 +4051,39 @@ as it stands after three rounds of review (ADR-0014's addendum "P5 as built" lis
   through an app module) check-e2e must exit 1, failing `playwright.config.ts` as unlistable and naming
   `@sssb/kit:src/core/webhook-signing.ts`. Rejected: adding the spec to `apps/starter` itself, whose one e2e spec is
   its tenancy claim.
+
+## Retiring init-app, the adoption probe and the adopter-identity test (2026-11-18, ADR-0014 P12, `feat/sssb-create`)
+
+ADR-0014's Consequences retire all three when `@sssb/create` ships, and its P12 row does it in the same PR as the
+generator. What went, what replaced each, and what was kept:
+
+- **`scripts/init-app.ts`, the root `init-app` script, `tests/tooling/init-app-slug.test.ts`, its `CODEOWNERS` line.**
+  Replaced by `@sssb/create` (`pnpm create @sssb <dir>` / `npm create @sssb <dir>`), which writes a new workspace
+  from `apps/starter` instead of renaming and ejecting inside a fork. The slug refusals the slug test pinned (reserved
+  names, Aurora's database-name rules) are the generator's to carry; `@sssb/cdk`'s `databaseNameFor` and its
+  synth-time refusal stay, since the construct still needs them.
+- **The `adoption-probe` job's steps** (copy the checkout, `init-app acme --eject-showcase --yes`, `pnpm verify`,
+  synth). **The job name is kept**: `integration`'s ruleset requires a check called `adoption-probe`, and
+  dropping the name would block every PR until the ruleset was edited. The new job of that
+  name generates a workspace with the packed `@sssb/create` and runs its own `pnpm verify`, which is what the old
+  probe proved for a fork: that an adopter's first command leaves a green gate. A later worker in this PR adds it;
+  `TODO(P12-adoption-probe)` marks the place in `checks.yml` and in `tests/tooling/app-checks-workflow.test.ts`,
+  which still pins the name.
+- **`tests/docs/adopter-identity.test.ts`.** Dropped, as ADR-0014's table says: the generator writes the owner files
+  from its flags, so there is no maintainer identity in an adopter's tree to scrub. The check that the template's
+  own owner files name the maintainer went with it.
+- **Kept: `tests/docs/doc-set.ts`**, shared with init-app until now. It lost what only the rewriter used (`EXEMPT`
+  and the `generalizeAppCitations` wrapper) and imports `@sssb/tools/doc-paths` by package name, since the reason for
+  the relative import (init-app running in a copy with no `node_modules`) is gone. The gate is unchanged.
+- **Kept: `generalizeAppCitations` in `@sssb/tools/doc-paths`.** It is a published export, so removing it is a
+  release-note decision rather than a cleanup; its tests moved from `tests/docs/doc-set.test.ts` to
+  `tests/tooling/doc-paths-engine.test.ts`, which tests the engine directly. It now has no caller in this repository.
+- **Kept: the doc gate's reference-app rule** (a citation of an absent `apps/showcase` or `apps/starter` resolves).
+  It served forks that took docs by merge; ADR-0014 says it then serves only this repo, and a fork adopted before
+  the switch still needs it.
+- **Future tasks.** `eject-rewrites-prose-into-false-sentences.md` is resolved by retirement (the rewrite it
+  describes no longer exists). `init-app-blank-option.md` became `create-blank-option.md`: a `--blank` option is as
+  much needed on the generator. The rest had their init-app mentions retargeted.
+- **Docs, as far as P12 needs.** `docs/adopting.md`'s fork and `init-app` sections now start from the generator; its
+  flags are as the P12 design names them, with `TODO(P12)` where the built CLI must confirm them. The full rewrite,
+  and ADR-0013's supersession, are P15.

@@ -4,9 +4,9 @@ import { welcome } from '../catalog'
 
 const indexUrl = `file://${path.resolve(__dirname, '../../dist-demo/index.html')}`
 
-test('the starter static shell signs in and lists an item, with the framework panel intact', async ({ page }) => {
+test('the static shell signs in and lists an item, with the framework panel intact', async ({ page }) => {
     await page.goto(indexUrl)
-    // Asserted against the catalog, not the product name — `pnpm init-app` renames the app, and this
+    // Asserted against the catalog, not the product name — `pnpm create @sssb` renames the app, and this
     // spec is the first thing that would have broken if it hard-coded the title.
     await expect(page.getByRole('heading', { level: 1 })).toContainText(welcome('en').title)
 
@@ -14,9 +14,9 @@ test('the starter static shell signs in and lists an item, with the framework pa
     await page.getByTestId('person-person-owner').click()
     await expect(page.getByTestId('signed-in-as')).toContainText('Nadia Owner')
 
-    await page.getByTestId('item-input').fill('write the starter')
+    await page.getByTestId('item-input').fill('write the first item')
     await page.getByTestId('item-add').click()
-    await expect(page.getByTestId('items-list')).toContainText('write the starter')
+    await expect(page.getByTestId('items-list')).toContainText('write the first item')
 
     // The whole Simulator panel comes from the package: an app that registers no tabs still gets the
     // framework's, and switching people still works.
@@ -27,6 +27,6 @@ test('the starter static shell signs in and lists an item, with the framework pa
 
     // The tours off-switch: this app registers `tours: []` (src/app-config/tours.ts), so the Tours tab
     // does not exist at all — an adopter who wants no scripted walkthrough pays nothing for the one
-    // the showcase ships.
+    // SSSB's reference app ships.
     await expect(page.getByTestId('simulator-tab-tours')).toHaveCount(0)
 })

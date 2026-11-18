@@ -70,7 +70,6 @@ One command runs all of it: `pnpm verify`.
 
 | Command                  | What it is                                                                                                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm init-app`          | Adopt: rename the app you keep, eject the demo (`--dry-run` to preview)                                                              |
 | `pnpm dev`               | Hermetic dev: all fake adapters, seeded, offline                                                                                     |
 | `pnpm dev:real`          | Real adapters against cloud resources — fails fast, listing missing cutover items                                                    |
 | `pnpm tick`              | Tick the running dev server's scheduler once (`DEV_TICK_SECONDS=30 pnpm dev` or the Simulator's Jobs tab does it on a timer, opt-in) |
@@ -110,14 +109,15 @@ app extends it only through the `apps/<app>/src/app-config/` registration seam, 
 want is turned off by registering nothing for it.
 
 ```sh
-pnpm init-app acme --name "Acme Research" --repo acme-research --eject-showcase
+pnpm create @sssb acme --name "Acme Research"     # or: npm create @sssb acme
 ```
 
-That renames the app you keep, deletes the demo, and repoints every file that named either — the whole
-mechanical half of adoption (`--repo` is the GitHub repository's name, which need not be the app's). Two example apps ship here: `apps/showcase` (a support desk — tickets, escalations, file
+That writes a new workspace in `acme/`: your app, generated from `apps/starter` and renamed, with its root config,
+its CI (a workflow calling SSSB's reusable one) and SSSB's packages as dependencies — the whole mechanical half of
+adoption. Two example apps ship here: `apps/showcase` (a support desk — tickets, escalations, file
 attachments, an export job run by a simulated external service) so every framework capability has a living
-worked example, and `apps/starter`, the minimum you keep. Build against the showcase as your reference,
-eject it when you no longer read it.
+worked example, and `apps/starter`, the template the generator copies. Build against the showcase as your
+reference; it stays here and is never copied.
 
 Updates from upstream arrive by `git merge`, not `pnpm update` — see
 [ADR-0013](docs/adr/0013-upstream-updates-fork-and-merge.md). There is deliberately **no changelog**:
@@ -155,7 +155,7 @@ checks the seam. Expect a straight answer, not a fast one.
 - `packages/kit/` — **the framework**: ports, adapters, core, db/RLS, authz, i18n, the Simulator harness
   and the generic screens (ADR-0012)
 - `apps/` — one directory per app, each self-contained (its own `package.json`, configs, e2e and contract
-  tests); single-app root commands delegate to `apps/showcase` until you eject it (ADR-0007)
+  tests); single-app root commands delegate to `apps/showcase` (ADR-0007)
 - `apps/<app>/src/` — **an app**: routes (`apps/<app>/src/app`), the registration seam
   (`apps/<app>/src/app-config`), domain modules, product cards, the static demo twin
 - [docs/README.md](docs/README.md) — the map of the doc set: binding doctrine (path-gated), dated records,

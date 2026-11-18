@@ -2,7 +2,7 @@ import type { MessageTree } from '@sssb/kit/i18n/messages'
 
 /**
  * The APP's i18n registration (the seam side of @sssb/kit/i18n/namespaces.ts, ADR-0012). The catalogs are
- * physically split: the framework owns FRAMEWORK_NAMESPACES in `packages/kit/src/i18n/messages/*.json`;
+ * physically split: the framework owns FRAMEWORK_NAMESPACES in `@sssb/kit/i18n/messages/*.json`;
  * this app owns APP_NAMESPACES in its own `messages/*.json`. Together they partition the merged catalog
  * (disjoint + exhaustive), enforced by the conformance suite's `i18n-partition` check (@sssb/kit/testing), which
  * this app runs against these registrations from src/sssb.conformance.test.ts.

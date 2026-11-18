@@ -9,9 +9,9 @@ import { citedPaths, doctrineDocs, missingIncludes, resolves } from './doc-set'
  * docs said one thing and the tree said another, and nothing caught it. This is the catch: the same
  * discipline `authorized-mutations.test.ts` applies to routes, applied to prose.
  *
- * The doc set, the citation parser and the resolution rule all live in `./doc-set.ts`, shared with
- * `scripts/init-app.ts`. That sharing is the point: adoption REWRITES these citations, and a rewriter
- * working from its own idea of what counts would leave the gate red on the adopter's first command.
+ * The doc set, the citation parser and the resolution rule all live in `@sssb/tools/doc-paths`, read through
+ * `./doc-set.ts`, and `sssb check-doc-paths` runs the same engine, so this test and an adopter's gate cannot
+ * disagree about scope.
  */
 describe('doctrine docs cite paths that exist', () => {
     const docs = doctrineDocs()
