@@ -4896,8 +4896,10 @@ records the first. Decisions, each with what was rejected:
   run (exit 0), and found no app to check links against. The preset already knows the apps (`resolveRoot`). Next
   reads each as a fast-glob pattern after turning every backslash into a slash, so a backslash escape broke any path
   with a special character (the review found it); each special character is a one-character class instead
-  (`nextRootDir`), and `!` is left as it is (`[!]` is a negated class). Rejected: switching the rule off (it then checks
-  nothing anywhere); an option adopters set (the preset has the answer).
+  (`nextRootDir`), and `!` is left as it is (`[!]` is a negated class). This repository's own root config, which gives
+  the framework's screens Next's rules too, points them at the apps (`apps/*`), where they render; `pnpm verify`'s
+  `eslint .` showed it warning the same way. Rejected: switching the rule off (it then checks nothing anywhere); an
+  option adopters set (the preset has the answer).
 
 ## The real S3 storage adapter is published as a factory, and rc.0's gitleaks advice is corrected (2026-11-18, `feat/s3-storage-factory`)
 
