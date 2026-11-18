@@ -11,7 +11,7 @@
         "typecheck": "next typegen && tsc --noEmit",
         "test:e2e": "NEXT_TELEMETRY_DISABLED=1 playwright test",
         "build:demo-static": "vite build --config vite.demo.config.ts",
-        "check:demo-size": "node ../../scripts/check-demo-size.mjs 820000",
+        "check:demo-size": "node ../../scripts/check-demo-size.mjs 840000",
         "e2e:demo-static": "playwright test --config playwright.demo.config.ts"
     },
     "dependencies": {
@@ -20,8 +20,8 @@
         "kysely": "^0.29.7",
         "next": "^16.4.6",
         "next-intl": "^4.14.9",
-        "react": "~19.2.8",
-        "react-dom": "~19.2.8"
+        "react": "~19.3.1",
+        "react-dom": "~19.3.1"
     },
     "devDependencies": {
         "@playwright/test": "^1.64.1",

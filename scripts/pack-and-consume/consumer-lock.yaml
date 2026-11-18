@@ -15,11 +15,11 @@ importers:
         specifier: ^26.6.5
         version: 26.6.6
       '@types/react':
-        specifier: ~19.2.17
-        version: 19.2.18
+        specifier: ~19.3.0
+        version: 19.3.0
       '@types/react-dom':
-        specifier: ~19.2.3
-        version: 19.2.7(@types/react@19.2.18)
+        specifier: ~19.3.0
+        version: 19.3.0(@types/react@19.3.0)
       '@vitejs/plugin-react':
         specifier: ^6.1.2
         version: 6.3.0(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
@@ -52,28 +52,28 @@ importers:
         version: 3.1169.0
       '@mantine/core':
         specifier: ^9.7.3
-        version: 9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+        version: 9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@sssb/app-config':
         specifier: link:./src/app-config
         version: link:src/app-config
       '@sssb/kit':
         specifier: file:../../../tarballs/sssb-kit-0.1.0.tgz
-        version: file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+        version: file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
       kysely:
         specifier: ^0.29.7
         version: 0.29.9
       next:
         specifier: ^16.4.6
-        version: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+        version: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       next-intl:
         specifier: ^4.14.9
-        version: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)
+        version: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
       react:
-        specifier: ~19.2.8
-        version: 19.2.9
+        specifier: ~19.3.1
+        version: 19.3.1
       react-dom:
-        specifier: ~19.2.8
-        version: 19.2.9(react@19.2.9)
+        specifier: ~19.3.1
+        version: 19.3.1(react@19.3.1)
     devDependencies:
       '@playwright/test':
         specifier: ^1.64.1
@@ -95,28 +95,28 @@ importers:
     dependencies:
       '@mantine/core':
         specifier: ^9.7.3
-        version: 9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+        version: 9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@sssb/app-config':
         specifier: link:./src/app-config
         version: link:src/app-config
       '@sssb/kit':
         specifier: file:../../../tarballs/sssb-kit-0.1.0.tgz
-        version: file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+        version: file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
       kysely:
         specifier: ^0.29.7
         version: 0.29.9
       next:
         specifier: ^16.4.6
-        version: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+        version: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       next-intl:
         specifier: ^4.14.9
-        version: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)
+        version: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
       react:
-        specifier: ~19.2.8
-        version: 19.2.9
+        specifier: ~19.3.1
+        version: 19.3.1
       react-dom:
-        specifier: ~19.2.8
-        version: 19.2.9(react@19.2.9)
+        specifier: ~19.3.1
+        version: 19.3.1(react@19.3.1)
     devDependencies:
       '@playwright/test':
         specifier: ^1.64.1
@@ -140,15 +140,15 @@ importers:
     dependencies:
       '@sssb/kit':
         specifier: file:../../../tarballs/sssb-kit-0.1.0.tgz
-        version: file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(@opentelemetry/api@1.10.0)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+        version: file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
 
 packages:
 
   '@adobe/css-tools@4.5.0':
     resolution: {integrity: sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q==}
 
-  '@anthropic-ai/sdk@0.115.0':
-    resolution: {integrity: sha512-BJrFIVyjNuU8lfDyIJTvlRYzgQg+zEl78BxE7fq8esULsGz9IRQvGtW5spq3tydmtjQb/GFdooKGdGsetpx+lQ==}
+  '@anthropic-ai/sdk@1.8.0':
+    resolution: {integrity: sha512-yDOArk2+Qpd/djEKmZjrv7JZ+pn5iBHARJ9PAdvfhGf4H5wNqTgY/2K0/yDKdQdm8G8hrNQchMlBAHpPK7yBfg==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -1556,14 +1556,14 @@ packages:
     engines: {node: '>=18.0.0'}
 
   '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz':
-    resolution: {integrity: sha512-KcxlLWpnKsLP9jLi0INeCeaqRy8rPOajNzWGlH8tk0EQIVGo9CE7laBybqleKMSCsnRmhtEcGaybiwdTWQhTGQ==, tarball: file:../tarballs/sssb-kit-0.1.0.tgz}
+    resolution: {integrity: sha512-xlULQ3uPlELTaMm9MLF+1rfXH5vsc+NeiE7FwF0ERTN5rBkmpDNjRxvLzGdXA/S8gD9t7wiOLNDDpT9HKJS8vw==, tarball: file:../tarballs/sssb-kit-0.1.0.tgz}
     version: 0.1.0
     peerDependencies:
       '@mantine/core': ^9.7.3
       '@sssb/app-config': '*'
       next: ^16.4.6
       next-intl: ^4.14.9
-      react: ~19.2.8
+      react: ~19.3.1
     peerDependenciesMeta:
       '@sssb/app-config':
         optional: true
@@ -1708,13 +1708,13 @@ packages:
   '@types/pg@8.23.1':
     resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
-  '@types/react-dom@19.2.7':
-    resolution: {integrity: sha512-I8bPpDLcHBv1qiIiXDCy71Rt8eQDKJP0sMSWJphDdAcdqiJ1sGpZamavoEIRZmYzjia9LuEb2HlYdDpmoENpvQ==}
+  '@types/react-dom@19.3.0':
+    resolution: {integrity: sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==}
     peerDependencies:
-      '@types/react': ^19.2.0
+      '@types/react': ^19.3.0
 
-  '@types/react@19.2.18':
-    resolution: {integrity: sha512-AnzbBERsrLKtk2XSfTbYRLjQPdy116Sty4q+T+Bp3IC4l6jNBvreVPAHmpq9qhXQM7CXZPjLVmGMw9sy+hxQ3w==}
+  '@types/react@19.3.0':
+    resolution: {integrity: sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==}
 
   '@types/whatwg-mimetype@3.0.2':
     resolution: {integrity: sha512-c2AKvDT8ToxLIOUlN51gTiHXflsfIFisS4pO7pDPoKouJCESkhZnEy623gwP9laCy5lnLDAw1vAzu2vM2YLOrA==}
@@ -2190,8 +2190,8 @@ packages:
   magic-string@1.4.5:
     resolution: {integrity: sha512-oLLC2+YvQUfAa+vxoufE/yc1icb87M9iXIRqAoR/2EhE/8cb3SF/+Gi0c2By1B+5Vz2e2vQtUvHiu1+63Znh+w==}
 
-  mailgun.js@13.3.0:
-    resolution: {integrity: sha512-8avnVhhaZJ17Pw91nPq+N4WuhCBBi9SJpsiAs5SV0CmLXZhz0UobTGP5p3bVTI+Zh1NZU6nXtL+N8KM/taBX4w==}
+  mailgun.js@14.1.1:
+    resolution: {integrity: sha512-xaYZKhoQEfoNj2bpVt5bKnCMdHLKYRz9k8jjZQJBLm4+JIdv+EMXyYE8l4v3wTMkO0m4wBiM3yLkWEetui/9/A==}
     engines: {node: '>=18.0.0'}
 
   marked@15.0.12:
@@ -2409,10 +2409,10 @@ packages:
     resolution: {integrity: sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==}
     engines: {node: '>=10'}
 
-  react-dom@19.2.9:
-    resolution: {integrity: sha512-YceU74W21fXEHszKBLj16MY0CmvpFKOs60iVrIyW/cCgOPsZJNaB6GVJEtIUqt6AG6EjzKLui5lPRrxAeS328Q==}
+  react-dom@19.3.1:
+    resolution: {integrity: sha512-Y0bARz53lhEC1NMCASs0/j+faB/zqt3R8hpvg1e8+61ZVJ4UL0UdC4cBbXfZMcIuhrfgeILTLe+ZeBCavQPtKQ==}
     peerDependencies:
-      react: ^19.2.9
+      react: ^19.3.1
 
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
@@ -2453,8 +2453,8 @@ packages:
       '@types/react':
         optional: true
 
-  react@19.2.9:
-    resolution: {integrity: sha512-RuLdAokXv3sRmZa2/N8QH0KmTBIgDKC+buRUikGqow31+mGSGidLCX2o4XFq8OV+xBFWfhM9DVgTq1PPHADH4w==}
+  react@19.3.1:
+    resolution: {integrity: sha512-QNhWdt7nrgVWWQG58QuGsAR3jv3Hbe4mb4vz7w2csnHavciZJgda1CPNaldF6eVxv90ud3jUXpKlHL69gO38yw==}
     engines: {node: '>=0.10.0'}
 
   redent@3.0.0:
@@ -2471,8 +2471,8 @@ packages:
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
     hasBin: true
 
-  scheduler@0.27.0:
-    resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
+  scheduler@0.28.0:
+    resolution: {integrity: sha512-juorfCmIkIw8tT+p5BXSm6PJjQF/ycEYmKyzURCIt/RaZIhL+PulbQ9Yu2z1HdOJDdqDTlxA1+xKBmHXJsczAw==}
 
   selderee@0.11.0:
     resolution: {integrity: sha512-5TF+l7p4+OsnP8BCCvSyZiSPc4x4//p5uPwK8TCnVPJYRmU2aYKMpOXvw8zM5a5JvuuCGN1jmsMwuU2W02ukfA==}
@@ -2761,8 +2761,9 @@ snapshots:
 
   '@adobe/css-tools@4.5.0': {}
 
-  '@anthropic-ai/sdk@0.115.0':
+  '@anthropic-ai/sdk@1.8.0':
     dependencies:
+      '@opentelemetry/api': 1.10.0
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.1.1
 
@@ -2993,39 +2994,39 @@ snapshots:
 
   '@babel/runtime@7.29.14': {}
 
-  '@clerk/backend@3.29.0(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@clerk/backend@3.29.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@clerk/shared': 4.45.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+      '@clerk/shared': 4.45.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       standardwebhooks: 1.1.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/nextjs@7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@clerk/nextjs@7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@clerk/backend': 3.29.0(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@clerk/react': 6.18.8(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@clerk/shared': 4.45.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
+      '@clerk/backend': 3.29.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/react': 6.18.8(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/shared': 4.45.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
       server-only: 0.0.1
 
-  '@clerk/react@6.18.8(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@clerk/react@6.18.8(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@clerk/shared': 4.45.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
+      '@clerk/shared': 4.45.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
 
-  '@clerk/shared@4.45.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@clerk/shared@4.45.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@tanstack/query-core': 5.107.1
       dequal: 2.0.3
       glob-to-regexp: 0.4.1
       js-cookie: 3.0.8
     optionalDependencies:
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
 
   '@electric-sql/pglite@0.5.16': {}
 
@@ -3148,18 +3149,18 @@ snapshots:
       '@floating-ui/core': 1.8.0
       '@floating-ui/utils': 0.2.12
 
-  '@floating-ui/react-dom@2.1.9(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@floating-ui/react-dom@2.1.9(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@floating-ui/dom': 1.8.0
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
 
-  '@floating-ui/react@0.27.20(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@floating-ui/react@0.27.20(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@floating-ui/react-dom': 2.1.9(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+      '@floating-ui/react-dom': 2.1.9(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@floating-ui/utils': 0.2.12
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
       tabbable: 6.5.2
 
   '@floating-ui/utils@0.2.12': {}
@@ -3287,29 +3288,29 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
-  '@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@floating-ui/react': 0.27.20(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@mantine/hooks': 9.8.1(react@19.2.9)
+      '@floating-ui/react': 0.27.20(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@mantine/hooks': 9.8.1(react@19.3.1)
       clsx: 2.1.1
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
-      react-number-format: 5.4.5(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      react-remove-scroll: 2.7.2(@types/react@19.2.18)(react@19.2.9)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
+      react-number-format: 5.4.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      react-remove-scroll: 2.7.2(@types/react@19.3.0)(react@19.3.1)
       type-fest: 5.10.0
     transitivePeerDependencies:
       - '@types/react'
 
-  '@mantine/form@9.8.1(react@19.2.9)':
+  '@mantine/form@9.8.1(react@19.3.1)':
     dependencies:
       '@standard-schema/spec': 1.1.0
       fast-deep-equal: 3.1.3
       klona: 2.0.6
-      react: 19.2.9
+      react: 19.3.1
 
-  '@mantine/hooks@9.8.1(react@19.2.9)':
+  '@mantine/hooks@9.8.1(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
   '@napi-rs/wasm-runtime@1.2.6(@emnapi/core@2.0.0-beta.2)(@emnapi/runtime@2.0.0-beta.2)':
     dependencies:
@@ -3473,138 +3474,138 @@ snapshots:
 
   '@posthog/types@1.425.1': {}
 
-  '@react-email/body@0.3.0(react@19.2.9)':
+  '@react-email/body@0.3.0(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/button@0.2.1(react@19.2.9)':
+  '@react-email/button@0.2.1(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/code-block@0.2.1(react@19.2.9)':
+  '@react-email/code-block@0.2.1(react@19.3.1)':
     dependencies:
       prismjs: 1.30.0
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/code-inline@0.0.6(react@19.2.9)':
+  '@react-email/code-inline@0.0.6(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/column@0.0.14(react@19.2.9)':
+  '@react-email/column@0.0.14(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/components@1.0.12(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@react-email/components@1.0.12(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@react-email/body': 0.3.0(react@19.2.9)
-      '@react-email/button': 0.2.1(react@19.2.9)
-      '@react-email/code-block': 0.2.1(react@19.2.9)
-      '@react-email/code-inline': 0.0.6(react@19.2.9)
-      '@react-email/column': 0.0.14(react@19.2.9)
-      '@react-email/container': 0.0.16(react@19.2.9)
-      '@react-email/font': 0.0.10(react@19.2.9)
-      '@react-email/head': 0.0.13(react@19.2.9)
-      '@react-email/heading': 0.0.16(react@19.2.9)
-      '@react-email/hr': 0.0.12(react@19.2.9)
-      '@react-email/html': 0.0.12(react@19.2.9)
-      '@react-email/img': 0.0.12(react@19.2.9)
-      '@react-email/link': 0.0.13(react@19.2.9)
-      '@react-email/markdown': 0.0.18(react@19.2.9)
-      '@react-email/preview': 0.0.14(react@19.2.9)
-      '@react-email/render': 2.0.6(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@react-email/row': 0.0.13(react@19.2.9)
-      '@react-email/section': 0.0.17(react@19.2.9)
-      '@react-email/tailwind': 2.0.7(@react-email/body@0.3.0(react@19.2.9))(@react-email/button@0.2.1(react@19.2.9))(@react-email/code-block@0.2.1(react@19.2.9))(@react-email/code-inline@0.0.6(react@19.2.9))(@react-email/container@0.0.16(react@19.2.9))(@react-email/heading@0.0.16(react@19.2.9))(@react-email/hr@0.0.12(react@19.2.9))(@react-email/img@0.0.12(react@19.2.9))(@react-email/link@0.0.13(react@19.2.9))(@react-email/preview@0.0.14(react@19.2.9))(@react-email/text@0.1.6(react@19.2.9))(react@19.2.9)
-      '@react-email/text': 0.1.6(react@19.2.9)
-      react: 19.2.9
+      '@react-email/body': 0.3.0(react@19.3.1)
+      '@react-email/button': 0.2.1(react@19.3.1)
+      '@react-email/code-block': 0.2.1(react@19.3.1)
+      '@react-email/code-inline': 0.0.6(react@19.3.1)
+      '@react-email/column': 0.0.14(react@19.3.1)
+      '@react-email/container': 0.0.16(react@19.3.1)
+      '@react-email/font': 0.0.10(react@19.3.1)
+      '@react-email/head': 0.0.13(react@19.3.1)
+      '@react-email/heading': 0.0.16(react@19.3.1)
+      '@react-email/hr': 0.0.12(react@19.3.1)
+      '@react-email/html': 0.0.12(react@19.3.1)
+      '@react-email/img': 0.0.12(react@19.3.1)
+      '@react-email/link': 0.0.13(react@19.3.1)
+      '@react-email/markdown': 0.0.18(react@19.3.1)
+      '@react-email/preview': 0.0.14(react@19.3.1)
+      '@react-email/render': 2.0.6(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@react-email/row': 0.0.13(react@19.3.1)
+      '@react-email/section': 0.0.17(react@19.3.1)
+      '@react-email/tailwind': 2.0.7(@react-email/body@0.3.0(react@19.3.1))(@react-email/button@0.2.1(react@19.3.1))(@react-email/code-block@0.2.1(react@19.3.1))(@react-email/code-inline@0.0.6(react@19.3.1))(@react-email/container@0.0.16(react@19.3.1))(@react-email/heading@0.0.16(react@19.3.1))(@react-email/hr@0.0.12(react@19.3.1))(@react-email/img@0.0.12(react@19.3.1))(@react-email/link@0.0.13(react@19.3.1))(@react-email/preview@0.0.14(react@19.3.1))(@react-email/text@0.1.6(react@19.3.1))(react@19.3.1)
+      '@react-email/text': 0.1.6(react@19.3.1)
+      react: 19.3.1
     transitivePeerDependencies:
       - react-dom
 
-  '@react-email/container@0.0.16(react@19.2.9)':
+  '@react-email/container@0.0.16(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/font@0.0.10(react@19.2.9)':
+  '@react-email/font@0.0.10(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/head@0.0.13(react@19.2.9)':
+  '@react-email/head@0.0.13(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/heading@0.0.16(react@19.2.9)':
+  '@react-email/heading@0.0.16(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/hr@0.0.12(react@19.2.9)':
+  '@react-email/hr@0.0.12(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/html@0.0.12(react@19.2.9)':
+  '@react-email/html@0.0.12(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/img@0.0.12(react@19.2.9)':
+  '@react-email/img@0.0.12(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/link@0.0.13(react@19.2.9)':
+  '@react-email/link@0.0.13(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/markdown@0.0.18(react@19.2.9)':
+  '@react-email/markdown@0.0.18(react@19.3.1)':
     dependencies:
       marked: 15.0.12
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/preview@0.0.14(react@19.2.9)':
+  '@react-email/preview@0.0.14(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/render@2.0.6(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@react-email/render@2.0.6(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
       html-to-text: 9.0.5
       prettier: 3.10.1
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
 
-  '@react-email/render@2.3.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)':
+  '@react-email/render@2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
       entities: 4.5.0
       html-to-text: 10.0.1
       html5parser: 3.0.0
       prettier: 3.10.1
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
 
-  '@react-email/row@0.0.13(react@19.2.9)':
+  '@react-email/row@0.0.13(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/section@0.0.17(react@19.2.9)':
+  '@react-email/section@0.0.17(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
-  '@react-email/tailwind@2.0.7(@react-email/body@0.3.0(react@19.2.9))(@react-email/button@0.2.1(react@19.2.9))(@react-email/code-block@0.2.1(react@19.2.9))(@react-email/code-inline@0.0.6(react@19.2.9))(@react-email/container@0.0.16(react@19.2.9))(@react-email/heading@0.0.16(react@19.2.9))(@react-email/hr@0.0.12(react@19.2.9))(@react-email/img@0.0.12(react@19.2.9))(@react-email/link@0.0.13(react@19.2.9))(@react-email/preview@0.0.14(react@19.2.9))(@react-email/text@0.1.6(react@19.2.9))(react@19.2.9)':
+  '@react-email/tailwind@2.0.7(@react-email/body@0.3.0(react@19.3.1))(@react-email/button@0.2.1(react@19.3.1))(@react-email/code-block@0.2.1(react@19.3.1))(@react-email/code-inline@0.0.6(react@19.3.1))(@react-email/container@0.0.16(react@19.3.1))(@react-email/heading@0.0.16(react@19.3.1))(@react-email/hr@0.0.12(react@19.3.1))(@react-email/img@0.0.12(react@19.3.1))(@react-email/link@0.0.13(react@19.3.1))(@react-email/preview@0.0.14(react@19.3.1))(@react-email/text@0.1.6(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@react-email/text': 0.1.6(react@19.2.9)
-      react: 19.2.9
+      '@react-email/text': 0.1.6(react@19.3.1)
+      react: 19.3.1
       tailwindcss: 4.3.5
     optionalDependencies:
-      '@react-email/body': 0.3.0(react@19.2.9)
-      '@react-email/button': 0.2.1(react@19.2.9)
-      '@react-email/code-block': 0.2.1(react@19.2.9)
-      '@react-email/code-inline': 0.0.6(react@19.2.9)
-      '@react-email/container': 0.0.16(react@19.2.9)
-      '@react-email/heading': 0.0.16(react@19.2.9)
-      '@react-email/hr': 0.0.12(react@19.2.9)
-      '@react-email/img': 0.0.12(react@19.2.9)
-      '@react-email/link': 0.0.13(react@19.2.9)
-      '@react-email/preview': 0.0.14(react@19.2.9)
+      '@react-email/body': 0.3.0(react@19.3.1)
+      '@react-email/button': 0.2.1(react@19.3.1)
+      '@react-email/code-block': 0.2.1(react@19.3.1)
+      '@react-email/code-inline': 0.0.6(react@19.3.1)
+      '@react-email/container': 0.0.16(react@19.3.1)
+      '@react-email/heading': 0.0.16(react@19.3.1)
+      '@react-email/hr': 0.0.12(react@19.3.1)
+      '@react-email/img': 0.0.12(react@19.3.1)
+      '@react-email/link': 0.0.13(react@19.3.1)
+      '@react-email/preview': 0.0.14(react@19.3.1)
 
-  '@react-email/text@0.1.6(react@19.2.9)':
+  '@react-email/text@0.1.6(react@19.3.1)':
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
 
   '@rolldown/binding-android-arm-eabi@1.2.19':
     optional: true
@@ -3818,7 +3819,7 @@ snapshots:
     dependencies:
       '@sentry/core': 11.12.0
 
-  '@sentry/nextjs@11.12.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))':
+  '@sentry/nextjs@11.12.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))':
     dependencies:
       '@opentelemetry/api': 1.10.0
       '@rollup/plugin-commonjs': 28.0.1(rollup@4.68.3)
@@ -3829,11 +3830,11 @@ snapshots:
       '@sentry/core': 11.12.0
       '@sentry/node': 11.12.0(rollup@4.68.3)
       '@sentry/opentelemetry': 11.12.0(@opentelemetry/api@1.10.0)
-      '@sentry/react': 11.12.0(react@19.2.9)
+      '@sentry/react': 11.12.0(react@19.3.1)
       '@sentry/server-runtime-injection': 11.12.0
       '@sentry/server-utils': 11.12.0
       '@sentry/vercel-edge': 11.12.0
-      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       rollup: 4.68.3
       stacktrace-parser: 0.1.11
     transitivePeerDependencies:
@@ -3863,12 +3864,12 @@ snapshots:
       '@sentry/conventions': 0.32.0
       '@sentry/core': 11.12.0
 
-  '@sentry/react@11.12.0(react@19.2.9)':
+  '@sentry/react@11.12.0(react@19.3.1)':
     dependencies:
       '@sentry/browser': 11.12.0
       '@sentry/conventions': 0.32.0
       '@sentry/core': 11.12.0
-      react: 19.2.9
+      react: 19.3.1
 
   '@sentry/replay-canvas@11.12.0':
     dependencies:
@@ -3930,30 +3931,30 @@ snapshots:
     dependencies:
       tslib: 2.9.1
 
-  '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))':
+  '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+console+src+app-config)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))':
     dependencies:
-      '@anthropic-ai/sdk': 0.115.0
+      '@anthropic-ai/sdk': 1.8.0
       '@aws-sdk/client-codebuild': 3.1169.0
       '@aws-sdk/client-rds-data': 3.1169.0
       '@aws-sdk/client-s3': 3.1169.0
       '@aws-sdk/client-secrets-manager': 3.1169.0
       '@aws-sdk/s3-presigned-post': 3.1169.0
       '@aws-sdk/s3-request-presigner': 3.1169.0
-      '@clerk/nextjs': 7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+      '@clerk/nextjs': 7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@electric-sql/pglite': 0.5.16
-      '@mantine/core': 9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@mantine/form': 9.8.1(react@19.2.9)
-      '@react-email/components': 1.0.12(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@react-email/render': 2.3.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@sentry/nextjs': 11.12.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+      '@mantine/core': 9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@mantine/form': 9.8.1(react@19.3.1)
+      '@react-email/components': 1.0.12(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@react-email/render': 2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@sentry/nextjs': 11.12.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
       jose: 6.2.17
       kysely: 0.29.9
-      mailgun.js: 13.3.0
-      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      next-intl: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)
+      mailgun.js: 14.1.1
+      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      next-intl: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
       pg: 8.23.1
-      posthog-node: 5.74.0(@opentelemetry/api@1.10.0)(@react-email/render@2.3.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9))
-      react: 19.2.9
+      posthog-node: 5.74.0(@opentelemetry/api@1.10.0)(@react-email/render@2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1))
+      react: 19.3.1
       server-only: 0.0.1
       valibot: 1.5.0(typescript@6.0.3)
     optionalDependencies:
@@ -3973,30 +3974,30 @@ snapshots:
       - wrangler
       - zod
 
-  '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))':
+  '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@sssb/app-config@apps+ledger+src+app-config)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))':
     dependencies:
-      '@anthropic-ai/sdk': 0.115.0
+      '@anthropic-ai/sdk': 1.8.0
       '@aws-sdk/client-codebuild': 3.1169.0
       '@aws-sdk/client-rds-data': 3.1169.0
       '@aws-sdk/client-s3': 3.1169.0
       '@aws-sdk/client-secrets-manager': 3.1169.0
       '@aws-sdk/s3-presigned-post': 3.1169.0
       '@aws-sdk/s3-request-presigner': 3.1169.0
-      '@clerk/nextjs': 7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+      '@clerk/nextjs': 7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@electric-sql/pglite': 0.5.16
-      '@mantine/core': 9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@mantine/form': 9.8.1(react@19.2.9)
-      '@react-email/components': 1.0.12(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@react-email/render': 2.3.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@sentry/nextjs': 11.12.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+      '@mantine/core': 9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@mantine/form': 9.8.1(react@19.3.1)
+      '@react-email/components': 1.0.12(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@react-email/render': 2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@sentry/nextjs': 11.12.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
       jose: 6.2.17
       kysely: 0.29.9
-      mailgun.js: 13.3.0
-      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      next-intl: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)
+      mailgun.js: 14.1.1
+      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      next-intl: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
       pg: 8.23.1
-      posthog-node: 5.74.0(@opentelemetry/api@1.10.0)(@react-email/render@2.3.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9))
-      react: 19.2.9
+      posthog-node: 5.74.0(@opentelemetry/api@1.10.0)(@react-email/render@2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1))
+      react: 19.3.1
       server-only: 0.0.1
       valibot: 1.5.0(typescript@6.0.3)
     optionalDependencies:
@@ -4016,30 +4017,30 @@ snapshots:
       - wrangler
       - zod
 
-  '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(@opentelemetry/api@1.10.0)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))':
+  '@sssb/kit@file:../tarballs/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))':
     dependencies:
-      '@anthropic-ai/sdk': 0.115.0
+      '@anthropic-ai/sdk': 1.8.0
       '@aws-sdk/client-codebuild': 3.1169.0
       '@aws-sdk/client-rds-data': 3.1169.0
       '@aws-sdk/client-s3': 3.1169.0
       '@aws-sdk/client-secrets-manager': 3.1169.0
       '@aws-sdk/s3-presigned-post': 3.1169.0
       '@aws-sdk/s3-request-presigner': 3.1169.0
-      '@clerk/nextjs': 7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+      '@clerk/nextjs': 7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@electric-sql/pglite': 0.5.16
-      '@mantine/core': 9.8.1(@mantine/hooks@9.8.1(react@19.2.9))(@types/react@19.2.18)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@mantine/form': 9.8.1(react@19.2.9)
-      '@react-email/components': 1.0.12(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@react-email/render': 2.3.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      '@sentry/nextjs': 11.12.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
+      '@mantine/core': 9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@mantine/form': 9.8.1(react@19.3.1)
+      '@react-email/components': 1.0.12(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@react-email/render': 2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@sentry/nextjs': 11.12.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
       jose: 6.2.17
       kysely: 0.29.9
-      mailgun.js: 13.3.0
-      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
-      next-intl: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9)
+      mailgun.js: 14.1.1
+      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      next-intl: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
       pg: 8.23.1
-      posthog-node: 5.74.0(@opentelemetry/api@1.10.0)(@react-email/render@2.3.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9))
-      react: 19.2.9
+      posthog-node: 5.74.0(@opentelemetry/api@1.10.0)(@react-email/render@2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1))
+      react: 19.3.1
       server-only: 0.0.1
       valibot: 1.5.0(typescript@6.0.3)
     transitivePeerDependencies:
@@ -4177,11 +4178,11 @@ snapshots:
       pg-protocol: 1.16.1
       pg-types: 2.2.0
 
-  '@types/react-dom@19.2.7(@types/react@19.2.18)':
+  '@types/react-dom@19.3.0(@types/react@19.3.0)':
     dependencies:
-      '@types/react': 19.2.18
+      '@types/react': 19.3.0
 
-  '@types/react@19.2.18':
+  '@types/react@19.3.0':
     dependencies:
       csstype: 3.2.3
 
@@ -4630,7 +4631,7 @@ snapshots:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  mailgun.js@13.3.0:
+  mailgun.js@14.1.1:
     dependencies:
       axios: 1.21.1
       base-64: 1.0.0
@@ -4668,7 +4669,7 @@ snapshots:
 
   next-intl-swc-plugin-extractor@4.15.1: {}
 
-  next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.2.18)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9))(react@19.2.9):
+  next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1):
     dependencies:
       '@eloqnt/config': 0.1.2
       '@eloqnt/format-json': 0.1.1
@@ -4678,25 +4679,25 @@ snapshots:
       '@swc/core': 1.16.22(@swc/helpers@0.5.23)
       icu-minify: 4.15.2
       negotiator: 1.1.0
-      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       next-intl-swc-plugin-extractor: 4.15.1
-      react: 19.2.9
-      use-intl: 4.15.1(@types/react@19.2.18)(react@19.2.9)
+      react: 19.3.1
+      use-intl: 4.15.1(@types/react@19.3.0)(react@19.3.1)
     optionalDependencies:
-      '@types/react': 19.2.18
+      '@types/react': 19.3.0
     transitivePeerDependencies:
       - '@swc/helpers'
 
-  next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.2.9(react@19.2.9))(react@19.2.9):
+  next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
       '@next/env': 16.4.6
       '@swc/helpers': 0.5.23
       baseline-browser-mapping: 2.11.37
       caniuse-lite: 1.0.30001826
       postcss: 8.5.23
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
-      styled-jsx: 5.1.6(react@19.2.9)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
+      styled-jsx: 5.1.6(react@19.3.1)
     optionalDependencies:
       '@next/swc-darwin-arm64': 16.4.6
       '@next/swc-darwin-x64': 16.4.6
@@ -4832,12 +4833,12 @@ snapshots:
     dependencies:
       xtend: 4.0.2
 
-  posthog-node@5.74.0(@opentelemetry/api@1.10.0)(@react-email/render@2.3.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)):
+  posthog-node@5.74.0(@opentelemetry/api@1.10.0)(@react-email/render@2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)):
     dependencies:
       '@posthog/core': 1.68.0
     optionalDependencies:
       '@opentelemetry/api': 1.10.0
-      '@react-email/render': 2.3.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
+      '@react-email/render': 2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
 
   prettier@3.10.1: {}
 
@@ -4851,46 +4852,46 @@ snapshots:
 
   proxy-from-env@2.1.0: {}
 
-  react-dom@19.2.9(react@19.2.9):
+  react-dom@19.3.1(react@19.3.1):
     dependencies:
-      react: 19.2.9
-      scheduler: 0.27.0
+      react: 19.3.1
+      scheduler: 0.28.0
 
   react-is@17.0.2: {}
 
-  react-number-format@5.4.5(react-dom@19.2.9(react@19.2.9))(react@19.2.9):
+  react-number-format@5.4.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
-      react: 19.2.9
-      react-dom: 19.2.9(react@19.2.9)
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
 
-  react-remove-scroll-bar@2.3.8(@types/react@19.2.18)(react@19.2.9):
+  react-remove-scroll-bar@2.3.8(@types/react@19.3.0)(react@19.3.1):
     dependencies:
-      react: 19.2.9
-      react-style-singleton: 2.2.3(@types/react@19.2.18)(react@19.2.9)
+      react: 19.3.1
+      react-style-singleton: 2.2.3(@types/react@19.3.0)(react@19.3.1)
       tslib: 2.9.1
     optionalDependencies:
-      '@types/react': 19.2.18
+      '@types/react': 19.3.0
 
-  react-remove-scroll@2.7.2(@types/react@19.2.18)(react@19.2.9):
+  react-remove-scroll@2.7.2(@types/react@19.3.0)(react@19.3.1):
     dependencies:
-      react: 19.2.9
-      react-remove-scroll-bar: 2.3.8(@types/react@19.2.18)(react@19.2.9)
-      react-style-singleton: 2.2.3(@types/react@19.2.18)(react@19.2.9)
+      react: 19.3.1
+      react-remove-scroll-bar: 2.3.8(@types/react@19.3.0)(react@19.3.1)
+      react-style-singleton: 2.2.3(@types/react@19.3.0)(react@19.3.1)
       tslib: 2.9.1
-      use-callback-ref: 1.3.3(@types/react@19.2.18)(react@19.2.9)
-      use-sidecar: 1.1.3(@types/react@19.2.18)(react@19.2.9)
+      use-callback-ref: 1.3.3(@types/react@19.3.0)(react@19.3.1)
+      use-sidecar: 1.1.3(@types/react@19.3.0)(react@19.3.1)
     optionalDependencies:
-      '@types/react': 19.2.18
+      '@types/react': 19.3.0
 
-  react-style-singleton@2.2.3(@types/react@19.2.18)(react@19.2.9):
+  react-style-singleton@2.2.3(@types/react@19.3.0)(react@19.3.1):
     dependencies:
       get-nonce: 1.0.1
-      react: 19.2.9
+      react: 19.3.1
       tslib: 2.9.1
     optionalDependencies:
-      '@types/react': 19.2.18
+      '@types/react': 19.3.0
 
-  react@19.2.9: {}
+  react@19.3.1: {}
 
   redent@3.0.0:
     dependencies:
@@ -4951,7 +4952,7 @@ snapshots:
       '@rollup/rollup-win32-x64-msvc': 4.68.3
       fsevents: 2.3.3
 
-  scheduler@0.27.0: {}
+  scheduler@0.28.0: {}
 
   selderee@0.11.0:
     dependencies:
@@ -5025,10 +5026,10 @@ snapshots:
     dependencies:
       min-indent: 1.0.1
 
-  styled-jsx@5.1.6(react@19.2.9):
+  styled-jsx@5.1.6(react@19.3.1):
     dependencies:
       client-only: 0.0.1
-      react: 19.2.9
+      react: 19.3.1
 
   tabbable@6.5.2: {}
 
@@ -5069,30 +5070,30 @@ snapshots:
 
   url-join@4.0.1: {}
 
-  use-callback-ref@1.3.3(@types/react@19.2.18)(react@19.2.9):
+  use-callback-ref@1.3.3(@types/react@19.3.0)(react@19.3.1):
     dependencies:
-      react: 19.2.9
+      react: 19.3.1
       tslib: 2.9.1
     optionalDependencies:
-      '@types/react': 19.2.18
+      '@types/react': 19.3.0
 
-  use-intl@4.15.1(@types/react@19.2.18)(react@19.2.9):
+  use-intl@4.15.1(@types/react@19.3.0)(react@19.3.1):
     dependencies:
       '@formatjs/fast-memoize': 3.1.7
       '@schummar/icu-type-parser': 1.21.5
       icu-minify: 4.15.2
       intl-messageformat: 12.1.5
-      react: 19.2.9
+      react: 19.3.1
     optionalDependencies:
-      '@types/react': 19.2.18
+      '@types/react': 19.3.0
 
-  use-sidecar@1.1.3(@types/react@19.2.18)(react@19.2.9):
+  use-sidecar@1.1.3(@types/react@19.3.0)(react@19.3.1):
     dependencies:
       detect-node-es: 1.1.0
-      react: 19.2.9
+      react: 19.3.1
       tslib: 2.9.1
     optionalDependencies:
-      '@types/react': 19.2.18
+      '@types/react': 19.3.0
 
   valibot@1.5.0(typescript@6.0.3):
     optionalDependencies:
