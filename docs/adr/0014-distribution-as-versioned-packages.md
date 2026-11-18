@@ -949,10 +949,13 @@ fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are t
 Part 10 and the P7 row say the notes' "Seam changes" and "Framework migrations" sections are written by hand "until
 Changesets exists". Changesets exists, and its changelog does not carry Kind and Action, so the notes are assembled
 instead: `scripts/release-notes.mjs` reads the pending changesets (each filed by its `**Kind.**` into the four
-sections of part 10, then "Other changes") and writes them with each entry's What changed, To adopt and Now deletable.
-`release.mjs prepare` runs it before `changeset version` deletes the files, the `plan` job publishes the result as its
-summary and a `release-notes` artifact, and `--since <tag>` gives a release candidate its notes (what was added since
-the previous one) and `--at <release commit>^` a finished release's. A release candidate's notes are therefore not
-hand-written, only checked; the sections for changes that predate the changesets (everything since 24b0589) are
-still written by hand. Creating the GitHub release is still P7's step. Why a script and not an `@sssb/tools` command,
-and why the notes stay out of the release commit, is in `docs/decision-log.md` (2026-11-18, `feat/release-notes`).
+sections of part 10, which are always present, then "Other changes" when there is one) and writes them with each
+entry's What changed, To adopt and Now deletable. `release.mjs prepare` runs it before `changeset version` deletes the
+files and writes the result to `docs/releases/v<version>.md`, a new file in the release commit that `verify-release`
+accepts at exactly that path, so the notes are in the repository for a fork that merges `main` as well as for the
+release. `--since <tag>` gives a release candidate the entries added since the previous one, and the entries edited
+since under "Corrections to earlier notes"; `--at <release commit>^` regenerates a finished release's notes. What is
+still written by hand for P7: the sections for changes that predate the changesets (everything since 24b0589, the
+rename among it), the tarballs' sha512 and install lines, and creating the GitHub release. P14's first npm release
+would omit that hand-written history unless it is backfilled first. Why a script and not an `@sssb/tools` command,
+and what review changed, is in `docs/decision-log.md` (2026-11-18, `feat/release-notes`).

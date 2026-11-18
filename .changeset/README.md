@@ -103,21 +103,29 @@ so write the file by hand. This README is not a changeset; Changesets skips it, 
 ```sh
 pnpm release:notes                                  # every pending changeset, to stdout
 pnpm release:notes --version 0.2.0 --out notes.md   # with the version in the heading, to a file
-pnpm release:notes --since v0.1.0-rc.1              # only what was added since a tag: a release candidate's notes
+pnpm release:notes --since v0.1.0-rc.1              # what was added since a tag, from git: a release candidate's notes
 pnpm release:notes --at v0.2.0^ --version 0.2.0     # a finished release's notes, from before its release commit
 pnpm release:notes --check                          # just judge the shape, as `pnpm release:check` does
 ```
 
 The notes have the four sections of ADR-0014 part 10 in its order (Seam changes, Framework migrations, Operator
-actions, Scaffold changes to apply by hand), then Other changes when there is one. The first two are always there,
-`None.` when empty. Inside a section the entries an adopter must act on come first (Action required, then optional,
-then none), then by file name. Each entry is its title, a line saying the action and the packages with their bump, and
-the body as written less Kind and Action: What changed, To adopt, Now deletable. An empty changeset is counted in
-the opening line and not listed. There are no dates, so the same changesets give the same bytes. A changeset that is
-not a readable entry stops the command with its file and what is wrong, and `pnpm release:check` (CI's `release-plan`
-job) says the same on every PR.
+actions, Scaffold changes to apply by hand), always present and `None.` when empty, then Other changes when there is
+one. Inside a section the entries an adopter must act on come first (Action required, then optional, then none), then
+by file name. Each entry is its title, a line saying the action and the packages, and the body as written less Kind and
+Action: What changed, To adopt, Now deletable. An empty changeset is counted in the opening line and not listed. There
+are no dates, so the same changesets give the same bytes.
 
-`release.yml`'s `plan` job runs `release.mjs prepare --notes <file>`, which assembles the notes from the pending
-changesets before `changeset version` deletes them and writes them outside the tree: to the run's summary and to a
-`release-notes` artifact. They are not in the release commit. Creating the GitHub release from them is the publishing
-step (ADR-0014 P7 for a release candidate, P14 for npm's), and is not automated here.
+`--since <ref>` puts the range in the heading and lists the changesets ADDED since the ref. One EDITED since (allowed
+only to correct it) comes back under "Corrections to earlier notes", so an adopter who followed the earlier text is
+told. `--since` and `--at` read git, not the working tree, so a changeset not yet committed is not in them.
+
+A changeset that is not a readable entry stops the command with its file and what is wrong, and `pnpm release:check`
+(CI's `release-plan` job) says the same on every PR. The frontmatter is read one quoted `'@sssb/<package>': bump` per
+line, with `#` comments and a quoted bump allowed, as Changesets reads it; a fenced code block in the body is never
+read for structure, and one left open is refused.
+
+`release.yml`'s `plan` job runs `release.mjs prepare`, which assembles the notes from the pending changesets before
+`changeset version` deletes them and writes them to `docs/releases/v<version>.md`: a new file in the release commit,
+which `verify-release` accepts at exactly that path. The job also appends them to its run summary. Until P14 every
+package is private and nothing is prepared. Creating the GitHub release from the notes is the publishing step
+(ADR-0014 P7 for a release candidate, P14 for npm's), and is not automated here.
