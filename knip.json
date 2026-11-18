@@ -21,6 +21,7 @@
             "ladle": {
                 "entry": ["src/**/*.stories.tsx"]
             },
+            "entry": ["src/testing/e2e.ts"],
             "project": ["src/**", "test-fixture/**"],
             "includeEntryExports": true,
             "ignoreExportsUsedInFile": {
