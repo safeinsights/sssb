@@ -25,6 +25,7 @@
  * `&&`, `||` and `|`, follows `$(…)`, and strips quotes. Anything it cannot place is red, not skipped. The
  * mutation tests at the bottom are its proof that each rule can fail.
  */
+import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -93,8 +94,37 @@ const STEP_ENV: Record<string, RegExp> = {
 /** Where a redirection in the token step may point. A file anywhere else could hand the token on. */
 const REDIRECT_TARGETS = new Set(['$GITHUB_STEP_SUMMARY', '/dev/null', '&1', '&2'])
 
+/**
+ * THE PIN. A hash of the whole `push` job (its runner, its steps, each `uses` at its SHA, each `run` word for
+ * word), so ANY edit to the job holding the key goes red. The rules below then explain why the pinned job
+ * needs exactly `RELEASE_APP_PERMISSIONS`; they are the second layer, not the only one. Review rounds kept
+ * finding new ways past a list of forbidden shell forms (`PATH=`, `printf -v`, a step before the mint
+ * writing $GITHUB_ENV, `container:`, a moving action ref), which is the sign that a list is the wrong
+ * instrument. When this goes red: re-read every use of the token in the job against those rules and
+ * `RELEASE_APP_PERMISSIONS`, and only then update the hash (the failure message prints the new one).
+ */
+const PUSH_JOB_SHA256 = '8f5d2e9ecb28391502f37e5fae5cc54fa4b9a28675ffc1dee9b5422d2501ff71'
+
+/** Variables the token step may assign, as release.yml does: the commit, the scratch repository, the header. */
+const ALLOWED_ASSIGNMENTS = new Set(['sha', 'pusher', 'auth'])
+
+/** The one line of the token step allowed to read $TOKEN. */
+const TOKEN_LINE = `auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)`
+
+/** A canonical JSON rendering (keys sorted at every level), so the pin does not depend on YAML key order. */
+function canonicalJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+    if (value && typeof value === 'object')
+        return `{${Object.keys(value)
+            .sort()
+            .map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`)
+            .join(',')}}`
+    return JSON.stringify(value)
+}
+
 /** Shell variables that change what git or gh reads, or where it sends things. Never set in the token step. */
-const RISKY_VARIABLE = /^(GIT_|GH_|GITHUB_|HOME$|XDG_CONFIG_HOME$|BASH_ENV$|ENV$|SSL_|CURL_|HTTPS?_PROXY$|ALL_PROXY$)/i
+const RISKY_VARIABLE =
+    /^(PATH$|LD_|DYLD_|GIT_|GH_|GITHUB_|HOME$|XDG_CONFIG_HOME$|BASH_ENV$|ENV$|SSL_|CURL_|HTTPS?_PROXY$|ALL_PROXY$)/i
 
 type Finding = string
 type Operation = { command: string; permission: keyof typeof RELEASE_APP_PERMISSIONS | null }
@@ -231,6 +261,8 @@ function classify(command: string[], findings: Finding[]): Operation | null {
     for (const name of assigns) {
         if (RISKY_VARIABLE.test(name))
             findings.push(`the token step sets ${name}, which changes what git or a tool reads`)
+        else if (!ALLOWED_ASSIGNMENTS.has(name))
+            findings.push(`the token step assigns ${name} (only ${[...ALLOWED_ASSIGNMENTS].join(', ')})`)
     }
     for (const target of redirects) {
         if (!REDIRECT_TARGETS.has(target)) findings.push(`the token step redirects to ${target}`)
@@ -242,6 +274,13 @@ function classify(command: string[], findings: Finding[]): Operation | null {
             findings.push(`\`set ${args.join(' ')}\` in the token step (only -euo pipefail)`)
         return { command: 'set', permission: null }
     }
+    if (program === 'printf' && args[0] === '-v')
+        findings.push('`printf -v` in the token step assigns a variable unseen')
+    if (
+        (program === 'echo' || program === 'printf') &&
+        args.some((a) => a.startsWith('::') && !a.startsWith('::add-mask::'))
+    )
+        findings.push(`\`${command.join(' ')}\` emits a workflow command from the token step`)
     if (LOCAL_COMMANDS.has(program)) return { command: program, permission: null }
     if (program !== 'git') {
         findings.push(
@@ -313,12 +352,29 @@ function expressions(text: string): string[] {
 }
 
 /**
+ * In every workflow: a job's environment must be a literal (an expression could name `release` unseen), and a
+ * job may call only a reusable workflow in this repository (one elsewhere could declare `environment:
+ * release` and run with this repository's secrets).
+ */
+function jobShapeFindings(name: string, workflow: Workflow): Finding[] {
+    const findings: Finding[] = []
+    for (const [jobName, job] of Object.entries(workflow?.jobs ?? {})) {
+        if (JSON.stringify(job.environment ?? '').includes('${{'))
+            findings.push(`${name}: job ${jobName}'s environment is an expression`)
+        if (typeof job.uses === 'string' && !job.uses.startsWith('./'))
+            findings.push(`${name}: job ${jobName} calls a reusable workflow outside this repository (${job.uses})`)
+    }
+    return findings
+}
+
+/**
  * Every workflow but release.yml: none may run a job in the `release` environment (the only way to read its
  * secret), and none may name the App's key or client id at all.
  */
 function auditOthers(files: { name: string; workflow: Workflow }[]): Finding[] {
     const findings: Finding[] = []
     for (const { name, workflow } of files) {
+        findings.push(...jobShapeFindings(name, workflow))
         if (name === RELEASE_WORKFLOW) continue
         for (const [jobName, job] of Object.entries(workflow?.jobs ?? {})) {
             if (environmentOf(job) === RELEASE_ENVIRONMENT || /\brelease\b/.test(JSON.stringify(job.environment ?? '')))
@@ -425,7 +481,15 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
     if (consumers.size === 0) findings.push("nothing uses the release app's token")
     if (consumers.size > 1) findings.push(`${consumers.size} steps hold the token; one may`)
 
-    // Nothing around the step may change how its shell or git behaves.
+    // The pin, and what reaches the job from the workflow around it.
+    const digest = createHash('sha256').update(canonicalJson(job)).digest('hex')
+    if (digest !== PUSH_JOB_SHA256) {
+        findings.push(
+            `the ${mint.job} job changed (sha256 ${digest}, pinned ${PUSH_JOB_SHA256}): re-review every use of the ` +
+                "release app's token in it against RELEASE_APP_PERMISSIONS and this test's rules, then update PUSH_JOB_SHA256",
+        )
+    }
+    if (workflow.env !== undefined) findings.push('release.yml sets a workflow-level env, which reaches the token step')
     for (const [where, holder] of [
         ['the workflow', workflow],
         [`job ${mint.job}`, job],
@@ -453,6 +517,12 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
             if (!rule || !rule.test(String(env[key]))) findings.push(`${label} sets env ${key}=${String(env[key])}`)
         }
         for (const key of Object.keys(STEP_ENV)) if (!(key in env)) findings.push(`${label} does not set env ${key}`)
+        const tokenLines = step.run.split('\n').filter((line) => /\$\{?TOKEN\b/.test(line))
+        if (tokenLines.length !== 1 || tokenLines[0].trim() !== TOKEN_LINE) {
+            findings.push(
+                `${label} reads $TOKEN outside the one line that builds the auth header: ${JSON.stringify(tokenLines)}`,
+            )
+        }
         if (/GITHUB_(ENV|OUTPUT|PATH)\b/.test(step.run)) {
             findings.push(`${label} holds the token and writes $GITHUB_ENV, $GITHUB_OUTPUT or $GITHUB_PATH`)
         }
@@ -547,6 +617,18 @@ describe('release.yml and the release app agree', () => {
                 },
             ]),
         ).toHaveLength(1)
+    })
+
+    it('goes red for an environment named by expression, or a reusable workflow from elsewhere', () => {
+        const job = { 'runs-on': 'ubuntu-latest', steps: [{ run: 'true' }] }
+        const named = "${{ format('{0}{1}', 'rel', 'ease') }}"
+        expect(auditOthers([{ name: 'x.yml', workflow: { jobs: { a: { ...job, environment: named } } } }])).toEqual([
+            "x.yml: job a's environment is an expression",
+        ])
+        const remote = 'other/repo/.github/workflows/x.yml@v1'
+        expect(auditOthers([{ name: 'x.yml', workflow: { jobs: { a: { uses: remote } } } }])).toEqual([
+            `x.yml: job a calls a reusable workflow outside this repository (${remote})`,
+        ])
     })
 })
 
@@ -743,6 +825,37 @@ describe('the guard goes red when release.yml outgrows the App', () => {
         red((w) => {
             w.jobs.pack.environment = { name: 'release' }
         }, /job pack runs in the "release" environment without minting/))
+    it('a PATH prefix before git', () =>
+        red((w) => appendRun(w, 'PATH="$GITHUB_WORKSPACE/bin:$PATH" git -C "$pusher" rev-parse HEAD'), /sets PATH/))
+    it('an unlisted assignment', () => red((w) => appendRun(w, 'other=1'), /assigns other/))
+    it('printf -v', () =>
+        red((w) => appendRun(w, 'printf -v GIT_CONFIG_GLOBAL %s "$GITHUB_WORKSPACE/evil.cfg"'), /printf -v/))
+    it('the token printed in a form the log mask misses', () =>
+        red((w) => appendRun(w, 'printf %s "$TOKEN" | base64 -w0 | base64 -w0'), /reads \$TOKEN outside the one line/))
+    it('a workflow command from the token step', () =>
+        red((w) => appendRun(w, 'echo "::set-output name=t::$auth"'), /emits a workflow command/))
+    it('a different commit pushed under the same refspec', () =>
+        red((w) => {
+            const step = pushStep(w)
+            step.run = step.run?.replace('sha=$(git rev-parse HEAD)', 'sha=$(git rev-parse HEAD)\nsha=origin/x')
+        }, /the push job changed/))
+    it('a step before the mint that writes $GITHUB_ENV', () =>
+        red((w) => {
+            pushJob(w).steps?.splice(0, 0, { run: 'echo "GIT_CONFIG_COUNT=1" >> "$GITHUB_ENV"' })
+        }, /the push job changed/))
+    it('a container for the job', () =>
+        red((w) => {
+            pushJob(w).container = 'evil/image:latest'
+        }, /the push job changed/))
+    it('the mint action at a moving ref', () =>
+        red((w) => {
+            const mint = pushJob(w).steps?.find((s) => s.uses?.startsWith(MINT_ACTION))
+            if (mint) mint.uses = `${MINT_ACTION}main`
+        }, /the push job changed/))
+    it('a workflow-level env', () =>
+        red((w) => {
+            w.env = { PATH: '/evil' }
+        }, /workflow-level env/))
     it('a second mint', () =>
         red((w) => {
             w.jobs.pack.steps?.push({ id: 'again', uses: `${MINT_ACTION}v3` })

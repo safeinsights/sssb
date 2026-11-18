@@ -675,6 +675,12 @@ describe('planBypass', () => {
         expect(planBypass(liveRulesets(), 0).problems[0]).toMatch(/positive integer/)
     })
 
+    it('refuses a checks ruleset that excludes main', () => {
+        const rulesets = liveRulesets()
+        rulesets[1].conditions.ref_name.exclude = ['refs/heads/main']
+        expect(planBypass(rulesets, APP_ID).problems[0]).toMatch(/does not cover main/)
+    })
+
     it('refuses to bypass a main ruleset that carries more than the checks', () => {
         const rulesets = liveRulesets()
         rulesets[1].rules.push({ type: 'pull_request' })
@@ -736,6 +742,25 @@ describe('externalGates', () => {
         expect(gates.org.map((g) => [g.name, g.app])).toEqual([
             ['require-pr', 'missing'],
             ['org tags', 'missing'],
+        ])
+    })
+
+    it('counts an update rule on main, a tag pattern that might reach v tags, and checks not in force', () => {
+        const update: Ruleset = { ...liveRulesets()[0], id: 9, name: 'org lock', rules: [{ type: 'update' }] }
+        const tagGlob: Ruleset = {
+            ...liveRulesets()[2],
+            id: 10,
+            name: 'org tag glob',
+            source_type: 'Organization',
+            conditions: { ref_name: { include: ['refs/tags/[v]*'], exclude: ['refs/tags/v*'] } },
+            rules: [{ type: 'creation' }],
+        }
+        const rulesets = [...liveRulesets(), update, tagGlob]
+        const gates = externalGates(onMain(rulesets), rulesets, APP_ID)
+        expect(gates.org.map((g) => g.name)).toEqual(['require-pr', 'org lock', 'org tag glob'])
+        const notInForce = onMain(liveRulesets()).filter((rule) => rule.type !== 'required_status_checks')
+        expect(externalGates(notInForce, liveRulesets(), APP_ID).problems).toEqual([
+            `"${MAIN_CHECKS}" is not in force on main: GitHub lists none of its required checks there`,
         ])
     })
 

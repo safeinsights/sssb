@@ -127,9 +127,10 @@ export function planBypass(rulesets: Ruleset[], appId: number): BypassPlan {
     } else if (checks.target !== 'branch') {
         problems.push(`"${MAIN_CHECKS}" targets ${checks.target}, not branch`)
     } else {
-        const include = checks.conditions?.ref_name?.include ?? []
-        if (!include.includes(DEFAULT_BRANCH) && !include.includes('refs/heads/main')) {
-            problems.push(`"${MAIN_CHECKS}" does not cover main (its include is ${JSON.stringify(include)})`)
+        if (!covers(checks, 'refs/heads/main')) {
+            problems.push(
+                `"${MAIN_CHECKS}" does not cover main (${JSON.stringify(checks.conditions?.ref_name ?? null)})`,
+            )
         }
         // Only the bypass list and enforcement change; its rules are the checks and stay as they are. Anything
         // else here (a pull-request or signature rule added later) would be bypassed with them, silently.
@@ -179,8 +180,12 @@ export function planBypass(rulesets: Ruleset[], appId: number): BypassPlan {
 /** One rule as `GET /repos/{o}/{r}/rules/branches/{branch}` returns it. */
 export type ActiveRule = { type: string; ruleset_source_type: string; ruleset_source: string; ruleset_id: number }
 
-/** Rule types that cannot refuse a fast-forward push of a branch or the creation of a tag. */
-const HARMLESS_TO_A_PUSH = new Set(['deletion', 'non_fast_forward', 'update'])
+/**
+ * Rule types that cannot refuse the release's push: on `main`, a fast-forward (an `update` rule refuses every
+ * push to a branch, so it is not here); on a tag, a creation.
+ */
+const HARMLESS_ON_MAIN = new Set(['deletion', 'non_fast_forward'])
+const HARMLESS_ON_A_NEW_TAG = new Set(['deletion', 'non_fast_forward', 'update'])
 
 /** An organisation ruleset the App's push meets, which only an org owner can change. */
 type OrgGate = {
@@ -208,6 +213,19 @@ function globToRegExp(pattern: string): RegExp {
     return new RegExp(`^${source}$`)
 }
 
+/**
+ * Whether a tag ruleset might apply to some release tag. Fails closed: any include that could start with `v`
+ * (or is a wildcard there) counts, and excludes are not trusted to carve release tags out, since judging every
+ * glob GitHub accepts against every future version is not something to get subtly wrong.
+ */
+function mayCoverReleaseTags(ruleset: RulesetBody): boolean {
+    return (ruleset.conditions?.ref_name?.include ?? []).some((pattern) => {
+        if (pattern === '~ALL') return true
+        const rest = pattern.startsWith('refs/tags/') ? pattern.slice('refs/tags/'.length) : pattern
+        return rest === '' || 'v*?['.includes(rest[0])
+    })
+}
+
 function covers(ruleset: RulesetBody, ref: string): boolean {
     const { include = [], exclude = [] } = ruleset.conditions?.ref_name ?? {}
     const hit = (pattern: string) =>
@@ -232,11 +250,11 @@ export function externalGates(activeOnMain: ActiveRule[], rulesets: Ruleset[], a
     const org: OrgGate[] = []
     const seen = new Set<number>()
 
-    const judge = (ruleset: Ruleset, types: string[]) => {
+    const judge = (ruleset: Ruleset, types: string[], harmless: Set<string>) => {
         if (seen.has(ruleset.id)) return
         seen.add(ruleset.id)
         if (ruleset.source_type === 'Repository' && managed.has(ruleset.name)) return
-        if (types.every((type) => HARMLESS_TO_A_PUSH.has(type))) return
+        if (types.every((type) => harmless.has(type))) return
         if (ruleset.source_type !== 'Organization') {
             problems.push(
                 `repository ruleset "${ruleset.name}" (${ruleset.id}, ${types.join(', ')}) also applies to the release's ` +
@@ -265,14 +283,24 @@ export function externalGates(activeOnMain: ActiveRule[], rulesets: Ruleset[], a
     for (const [id, types] of typesOnMain) {
         const ruleset = byId.get(id)
         if (!ruleset) problems.push(`could not read ruleset ${id}, which applies to main`)
-        else judge(ruleset, types)
+        else judge(ruleset, types, HARMLESS_ON_MAIN)
     }
     for (const ruleset of rulesets) {
-        if (ruleset.target === 'tag' && covers(ruleset, 'refs/tags/v0.1.0'))
+        if (ruleset.target === 'tag' && mayCoverReleaseTags(ruleset))
             judge(
                 ruleset,
                 (ruleset.rules ?? []).map((rule) => rule.type),
+                HARMLESS_ON_A_NEW_TAG,
             )
+    }
+    // The checks ruleset must actually be in force on main, not merely named: GitHub's own list of the rules
+    // that apply there has to carry its required_status_checks.
+    const checks = rulesets.find((r) => r.source_type === 'Repository' && r.name === MAIN_CHECKS)
+    if (
+        checks &&
+        !activeOnMain.some((rule) => rule.ruleset_id === checks.id && rule.type === 'required_status_checks')
+    ) {
+        problems.push(`"${MAIN_CHECKS}" is not in force on main: GitHub lists none of its required checks there`)
     }
     return { org, problems }
 }
