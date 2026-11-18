@@ -50,4 +50,18 @@ describe('contractDatabaseName', () => {
     it('stays within the 63 characters of an identifier', () => {
         expect(contractDatabaseName('a'.repeat(200)).length).toBeLessThanOrEqual(63)
     })
+
+    it('trims the underscores a slug leaves at either end, and takes any length of junk in linear time', () => {
+        expect(contractDatabaseName('--Acme Corp--')).toBe('acme_corp_contract')
+        expect(contractDatabaseName('__a__')).toBe('a_contract')
+        // only symbols fold to nothing, which does not start with a letter
+        expect(contractDatabaseName('---')).toBe('app__contract')
+        expect(contractDatabaseName('')).toBe('app__contract')
+        // `[^a-z0-9]+` already collapses a run (underscores included) to ONE underscore, so the old `/^_+|_+$/` had no
+        // long run to backtrack over here: this pins the answer and the speed, but could not be made red.
+        const start = performance.now()
+        expect(contractDatabaseName(`${'-'.repeat(50_000)}a${'-'.repeat(50_000)}!`)).toBe('a_contract')
+        expect(contractDatabaseName(`${'_'.repeat(50_000)}a`)).toBe('a_contract')
+        expect(performance.now() - start).toBeLessThan(500)
+    })
 })

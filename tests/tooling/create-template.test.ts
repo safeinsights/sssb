@@ -175,6 +175,11 @@ describe('@sssb/create: the pinned commit must be on GitHub', () => {
             ].map(remotePath),
         ).toEqual(Array(8).fill('safeinsights/sssb'))
         expect(remotePath('git@github-work:someone/sssb.git')).toBe('someone/sssb')
+        // A long run of slashes followed by anything else: trimmed in linear time (`/\/+$/` took seconds on this).
+        const started = performance.now()
+        expect(remotePath(`https://github.com/someone/sssb${'/'.repeat(50_000)}x`)).toMatch(/^someone\/sssb\/+x$/)
+        expect(remotePath(`https://github.com/someone/sssb${'/'.repeat(50_000)}`)).toBe('someone/sssb')
+        expect(performance.now() - started).toBeLessThan(500)
         // A local path or file: URL is not a network remote.
         for (const local of ['/srv/safeinsights/sssb', '../sssb', 'file:///srv/safeinsights/sssb'])
             expect(remotePath(local), local).toBeNull()

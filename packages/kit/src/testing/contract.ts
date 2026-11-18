@@ -52,11 +52,15 @@ export interface ContractOptions {
  */
 export function contractDatabaseName(slug: string): string {
     // 63 is Postgres's identifier limit; "_contract" is 9 of it.
-    const folded = slug
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .slice(0, 50)
+    const underscored = slug.toLowerCase().replace(/[^a-z0-9]+/g, '_')
+    // The leading and trailing underscore trimmed by a loop rather than `/^_+|_+$/`, a pattern that backtracks
+    // quadratically on a long run (CodeQL flags it on a caller's input); the collapse above already leaves at most one
+    // underscore at each end, so this changes no result.
+    let from = 0
+    let to = underscored.length
+    while (from < to && underscored[from] === '_') from++
+    while (to > from && underscored[to - 1] === '_') to--
+    const folded = underscored.slice(from, to).slice(0, 50)
     const base = /^[a-z]/.test(folded) ? folded : `app_${folded}`
     return `${base}_contract`
 }

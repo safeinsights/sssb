@@ -689,7 +689,7 @@ describe('verifyGateProblems', () => {
                     .verify!.replaceAll(`'pnpm:${name}'`, '')
                     .replaceAll(`pnpm run ${name} `, 'true ')
                 dropped.verify = dropped.verify.replace(
-                    new RegExp(`pnpm ${name.replace(/[.:]/g, '\\$&')}( |$)`),
+                    new RegExp(`pnpm ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`),
                     'true$1',
                 )
                 dropped.checks = dropped.checks!.replaceAll(`'pnpm:${name}'`, '')

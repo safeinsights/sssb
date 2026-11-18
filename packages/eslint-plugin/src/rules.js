@@ -545,7 +545,10 @@ const pathOutOfPackage = {
         // relative path's `?query` or `#hash` is dropped first: Vite and Vitest load the file it names (a `file:` URL's
         // are URL syntax, which fileURLToPath reads).
         const finding = (rawSpecifier) => {
-            const specifier = /^file:/i.test(rawSpecifier) ? rawSpecifier : rawSpecifier.replace(/[?#].*$/, '')
+            // Cut at the first `?` or `#` by index: `/[?#].*$/` retried from every `?` in a long run, which a
+            // linted file controls, and took time quadratic in it.
+            const cut = /^file:/i.test(rawSpecifier) ? -1 : rawSpecifier.search(/[?#]/)
+            const specifier = cut < 0 ? rawSpecifier : rawSpecifier.slice(0, cut)
             const landing = landingOfPath(repoRoot, context.filename, specifier)
             if (landing === undefined || APP_CODE_DIRS.some((dir) => isUnder(landing, dir))) return undefined
             if (!isUnder(landing, KIT_DIR)) return { messageId: 'outside', landing: landing || '.' }
