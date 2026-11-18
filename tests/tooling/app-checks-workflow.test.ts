@@ -172,8 +172,11 @@ describe('app-checks.yml, the reusable workflow', () => {
             'demo-static': { APP: '${{ matrix.demo.app }}' },
             synth: { SYNTH: '${{ inputs.synth }}' },
         }
+        expect((reusable as Record<string, unknown>)['env']).toBeUndefined()
+        expect((reusable as Record<string, unknown>)['defaults']).toBeUndefined()
         for (const [id, job] of Object.entries(reusable.jobs)) {
             expect((job as Record<string, unknown>)['defaults'], id).toBeUndefined()
+            expect((job as Record<string, unknown>)['env'], id).toBeUndefined()
             for (const step of job.steps ?? []) {
                 if (step.uses?.startsWith('actions/checkout@')) {
                     expect((step as Record<string, unknown>)['with'], `${id}: checkout`).toBeUndefined()
@@ -324,11 +327,12 @@ describe('the check names the rulesets require', () => {
         const apps = readdirSync(path.join(ROOT, 'apps'))
             .filter((app) => existsSync(path.join(ROOT, 'apps', app, 'package.json')))
             .sort()
-        if (apps.join(' ') !== 'showcase starter') return
+        if (!apps.includes('showcase') || !apps.includes('starter')) return
+        const ours = (entry: { app?: string }) => entry.app === 'apps/showcase' || entry.app === 'apps/starter'
         expect(
             [
-                ...shards.map((s) => `sssb / e2e (${s.name})`),
-                ...demos.map((d) => `sssb / demo-static (${d.name})`),
+                ...shards.filter(ours).map((s) => `sssb / e2e (${s.name})`),
+                ...demos.filter(ours).map((d) => `sssb / demo-static (${d.name})`),
             ].sort(),
         ).toEqual([
             'sssb / demo-static (showcase)',

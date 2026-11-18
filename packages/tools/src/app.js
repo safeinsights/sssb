@@ -87,6 +87,8 @@ export function workspaceApps(root) {
         if (!Array.isArray(listed) || !listed.every((entry) => typeof entry === 'string'))
             throw new UsageError('sssb: `sssb.apps` in the root package.json must be a list of directories')
         for (const dir of listed) {
+            if (path.isAbsolute(dir) || dir.split(/[\\/]/).includes('..'))
+                throw new UsageError(`sssb: \`sssb.apps\` names ${dir}: each app is a directory inside the workspace`)
             if (!existsSync(path.join(root, dir, 'package.json')))
                 throw new UsageError(`sssb: \`sssb.apps\` names ${dir}, which is not a package`)
         }

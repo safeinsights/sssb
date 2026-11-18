@@ -333,6 +333,19 @@ describe('sssb ci', () => {
         expect(result.stderr).toContain('apps/gamma has no Playwright config')
     })
 
+    it('fails when the workspace has no apps, rather than writing an empty matrix', () => {
+        const result = sssb(workspace('ci-no-apps'), ['ci', 'e2e-shards'])
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('the workspace has no apps')
+    })
+
+    it.each([['../outside'], ['/abs/apps/web']])('refuses %s in `sssb.apps`, as `--apps` does', (dir) => {
+        const root = workspace('ci-sssb-apps-out', { sssb: { apps: [dir] } })
+        const result = sssb(root, ['ci', 'matrix'])
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('each app is a directory inside the workspace')
+    })
+
     it('exits 1 for an unknown job', () => {
         const result = sssb(workspace('ci-unknown'), ['ci', 'deploy'])
         expect(result.status).toBe(1)

@@ -60,12 +60,13 @@ function sh(cwd, command) {
  * that went stale when an app was added is the way an app goes unchecked with every check green.
  * @param {string} root
  * @param {string | undefined} listed
+ * @param {{ warn?: boolean }} [options] `warn: false` for a job that covers the same apps as one that warns
  * @returns {string[]}
  */
-export function appsOf(root, listed) {
+export function appsOf(root, listed, { warn = true } = {}) {
     if (listed === undefined || listed.trim() === '') {
         const apps = workspaceApps(root)
-        warnLeftOut(root, apps, '`sssb.apps` in the root package.json')
+        if (warn) warnLeftOut(root, apps, '`sssb.apps` in the root package.json')
         return apps
     }
     /** @type {string[]} */
@@ -80,7 +81,7 @@ export function appsOf(root, listed) {
         const normal = normalAppDir(app)
         if (!apps.includes(normal)) apps.push(normal)
     }
-    warnLeftOut(root, apps, '--apps')
+    if (warn) warnLeftOut(root, apps, '--apps')
     return apps
 }
 
@@ -193,6 +194,7 @@ export async function run(args) {
         if (rest.length > 0) throw new UsageError(`usage: sssb ci ${job} [--apps <dirs>]`)
         const root = workspaceRootOf(process.cwd())
         const apps = appsOf(root, listed)
+        if (apps.length === 0) throw new UsageError(`sssb ci ${job}: the workspace has no apps`)
         const shards = e2eShards(root, apps)
         const noE2e = apps.filter((app) => !shards.some((shard) => shard.app === app))
         if (noE2e.length > 0) {
@@ -229,7 +231,8 @@ export async function run(args) {
         const listed = takeOption(rest, '--apps')
         if (rest.length > 0) throw new UsageError('usage: sssb ci lint-typecheck-unit [--apps <dirs>]')
         const root = workspaceRootOf(process.cwd())
-        const apps = appsOf(root, listed)
+        // `discover` (`sssb ci matrix`) warns about apps left out, for the same list; one warning a run is enough.
+        const apps = appsOf(root, listed, { warn: false })
         if (apps.length === 0) throw new UsageError('sssb ci lint-typecheck-unit: the workspace has no apps')
         const steps = [
             rootScript(root, job, ['lint']),
