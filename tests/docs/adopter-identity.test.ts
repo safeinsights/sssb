@@ -308,8 +308,8 @@ describe.runIf(isTemplate)('TEMPLATE: `pnpm init-app` scrubs the maintainer iden
         })
 
         // Two places correctly KEEP the maintainer's name, and must stay exempt:
-        it("LICENSE keeps the maintainer's name — MIT requires preserving the copyright notice verbatim", () => {
-            expect(readProbe('LICENSE')).toContain('JP Slavinsky')
+        it("LICENSE keeps the copyright holder's name — MIT requires preserving the copyright notice verbatim", () => {
+            expect(readProbe('LICENSE')).toContain('Copyright (c) 2026 Rice University')
         })
 
         it("docs/adr approver lines keep the maintainer's name — honest provenance for SSSB's own decisions", () => {
