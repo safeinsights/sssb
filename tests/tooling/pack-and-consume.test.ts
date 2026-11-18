@@ -7,8 +7,10 @@ import {
     checkE2eOkProblems,
     CONFORMANCE_DATA,
     conformanceProblems,
+    createPackageProblems,
     expectedConformanceTests,
     lockfileMoves,
+    packagesBeyondSeed,
     lockfileProblems,
     pluginManifestProblems,
     pluginShippedFileProblems,
@@ -107,8 +109,31 @@ describe('lockfileProblems', () => {
         ])
     })
 
+    it("accepts the generator's overrides of each @sssb package to its tarball, and fails one to anything else", () => {
+        const overridden = GOOD_LOCKFILE.replace(
+            'importers:\n',
+            "overrides:\n  '@sssb/kit': file:/run/tarballs/sssb-kit-0.1.0.tgz\n\nimporters:\n",
+        )
+        const { problems, seen } = lockfileProblems(overridden)
+        expect(problems).toEqual([])
+        expect(seen).toContain('overrides: @sssb/kit -> file:/run/tarballs/sssb-kit-0.1.0.tgz')
+        for (const [name, target] of [
+            ['@sssb/kit', '0.1.0'],
+            ['@sssb/kit', 'link:../kit'],
+            ['@sssb/app-config', 'file:/run/app-config.tgz'],
+        ]) {
+            const bad = overridden.replace("'@sssb/kit': file:/run/tarballs/sssb-kit-0.1.0.tgz", `'${name}': ${target}`)
+            expect(lockfileProblems(bad).problems, `${name} -> ${target}`).toEqual([
+                expect.stringContaining(`${name} is overridden to ${target}, not a local tarball`),
+            ])
+        }
+    })
+
     it('fails closed on an @sssb line it cannot classify', () => {
-        const odd = GOOD_LOCKFILE.replace('lockfileVersion', "overrides:\n  '@sssb/kit': 0.0.9\n\nlockfileVersion")
+        const odd = GOOD_LOCKFILE.replace(
+            'lockfileVersion',
+            "time:\n  '@sssb/kit@0.0.9': 2026-01-01\n\nlockfileVersion",
+        )
         expect(lockfileProblems(odd).problems).toEqual([expect.stringContaining('cannot classify')])
     })
 })
@@ -238,8 +263,8 @@ describe('the workaround register', () => {
     it('holds no workaround a step that has landed was to remove', () => {
         // P3 removed its four (types-pg, undeclared-typescript, demo-presets-seam-skipped,
         // strict-flags-kit-baseline). P5 removed conformance-by-include, and contract-test-dropped with the contract
-        // runner. Raise this as each later step lands.
-        const landed = new Set(['P1', 'P1b', 'P2', 'P3', 'P5'])
+        // runner. P12 removed its six when the consumer became @sssb/create's output. Raise this as each later step lands.
+        const landed = new Set(['P1', 'P1b', 'P2', 'P3', 'P5', 'P12'])
         for (const [id, workaround] of Object.entries(WORKAROUNDS))
             expect(landed.has(workaround.removedBy), id).toBe(false)
     })
@@ -450,6 +475,76 @@ describe('pluginShippedFileProblems', () => {
     })
 })
 
+describe('createPackageProblems', () => {
+    const manifest = { name: '@sssb/create', bin: { 'sssb-create': './bin/create.js' } }
+    const files = [
+        'package.json',
+        'bin/create.js',
+        'src/generate.js',
+        'template/meta.json',
+        'template/app/package.json',
+        'template/app/src/sssb.conformance.test.ts',
+        'template/app/_dot_env.example',
+        'template/root/_dot_editorconfig',
+    ]
+
+    it('passes the generator with its template and no dependency', () => {
+        expect(createPackageProblems(manifest, files)).toEqual([])
+    })
+
+    it('fails any dependency at all, a missing bin and a wrong name', () => {
+        expect(createPackageProblems({ ...manifest, dependencies: { kleur: '^4.0.0' } }, files)).toEqual([
+            'dependencies names kleur: @sssb/create runs with no dependency installed',
+        ])
+        expect(createPackageProblems({ ...manifest, peerDependencies: { '@sssb/kit': '0.1.0' } }, files)).toHaveLength(
+            1,
+        )
+        expect(createPackageProblems({ name: '@sssb/create' }, files)).toEqual(['the packed manifest has no bin'])
+        expect(createPackageProblems({ ...manifest, name: '@sssb/tools' }, files)).toHaveLength(1)
+        expect(
+            createPackageProblems(
+                manifest,
+                files.filter((f) => f !== 'bin/create.js'),
+            ),
+        ).toEqual(['./bin/create.js: the bin is not shipped'])
+    })
+
+    it('fails a template that was not packed, or not whole', () => {
+        expect(
+            createPackageProblems(
+                manifest,
+                files.filter((f) => !f.startsWith('template/')),
+            ),
+        ).toEqual([
+            'template/meta.json: the template is not packed whole',
+            'template/app/package.json: the template is not packed whole',
+            'template/app/src/sssb.conformance.test.ts: the template is not packed whole',
+        ])
+    })
+
+    it("fails a checkout's local state in the template, at any depth, and a stray or test file outside it", () => {
+        for (const file of [
+            'template/app/node_modules/x/index.js',
+            'template/app/_dot_next/server.js',
+            'template/app/_dot_data/pglite/base',
+            'template/app/_dot_env.local',
+            'template/app/infra/cdk.out/manifest.json',
+            'template/app/test-results/trace.zip',
+            'template/app/tsconfig.tsbuildinfo',
+        ]) {
+            expect(createPackageProblems(manifest, [...files, file]), file).toEqual([
+                expect.stringMatching(new RegExp(`^${file.replaceAll('.', '\\.')}: a checkout's local state`)),
+            ])
+        }
+        expect(createPackageProblems(manifest, [...files, 'src/generate.test.js'])).toEqual([
+            'src/generate.test.js: a test file is shipped',
+        ])
+        expect(createPackageProblems(manifest, [...files, 'scripts/build-template.js'])).toEqual([
+            'scripts/build-template.js: outside bin/, src/ and template/',
+        ])
+    })
+})
+
 describe('lockfileMoves', () => {
     it("ignores the framework's own entries, which change with every build and release", () => {
         const bumped = GOOD_LOCKFILE.replaceAll('sssb-kit-0.1.0', 'sssb-kit-0.2.0')
@@ -461,6 +556,21 @@ describe('lockfileMoves', () => {
     it("ignores @sssb/tools' entries the same way", () => {
         const bumped = WITH_TOOLS.replaceAll('sssb-tools-0.1.0', 'sssb-tools-0.2.0').replace('sha512-tools', 'sha512-x')
         expect(lockfileMoves(WITH_TOOLS, bumped)).toEqual({ added: 0, removed: 0 })
+    })
+
+    it("ignores @sssb/cdk's entries, and the generator's overrides of every @sssb package, the same way", () => {
+        const entry = TOOLS_ENTRY.replaceAll('sssb/tools', 'sssb/cdk')
+            .replaceAll('sssb-tools-', 'sssb-cdk-')
+            .replace('sha512-tools', 'sha512-cdk')
+        const withCdk = GOOD_LOCKFILE.replace('snapshots:\n', `${entry}snapshots:\n`).replace(
+            'importers:\n',
+            "overrides:\n  '@sssb/cdk': file:/run/tarballs/sssb-cdk-0.1.0.tgz\n  '@sssb/kit': file:/run/tarballs/sssb-kit-0.1.0.tgz\n\nimporters:\n",
+        )
+        const bumped = withCdk
+            .replaceAll('sssb-cdk-0.1.0', 'sssb-cdk-0.2.0')
+            .replaceAll('sssb-kit-0.1.0', 'sssb-kit-0.2.0')
+            .replace('sha512-cdk', 'sha512-x')
+        expect(lockfileMoves(withCdk, bumped)).toEqual({ added: 0, removed: 0 })
     })
 
     it("ignores @sssb/eslint-plugin's entries the same way", () => {
@@ -481,6 +591,26 @@ describe('lockfileMoves', () => {
             '        version: link:src/app-config\n      react: 19.2.9\n',
         )
         expect(lockfileMoves(GOOD_LOCKFILE, moved)).toEqual({ added: 1, removed: 0 })
+    })
+})
+
+describe('packagesBeyondSeed', () => {
+    const seed = `${GOOD_LOCKFILE.replace(
+        'snapshots:\n',
+        "  react@19.2.9:\n    resolution: {integrity: sha512-r}\n\n  'left-pad@1.3.0':\n    resolution: {integrity: sha512-l}\n\nsnapshots:\n",
+    )}  left-pad@1.3.0:\n    optional: true\n`
+
+    it('holds a subset of the seed to it, whatever flags moved and whichever packages went, and the framework aside', () => {
+        const subset = seed
+            .replace("  'left-pad@1.3.0':\n    resolution: {integrity: sha512-l}\n\n", '')
+            .replace('    optional: true\n', '')
+            .replaceAll('sssb-kit-0.1.0', 'sssb-kit-0.2.0')
+        expect(packagesBeyondSeed(seed, subset)).toEqual([])
+    })
+
+    it('names a package version the seed does not hold, quoted or not', () => {
+        const moved = seed.replace('  react@19.2.9:', '  react@19.3.1:').replace("'left-pad@1.3.0'", "'left-pad@1.3.1'")
+        expect(packagesBeyondSeed(seed, moved)).toEqual(['react@19.3.1', 'left-pad@1.3.1'])
     })
 })
 

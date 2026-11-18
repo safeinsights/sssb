@@ -96,6 +96,16 @@ export function lockfileProblems(lockfile) {
         if (indent === 4 && /^\s+[A-Za-z]+:\s*$/.test(line)) group = line.trim().slice(0, -1)
         if (!line.includes('@sssb/')) continue
 
+        // A workspace generated from tarballs (`@sssb/create --sssb <dir>`) overrides every @sssb package to its
+        // tarball, and pnpm records the overrides: `  '@sssb/kit': file:/…/sssb-kit-0.1.0.tgz`.
+        const override =
+            section === 'overrides' && indent === 2 ? /^ {2}'(@sssb\/[^']+)':\s*(\S+)\s*$/.exec(line) : null
+        if (override) {
+            seen.push(`overrides: ${override[1]} -> ${override[2]}`)
+            if (override[1] === '@sssb/app-config' || !isLocal(override[1], override[2]))
+                problems.push(`${where}: ${override[1]} is overridden to ${override[2]}, not a local tarball`)
+            continue
+        }
         // packages: and snapshots: are keyed `  '@sssb/kit@<version>':`, the snapshot key with peer suffixes.
         const key = indent === 2 ? /^ {2}'(@sssb\/[^@']+)@([^']+)':\s*$/.exec(line) : null
         if (key && (section === 'packages' || section === 'snapshots')) {
@@ -383,6 +393,66 @@ export function pluginShippedFileProblems(files) {
 }
 
 /**
+ * Local state a developer's checkout holds under the starter, as the packed template stores it (a leading `.` in a
+ * path segment is stored as `_dot_`): none of it may reach an adopter's workspace.
+ */
+const TEMPLATE_LOCAL_STATE = new Set([
+    'node_modules',
+    '_dot_next',
+    '_dot_data',
+    'test-results',
+    'playwright-report',
+    'coverage',
+    'cdk.out',
+    'dist-demo',
+])
+
+/**
+ * The packed @sssb/create (ADR-0014 P12): named so, with its bin, no dependency at all (it runs before anything is
+ * installed, and depends on no SSSB package, rule 4), shipping JavaScript under bin/ and src/ and the template its
+ * prepack built (template/meta.json, the app under template/app/), and none of a checkout's local state in that
+ * template. Returns the problems.
+ * @param {Record<string, unknown>} manifest
+ * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
+ */
+export function createPackageProblems(manifest, files) {
+    const problems = []
+    if (manifest.name !== '@sssb/create')
+        problems.push(`the packed manifest is named ${manifest.name}, not @sssb/create`)
+    const bin = /** @type {Record<string, string> | undefined} */ (manifest.bin)
+    if (typeof bin !== 'object' || bin === null || Object.values(bin).length === 0)
+        problems.push('the packed manifest has no bin')
+    for (const field of /** @type {const} */ (['dependencies', 'peerDependencies', 'optionalDependencies'])) {
+        for (const dep of Object.keys(/** @type {Record<string, string>} */ (manifest[field] ?? {})))
+            problems.push(`${field} names ${dep}: @sssb/create runs with no dependency installed`)
+    }
+    for (const file of files) {
+        if (['package.json', 'README.md', 'LICENSE'].includes(file)) continue
+        if (file.startsWith('template/')) {
+            const segments = file.split('/')
+            const local = segments.find(
+                (segment) =>
+                    TEMPLATE_LOCAL_STATE.has(segment) ||
+                    segment.endsWith('.tsbuildinfo') ||
+                    (segment.startsWith('_dot_env') && segment !== '_dot_env.example'),
+            )
+            if (local) problems.push(`${file}: a checkout's local state (${local}) is in the template`)
+        } else if (!/^(bin|src)\//.test(file)) problems.push(`${file}: outside bin/, src/ and template/`)
+        else if (/\.test\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test file is shipped`)
+        else if (!/\.js$/.test(file)) problems.push(`${file}: not JavaScript`)
+    }
+    for (const entry of [
+        'template/meta.json',
+        'template/app/package.json',
+        'template/app/src/sssb.conformance.test.ts',
+    ])
+        if (!files.includes(entry)) problems.push(`${entry}: the template is not packed whole`)
+    for (const entry of Object.values(bin ?? {}))
+        if (!files.includes(entry.replace(/^\.\//, ''))) problems.push(`${entry}: the bin is not shipped`)
+    return problems
+}
+
+/**
  * How far a lockfile moved from its seed, leaving out the packed SSSB packages' own entries (a tarball's name,
  * integrity and version change with every build or release, and are this run's to change). Lines are
  * compared as a multiset, so an edge that moves to a line some other entry already has still counts.
@@ -397,9 +467,9 @@ export function lockfileMoves(seed, lockfile) {
         let inSssbBlock = false
         for (const line of text.split('\n')) {
             // A `packages:` or `snapshots:` entry for a packed SSSB package: its key and every line indented under it.
-            if (/^ {2}'@sssb\/(kit|tools|eslint-plugin)@/.test(line)) inSssbBlock = true
+            if (/^ {2}'@sssb\/(kit|tools|eslint-plugin|cdk)@/.test(line)) inSssbBlock = true
             else if (/^ {0,2}\S/.test(line)) inSssbBlock = false
-            if (inSssbBlock || /sssb-(kit|tools|eslint-plugin)-/.test(line)) continue
+            if (inSssbBlock || /sssb-(kit|tools|eslint-plugin|cdk)-/.test(line)) continue
             counts.set(line, (counts.get(line) ?? 0) + 1)
         }
         return counts
@@ -411,6 +481,31 @@ export function lockfileMoves(seed, lockfile) {
     for (const [line, n] of after) added += Math.max(0, n - (before.get(line) ?? 0))
     for (const [line, n] of before) removed += Math.max(0, n - (after.get(line) ?? 0))
     return { added, removed }
+}
+
+/**
+ * The package versions a lockfile resolved that its seed does not hold: its `packages:` keys (`  name@version:`) less
+ * the seed's, the packed SSSB packages' own left out. For a workspace whose importers are a SUBSET of the seed's, where
+ * a line-by-line comparison also counts the flags pnpm moves when importers drop out (`optional: true`), this is what
+ * says its resolution left the seed.
+ * @param {string} seed
+ * @param {string} lockfile
+ */
+export function packagesBeyondSeed(seed, lockfile) {
+    /** @param {string} text */
+    const keys = (text) => {
+        /** @type {Set<string>} */
+        const out = new Set()
+        let section = ''
+        for (const line of text.split('\n')) {
+            if (/^[A-Za-z]+:/.test(line)) section = line.slice(0, line.indexOf(':'))
+            else if (section === 'packages' && /^ {2}\S.*:\s*$/.test(line) && !/^ {2}'?@sssb\//.test(line))
+                out.add(line.trim().replace(/^'|':$|:$/g, ''))
+        }
+        return out
+    }
+    const known = keys(seed)
+    return [...keys(lockfile)].filter((key) => !known.has(key))
 }
 
 /**

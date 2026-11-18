@@ -102,22 +102,67 @@ jobs:
                   REPO: ${{ github.repository }}
               run: bash .github/scripts/require-changeset.sh
 
-    # TODO(P12-adoption-probe): the `adoption-probe` job goes here: it generates a workspace with the packed
-    # @sssb/create and runs its verify. The name is kept because the rulesets require a check called `adoption-probe`.
+    # ADR-0014 P12: a new adopter's workspace, as `pnpm create @sssb` makes it. Packs every @sssb package, runs the
+    # PACKED @sssb/create (extracted from its tarball, under plain Node) into a scratch directory with the tarballs as
+    # its packages, installs, and runs that workspace's OWN gates with not one of its files changed: `pnpm verify`
+    # (e2e and the static demo included), `pnpm test:contract` on embedded Postgres, the reusable workflow's
+    # `sssb ci lint-typecheck-unit`, `pnpm synth` and `pnpm jscpd`. A required check, under the name the rulesets
+    # already require. It is pack and consume's second shape (`--shape generated`), and the job below runs the first:
+    # two jobs side by side rather than one running both, so each is its own required check and neither waits on the
+    # other. Packing, the install of the kit's own dependencies for its prepack (the generator's prepack is plain Node
+    # and needs none) and the caches are the job below's, keyed the same: both workspaces install from the one seed.
+    adoption-probe:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+            - name: locate the pnpm store
+              id: pnpm-store
+              run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: ${{ steps.pnpm-store.outputs.path }}
+                  key: pack-and-consume-pnpm-${{ runner.os }}-${{ hashFiles('scripts/pack-and-consume/consumer-lock.yaml') }}
+                  restore-keys: pack-and-consume-pnpm-${{ runner.os }}-
+            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: ~/.cache/ms-playwright
+                  key: pack-and-consume-playwright-${{ runner.os }}-${{ hashFiles('scripts/pack-and-consume/consumer-lock.yaml') }}
+                  restore-keys: pack-and-consume-playwright-${{ runner.os }}-
+            - name: install the kit's own dependencies, for its prepack build
+              run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit
+            - run: node scripts/pack-and-consume.mjs --shape generated --dir "$RUNNER_TEMP/adoption-probe"
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              if: failure()
+              with:
+                  name: adoption-probe-e2e
+                  path: |
+                      ${{ runner.temp }}/adoption-probe/generated/apps/*/test-results/
+                      ${{ runner.temp }}/adoption-probe/generated/apps/*/playwright-report/
+                  retention-days: 7
 
-    # ADR-0014 rule 5 (P2): the framework as an adopter gets it. Packs @sssb/kit, installs the TARBALL
-    # into an adopter-shaped workspace built outside this checkout from copies of apps/starter (two apps
-    # with different seams linked by `link:`, a sibling package, and a seamless importer that must fail),
-    # and runs that workspace's verify. Inside this repo workspace links and per-app aliases resolve the
-    # framework and the seam, which hides exactly what an adopter would hit; every step's logic is in
-    # scripts/pack-and-consume.mjs, so `pnpm pack-and-consume` reproduces this job locally.
+    # ADR-0014 rule 5 (P2): the framework as an adopter gets it, in the first adopter's shape. Packs every @sssb
+    # package and generates a workspace outside this checkout with the PACKED @sssb/create, then shapes it like
+    # safeinsights/pages: two apps with different seams linked by `link:` (the second one the generator's too), an
+    # app-owned adapter, a sibling package, and a seamless importer that must fail. It installs the TARBALLS and runs
+    # the script's checks over that workspace (`--shape pages`): typecheck with the strict flags, the unit and contract
+    # suites from the root, doctor, check-e2e, the fences, the migrator bundles, next build and e2e. Inside this repo
+    # workspace links and per-app aliases resolve the framework and the seam, which hides exactly what an adopter would
+    # hit; every step's logic is in scripts/pack-and-consume.mjs, so `pnpm pack-and-consume` reproduces this job, and
+    # the one above, locally.
     #
     # No `pnpm install` of the whole repo: the job needs only `pnpm pack`, and of this repo's packages only the kit has
-    # a pack-time build (its `prepack` compiles @sssb/kit/testing/e2e with esbuild and typescript, its devDependencies),
-    # so the step before the script installs the kit's own dependencies and nothing else. The consumer installs from its own
-    # committed lockfile seed (scripts/pack-and-consume/consumer-lock.yaml), so its caches are keyed on
-    # that file, under prefixes of their own: sharing setup-node's pnpm cache key would let this job save
-    # a store holding only the consumer's packages for every other job to restore.
+    # a pack-time build that needs dependencies (its `prepack` compiles @sssb/kit/testing/e2e with esbuild and
+    # typescript, its devDependencies; @sssb/create's builds its template with Node alone), so the step before the
+    # script installs the kit's own dependencies and nothing else. The consumer installs from its own committed lockfile
+    # seed (scripts/pack-and-consume/consumer-lock.yaml), so its caches are keyed on that file, under prefixes of their
+    # own: sharing setup-node's pnpm cache key would let this job save a store holding only the consumer's packages for
+    # every other job to restore.
     pack-and-consume:
         runs-on: ubuntu-latest
         permissions:
@@ -146,7 +191,7 @@ jobs:
             # and the pack needs no install script (esbuild's binary arrives as an optional dependency).
             - name: install the kit's own dependencies, for its prepack build
               run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit
-            - run: node scripts/pack-and-consume.mjs --dir "$RUNNER_TEMP/pack-and-consume"
+            - run: node scripts/pack-and-consume.mjs --shape pages --dir "$RUNNER_TEMP/pack-and-consume"
             # On CI the starter's Playwright reporter is `github`, so the evidence on a failure is the
             # traces under test-results/ (trace: on-first-retry), not an HTML report.
             - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

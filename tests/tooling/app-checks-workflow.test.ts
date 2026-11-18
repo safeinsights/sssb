@@ -260,8 +260,7 @@ describe("checks.yml's call to it", () => {
 describe('the check names the rulesets require', () => {
     // The names that do not depend on which apps the tree holds: a job renamed or added fails this.
     const FIXED = [
-        // TODO(P12-adoption-probe): the init-app probe is gone; a job of the same name, which generates a workspace with
-        // the packed @sssb/create and runs its verify, replaces it. The name stays because the ruleset requires it.
+        // Pack and consume's generated shape: the packed @sssb/create's workspace, and its own verify (ADR-0014 P12).
         'adoption-probe',
         'changeset-required',
         'pack-and-consume',
