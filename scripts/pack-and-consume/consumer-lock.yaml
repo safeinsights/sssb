@@ -149,12 +149,6 @@ importers:
         specifier: file:../../../tarballs/tools/sssb-tools-0.1.0.tgz
         version: file:../tarballs/tools/sssb-tools-0.1.0.tgz(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))
 
-  packages/seamless:
-    dependencies:
-      '@sssb/kit':
-        specifier: file:../../../tarballs/kit/sssb-kit-0.1.0.tgz
-        version: file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))
-
 packages:
 
   '@adobe/css-tools@4.5.0':
@@ -1617,7 +1611,7 @@ packages:
     engines: {node: '>=18.0.0'}
 
   '@sssb/kit@file:../tarballs/kit/sssb-kit-0.1.0.tgz':
-    resolution: {integrity: sha512-7AQFlIcvhhyRcw/Xivo2FujnGtUAwYM2BmxPbT6h2hwIHJe/T0JKU7H6aLQ9H6ZZsTTjkPDgt4h22IZG7sQowA==, tarball: file:../tarballs/kit/sssb-kit-0.1.0.tgz}
+    resolution: {integrity: sha512-s0sgTDCfFdrKvCaBduphgAs52lBmCBB/CsDd2bDx1dHT6jxpl70bN1JPNaKlD1q4+GDLleMWQaO/vY+JqFil4g==, tarball: file:../tarballs/kit/sssb-kit-0.1.0.tgz}
     version: 0.1.0
     peerDependencies:
       '@mantine/core': ^9.7.3
@@ -1640,7 +1634,7 @@ packages:
         optional: true
 
   '@sssb/tools@file:../tarballs/tools/sssb-tools-0.1.0.tgz':
-    resolution: {integrity: sha512-Ud7NWZ6HRLEzzJAfOkPCXeXxKONsINkxECuPnJD3WpnopdMu3LRAyJEnFu+eGXWTCWcuSQ5MM2MMU62K58CHZw==, tarball: file:../tarballs/tools/sssb-tools-0.1.0.tgz}
+    resolution: {integrity: sha512-bMcEbcouhQ5PWOyW6cHI566fD+yfcMnwpKY3mShzRvBspc9yU+9zuFTzDpsp3GSlT9pxpRccDQreB8dNtOt1UQ==, tarball: file:../tarballs/tools/sssb-tools-0.1.0.tgz}
     version: 0.1.0
     engines: {node: '>=24'}
     hasBin: true
@@ -4131,53 +4125,6 @@ snapshots:
       valibot: 1.5.0(typescript@6.0.3)
     optionalDependencies:
       '@sssb/app-config': link:apps/ledger/src/app-config
-      embedded-postgres: 18.4.0-beta.17
-      vitest: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
-    transitivePeerDependencies:
-      - '@cloudflare/workers-types'
-      - '@opentelemetry/api'
-      - debug
-      - pg-native
-      - react-dom
-      - react-router
-      - rxjs
-      - supports-color
-      - vite
-      - webpack
-      - wrangler
-      - zod
-
-  '@sssb/kit@file:../tarballs/kit/sssb-kit-0.1.0.tgz(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@types/react@19.3.0)(embedded-postgres@18.4.0-beta.17)(kysely@0.29.9)(next-intl@4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))(vitest@4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)))':
-    dependencies:
-      '@anthropic-ai/sdk': 1.8.0
-      '@aws-sdk/client-codebuild': 3.1169.0
-      '@aws-sdk/client-rds-data': 3.1169.0
-      '@aws-sdk/client-s3': 3.1169.0
-      '@aws-sdk/client-secrets-manager': 3.1169.0
-      '@aws-sdk/s3-presigned-post': 3.1169.0
-      '@aws-sdk/s3-request-presigner': 3.1169.0
-      '@clerk/nextjs': 7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@electric-sql/pglite': 0.5.16
-      '@mantine/core': 9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@mantine/form': 9.8.1(react@19.3.1)
-      '@react-email/components': 1.0.12(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@react-email/render': 2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@sentry/nextjs': 11.12.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
-      '@types/node': 26.6.6
-      '@types/pg': 8.23.1
-      '@types/react': 19.3.0
-      jose: 6.2.17
-      kysely: 0.29.9
-      mailgun.js: 14.1.1
-      next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      next-intl: 4.15.1(@swc/helpers@0.5.23)(@types/react@19.3.0)(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
-      pg: 8.23.1
-      posthog-node: 5.74.0(@opentelemetry/api@1.10.0)(@react-email/render@2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1))
-      react: 19.3.1
-      server-only: 0.0.1
-      typescript: 6.0.3
-      valibot: 1.5.0(typescript@6.0.3)
-    optionalDependencies:
       embedded-postgres: 18.4.0-beta.17
       vitest: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
     transitivePeerDependencies:
