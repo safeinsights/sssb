@@ -4710,6 +4710,56 @@ cause, in pnpm's source). Each decision, and what was rejected:
 - **Not covered: `nodeLinker: hoisted`.** One hoisted `@sssb/kit` cannot hold two apps' seams; with two apps doctor
   fails it ("runs on a seam not its own"), as it did before this change.
 
+## `sssb doctor` needs nodeLinker isolated, and stops a vitest list that never ends (2026-11-18, `fix/doctor-nodelinker-pnp`)
+
+The workspace-package seam's review (the entry above) found `pnpm sssb:doctor` hanging under `nodeLinker: pnp`.
+Measured in a workspace `@sssb/create` generated, with `nodeLinker: pnp` (pnpm 11.14.0):
+
+- **Run directly, doctor finished and said "sssb doctor: ok"**: a false pass on a layout nothing of SSSB's is built for.
+- **Run as `pnpm sssb:doctor`, it hung.** `pnpm run` puts `--require=<root>/.pnp.cjs` in `NODE_OPTIONS`, and the
+  `vitest list` child doctor spawns, inheriting it, never finished. The same listing without that option finished in
+  under 3 s.
+- **Under `nodeLinker: hoisted`, doctor failed only indirectly** ("runs on a seam not its own", from the seam check),
+  never naming the cause.
+
+Decisions, each with what was rejected:
+
+- **Doctor requires `isolated`, pnpm's default, with no Plug'n'Play left, and checks it first, alone**
+  (`nodeLinkerProblem`, `packages/tools/src/commands/doctor-checks.js`, called at the top of `run` in
+  `packages/tools/src/commands/doctor.js`). It reads the layout pnpm actually installed, `nodeLinker` in the root's
+  `node_modules/.modules.yaml` (JSON in pnpm 11; a damaged or YAML file is read for a `nodeLinker` key, and one that
+  cannot be read fails), rather than the setting (`pnpm-workspace.yaml`, an environment variable or a flag could each ask
+  for it; pnpm 11 ignores `node-linker` in `.npmrc`). Both `pnp` and `hoisted` fail. So does a `.pnp.cjs` left at the root (pnpm writes and loads no other PnP file), and
+  doctor's own `NODE_OPTIONS` loading a `.pnp.cjs`: the review found that removing the setting and reinstalling leaves
+  `.pnp.cjs` behind, `pnpm run` keeps loading it, and doctor then spent 6 minutes on three killed listings and printed
+  two false FAILs (PnP resolving inside doctor itself). The message names the setting to remove and the file to delete.
+  Nothing else is checked, since every other check reads the isolated layout. Rejected: supporting `pnp` (pnpm 11
+  still builds the isolated `node_modules` there, but `.pnp.cjs` makes every script resolve through Plug'n'Play, which
+  doctor's checks and Vitest's listing do not survive) or `hoisted` (one instance for every app, against ADR-0014 part
+  5's own instance per app, linked to its own seam); failing only `pnp` (`hoisted` breaks the same model, and doctor's indirect failure there named the
+  wrong cause); stripping PnP from the listing's environment (doctor's own resolution was wrong too).
+- **Not added to the shared kit resolver** (`packages/tools/src/kit.js`). It resolved the kit under pnp (pnpm still
+  links direct dependencies into `node_modules` there), so the other `sssb` commands are left to fail on their own;
+  doctor, which every workspace's `pnpm verify` runs, is where the layout is named. Rejected: checking the layout on
+  every resolution, a file read per command for a setting doctor already names.
+- **A `vitest list` that runs past 120 s is killed, with every process it started** (`SSSB_DOCTOR_VITEST_TIMEOUT`
+  seconds overrides it, rounded up to whole milliseconds; `vitestList` in `packages/tools/src/commands/doctor-vitest.js`),
+  and reported as that listing's error ("did not finish within …"), which doctor already turns into a problem, so no
+  other cause can hang it. A small launcher (`node -e`) runs Vitest in a process group of its own and kills the group (on Windows, Vitest's own process only):
+  the review found that killing Vitest's own process left a pool worker of a hung test file running under init, and
+  `SIGTERM` does no better. After one listing runs out of time, doctor returns "not listed, since an earlier listing ran out of time (…)" for every later listing
+  instead of waiting again (`listOnce`, `doctor.js`), so one hang costs one limit, not one per config. 120 s is far
+  above the few seconds a listing takes. Rejected: no limit (a `spawnSync` that never returns also blocks a test
+  runner's own timeout, as the probe of this very test showed); writing the child's output to files instead of pipes
+  (tried, for a grandchild holding a pipe: `spawnSync` returned at the limit either way, so it bought nothing).
+- **Tests** (`tests/tooling/tools-doctor.test.ts`): `nodeLinkerProblem` on isolated, pnp, hoisted, nothing installed,
+  a truncated or YAML record, an unreadable one, PnP files left at the root and a `NODE_OPTIONS` loading one; doctor end
+  to end on a workspace marked pnp fails at once with only that problem; a fake `vitest` that never exits, with a
+  "worker" that never exits either, is stopped at a 1 s limit with the worker dead, and at the environment's
+  (`0.0015`, rounded); doctor end to end on configs that never load waits out one 3 s limit and reports the other
+  listings as not listed. Seen red, one guard at a time: each of these fails without its guard; with no limit at all the test
+  never returns, and ignoring the variable it fails only after the 120 s default limit.
+
 ## `sssb doctor` works from the root with no `--app`, rather than every instruction learning `--app` (2026-11-18, `fix/doctor-from-root`)
 
 Found by the seam-link session: the files `@sssb/create` generates, its README among them, tell people to run
@@ -4773,3 +4823,29 @@ What each tool does with the moved files, decided one by one (`.changeset/README
 - **No changeset in this PR**: nothing it changes is a gated path. The changeset on `integration` already (`@sssb/tools`,
   `@sssb/create`: doctor from the root) is what lets the next merge to `main` cut `rc.1`; a merge of `main` into
   `integration` planned `0.2.0-rc.0 -> 0.2.0-rc.1` from it.
+## A vouched-for bypass actor on an organisation ruleset passes `release-app verify` (2026-11-18, `fix/release-app-verify-org-bypass`)
+
+JP created the release app (App 5820735), and `pnpm release-app verify --app-id 5820735` failed on one thing: the
+organisation ruleset `require-pr` (7484436) also lets App 4038189, canopycms-release-bot, bypass it always, and
+`release.yml` assumes the release app is the only actor that can push to `main` past it. JP says that App is installed
+on `safeinsights/canopycms` only, so it cannot reach this repository. The API shows only part of that: the
+organisation's installation list (which `verify` already reads with the operator's own token) says the App is
+installed once, on selected repositories, but which repositories are selected needs a token this tool does not have.
+
+- **A checked-in list, not a flag.** `VOUCHED_ORG_BYPASSES` in `scripts/release-app/rulesets.ts` names each actor a
+  person has vouched for: the organisation ruleset's id, the actor's type and id, its name, a one-line reason, who
+  vouched and the date. `verify` and `bypass` report each as a ✓ with that reason, and anything else on an
+  organisation ruleset the release meets still fails. A command-line flag was rejected: it would widen the check for
+  whatever it named, a typo included, with no record of who decided or why.
+- **Exact matches only, and Apps only.** An entry covers one App (`Integration` and its id) on one ruleset; the same
+  App on another ruleset, another actor type with the same id, or a neighbouring id is not covered. An organisation
+  admin, a team or a role cannot be vouched for: "cannot reach this repository" is never true of one.
+- **The vouch holds only while the installation list agrees.** `verify` and `bypass` read the organisation's
+  installations and accept the vouch only while the App is installed exactly once, on selected repositories, and not
+  suspended; otherwise it is a ✗ that says what changed. So the drift nobody would notice (the App moved to all
+  repositories, a second installation) turns the check red; the part the tool cannot see (which repositories are
+  selected) stays the person's word. The review of this change found the tool already read that list, which the
+  first version of this entry said it could not.
+- **The first entry:** Integration 4038189 on `require-pr`, canopycms-release-bot, installed on
+  `safeinsights/canopycms` only, vouched for by JP on 2026-11-18. It has to be re-vouched or removed if that App is
+  ever installed on more repositories.
