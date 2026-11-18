@@ -11,8 +11,9 @@ import { runWithTenant } from './with-tenant'
  * over one shared set of fixtures, as a single call both engines make.
  *
  * WHY IT LIVES IN THE PACKAGE. The suite has two consumers on opposite sides of the framework/app line —
- * packages/kit/src/db/rls-pglite.test.ts (unit, pglite) and tests/support/contract-suite.ts (contract,
- * real Postgres; every app's tests/contract file calls it) — and they must run the IDENTICAL assertions or
+ * the conformance suite's `rls-pglite` check (packages/kit/src/testing/conformance/db.ts; unit, pglite) and the
+ * contract runner's `contract-rls` check (packages/kit/src/testing/contract.ts, `@sssb/kit/testing/contract`; real
+ * Postgres; every app's tests/contract file calls it) — and they must run the IDENTICAL assertions or
  * the anti-drift guarantee is gone. A repo-root composition point would force the package's own test to escape its tree with a
  * relative `../../../../` import, which is precisely the wart ADR-0012 recorded and this file closes.
  * So the framework owns the composition and reads the app's half through the seam: `@sssb/app-config/db/

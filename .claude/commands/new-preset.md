@@ -12,9 +12,11 @@ tour can start from it. The contract and every operation kind's rules are in
 `packages/kit/src/core/presets.ts`; the worked examples are `apps/showcase/src/app-config/presets/`.
 
 1. **Register.** One file per preset, `apps/showcase/src/app-config/presets/<id>.ts`, exporting a `DemoPreset`
-   (`@sssb/kit/core/presets`); import it into `presets` in `apps/showcase/src/app-config/presets.ts`. The array's
-   order is the order the Snapshots tab lists them, and a base may sit anywhere in it. The registration is PURE
-   TypeScript — the static demo bundles it — so it imports nothing server-only. A script fragment you want to
+   (`@sssb/kit/core/presets`); import it into `presets` in `apps/showcase/src/app-config/presets/list.ts`, which
+   the seam's `presets.ts` re-exports. The array's order is the order the Snapshots tab lists them, and a base may
+   sit anywhere in it. The registration is PURE TypeScript — the static demo bundles it — so it imports nothing
+   server-only; and a preset file takes only TYPES from the kit, because the static demo's Playwright spec loads
+   the list, and a spec reaches the kit only through `@sssb/kit/testing/e2e` (ADR-0014 part 2). A script fragment you want to
    reuse by hand rather than through `extends` is a plain `PresetOperation[]` constant (the showcase's
    `presets/morning-tickets.ts` is one, used by `mid-demo`).
     - **`id`** is a world-start name: lowercase letters, digits and hyphens, starting with a letter or digit,
@@ -74,7 +76,8 @@ tour can start from it. The contract and every operation kind's rules are in
    and never survives into the next preset; a child can release what its base held.
 8. **What the build enforces, and how to read it.** Three layers, none of which you edit for a new preset:
     - `presetProblems` (`packages/kit/src/core/presets.ts`), run by
-      `packages/kit/src/server-lib/demo-presets-seam.test.ts` under EVERY app's vitest project against a world
+      the conformance suite's `demo-presets` check (`packages/kit/src/testing/conformance/demo-presets.ts`), which
+      every app runs from its `apps/<app>/src/sssb.conformance.test.ts`, against a world
       derived from the seed and the registries, never hand-listed. A problem reads
       `preset "<id>" operation <n> (<kind>): <sentence>`: the number is in the expanded script, base first, so
       a base's own problem repeats under every preset that extends it. It fails an unknown kind, a bad argument
@@ -97,8 +100,9 @@ tour can start from it. The contract and every operation kind's rules are in
    where a saved snapshot's name does not (`apps/showcase/src/app-config/tours.test.ts` rejects one). The
    tour's first step should say what the preset already set up. The rest is `/new-tour`.
 10. **Verify.**
-    - Fast loop: `pnpm exec vitest run packages/kit/src/server-lib/demo-presets-seam.test.ts` (it runs under
-      every app's project); `pnpm test:unit` adds `tours.test.ts` and the i18n parity pair.
+    - Fast loop: `pnpm exec vitest run apps/showcase/src/sssb.conformance.test.ts` (the conformance suite, whose
+      `demo-presets` check replays every preset, and whose i18n checks hold the copy); `pnpm test:unit` adds
+      `tours.test.ts`.
     - Assert what the preset VISIBLY did, on both hosts: the server in the `presets:` test of
       `apps/showcase/tests/e2e/destructive/simulator-snapshots.spec.ts` (destructive: it resets the world),
       the static demo in the load test beside the loop in `static-shell.spec.ts`. Run the first with

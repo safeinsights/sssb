@@ -11,18 +11,25 @@
 //
 // The workspace, laid out like the first adopter's (safeinsights/pages):
 //   apps/console   the full verify: typecheck at the ES2022 floor and with the strict-flag set on, unit
-//                  tests with the framework's seam-conformance suites run from the tarball, the
-//                  migrator bundle, `next build`, e2e, the static demo, its size and its e2e. It owns an
-//                  adapter (src/adapters/real/), and a seam module that imports through its `@/` alias.
+//                  tests with the conformance suite (@sssb/kit/testing) run from the tarball, its contract
+//                  suite (@sssb/kit/testing/contract) on embedded Postgres, the migrator bundle, `next build`,
+//                  e2e, the static demo, its size and its e2e. It owns an
+//                  adapter (src/adapters/real/), a seam module that imports through its `@/` alias, and an e2e spec
+//                  that imports `@sssb/kit/testing/e2e` and an app domain module, which `sssb check-e2e` must pass,
+//                  Playwright must load (`--list`, even with `--skip-build-and-e2e`), and whose negatives (specs
+//                  reaching the framework's source, dropped in for one run, which Playwright cannot list) check-e2e
+//                  must fail, naming the kit file.
 //                  Each app lints with its own eslint.config.mjs (the plugin's preset), from the workspace root
 //                  and from the app, and passes `sssb check-fences`; the console has a lint-exceptions.mjs entry.
 //   apps/ledger    a second app with a different seam (its own slug and an extra migration, imported
-//                  through `@/`): typecheck, unit + conformance, and the migrator bundle, which must
+//                  through `@/`): typecheck, unit + conformance, contract, and the migrator bundle, which must
 //                  hold its own migrations and not the console's.
 //   packages/gate  a sibling package that does not use the framework at all, only @sssb/tools' scratch-directory
 //                  helper (ADR-0014 part 3: the helpers that touch no seam are any workspace package's).
 //   packages/seamless  the NEGATIVE fixture: it takes @sssb/kit without linking a seam, and must fail
-//                  loudly rather than run on another app's seam (ADR-0014 part 5).
+//                  loudly rather than run on another app's seam (ADR-0014 part 5). It joins the workspace only
+//                  after the verify (a second install), because `sssb doctor` walks every package: the verify's
+//                  doctor runs green without it, and with it doctor must NAME it.
 //
 // Today's gaps between that and what an adopter should need are named workarounds
 // (scripts/pack-and-consume/workarounds.mjs), each tied to the step that removes it.
@@ -48,7 +55,9 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-    CONFORMANCE_SUITES,
+    checkE2eFailProblems,
+    checkE2eOkProblems,
+    expectedConformanceTests,
     STRICT_FLAGS,
     conformanceProblems,
     tarballIntegrities,
@@ -331,10 +340,8 @@ export default [...(await sssb.configs.app({ root: import.meta.dirname }))]
         `export const APP_SLUG = '${slug}'`,
     )
 
-    // The real-Postgres contract test runs through this repo's tests/support harness, which no package
-    // ships yet. It is not part of this job's verify (CI's contract job runs it for both apps in-repo).
-    applyWorkaround('contract-test-dropped')
-    rmSync(path.join(dir, 'tests/contract'), { recursive: true })
+    // tests/contract stays: the starter's contract test calls @sssb/kit/testing/contract, which the tarball ships, and
+    // the `contract tests` step runs it as an adopter would (vitest.contract.config.ts below).
 
     // The WHOLE public surface, in the app's type program. A consumer typechecks only the framework
     // modules it reaches, and the starter reaches a fraction of them; an adopter may import any published
@@ -524,7 +531,34 @@ export const consoleServiceOrgs: readonly string[] = []
         'export const serviceManagedOrgSlugs: readonly string[] = []',
         'export const serviceManagedOrgSlugs: readonly string[] = consoleServiceOrgs',
     )
+
+    // An e2e spec that imports @sssb/kit/testing/e2e and an app domain module (ADR-0014 part 7), so `sssb check-e2e`
+    // has the case it exists for, and Playwright loads the compiled entry under Node. It takes no page, so it needs no
+    // server, but it runs with the rest of the suite in the e2e step.
+    write(
+        path.join(dir, CONSOLE_E2E_SPEC),
+        `import { createHmac } from 'node:crypto'
+import { expect, test } from '@playwright/test'
+import { verifyWebhookSignature, WEBHOOK_REPLAY_TOLERANCE_MS } from '@sssb/kit/testing/e2e'
+import { consoleServiceOrgs } from '@/domain/service-orgs'
+
+// The framework reaches a spec only through @sssb/kit/testing/e2e, compiled and seam-free (ADR-0014 part 2); the app's
+// own modules come in as usual. The signature is computed here, with node:crypto, and checked by the framework.
+test('the e2e entry verifies a webhook signature computed in the spec', () => {
+    const body = JSON.stringify({ serviceOrgs: consoleServiceOrgs })
+    const secret = 'console-e2e-secret'
+    const t = 1_700_000_000
+    const v1 = createHmac('sha256', secret).update(\`\${t}.\${body}\`).digest('hex')
+    const opts = { toleranceMs: WEBHOOK_REPLAY_TOLERANCE_MS, now: new Date(t * 1000) }
+    expect(verifyWebhookSignature(body, \`t=\${t},v1=\${v1}\`, secret, opts)).toEqual({ ok: true })
+    expect(verifyWebhookSignature(\`\${body} \`, \`t=\${t},v1=\${v1}\`, secret, opts)).toEqual({ ok: false, reason: 'signature' })
+})
+`,
+    )
 }
+
+/** The console's spec that reaches the framework through @sssb/kit/testing/e2e, relative to the app. */
+const CONSOLE_E2E_SPEC = 'tests/e2e/kit-entry.spec.ts'
 
 /** The ledger: a different seam, whose extra migration comes in through the app's `@/` alias. */
 function shapeLedger(/** @type {string} */ dir) {
@@ -694,26 +728,14 @@ test("@sssb/tools' scratch-directory helper works in a package that has no @sssb
 `,
     )
 
-    // THE NEGATIVE FIXTURE: an importer of @sssb/kit that links no seam.
-    writeJson(path.join(WS, 'packages/seamless/package.json'), {
-        name: 'seamless',
-        private: true,
-        type: 'module',
-        dependencies: { '@sssb/kit': `file:${path.relative(path.join(WS, 'packages/seamless'), tarball)}` },
-    })
-    write(
-        path.join(WS, 'packages/seamless/src/main.ts'),
-        `import { WEBHOOK_SIGNATURE_HEADER } from '@sssb/kit/core/webhook-signing'
-
-// With no seam of its own this must not load. If it prints, it ran on another app's seam.
-console.log(WEBHOOK_SIGNATURE_HEADER)
-`,
-    )
+    // The negative fixture (packages/seamless) is not written here: it joins after the verify (addSeamless).
 
     // Vitest from the workspace root, as Pages runs it: a project per app from @sssb/tools' preset, which passes
     // each app's own seam explicitly, as every SSSB builder does (the migrator bundle below, tsc and next build
-    // resolve it through the link alone).
-    applyWorkaround('conformance-by-include')
+    // resolve it through the link alone). The framework's conformance suite is reached the way an adopter reaches
+    // it: each app's own src/sssb.conformance.test.ts (copied with the starter) calls @sssb/kit/testing, so the
+    // preset's ordinary `src/**` include runs it, and Vitest's default exclude, node_modules and all, stays in force
+    // (ADR-0014 part 3).
     write(
         path.join(WS, 'vitest.config.ts'),
         `import { fileURLToPath } from 'node:url'
@@ -722,20 +744,7 @@ import { defineConfig, type ViteUserConfig } from 'vitest/config'
 
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 
-// The framework's seam-conformance suites, run from each app's own copy of the package. Vitest's default
-// exclude drops node_modules, so each app project sets its own (ADR-0014 part 3; P5 replaces this).
-const CONFORMANCE = ${JSON.stringify(CONFORMANCE_SUITES.map((suite) => `node_modules/@sssb/kit/${suite}`))}
-
-const app = async (name: string) => {
-    const project = await appTestProject({ appDir: at(\`./apps/\${name}\`), include: CONFORMANCE })
-    return {
-        ...project,
-        test: {
-            ...project.test,
-            exclude: ['**/.next/**', '**/dist-demo/**', 'node_modules/@sssb/kit/node_modules/**'],
-        },
-    }
-}
+const app = (name: string) => appTestProject({ appDir: at(\`./apps/\${name}\`) })
 
 export default defineConfig(
     async (): Promise<ViteUserConfig> => ({
@@ -746,6 +755,30 @@ export default defineConfig(
                 { test: { name: 'gate', root: at('./packages/gate'), environment: 'node' } },
             ],
         },
+    }),
+)
+`,
+    )
+
+    // The contract config, as an adopter would write one: the same preset project per app, narrowed to the app's
+    // tests/contract (each calls @sssb/kit/testing/contract), in Node, one file at a time because every app's embedded
+    // Postgres takes the one port. The unit config above never reaches tests/contract.
+    write(
+        path.join(WS, 'vitest.contract.config.ts'),
+        `import { fileURLToPath } from 'node:url'
+import { appTestProject } from '@sssb/tools/vitest'
+import { defineConfig, type ViteUserConfig } from 'vitest/config'
+
+const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
+
+const contract = async (name: string) => {
+    const project = await appTestProject({ appDir: at(\`./apps/\${name}\`) })
+    return { ...project, test: { ...project.test, environment: 'node', include: ['tests/contract/**/*.test.ts'] } }
+}
+
+export default defineConfig(
+    async (): Promise<ViteUserConfig> => ({
+        test: { fileParallelism: false, projects: [await contract('console'), await contract('ledger')] },
     }),
 )
 `,
@@ -874,7 +907,7 @@ function checkDeclaredImports() {
     if (shippedProblems.length > 0)
         fail(`the packed @sssb/kit ships what its files allowlist should keep out:\n  ${shippedProblems.join('\n  ')}`)
     console.log(
-        `the packed @sssb/kit ships ${shipped.length} files, of which the tests are the ${CONFORMANCE_SUITES.length} conformance suites`,
+        `the packed @sssb/kit ships ${shipped.length} files, no test among them, and the conformance suite's data`,
     )
     const sources = filesUnder(path.join(kit, 'src'))
         .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
@@ -952,10 +985,14 @@ function unitTests() {
     run('pnpm', ['exec', 'vitest', 'run', '--reporter=default', '--reporter=json', `--outputFile.json=${report}`], {
         cwd: WS,
     })
-    /** @type {Record<string, string[]>} */
-    const kitDirs = {}
+    // Each app's conformance file, held to every check the PACKED registry names: the suite as an adopter gets it.
+    /** @type {Record<string, string>} */
+    const conformanceFiles = {}
     for (const app of ['console', 'ledger'])
-        kitDirs[app] = [path.join(appDir(app), 'node_modules/@sssb/kit'), kitOf(appDir(app)).kit]
+        conformanceFiles[app] = path.join(appDir(app), 'src/sssb.conformance.test.ts')
+    const expected = expectedConformanceTests(
+        readJson(path.join(kitOf(appDir('console')).kit, 'src/testing/checks.json')),
+    )
     // The app tests this job's claims rest on must have run too, not merely the suite as a whole.
     const required = {
         console: ['src/seam-identity.test.ts', 'src/adapters/fake/object-store.test.ts'].map((f) =>
@@ -963,10 +1000,50 @@ function unitTests() {
         ),
         ledger: ['src/seam-identity.test.ts'].map((f) => path.join(appDir('ledger'), f)),
     }
-    const problems = conformanceProblems(readJson(report), kitDirs, required)
+    const problems = conformanceProblems(readJson(report), conformanceFiles, expected, required)
     if (problems.length > 0)
-        fail(`the seam-conformance suites did not all run from the tarball:\n  ${problems.join('\n  ')}`)
-    console.log(`seam-conformance: ${CONFORMANCE_SUITES.length} suites ran and passed from each app's own @sssb/kit`)
+        fail(`the conformance suite did not run and pass in full from the tarball:\n  ${problems.join('\n  ')}`)
+    console.log(`conformance: all ${expected.length} checks' tests ran and passed in each app, from @sssb/kit/testing`)
+}
+
+/**
+ * Each app's contract suite (`tests/contract`, which calls `@sssb/kit/testing/contract`) RUN from the tarball, under
+ * the consumer's own contract config, on an embedded Postgres of its own (`embedded-postgres`, the starter's
+ * devDependency and the framework's optional peer) on a free port; CONTRACT_DATABASE_URL is blanked so a developer's
+ * server is never used. Held, like the unit suite, to every contract test the PACKED registry names.
+ */
+function contractTests() {
+    mkdirSync(REPORTS, { recursive: true })
+    const report = path.join(REPORTS, 'vitest-contract.json')
+    rmSync(report, { force: true })
+    run(
+        'pnpm',
+        [
+            'exec',
+            'vitest',
+            'run',
+            '--config',
+            'vitest.contract.config.ts',
+            '--reporter=default',
+            '--reporter=json',
+            `--outputFile.json=${report}`,
+        ],
+        { cwd: WS, env: consumerEnv({ CONTRACT_PG_PORT: String(contractPort), CONTRACT_DATABASE_URL: '' }) },
+    )
+    /** @type {Record<string, string>} */
+    const contractFiles = {}
+    for (const app of ['console', 'ledger'])
+        contractFiles[app] = path.join(appDir(app), 'tests/contract/rls-contract.test.ts')
+    const expected = expectedConformanceTests(
+        readJson(path.join(kitOf(appDir('console')).kit, 'src/testing/checks.json')),
+        'contract',
+    )
+    const problems = conformanceProblems(readJson(report), contractFiles, expected)
+    if (problems.length > 0)
+        fail(`the contract suite did not run and pass in full from the tarball:\n  ${problems.join('\n  ')}`)
+    console.log(
+        `contract: all ${expected.length} contract tests ran and passed in each app on embedded Postgres, from @sssb/kit/testing/contract`,
+    )
 }
 
 function migratorBundles() {
@@ -1025,6 +1102,96 @@ function staticDemo() {
 }
 
 /**
+ * `sssb doctor` and `sssb check-e2e` in each app, as its verify runs them (ADR-0014 part 7): from the tarball, so
+ * doctor must NOT find itself in in-repo mode here, and it walks a workspace whose every importer links its own seam.
+ * In the console, check-e2e must have checked the spec that reaches the framework through `@sssb/kit/testing/e2e`,
+ * resolved through the installed exports map to the compiled entry; and then, with two specs dropped in that reach the
+ * framework's source (one directly, one through an app module), it must fail. Here that source is TypeScript under
+ * node_modules, which Node will not load, so Playwright cannot list the console's config at all: check-e2e fails the
+ * config with Playwright's error, naming the kit file it reaches.
+ */
+function doctorAndCheckE2e() {
+    for (const app of ['console', 'ledger']) {
+        const doctor = run('pnpm', ['run', 'sssb:doctor'], { cwd: appDir(app), capture: true })
+        console.log(doctor.stdout)
+        if (doctor.stdout.includes('in-repo mode'))
+            fail(`${app}: sssb doctor took the tarball's kit for this repo's own`)
+        const checked = run('pnpm', ['run', 'check:e2e'], { cwd: appDir(app), capture: true })
+        console.log(checked.stdout)
+        if (app !== 'console') continue
+        const okProblems = checkE2eOkProblems(checked, CONSOLE_E2E_SPEC)
+        if (okProblems.length > 0) fail(`console: sssb check-e2e:\n  ${okProblems.join('\n  ')}`)
+    }
+
+    const kitFile = '@sssb/kit:src/core/webhook-signing.ts'
+    const probes = {
+        'tests/e2e/reaches-kit-source.spec.ts':
+            "import { WEBHOOK_SIGNATURE_HEADER } from '@sssb/kit/core/webhook-signing'\nconsole.log(WEBHOOK_SIGNATURE_HEADER)\n",
+        'tests/e2e/reaches-kit-through-app.spec.ts':
+            "import { probeHeader } from '@/domain/e2e-probe'\nconsole.log(probeHeader)\n",
+        'src/domain/e2e-probe.ts':
+            "export { WEBHOOK_SIGNATURE_HEADER as probeHeader } from '@sssb/kit/core/webhook-signing'\n",
+    }
+    for (const [file, text] of Object.entries(probes)) write(path.join(appDir('console'), file), text)
+    let probed
+    try {
+        probed = run('pnpm', ['exec', 'sssb', 'check-e2e'], {
+            cwd: appDir('console'),
+            capture: true,
+            allowFailure: true,
+        })
+    } finally {
+        for (const file of Object.keys(probes)) rmSync(path.join(appDir('console'), file))
+    }
+    const failProblems = checkE2eFailProblems(probed, { config: 'playwright.config.ts', kitFile })
+    if (failProblems.length > 0) {
+        console.error(`${probed.stdout}\n${probed.stderr}`)
+        fail(`console: sssb check-e2e with specs reaching the framework's source:\n  ${failProblems.join('\n  ')}`)
+    }
+    console.log(
+        `sssb check-e2e failed the config whose specs reach ${kitFile}, as it must:\n  ${probed.stdout
+            .split('\n')
+            .filter((line) => /^FAIL|^ {10}/.test(line))
+            .join('\n  ')}`,
+    )
+}
+
+/**
+ * Playwright itself loads every console spec, the one importing `@sssb/kit/testing/e2e` and an app module included:
+ * `--list` loads each file under Node, as a run does, without starting the dev server or a browser. So the spec
+ * check-e2e passes is proven loadable even when `--skip-build-and-e2e` skips the run.
+ */
+function playwrightLoadsSpecs() {
+    const listed = run('pnpm', ['exec', 'playwright', 'test', '--list', '--reporter=list'], {
+        cwd: appDir('console'),
+        env: consumerEnv({ CI: '1' }),
+        capture: true,
+    })
+    console.log(listed.stdout)
+    if (!listed.stdout.includes(`${path.basename(CONSOLE_E2E_SPEC)}:`))
+        fail(`playwright test --list did not list ${CONSOLE_E2E_SPEC}`)
+}
+
+/** THE NEGATIVE FIXTURE: an importer of @sssb/kit that links no seam, joining the workspace after the verify. */
+function addSeamless() {
+    writeJson(path.join(WS, 'packages/seamless/package.json'), {
+        name: 'seamless',
+        private: true,
+        type: 'module',
+        dependencies: { '@sssb/kit': `file:${path.relative(path.join(WS, 'packages/seamless'), tarball)}` },
+    })
+    write(
+        path.join(WS, 'packages/seamless/src/main.ts'),
+        `import { WEBHOOK_SIGNATURE_HEADER } from '@sssb/kit/core/webhook-signing'
+
+// With no seam of its own this must not load. If it prints, it ran on another app's seam.
+console.log(WEBHOOK_SIGNATURE_HEADER)
+`,
+    )
+    run('pnpm', ['install', '--no-frozen-lockfile'], { cwd: WS })
+}
+
+/**
  * The lint fences, the way an adopter runs them (ADR-0014 part 4): `eslint .` from the workspace root, where ESLint 10
  * lints each app's files with the app's own config, and from each app; then `sssb check-fences` in each app, which
  * compares every source file's effective config with the preset's and probes each fence and the console's
@@ -1061,6 +1228,22 @@ function lint() {
 }
 
 function negativeFixture() {
+    addSeamless()
+    // Doctor, run from an APP, walks the whole workspace and names the importer that slipped (ADR-0014 part 5).
+    const doctor = run('pnpm', ['exec', 'sssb', 'doctor'], {
+        cwd: appDir('console'),
+        capture: true,
+        allowFailure: true,
+    })
+    const named = doctor.stdout
+        .split('\n')
+        .find((line) => /^\s+- packages\/seamless: takes @sssb\/kit but declares no seam link/.test(line))
+    if (doctor.status !== 1 || named === undefined) {
+        console.error(`${doctor.stdout}\n${doctor.stderr}`)
+        fail(`sssb doctor did not name the seamless importer (exit ${doctor.status})`)
+    }
+    console.log(`sssb doctor named the seamless importer, from apps/console:\n  ${named.trim()}`)
+
     const result = run('pnpm', ['exec', 'tsx', 'src/main.ts'], {
         cwd: path.join(WS, 'packages/seamless'),
         capture: true,
@@ -1086,10 +1269,38 @@ function negativeFixture() {
     )
 }
 
+/**
+ * `@sssb/kit/testing/e2e` is the one entry Node loads directly (Playwright does not transform `node_modules`), so
+ * it ships compiled and seam-free (ADR-0014 part 2). Plain Node, no tsx, loads it from the package that has NO
+ * seam, and the verifier it exports checks a signature.
+ */
+function e2eEntryUnderNode() {
+    const script = [
+        "const e2e = await import('@sssb/kit/testing/e2e')",
+        "const result = e2e.verifyWebhookSignature('{}', 't=1,v1=00', 'k', { toleranceMs: e2e.WEBHOOK_REPLAY_TOLERANCE_MS, now: new Date(1000) })",
+        "if (result.ok || result.reason !== 'signature') throw new Error('unexpected verdict ' + JSON.stringify(result))",
+        "console.log(import.meta.resolve('@sssb/kit/testing/e2e'))",
+    ].join('\n')
+    const result = run('node', ['--input-type=module', '-e', script], {
+        cwd: path.join(WS, 'packages/seamless'),
+        capture: true,
+        allowFailure: true,
+    })
+    if (result.status !== 0) {
+        fail(`plain Node could not load @sssb/kit/testing/e2e without a seam:\n${result.stdout}\n${result.stderr}`)
+    }
+    if (!/\/dist\/testing\/e2e\.js$/.test(result.stdout.trim())) {
+        fail(`@sssb/kit/testing/e2e resolved to ${result.stdout.trim()}, not the compiled dist/testing/e2e.js`)
+    }
+    console.log(`plain Node, no seam: @sssb/kit/testing/e2e -> ${result.stdout.trim()}`)
+}
+
 // ---- the run --------------------------------------------------------------------------------------
 
 const started = Date.now()
 const port = await freePort()
+// The consumer's contract suites' embedded Postgres: a free port, never the per-checkout one this repo's own uses.
+const contractPort = await freePort()
 console.log(`pack and consume: ${BASE}`)
 
 /** @type {string} */
@@ -1193,9 +1404,13 @@ step('layout: lockfile, seam links, one instance per app', checkLayout)
 step('the packed package ships and imports only what it declares', checkDeclaredImports)
 step('typecheck at the ES2022 floor', typecheck)
 step('typecheck with the strict-flag set', typecheckStrict)
-step('unit tests and seam conformance, from the workspace root', unitTests)
+step('unit tests and the conformance suite, from the workspace root', unitTests)
+step('contract tests on embedded Postgres, from the workspace root', contractTests)
 step('migrator bundles, with no alias and no tsconfig', migratorBundles)
-step('negative fixture: an importer with no seam', negativeFixture)
+step('sssb doctor and sssb check-e2e, in each app', doctorAndCheckE2e)
+step('Playwright loads every console spec (--list: no server, no browser)', playwrightLoadsSpecs)
+step('negative fixture: an importer with no seam, which sssb doctor names', negativeFixture)
+step('the compiled e2e entry loads under plain Node, with no seam', e2eEntryUnderNode)
 step('the dev:real preflight, through esbuild from each app', realEnvPreflight)
 step('lint from the workspace root and from each app, and sssb check-fences', lint)
 if (SKIP_BUILD_AND_E2E) {

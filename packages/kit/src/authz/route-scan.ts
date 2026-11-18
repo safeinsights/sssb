@@ -3,8 +3,9 @@ import path from 'node:path'
 import ts from 'typescript'
 
 /**
- * The analyser behind the authorization scan (`authorized-mutations.test.ts`), split out so the scan's
- * POLICY (which roots, which exemptions) is input rather than something this module knows. It reads route
+ * The analyser behind the authorization scan (each app's, ./app-exemptions.ts `scanApp`, and the kit's own over its
+ * fixture, `authorized-mutations.test.ts`), split out so the scan's POLICY (which roots, which exemptions:
+ * ./route-policy.ts and an app's own) is input rather than something this module knows. It reads route
  * files with the TypeScript compiler's parser and binder, never a regex over their text, and judges EACH
  * exported mutating handler on its own: a string, a comment, a call in another handler or a call in
  * statically dead code proves nothing about the handler in front of it.

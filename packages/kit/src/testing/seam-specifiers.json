@@ -1,0 +1,22 @@
+{
+    "specifiers": [
+        "@sssb/app-config/abilities",
+        "@sssb/app-config/actors",
+        "@sssb/app-config/audit",
+        "@sssb/app-config/db/migrations",
+        "@sssb/app-config/db/rls-proofs",
+        "@sssb/app-config/db/schema",
+        "@sssb/app-config/digest",
+        "@sssb/app-config/identity",
+        "@sssb/app-config/inbound-email",
+        "@sssb/app-config/jobs",
+        "@sssb/app-config/messages",
+        "@sssb/app-config/notifications",
+        "@sssb/app-config/preset-operations",
+        "@sssb/app-config/presets",
+        "@sssb/app-config/seed",
+        "@sssb/app-config/simulator",
+        "@sssb/app-config/tours",
+        "@sssb/app-config/webhooks"
+    ]
+}

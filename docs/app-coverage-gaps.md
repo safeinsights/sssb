@@ -217,7 +217,7 @@ resolution is GLOBAL-by-slug and yields the tenant too; `inbound_emails.org_id` 
 per 1001) is NULLable for the real MULTI-domain path (domain→tenant, org possibly unknown) even though the
 single-domain template never files a null-org row — the RLS proof exercises it directly. Mailgun's inbound
 signature (`HMAC-SHA256(signingKey, timestamp+token)`) reuses
-`packages/kit/src/core/webhook-signing.ts`'s primitive (a new `verifyMailgunSignature`, cross-checked
+`packages/kit/src/core/webhook-hmac.ts`'s primitive (a new `verifyMailgunSignature`, cross-checked
 against `node:crypto`); the stateful signing-key lookup + a per-process token replay guard sit in
 `packages/kit/src/service-auth/mailgun.ts` beside the bearer verifier, and the route wraps in a new
 `withMailgunSignature` (the `webhooks/` authorize-exemption `mustMatch` was widened to accept it). Intake

@@ -1,11 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { contractDatabaseName } from './contract-postgres'
+import { contractDatabaseName } from '@sssb/kit/testing/contract'
 
 /**
  * What every app in `apps/*` must carry to be a template an adopter can keep, checked the same way for all of them:
- * the deployment parameters the cutover rows point at, and a contract suite for its migrations. These were once the
+ * the deployment parameters the cutover rows point at, a contract suite for its migrations, and the file that runs
+ * SSSB's conformance suite from the app's own tree (`src/sssb.conformance.test.ts`). These were once the
  * two things `pnpm init-app --eject-showcase` copied out of the showcase before deleting it, because only the
  * showcase had them; each app owns them now, and these are the gates that say so. Generic over apps and
  * deliberately free of any one app's content, so the conformance kit (ADR-0014, P5) can take it as it is.
@@ -19,21 +20,34 @@ export interface AppFacts {
     paramsSource: string | null
     /** Whether the app registers migrations of its own. */
     hasMigrations: boolean
-    /** The app's `tests/contract/*.test.ts` files that call `defineContractSuite`. */
+    /** The app's `tests/contract/*.test.ts` files that call `contractSuite`. */
     contractSuites: string[]
-    /** The database its contract suite uses (`contractDatabaseName` of its `config/app.ts` slug), or null with no slug. */
+    /** The database its contract suite uses (`contractDatabaseName` of its `config/app.ts` slug, which the seam's
+     *  `identity` re-exports and the runner reads), or null with no slug. */
     contractDatabase: string | null
+    /** Whether its `src/sssb.conformance.test.ts` calls `conformanceSuite` (ADR-0014 P5). */
+    runsConformanceSuite: boolean
 }
 
 /** The prefix of SSSB's own contract databases (`sssb_contract`, `sssb_data_api_contract`, `sssb_data_api_lock`), which
  *  no app's may start with: the framework's fixture runs on the same server. */
 const FRAMEWORK_DATABASE_PREFIX = 'sssb_'
 
-/** Whether a source CALLS `defineContractSuite(`: a mention in a comment is not a call. */
-export function callsDefineContractSuite(source: string): boolean {
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-    return code.includes('defineContractSuite(')
+/** A source without its comments, so a mention of a call in one is not a call. */
+const withoutComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+/** Whether a source CALLS `contractSuite(` (`@sssb/kit/testing/contract`): a mention in a comment is not a call. */
+export function callsContractSuite(source: string): boolean {
+    return /\bcontractSuite\(/.test(withoutComments(source))
 }
+
+/** Whether a source CALLS `conformanceSuite(`: a mention in a comment is not a call. */
+export function callsConformanceSuite(source: string): boolean {
+    return withoutComments(source).includes('conformanceSuite(')
+}
+
+/** Where an app runs SSSB's conformance suite from, relative to the app (ADR-0014 P5). */
+const CONFORMANCE_FILE = 'src/sssb.conformance.test.ts'
 
 /** Every leaf of a value as a dotted path: `{ a: { b: 'x' } }` is `['a.b']`. */
 export function leafPaths(value: unknown, prefix = ''): string[] {
@@ -106,9 +120,15 @@ export function scaffoldProblems(apps: readonly AppFacts[], rows: ReadonlySet<st
                 )
             }
         }
+        if (!app.runsConformanceSuite) {
+            problems.push(
+                `apps/${app.name}: no ${CONFORMANCE_FILE} calling conformanceSuite from @sssb/kit/testing, so SSSB's ` +
+                    'conformance checks (the authorization scan, i18n, RLS, migrations, presets, the seam map) never run against it',
+            )
+        }
         if (app.hasMigrations && app.contractSuites.length === 0) {
             problems.push(
-                `apps/${app.name}: registers migrations but has no contract suite (a tests/contract/*.test.ts calling defineContractSuite), ` +
+                `apps/${app.name}: registers migrations but has no contract suite (a tests/contract/*.test.ts calling contractSuite from @sssb/kit/testing/contract), ` +
                     'so its own tables never meet real Postgres',
             )
         }
@@ -131,6 +151,7 @@ export async function readAppFacts(repoRoot: string, name: string): Promise<AppF
     const slug = existsSync(slugFile)
         ? ((await import(pathToFileURL(slugFile).href)) as { APP_SLUG?: unknown }).APP_SLUG
         : undefined
+    const conformance = path.join(dir, CONFORMANCE_FILE)
     const migrations = path.join(dir, 'src', 'app-config', 'db', 'migrations')
     const contract = path.join(dir, 'tests', 'contract')
     return {
@@ -141,11 +162,11 @@ export async function readAppFacts(repoRoot: string, name: string): Promise<AppF
         contractSuites: existsSync(contract)
             ? readdirSync(contract).filter(
                   (file) =>
-                      file.endsWith('.test.ts') &&
-                      callsDefineContractSuite(readFileSync(path.join(contract, file), 'utf8')),
+                      file.endsWith('.test.ts') && callsContractSuite(readFileSync(path.join(contract, file), 'utf8')),
               )
             : [],
         contractDatabase: typeof slug === 'string' ? contractDatabaseName(slug) : null,
+        runsConformanceSuite: existsSync(conformance) && callsConformanceSuite(readFileSync(conformance, 'utf8')),
     }
 }
 

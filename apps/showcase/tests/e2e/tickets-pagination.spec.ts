@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { TICKET_PAGE_SIZE } from '../../src/domain/tickets'
+import { TICKET_PAGE_SIZE } from '../../src/domain/ticket-page-size'
 import { pickOrg } from './support/org-switcher'
 import { signInAs } from './support/people'
 

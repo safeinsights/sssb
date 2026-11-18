@@ -22,29 +22,23 @@ const APPS = ['showcase', 'starter'] as const
  * at all. `@sssb/app-config/*` is the seam the framework resolves app vocabulary through (ADR-0012), and it is a
  * BARE SPECIFIER: a single global alias can only ever point at one app. With two apps a shared alias would silently
  * bind the framework's tests to whichever app happened to be listed first, and the other app's registrations would
- * never execute. So each app gets its own project, rooted at the app, with its own seam passed explicitly, and the
- * framework's seam-conformance tests are included in BOTH.
+ * never execute. So each app gets its own project, rooted at the app, with its own seam passed explicitly, and each
+ * app's conformance suite (below) runs against that app's seam.
  *
- * What this repo adds to the preset: the conformance suites by path (below), and `@sssb/kit` aliased to the
- * framework's source, so Vitest loads the SAME source files the app's tsconfig `paths` resolve to (ADR-0014 part 1:
- * inside this repo resolution goes through aliases, an adopter's through the seam link).
+ * What this repo adds to the preset: `@sssb/kit` aliased to the framework's source, so Vitest loads the SAME source
+ * files the app's tsconfig `paths` resolve to (ADR-0014 part 1: inside this repo resolution goes through aliases, an
+ * adopter's through the seam link).
  */
 /**
- * The framework tests that must hold for EVERY app, re-run against each app's seam:
- * - the i18n pair proves the namespace partition and en/es parity over that app's MERGED catalog;
- * - the pglite RLS suite proves that app's own tables through SSSB's composed proof runner;
- * - the demo-presets check holds that app's registered presets to its own seed, registries and catalogs.
- *
- * These are the SEAM-CONFORMANCE tests, and running them per app is the point: they are what proves
- * the seam is honest against real apps rather than only against the fixture. The REST of SSSB's suite
- * runs once, in the `kit` project below, against the framework's own fixture seam.
+ * The framework checks that must hold for EVERY app (the authorization scan of its route tree, i18n
+ * partition and parity over its MERGED catalog, the pglite RLS suite over its own tables, migration
+ * order, its demo presets, the seam map) are the CONFORMANCE SUITE, `@sssb/kit/testing` (ADR-0014 P5).
+ * This file does not list them: each app runs the suite from its own tree, `apps/<app>/src/sssb.conformance.test.ts`,
+ * which the app project's own `src/**` include picks up like any other app test, as an adopter's does. Running
+ * them per app is the point: they are what proves the seam is honest against real apps rather than only
+ * against the fixture. The `kit` project below runs the same suite against the framework's own fixture seam
+ * (packages/kit/src/testing/conformance.test.ts), and the REST of SSSB's suite once, against that seam.
  */
-const SEAM_CONFORMANCE_TESTS = [
-    'packages/kit/src/i18n/*.test.ts',
-    'packages/kit/src/db/rls-pglite.test.ts',
-    'packages/kit/src/db/migrate.test.ts',
-    'packages/kit/src/server-lib/demo-presets-seam.test.ts',
-]
 
 // The first test to touch the fake DB cold-migrates + seeds pglite in-process; under full-suite
 // parallel load that can exceed vitest's 5s default and flake the unit job (which, unlike e2e, has no
@@ -54,8 +48,6 @@ const TEST_TIMEOUT_MS = 20_000
 const projectFor = (app: string) =>
     appTestProject({
         appDir: at(`./apps/${app}`),
-        // relative to the project's root, the app
-        include: SEAM_CONFORMANCE_TESTS.map((file) => `../../${file}`),
         alias: { '@sssb/kit': at('./packages/kit/src') },
         // The fake LLM adapter resolves fixtures from the working directory, which for `next dev` is the app, but
         // this suite runs from the REPO ROOT, so every project points the adapter at its OWN fixtures (same
@@ -74,8 +66,8 @@ const projectFor = (app: string) =>
  * vocabulary is deliberately none of the apps' (`harbor`/`dockets`/`fixture-*`), so a regression back
  * to app coupling fails loudly instead of passing by coincidence.
  *
- * It carries the cross-app scans too: authorized-mutations.test.ts walks EVERY app's route tree from
- * the repo root plus the fixture's, so no app can opt out by existing.
+ * It no longer carries a cross-app scan: each app's route tree is scanned by that app's own conformance
+ * suite (`authz-mutations`), and authorized-mutations.test.ts here scans the fixture's reference tree.
  */
 const kitProject = {
     plugins: [react()],

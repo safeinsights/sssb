@@ -32,15 +32,16 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `packages/seed`, a `..` in any package or alias specifier, and any specifier through `node_modules`, by
   `import()` and in a type `import('…')` as well as in a declaration; the `@sssb/app-config/*` alias is the only
   channel back. `sssb/no-path-out-of-package` also bars any path out of `packages/kit`, an absolute path or `file:`
-  URL even into it, and a shipped file's path to one the `files` allowlist leaves out (two real-Postgres contract
-  tests are the named exceptions). **The framework must compile under `packages/kit/tsconfig.strict.json`**
+  URL even into it, and a shipped file's path to one the `files` allowlist leaves out, with no exceptions.
+  **The framework must compile under `packages/kit/tsconfig.strict.json`**
   (the strict-flag set at the ES2022 lib floor; `pnpm typecheck` runs it), because adopters compile the shipped
   `.ts` under their own options. **`@sssb/kit`'s `files` allowlist in its `package.json` decides what ships**
-  (tests and stories out, the five seam-conformance tests in); a new file that must ship, or a new import of a
+  (tests and stories out; the conformance suite ships as source, `@sssb/kit/testing`); a new file that must ship, or a new import of a
   package the source needs, goes in the manifest — pack and consume checks the tarball. A package the app must
   share one copy of is a peer: `react`, `next`, `next-intl`, `@mantine/core`, `kysely` (the app's migrations get
   the framework's `Kysely`), the compiler and the global types an adopter's program shares (`typescript`,
-  `@types/react`, `@types/node`), and `vitest`, optional, for the shipped tests; anything else, `@types/pg`
+  `@types/react`, `@types/node`), `vitest`, optional, for the shipped tests, and `embedded-postgres`, optional, for the
+  contract runner's local server; anything else, `@types/pg`
   included, is a dependency (`docs/decision-log.md`, "Package hygiene").
 - **The kit's OWN tests run against its own app seam, never an app's** — `packages/kit/test-fixture`
   (outside `packages/kit/src` because that tree is what `@sssb/kit/*` resolves to and what ships; the
@@ -55,7 +56,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   `pnpm init-app --eject-showcase` with a red gate.
-- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 132 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 137 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it);
   the rest of the package is internal and reachable only by relative import inside it. Lint-enforced
   (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
@@ -113,9 +114,18 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 
 - Formatting is `.editorconfig` + Prettier — run `pnpm lint:fix`, never hand-format.
 - Conventional commits: lowercase subject, ≤100 chars (commitlint hook enforces).
-- Before finishing any change: `pnpm verify` (typecheck + lint + unit + knip in parallel, then e2e,
-  static-demo build, demo size budget, static-demo e2e). E2E needs Playwright chromium installed once:
-  `pnpm exec playwright install chromium`.
+- Before finishing any change: `pnpm verify` (typecheck + lint + unit + knip + `sssb doctor` + `sssb check-e2e` in
+  parallel, then e2e, static-demo build, demo size budget, static-demo e2e). E2E needs Playwright chromium installed
+  once: `pnpm exec playwright install chromium`. **`sssb doctor`** (`pnpm sssb:doctor`: one run from the root checks
+  every app; never `pnpm doctor`, which is pnpm's own) fails unless the config a bare `vitest` would load for each app
+  lists every unit conformance test, and some config running its `apps/<app>/tests/contract/` lists every contract
+  one, less named opt-outs; and on a second copy of a kit peer, an @sssb package out of step, a workspace walk that
+  misses the app, or (in this repo, "in-repo mode") a tsconfig or Vitest alias sending an app's seam anywhere but its
+  own. Any other Vitest config that runs an app's tests without the checks, a bare `vitest` from the app's directory
+  that would not run the suite, and the flags package.json scripts pass to vitest, are reported, not failed: doctor
+  cannot see what CI runs. **`sssb check-e2e`** (`pnpm check:e2e`, per app) asks
+  Playwright which files each config loads, and fails a spec that reaches the kit other than through
+  `@sssb/kit/testing/e2e`, directly or through an app module or a workspace package.
 - `pnpm verify` does NOT run `test:contract`, jscpd, coverage, gitleaks or pack and consume — CI runs those
   (`.github/workflows/checks.yml`). **CI's app checks are the reusable workflow an adopter calls**
   (`.github/workflows/app-checks.yml`, ADR-0014 P10): `checks.yml`'s `sssb` job calls it (by its local path), so
@@ -129,8 +139,10 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   with `pnpm pack-and-consume --update-lockfile` and commit `scripts/pack-and-consume/consumer-lock.yaml`.
   **Any migration/db change: run `pnpm test:contract` yourself** (the
   same RLS proofs on real Postgres, for EVERY app AND SSSB's fixture seam, each in its own
-  database — SSSB's twice, once through the `pg` driver and once through the RDS Data API driver and its
-  emulator, each also as a non-superuser owner, `packages/kit/src/db/owner-pass.ts`); after
+  database, each twice: once through the `pg` driver and once through the RDS Data API driver and its
+  emulator, each also as a non-superuser owner, `packages/kit/src/db/owner-pass.ts`. An app's are the contract
+  runner's, `contractSuite` from `@sssb/kit/testing/contract`, called from `apps/<app>/tests/contract/`, with the
+  conformance suite's opt-outs and skip guard; SSSB's fixture keeps its own in `packages/kit/src/adapters/real`); after
   renumbering/renaming a migration, wipe local `.data` first.
   **Also wipe `apps/*/.data` after changing `packages/seed`** — the app seeder is guarded by "does this
   world have any rows yet", so new seed rows are invisible on an existing world and only CI sees them.
@@ -152,18 +164,22 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   migrations are numbered ≥1001; framework migrations 0001–0999 live in
   `packages/kit/src/db/migrations` — ADR-0012).
 - **Every mutating route handler (POST/PUT/PATCH/DELETE) must call `authorize(...)`**
-  (`@sssb/kit/authz/authorize.ts`) — a build-time scan
-  (`packages/kit/src/authz/authorized-mutations.test.ts`) walks every `route.{ts,tsx,js,jsx,mjs}` under
-  EVERY app's whole `apps/*/src/app` tree, not only `api/` (Next serves a `route.ts` from anywhere
-  there), **plus the framework's own reference tree, `packages/kit/test-fixture/api`**. It judges EACH
+  (`@sssb/kit/authz/authorize.ts`) — a build-time scan walks every `route.{ts,tsx,js,jsx,mjs}` under the app's
+  whole `apps/<app>/src/app` tree, not only `api/` (Next serves a `route.ts` from anywhere there): the conformance
+  suite's `authz-mutations` check, which each app runs from its own `apps/<app>/src/sssb.conformance.test.ts`
+  (`packages/kit/src/authz/app-exemptions.ts`). The framework's own reference tree, `packages/kit/test-fixture/api`,
+  is scanned by `packages/kit/src/authz/authorized-mutations.test.ts`. The scan judges EACH
   exported mutating handler, read with the TypeScript parser (`packages/kit/src/authz/route-scan.ts`), never
   the file's text: the handler must reach the `authorize` imported from `@sssb/kit/authz/authorize` on its own path,
-  or its route must have a justified entry in that test's exemption map and the handler must pass that entry's
+  or its route must have a justified exemption and the handler must pass that entry's
   gate. A string, a comment, another verb, a dead branch, an uncalled function or a helper in another module
   does not count, and a handler the scan cannot follow fails. Exemption keys are paths relative to each app's
   `apps/<app>/src/app/api`, so a mutating route OUTSIDE `api/` can match no exemption and must call
-  `authorize(...)` itself. The exemption map's staleness is measured against the FIXTURE tree, so a new
-  exemption needs a file there to demonstrate it; the fixture's routes are scanned, never served. **Every
+  `authorize(...)` itself. The FRAMEWORK's exemption map is `packages/kit/src/authz/route-policy.ts`, and its
+  staleness is measured against the FIXTURE tree, so a new framework exemption needs a file there to demonstrate it;
+  the fixture's routes are scanned, never served. An app names its own in `apps/<app>/authz-exemptions.mjs`
+  (`{ files, prefixes }`), measured against the app's own tree, and an entry that overlaps a framework one, or a
+  prefix nested in another of the app's, fails. **Every
   exemption MUST carry a `mustMatch`**, a gate checked on each verb (the handler IS the guard's call, reaches a
   port call, or opens with the simulated-mode 404), every name in it a value import kept under its exported name,
   so a local look-alike or an alias is not the gate — entries are matched by relative path in every root, so a
@@ -178,9 +194,12 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - Unit tests are colocated (`*.test.ts(x)`), run by Vitest — `vitest.config.ts` has ONE PROJECT PER APP
   because `@sssb/app-config/*` is a bare specifier and a single alias can only name one app, PLUS a `kit`
   project that runs the packages' suites against the framework's own seam
-  (**`packages/kit/test-fixture`** — see below). SSSB's seam-conformance tests (i18n partition/parity,
-  the pglite RLS suite, the demo-presets check, the migration numbering and upgrade check) run under every app project as well, and that is what proves the seam against
-  real apps rather than only against the fixture. E2E
+  (**`packages/kit/test-fixture`** — see below). SSSB's **conformance suite** (`@sssb/kit/testing`: the
+  authorization scan, i18n partition/parity, the pglite RLS suite, migration order, the demo-presets check, the seam
+  map; its checks and fixed test names are `packages/kit/src/testing/checks.json`) runs in every app from the app's
+  own `apps/<app>/src/sssb.conformance.test.ts` (`tests/tooling/app-scaffold.test.ts` fails an app without one), and in the
+  `kit` project against the fixture; that is what proves the seam against real apps rather than only against the
+  fixture. A check is left out only by a named opt-out with a reason, and the suite fails a run that skips one. E2E
   lives in `apps/*/tests/e2e/` (showcase on :3000, starter on :3100). In a LINKED WORKTREE both ports
   are derived per checkout by `@sssb/tools/ports`, so parallel agent sessions don't adopt each other's
   dev server; `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last

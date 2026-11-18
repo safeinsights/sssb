@@ -19,7 +19,7 @@ import {
 
 /**
  * The analyser's own cases: which export forms it reads, what counts as a handler's path, what it refuses.
- * The policy (the real exemption map, the real roots) is authorized-mutations.test.ts; this file feeds the
+ * The policy (the real exemption map) is ./route-policy.ts, applied by authorized-mutations.test.ts and ./app-exemptions.ts; this file feeds the
  * analyser small route trees written to a scratch directory and checks what it found.
  */
 

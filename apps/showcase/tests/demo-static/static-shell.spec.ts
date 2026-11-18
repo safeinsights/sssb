@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
-import { presets } from '../../src/app-config/presets'
+import { presets } from '../../src/app-config/presets/list'
 import { appMessage, simulatorNotice, welcome } from '../catalog'
 
 const indexUrl = `file://${path.resolve(__dirname, '../../dist-demo/index.html')}`

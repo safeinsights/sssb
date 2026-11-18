@@ -12,7 +12,7 @@ CI's `changeset-required` job fails a PR that changes what ships to adopters and
 
 - **Every `@sssb/*` package under `packages/`** (read from its `package.json`, so a package added later is covered
   the day it lands), less tests, stories and a `test-fixture` directory. For `packages/kit` that is exactly what its
-  `files` allowlist ships: `package.json`, `src` less tests and stories, plus the five seam-conformance tests.
+  `files` allowlist ships: `package.json`, `src` less tests and stories, and `dist`, built when the package is packed by `packages/kit/scripts/`, which the gate counts in its place.
 - **`apps/starter`**, the scaffold an adopter keeps and edits, which becomes `@sssb/create`'s template (ADR-0014 P12).
 
 Not gated: `apps/showcase`, `packages/seed` (the showcase's world, `@app/seed`), tests, scripts, docs and the
