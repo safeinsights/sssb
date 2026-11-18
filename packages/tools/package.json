@@ -30,6 +30,10 @@
             "types": "./src/doc-paths.d.ts",
             "default": "./src/doc-paths.js"
         },
+        "./kit": {
+            "types": "./src/kit.d.ts",
+            "default": "./src/kit.js"
+        },
         "./next": {
             "types": "./src/next.d.ts",
             "default": "./src/next.js"

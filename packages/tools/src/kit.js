@@ -8,7 +8,7 @@
 // HERE, with the app's own directory as the base, and then runs the shared check: the real path of the file it
 // got must sit inside the real directory of the `@sssb/kit` that the app itself resolves. The lint rule
 // `sssb/no-bare-kit-import` keeps every other route out of this package's source.
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -29,8 +29,8 @@ function requireFrom(appDir) {
  * `pnpm exec` and `pnpm run` set NODE_PATH to the workspace's hoisted `.pnpm/node_modules`. So for an app that
  * installs no framework, `require.resolve('@sssb/kit/…')` would quietly return the hoisted copy, another app's
  * instance: the slip rule 4 exists to prevent. The walk never consults NODE_PATH or the global folders.
- * @param {string} appDir
- * @returns {string}
+ *
+ * @type {import('./kit.d.ts').kitDirOf}
  */
 export function kitDirOf(appDir) {
     for (let dir = path.resolve(appDir); ; dir = path.dirname(dir)) {
@@ -44,12 +44,22 @@ export function kitDirOf(appDir) {
     )
 }
 
+/** @type {import('./kit.d.ts').kitVersionOf} */
+export function kitVersionOf(appDir) {
+    const manifest = JSON.parse(readFileSync(path.join(kitDirOf(appDir), 'package.json'), 'utf8'))
+    if (typeof manifest.version !== 'string') {
+        throw new UsageError(
+            `sssb: the ${KIT} that ${path.resolve(appDir)} resolves has no version in its package.json`,
+        )
+    }
+    return manifest.version
+}
+
 /**
  * The shared real-path check: `file` must be part of the `@sssb/kit` that `appDir` resolves. Anything else (the
  * hoisted copy, another app's instance, this repository's source reached by a path) throws.
- * @param {string} appDir
- * @param {string} file
- * @returns {string} the file's real path
+ *
+ * @type {import('./kit.d.ts').assertAppsKitFile}
  */
 export function assertAppsKitFile(appDir, file) {
     const kitDir = kitDirOf(appDir)
@@ -67,9 +77,8 @@ export function assertAppsKitFile(appDir, file) {
 /**
  * A published subpath of `@sssb/kit` (`i18n/request`, `adapters/real/index`), resolved with the app's directory
  * as the base and checked. Returns the real path.
- * @param {string} appDir
- * @param {string} subpath
- * @returns {string}
+ *
+ * @type {import('./kit.d.ts').resolveAppsKit}
  */
 export function resolveAppsKit(appDir, subpath) {
     let file
