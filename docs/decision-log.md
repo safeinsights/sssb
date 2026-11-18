@@ -4851,6 +4851,121 @@ installed once, on selected repositories, but which repositories are selected ne
   `safeinsights/canopycms` only, vouched for by JP on 2026-11-18. It has to be re-vouched or removed if that App is
   ever installed on more repositories.
 
+## `@sssb/tools` is a peer of `@sssb/cdk`, and Next's lint knows the apps (2026-11-18, `fix/cdk-tools-peer`)
+
+Pages' switch to v0.2.0-rc.1 found two packaging problems (its items 1 and 5). ADR-0014's addendum of the same date
+records the first. Decisions, each with what was rejected:
+
+- **`@sssb/tools` is a peer of `@sssb/cdk`, not a dependency** (`packages/cdk/package.json`). Reproduced first with
+  the packed tarballs served over a local URL, installed as the rc.1 notes say (pnpm 11.14.0): with the notes'
+  `overrides`, `ERR_PNPM_EXOTIC_SUBDEP`; without them, pnpm asked npm for `@sssb/tools` and found no release candidate, only the `0.0.0` and `0.0.0-stage` placeholders. With the
+  peer and no `overrides`, the install resolved and cdk's peer was the package's own `@sssb/tools`. Rejected:
+  documenting `blockExoticSubdeps: false` (it turns off a supply-chain guard for every dependency of the workspace, to
+  admit one); keeping the dependency and `overrides` (the error above); publishing release candidates to a registry
+  (npm publishing waits for P14, and it would not fix the tarball recipe `@sssb/create --sssb` writes).
+- **`SssbApp` refuses to synth beside an `@sssb/tools` of another version** (`toolsVersionProblem`,
+  `packages/cdk/src/sssb-app.js`, read from cdk's own resolution of `@sssb/tools/package.json`). The exact dependency
+  used to pin it; a peer at another version is only pnpm's warning (`strictPeerDependencies` is off), and cdk's
+  deploy-time checks are that tools release's, while `sssb doctor`'s version check reads each app's own packages, never
+  its `infra/`. The review found it. `packages/cdk/src/sssb-app-tools-version.test.js` pins the refusal (cdk reads its
+  `@sssb/tools` manifest as another version; without the call in `resolveMigrator` the test goes red).
+  Rejected: `strictPeerDependencies` (an adopter's whole-workspace setting).
+- **Each app's `infra/` declares `@sssb/tools`** beside `@sssb/cdk` (`apps/starter/infra/package.json`,
+  `apps/showcase/infra/package.json`), so the peer is met by a dependency of the package itself rather than by pnpm's
+  `resolvePeersFromWorkspaceRoot` finding the root's copy, or `autoInstallPeers` asking the registry.
+- **The peer cannot lift the fixed group to 1.0.0** (part 10's reason for keeping peers out): measured with
+  `@changesets/cli` 3.0.3, a `minor` on `@sssb/tools` versions the set to 0.3.0 from 0.2.0 and to `rc.2` in pre mode;
+  a peer range the bump leaves out of range (`^0.2.0`) moved cdk with the set to 0.3.0, and with the fixed group
+  removed gave it only a patch, never a major. The release plan's 1.0.0 backstop stays.
+- **No `overrides`, anywhere** (`release.mjs` `candidateNotes`, `@sssb/create`'s `--sssb`): nothing needs one now.
+- **The packed cdk's check** (`cdkPackProblems`, `scripts/pack-and-consume/checks.mjs`) requires `@sssb/tools` as a
+  required peer at exactly cdk's version, and fails it as a dependency.
+- **Pack and consume proves the notes' recipe** (`notesRecipe`, the pages shape): `candidateNotes` rendered for the
+  packed tarballs, its JSON block taken verbatim into a workspace package, the URLs pointed at a local server (a child
+  process, stopped when the step ends or the run exits), the generated workspace's `minimumReleaseAge` guard kept and
+  nothing else set, installed with `--ignore-scripts`. The guard and the flag came from review: the install has no
+  lockfile, and this job's tarballs become a release candidate's assets, so a package published in the last days must
+  not be installed, nor any install script run, beside them. Past pre mode (P14) `candidateNotes` has no notes to
+  render, so the step says it is skipped (`.claude/future-tasks/p14-leave-pre-mode.md` has the follow-up). Rejected:
+  rewriting the whole pages shape to install by URL (the shape's `file:` installs and committed seed would need a URL
+  token, for no more coverage of the recipe); a committed lockfile seed for the recipe (one more seed to refresh, for a
+  step that checks only how the `@sssb` packages resolve).
+- **Next's lint gets each app as its root dir** (`settings.next.rootDir` on the preset's `next` block,
+  `packages/eslint-plugin/src/app-config.js`). `@next/next/no-html-link-for-pages` looked for `pages/` and `app/`
+  under the directory ESLint ran from, so from a workspace root it printed "Pages directory cannot be found" on every
+  run (exit 0), and found no app to check links against. The preset already knows the apps (`resolveRoot`). Next
+  reads each as a fast-glob pattern after turning every backslash into a slash, so a backslash escape broke any path
+  with a special character (the review found it); each special character is a one-character class instead
+  (`nextRootDir`), and `!` is left as it is (`[!]` is a negated class). This repository's own root config, which gives
+  the framework's screens Next's rules too, points them at the apps (`apps/*`), where they render; `pnpm verify`'s
+  `eslint .` showed it warning the same way. Rejected: switching the rule off (it then checks nothing anywhere); an
+  option adopters set (the preset has the answer).
+
+## The real S3 storage adapter is published as a factory, and rc.0's gitleaks advice is corrected (2026-11-18, `feat/s3-storage-factory`)
+
+The first adopter, on `v0.2.0-rc.1`, kept a copy of the kit's real S3 storage adapter for a simulated app run against a
+real bucket (`dev:edge`), because the kit did not publish it; and found that rc.0's notes told it to drop a
+`.gitleaks.toml` entry that its full-history scan still needs.
+
+- **`@sssb/kit/adapters/real/s3-storage` exports `createS3Storage({ bucket, region?, endpoint?, credentials?,
+forcePathStyle?, client? })`**, the adapter the real-mode registry builds, moved from `adapters/real/storage.ts` to a
+  module of its own so the published surface is the factory and its options alone; `storage.ts` keeps the registry's
+  `createRealStorage(bucket, region)` as a two-line wrapper, so the registry, its mocks and its tests did not change. The
+  options are `S3ClientConfig`'s own keys, passed through when set. A `client` beside any of the others is refused,
+  since they would be ignored silently. Rejected: publishing `createRealStorage(bucket, region)` (no endpoint, path
+  style or credentials, which is what the copy needed), and an `S3ClientConfig` pass-through (it would publish the
+  SDK's whole configuration surface as the kit's). The port is unchanged, the SDK stays in `packages/kit/src/adapters/`,
+  and an app imports the factory from its own `src/adapters/real/` (`sssb/no-kit-real-adapter-import` bans it only in the
+  registry and the fakes). It passes the universality test: it is the real adapter of SSSB's own storage port.
+- **The gitleaks correction is a new changeset, and the consumed one is corrected in place.** The advice was in
+  `.changeset/pre/history-since-keel-scaffold.md`, consumed by rc.0. The notes tool's "Corrections to earlier notes"
+  lists changesets EDITED since a ref, but only `.changeset/*.md` and only under `--since`, and a candidate's notes are
+  built without `--since` from the pending changesets (`release.mjs prepare`), so an edit to a `pre/` file reaches no
+  candidate's notes. The README's rule for "more to say about a change a release candidate already carried" is a new
+  file, so `gitleaks-keep-keel-webhook-entry.md` (scaffold, required) is what rc.2's notes carry; the `pre/` file is
+  corrected too, so the record P14 reads for the whole series does not repeat the wrong advice. Rejected: editing only
+  the `pre/` file (rc.2's notes would say nothing) and teaching the notes tool to read edits in `pre/` (the
+  decision of 2026-11-18 above left reading `pre/` to P14).
+
+## SSSB's real adapters are fenced across the app, not only in its registry and fakes (2026-11-18, `fix/fence-kit-real-adapter-imports`)
+
+Found while publishing `@sssb/kit/adapters/real/s3-storage`: `sssb/no-kit-real-adapter-import` ran only over an app's
+`src/adapters/` (less `real/`), so a route, a domain module or a screen could import `@sssb/kit/adapters/real/llm` or
+`s3-storage` by a declaration and load the vendor SDK in a simulated run.
+
+- **The same rule id, a wider block.** `kit-real-adapters-by-import` in the app preset runs it over every file of the
+  app, deny-by-default, less `src/adapters/real/` and the vendor ban's three carve-outs (`next.config.*`,
+  `tests/contract/`, `infra/`); `registry-and-fakes` no longer lists it. Review found that the first version, over
+  `src/` and `config/` only, let a module outside them (a `lib/`, a test helper, a script) re-export one into `src/`
+  with every check green, the route the vendor ban closes by covering the whole app; so it covers what the vendor ban
+  covers. Rejected: a second
+  rule id. The pattern and what it bans are unchanged, only where; a second id would leave two rules saying one thing,
+  and an adopter config that switched the old one off for the registry would have kept doing so. The message now
+  says where it holds.
+- **What stays allowed, and why.** `import()` anywhere (it is a declaration rule, as the app's own real-adapter rule
+  is): the sign-in, accept-invite and layout modules load SSSB's real-mode forms and providers that way when
+  `!isSimulated`, and lint cannot see the branch. `src/adapters/real/` may import one statically, as it imports a
+  vendor: an app-owned storage adapter builds on `createS3Storage`. The showcase's fixture recorder
+  (`apps/showcase/scripts/llm-record.ts`), which runs the real LLM client on purpose, now loads it with `import()`
+  rather than being carved out.
+- **What is banned with it, and what is not.** Tests and stories are banned too (a story would put the SDK in the
+  workshop; the app's real adapters' own tests sit in `real/`), and so are re-exports and the inline
+  `import { type X }`, which `verbatimModuleSyntax` emits as `import {} from …` and so loads the module. A declaration
+  that is type-only as a whole (`import type`, `export type … from`, `import type x = require()`) is allowed: TypeScript
+  erases it under every setting, and the fence is about loading the SDK (`allowTypeOnly` in
+  `packages/eslint-plugin/src/import-ban.js`, for this rule alone). The first version banned it, like every other
+  declaration fence, and pack and consume's consumer failed: its `src/sssb-surface.ts` names every published module
+  with `export type * as …` to typecheck the whole surface. Rejected: rewriting that file to `typeof import()`, which
+  would have kept a ban on code that loads nothing.
+- **Not covered, by design parity.** A `require()` of one is not this rule's (it is a declaration rule, so `import()`
+  stays open); `@typescript-eslint/no-require-imports` reports a `require()` call, nested ones too (seen in `.ts`, `.js`, `.mjs`
+  and `.cts` files), but that is a base
+  rule, not a fence `sssb check-fences` holds. The app's own real-adapter rule has the same gap.
+- **Existing code.** Every reach into `@sssb/kit/adapters/real/*` from either app's `src/` was already an `import()`;
+  the one declaration was the showcase's fixture recorder (above), and the starter-built template has none. The
+  kit-s3-storage changeset's parenthesis, which said the
+  ban held only in the registry and the fakes, is corrected in place (it is pending, in no release candidate yet).
+
 ## An app names the cluster-wide roles its migrations create (2026-11-18, `fix/owner-pass-app-roles`)
 
 Reported by Pages: the contract suite's owner pass (`packages/kit/src/db/owner-pass.ts`) gave a later owner ADMIN on
@@ -5008,117 +5123,3 @@ _Accepted gap_ and adds to the rule.
   `packages/kit/tsconfig.strict.json`, is what compiles the kit against a seam without `appRoles` (the strict config
   resolves the seam to the fixture, which exports it): reading `.appRoles` directly fails `apps/starter` and
   `apps/showcase` with TS2339 and passes the strict config.
-## `@sssb/tools` is a peer of `@sssb/cdk`, and Next's lint knows the apps (2026-11-18, `fix/cdk-tools-peer`)
-
-Pages' switch to v0.2.0-rc.1 found two packaging problems (its items 1 and 5). ADR-0014's addendum of the same date
-records the first. Decisions, each with what was rejected:
-
-- **`@sssb/tools` is a peer of `@sssb/cdk`, not a dependency** (`packages/cdk/package.json`). Reproduced first with
-  the packed tarballs served over a local URL, installed as the rc.1 notes say (pnpm 11.14.0): with the notes'
-  `overrides`, `ERR_PNPM_EXOTIC_SUBDEP`; without them, pnpm asked npm for `@sssb/tools` and found no release candidate, only the `0.0.0` and `0.0.0-stage` placeholders. With the
-  peer and no `overrides`, the install resolved and cdk's peer was the package's own `@sssb/tools`. Rejected:
-  documenting `blockExoticSubdeps: false` (it turns off a supply-chain guard for every dependency of the workspace, to
-  admit one); keeping the dependency and `overrides` (the error above); publishing release candidates to a registry
-  (npm publishing waits for P14, and it would not fix the tarball recipe `@sssb/create --sssb` writes).
-- **`SssbApp` refuses to synth beside an `@sssb/tools` of another version** (`toolsVersionProblem`,
-  `packages/cdk/src/sssb-app.js`, read from cdk's own resolution of `@sssb/tools/package.json`). The exact dependency
-  used to pin it; a peer at another version is only pnpm's warning (`strictPeerDependencies` is off), and cdk's
-  deploy-time checks are that tools release's, while `sssb doctor`'s version check reads each app's own packages, never
-  its `infra/`. The review found it. `packages/cdk/src/sssb-app-tools-version.test.js` pins the refusal (cdk reads its
-  `@sssb/tools` manifest as another version; without the call in `resolveMigrator` the test goes red).
-  Rejected: `strictPeerDependencies` (an adopter's whole-workspace setting).
-- **Each app's `infra/` declares `@sssb/tools`** beside `@sssb/cdk` (`apps/starter/infra/package.json`,
-  `apps/showcase/infra/package.json`), so the peer is met by a dependency of the package itself rather than by pnpm's
-  `resolvePeersFromWorkspaceRoot` finding the root's copy, or `autoInstallPeers` asking the registry.
-- **The peer cannot lift the fixed group to 1.0.0** (part 10's reason for keeping peers out): measured with
-  `@changesets/cli` 3.0.3, a `minor` on `@sssb/tools` versions the set to 0.3.0 from 0.2.0 and to `rc.2` in pre mode;
-  a peer range the bump leaves out of range (`^0.2.0`) moved cdk with the set to 0.3.0, and with the fixed group
-  removed gave it only a patch, never a major. The release plan's 1.0.0 backstop stays.
-- **No `overrides`, anywhere** (`release.mjs` `candidateNotes`, `@sssb/create`'s `--sssb`): nothing needs one now.
-- **The packed cdk's check** (`cdkPackProblems`, `scripts/pack-and-consume/checks.mjs`) requires `@sssb/tools` as a
-  required peer at exactly cdk's version, and fails it as a dependency.
-- **Pack and consume proves the notes' recipe** (`notesRecipe`, the pages shape): `candidateNotes` rendered for the
-  packed tarballs, its JSON block taken verbatim into a workspace package, the URLs pointed at a local server (a child
-  process, stopped when the step ends or the run exits), the generated workspace's `minimumReleaseAge` guard kept and
-  nothing else set, installed with `--ignore-scripts`. The guard and the flag came from review: the install has no
-  lockfile, and this job's tarballs become a release candidate's assets, so a package published in the last days must
-  not be installed, nor any install script run, beside them. Past pre mode (P14) `candidateNotes` has no notes to
-  render, so the step says it is skipped (`.claude/future-tasks/p14-leave-pre-mode.md` has the follow-up). Rejected:
-  rewriting the whole pages shape to install by URL (the shape's `file:` installs and committed seed would need a URL
-  token, for no more coverage of the recipe); a committed lockfile seed for the recipe (one more seed to refresh, for a
-  step that checks only how the `@sssb` packages resolve).
-- **Next's lint gets each app as its root dir** (`settings.next.rootDir` on the preset's `next` block,
-  `packages/eslint-plugin/src/app-config.js`). `@next/next/no-html-link-for-pages` looked for `pages/` and `app/`
-  under the directory ESLint ran from, so from a workspace root it printed "Pages directory cannot be found" on every
-  run (exit 0), and found no app to check links against. The preset already knows the apps (`resolveRoot`). Next
-  reads each as a fast-glob pattern after turning every backslash into a slash, so a backslash escape broke any path
-  with a special character (the review found it); each special character is a one-character class instead
-  (`nextRootDir`), and `!` is left as it is (`[!]` is a negated class). This repository's own root config, which gives
-  the framework's screens Next's rules too, points them at the apps (`apps/*`), where they render; `pnpm verify`'s
-  `eslint .` showed it warning the same way. Rejected: switching the rule off (it then checks nothing anywhere); an
-  option adopters set (the preset has the answer).
-
-## The real S3 storage adapter is published as a factory, and rc.0's gitleaks advice is corrected (2026-11-18, `feat/s3-storage-factory`)
-
-The first adopter, on `v0.2.0-rc.1`, kept a copy of the kit's real S3 storage adapter for a simulated app run against a
-real bucket (`dev:edge`), because the kit did not publish it; and found that rc.0's notes told it to drop a
-`.gitleaks.toml` entry that its full-history scan still needs.
-
-- **`@sssb/kit/adapters/real/s3-storage` exports `createS3Storage({ bucket, region?, endpoint?, credentials?,
-forcePathStyle?, client? })`**, the adapter the real-mode registry builds, moved from `adapters/real/storage.ts` to a
-  module of its own so the published surface is the factory and its options alone; `storage.ts` keeps the registry's
-  `createRealStorage(bucket, region)` as a two-line wrapper, so the registry, its mocks and its tests did not change. The
-  options are `S3ClientConfig`'s own keys, passed through when set. A `client` beside any of the others is refused,
-  since they would be ignored silently. Rejected: publishing `createRealStorage(bucket, region)` (no endpoint, path
-  style or credentials, which is what the copy needed), and an `S3ClientConfig` pass-through (it would publish the
-  SDK's whole configuration surface as the kit's). The port is unchanged, the SDK stays in `packages/kit/src/adapters/`,
-  and an app imports the factory from its own `src/adapters/real/` (`sssb/no-kit-real-adapter-import` bans it only in the
-  registry and the fakes). It passes the universality test: it is the real adapter of SSSB's own storage port.
-- **The gitleaks correction is a new changeset, and the consumed one is corrected in place.** The advice was in
-  `.changeset/pre/history-since-keel-scaffold.md`, consumed by rc.0. The notes tool's "Corrections to earlier notes"
-  lists changesets EDITED since a ref, but only `.changeset/*.md` and only under `--since`, and a candidate's notes are
-  built without `--since` from the pending changesets (`release.mjs prepare`), so an edit to a `pre/` file reaches no
-  candidate's notes. The README's rule for "more to say about a change a release candidate already carried" is a new
-  file, so `gitleaks-keep-keel-webhook-entry.md` (scaffold, required) is what rc.2's notes carry; the `pre/` file is
-  corrected too, so the record P14 reads for the whole series does not repeat the wrong advice. Rejected: editing only
-  the `pre/` file (rc.2's notes would say nothing) and teaching the notes tool to read edits in `pre/` (the
-  decision of 2026-11-18 above left reading `pre/` to P14).
-
-## SSSB's real adapters are fenced across the app, not only in its registry and fakes (2026-11-18, `fix/fence-kit-real-adapter-imports`)
-
-Found while publishing `@sssb/kit/adapters/real/s3-storage`: `sssb/no-kit-real-adapter-import` ran only over an app's
-`src/adapters/` (less `real/`), so a route, a domain module or a screen could import `@sssb/kit/adapters/real/llm` or
-`s3-storage` by a declaration and load the vendor SDK in a simulated run.
-
-- **The same rule id, a wider block.** `kit-real-adapters-by-import` in the app preset runs it over every file of the
-  app, deny-by-default, less `src/adapters/real/` and the vendor ban's three carve-outs (`next.config.*`,
-  `tests/contract/`, `infra/`); `registry-and-fakes` no longer lists it. Review found that the first version, over
-  `src/` and `config/` only, let a module outside them (a `lib/`, a test helper, a script) re-export one into `src/`
-  with every check green, the route the vendor ban closes by covering the whole app; so it covers what the vendor ban
-  covers. Rejected: a second
-  rule id. The pattern and what it bans are unchanged, only where; a second id would leave two rules saying one thing,
-  and an adopter config that switched the old one off for the registry would have kept doing so. The message now
-  says where it holds.
-- **What stays allowed, and why.** `import()` anywhere (it is a declaration rule, as the app's own real-adapter rule
-  is): the sign-in, accept-invite and layout modules load SSSB's real-mode forms and providers that way when
-  `!isSimulated`, and lint cannot see the branch. `src/adapters/real/` may import one statically, as it imports a
-  vendor: an app-owned storage adapter builds on `createS3Storage`. The showcase's fixture recorder
-  (`apps/showcase/scripts/llm-record.ts`), which runs the real LLM client on purpose, now loads it with `import()`
-  rather than being carved out.
-- **What is banned with it, and what is not.** Tests and stories are banned too (a story would put the SDK in the
-  workshop; the app's real adapters' own tests sit in `real/`), and so are re-exports and the inline
-  `import { type X }`, which `verbatimModuleSyntax` emits as `import {} from …` and so loads the module. A declaration
-  that is type-only as a whole (`import type`, `export type … from`, `import type x = require()`) is allowed: TypeScript
-  erases it under every setting, and the fence is about loading the SDK (`allowTypeOnly` in
-  `packages/eslint-plugin/src/import-ban.js`, for this rule alone). The first version banned it, like every other
-  declaration fence, and pack and consume's consumer failed: its `src/sssb-surface.ts` names every published module
-  with `export type * as …` to typecheck the whole surface. Rejected: rewriting that file to `typeof import()`, which
-  would have kept a ban on code that loads nothing.
-- **Not covered, by design parity.** A `require()` of one is not this rule's (it is a declaration rule, so `import()`
-  stays open); `@typescript-eslint/no-require-imports` reports a `require()` call, nested ones too (seen in `.ts`, `.js`, `.mjs`
-  and `.cts` files), but that is a base
-  rule, not a fence `sssb check-fences` holds. The app's own real-adapter rule has the same gap.
-- **Existing code.** Every reach into `@sssb/kit/adapters/real/*` from either app's `src/` was already an `import()`;
-  the one declaration was the showcase's fixture recorder (above), and the starter-built template has none. The
-  kit-s3-storage changeset's parenthesis, which said the
-  ban held only in the registry and the fakes, is corrected in place (it is pending, in no release candidate yet).
