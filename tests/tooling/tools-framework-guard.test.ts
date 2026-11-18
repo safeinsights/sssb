@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Plugin, PluginOption } from 'vite'
 import { describe, expect, it } from 'vitest'
@@ -50,8 +50,26 @@ describe('frameworkGuard', () => {
         expect(() => load(`${foreign}?v=1`)).toThrow('is not part of the @sssb/kit')
     })
 
+    it('remembers a file only once it passes: a foreign file fails every load, an own file passes every load', () => {
+        const guard = frameworkGuard(app).load as unknown as (this: unknown, id: string) => unknown
+        expect(() => guard.call({}, foreign)).toThrow('is not part of the @sssb/kit')
+        expect(() => guard.call({}, foreign)).toThrow('is not part of the @sssb/kit')
+        expect(guard.call({}, ownKit)).toBeNull()
+        expect(guard.call({}, ownKit)).toBeNull()
+    })
+
     it('is the first plugin of both presets', async () => {
-        const appDir = path.resolve(__dirname, '../../apps/starter')
+        // Whichever app of this tree builds a static demo: `init-app` renames and ejects apps, so no name is assumed.
+        const appsDir = path.resolve(__dirname, '../../apps')
+        const appDir = readdirSync(appsDir)
+            .map((name) => path.join(appsDir, name))
+            .find((dir) => {
+                const manifest = path.join(dir, 'package.json')
+                if (!existsSync(manifest)) return false
+                const devDependencies = JSON.parse(readFileSync(manifest, 'utf8')).devDependencies ?? {}
+                return '@vitejs/plugin-react' in devDependencies && 'vite-plugin-singlefile' in devDependencies
+            })
+        if (appDir === undefined) throw new Error('no app in this tree builds a static demo')
         const project = await appTestProject({ appDir })
         expect(flatten(project.plugins as PluginOption[])[0]?.name).toBe('sssb:framework-guard')
         const demo = await staticDemoConfig({ appDir })

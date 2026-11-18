@@ -9,7 +9,7 @@
 // got must sit inside the real directory of the `@sssb/kit` that the app itself resolves. The lint rule
 // `sssb/no-bare-kit-import` keeps every other route out of this package's source.
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { builtinModules, createRequire } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { UsageError } from './app.js'
@@ -43,11 +43,12 @@ const packageNameOf = (specifier) =>
         .slice(0, specifier.startsWith('@') ? 2 : 1)
         .join('/')
 
-/** @type {Map<string, string | null>} the `name` of each directory's nearest package.json */
+/** @type {Map<string, string | null>} the `name` of each directory's nearest named package.json */
 const owningNames = new Map()
 
 /**
- * The `name` in the nearest package.json at or above `dir`, or null.
+ * The `name` in the nearest package.json at or above `dir` that has one (a nameless `{ "type": "module" }` is not a
+ * package), or null.
  * @param {string} dir
  * @returns {string | null}
  */
@@ -57,14 +58,20 @@ function owningPackageName(dir) {
     const manifest = path.join(dir, 'package.json')
     /** @type {string | null} */
     let name
+    // A package.json with no `name` (a nested `{ "type": "module" }`) does not make a package: keep walking, or a file
+    // under one inside a framework copy would read as nobody's and pass every guard.
+    /** @type {string | null} */
+    let named = null
     if (existsSync(manifest)) {
         try {
             const parsed = JSON.parse(readFileSync(manifest, 'utf8'))
-            name = typeof parsed?.name === 'string' ? parsed.name : null
+            named = typeof parsed?.name === 'string' ? parsed.name : null
         } catch {
-            name = null
+            named = null
         }
-    } else {
+    }
+    if (named !== null) name = named
+    else {
         const parent = path.dirname(dir)
         name = parent === dir ? null : owningPackageName(parent)
     }
@@ -73,7 +80,7 @@ function owningPackageName(dir) {
 }
 
 /**
- * Whether `file` is framework source: its nearest package.json is named `@sssb/kit`, wherever it sits (an installed
+ * Whether `file` is framework source: its nearest named package.json is `@sssb/kit`'s, wherever it sits (an installed
  * instance, a workspace link, or a copy of the framework's tree reached by a relative path). Recognised by the
  * package, not by an `@sssb/kit` segment in the path, which a copy outside node_modules does not have.
  *
@@ -98,7 +105,7 @@ export function assertNoForeignFramework(appDir, file) {
  * app's directory, which is where Node's own lookup finds it. Throws, naming the app, when there is none.
  *
  * WALKED, NOT `require.resolve`d: Node's resolver falls back to NODE_PATH when the app's own chain has no match, and
- * `pnpm exec` and `pnpm run` set NODE_PATH to the workspace's hoisted `.pnpm/node_modules`. So for an app that
+ * pnpm's bin shims (which `pnpm exec <bin>` and package scripts run) set NODE_PATH to the workspace's hoisted `.pnpm/node_modules`. So for an app that
  * installs no framework, `require.resolve('@sssb/kit/…')` would quietly return the hoisted copy, another app's
  * instance: the slip rule 4 exists to prevent. The walk never consults NODE_PATH or the global folders.
  *
@@ -172,10 +179,14 @@ export function resolveAppsKit(appDir, subpath) {
  */
 export function resolveFromApp(appDir, specifier, why) {
     const missing = () =>
-        `sssb: ${path.resolve(appDir)} does not install \`${specifier}\`, which ${why}. Add it to the app's devDependencies.`
+        specifier.startsWith('#')
+            ? `sssb: ${path.resolve(appDir)} cannot resolve \`${specifier}\`, which ${why}: check the \`imports\` of the app's package.json.`
+            : `sssb: ${path.resolve(appDir)} does not install \`${specifier}\`, which ${why}. Add it to the app's devDependencies.`
     // The package must be on the app's own lookup chain. Node's resolver would otherwise fall back to NODE_PATH, which
-    // pnpm points at the hoisted store, and hand back a copy installed for another package (see kitDirOf).
-    if (packageDirFrom(appDir, packageNameOf(specifier)) === null) throw new UsageError(missing())
+    // pnpm's bin shims point at the hoisted store, and hand back a copy installed for another package (see kitDirOf).
+    // Node's built-ins and package imports (`#x`) are not packages on a lookup chain.
+    const bare = !specifier.startsWith('node:') && !specifier.startsWith('#') && !builtinModules.includes(specifier)
+    if (bare && packageDirFrom(appDir, packageNameOf(specifier)) === null) throw new UsageError(missing())
     try {
         return requireFrom(appDir).resolve(specifier)
     } catch (error) {

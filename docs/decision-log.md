@@ -3193,7 +3193,7 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 - **The pill's badge uses the name's number format** (`useFormatter().number`, as ICU's `#` does: "1,000" in en). The
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
-  `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
+  `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
 
 ## `@sssb/cdk` and per-app infra (2026-11-18, ADR-0014 P9, `feat/sssb-cdk`)
 
@@ -3287,17 +3287,16 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
 - **One resolver, `packages/tools/src/kit.js`.** It finds the app's `@sssb/kit` by walking `node_modules` up from the
   app's directory, as Node's lookup does, and checks that every framework file a tool loads has its real path inside
   that directory. It started as `require.resolve(…, { paths: [appDir] })`, as the ADR wrote it; the tests found that
-  `pnpm exec` and `pnpm run` set `NODE_PATH` to the hoisted `.pnpm/node_modules`, which Node's resolver falls back to,
+  pnpm's bin shims (`node_modules/.bin/<bin>`, which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the hoisted `.pnpm/node_modules`, which Node's resolver falls back to,
   so an app with no framework of its own resolved the hoisted copy, another app's instance: the slip rule 4 exists for.
   The walk never reads `NODE_PATH`. Its users are the `dev:real` preflight, the Next preset's next-intl request path
   and `sssb guide`. `sssb/no-bare-kit-import` bans a literal `@sssb/kit` specifier (declarations, `import()`, type
   imports, `require`, any `.resolve('…')`, Vitest's loaders) in every package under `packages/` but the framework and
-  the showcase's seed, deny-by-default, so P6's and P9's packages are covered before anyone names them; seen red on a
-  probe in each form (`tests/lint/no-bare-kit-import.test.ts`).
+  the showcase's seed, deny-by-default, so P6's and P9's packages are covered before anyone names them; seen red on a probe in each form `tests/lint/no-bare-kit-import.test.ts` lists.
 - **A preset configures the app's own tools.** The Vite preset loads `@vitejs/plugin-react` and
   `vite-plugin-singlefile`, the Vitest preset the React plugin and jest-dom, and the Next preset next-intl's plugin,
-  each resolved from the app's directory, so `@sssb/tools` declares no peer it would have to keep in step and never
-  brings a second copy. jest-dom goes to Vitest as the bare specifier, not a resolved path: resolved with Node's
+  each resolved from the app's directory, so `@sssb/tools` never brings a second copy of them; its only peers are
+  optional: `next` and `vite` for its declarations' types, `vitest` for the scratch-directory helper's `afterAll`. jest-dom goes to Vitest as the bare specifier, not a resolved path: resolved with Node's
   `require` conditions it is jest-dom's CommonJS build, which cannot load Vitest.
 - **The Vite and Vitest presets pass the seam explicitly** (`@sssb/app-config` to the app's `src/app-config`), as the
   ADR says every SSSB builder does: the same directory as the link in an adopter's app, the only way in this
@@ -3322,9 +3321,9 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
 - **The tick scripts moved into `@sssb/tools`** (`sssb tick`, `sssb dev-tick`, `@sssb/tools/ticker`,
   `@sssb/tools/ticker-marker`), in a commit of their own: every app with a scheduled-tick route needs them, and the
   starter's Playwright config imports the marker. ADR-0014's table had no row for them (`pnpm tick` merged after it).
-  Their code is unchanged but for imports and entry points.
+  Their logic is unchanged: against `scripts/`, the diff is imports, entry points, comments, the usage text, and three constants no longer exported (for knip).
 - **The framework keeps its own scratch-directory helper** for its tests, the shipped conformance suites among them,
-  because no SSSB package depends on another; everyone else imports `@sssb/tools/testing/tmp-dir`. The two marker
+  because the framework depends on no other SSSB package; everyone else imports `@sssb/tools/testing/tmp-dir`. The two marker
   suffixes are held equal by `tests/tooling/tmp-dir.test.ts`. The framework's copy lost `makeTestTmpDirAsync`, which
   only the repository's own tests used.
 - **`sssb ci`** has three jobs today: `e2e-shards` (discovering shards from the workspace's apps, with a project named
@@ -3335,7 +3334,7 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
   `.claude/sssb-guide.md` with a `sha256` stamp and `--check` compares stamps; until P7 publishes the guide it says so
   and exits 1.
 - **The assembly checks** (`@sssb/tools/assembly-checks`: the migrator bundle, the fail-closed environment, #49's Data
-  API shape) are pure functions over a synthesized template, which `infra/check-shapes.ts` now calls. It also gained
+  API shape) are functions over a synthesized template and its assembly directory, which `infra/check-shapes.ts` now calls. It also gained
   the fail-closed check on the server function's environment, on both shapes.
 - **`sssb check-doc-paths`** runs the doc-path gate's engine (`@sssb/tools/doc-paths`) over the doc set in the root
   package.json's `sssb.docPaths`. `tests/docs/doc-set.ts` reads the same configuration, so the gate, the CLI and
@@ -3349,7 +3348,25 @@ them; `scripts/` keeps only what is this repository's own (`init-app`, `release`
   from each app, and the sibling package `gate` uses `@sssb/tools`' helper with no framework installed.
 - **knip** cannot see what a preset loads from the app or what `@sssb/tools` imports from its optional peers; the
   narrow entries are in `docs/build-notes.md`.
-  `.claude/future-tasks/resolved/simulator-panel-focus-on-toggle.md`.
+- **What review changed** (two rounds and a diff review, Opus and Fable). Framework source is now recognised by its
+  package, not its path: a file is the framework's when its nearest named package.json is `@sssb/kit`'s
+  (`isFrameworkFile`), which also catches a copy of the framework's tree reached by a relative path. The `dev:real`
+  preflight bundles every file outside `node_modules` (a workspace package the seam imports included, so its own
+  `@sssb/kit` imports are checked rather than loaded natively past the check) and runs the identity check on every
+  bundled input and every external. Each bundled file that uses `import.meta` is first transformed with `import.meta`
+  defined as an object holding its own location, since a CommonJS bundle has none. The Vite and Vitest presets add a
+  guard plugin that runs the same check on every module they load, so a workspace package bringing a framework
+  instance of its own fails there too, instead of running beside the app's on the app's seam. `resolveFromApp` walks
+  `node_modules` as `kitDirOf` does. The doc-path gate, and this repository's `tests/docs/doc-paths.test.ts`, fail an
+  `include` entry that names nothing. Labels for shards and launch configurations are unique; `sssb tick` and
+  `sssb dev-tick` take `--app`.
+- **The resolver is published as `@sssb/tools/kit`** (`kitDirOf`, `kitVersionOf`, `assertAppsKitFile`,
+  `resolveAppsKit`, `isFrameworkFile`, `assertNoForeignFramework`, `resolveFromApp`, `importFromApp`), at P9's
+  request: `@sssb/cdk`'s construct runs the same check rather than a second copy. P9 records the dependency that
+  takes on `@sssb/tools`.
+- **Port slots stay a closed list** (`showcase`, `starter`, `ladle`, `contractPg`), as `scripts/ports.mjs` had them, so
+  two apps of an adopter's own made from the starter share one; the independent review found it, and
+  `.claude/future-tasks/port-slots-for-adopter-apps.md` designs a slot an app declares itself.
 
 ## A Simulator control for the dev ticker, and focus on panel toggle (2026-11-18, `feat/simulator-ticker-control`)
 

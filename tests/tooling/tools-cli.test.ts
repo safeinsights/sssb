@@ -385,6 +385,43 @@ describe('appLabels', () => {
         expect([...appLabels(root, ['.'])]).toEqual([['.', 'my-repo']])
     })
 
+    it('keeps every label unique when two spellings of a path meet', () => {
+        const root = path.join('/ws', 'my-repo')
+        for (const apps of [
+            ['services/web', 'other/web', 'services-web'],
+            ['a/x/web', 'a-x/web'],
+            ['apps/web', './apps/web'],
+        ]) {
+            const labels = appLabels(root, apps)
+            expect(new Set(labels.values()).size).toBe(apps.length)
+        }
+        expect([...appLabels(root, ['services/web', 'other/web', 'services-web']).values()]).toEqual([
+            'services-web',
+            'other-web',
+            'services-web-2',
+        ])
+        expect([...appLabels(root, ['a/x/web', 'a-x/web']).values()]).toEqual(['a-x-web', 'a-x-web-2'])
+        expect([...appLabels(root, ['apps/web', './apps/web']).values()]).toEqual(['apps-web', 'apps-web-2'])
+    })
+
+    it('keeps `ci e2e-shards` names unique when an app labelled `x-destructive` sits beside a splitting app `x`', () => {
+        const root = workspace('labels-destructive', { sssb: { apps: ['apps/x', 'apps/x-destructive'] } })
+        app(root, 'apps/x', { name: 'x' })
+        write(
+            path.join(root, 'apps/x/playwright.config.ts'),
+            "export default { projects: [{ name: 'chromium' }, { name: 'destructive' }] }\n",
+        )
+        app(root, 'apps/x-destructive', { name: 'x-destructive' })
+        write(path.join(root, 'apps/x-destructive/playwright.config.ts'), 'export default {}\n')
+        const result = sssb(root, ['ci', 'e2e-shards'])
+        expect(result.status).toBe(0)
+        const line = result.stdout.split('\n').find((l) => l.startsWith('computed matrix: '))!
+        const names = JSON.parse(line.slice('computed matrix: '.length)).map((shard: { name: string }) => shard.name)
+        expect(names).toHaveLength(3)
+        expect(new Set(names).size).toBe(3)
+        expect(names).toEqual(['x', 'x-destructive', 'x-destructive-2'])
+    })
+
     it('gives `ci e2e-shards` unique names for two apps that share a basename', () => {
         const root = workspace('labels', { sssb: { apps: ['apps/web', 'services/web'] } })
         for (const dir of ['apps/web', 'services/web']) {
@@ -407,6 +444,16 @@ describe('sssb tick and dev-tick with --app', () => {
         const result = sssb(root, ['tick', '--app', dir, '--url', 'http://127.0.0.1:1', '--timeout', '2'])
 
         expect(result.stderr).toContain('tick: request to http://127.0.0.1:1')
+        expect(result.status).toBe(1)
+    })
+
+    it('`tick <slot> --url …` from a directory with no package.json gets past argument parsing', () => {
+        const scratch = realpathSync(makeTestTmpDir('sssb-cli-tick-bare-'))
+
+        const result = sssb(scratch, ['tick', 'showcase', '--url', 'http://127.0.0.1:1', '--timeout', '2'])
+
+        expect(result.stderr).toContain('tick: request to http://127.0.0.1:1')
+        expect(result.stderr).not.toContain('is not a package')
         expect(result.status).toBe(1)
     })
 

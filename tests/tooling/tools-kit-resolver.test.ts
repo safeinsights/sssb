@@ -77,7 +77,7 @@ describe('resolveAppsKit', () => {
     })
 
     it('says the app does not resolve @sssb/kit when nothing installs it, even with NODE_PATH at a hoisted copy', () => {
-        // `pnpm exec` and `pnpm run` set NODE_PATH to pnpm's hoisted `.pnpm/node_modules`, which Node's resolver honours
+        // pnpm's bin shims (which `pnpm exec <bin>` and package scripts run) set NODE_PATH to pnpm's hoisted `.pnpm/node_modules`, which Node's resolver honours
         // as a last resort. Resolved that way, an app with no framework of its own would get the hoisted one: another
         // app's instance. So the child runs with NODE_PATH pointing straight at a hoisted copy, and must still refuse.
         const script = [
@@ -175,6 +175,19 @@ describe('isFrameworkFile', () => {
     })
 })
 
+describe('a package.json with no name inside a framework copy', () => {
+    const nested = path.join(WS, 'vendor', 'kit-nested')
+    writeKit(nested, 'nested')
+    writeFile(path.join(nested, 'src', 'nested', 'package.json'), JSON.stringify({ type: 'module' }))
+    const deep = path.join(nested, 'src', 'nested', 'deep.ts')
+    writeFile(deep, '')
+
+    it('does not make a package: the walk goes on to the framework above it', () => {
+        expect(isFrameworkFile(deep)).toBe(true)
+        expect(() => assertNoForeignFramework(appA, deep)).toThrow('is not part of the @sssb/kit')
+    })
+})
+
 describe('assertNoForeignFramework', () => {
     it('passes the app’s own kit file and files that are not framework source', () => {
         expect(() => assertNoForeignFramework(appA, errorsOf(kitA))).not.toThrow()
@@ -207,6 +220,11 @@ describe('resolveFromApp', () => {
             env: { ...process.env, NODE_PATH: hoisted },
         })
         expect(result.stdout).toContain('does not install `x-plugin`')
+    })
+
+    it('resolves Node’s built-ins, which are not packages on a lookup chain', () => {
+        expect(() => resolveFromApp(appA, 'node:fs', 'x')).not.toThrow()
+        expect(() => resolveFromApp(appA, 'fs', 'x')).not.toThrow()
     })
 
     it('resolves a package in the app’s own node_modules or an ancestor’s', () => {

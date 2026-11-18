@@ -3,7 +3,7 @@
 
 /**
  * The real directory of the `@sssb/kit` an app resolves: the first `node_modules/@sssb/kit` walking up from the app's
- * directory, as Node's lookup finds it, never through NODE_PATH (which pnpm points at the hoisted store).
+ * directory, as Node's lookup finds it, never through NODE_PATH (which pnpm's bin shims point at the hoisted store).
  */
 export declare function kitDirOf(appDir: string): string
 
@@ -25,7 +25,7 @@ export declare function assertAppsKitFile(appDir: string, file: string): string
 export declare function resolveAppsKit(appDir: string, subpath: string): string
 
 /**
- * Whether `file` is framework source: its nearest package.json is named `@sssb/kit`, wherever it sits (an installed
+ * Whether `file` is framework source: its nearest named package.json is `@sssb/kit`'s, wherever it sits (an installed
  * instance, a workspace link, or a copy of the framework's tree reached by a relative path).
  */
 export declare function isFrameworkFile(file: string): boolean

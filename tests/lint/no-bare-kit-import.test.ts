@@ -22,9 +22,20 @@ describe('sssb/no-bare-kit-import', () => {
         ['require.resolve()', "export const m = require.resolve('@sssb/kit/package.json')\n"],
         ['import.meta.resolve()', "export const m = import.meta.resolve('@sssb/kit/i18n/request')\n"],
         ['a template with no expressions', 'export const m = import(`@sssb/kit/ports/errors`)\n'],
+        ["Vitest's vi.mock", "vi.mock('@sssb/kit/ports/errors')\n"],
+        ["Vitest's vi.importActual", "export const m = vi.importActual('@sssb/kit/ports/errors')\n"],
     ]
     it.each(forms)('bans %s in @sssb/tools', async (_form, code) => {
         expect(await fired('packages/tools/src/probe.js', code)).toBe(1)
+    })
+
+    it("covers TypeScript's import-equals form", async () => {
+        expect(
+            await fired(
+                'packages/tools/src/probe.ts',
+                "import errors = require('@sssb/kit/ports/errors')\nexport { errors }\n",
+            ),
+        ).toBe(1)
     })
 
     it('covers a type import in a declaration file', async () => {

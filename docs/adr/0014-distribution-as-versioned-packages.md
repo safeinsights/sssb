@@ -897,13 +897,12 @@ P9 built `@sssb/cdk` and moved the root `infra/` into each app. Details the body
 P4 built `packages/tools` as the plan row says. Where it refined what the body said (each in `docs/decision-log.md`,
 "`@sssb/tools`"):
 
-- **Rule 4's resolver walks `node_modules` instead of calling `require.resolve(…, { paths: [appDir] })`.** `pnpm exec`
-  and `pnpm run` set `NODE_PATH` to the hoisted `.pnpm/node_modules`, Node's resolver falls back to it, and an app with
+- **Rule 4's resolver walks `node_modules` instead of calling `require.resolve(…, { paths: [appDir] })`.** pnpm's bin shims (which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the hoisted `.pnpm/node_modules`, Node's resolver falls back to it, and an app with
   no framework of its own then resolved the hoisted copy. The shared real-path check is unchanged.
 - **`@sssb/tools` is written in JavaScript with hand-written declarations**, not TypeScript built when packed, so its
   bin and presets run from source inside this repository.
 - **The presets load the tools they configure from the app** (next-intl's plugin, Vite's React plugin,
-  `vite-plugin-singlefile`, jest-dom), so `@sssb/tools` has no runtime peer to keep in step.
+  `vite-plugin-singlefile`, jest-dom), so `@sssb/tools` never brings a second copy; its only peers are optional (`next` and `vite` for types, `vitest` for the scratch-directory helper).
 - **The Vite and Vitest presets pass the seam explicitly**, as part 8 says every SSSB builder does. Pack and consume's
   proof of the seam link now comes from `tsc`, `next build`, the migrator bundle and the negative fixture.
 - **Each app declares its port slot** in its package.json (`"sssb": { "port": … }`); `sssb port` with no argument
@@ -912,3 +911,8 @@ P4 built `packages/tools` as the plan row says. Where it refined what the body s
 - **`sssb ci` has the jobs this repository's CI needed first** (`e2e-shards`, `e2e`, `demo-static`); P10 adds the rest.
 - **`sssb guide`** looks for the guide at the published subpath `@sssb/kit/guide.md` and copies it to
   `.claude/sssb-guide.md`; P7 publishes the guide.
+- **Rule 4's check recognises the framework by its package**: a file is the framework's when its nearest named
+  package.json is `@sssb/kit`'s, wherever it sits, so a copy of the framework's tree outside `node_modules` is caught,
+  which a check on the path missed. Besides the resolver's users, the Vite and Vitest presets run it on every module
+  they load, and the `dev:real` preflight on everything it bundles or leaves external.
+- **The resolver is published as `@sssb/tools/kit`**, so `@sssb/cdk` (P9) runs the same check.

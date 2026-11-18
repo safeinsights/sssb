@@ -79,7 +79,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `@sssb/kit` from the APP's directory and checks the real path of what it got. `sssb/no-bare-kit-import` bans a bare
   `@sssb/kit` specifier in every package under `packages/` but the framework and the showcase's seed. A preset loads
   the tools it configures (Vite's React plugin, next-intl's plugin, jest-dom) from the app, never its own copies. A
-  new CLI command is a module in `packages/tools/src/commands/` plus one line in `bin/sssb.js`; a new published
+  new CLI command is a module in `packages/tools/src/commands/` plus one entry in `bin/sssb.js`'s `COMMANDS`; a new published
   helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.

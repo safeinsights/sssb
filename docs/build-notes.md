@@ -2094,7 +2094,7 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 
-- **`pnpm exec` and `pnpm run` set `NODE_PATH` to the workspace's hoisted `.pnpm/node_modules`**, and Node's resolver
+- **pnpm's bin shims (`node_modules/.bin/<bin>`, which `pnpm exec <bin>` and package scripts run) set `NODE_PATH` to the workspace's hoisted `.pnpm/node_modules`**, and Node's resolver
   falls back to it when a package's own `node_modules` chain has no match. So `createRequire(app).resolve('@sssb/kit/…')`
   from an app that installs no framework does not fail: it returns the hoisted copy, another app's. A tool that must
   load THIS app's instance finds it by walking `node_modules` itself (`packages/tools/src/kit.js`). The resolver's test
@@ -2107,9 +2107,7 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   refused `@clerk/nextjs`'s ES build (`ERR_UNSUPPORTED_DIR_IMPORT`: it imports directories, written for bundlers), and
   then `import { Pool } from` `pg`'s CommonJS ("Named export 'Pool' not found"). tsx had hidden both, since it resolves
   like a bundler. The preflight bundle is CommonJS, and each external is the path of its `require` entry.
-- **A tool that loads `next.config.ts` from elsewhere breaks a working-directory default.** knip evaluates each app's
-  Next config from the repository root, so a preset that took the app's directory from `process.cwd()` computed the
-  next-intl request path relative to the root, and knip reported it unresolved. The apps pass `__dirname`.
+- **A tool that loads `next.config.ts` from elsewhere breaks a working-directory default.** With the preset taking the app's directory from `process.cwd()`, `pnpm knip` reported `./packages/kit/src/i18n/request.ts` as an unresolved import of both apps' `next.config.ts`: the next-intl request path had been computed from the repository root, where knip runs. The apps pass `__dirname`.
 - **The doc-path gate did not notice the scripts moving.** A file citation resolves when its parent directory exists
   (the recipes cite files you are meant to create), and `scripts/` still exists, so `scripts/ports.mjs` and the rest
   passed. They were found by grepping for the old paths; a move that leaves its directory behind needs that grep.
@@ -2119,6 +2117,15 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   "referenced optional peerDependencies": each is needed only by the entry that imports it (the Next preset's types, the
   Vite preset's types, the scratch-directory helper's `afterAll`), so a package that uses only one helper need not
   install the others.
+- **A CommonJS bundle has an empty `import.meta`.** Bundling a workspace package that reads a file beside it with
+  `new URL('./data.txt', import.meta.url)` into the CommonJS preflight bundle crashed with `ERR_INVALID_URL`. Rewriting
+  `import.meta.url` as text fixed that and broke a file whose string literal mentioned it (`"see import.meta.url"`
+  became invalid code), and `replaceAll` read `$&` in a path as a pattern. What works is esbuild's own transform with a
+  per-file `define` of `import.meta` as an object: a define replaces expressions only, and covers the destructured form.
+- **Vitest 4 runs every `.ts` file through Vite's plugins, even under `node_modules`.** Its module runner externalizes
+  only `.js`, `.mjs`, `.cjs`, `.node` and `.wasm` files there, so a plugin's `load` hook sees the framework's
+  TypeScript, JSON and CSS from an installed instance, which is what lets the presets' guard check every framework
+  file a test loads.
 - **A Vitest config with an async default needs its return type named.** `defineConfig(async () => ({ … }))` failed
   `tsc` (no overload matched: the inferred literal is wider than `UserConfig`); `async (): Promise<ViteUserConfig> =>`
   passes. The config is async because the presets are: they `import()` the app's plugins.
