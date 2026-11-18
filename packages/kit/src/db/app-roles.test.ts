@@ -5,7 +5,7 @@ import { appRolesOf, checkAppRoles, refusedOf, shownRefused } from './app-roles'
 import type { DB } from './schema'
 
 describe('an app role is ordinary, read from a server (pglite)', () => {
-    it('refuses each attribute, and every membership but app_user and the named roles, at any depth', async () => {
+    it('refuses each attribute and catalog entry, and every membership but app_user and the named roles, at any depth', async () => {
         const db = new Kysely<DB>({ dialect: new PGliteDialect(openPglite()) })
         try {
             for (const statement of [
@@ -21,6 +21,14 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
                 'CREATE ROLE depot_bypass NOLOGIN BYPASSRLS',
                 'CREATE ROLE depot_replication NOLOGIN REPLICATION',
                 'CREATE ROLE depot_super NOLOGIN SUPERUSER',
+                // Attribute-free, member of nothing, and more than ordinary through the cluster-wide catalogs.
+                'CREATE ROLE depot_parameter NOLOGIN',
+                'GRANT ALTER SYSTEM ON PARAMETER archive_command TO depot_parameter',
+                'CREATE ROLE depot_database NOLOGIN',
+                'CREATE DATABASE depot_db OWNER depot_database',
+                'CREATE ROLE depot_tablespace NOLOGIN',
+                'SET allow_in_place_tablespaces = on',
+                "CREATE TABLESPACE depot_space OWNER depot_tablespace LOCATION ''",
                 'CREATE ROLE wharf_boss NOLOGIN SUPERUSER',
                 'CREATE ROLE depot_under_boss NOLOGIN',
                 'GRANT wharf_boss TO depot_under_boss',
@@ -46,6 +54,9 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
                 'depot_bypass',
                 'depot_replication',
                 'depot_super',
+                'depot_parameter',
+                'depot_database',
+                'depot_tablespace',
                 'depot_under_boss',
                 'depot_program',
                 'depot_chain',
@@ -63,6 +74,9 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
                 depot_bypass: ['BYPASSRLS'],
                 depot_replication: ['REPLICATION'],
                 depot_super: ['SUPERUSER'],
+                depot_parameter: ['granted ALTER SYSTEM on parameter "archive_command"'],
+                depot_database: ['owner of database "depot_db"'],
+                depot_tablespace: ['owner of tablespace "depot_space"'],
                 depot_under_boss: ['member of "wharf_boss"'],
                 depot_program: ['member of "pg_execute_server_program"'],
                 depot_chain: ['member of "pg_read_server_files"', 'member of "wharf_middle"'],
@@ -77,8 +91,9 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
     }, 30_000)
 
     // Every later owner is handed ADMIN on app_user too. It is shared by every database on a server, so it may be a
-    // member of a role another app named (CI's one contract server), but never of a predefined or privileged one.
-    it('reads app_user too, first: each attribute refused, and every membership but the named roles and roles ordinary in shape', async () => {
+    // member of a role another app named (CI's one contract server), but never of a predefined one or of one not
+    // ordinary in shape.
+    it('reads app_user too, first: each attribute and catalog entry refused, and every membership but the named roles and roles ordinary in shape', async () => {
         const db = new Kysely<DB>({ dialect: new PGliteDialect(openPglite()) })
         try {
             for (const statement of [
@@ -90,6 +105,21 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
                 'CREATE ROLE wharf_middle NOLOGIN',
                 'GRANT pg_read_server_files TO wharf_middle',
                 'CREATE ROLE rds_fixture NOLOGIN',
+                // One role per attribute, each reached only through app_user's membership in it.
+                'CREATE ROLE wharf_bypass NOLOGIN BYPASSRLS',
+                'CREATE ROLE wharf_replication NOLOGIN REPLICATION',
+                'CREATE ROLE wharf_createrole NOLOGIN CREATEROLE',
+                'CREATE ROLE wharf_createdb NOLOGIN CREATEDB',
+                'CREATE ROLE wharf_login LOGIN',
+                // ...and one per catalog entry, each attribute-free.
+                'CREATE ROLE wharf_parameter NOLOGIN',
+                'GRANT SET ON PARAMETER log_statement TO wharf_parameter',
+                'CREATE ROLE wharf_database NOLOGIN',
+                'CREATE DATABASE wharf_db OWNER wharf_database',
+                'CREATE ROLE wharf_tablespace NOLOGIN',
+                'SET allow_in_place_tablespaces = on',
+                "CREATE TABLESPACE wharf_space OWNER wharf_tablespace LOCATION ''",
+                'GRANT ALTER SYSTEM ON PARAMETER archive_command TO app_user',
                 'ALTER ROLE app_user SUPERUSER BYPASSRLS REPLICATION CREATEROLE CREATEDB LOGIN',
                 'GRANT harbor_clerk TO app_user',
                 'GRANT other_app_reader TO app_user',
@@ -97,6 +127,8 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
                 'GRANT wharf_middle TO app_user',
                 'GRANT rds_fixture TO app_user',
                 'GRANT pg_execute_server_program TO app_user',
+                'GRANT wharf_bypass, wharf_replication, wharf_createrole, wharf_createdb, wharf_login TO app_user',
+                'GRANT wharf_parameter, wharf_database, wharf_tablespace TO app_user',
                 // A named role that is a member of app_user: what app_user leads to is app_user's to answer for.
                 'CREATE ROLE depot_ok NOLOGIN',
                 'GRANT app_user TO depot_ok',
@@ -114,10 +146,19 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
                         'CREATEROLE',
                         'CREATEDB',
                         'LOGIN',
+                        'granted ALTER SYSTEM on parameter "archive_command"',
                         'member of "pg_execute_server_program"',
                         'member of "pg_read_server_files"',
                         'member of "rds_fixture"',
                         'member of "wharf_boss"',
+                        'member of "wharf_bypass"',
+                        'member of "wharf_createdb"',
+                        'member of "wharf_createrole"',
+                        'member of "wharf_database"',
+                        'member of "wharf_login"',
+                        'member of "wharf_parameter"',
+                        'member of "wharf_replication"',
+                        'member of "wharf_tablespace"',
                     ],
                 ],
                 ['harbor_clerk', []],
@@ -128,6 +169,9 @@ describe('an app role is ordinary, read from a server (pglite)', () => {
             for (const statement of [
                 'ALTER ROLE app_user NOSUPERUSER NOBYPASSRLS NOREPLICATION NOCREATEROLE NOCREATEDB NOLOGIN',
                 'REVOKE wharf_boss, wharf_middle, rds_fixture, pg_execute_server_program FROM app_user',
+                'REVOKE wharf_bypass, wharf_replication, wharf_createrole, wharf_createdb, wharf_login FROM app_user',
+                'REVOKE wharf_parameter, wharf_database, wharf_tablespace FROM app_user',
+                'REVOKE ALTER SYSTEM ON PARAMETER archive_command FROM app_user',
             ]) {
                 await sql.raw(statement).execute(db)
             }

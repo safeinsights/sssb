@@ -119,8 +119,8 @@ async function rolesTheAppCreates(named: readonly string[]): Promise<{ created: 
  * (../../db/app-roles.ts). A role it creates and does not name breaks the owner pass's second run, where a later owner
  * has no ADMIN on it; a name it does not create is one the owner pass would grant ADMIN on all the same, so a stale or
  * hostile name is refused here before any server sees it. And every named role, and the framework's `app_user`, is
- * still ORDINARY once the migrations ran (`refusedOf`): a migration that makes one LOGIN or CREATEDB, or a member of a
- * privileged role, is caught here, before the owner pass hands every later owner ADMIN on it. Measured once per file,
+ * still ORDINARY once the migrations ran (`refusedOf`): a migration that makes one LOGIN or CREATEDB, the owner of a
+ * database, or a member of a privileged role, is caught here, before the owner pass hands every later owner ADMIN on it. Measured once per file,
  * on one pglite.
  */
 export const appRolesCheck: CheckImpl = (() => {
@@ -169,25 +169,22 @@ export const appRolesCheck: CheckImpl = (() => {
                 ).toEqual([])
             },
             "every role appRoles names is an ordinary role once the app's migrations ran": async () => {
-                const { FRAMEWORK_ROLE, shownRefused } = await import('../../db/app-roles')
+                const { FRAMEWORK_ROLE, ORDINARY_NAMED, shownRefused } = await import('../../db/app-roles')
                 const strayed = shownRefused((await measure()).found.filter((role) => role.rolname !== FRAMEWORK_ROLE))
                 expect(
                     strayed,
                     `after the app's migrations, appRoles names ${strayed}: the contract suite's owner pass grants every ` +
-                        'later owner ADMIN on these roles, so each must stay ordinary: NOLOGIN, never CREATEDB, ' +
-                        'CREATEROLE, SUPERUSER, BYPASSRLS or REPLICATION, and a member of no role but app_user and ' +
-                        "the app's other named roles",
+                        `later owner ADMIN on these roles, so each must stay ordinary: ${ORDINARY_NAMED}`,
                 ).toBe('')
             },
             "app_user is an ordinary role once the app's migrations ran": async () => {
-                const { FRAMEWORK_ROLE, shownRefused } = await import('../../db/app-roles')
+                const { FRAMEWORK_ROLE, ORDINARY_APP_USER, shownRefused } = await import('../../db/app-roles')
                 const strayed = shownRefused((await measure()).found.filter((role) => role.rolname === FRAMEWORK_ROLE))
                 expect(
                     strayed,
                     `after the app's migrations, ${strayed}: the contract suite's owner pass grants every later owner ` +
-                        "ADMIN on the framework's app_user, so the app's migrations must leave it ordinary: NOLOGIN, " +
-                        'never CREATEDB, CREATEROLE, SUPERUSER, BYPASSRLS or REPLICATION, and a member of no predefined ' +
-                        '(pg_*) or privileged role (grant it only the roles appRoles names)',
+                        "ADMIN on the framework's app_user, so the app's migrations must leave it ordinary: " +
+                        ORDINARY_APP_USER,
                 ).toBe('')
             },
         },

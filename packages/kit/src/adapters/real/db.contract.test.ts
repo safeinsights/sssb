@@ -268,6 +268,50 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         }
     }
 
+    /**
+     * Makes `role`, which exists and is ordinary, more than ordinary through one cluster-wide catalog: ALTER SYSTEM on
+     * `archive_command` (a shell command the server runs), or the owner of a database or of a tablespace (in place, so
+     * it needs no directory on the server's machine). Resolves to what the refusal names and what undoes it.
+     */
+    async function holdInCatalog(
+        admin: ReturnType<typeof connect>,
+        kind: 'parameter' | 'database' | 'tablespace',
+        role: string,
+    ): Promise<{ reason: string; undo: () => Promise<void> }> {
+        const object = `${role}_${kind}`
+        if (kind === 'parameter') {
+            await sql`GRANT ALTER SYSTEM ON PARAMETER archive_command TO ${sql.id(role)}`.execute(admin)
+            return {
+                reason: 'granted ALTER SYSTEM on parameter "archive_command"',
+                undo: async () => {
+                    await sql`REVOKE ALTER SYSTEM ON PARAMETER archive_command FROM ${sql.id(role)}`.execute(admin)
+                },
+            }
+        }
+        if (kind === 'database') {
+            await sql`CREATE DATABASE ${sql.id(object)} OWNER ${sql.id(role)}`.execute(admin)
+            return {
+                reason: `owner of database "${object}"`,
+                undo: async () => {
+                    await sql`DROP DATABASE IF EXISTS ${sql.id(object)} WITH (FORCE)`.execute(admin)
+                },
+            }
+        }
+        // One connection: the setting is the session's, and CREATE TABLESPACE runs in no transaction.
+        await admin.connection().execute(async (session) => {
+            await sql`SET allow_in_place_tablespaces = on`.execute(session)
+            await sql`CREATE TABLESPACE ${sql.id(object)} OWNER ${sql.id(role)} LOCATION ''`.execute(session)
+            await sql`RESET allow_in_place_tablespaces`.execute(session)
+        })
+        return {
+            reason: `owner of tablespace "${object}"`,
+            undo: async () => {
+                await sql`DROP TABLESPACE IF EXISTS ${sql.id(object)}`.execute(admin)
+            },
+        }
+    }
+    const catalogKinds = ['parameter', 'database', 'tablespace'] as const
+
     /** The memberships `role` holds, as `<the role it is a member of>:<its ADMIN option>`. */
     const membershipsOf = async (admin: ReturnType<typeof connect>, role: string) =>
         (
@@ -280,12 +324,14 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
 
     // The owner pass grants ADMIN on the roles an app names, and on nothing more: a named role that is more than an
     // app's ordinary role is refused before anything is granted, so a hostile or mistaken name cannot lift the owner.
-    // ADMIN lets its holder grant itself SET on the role, so the role's memberships are its power too, at any depth.
-    test("the owner pass refuses ADMIN on a named role that is not ordinary: an attribute, or a membership beyond app_user and the app's roles", async () => {
+    // ADMIN lets its holder grant itself SET on the role, so what the catalogs record for the role, and its memberships
+    // at any depth, are its power too.
+    test("the owner pass refuses ADMIN on a named role that is not ordinary: an attribute, a catalog entry, or a membership beyond app_user and the app's roles", async () => {
         const { admin } = asSuperuser()
         const stamp = Date.now()
         const owner = `sssb_refused_owner_${stamp}`
         const created: string[] = [owner]
+        const undos: (() => Promise<void>)[] = []
         const role = async (name: string, ...statements: string[]) => {
             created.push(name)
             for (const statement of statements) await sql.raw(statement).execute(admin)
@@ -327,6 +373,13 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                 await role(chain, `CREATE ROLE ${chain} NOLOGIN`, `GRANT ${middle} TO ${chain}`),
                 `member of "${middle}", member of "pg_read_server_files"`,
             ])
+            // Attribute-free and a member of nothing: what the cluster-wide catalogs record for it is its power too.
+            for (const kind of catalogKinds) {
+                const name = await role(`fixture_${kind}_${stamp}`, `CREATE ROLE fixture_${kind}_${stamp} NOLOGIN`)
+                const { reason, undo } = await holdInCatalog(admin, kind, name)
+                undos.push(undo)
+                cases.push([`a role with a ${kind} in the catalogs`, name, reason])
+            }
             for (const [label, name, reasons] of cases) {
                 // Named beside the fixture's ordinary role: the refusal grants neither.
                 await expect(grantAppRoles(admin, owner, ['fixture_docket_clerk', name]), label).rejects.toThrow(
@@ -358,6 +411,7 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
             await grantAppRoles(admin, owner, ['fixture_docket_clerk', sibling])
             expect(await membershipsOf(admin, owner)).toEqual(['fixture_docket_clerk:true', `${sibling}:true`])
         } finally {
+            for (const undo of undos) await undo()
             for (const name of created.reverse()) {
                 await sql`DROP ROLE IF EXISTS ${sql.id(name)}`.execute(admin).catch(() => undefined)
             }
@@ -418,6 +472,27 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         }
     })
 
+    // ...or the owner of a database: ADMIN lets the owner grant itself SET on the role, and CREATEDB create a database
+    // the role owns (measured on Postgres 18.4). Every later owner could then act as that database's owner.
+    test('the owner pass fails when its migrations leave a named role owning a database', async () => {
+        const database = `fixture_clerk_owns_${Date.now()}`
+        try {
+            const { outcome, left } = await ownerPassThen(async (ownerDb, owner) => {
+                await sql`GRANT fixture_docket_clerk TO ${sql.id(owner)} WITH SET TRUE`.execute(ownerDb)
+                await sql`CREATE DATABASE ${sql.id(database)} OWNER fixture_docket_clerk`.execute(ownerDb)
+            })
+            expectOnly(
+                outcome,
+                `after the migrations, not an ordinary role: "fixture_docket_clerk" (owner of database "${database}").`,
+            )
+            expect(left).toEqual([])
+        } finally {
+            const { admin } = asSuperuser()
+            await sql`DROP DATABASE IF EXISTS ${sql.id(database)} WITH (FORCE)`.execute(admin)
+            await admin.destroy()
+        }
+    })
+
     // Whichever branch each named role took (created by the owner's migration, or granted before it), the owner holds
     // ADMIN on it after the migrations: the pass checks that, so a grant that stops reaching the owner is seen.
     test('the owner pass fails when the owner does not hold ADMIN on a named role after its migrations', async () => {
@@ -443,6 +518,15 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         const middle = `fixture_middle_${stamp}`
         const provider = `rds_fixture_${stamp}`
         const otherApp = `fixture_other_app_${stamp}`
+        // One role per attribute, each reached only through app_user's membership in it (SUPERUSER is `boss`'s).
+        const reached = ['BYPASSRLS', 'REPLICATION', 'CREATEROLE', 'CREATEDB', 'LOGIN'].map(
+            (attribute): [string, string] => [attribute, `fixture_reached_${attribute.toLowerCase()}_${stamp}`],
+        )
+        // What a leaked owner pass leaves behind: a LOGIN CREATEROLE CREATEDB role, as the pass's owner is made.
+        const leaked = `fixture_leaked_owner_${stamp}`
+        // ...and one per cluster-wide catalog entry, attribute-free.
+        const catalogued = catalogKinds.map((kind) => `fixture_reached_${kind}_${stamp}`)
+        const undos: (() => Promise<void>)[] = []
         try {
             for (const statement of [
                 `CREATE ROLE ${owner} NOLOGIN NOSUPERUSER CREATEROLE`,
@@ -451,9 +535,16 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                 `GRANT pg_read_server_files TO ${middle}`,
                 `CREATE ROLE ${provider} NOLOGIN`,
                 `CREATE ROLE ${otherApp} NOLOGIN`,
+                ...reached.map(
+                    ([attribute, name]) => `CREATE ROLE ${name} ${attribute === 'LOGIN' ? '' : 'NOLOGIN '}${attribute}`,
+                ),
+                `CREATE ROLE ${leaked} LOGIN CREATEROLE CREATEDB NOSUPERUSER`,
+                ...catalogued.map((name) => `CREATE ROLE ${name} NOLOGIN`),
             ]) {
                 await sql.raw(statement).execute(admin)
             }
+            const held = catalogKinds.map((kind, index) => [kind, catalogued[index]!] as const)
+            for (const [kind, name] of held) undos.push((await holdInCatalog(admin, kind, name)).undo)
             // [what app_user is made, the statement, the one that undoes it, what the refusal names]
             const cases: [string, string, string, string][] = [
                 ...['SUPERUSER', 'BYPASSRLS', 'REPLICATION', 'CREATEROLE', 'CREATEDB', 'LOGIN'].map(
@@ -465,6 +556,12 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                     ],
                 ),
                 [
+                    'granted ALTER SYSTEM on archive_command',
+                    'GRANT ALTER SYSTEM ON PARAMETER archive_command TO app_user',
+                    'REVOKE ALTER SYSTEM ON PARAMETER archive_command FROM app_user',
+                    'granted ALTER SYSTEM on parameter "archive_command"',
+                ],
+                [
                     'a member of pg_execute_server_program',
                     'GRANT pg_execute_server_program TO app_user',
                     'REVOKE pg_execute_server_program FROM app_user',
@@ -475,6 +572,24 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                     `GRANT ${boss} TO app_user`,
                     `REVOKE ${boss} FROM app_user`,
                     `member of "${boss}"`,
+                ],
+                ...reached.map(([attribute, name]): [string, string, string, string] => [
+                    `a member of a ${attribute} role`,
+                    `GRANT ${name} TO app_user`,
+                    `REVOKE ${name} FROM app_user`,
+                    `member of "${name}"`,
+                ]),
+                ...held.map(([kind, name]): [string, string, string, string] => [
+                    `a member of a role with a ${kind} in the catalogs`,
+                    `GRANT ${name} TO app_user`,
+                    `REVOKE ${name} FROM app_user`,
+                    `member of "${name}"`,
+                ]),
+                [
+                    "a member of a leaked owner pass's owner",
+                    `GRANT ${leaked} TO app_user`,
+                    `REVOKE ${leaked} FROM app_user`,
+                    `member of "${leaked}"`,
                 ],
                 [
                     'a member, two levels down through an ordinary role, of pg_read_server_files',
@@ -511,7 +626,17 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
             expect(await membershipsOf(admin, owner)).toEqual(['fixture_docket_clerk:true'])
         } finally {
             await sql.raw(ordinaryAppUser).execute(admin)
-            for (const name of [otherApp, provider, middle, boss, owner]) {
+            for (const undo of undos) await undo()
+            for (const name of [
+                ...catalogued,
+                leaked,
+                ...reached.map(([, name]) => name),
+                otherApp,
+                provider,
+                middle,
+                boss,
+                owner,
+            ]) {
                 await sql`DROP ROLE IF EXISTS ${sql.id(name)}`.execute(admin).catch(() => undefined)
             }
             await admin.destroy()

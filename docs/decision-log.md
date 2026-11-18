@@ -4862,8 +4862,9 @@ cluster-wide, so a real cluster takes that branch too: any owner after the one t
 - **Chosen: an optional `appRoles` export** (`readonly string[]`) from the app's `@sssb/app-config/db/migrations`
   module, beside `appMigrations`, because migrations are what create roles. Optional, so an app that creates none
   changes nothing. The kit reads it with `in` on the module namespace (`packages/kit/src/db/app-roles.ts`), which
-  compiles against a seam that lacks it (the starter's, under `packages/kit/tsconfig.strict.json`), and validates it
-  when read: an array of distinct lowercase unquoted role names, never `app_user`, `pg_*` or `rds_*`.
+  compiles against a seam that lacks it (the starter's: `apps/starter/tsconfig.json` compiles `packages/kit/src`
+  against the starter's own seam), and validates it when read: an array of distinct lowercase unquoted role names,
+  never `app_user`, `pg_*` or `rds_*`.
 - **The owner pass grants the creator's membership** (`GRANT <role> TO <owner> WITH ADMIN TRUE, INHERIT FALSE, SET
 FALSE`, what it already grants on `app_user`) on each NAMED role that already exists; one that does not exist yet is
   created by the owner's own migration, which gives it that membership. It grants on nothing unnamed, and refuses,
@@ -4970,3 +4971,40 @@ bullets, and replace its reading that a named role's walk passes through `app_us
   `ownersOn`, and round 1's teardown test); the hook
   helper dropping in sequence (its test); the fixture's 1004 making `app_user` LOGIN and a member of
   `pg_read_server_files` (the new conformance test).
+
+Review round 3 (same day; a claim check, every measurement on Postgres 18.4 and pglite 0.5.16). It replaces round 2's
+_Accepted gap_ and adds to the rule.
+
+- **"Ordinary" now reads the cluster-wide catalogs too.** An attribute-free role that is a member of nothing can still
+  hold cluster-wide power, and ADMIN on it hands that power to the owner: measured, an owner with only ADMIN on a role
+  granted `ALTER SYSTEM ON PARAMETER archive_command` granted itself SET on it and ran
+  `ALTER SYSTEM SET archive_command` (a shell command the server runs), which it is refused as itself. So `refusedOf`
+  (`packages/kit/src/db/app-roles.ts`) refuses, for `app_user`, a named role, and (in the shape test) every role
+  `app_user` reaches: a privilege on a server parameter (`pg_parameter_acl`), a database it owns
+  (`pg_database.datdba`) and a tablespace it owns (`pg_tablespace.spcowner`). All three are shared catalogs, read from
+  whatever database the pass connects to, by any role (measured as a `NOSUPERUSER` login). The owner's own migration
+  can make a named role a database's owner (it grants itself SET, then `CREATE DATABASE ... OWNER`), but not grant a
+  parameter privilege or create a tablespace (both refused to it): the check after the migrations catches the first,
+  in a test of its own. The rule's text now has one home, `ORDINARY_NAMED` and `ORDINARY_APP_USER` in `app-roles.ts`,
+  which the owner pass's and the conformance check's messages print; the conformance message for `app_user` said
+  "grant it only the roles appRoles names", stricter than the rule round 2 settled on, and now says that rule.
+- **Each attribute is seen on a reached role.** Only SUPERUSER had been: removing any other of the six attributes
+  from the shape test passed every test. Now each attribute and each catalog entry has a role of its own that
+  `app_user` is a member of, in `app-roles.test.ts` (pglite) and in the contract test, which adds a leaked owner pass's
+  owner (`LOGIN CREATEROLE CREATEDB`).
+- **Accepted gap, now:** what a role owns or is granted INSIDE a database other than the one being read (a table it
+  owns in another app's database, say) is in that database's catalogs, not the shared ones. `pg_shdepend` records
+  ownership across databases (measured: a table in `starter_contract` owned by a role shows there as `deptype 'o'`),
+  so a later round could refuse that cheaply; the grants recorded there also include `app_user`'s ordinary table
+  grants, so they would need sorting first. On a cluster several apps share, `app_user` is shared too, so each app's
+  owner already reaches what the others grant it.
+- **Seen red, one change at a time:** each of the six attributes removed from the shape test (one pglite test and the
+  contract `app_user` refusal each time); each catalog entry removed from a role's own reasons (the pglite and
+  contract named-role tests, and for the parameter both `app_user` tests) and from the shape test (the pglite and
+  contract `app_user` tests); the own-database entry removed (the new after-the-migrations test). Round 1's and round
+  2's mutations were re-run on this branch and still red what they name; with this round's test added, the
+  "keeps the owner" mutation reds five `ownersOn` readers, and the named-roles-only rule for `app_user` reds 7 of 58 on
+  a fresh shared server (all 58 pass twice over on one). Both apps' typecheck, not
+  `packages/kit/tsconfig.strict.json`, is what compiles the kit against a seam without `appRoles` (the strict config
+  resolves the seam to the fixture, which exports it): reading `.appRoles` directly fails `apps/starter` and
+  `apps/showcase` with TS2339 and passes the strict config.

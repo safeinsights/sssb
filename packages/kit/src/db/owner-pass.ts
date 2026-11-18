@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { type Kysely, sql } from 'kysely'
-import { appRoles, checkAppRoles, FRAMEWORK_ROLE, refusedOf, shownRefused } from './app-roles'
+import {
+    appRoles,
+    checkAppRoles,
+    FRAMEWORK_ROLE,
+    ORDINARY_APP_USER,
+    ORDINARY_NAMED,
+    refusedOf,
+    shownRefused,
+} from './app-roles'
 import { migrateToLatest } from './migrate'
 import { runRlsProofs } from './rls-proof-runner'
 import type { ProofExpectation } from './rls-proofs'
@@ -22,9 +30,8 @@ import { runWithTenant } from './with-tenant'
  * own, which it names in `appRoles` (./app-roles.ts). Where an earlier pass created one, a later owner is granted the
  * creator's membership in it too, as in `app_user` (`grantAppRoles`), and on no role the app does not name, nor on a
  * named role, or an `app_user`, that is not ordinary; after the migrations, `app_user` and every named role must still
- * be ordinary. Teardown leaves the
- * roles themselves, as it leaves `app_user` (a role a migration creates is the cluster's, not the pass's), but not what
- * the owner granted on them: `DROP OWNED BY` revokes a membership the owner's migration granted (`GRANT <role> TO
+ * be ordinary. Teardown leaves the roles themselves, as it leaves `app_user` (a role a migration creates is the
+ * cluster's, not the pass's), but not what the owner granted on them: `DROP OWNED BY` revokes a membership the owner's migration granted (`GRANT <role> TO
  * app_user`), which would otherwise keep the owner from being dropped (`dropPassRole`). An owner the teardown cannot
  * drop fails the pass.
  *
@@ -62,9 +69,10 @@ export interface OwnerPassConnections {
  * role that is not named is never touched.
  *
  * It refuses, before granting anything, a named role that is not ORDINARY (`refusedOf`, ./app-roles.ts): one that
- * can log in, create databases or roles, is a superuser or bypasses RLS, or is a member, at any depth, of any role but
- * `app_user` and the other named roles. ADMIN lets its holder grant itself SET on the role and so act as everything the
- * role is a member of, and, with CREATEROLE, reset a LOGIN role's password: on such a role it gives the owner more than
+ * can log in, create databases or roles, is a superuser, bypasses RLS or replicates, holds a privilege on a server
+ * parameter, owns a database or tablespace, or is a member, at any depth, of any role but `app_user` and the other
+ * named roles. ADMIN lets its holder grant itself SET on the role and so act as the role and everything it is a member
+ * of, and, with CREATEROLE, reset a LOGIN role's password: on such a role it gives the owner more than
  * an app's own role, and the names alone (validated again here by `checkAppRoles`, as a caller may pass any list)
  * cannot rule that out on a server another hand set up. It refuses an existing `app_user` that is not ordinary the same
  * way, though it does not grant it: `runOwnerPass` grants `app_user` only once this has passed.
@@ -76,8 +84,8 @@ export async function grantAppRoles(admin: Kysely<DB>, owner: string, named: rea
         throw new Error(
             `owner pass: refusing to grant ADMIN on ${privileged}: a later owner is handed ADMIN on app_user and on ` +
                 'every role appRoles names, so each must be an ordinary role, and ADMIN on this one would give the owner ' +
-                'more than that. Leave it NOLOGIN, with no other attribute, and a member of no role but app_user and ' +
-                "the app's named roles (app_user: of no predefined or privileged role), or stop naming it in appRoles.",
+                `more than that. Leave a named role ${ORDINARY_NAMED}, or stop naming it in appRoles; leave app_user ` +
+                `${ORDINARY_APP_USER}.`,
         )
     }
     for (const { rolname } of found) {
@@ -184,15 +192,16 @@ export async function runOwnerPass(
             expect(`ADMIN on ${role}: ${String(held.rows[0]?.admin ?? false)}`).toBe(`ADMIN on ${role}: true`)
         }
         // ...and app_user and every named role are still ordinary. The owner's migration ran with ADMIN and CREATEROLE
-        // on each, which let it make one LOGIN with a password it chose, CREATEDB or CREATEROLE (never SUPERUSER,
-        // BYPASSRLS or REPLICATION, which the owner lacks): a role every later owner is handed ADMIN on must not be one.
+        // on each, which let it make one LOGIN with a password it chose, CREATEDB or CREATEROLE, or (granting itself SET
+        // on it) the owner of a new database; never SUPERUSER, BYPASSRLS or REPLICATION, which the owner lacks, nor a
+        // holder of a parameter privilege or a tablespace, which need a superuser (all measured on Postgres 18.4): a role
+        // every later owner is handed ADMIN on must not be one.
         const strayed = shownRefused(await refusedOf(admin, roles))
         if (strayed !== '') {
             throw new Error(
                 `owner pass: after the migrations, not an ordinary role: ${strayed}. Every later owner is handed ` +
-                    'ADMIN on app_user and on every role appRoles names. Leave each NOLOGIN, with no other ' +
-                    "attribute, and a member of no role but app_user and the app's named roles (app_user: of no " +
-                    'predefined or privileged role).',
+                    `ADMIN on app_user and on every role appRoles names. Leave a named role ${ORDINARY_NAMED}; leave ` +
+                    `app_user ${ORDINARY_APP_USER}.`,
             )
         }
 
