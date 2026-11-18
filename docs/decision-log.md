@@ -4883,23 +4883,34 @@ Found while publishing `@sssb/kit/adapters/real/s3-storage`: `sssb/no-kit-real-a
 `src/adapters/` (less `real/`), so a route, a domain module or a screen could import `@sssb/kit/adapters/real/llm` or
 `s3-storage` by a declaration and load the vendor SDK in a simulated run.
 
-- **The same rule id, a wider block.** `kit-real-adapters-by-import` in the app preset runs it over the app's `src/`
-  and `config/`, deny-by-default, less `src/adapters/real/`; `registry-and-fakes` no longer lists it. Rejected: a second
+- **The same rule id, a wider block.** `kit-real-adapters-by-import` in the app preset runs it over every file of the
+  app, deny-by-default, less `src/adapters/real/` and the vendor ban's three carve-outs (`next.config.*`,
+  `tests/contract/`, `infra/`); `registry-and-fakes` no longer lists it. Review found that the first version, over
+  `src/` and `config/` only, let a module outside them (a `lib/`, a test helper, a script) re-export one into `src/`
+  with every check green, the route the vendor ban closes by covering the whole app; so it covers what the vendor ban
+  covers. Rejected: a second
   rule id. The pattern and what it bans are unchanged, only where; a second id would leave two rules saying one thing,
   and an adopter config that switched the old one off for the registry would have kept doing so. The message now
   says where it holds.
 - **What stays allowed, and why.** `import()` anywhere (it is a declaration rule, as the app's own real-adapter rule
   is): the sign-in, accept-invite and layout modules load SSSB's real-mode forms and providers that way when
   `!isSimulated`, and lint cannot see the branch. `src/adapters/real/` may import one statically, as it imports a
-  vendor: an app-owned storage adapter builds on `createS3Storage`. Outside `src/` and `config/` the rule does not
-  run: `scripts/`, `tests/` and `infra/` are not on the app's runtime module graph, and the showcase's fixture
-  recorder (`apps/showcase/scripts/llm-record.ts`) imports the real LLM client on purpose.
-- **What is banned with it.** Tests and stories (a story would put the SDK in the workshop; no test in `src/` needs
-  one, and the app's real adapters' own tests sit in `real/`); `import type` and re-exports, like every declaration
-  fence here. Rejected: allowing `import type`. It loads nothing, but the inline form (`import { type X }`) keeps a
-  side-effect import under `verbatimModuleSyntax`, and the type an app needs belongs to the port, not the adapter.
-  `config/` is included beyond the brief's `src/` because `config/app.ts` is on the runtime module graph, as for
-  the vendor and `process.env` bans.
-- **Existing code.** Neither app nor the starter-built template had a violating import: every reach into
-  `@sssb/kit/adapters/real/*` from `src/` is an `import()`. The kit-s3-storage changeset's parenthesis, which said the
+  vendor: an app-owned storage adapter builds on `createS3Storage`. The showcase's fixture recorder
+  (`apps/showcase/scripts/llm-record.ts`), which runs the real LLM client on purpose, now loads it with `import()`
+  rather than being carved out.
+- **What is banned with it, and what is not.** Tests and stories are banned too (a story would put the SDK in the
+  workshop; the app's real adapters' own tests sit in `real/`), and so are re-exports and the inline
+  `import { type X }`, which `verbatimModuleSyntax` emits as `import {} from …` and so loads the module. A declaration
+  that is type-only as a whole (`import type`, `export type … from`, `import type x = require()`) is allowed: TypeScript
+  erases it under every setting, and the fence is about loading the SDK (`allowTypeOnly` in
+  `packages/eslint-plugin/src/import-ban.js`, for this rule alone). The first version banned it, like every other
+  declaration fence, and pack and consume's consumer failed: its `src/sssb-surface.ts` names every published module
+  with `export type * as …` to typecheck the whole surface. Rejected: rewriting that file to `typeof import()`, which
+  would have kept a ban on code that loads nothing.
+- **Not covered, by design parity.** A `require()` of one is not this rule's (it is a declaration rule, so `import()`
+  stays open); `@typescript-eslint/no-require-imports` reports a top-level `require` in TypeScript, but that is a base
+  rule, not a fence `sssb check-fences` holds. The app's own real-adapter rule has the same gap.
+- **Existing code.** Every reach into `@sssb/kit/adapters/real/*` from either app's `src/` was already an `import()`;
+  the one declaration was the showcase's fixture recorder (above), and the starter-built template has none. The
+  kit-s3-storage changeset's parenthesis, which said the
   ban held only in the registry and the fakes, is corrected in place (it is pending, in no release candidate yet).

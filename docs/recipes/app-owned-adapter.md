@@ -50,9 +50,10 @@ reads the environment. The vendor ban also covers the rest of `apps/<app>/` (`ap
 `apps/<app>/next.config.*` (the `.ts`, `.mts`, `.js` and `.mjs` names Next loads it from),
 `apps/<app>/tests/contract/`, and `apps/<app>/infra/`, the app's deployment. SSSB's own published real adapters
 (`@sssb/kit/adapters/real/*`) load their SDK as well: outside `apps/<app>/src/adapters/real/`, which may build on one
-(an app-owned storage adapter on `createS3Storage`), no module in `apps/<app>/src/` or `apps/<app>/config/`, tests and
-stories included, imports one by a declaration (`import type` and re-exports too). A page reaches one with `import()`
-when `!isSimulated`, as the sign-in page loads SSSB's sign-in form (`sssb/no-kit-real-adapter-import`).
+(an app-owned storage adapter on `createS3Storage`), and the same three carve-outs as the vendor ban, no module of the
+app (tests, stories and `scripts/` included) imports one by a declaration, re-exports included. A type-only
+`import type` or `export type` loads nothing and is allowed; an inline `import { type X }` is not. A page reaches one
+with `import()` when `!isSimulated`, as the sign-in page loads SSSB's sign-in form (`sssb/no-kit-real-adapter-import`).
 
 Every row holds whatever the file's extension: `.mjs`, `.cjs`, `.js`, `.jsx`, `.mts` and `.cts` are fenced
 the same as `.ts` and `.tsx`. The registry is `index.ts` by name, so an `index.mjs` beside it is one more

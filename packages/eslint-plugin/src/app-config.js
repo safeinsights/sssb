@@ -348,14 +348,13 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             plugins: sssb,
             rules: { 'sssb/no-real-adapter-import': 'error' },
         }),
-        // SSSB's real adapters, deny-by-default over src/ and config/ (both on the runtime module graph), tests and
-        // stories included: only by import(), so a simulated run never loads their vendor SDK. The app's own real
-        // adapters may import them statically, the way they import a vendor. Outside src/ and config/ (scripts/,
-        // tests/, infra/) nothing runs in the app's simulated mode, and the showcase's fixture recorder imports the
-        // real LLM client on purpose.
+        // SSSB's real adapters load their vendor SDK, so they are reached only by import(), deny-by-default over every
+        // file of the app, tests and stories included: a module outside src/ (a `lib/`, a test helper, a script) could
+        // otherwise re-export one into src/ with every check green. Ignored where the vendor ban is: the app's own real
+        // adapters, which may build on one as they import a vendor, and the three carve-outs.
         at('kit-real-adapters-by-import', {
-            files: files('src', 'config'),
-            ignores: [`${src('adapters/real')}/**`],
+            files: files(''),
+            ignores: [`${src('adapters/real')}/**`, ...carveOuts(P)],
             plugins: sssb,
             rules: { 'sssb/no-kit-real-adapter-import': 'error' },
         }),

@@ -283,11 +283,21 @@ describe('SSSB’s real adapters are loaded only by import(), outside the app’
         `${APP}/config/app.ts`,
         // a lookalike: an `adapters/real` that is not the app's adapters directory
         `${APP}/src/domain/adapters/real/storage.ts`,
+        // outside src/: any of these could re-export one into src/
+        `${APP}/lib/storage.ts`,
+        `${APP}/scripts/record.ts`,
+        `${APP}/tests/support/storage.ts`,
+        `${APP}/tests/e2e/upload.spec.ts`,
+        `${APP}/.ladle/components.tsx`,
+        `${APP}/playwright.config.ts`,
+        // every extension a declaration can sit in
+        ...['mts', 'cts', 'js', 'jsx', 'mjs'].map((ext) => `${APP}/src/domain/storage.${ext}`),
     ]
     it.each(KIT_REAL_ZONES)('%s may not import one of SSSB’s real adapters by a declaration', async (file) => {
         for (const code of [
             "import { createS3Storage } from '@sssb/kit/adapters/real/s3-storage'\nexport const make = createS3Storage\n",
-            "import type { S3StorageOptions } from '@sssb/kit/adapters/real/s3-storage'\nexport type O = S3StorageOptions\n",
+            // inline `type` keeps the declaration: under verbatimModuleSyntax it emits `import {} from …`
+            "import { type S3StorageOptions } from '@sssb/kit/adapters/real/s3-storage'\nexport type O = S3StorageOptions\n",
             "export { createRealLlm } from '@sssb/kit/adapters/real/llm'\n",
             "export * from '@sssb/kit/adapters/real/providers'\n",
             "import '@sssb/kit/adapters/real/index'\n",
@@ -296,14 +306,29 @@ describe('SSSB’s real adapters are loaded only by import(), outside the app’
         }
     })
 
-    it.each([`${APP}/src/adapters/real/storage.ts`, `${APP}/src/adapters/real/storage.test.ts`])(
-        '%s, an app’s own real adapter, may build on one',
-        async (file) => {
-            const code =
-                "import { createS3Storage } from '@sssb/kit/adapters/real/s3-storage'\nexport const make = createS3Storage\n"
-            expect(fired(await lint(file, code), KIT_REAL_ADAPTER)).toBe(0)
-        },
-    )
+    it.each([
+        `${APP}/src/adapters/real/storage.ts`,
+        `${APP}/src/adapters/real/storage.test.ts`,
+        // the vendor ban's carve-outs: off the request path
+        `${APP}/infra/lib/stack.ts`,
+        `${APP}/tests/contract/storage.test.ts`,
+        `${APP}/next.config.ts`,
+    ])('%s, an app’s own real adapter or a carve-out, may build on one', async (file) => {
+        const code =
+            "import { createS3Storage } from '@sssb/kit/adapters/real/s3-storage'\nexport const make = createS3Storage\n"
+        expect(fired(await lint(file, code), KIT_REAL_ADAPTER)).toBe(0)
+    })
+
+    // A declaration that is type-only as a whole is erased under every setting, so it loads nothing: what pack and
+    // consume's surface file does for every published module.
+    it.each([
+        "import type { S3StorageOptions } from '@sssb/kit/adapters/real/s3-storage'\nexport type O = S3StorageOptions\n",
+        "export type { S3StorageOptions } from '@sssb/kit/adapters/real/s3-storage'\n",
+        "export type * as llm from '@sssb/kit/adapters/real/llm'\n",
+        "import type llm = require('@sssb/kit/adapters/real/llm')\nexport type L = typeof llm\n",
+    ])('a type-only declaration loads nothing, so it may name one: %s', async (code) => {
+        expect(fired(await lint(`${APP}/src/domain/storage.ts`, code), KIT_REAL_ADAPTER)).toBe(0)
+    })
 
     it('anything else under @sssb/kit/adapters is not a real adapter', async () => {
         const code = [

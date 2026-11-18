@@ -75,7 +75,8 @@ export const appRealAdapterStaticPattern = {
 // real-mode forms and providers, the migrate handler). Importing one loads its vendor SDK, so outside the app's own
 // real adapters (which may build on one, as an app-owned storage adapter builds on `createS3Storage`) a module
 // reaches one only by import(), the way the sign-in page loads SSSB's sign-in form when !isSimulated. DECLARATIONS
-// only, like the app's own real-adapter rule: `import type` is a declaration too, and is banned with the rest.
+// only, like the app's own real-adapter rule, less a declaration that is type-only as a whole (`import type`,
+// `export type … from`), which loads nothing (`allowTypeOnly`, ./import-ban.js); an inline `import { type X }` does.
 export const kitRealAdapterPattern = {
     regex: '^@sssb/kit/adapters/real/',
     message:
