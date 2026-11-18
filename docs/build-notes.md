@@ -2070,7 +2070,7 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
   "Unused eslint-disable directive" warnings for `react-hooks/set-state-in-effect`, at lines nobody had touched.
 - **Cause:** the new code destructured a response with a rest element (`const { error, ...status } = body`). The React
   Compiler bailed out of the whole component, and the `react-hooks` rules that run on its analysis went silent with it,
-  so every disable for them became "unused". Nothing else said so: typecheck, the build and the rest of lint were green.
+  so every disable for them became "unused". Nothing else said so: typecheck and the rest of lint were green.
 - **Lesson:** a burst of unused `react-hooks/*` disables in a component you changed means the compiler stopped
   compiling it, not that the code got better. Find the construct by bisecting (`git show HEAD:<file>` piped to
   `eslint --stdin --stdin-filename <file>` gives the before count) and write it another way.

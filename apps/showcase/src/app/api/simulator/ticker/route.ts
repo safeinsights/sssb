@@ -26,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!isSimulatedDevServer) return new Response(null, { status: 404 })
     // JSON only. A page on another origin can send a simple POST (text/plain, no preflight) to localhost, and this one
     // starts a loop that outlives the request; asking for application/json makes such a browser request preflight,
-    // which a dev server does not answer for another origin. The panel sends JSON.
+    // and the preflight fails because this server sends no Access-Control-Allow-Origin. The panel sends JSON.
     if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
         return Response.json({ error: 'json-only' }, { status: 415 })
     }

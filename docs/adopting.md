@@ -470,8 +470,8 @@ the showcase carries the same route over the same function.
       with the interval in a field: the same call, the same marker under the server's pid, the same off-until-asked rule.
       It exists only on a `pnpm dev` of a simulated world: its route
       (`apps/showcase/src/app/api/simulator/ticker/route.ts`) answers 404 in real mode and in every production build (a
-      deployment, the hosted demo, the e2e build), and the panel shows the control only where the route answers, so the
-      static demo never has it. It will not start beside a ticker started outside it (`DEV_TICK_SECONDS`); it says
+      deployment, the hosted demo, the e2e build), and the panel shows the control only where the route answers. The
+      static demo has no server and never wires it. It will not start beside a ticker started outside it (`DEV_TICK_SECONDS`); it says
       that one is running and leaves it to be stopped where it was started. The starter has no server-side Simulator, so
       it has no such control; the route is app code, and an app that wants one copies it.
 

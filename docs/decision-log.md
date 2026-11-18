@@ -3224,15 +3224,25 @@ JP asked on 2026-11-17 whether the Simulator could start the ticking clock from 
   running, with its interval and pid, and to stop it there. The panel cannot stop a ticker another process owns.
 - **The origin is `http://localhost:<portFor('showcase')>`, not the request's host.** The dev secret is sent there as a
   bearer, and a Host header is the client's to choose. `pnpm dev` takes its `--port` from the same function. A server
-  started on another port by hand would see "could not reach" in the control's last-error line.
+  started on another port by hand ticks whatever listens on the derived port instead: its last-error line then says
+  "could not reach", or a 401 if another checkout's server is there. `pnpm tick` has the same exposure.
 - **The control keeps focus.** Start and Stop are one button whose label changes, not two buttons swapped, and it is
-  `aria-disabled` while a request is in flight rather than `disabled`, which would drop focus to the page. While the
+  `aria-disabled` while a request is in flight rather than `disabled`: disabling a focused button moves
+  `document.activeElement` to `<body>` (measured in Chromium with Playwright). While the
   ticker runs the interval field is not rendered: the status line names the interval, and a disabled Mantine field
   on the dark panel was hard to read.
 - **Focus follows a panel toggle.** After `toggle()`, an effect keyed on `collapsed` focuses Hide when the panel opens
   and the pill when it closes, gated on a ref only `toggle()` sets, so page load never takes focus. A mouse click on the
   pill moves focus to Hide too; that is where the next Tab should start.
 - **`scripts/ticker.mjs` changed only in its header comment** (its two users, and where each one's policy lives), so
-  P4's move of the tick scripts into `@sssb/tools` resolves against it simply. The new route imports
-  `scripts/ports.mjs`, `scripts/ticker.mjs` and `scripts/ticker-marker.mjs` by relative path; when they move, those three
-  imports move with them.
+  P4's move of the tick scripts into `@sssb/tools` resolves against it simply. The route's `dev-ticker.ts` imports
+  `scripts/ports.mjs`, `scripts/ticker.mjs` and `scripts/ticker-marker.mjs` by relative path (its test imports the last
+  two); when they move, those imports move with them.
+- **Two things review added.** The POST takes only `application/json` (415 otherwise): a page on another origin can
+  send a text/plain POST to localhost without a preflight, and this route starts a loop that outlives the request. And
+  the server removes its own marker on `exit`, so a dev server stopped with a UI ticker running leaves none behind.
+- **Left as they are, from review.** A Start clicked by hand during a local `pnpm test:e2e` ticks under the run (the
+  guard checks the marker at config load). Wiping `.data` under a running ticker removes its marker, as it does the
+  wrapper's. An `APP_DATA_DIR` set only in a `.env` file would reach the server but not the playwright config or the
+  wrapper, which read the shell's environment (no `.env` file exists here). Each needs a hand to do something the
+  docs already say not to, and closing them means changing `scripts/` while P4 moves it.

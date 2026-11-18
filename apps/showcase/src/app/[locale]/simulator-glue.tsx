@@ -154,7 +154,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     const [schedulesData, setSchedulesData] = useState<SchedulesResponse>(EMPTY_SCHEDULES)
     const [hooksData, setHooksData] = useState<HooksResponse>(EMPTY_HOOKS)
     // The dev ticker exists only where its route answers (a simulated `next dev`). Null until it does, and once it
-    // answers 404 (a production build: the demo, e2e) it is never asked again in this page's life.
+    // answers 404 (a production build: the demo, e2e) it is not asked again while this glue is mounted.
     const [tickerData, setTickerData] = useState<TickerResponse | null>(null)
     const tickerOffered = useRef(true)
     const [snapshotsBusy, setSnapshotsBusy] = useState(false)

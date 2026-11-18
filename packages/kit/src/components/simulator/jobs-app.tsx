@@ -192,7 +192,8 @@ function WorldClock({ clock }: { clock: WorldClockLike }) {
 /**
  * The dev ticker block: ticks the scheduler on real time, as `pnpm tick` does, until stopped. Off until someone
  * starts it. One Start/Stop button whose label changes, never two buttons swapped, so keyboard focus stays on it; and
- * `aria-disabled` rather than `disabled` while busy, which would drop that focus to the page.
+ * `aria-disabled` rather than `disabled` while busy: disabling a focused button moves `document.activeElement` to
+ * `<body>` (measured in Chromium).
  */
 function DevTicker({ ticker }: { ticker: DevTickerLike }) {
     const t = useTranslations('simulator')
