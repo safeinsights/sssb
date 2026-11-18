@@ -38,6 +38,10 @@ const COMMANDS = {
         load: () => import('../src/commands/check-real-env.js'),
         summary: "the dev:real preflight: name every cutover item the real adapters' environment still lacks",
     },
+    'check-fences': {
+        load: () => import('../src/commands/check-fences.js'),
+        summary: "fail when the app's lint config drops a fence",
+    },
     'check-doc-paths': {
         load: () => import('../src/commands/check-doc-paths.js'),
         summary: "fail when a doc in the workspace's doc set cites a path that does not exist",

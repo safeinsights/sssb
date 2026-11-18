@@ -3,8 +3,8 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
- * SSSB's public surface is `packages/kit/package.json`'s `exports` map (ADR-0012), and
- * `eslint.config.mjs`'s `sssb/public-surface` rule reads that map to fail any
+ * SSSB's public surface is `packages/kit/package.json`'s `exports` map (ADR-0012), and the
+ * `sssb/public-surface` rule (@sssb/eslint-plugin) reads that map to fail any
  * `@sssb/kit/<subpath>` import it does not publish. That makes the map load-bearing, and two ways of
  * breaking it are invisible to every other gate:
  *
@@ -56,7 +56,7 @@ describe('SSSB public surface', () => {
      * A norm — "re-derive a number before you quote it" — did not survive three attempts, so the
      * count becomes a gate: change the map without changing the sentence and this goes red.
      *
-     * Counted exactly as `eslint.config.mjs`'s `sssb/public-surface` rule counts it, since that rule
+     * Counted exactly as the `sssb/public-surface` rule counts it, since that rule
      * is what the sentence is describing.
      */
     it('is the size CLAUDE.md says it is', () => {

@@ -1,0 +1,44 @@
+{
+    "name": "@sssb/eslint-plugin",
+    "version": "0.1.0",
+    "private": true,
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/safeinsights/sssb.git",
+        "directory": "packages/eslint-plugin"
+    },
+    "type": "module",
+    "description": "SSSB's lint fences as one ESLint plugin: every sssb/* rule, the configs.app({ root }) preset an app composes with its own config, and the probes `sssb check-fences` runs through that composed config. Plain JavaScript that ESLint loads directly; it never depends on @sssb/kit (ADR-0014, part 4).",
+    "files": [
+        "src",
+        "!src/**/*.test.*"
+    ],
+    "exports": {
+        "./package.json": "./package.json",
+        ".": {
+            "types": "./src/index.d.ts",
+            "default": "./src/index.js"
+        },
+        "./check-fences": {
+            "types": "./src/check-fences.d.ts",
+            "default": "./src/check-fences.js"
+        }
+    },
+    "engines": {
+        "node": ">=24"
+    },
+    "dependencies": {
+        "@eslint/js": "^10.0.1",
+        "@next/eslint-plugin-next": "^16.4.6",
+        "eslint-config-prettier": "^10.1.8",
+        "eslint-plugin-jsx-a11y": "^6.10.2",
+        "eslint-plugin-react": "^7.37.5",
+        "eslint-plugin-react-hooks": "^7.1.1",
+        "ignore": "^5.3.2",
+        "typescript-eslint": "^8.72.0"
+    },
+    "peerDependencies": {
+        "eslint": "^10.13.0"
+    }
+}

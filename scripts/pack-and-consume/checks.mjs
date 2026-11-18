@@ -323,6 +323,52 @@ export function toolsShippedFileProblems(files) {
 }
 
 /**
+ * The packed @sssb/eslint-plugin's manifest: named so, no dependency on any SSSB package (ADR-0014 rule 4), and ESLint a
+ * peer, so the plugin runs inside the app's own ESLint. Returns the problems.
+ * @param {Record<string, unknown>} manifest
+ */
+export function pluginManifestProblems(manifest) {
+    const problems = []
+    if (manifest.name !== '@sssb/eslint-plugin') {
+        problems.push(`the packed manifest is named ${manifest.name}, not @sssb/eslint-plugin`)
+    }
+    for (const field of /** @type {const} */ ([
+        'dependencies',
+        'peerDependencies',
+        'optionalDependencies',
+        'peerDependenciesMeta',
+    ])) {
+        for (const dep of Object.keys(manifest[field] ?? {})) {
+            if (dep.startsWith('@sssb/')) {
+                problems.push(`${field} names ${dep}: @sssb/eslint-plugin depends on no SSSB package`)
+            }
+        }
+    }
+    const peers = /** @type {Record<string, string> | undefined} */ (manifest.peerDependencies)
+    if (!peers?.eslint) problems.push("eslint is not a peer: the plugin must run inside the app's own ESLint")
+    return problems
+}
+
+/**
+ * What the packed @sssb/eslint-plugin may ship: JavaScript ESLint loads directly and its hand-written declarations
+ * (ADR-0014 part 2), and no tests. Returns the problems.
+ * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
+ */
+export function pluginShippedFileProblems(files) {
+    const problems = []
+    for (const file of files) {
+        if (['package.json', 'README.md', 'LICENSE'].includes(file)) continue
+        if (/\.test\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test file is shipped`)
+        else if (!file.startsWith('src/')) problems.push(`${file}: outside src/`)
+        else if (!/\.(js|d\.ts)$/.test(file)) problems.push(`${file}: neither JavaScript nor a declaration file`)
+    }
+    for (const entry of ['src/index.js', 'src/check-fences.js']) {
+        if (!files.includes(entry)) problems.push(`${entry}: an export's entry is not shipped`)
+    }
+    return problems
+}
+
+/**
  * How far a lockfile moved from its seed, leaving out the packed SSSB packages' own entries (a tarball's name,
  * integrity and version change with every build or release, and are this run's to change). Lines are
  * compared as a multiset, so an edge that moves to a line some other entry already has still counts.
@@ -337,9 +383,9 @@ export function lockfileMoves(seed, lockfile) {
         let inSssbBlock = false
         for (const line of text.split('\n')) {
             // A `packages:` or `snapshots:` entry for a packed SSSB package: its key and every line indented under it.
-            if (/^ {2}'@sssb\/(kit|tools)@/.test(line)) inSssbBlock = true
+            if (/^ {2}'@sssb\/(kit|tools|eslint-plugin)@/.test(line)) inSssbBlock = true
             else if (/^ {0,2}\S/.test(line)) inSssbBlock = false
-            if (inSssbBlock || /sssb-(kit|tools)-/.test(line)) continue
+            if (inSssbBlock || /sssb-(kit|tools|eslint-plugin)-/.test(line)) continue
             counts.set(line, (counts.get(line) ?? 0) + 1)
         }
         return counts

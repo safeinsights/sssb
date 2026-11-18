@@ -1,9 +1,9 @@
 import { RuleTester } from 'eslint'
 import { describe, it } from 'vitest'
-import { sssbNoDirectMkdtempRuleForTests } from '../../eslint.config.mjs'
+import sssb from '@sssb/eslint-plugin'
 
 /**
- * Pins what `sssb/no-direct-mkdtemp` (eslint.config.mjs) does and does not match. The rule is a lint
+ * Pins what `sssb/no-direct-mkdtemp` (@sssb/eslint-plugin) does and does not match. The rule is a lint
  * gate, so a rule that quietly stops matching is invisible until a leak has already happened — these
  * cases are what makes the silence loud. RuleTester reports through vitest's own describe/it.
  */
@@ -12,7 +12,7 @@ RuleTester.it = it
 
 const ruleTester = new RuleTester({ languageOptions: { ecmaVersion: 'latest', sourceType: 'module' } })
 
-ruleTester.run('sssb/no-direct-mkdtemp', sssbNoDirectMkdtempRuleForTests, {
+ruleTester.run('sssb/no-direct-mkdtemp', sssb.rules['no-direct-mkdtemp'], {
     valid: [
         { code: "const dir = makeTestTmpDir('app-x-')" },
         { code: "const dir = await makeTestTmpDirAsync('app-x-')" },
