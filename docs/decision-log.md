@@ -2935,9 +2935,8 @@ Dependabot's #1.
 
 ## Copyright assigned to Rice University (2026-11-17, `chore/copyright-rice`)
 
-ADR-0014's D3: JP Slavinsky assigns SSSB's copyright (keel's, before the rename) to Rice University, for SafeInsights,
-and the licence stays MIT. This change records the assignment: `LICENSE` now reads "Copyright (c) 2026 Rice
-University". JP asked for the record to be made as a PR he opens and merges himself, with a commit he authored,
-approved by `si-bob`, rather than the usual relay route. `tests/docs/adopter-identity.test.ts` checks that an adopted
+ADR-0014's D3: JP Slavinsky assigns SSSB's copyright (keel's, before the rename) to Rice University, and the licence
+stays MIT. This change records the assignment: `LICENSE` now reads "Copyright (c) 2026 Rice
+University". JP opens and merges the PR that records it, with a commit he authored. `tests/docs/adopter-identity.test.ts` checks that an adopted
 tree keeps the notice verbatim, as MIT requires, so it now expects Rice University. ADR approver lines keep JP's
 name: they record who decided. This lands before P7, whose release-candidate tarballs carry the `LICENSE`.
