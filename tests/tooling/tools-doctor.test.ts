@@ -1238,6 +1238,11 @@ describe('pinReport: the workflow and plugin pins against the kit’s release st
             )
         // Any plugin enabled from the pinned marketplace is SSSB's: the kit does not know the plugin's name.
         expect(pinReport({ ...base, settings: withPlugins({ 'renamed@sssb': true }) }).status).toBe('ok')
+        // Claude Code's settings also take a non-empty array of version constraints as enabled; an empty one is not.
+        expect(pinReport({ ...base, settings: withPlugins({ 'sssb@sssb': ['>=0.1.0'] }) }).status).toBe('ok')
+        expect(pinReport({ ...base, settings: withPlugins({ 'sssb@sssb': [] }) }).lines).toEqual([
+            '.claude/settings.json enables no plugin from marketplace sssb, so the pin loads nothing: its enabledPlugins enable none (and set sssb@sssb: [])',
+        ])
         // Alongside a pin that differs, the title is the pin's; the line still says what is enabled.
         const both = pinReport({ ...base, workflows: [workflow(OTHER)], settings: withPlugins({}) })
         expect(both.title).toMatch(/1 pin\(s\) differ/)

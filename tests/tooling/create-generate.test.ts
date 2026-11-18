@@ -36,6 +36,8 @@ const SEAM_SPECIFIERS: string[] = JSON.parse(
     readFileSync(path.join(REPO, 'packages/kit/src/testing/seam-specifiers.json'), 'utf8'),
 ).specifiers
 
+/** The browser install, run where `@playwright/test` is a dependency (the app), as the plugin's commands write it. */
+const PLAYWRIGHT_INSTALL = "pnpm --filter './apps/*' exec playwright install chromium"
 const read = (root: string, file: string) => readFileSync(path.join(root, file), 'utf8')
 const readJson = (root: string, file: string) => JSON.parse(read(root, file))
 
@@ -273,6 +275,10 @@ describe('@sssb/create: the generated workspace', () => {
         expect(readme).toContain('**Claude Code 2.1.324 or later**')
         expect(readme).toContain('`/sssb:new-entity`')
         expect(readme).toContain("the plugin marketplace's `ref` in `.claude/settings.json`")
+        // Playwright is the app's dependency, not the root's: the root form works only where pnpm hoists its bin.
+        expect(readme).toContain(`\n${PLAYWRIGHT_INSTALL}   # once`)
+        expect(readme).not.toMatch(/^pnpm exec playwright/m)
+        expect(read(REPO, 'plugins/sssb/commands/verify.md')).toContain(`\`${PLAYWRIGHT_INSTALL}\``)
     })
 
     it('names each of the plugin’s commands as the workspace’s Claude Code runs it, `/sssb:<command>`', () => {
@@ -795,6 +801,8 @@ describe('@sssb/create: the command', () => {
         expect(result.stdout).toContain(`  cd '${target}'\n`)
         expect(result.stdout).toContain('`sssb / all-checks`')
         expect(result.stdout).toContain('Still to fill in: the code owner in CODEOWNERS (--owner)')
+        expect(result.stdout).toContain(`\n  ${PLAYWRIGHT_INSTALL}\n`)
+        expect(result.stdout).not.toMatch(/^ {2}pnpm exec playwright/m)
         expect(readJson(target, 'apps/research-hub/package.json').name).toBe('research-hub')
     })
 

@@ -934,7 +934,8 @@ function workflowPins(repository, workflows) {
  * Every marketplace `.claude/settings.json` declares from `repository` (`extraKnownMarketplaces.<name>.source`, a
  * `github` source naming it as `repo`, or a `git` one whose `url` is it), with its `ref`; and, when there is one, a
  * line when no plugin is enabled from any of them. A pinned marketplace loads nothing by itself: only
- * `enabledPlugins["<plugin>@<marketplace>"]: true` loads a plugin from it. The kit does not know the plugin's name,
+ * `enabledPlugins["<plugin>@<marketplace>"]: true` (or a non-empty array of version constraints) loads a plugin from
+ * it. The kit does not know the plugin's name,
  * and needs not: SSSB's marketplace lists only SSSB's plugins, so any plugin enabled from it is one of them, while
  * `sssb@<another marketplace>` is a copy from elsewhere (a local checkout's, say), not the pinned one.
  * @param {string} repository `owner/name`, lowercased
@@ -977,11 +978,13 @@ function marketplacePins(repository, file, text) {
     const plugins = settings?.enabledPlugins
     const entries = Object.entries(typeof plugins === 'object' && plugins ? plugins : {})
     const fromSssb = (/** @type {string} */ key) => names.includes(key.slice(key.lastIndexOf('@') + 1))
-    if (names.length === 0 || entries.some(([key, on]) => on === true && fromSssb(key)))
+    // Claude Code takes `true`, or a non-empty array of version constraints, as enabled.
+    const isOn = (/** @type {unknown} */ on) => on === true || (Array.isArray(on) && on.length > 0)
+    if (names.length === 0 || entries.some(([key, on]) => isOn(on) && fromSssb(key)))
         return { pins, error: null, unused: null }
-    const enabled = entries.filter(([, on]) => on === true).map(([key]) => key)
+    const enabled = entries.filter(([, on]) => isOn(on)).map(([key]) => key)
     const off = entries
-        .filter(([key, on]) => on !== true && fromSssb(key))
+        .filter(([key, on]) => !isOn(on) && fromSssb(key))
         .map(([key, on]) => `${key}: ${JSON.stringify(on)}`)
     return {
         pins,

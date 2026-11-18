@@ -27,9 +27,8 @@ point's recipe instead.
    vendor SDK, no `process.env` and no import of `src/adapters/real/`: the lint refuses all three here. Colocate
    its unit test (create `src/adapters/fake/<name>.test.ts`).
 3. Create `src/adapters/real/<name>.ts`, the only file that imports the vendor SDK, marked
-   `AUTHORED — CUTOVER (<row>)` until someone has watched it talk to the real service. Install the SDK in the app's
-   own `package.json` (`pnpm --filter <app> add <sdk>`), then run `pnpm sssb:doctor` (if it reports the kit has no
-   seam linked, `/sssb:new-preset-operation` step 2 has the fix). Read configuration from `process.env` only in
+   `AUTHORED — CUTOVER (<row>)` until someone has watched it talk to the real service. Add the SDK to the app's
+   own `package.json` the way **Adding a package** (below) says. Read configuration from `process.env` only in
    `src/adapters/real/` (create `src/adapters/real/index.ts`, with a REQUIRED_ENV map from each variable to its
    cutover row that throws `CutoverPendingError` (`@sssb/kit/ports/errors`) naming every missing variable at once);
    never read `APP_MODE`, `DEMO_MODE` or `E2E_BUILD` there. Record non-secret params and secret NAMES (never values)
@@ -42,3 +41,21 @@ point's recipe instead.
    by SSSB's vendor list (the app guide names it) or by the app's own `"sssb": { "vendors": ["<sdk>", "<sdk>/*"] }` in
    its `package.json`, which the lint preset reads: otherwise the rest of the app could import it with a green lint.
    Then run `pnpm verify`.
+
+## Adding a package
+
+In a generated workspace, add a dependency by hand, never with `pnpm add` (nor `pnpm --filter <app> add`): in a
+workspace that is already installed, it re-resolves SSSB's kit without the app's seam, and `pnpm sssb:doctor` then
+fails "has no seam linked" while typecheck fails inside `@sssb/kit`.
+
+1. Write the package into the app's `package.json` under `dependencies` (`devDependencies` for a tool only the tests
+   use), by its exact npm name, with a caret range on its latest release: `pnpm view <package> version` prints it
+   (say `1.5.0`), and the entry is `"<package>": "^1.5.0"`. If the package is already a dependency elsewhere in the
+   workspace, use the range written there.
+2. From the workspace root, `pnpm install`, then `pnpm sssb:doctor`. If the install refuses the release as too new
+   (the workspace's `minimumReleaseAge` holds back anything published in the last two days), take the newest older
+   one `pnpm view <package> time` lists and install again.
+
+If you already ran `pnpm add`, keep the `package.json` it edited and undo only the lockfile:
+`git checkout HEAD -- pnpm-lock.yaml`, then `pnpm install` and `pnpm sssb:doctor`. Both ways leave the rest of the
+dependency tree as it was.

@@ -110,7 +110,7 @@ Next:
   cd ${shellQuoted(relative)}
   git init
   pnpm install
-  pnpm exec playwright install chromium
+  pnpm --filter './apps/*' exec playwright install chromium
   pnpm verify
 
 On GitHub, require the check \`sssb / all-checks\` on your default branch (it fails unless every one of SSSB's

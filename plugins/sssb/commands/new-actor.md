@@ -45,7 +45,8 @@ app's and not part of a generated app.
       a surface SSSB doesn't own is a new twin beside it.
     - **The slots**: map `actors` to `ActorSlot` (`@sssb/kit/components/simulator/actors-app`), titled with
       `tActors(titleKey)`, whose `node` is an `ActorShell` (`@sssb/kit/components/simulator/actor-shell`) with
-      `inline`, `startPaused={false}`, `held={() => world.actorHolds[id] ?? false}` and the tick for THAT id.
+      `key={id}`, `actor={id}`, `inline`, `startPaused={false}`, `held={() => world.actorHolds[id] ?? false}` and
+      `tick` set to the tick for THAT id (`actor`, `startPaused` and `tick` are required).
     - **The tab's content**: map `tabs` to `SimulatorExtraTab` (`@sssb/kit/components/simulator/simulator-panel`),
       labelled `tSimulator(tab.labelKey)`, with `ActorsApp` (`@sssb/kit/components/simulator/actors-app`) as its
       content (`world={{ held: world.jobsHeld, counts: world.jobCounts }}`), and pass it to `DemoShell` instead of

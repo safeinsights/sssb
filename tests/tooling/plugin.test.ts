@@ -21,21 +21,28 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  *       - a path resolves against the app, then the workspace root; a path in a command, against the directory the
  *         command runs in. `<app>` is the app's slug (its directory and package name). Any other `<placeholder>`,
  *         `…` or `*` ends what is known: the path's fixed part before that segment must exist (or be created);
- *       - a path right after the word "create" (not "do not create", "never create") is one the command tells you
- *         to create; later mentions of it, of a path under it, or of a file in it by its bare name, resolve;
+ *       - a path right after "create" or "create the|a file|directory", or right before "you create" (not after
+ *         "do not create", "must not ever create", "never create") is one the command tells you to create; later
+ *         mentions of it, of a path under it, or of a file in it by its bare name, resolve;
  *       - "(if any)" right after a path excuses only OPTIONAL: places the app guide names that an app may lack;
  *       - a runtime path is an entry the generated `.gitignore` names, exactly (`.data/`), or a build output
- *         listed in RUNTIME_OUTPUTS with the app script that writes it; nothing under `node_modules`, ever;
+ *         listed in RUNTIME_OUTPUTS with the app script that writes it, or the root's `pnpm-lock.yaml`; nothing
+ *         under `node_modules`, ever;
  *       - a `pnpm` script exists in a generated workspace AND in this repository (root, or both apps, by where it
  *         runs); `pnpm exec <bin>` takes a binary a dependency of the package it runs in declares (the workspace
  *         root, or the app under `--filter <app>`, `-C`, `cd`), never one pnpm only happens to hoist; `sssb …`
- *         names a command `sssb --help` lists; `npx` and `pnpm dlx` of SSSB's packages, and a package binary run
- *         bare, fail;
+ *         names a command `sssb --help` lists; `npx`, `npm`, `yarn`, `pnpm dlx` of SSSB's packages, and a package
+ *         binary run bare, fail, behind an environment prefix (`CI=1 …`) too; so does `pnpm add` (or `pnpm install
+ *         <pkg>`) unless the prose says not to run it ("never `pnpm add`"): it drops the app's seam link;
  *       - `@sssb/<package>/<subpath>` is a dependency of the generated workspace and in that package's `exports`,
  *         `@sssb/app-config/<module>` and `@/<module>` resolve in the app, `sssb/<rule>` is an
- *         `@sssb/eslint-plugin` rule, `/sssb:<command>` is a plugin command;
- *       - an identifier the text ties to an `@sssb/kit/…` module ("`X` (`@sssb/kit/m`)", "`X` from|in
- *         `@sssb/kit/m`", a list of them, "`@sssb/kit/m` (`X`, `Y`)", or a fenced import) is exported by it;
+ *         `@sssb/eslint-plugin` rule, `/sssb:<command>` is a plugin command; so is a specifier inside
+ *         `require(…)`, `require.resolve(…)`, `import(…)`;
+ *       - an identifier the text ties to an `@sssb/kit/…` module ("`X` (`@sssb/kit/m`)", "`X` (from|in
+ *         `@sssb/kit/m`", "`X`, exported by `@sssb/kit/m`", a list of them, "`@sssb/kit/m` (`X`, `Y`)",
+ *         "`@sssb/kit/m` exports `X`", or a fenced import, default included) is exported by it (a module the
+ *         exports point at the build for is read from its source); "an `X` (`m`) with `a`, `b={…}`" gives props
+ *         `XProps` has, and every required one;
  *       - SSSB's own files are cited ONLY as a code span `https://github.com/safeinsights/sssb/(blob|tree)/<ref>/<path>`
  *         whose path exists in this tree (the plugin and the file are read at the same commit); any other mention of
  *         the repository (bare, a markdown link, `http://`, `www.`, raw.githubusercontent, a branch) fails.
@@ -181,6 +188,11 @@ interface Context {
 const OPTIONAL = ['src/adapters/real/', 'lint-exceptions.mjs']
 /** Build output a command may name, app-relative, with the app script that writes it (checked to exist). */
 const RUNTIME_OUTPUTS = new Map([['dist-demo/index.html', 'build:demo-static']])
+/**
+ * What pnpm itself writes at the workspace root, which a generated workspace has only once installed: the lockfile
+ * (`pnpm install`), so a remedy can restore it by name. Never ignored, so git has a copy (tested below).
+ */
+const WORKSPACE_OUTPUTS = ['pnpm-lock.yaml']
 
 let ctx: Context
 
@@ -205,6 +217,20 @@ function binsOf(names: string[]): Set<string> {
     return bins
 }
 const intersect = (a: Set<string>, b: Set<string>) => new Set([...a].filter((x) => b.has(x)))
+/**
+ * The TypeScript source behind a kit export: the file itself, or for one that points at the build
+ * (`./dist/testing/e2e.js`) the source it is built from (`src/testing/e2e.ts`); null for anything else (JSON, CSS).
+ */
+function kitSource(file: string): string | null {
+    if (/\.tsx?$/.test(file)) return path.join(REPO, 'packages/kit', file)
+    const built = /^\.\/dist\/(.+)\.js$/.exec(file)?.[1]
+    if (built === undefined) return null
+    return (
+        ['ts', 'tsx']
+            .map((ext) => path.join(REPO, 'packages/kit/src', `${built}.${ext}`))
+            .find((source) => existsSync(source)) ?? null
+    )
+}
 
 beforeAll(() => {
     const template = path.join(makeTestTmpDir('plugin-template-'), 'template')
@@ -253,8 +279,8 @@ beforeAll(() => {
         kitModules: new Map(
             Object.entries(kitExports)
                 .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-                .filter(([, file]) => /\.tsx?$/.test(file))
-                .map(([key, file]) => [key, path.join(REPO, 'packages/kit', file)]),
+                .map(([key, file]) => [key, kitSource(file)])
+                .filter((entry): entry is [string, string] => entry[1] !== null),
         ),
         sssbCommands: new Set([...help.stdout.matchAll(/^ {2}([a-z][\w-]*) /gm)].map((m) => m[1])),
         ruleIds: new Set(Object.keys(eslintPlugin.rules).map((id) => `sssb/${id}`)),
@@ -272,6 +298,7 @@ beforeAll(() => {
     expect(ctx.rootBins).not.toContain('playwright')
     expect(ctx.installedSssb).toContain('@sssb/kit')
     expect(ctx.kitModules.size).toBeGreaterThan(50)
+    expect(ctx.kitModules.get('./testing/e2e')).toBe(path.join(REPO, 'packages/kit/src/testing/e2e.ts'))
 })
 
 /** Where SSSB's framework, reference app and repo-only files live: never a path in a plugin command. */
@@ -324,6 +351,7 @@ const PNPM_BUILTINS = new Set([
     'create',
     'store',
     'patch',
+    'view',
 ])
 
 const normalize = (rel: string) => rel.replaceAll('<app>', SLUG).replace(/^\.\//, '')
@@ -342,8 +370,12 @@ function moduleExists(c: Context, rel: string, created: string[]) {
     return candidates.some((candidate) => existsIn([c.app], candidate) || created.includes(candidate))
 }
 
-/** A runtime path: an exact `.gitignore` entry, or a listed build output whose script the app has. */
-function isRuntime(c: Context, rel: string) {
+/**
+ * A runtime path: an exact `.gitignore` entry, a listed build output whose script the app has, or what pnpm writes at
+ * the workspace root (only where the path resolves against the root).
+ */
+function isRuntime(c: Context, rel: string, bases: string[]) {
+    if (WORKSPACE_OUTPUTS.includes(rel)) return bases.includes(c.ws)
     const p = appRelative(rel)
     const script = RUNTIME_OUTPUTS.get(p)
     if (script !== undefined) return c.appScripts.has(script)
@@ -377,7 +409,7 @@ function checkPath(c: Context, token: string, created: string[], optional: boole
             ? null
             : `its fixed part \`${fixed}\` does not exist in a generated workspace`
     }
-    if (existsIn(bases, p) || isRuntime(c, p) || isCreated(p, created)) return null
+    if (existsIn(bases, p) || isRuntime(c, p, bases) || isCreated(p, created)) return null
     if (optional) {
         return OPTIONAL.some((place) => appRelative(p) === place || appRelative(p).startsWith(place))
             ? null
@@ -445,13 +477,18 @@ function packageDir(c: Context, value: string, kind: 'filter' | 'dir'): 'app' | 
     return null
 }
 
-/** Problems with a command line: `pnpm …`, `sssb …`, and any other command's path arguments. */
-function checkCommand(c: Context, span: string, created: string[]): string[] {
+/**
+ * Problems with a command line: `pnpm …`, `sssb …`, and any other command's path arguments. An environment prefix
+ * (`CI=1 pnpm …`, `env X=y …`) is read past, so the command behind it is checked as if bare. `negated`: the prose
+ * says NOT to run it ("never `pnpm add`"), which excuses only the dependency-adding rule.
+ */
+function checkCommand(c: Context, span: string, created: string[], negated = false): string[] {
     const problems: string[] = []
     let cwd: 'root' | 'app' = 'root'
     for (const segment of span.split(/&&|\|\||;|\|/).map((s) => s.trim())) {
         if (!segment) continue
         const words = segment.split(/\s+/)
+        while (words.length > 1 && (words[0] === 'env' || /^[A-Za-z_]\w*=/.test(words[0]))) words.shift()
         const at = (message: string) => problems.push(`\`${segment}\`: ${message}`)
         const dirOf = (where: 'root' | 'app') => (where === 'app' ? c.app : c.ws)
         if (words[0] === 'cd') {
@@ -462,6 +499,12 @@ function checkCommand(c: Context, span: string, created: string[]): string[] {
         }
         if (words[0] === 'npx') {
             at("`npx` reaches past the workspace: run a dependency's binary with `pnpm exec`")
+            continue
+        }
+        if (words[0] === 'npm' || words[0] === 'yarn') {
+            at(
+                `\`${words[0]}\` is not this workspace's package manager: it is pnpm's (\`pnpm <script>\`, \`pnpm exec\`)`,
+            )
             continue
         }
         if (words[0] === 'sssb') {
@@ -503,6 +546,14 @@ function checkCommand(c: Context, span: string, created: string[]): string[] {
             if (!bins.has(bin)) at(`no dependency of ${where} provides "${bin}" in a generated workspace`)
             else if (!repoBins.has(bin)) at(`no dependency of ${where} provides "${bin}" in SSSB's own repository`)
             problems.push(...checkArgs(c, words.slice(i + 2), dirOf(target), created, segment))
+        } else if (
+            command === 'add' ||
+            (['install', 'i'].includes(command) && words.slice(i + 1).some((w) => !w.startsWith('-')))
+        ) {
+            if (!negated)
+                at(
+                    "`pnpm add` drops the app's seam link in an installed generated workspace: edit the app's package.json and `pnpm install` (a command's **Adding a package**)",
+                )
         } else if (command === 'dlx') {
             if (/^(@sssb\/|sssb$)/.test(words[i + 1] ?? ''))
                 at("`pnpm dlx` fetches SSSB's tools from the registry, past the workspace's pinned copy")
@@ -575,7 +626,60 @@ interface Span {
     end: number
 }
 
-/** Identifiers the prose ties to an `@sssb/kit/…` module, by position: before it, or listed in brackets after it. */
+/** Glue that ties the identifier right before a module to it: "(", "(from", "from", "in", ", exported by". */
+const TIED_BEFORE = /^\s*(?:\(\s*(?:from\s*)?|from|in|,?\s*exported\s+by)\s*$/
+/** Glue that ties the identifiers right after a module to it: "(", "exports", "module exports". */
+const TIED_AFTER = /^\s*(?:\(|(?:module\s+)?exports)\s*$/
+
+/**
+ * A component's props as its `<Name>Props` interface in `file` declares them (name → optional), or null when there is
+ * no such interface, or it extends another (its own members are then not all of them).
+ */
+function propsOf(file: string, component: string): Map<string, boolean> | null {
+    const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true)
+    const declaration = source.statements.find(
+        (statement): statement is ts.InterfaceDeclaration =>
+            ts.isInterfaceDeclaration(statement) && statement.name.text === `${component}Props`,
+    )
+    if (!declaration || declaration.heritageClauses) return null
+    const props = new Map<string, boolean>()
+    for (const member of declaration.members) {
+        if (member.name && ts.isIdentifier(member.name)) props.set(member.name.text, member.questionToken !== undefined)
+    }
+    return props
+}
+
+/**
+ * Problems with the props the prose gives a kit component, "an `X` (`@sssb/kit/m`) with `a`, `b={…}` and `c`": each
+ * is one of `XProps`, and every required one of `XProps` is named (`key` and `ref` are React's).
+ */
+function propsProblems(c: Context, prose: string, spans: Span[], at: number, component: string): string[] {
+    const module = spans[at]
+    const file = c.kitModules.get(`./${module.text.slice('@sssb/kit/'.length)}`)
+    const next = spans[at + 1]
+    if (!file || !next || !/^\s*\)?\s*with\s*$/.test(prose.slice(module.end, next.start))) return []
+    const props = propsOf(file, component)
+    if (!props) return []
+    const given: string[] = []
+    for (let k = at + 1; k < spans.length; k += 1) {
+        const name = /^(\w+)(?:=|$)/.exec(spans[k].text)?.[1]
+        if (!name) break
+        given.push(name)
+        if (k + 1 >= spans.length || !LIST_GLUE.test(prose.slice(spans[k].end, spans[k + 1].start))) break
+    }
+    const problems = given
+        .filter((name) => !props.has(name) && name !== 'key' && name !== 'ref')
+        .map((name) => `\`${name}\` is not a prop of ${component} (${module.text})`)
+    const missing = [...props].filter(([name, optional]) => !optional && !given.includes(name)).map(([name]) => name)
+    if (missing.length > 0)
+        problems.push(`${component} (${module.text}) is given without its required ${missing.join(', ')}`)
+    return problems
+}
+
+/**
+ * Identifiers the prose ties to an `@sssb/kit/…` module, by position: before it ("`X` (`m`)", "`X` from|in `m`",
+ * "`X`, exported by `m`", a list), or after it ("`m` (`X`, `Y`)", "`m` exports `X`"); and a component's props.
+ */
 function proseIdentifierProblems(c: Context, prose: string, spans: Span[]): string[] {
     const problems: string[] = []
     const glue = (a: Span, b: Span) => prose.slice(a.end, b.start)
@@ -586,12 +690,13 @@ function proseIdentifierProblems(c: Context, prose: string, spans: Span[]): stri
         const named: string[] = []
         for (let k = j - 1; k >= 0; k -= 1) {
             const between = glue(spans[k], spans[k + 1])
-            const ok = k === j - 1 ? /^\s*(?:\(|from|in)\s*$/.test(between) : LIST_GLUE.test(between)
+            const ok = k === j - 1 ? TIED_BEFORE.test(between) : LIST_GLUE.test(between)
             const name = identifier(spans[k])
             if (!ok || !name) break
             named.push(name)
         }
-        if (j + 1 < spans.length && /^\s*\(\s*$/.test(glue(module, spans[j + 1]))) {
+        if (named.length === 1) problems.push(...propsProblems(c, prose, spans, j, named[0]))
+        if (j + 1 < spans.length && TIED_AFTER.test(glue(module, spans[j + 1]))) {
             for (let k = j + 1; k < spans.length; k += 1) {
                 const name = identifier(spans[k])
                 if (!name) break
@@ -622,6 +727,11 @@ function scriptProblems(c: Context, code: string, created: string[]): string[] {
             problems.push(`\`${spec}\` (fenced import): ${problem}`)
             continue
         }
+        const defaultName = ts.isImportDeclaration(statement) ? statement.importClause?.name : undefined
+        if (defaultName && spec.startsWith('@sssb/kit/')) {
+            const problem = identifierProblem(c, 'default', spec)
+            if (problem) problems.push(`${problem} (fenced default import of \`${defaultName.text}\`)`)
+        }
         const bindings = ts.isImportDeclaration(statement)
             ? statement.importClause?.namedBindings
             : statement.exportClause
@@ -635,6 +745,30 @@ function scriptProblems(c: Context, code: string, created: string[]): string[] {
             const problem = identifierProblem(c, (element.propertyName ?? element.name).text, spec)
             if (problem) problems.push(`${problem} (fenced import)`)
         }
+    }
+    return problems
+}
+
+/**
+ * The create forms, kept strict: "create `x`", "create (`x`", "create the|a (new) file|directory `x`", and "`x` you
+ * create"; not after a negation ("do not create", "must not ever create", "never create a file").
+ */
+const CREATE_BEFORE = /\bcreate(?:\s+(?:the|a|an)(?:\s+new)?\s+(?:file|directory|folder))?\s*\(?\s*$/i
+const NOT_CREATE_BEFORE =
+    /\b(?:not|never|n't|no)(?:\s+(?:ever|yet|again|also|even))*\s+create(?:\s+(?:the|a|an)(?:\s+new)?\s+(?:file|directory|folder))?\s*\(?\s*$/i
+const CREATE_AFTER = /^\s+you\s+create\b/i
+/** Prose before a command span that says not to run it, or that it was run: "never (with) `…`", "(nor `…`". */
+const NEGATED_COMMAND = /(?:\b(?:never|not|nor|no|n't)(?:\s+[a-z]+)?|\balready\s+ran)\s*\(?\s*$/i
+/** A module named in a call: `require(…)`, `require.resolve(…)`, `import(…)`, `import.meta.resolve(…)`. */
+const CALL_SPECIFIER = /\b(?:require(?:\.resolve)?|import(?:\.meta\.resolve)?)\(\s*(['"`])((?:@sssb\/|@\/)[^'"`]*)\1/g
+
+/** Problems with the `@sssb/…` and `@/…` specifiers a call in `code` names (a `${…}` in a template is a placeholder). */
+function callSpecifierProblems(c: Context, code: string, created: string[]): string[] {
+    const problems: string[] = []
+    for (const match of code.matchAll(CALL_SPECIFIER)) {
+        const spec = match[2].replace(/\$\{[^}]*\}/g, '<x>')
+        const problem = checkToken(c, spec, created)
+        if (problem) problems.push(`\`${match[2]}\` (in a call): ${problem}`)
     }
     return problems
 }
@@ -671,13 +805,16 @@ function referenceProblems(c: Context, text: string): string[] {
         .filter((m) => !/\n\s*\n/.test(m[1]))
         .map((m) => ({ text: m[1], start: m.index, end: m.index + m[0].length }))
     const created = spans
-        .filter(({ start }) => {
-            const before = prose.slice(Math.max(0, start - 30), start)
-            return /\bcreate\s*\(?\s*$/i.test(before) && !/\b(?:not|never|n't|no)\s+create\s*\(?\s*$/i.test(before)
+        .filter(({ start, end }) => {
+            const before = prose.slice(Math.max(0, start - 50), start)
+            if (CREATE_BEFORE.test(before)) return !NOT_CREATE_BEFORE.test(before)
+            return CREATE_AFTER.test(prose.slice(end, end + 20))
         })
         .map(({ text }) => normalize(text))
+    // A command the prose says not to run ("never `pnpm add`", "nor `…`"), or one it says was run ("already ran").
+    const negated = (start: number) => NEGATED_COMMAND.test(prose.slice(Math.max(0, start - 30), start))
 
-    for (const { text: raw, end } of spans) {
+    for (const { text: raw, start, end } of spans) {
         if (raw.includes('\n') && PATH_CHARS.test(raw.replace(/\s+/g, '')) && raw.replace(/\s+/g, '').includes('/')) {
             problems.push(
                 `\`${raw.replace(/\s+/g, '')}\`: a path broken across lines, which markdown renders with a space`,
@@ -686,13 +823,14 @@ function referenceProblems(c: Context, text: string): string[] {
         }
         const span = raw.replace(/\s+/g, ' ').trim()
         if (/\s/.test(span)) {
-            problems.push(...checkCommand(c, span, created))
+            problems.push(...checkCommand(c, span, created, negated(start)))
             continue
         }
         const problem = checkToken(c, span, created, /^\s*\(if any\)/.test(prose.slice(end, end + 12)))
         if (problem) problems.push(`\`${span}\`: ${problem}`)
     }
     problems.push(...proseIdentifierProblems(c, prose, spans))
+    for (const { text } of spans) problems.push(...callSpecifierProblems(c, text, created))
 
     // Bare references in the prose: paths, rule ids (URLs are the scan's above).
     const bare = prose.replace(/`[^`]+`/g, ' ').replace(URLS, ' ')
@@ -721,7 +859,7 @@ function referenceProblems(c: Context, text: string): string[] {
                 if (command && !command.startsWith('#')) problems.push(...checkCommand(c, command, created))
             }
         } else if (SCRIPT.has(lang)) {
-            problems.push(...scriptProblems(c, code, created))
+            problems.push(...scriptProblems(c, code, created), ...callSpecifierProblems(c, code, created))
         }
     }
     return problems
@@ -742,6 +880,24 @@ describe('the plugin: every reference resolves in a generated workspace', () => 
             expect(ctx.appScripts, output).toContain(script)
             expect(spec, `the app's own static spec reads ${output}`).toContain(output)
         }
+        // pnpm writes its lockfile at the root of a workspace (pnpm-workspace.yaml), and git keeps it (not ignored).
+        expect(existsSync(path.join(ctx.ws, 'pnpm-workspace.yaml'))).toBe(true)
+        for (const output of WORKSPACE_OUTPUTS)
+            expect(ctx.ignored.map((x) => x.replace(/^\//, ''))).not.toContain(output)
+    })
+
+    it('says how to add a package the one way that keeps the seam linked, in every command that adds one', () => {
+        const section = (text: string) =>
+            /\n## Adding a package\n([\s\S]*?)(?=\n## |$)/.exec(text)?.[1].replace(/\s+/g, ' ')
+        const texts = files.map((file) => readFileSync(path.join(REPO, file), 'utf8'))
+        const sections = texts.map(section).filter((text): text is string => text !== undefined)
+        // The commands that add one: the static demo's schema library, a port's SDK, the axe sweep's library.
+        expect(sections.length).toBeGreaterThanOrEqual(3)
+        expect(new Set(sections).size, 'every copy is the same text').toBe(1)
+        for (const [i, text] of texts.entries()) {
+            if (text.includes('**Adding a package**')) expect(section(text), files[i]).toBeDefined()
+        }
+        expect(sections[0]).toContain('`git checkout HEAD -- pnpm-lock.yaml`')
     })
 
     // A canary for the checker itself: each planted reference must fail with ITS problem, so a rule that stops
@@ -804,6 +960,45 @@ describe('the plugin: every reference resolves in a generated workspace', () => 
         ['`@sssb/kit/core/presets` (`presetProblems`, `nopeOperation`)', '`nopeOperation` is not exported'],
         // Declared in the module but not exported: still not something an app can import.
         ['`inviteOperation` from `@sssb/kit/core/presets`', '`inviteOperation` is not exported'],
+        // The other ways prose ties an identifier to a module, and a module the build points at (its source is read).
+        ['`nopeFn` (from `@sssb/kit/core/presets`)', '`nopeFn` is not exported by @sssb/kit/core/presets'],
+        ['the `@sssb/kit/core/presets` module exports `nopeFn`', '`nopeFn` is not exported by @sssb/kit/core/presets'],
+        ['`nopeFn`, exported by `@sssb/kit/core/presets`', '`nopeFn` is not exported by @sssb/kit/core/presets'],
+        ['`nopeHelper` (`@sssb/kit/testing/e2e`)', '`nopeHelper` is not exported by @sssb/kit/testing/e2e'],
+        [
+            "```ts\nimport nope from '@sssb/kit/core/presets'\n```",
+            '`default` is not exported by @sssb/kit/core/presets',
+        ],
+        // A component's props: each one it has, and none of its required ones left out.
+        [
+            'an `ActorShell` (`@sssb/kit/components/simulator/actor-shell`) with `actor={id}`, `startPaused`, `tick` and `nope`',
+            '`nope` is not a prop of ActorShell',
+        ],
+        [
+            'an `ActorShell` (`@sssb/kit/components/simulator/actor-shell`) with `inline`, `startPaused={false}` and `tick`',
+            'ActorShell (@sssb/kit/components/simulator/actor-shell) is given without its required actor',
+        ],
+        // A specifier inside a call, in a span or a fence (a template's `${…}` is a placeholder).
+        ["```ts\nconst f = require.resolve('@sssb/kit/nope/en.json')\n```", '`@sssb/kit/nope/en.json` (in a call)'],
+        ["`require.resolve('@sssb/kit/i18n/nope/<locale>.json')`", 'no @sssb/kit subpath under ./i18n/nope/'],
+        [
+            '```ts\nconst f = require.resolve(`@sssb/kit/i18n/nope/${locale}.json`)\n```',
+            'no @sssb/kit subpath under ./i18n/nope/',
+        ],
+        // Another package manager, an environment prefix, and a dependency added with `pnpm add`.
+        ['`npm run verify`', "`npm` is not this workspace's package manager"],
+        ['`yarn verify`', "`yarn` is not this workspace's package manager"],
+        ['`CI=1 pnpm nope6`', 'no "nope6" script in the workspace root'],
+        ['`env CI=1 npx sssb doctor`', '`npx` reaches past the workspace'],
+        ['`pnpm --filter <app> add left-pad`', "`pnpm add` drops the app's seam link"],
+        ['`pnpm install left-pad`', "`pnpm add` drops the app's seam link"],
+        ['Then run `pnpm add left-pad`.', "`pnpm add` drops the app's seam link"],
+        // The lockfile is the workspace root's: from the app's directory it is not there.
+        ['`cd apps/<app> && git checkout HEAD -- pnpm-lock.yaml`', '`pnpm-lock.yaml` (in `git checkout'],
+        // Negations and non-create verbs: what follows is NOT created, so it must exist.
+        ['You must not ever create `src/never-made.ts`.', '`src/never-made.ts`: does not exist'],
+        ['Never create the file `src/app-config/nope-file.ts`.', '`src/app-config/nope-file.ts`: does not exist'],
+        ['write `src/new-file.ts` here', '`src/new-file.ts`: does not exist'],
         ['A span that wraps `src/app-config/\nabilities.ts` here.', 'a path broken across lines'],
         ['an odd ` backtick here', 'unbalanced backticks'],
     ]
@@ -829,7 +1024,19 @@ describe('the plugin: every reference resolves in a generated workspace', () => 
             '```bash\npnpm build:demo-static && pnpm e2e:demo-static\n```',
             // An indented fence (inside a list item) is code, not prose: its lone backtick is a template literal's.
             '1. A step:\n\n        ```ts\n        const file = `../messages/${locale}.json\n        ```',
-            'the app under src/app/[locale]/(protected)/dashboard/page.tsx, `pnpm create @sssb`, `pnpm --filter <app> add valibot`',
+            'the app under src/app/[locale]/(protected)/dashboard/page.tsx, `pnpm create @sssb`',
+            // The create forms beyond "create `x`".
+            'create the file `src/app-config/brand-new.ts`, then edit `src/app-config/brand-new.ts`',
+            'the spec at `tests/demo-static/made-here.spec.ts` you create',
+            // A command the prose says not to run, or that was run; the lockfile by name, from the root.
+            'never `pnpm --filter <app> add valibot` (nor `pnpm add`); if you already ran `pnpm add`, run',
+            '`git checkout HEAD -- pnpm-lock.yaml`, then `pnpm install`; `rm -rf node_modules pnpm-lock.yaml && pnpm install`',
+            '`CI=1 pnpm verify` `pnpm view valibot version` `pnpm install --frozen-lockfile`',
+            "`require.resolve('@sssb/kit/i18n/messages/<locale>.json')`",
+            '```ts\nconst f = require.resolve(`@sssb/kit/i18n/messages/${locale}.json`)\n```',
+            '`JOB_STATUSES` (from `@sssb/kit/core/jobs`); `@sssb/kit/core/presets` exports `presetProblems`',
+            '`expandPreset`, exported by `@sssb/kit/core/presets`; `verifyWebhookSignature` (`@sssb/kit/testing/e2e`)',
+            'an `ActorShell` (`@sssb/kit/components/simulator/actor-shell`) with `key={id}`, `actor={id}`, `inline`, `startPaused={false}` and `tick`',
         ].join('\n\n')
         expect(referenceProblems(ctx, fine)).toEqual([])
     })

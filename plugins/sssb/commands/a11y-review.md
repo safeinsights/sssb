@@ -12,9 +12,8 @@ read its local showcase app instead).
    the app that owns the Playwright config). If it has none, write one first, modelled on the reference app's
    (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/tests/e2e/a11y.spec.ts`): every route under
    `src/app/[locale]`, both locales, signed in where the route is protected. It uses `@axe-core/playwright`, which a
-   generated app does not have: add it with `pnpm --filter <app> add -D @axe-core/playwright`, then run
-   `pnpm sssb:doctor` (if it reports the kit has no seam linked, `/sssb:new-preset-operation` step 2 has the fix).
-   It also imports that app's own spec helpers
+   generated app does not have: add it to the app's `devDependencies` the way **Adding a package** (below)
+   says. It also imports that app's own spec helpers
    (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/tests/e2e/support`: `signInAs`,
    `openSimulatorPanel`), which a generated app lacks: sign in through the people picker as
    `tests/e2e/items.spec.ts` does, and drop the reference's Simulator-panel pass, since `pnpm dev` has no panel in a
@@ -31,3 +30,21 @@ read its local showcase app instead).
       uses `primaryShade: 8` because shade 6 failed WCAG; an app that overrides the theme re-checks it.
 3. Done when the axe spec is green and you've produced a ranked findings list (WCAG criterion, page, suggested fix).
    Apply one-line fixes directly; list larger ones instead of fixing them. No new `eslint-disable` comments.
+
+## Adding a package
+
+In a generated workspace, add a dependency by hand, never with `pnpm add` (nor `pnpm --filter <app> add`): in a
+workspace that is already installed, it re-resolves SSSB's kit without the app's seam, and `pnpm sssb:doctor` then
+fails "has no seam linked" while typecheck fails inside `@sssb/kit`.
+
+1. Write the package into the app's `package.json` under `dependencies` (`devDependencies` for a tool only the tests
+   use), by its exact npm name, with a caret range on its latest release: `pnpm view <package> version` prints it
+   (say `1.5.0`), and the entry is `"<package>": "^1.5.0"`. If the package is already a dependency elsewhere in the
+   workspace, use the range written there.
+2. From the workspace root, `pnpm install`, then `pnpm sssb:doctor`. If the install refuses the release as too new
+   (the workspace's `minimumReleaseAge` holds back anything published in the last two days), take the newest older
+   one `pnpm view <package> time` lists and install again.
+
+If you already ran `pnpm add`, keep the `package.json` it edited and undo only the lockfile:
+`git checkout HEAD -- pnpm-lock.yaml`, then `pnpm install` and `pnpm sssb:doctor`. Both ways leave the rest of the
+dependency tree as it was.
