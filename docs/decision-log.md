@@ -4983,7 +4983,7 @@ _Accepted gap_ and adds to the rule.
   `app_user` reaches: a privilege on a server parameter (`pg_parameter_acl`), a database it owns
   (`pg_database.datdba`) and a tablespace it owns (`pg_tablespace.spcowner`). All three are shared catalogs, read from
   whatever database the pass connects to, by any role (measured as a `NOSUPERUSER` login). The owner's own migration
-  can make a named role a database's owner (it grants itself SET, then `CREATE DATABASE ... OWNER`), but not grant a
+  can make a named role a database's owner (it grants itself SET, then `ALTER DATABASE ... OWNER TO`; `CREATE DATABASE` cannot run in the migrations' transaction), but not grant a
   parameter privilege or create a tablespace (both refused to it): the check after the migrations catches the first,
   in a test of its own. The rule's text now has one home, `ORDINARY_NAMED` and `ORDINARY_APP_USER` in `app-roles.ts`,
   which the owner pass's and the conformance check's messages print; the conformance message for `app_user` said

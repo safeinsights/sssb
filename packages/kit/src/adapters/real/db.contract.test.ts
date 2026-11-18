@@ -472,8 +472,10 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         }
     })
 
-    // ...or the owner of a database: ADMIN lets the owner grant itself SET on the role, and CREATEDB create a database
-    // the role owns (measured on Postgres 18.4). Every later owner could then act as that database's owner.
+    // ...or the owner of a database: ADMIN lets the owner grant itself SET on the role and then make the role a
+    // database's owner. A migration would do it with `ALTER DATABASE … OWNER TO` (`CREATE DATABASE` cannot run in its
+    // transaction); this test's hook runs after the migrations, outside their transaction, so it creates one (both
+    // measured on Postgres 16.15 and 18.4). Every later owner could then act as that database's owner.
     test('the owner pass fails when its migrations leave a named role owning a database', async () => {
         const database = `fixture_clerk_owns_${Date.now()}`
         try {

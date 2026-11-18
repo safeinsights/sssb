@@ -44,7 +44,7 @@ DO $$ BEGIN
 END $$
 ```
 
-Leave `app_user` ordinary as well: never change its attributes, give it no parameter privilege or database, and grant
+Leave `app_user` ordinary as well: never change its attributes, give it no parameter privilege, database or tablespace, and grant
 it only your named roles.
 
 Then make a migration that only warned when it lacked ADMIN on its role fail again: the owner pass now gives a later

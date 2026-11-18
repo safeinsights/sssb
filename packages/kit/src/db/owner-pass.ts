@@ -193,7 +193,8 @@ export async function runOwnerPass(
         }
         // ...and app_user and every named role are still ordinary. The owner's migration ran with ADMIN and CREATEROLE
         // on each, which let it make one LOGIN with a password it chose, CREATEDB or CREATEROLE, or (granting itself SET
-        // on it) the owner of a new database; never SUPERUSER, BYPASSRLS or REPLICATION, which the owner lacks, nor a
+        // on it) the owner of the pass's own database, by `ALTER DATABASE … OWNER TO` (`CREATE DATABASE` cannot run in
+        // the migrations' transaction); never SUPERUSER, BYPASSRLS or REPLICATION, which the owner lacks, nor a
         // holder of a parameter privilege or a tablespace, which need a superuser (all measured on Postgres 18.4): a role
         // every later owner is handed ADMIN on must not be one.
         const strayed = shownRefused(await refusedOf(admin, roles))
