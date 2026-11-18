@@ -1,2 +1,2 @@
 // @ts-check
-export { SssbApp } from './sssb-app.js'
+export { databaseNameFor, SssbApp } from './sssb-app.js'

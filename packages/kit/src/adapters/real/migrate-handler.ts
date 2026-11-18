@@ -51,11 +51,15 @@ export async function handler(): Promise<{ ok: true }> {
         port: number
         username: string
         password: string
-        dbname: string
+        dbname?: string
     }
 
+    // The deployment names the database (SSSB's construct sets DATABASE_NAME); the secret's `dbname` is the fallback
+    // for infra that does not, and is there only if the cluster's secret attachment added it.
+    const database = process.env['DATABASE_NAME'] ?? dbname
+    if (!database) throw new Error('neither DATABASE_NAME nor the secret names the database to migrate')
     const db = createRealDb(
-        `postgres://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}/${dbname}`,
+        `postgres://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}/${database}`,
     )
     await db.migrateToLatest()
     return { ok: true }
