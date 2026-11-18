@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -285,6 +285,32 @@ describe('@sssb/create: the command, run from a checkout', () => {
         )
         expect(unpinned.leftInTmp).toEqual([])
     })
+
+    it('removes the template, and writes nothing, when a signal comes while the template is built', async () => {
+        // Thousands of starter files more, so the build lasts long enough to be interrupted.
+        const repo = standIn()
+        mkdirSync(path.join(repo, 'apps/starter/bulk'))
+        for (let index = 0; index < 4000; index += 1)
+            writeFileSync(path.join(repo, `apps/starter/bulk/f${index}.txt`), '')
+        git(repo, ['add', '-A'])
+        commit(repo)
+        const tmp = makeTestTmpDir('create-cli-tmp-')
+        const out = target()
+        const child = spawn(
+            process.execPath,
+            [path.join(repo, 'packages/create/bin/create.js'), out, '--workflow-ref', 'a'.repeat(40), '--yes'],
+            { stdio: 'ignore', env: cleanEnv({ TMPDIR: tmp }) },
+        )
+        const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })))
+        const building = () => readdirSync(tmp).some((entry) => entry.startsWith('sssb-create-template-'))
+        const until = Date.now() + 20_000
+        while (!building() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 1))
+        expect(building(), 'the build started').toBe(true)
+        child.kill('SIGINT')
+        expect(await exited).toEqual({ code: null, signal: 'SIGINT' })
+        expect(readdirSync(tmp)).toEqual([])
+        expect(existsSync(out)).toBe(false)
+    }, 60_000)
 
     it('fails with a message, not a stack trace, in a checkout without git', () => {
         const result = cli(standIn({ withGit: false }), [target(), '--yes'])

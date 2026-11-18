@@ -18,10 +18,10 @@ import {
     writeFileSync,
 } from 'node:fs'
 import path from 'node:path'
-import { setImmediate } from 'node:timers'
 import { columns, CreateError, displayName } from './args.js'
 import * as files from './files.js'
 import { formatJson, packageJson } from './json.js'
+import { holdSignals, releaseSignals } from './signals.js'
 import { filesUnder, fromStored, GUIDE_FILE, readTemplate } from './template.js'
 
 /** The @sssb packages the workspace installs (the seam, @sssb/app-config, is the app's own and never installed). */
@@ -220,53 +220,27 @@ function checkPackageNames(slug, meta) {
     }
 }
 
-/** How to undo each generation under way, for the signal handler below. @type {Set<() => void>} */
-const underWay = new Set()
-
 /**
- * SIGINT or SIGTERM while a generation is under way. The generation is synchronous, so the signal is only seen once it
- * has finished or failed (a listener defers it, where the default would kill the process part-way): what it wrote is
- * undone, and the signal is raised again, for the process to end as it asked.
- * @param {NodeJS.Signals} signal
+ * What a directory may hold and still count as empty, each left untouched: a repository's `.git` (`git init`, or
+ * `gh repo clone` of a new repository), the Finder's `.DS_Store` (which it may also write while the workspace is), and a
+ * filesystem root's `lost+found`. The workspace writes none of them.
  */
-function onSignal(signal) {
-    for (const undo of underWay) undo()
-    underWay.clear()
-    process.off('SIGINT', onSignal)
-    process.off('SIGTERM', onSignal)
-    process.kill(process.pid, signal)
-}
-
-/** @param {() => void} undo */
-function holdSignals(undo) {
-    if (underWay.size === 0) {
-        process.on('SIGINT', onSignal)
-        process.on('SIGTERM', onSignal)
-    }
-    underWay.add(undo)
-}
+const LEFT_ALONE = new Set(['.git', '.DS_Store', 'lost+found'])
 
 /**
- * Lets the signals go again, on the event loop's next turn: a signal that arrived during the (synchronous) generation
- * is dispatched before then, and still finds what to undo.
- * @param {() => void} undo
+ * A directory's entries but those LEFT_ALONE and `also`.
+ * @param {string} dir
+ * @param {string} [also]
  */
-function releaseSignals(undo) {
-    setImmediate(() => {
-        underWay.delete(undo)
-        if (underWay.size > 0) return
-        process.off('SIGINT', onSignal)
-        process.off('SIGTERM', onSignal)
-    })
-}
+const occupants = (dir, also) => readdirSync(dir).filter((entry) => !LEFT_ALONE.has(entry) && entry !== also)
 
 /**
- * Writes a new workspace. Refuses a target that exists and is not an empty directory, or is a symlink. An existing
- * target is never removed or replaced (it may be the shell's working directory, a mount point, or in a directory this
- * user cannot write; its mode, owner and ACLs are the user's): the workspace is written into a stage INSIDE it,
- * `<target>/.sssb-create-<hex>/`, whose entries are moved up into the target at the end. A failure part-way, or a
- * SIGINT or SIGTERM, leaves nothing behind: the stage and whatever was moved up are removed, and the target and its
- * parents too when this run created them (and they are empty).
+ * Writes a new workspace. Refuses a target that exists and is not an empty directory (LEFT_ALONE's entries aside), or
+ * is a symlink. An existing target is never removed or replaced (it may be the shell's working directory, a mount
+ * point, or in a directory this user cannot write; its mode, owner and ACLs are the user's): the workspace is written
+ * into a stage INSIDE it, `<target>/.sssb-create-<hex>/`, whose entries are moved up into the target at the end. A
+ * failure part-way, or a SIGINT, SIGTERM or SIGHUP (signals.js), leaves nothing behind: the stage and whatever was
+ * moved up are removed, and the target and its parents too when this run created them (and they are empty).
  * @param {GenerateOptions} options
  * @returns {{ root: string, appDir: string, files: string[], workflowRef: string, tarballs: Record<string, string> | null }}
  */
@@ -313,7 +287,7 @@ export function generate({
         const existing = lstatSync(root, { throwIfNoEntry: false })
         if (existing?.isSymbolicLink())
             throw new CreateError(`${root} is a symbolic link: name a new directory, or an empty one`)
-        if (existing && (!existing.isDirectory() || readdirSync(root).length > 0))
+        if (existing && (!existing.isDirectory() || occupants(root).length > 0))
             throw new CreateError(`${root} already exists and is not an empty directory: name a new one`)
         if (!existing) {
             made.created = mkdirSync(path.dirname(root), { recursive: true })
@@ -324,12 +298,15 @@ export function generate({
         made.stage = path.join(root, stageName)
         mkdirSync(made.stage)
         const files = writeWorkspace(made.stage, c, templateDir)
-        const arrived = readdirSync(root).filter((entry) => entry !== stageName)
+        const arrived = occupants(root, stageName)
         if (arrived.length > 0)
             throw new CreateError(
                 `${root} gained ${arrived.join(', ')} while the workspace was written: name a new one`,
             )
         for (const entry of readdirSync(made.stage)) {
+            // Never over one of LEFT_ALONE's (a rename replaces a file), and so never undoing it.
+            if (lstatSync(path.join(root, entry), { throwIfNoEntry: false }))
+                throw new CreateError(`${root} already holds ${entry}, which the workspace would replace`)
             renameSync(path.join(made.stage, entry), path.join(root, entry))
             made.moved.push(entry)
         }

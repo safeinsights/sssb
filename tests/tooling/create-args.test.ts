@@ -75,6 +75,13 @@ describe('@sssb/create: arguments', () => {
         [['ws', '--name', 'A ~ B ~ C'], /more than one "~"/],
         [['ws', '--name', 'Lab #'], /ends in a "#" of its own/],
         [['ws', '--name', 'Lab ##'], /ends in a "#" of its own/],
+        // `&` where markdown reads a character reference.
+        [['ws', '--name', 'Fish &amp; Chips'], /an "&" that markdown reads as a character reference/],
+        [['ws', '--name', 'Acme &copy; Labs'], /an "&" that markdown reads as a character reference/],
+        [['ws', '--name', 'R&D;Lab'], /an "&" that markdown reads as a character reference/],
+        [['ws', '--name', 'Lab &#169;'], /an "&" that markdown reads as a character reference/],
+        [['ws', '--name', 'Lab &#x26; Co'], /an "&" that markdown reads as a character reference/],
+        [['ws', '--name', 'C&#1'], /an "&" that markdown reads as a character reference/],
         [['ws', '--name', '-leading'], /must start with a letter or a digit/],
         [['ws', '--name', `''"x"`], /must start with a letter or a digit/],
         [['ws', '--name', "Rock''n roll"], /two apostrophes in a row/],
@@ -97,12 +104,23 @@ describe('@sssb/create: arguments', () => {
     })
 
     // Each lands Prettier-clean and parseable in every file (tests/tooling/create-generate.test.ts generates them).
-    it.each(['50% Study', 'A; B', 'Q&A = Help', 'Acme ~ Lab', 'Lab_1', 'snake_case_name', 'C# Lab', 'Lab #1', 'C#'])(
-        'accepts %j',
-        (name) => {
-            expect(parseArgs(['ws', '--name', name]).name).toBe(name)
-        },
-    )
+    it.each([
+        '50% Study',
+        'A; B',
+        'Q&A = Help',
+        'Acme ~ Lab',
+        'Lab_1',
+        'snake_case_name',
+        'C# Lab',
+        'Lab #1',
+        'C#',
+        'R&D',
+        'Q & A',
+        "Harbor & O'Neill",
+        'R&D: Q&A',
+    ])('accepts %j', (name) => {
+        expect(parseArgs(['ws', '--name', name]).name).toBe(name)
+    })
 
     // `npm create @sssb <dir> -- --slug x`: npm hands the `--` through.
     it('ignores a bare --', () => {

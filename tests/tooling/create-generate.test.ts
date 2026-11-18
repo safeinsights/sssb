@@ -555,24 +555,141 @@ describe('@sssb/create: the generated workspace', () => {
         expect(existsSync(path.join(target, 'apps/acme/package.json'))).toBe(true)
     })
 
-    it('leaves nothing behind when SIGINT or SIGTERM comes part-way', async () => {
+    // `git init` or `gh repo clone` of a new repository, the Finder, a filesystem root: still an empty directory.
+    it('counts a directory holding only .git, .DS_Store or lost+found as empty, and leaves them as they were', () => {
+        const parent = makeTestTmpDir('create-left-alone-')
+        const target = path.join(parent, 'ws')
+        mkdirSync(path.join(target, '.git'), { recursive: true })
+        writeFileSync(path.join(target, '.git/HEAD'), 'ref: refs/heads/main\n')
+        writeFileSync(path.join(target, '.DS_Store'), 'finder')
+        mkdirSync(path.join(target, 'lost+found'))
+        const leftAlone = ['.DS_Store', '.git', 'lost+found']
+        // A failure part-way removes what it wrote, and none of them.
+        const broken = path.join(makeTestTmpDir('create-broken-'), 'template')
+        cpSync(template, broken, { recursive: true })
+        writeFileSync(path.join(broken, 'app/config/app.ts'), 'export {}\n')
+        expect(() => generate({ templateDir: broken, target, slug: 'acme', name: 'Acme' })).toThrow(/no APP_SLUG/)
+        expect(readdirSync(target).sort()).toEqual(leftAlone)
+        generate({ templateDir: template, target, slug: 'acme', name: 'Acme' })
+        expect(existsSync(path.join(target, 'apps/acme/package.json'))).toBe(true)
+        expect(read(target, '.git/HEAD')).toBe('ref: refs/heads/main\n')
+        expect(read(target, '.DS_Store')).toBe('finder')
+        expect(readdirSync(path.join(target, 'lost+found'))).toEqual([])
+        // A workspace that would write one of them never replaces (or, failing, removes) the one already there.
+        const finder = path.join(makeTestTmpDir('create-finder-'), 'template')
+        cpSync(template, finder, { recursive: true })
+        writeFileSync(path.join(finder, 'root/_dot_DS_Store'), 'template')
+        const kept = path.join(makeTestTmpDir('create-finder-out-'), 'ws')
+        mkdirSync(kept)
+        writeFileSync(path.join(kept, '.DS_Store'), 'finder')
+        expect(() => generate({ templateDir: finder, target: kept, slug: 'a', name: 'A' })).toThrow(
+            /already holds \.DS_Store, which the workspace would replace/,
+        )
+        expect(readdirSync(kept)).toEqual(['.DS_Store'])
+        expect(read(kept, '.DS_Store')).toBe('finder')
+        // Anything else is not empty.
+        for (const entry of ['.gitignore', '.github', 'notes.txt']) {
+            const other = path.join(makeTestTmpDir('create-not-empty-'), 'ws')
+            mkdirSync(path.join(other, '.git'), { recursive: true })
+            writeFileSync(path.join(other, entry), '')
+            expect(() => generate({ templateDir: template, target: other, slug: 'a', name: 'A' }), entry).toThrow(
+                /already exists and is not an empty directory/,
+            )
+            expect(readdirSync(other).sort(), entry).toEqual(['.git', entry].sort())
+        }
+    })
+
+    /** Runs `generate` in a child that writes `arrival` into the target as the workspace's first file is copied. */
+    function generateWhileArriving(target: string, arrival: string) {
+        const script = path.join(makeTestTmpDir('create-arrival-'), 'run.mjs')
+        const generator = pathToFileURL(path.join(REPO, 'packages/create/src/generate.js')).href
+        writeFileSync(
+            script,
+            [
+                "import fs from 'node:fs'",
+                "import { syncBuiltinESMExports } from 'node:module'",
+                `import { generate } from '${generator}'`,
+                'const [options, arrival] = [JSON.parse(process.argv[2]), process.argv[3]]',
+                'const cpSync = fs.cpSync',
+                'fs.cpSync = (...args) => {',
+                '    fs.cpSync = cpSync',
+                '    syncBuiltinESMExports()',
+                '    fs.writeFileSync(`${options.target}/${arrival}`, "")',
+                '    return cpSync(...args)',
+                '}',
+                'syncBuiltinESMExports()',
+                'generate(options)',
+                '',
+            ].join('\n'),
+        )
+        const options = { templateDir: template, target, slug: 'acme', name: 'Acme' }
+        return spawnSync(process.execPath, [script, JSON.stringify(options), arrival], { encoding: 'utf8' })
+    }
+
+    it('lets a .DS_Store arrive while it writes, and refuses anything else that does', () => {
+        const target = path.join(makeTestTmpDir('create-arrival-out-'), 'ws')
+        mkdirSync(target)
+        const finder = generateWhileArriving(target, '.DS_Store')
+        expect(finder.stderr).toBe('')
+        expect(finder.status).toBe(0)
+        expect(existsSync(path.join(target, 'apps/acme/package.json'))).toBe(true)
+        expect(existsSync(path.join(target, '.DS_Store'))).toBe(true)
+
+        const other = path.join(makeTestTmpDir('create-arrival-out-'), 'ws')
+        mkdirSync(other)
+        const notes = generateWhileArriving(other, 'notes.txt')
+        expect(notes.status).toBe(1)
+        expect(notes.stderr).toContain('gained notes.txt while the workspace was written')
+        expect(readdirSync(other)).toEqual(['notes.txt'])
+    })
+
+    /**
+     * A signal part-way leaves nothing (what was there before stays). `poll` runs `generate` inside an I/O callback, as
+     * the command does after its confirmation prompt (`main()` resumes from stdin's read callback): there the event
+     * loop's next check phase comes before its next poll phase, the only one where libuv reads a pending signal. The
+     * child then waits as the command does (signalsSettled) and exits 0, so a signal not dispatched by then is dropped.
+     */
+    it('leaves nothing behind when SIGINT, SIGTERM or SIGHUP comes part-way, from an I/O callback too', async () => {
         // A template with thousands of files more, so the write lasts long enough to be interrupted.
         const big = path.join(makeTestTmpDir('create-big-'), 'template')
         cpSync(template, big, { recursive: true })
         mkdirSync(path.join(big, 'app/bulk'))
         for (let index = 0; index < 4000; index += 1) writeFileSync(path.join(big, `app/bulk/f${index}.txt`), '')
         const script = path.join(makeTestTmpDir('create-signal-'), 'run.mjs')
-        const generator = pathToFileURL(path.join(REPO, 'packages/create/src/generate.js')).href
-        writeFileSync(script, `import { generate } from '${generator}'\ngenerate(JSON.parse(process.argv[2]))\n`)
-        for (const [signal, existing] of [
-            ['SIGINT', false],
-            ['SIGTERM', true],
+        const src = (file: string) => pathToFileURL(path.join(REPO, 'packages/create/src', file)).href
+        writeFileSync(
+            script,
+            [
+                "import { readFile } from 'node:fs'",
+                `import { generate } from '${src('generate.js')}'`,
+                `import { signalsSettled } from '${src('signals.js')}'`,
+                'const [options, mode] = [JSON.parse(process.argv[2]), process.argv[3]]',
+                'const run = async () => {',
+                '    generate(options)',
+                '    await signalsSettled()',
+                "    console.log('Created')",
+                '    process.exit(0)',
+                '}',
+                "if (mode === 'poll') readFile(process.argv[1], () => void run())",
+                'else void run()',
+                '',
+            ].join('\n'),
+        )
+        for (const [signal, existing, mode] of [
+            ['SIGINT', false, 'poll'],
+            ['SIGINT', true, 'top'],
+            ['SIGTERM', true, 'poll'],
+            ['SIGHUP', false, 'poll'],
         ] as const) {
+            const what = `${signal} ${mode}${existing ? ' existing' : ''}`
             const parent = makeTestTmpDir('create-signal-parent-')
             const target = path.join(parent, 'ws')
-            if (existing) mkdirSync(target)
+            if (existing) {
+                mkdirSync(path.join(target, '.git'), { recursive: true })
+                writeFileSync(path.join(target, '.DS_Store'), '')
+            }
             const options = { templateDir: big, target, slug: 'acme', name: 'Acme' }
-            const child = spawn(process.execPath, [script, JSON.stringify(options)], { stdio: 'ignore' })
+            const child = spawn(process.execPath, [script, JSON.stringify(options), mode], { stdio: 'ignore' })
             const exited = new Promise((resolve) => child.on('exit', (code, sig) => resolve({ code, signal: sig })))
             const staged = () =>
                 [parent, target].some(
@@ -580,11 +697,11 @@ describe('@sssb/create: the generated workspace', () => {
                 )
             const until = Date.now() + 20_000
             while (!staged() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 1))
-            expect(staged(), 'the stage appeared').toBe(true)
+            expect(staged(), `${what}: the stage appeared`).toBe(true)
             child.kill(signal)
-            expect(await exited, signal).toEqual({ code: null, signal })
-            expect(readdirSync(parent), signal).toEqual(existing ? ['ws'] : [])
-            if (existing) expect(readdirSync(target), signal).toEqual([])
+            expect(await exited, what).toEqual({ code: null, signal })
+            expect(readdirSync(parent), what).toEqual(existing ? ['ws'] : [])
+            if (existing) expect(readdirSync(target).sort(), what).toEqual(['.DS_Store', '.git'])
         }
     }, 60_000)
 })

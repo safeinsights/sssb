@@ -111,18 +111,21 @@ export function columns(text) {
  * The characters a display name may hold. It lands in TypeScript and JSON strings, an HTML `<title>`, markdown (a
  * heading, the middle of a sentence) and the app's message catalogs, which next-intl reads as ICU messages; each of the
  * characters left out means something in one of them (`* \` [ ] < > |` in markdown or HTML, `{ }` and `<tag>` in ICU,
- * `\` and `$` in strings). `_`, `~` and `#` are let in where they mean nothing (displayName's NAME_RULES).
+ * `\` and `$` in strings). `_`, `~`, `#` and `&` are let in where they mean nothing (displayName's NAME_RULES).
  */
 const NAME_CHARACTERS = /[^\p{L}\p{M}\p{N}\p{Extended_Pictographic} '’".,&()!?:/+%;=~_#-]/gu
 
 /**
- * Where `_`, `~` and `#` would mean something in markdown, each with why. `#` at the start is the start rule's.
+ * Where `_`, `~`, `#` and `&` would mean something in markdown, each with why. `#` at the start is the start rule's.
  * @type {[RegExp, string][]}
  */
 const NAME_RULES = [
     [/(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/u, 'has a "_" that is not inside a word (markdown reads it as emphasis)'],
     [/~.*~/u, 'has more than one "~" (markdown reads a pair as strikethrough)'],
     [/\s#+$/u, 'ends in a "#" of its own (a markdown heading drops it)'],
+    // `&copy;`, `&#169;`: markdown reads a character reference as the character. Only `;` ends one, so `R&D` is text;
+    // `&#` is refused whatever follows.
+    [/&(?:#|[\p{L}\p{N}]+;)/u, 'has an "&" that markdown reads as a character reference (as in "&amp;" or "&#38;")'],
 ]
 
 /** The joiners an emoji sequence is built with (a zero-width joiner, an emoji presentation selector). */

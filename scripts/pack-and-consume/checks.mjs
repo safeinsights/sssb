@@ -611,14 +611,29 @@ function scriptsRunBy(command, scripts) {
 }
 
 /**
+ * A script as a shell sequences it: each quoted string ('…' or "…") blanked out, so that a `;` inside one (an argument:
+ * a glob, a pattern, `node -e` code) is not read as a separator. Not when the script hands quoted text to another shell
+ * (concurrently runs each of its arguments in one, as `sh -c` does), where a quoted `;` separates steps all the same:
+ * then the script as it is.
+ * @param {string} script
+ */
+const sequencedText = (script) =>
+    /\bconcurrently\b|\b(?:ba|da|k|z)?sh\s+(?:-\w+\s+)*-\w*c\b/.test(script)
+        ? script
+        : script.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "''")
+
+/**
  * The shell and runner forms that let a script exit 0 with a step failed or never run, so that naming a gate's script
- * is not running it: each with what it does. Deliberately plain text matches over the whole script (a quoted `;` is
- * refused too): the generator writes none of them, and an adopter's verify that needs one can say why in review.
+ * is not running it: each with what it does. Deliberately plain text matches over the whole script, quoted or not,
+ * except a `;` inside quotes where no other shell reads it (sequencedText): the generator writes none of them, and an
+ * adopter's verify that needs one can say why in review.
  * @type {[{ test: (script: string) => boolean }, string][]}
  */
 const SWALLOWING_FORMS = [
     [/\|\|/, '`||` (a failure before it is swallowed)'],
-    [/;/, '`;` (the steps run whatever the one before returned)'],
+    [/(?<!\|)\|(?!\|)/, '`|` (a pipeline exits with its last command, so a failure before it is swallowed)'],
+    [/[\n\r]/, 'a newline (each line runs whatever the one before returned)'],
+    [{ test: (script) => sequencedText(script).includes(';') }, '`;` (the steps run whatever the one before returned)'],
     [/(?<![&>])&(?![&>])/, '`&` (a step put in the background is never waited for)'],
     [/--if-present/, '`--if-present` (a script that is missing passes)'],
     [
@@ -631,7 +646,7 @@ const SWALLOWING_FORMS = [
         {
             test: (script) =>
                 script
-                    .split(/[;&|]+/)
+                    .split(/[;&|\n\r]+/)
                     .some((command) => /--filter\b/.test(command) && !/--fail-if-no-match\b/.test(command)),
         },
         '`--filter` without `--fail-if-no-match` in the same command (a selector matching nothing passes)',

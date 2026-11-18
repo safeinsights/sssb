@@ -731,6 +731,12 @@ describe('verifyGateProblems', () => {
     it.each([
         ['`||`', { verify: scripts.verify!.replace('pnpm run test:contract &&', 'pnpm run test:contract || true &&') }],
         ['`;`', { verify: scripts.verify!.replaceAll(' && ', ' ; ') }],
+        // Inside quotes too, where another shell runs the quoted text.
+        ['`;`', { checks: scripts.checks!.replace("'pnpm:lint'", "'pnpm lint; true'") }],
+        ['`;`', { synth: `sh -c 'pnpm --filter ./apps/*/infra --fail-if-no-match synth; true'` }],
+        ['`|`', { verify: scripts.verify!.replace('pnpm run test:contract &&', 'pnpm run test:contract | cat &&') }],
+        ['`|`', { lint: 'eslint . |& tee lint.log' }],
+        ['a newline', { verify: scripts.verify!.replace(' && pnpm run test:contract', '\npnpm run test:contract') }],
         ['`&`', { verify: scripts.verify!.replace('pnpm run test:contract &&', 'pnpm run test:contract &') }],
         ['`--if-present`', { synth: "pnpm --filter './apps/*/infra' --fail-if-no-match --if-present synth" }],
         [
@@ -753,11 +759,11 @@ describe('verifyGateProblems', () => {
         expect(problems.filter((p) => p.startsWith(`${script} uses `)).length).toBeGreaterThan(0)
     })
 
-    it('accepts the forms that only look like those: `&&`, a redirect, `--success all`, a filter that must match', () => {
+    it('accepts the forms that only look like those: `&&`, a redirect, `--success all`, a filter that must match, a quoted `;`', () => {
         const fine = {
             ...scripts,
             checks: scripts.checks!.replace('concurrently', 'concurrently --success all'),
-            lint: 'eslint . 2>&1 && prettier --check .',
+            lint: `eslint . 2>&1 && prettier --check . && node -e 'const a = 1; process.exit(a - 1)' && grep -q "x;y" .nvmrc`,
         }
         expect(verifyGateProblems(fine).problems).toEqual([])
     })

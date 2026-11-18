@@ -7,9 +7,9 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline/promises'
-import { setImmediate } from 'node:timers'
 import { CreateError, parseArgs, PLACEHOLDER_OWNER, PLACEHOLDER_REPO, USAGE } from '../src/args.js'
 import { generate } from '../src/generate.js'
+import { holdSignals, releaseSignals, signalsSettled } from '../src/signals.js'
 import { buildTemplate, META_FILE, unpushedPin } from '../src/template.js'
 
 const PACKAGE = path.resolve(import.meta.dirname, '..')
@@ -44,8 +44,15 @@ function fromCheckout(workflowRef, run) {
         throw new CreateError(
             `this package has no template (${path.join(PACKAGE, 'template')}) and is not in SSSB's repository`,
         )
-    const scratch = mkdtempSync(path.join(tmpdir(), 'sssb-create-template-'))
+    // Held before the directory is made: a signal during the (synchronous) build would otherwise end the process by
+    // its default action, before the `finally` below, and leave the directory in the temporary one (signals.js).
+    let scratch = ''
+    const undo = () => {
+        if (scratch) rmSync(scratch, { recursive: true, force: true })
+    }
+    holdSignals(undo)
     try {
+        scratch = mkdtempSync(path.join(tmpdir(), 'sssb-create-template-'))
         const meta = buildTemplate({
             repoRoot,
             outDir: scratch,
@@ -56,7 +63,8 @@ function fromCheckout(workflowRef, run) {
         if (problem) console.warn(`\n@sssb/create: WARNING: ${problem}. Push it, or pass --workflow-ref <sha>.\n`)
         return run(scratch)
     } finally {
-        rmSync(scratch, { recursive: true, force: true })
+        undo()
+        releaseSignals(undo)
     }
 }
 
@@ -85,9 +93,9 @@ async function main() {
         })
     const packed = path.join(PACKAGE, 'template')
     const result = existsSync(path.join(packed, META_FILE)) ? create(packed) : fromCheckout(options.workflowRef, create)
-    // One turn of the event loop: a Ctrl-C that came while the workspace was written is seen here, undoes it and ends
-    // the process (generate.js), before anything says it was created.
-    await new Promise((resolve) => setImmediate(resolve))
+    // A Ctrl-C (or SIGTERM, SIGHUP) that came while the template was built or the workspace written is dispatched
+    // before this resolves, undoes them and ends the process (signals.js), before anything says it was created.
+    await signalsSettled()
 
     const fromHere = path.relative(process.cwd(), result.root)
     const relative = fromHere === '' ? '.' : fromHere.startsWith('..') ? result.root : fromHere
@@ -114,7 +122,9 @@ checks ran and passed), and turn on private vulnerability reporting. README.md l
 
 main().then(
     (status) => process.exit(status),
-    (error) => {
+    async (error) => {
+        // A failure a signal caused (a Ctrl-C reaches git, which the template build runs, too) ends as that signal.
+        await signalsSettled()
         if (error instanceof CreateError) {
             console.error(`@sssb/create: ${error.message}\n\n${USAGE}`)
             process.exit(1)
