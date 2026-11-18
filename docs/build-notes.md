@@ -2226,3 +2226,15 @@ bite there first.
 - **`playwright test --list`** starts no `webServer`, runs no global setup and needs no browser, but one spec that fails
   to load makes it list nothing. Its JSON report holds only the first entry of a `globalSetup` array; write it with
   `PLAYWRIGHT_JSON_OUTPUT_FILE`, since a spec's own output shares stdout.
+- **`sssb doctor` found two copies of `next` in the ejected adoption probe**, which nothing had seen: the lockfile
+  held two `next@16.4.6` variants, one per `@opentelemetry/api` (1.9.1 and 1.10.0, `next`'s optional peer, pulled in
+  by different SDKs), and `init-app --eject-showcase` plus `pnpm install --no-frozen-lockfile` gave the app one and
+  the kit the other. Two `next` instances mean two `next/headers` request stores. `pnpm dedupe` left one
+  `@opentelemetry/api` and so one `next`; `pnpm dedupe --check` shows whether a lockfile has drifted back.
+- **`knip.json` names `packages/kit/src/testing/e2e.ts` as an entry of the kit.** Its `exports` target is the compiled
+  `dist/testing/e2e.js`, which exists only in a packed tarball, so knip cannot map the export to the source, and once
+  the showcase (its one importer) is ejected the file reads as unused. An entry, not an `ignore`, so its own imports
+  are still checked.
+- **The pack-and-consume job installs the kit's own dependencies** (`pnpm install --frozen-lockfile --ignore-scripts
+--filter @sssb/kit`) because the kit's `prepack` builds that entry with esbuild and typescript; the root's
+  `prepare` needs the whole repo, hence `--ignore-scripts`.

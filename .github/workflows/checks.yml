@@ -369,8 +369,10 @@ jobs:
                   path: ~/.cache/ms-playwright
                   key: pack-and-consume-playwright-${{ runner.os }}-${{ hashFiles('scripts/pack-and-consume/consumer-lock.yaml') }}
                   restore-keys: pack-and-consume-playwright-${{ runner.os }}-
+            # --ignore-scripts: the root's `prepare` (husky, launch-json, panda codegen) needs the whole repo installed,
+            # and the pack needs no install script (esbuild's binary arrives as an optional dependency).
             - name: install the kit's own dependencies, for its prepack build
-              run: pnpm install --frozen-lockfile --filter @sssb/kit
+              run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit
             - run: node scripts/pack-and-consume.mjs --dir "$RUNNER_TEMP/pack-and-consume"
             # On CI the starter's Playwright reporter is `github`, so the evidence on a failure is the
             # traces under test-results/ (trace: on-first-retry), not an HTML report.
