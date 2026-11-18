@@ -25,6 +25,8 @@ import type { Citation } from '../../packages/tools/src/doc-paths.js'
  *   - `docs/adr/`: dated decisions; amended by appending a dated addendum, never by editing the body.
  *   - `docs/build-notes.md`: running log of dated lessons.
  *   - `docs/decision-log.md`: running log of dated decisions.
+ *   - `docs/releases/`: one file per release, written by the release workflow from that release's changesets; it
+ *     cites paths in an adopter's tree.
  *   - `.claude/future-tasks/resolved/`: finished tasks; the work that resolved one routinely moved
  *     what it cites.
  *   - `.claude/worktrees/`: linked worktrees from agent sessions, not this checkout's content.

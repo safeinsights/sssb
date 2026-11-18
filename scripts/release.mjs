@@ -9,13 +9,17 @@
 //                                 nothing for a private package, and a check of that plan could never fail. It
 //                                 also fails on what would stall a release later: a changeset naming a package
 //                                 outside the fixed group, a group member outside packages/ or without
-//                                 repository.url, a group that is part private.
-//   prepare [--allow-dirty]       The `plan` job. Plans, guards, then runs `changeset version` in the working
-//                                 tree and commits nothing. stdout is one JSON object, `{"release":false,
-//                                 "reason":…}` or `{"release":true,"version":…,"packages":[…]}`.
+//                                 repository.url, a group that is part private, and a changeset whose body is not a
+//                                 readable release-note entry (scripts/release-notes.mjs).
+//   prepare [--allow-dirty]       The `plan` job. Plans, guards, writes the release notes (assembled from the pending
+//                                 changesets by scripts/release-notes.mjs) to docs/releases/v<version>.md, then runs
+//                                 `changeset version` in the working tree and commits nothing. stdout is one JSON
+//                                 object, `{"release":false,"reason":…}` or `{"release":true,"version":…,
+//                                 "packages":[…],"notes":"docs/releases/v<version>.md"}`.
 //   verify-release <version>      The `push` job, which holds the release app's key. From HEAD alone, works out
 //                                 the release the pending changesets imply and fails unless the staged patch is
-//                                 exactly that; prints `verified <version>`. Needs no installed dependencies.
+//                                 exactly that, notes file included; prints `verified <version>`. Needs no installed
+//                                 dependencies.
 //   publishable <version>         The tag's pack job. The packages to publish, as JSON, and `[]` while every
 //                                 package is private. Fails if a non-private package is outside the fixed group
 //                                 or at another version.
@@ -33,7 +37,7 @@
 // Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout carries only the result.
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -152,6 +156,11 @@ export async function check(root) {
             }
         }
     }
+    // The release notes are written from these files (scripts/release-notes.mjs), so a body that cannot be read
+    // would fail the release after its plan was already accepted. Loaded here, not at the top: release.yml's `push`
+    // and `publish` jobs run a lone copy of this file with no sibling modules.
+    const { lintChangesets } = await import('./release-notes.mjs')
+    problems.push(...lintChangesets(root, { judgePackages: false }))
     // Only the fixed group is ever published; the apps that depend on it would be planned too, and are noise.
     const asPublished = ws
         .plan({ ...ws.config, privatePackages: { version: true, tag: false } })
@@ -195,6 +204,8 @@ function latestStableTag(root) {
 /**
  * The `plan` job's preparation. Commits nothing: the `push` job applies what this leaves, after
  * `verifyRelease` has checked it.
+ * @param {string} root
+ * @param {{ allowDirty?: boolean, fetchImpl?: typeof fetch }} [options]
  */
 export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = {}) {
     if (!allowDirty) {
@@ -247,6 +258,15 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
         }
     }
 
+    // THE RELEASE NOTES, from the changesets as they are NOW: `changeset version` deletes them. They are judged here,
+    // before anything is changed, so a changeset that is not a readable entry stops the release instead of failing it
+    // after its plan was accepted. The package names and bumps are judged by `check` above, as in `check` itself.
+    // The notes are a new file in the release commit, which verifyRelease accepts at exactly this path.
+    const { releaseNotes } = await import('./release-notes.mjs')
+    const { markdown } = releaseNotes(root, { version, judgePackages: false })
+    mkdirSync(path.join(root, 'docs', 'releases'), { recursive: true })
+    writeFileSync(path.join(root, notesPath(version)), markdown)
+
     // This repository's own CLI, resolved here rather than at load (the publish job has no node_modules), so a
     // fixture workspace without node_modules can be versioned too.
     // `format` makes Changesets run `pnpm exec prettier`, and pnpm 11 first re-installs, scripts and all, when a
@@ -268,7 +288,7 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
         .map((p) => `${p.packageJson.name} is at ${p.packageJson.version}`)
     if (after.changesets.length > 0) wrong.push(`changesets remain: ${after.changesets.map((c) => c.id).join(', ')}`)
     if (wrong.length > 0) throw new Error(`after \`changeset version\` to ${version}: ${wrong.join('; ')}`)
-    return { release: true, version, packages: releases.map((r) => r.name).sort() }
+    return { release: true, version, packages: releases.map((r) => r.name).sort(), notes: notesPath(version) }
 }
 
 /**
@@ -402,8 +422,11 @@ const CHANGELOG = /^packages\/[^/]+\/CHANGELOG\.md$/
 
 const BUMPS = ['patch', 'minor', 'major']
 
+/** Where a release's notes live in its release commit. */
+const notesPath = (/** @type {string} */ version) => `docs/releases/v${version}.md`
+
 /** Whether Changesets (@changesets/read 1.0.1) reads this `.changeset/` file as a changeset. */
-function isChangesetName(name) {
+export function isChangesetName(name) {
     return (
         name.endsWith('.md') &&
         !name.startsWith('.') &&
@@ -416,16 +439,20 @@ function isChangesetName(name) {
  * The releases a changeset's frontmatter names, read without a YAML parser (the `push` job installs none): one
  * `"name": type` per line, and anything else fails rather than being guessed at.
  */
-function changesetReleases(text, where) {
-    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n?---/.exec(text)
+export function changesetReleases(text, where) {
+    // What scripts/release-notes.mjs's lint accepts, which is what Changesets reads: a BOM or blank lines first, `#`
+    // comments, a quoted bump. A reader stricter than the lint would fail a release in the `push` job, after its plan
+    // was accepted (tests/tooling/release-notes.test.ts holds the two together).
+    const frontmatter = /^\uFEFF?\s*---\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)/.exec(text)
     if (!frontmatter) throw new Error(`${where}: no frontmatter`)
-    return frontmatter[1]
+    return (frontmatter[1] ?? '')
         .split(/\r?\n/)
-        .filter((line) => line.trim())
+        .map((line) => line.replace(/\s+#.*$/, '').trim())
+        .filter((line) => line && !line.startsWith('#'))
         .map((line) => {
-            const m = /^\s*(["']?)([^"'\s:][^"']*?)\1\s*:\s*(major|minor|patch|none)\s*$/.exec(line)
+            const m = /^(["']?)([^"'\s:][^"']*?)\1\s*:\s*(["']?)(major|minor|patch|none)\3$/.exec(line)
             if (!m) throw new Error(`${where}: cannot read "${line}"`)
-            return { name: m[2], type: m[3] }
+            return { name: m[2], type: m[4] }
         })
 }
 
@@ -435,8 +462,10 @@ function changesetReleases(text, where) {
  * works out what the release must be: every pending changeset consumed, every public fixed-group manifest under
  * packages/ (where `check` keeps the group) moved
  * to the one version those changesets imply. The index may then differ from HEAD by exactly that: the
- * changesets deleted, each of those manifests changed in its version line and nowhere else, and plain-file
- * changelogs beside them. The version must also be newer than every `vX.Y.Z` tag. Needs no installed dependency.
+ * changesets deleted, each of those manifests changed in its version line and nowhere else, plain-file
+ * changelogs beside them, and one new plain file, the release notes `docs/releases/v<version>.md`, which must begin
+ * `# Release notes: v<version>` and is required. The version must also be newer than every `vX.Y.Z` tag. Needs no
+ * installed dependency.
  */
 export function verifyRelease(root, version) {
     const problems = []
@@ -476,6 +505,7 @@ export function verifyRelease(root, version) {
     // gitlink cannot pass as a plain file.
     const deleted = new Set()
     const bumped = new Set()
+    let notes = false
     const plain = (mode) => mode === '100644'
     const raw = git(root, ['diff', '--cached', '--raw', '--no-renames', '-z', 'HEAD']).split('\0').filter(Boolean)
     for (let i = 0; i < raw.length; i += 2) {
@@ -484,6 +514,17 @@ export function verifyRelease(root, version) {
         const dir = path.posix.dirname(file)
         if (status === 'D' && pending.includes(file)) {
             deleted.add(file)
+            continue
+        }
+        // The release notes: one new plain file, at exactly this path. Its words come from reviewed changesets, and
+        // this lone copy cannot regenerate them to compare (it has no sibling module), so what is checked is that it is
+        // the notes of THIS version. The package changelogs below are accepted on the same terms.
+        if (file === notesPath(version) && status === 'A' && plain(newMode)) {
+            const staged = git(root, ['show', `:${file}`])
+            if (!staged.startsWith(`# Release notes: v${version}\n`)) {
+                problems.push(`${file} must be the release notes of v${version}`)
+            }
+            notes = true
             continue
         }
         if (
@@ -515,6 +556,7 @@ export function verifyRelease(root, version) {
         }
         problems.push(`the release may not change ${file} (${status} ${oldMode} → ${newMode})`)
     }
+    if (!notes) problems.push(`the release notes ${notesPath(version)} are not staged`)
     for (const file of pending) if (!deleted.has(file)) problems.push(`${file} is not consumed`)
     for (const file of released.keys()) if (!bumped.has(file)) problems.push(`${file} is not moved to ${version}`)
     const tag = latestStableTag(root)
@@ -581,7 +623,8 @@ async function main(argv) {
         if (problems.length > 0) throw new Error(problems.join('\n'))
         return
     }
-    if (command === 'prepare' && (rest.length === 0 || (rest.length === 1 && rest[0] === '--allow-dirty'))) {
+    if (command === 'prepare') {
+        if (rest.length > 1 || (rest.length === 1 && rest[0] !== '--allow-dirty')) throw new Error(USAGE)
         console.log(JSON.stringify(await prepare(root, { allowDirty: rest.length === 1 })))
         return
     }

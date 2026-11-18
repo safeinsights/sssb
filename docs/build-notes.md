@@ -2193,6 +2193,28 @@ and #19 changed paths in earlier entries after their files moved to `resolved/`.
   nested config file that takes over a directory (ESLint 10 looks up the config from each file's directory), none of
   which a probe at a fixed path would see unless it happened to sit there.
 
+## `release.mjs` runs as a lone file in two release jobs, and its output is a file in a commit (2026-11-18, `feat/release-notes`)
+
+release.yml's `push` job copies `scripts/release.mjs` out of the commit to a temp path (so a patch that rewrote it
+would not be the code that judges it) and `publish` checks out three files (`.nvmrc`, `.changeset/config.json` and
+`scripts/release.mjs`); neither has `node_modules`, and neither has `scripts/release-notes.mjs` beside it. A static `import './release-notes.mjs'` would have failed both with
+`ERR_MODULE_NOT_FOUND`, in the one job that holds the release app's key, after the release was already planned. So the
+notes module is imported inside `check` and `prepare`, and `tests/tooling/release.test.ts` copies `release.mjs` alone
+and runs it. A script run through a symlinked temp directory (macOS's `/var`) also never reaches `main` if it compares
+`process.argv[1]` with `import.meta.url` as plain strings; both scripts compare real paths.
+
+Two things review found in the first version of the notes file, both about what a release commit must pass:
+
+- **Anything `prepare` writes into the tree is checked by `pnpm lint`.** The notes were first written with two blank
+  lines between sections. Prettier flags that, so `checks` would have gone red on the release commit, after its tag
+  was pushed, and `release.mjs wait-for-checks` would then have refused to publish. A test runs the notes through the
+  repository's prettier config (`resolveConfig(file, { editorconfig: true })`: the API, unlike the CLI, ignores
+  `.editorconfig` unless asked, and the 120-column width lives there).
+- **A frontmatter reader that is stricter than the lint breaks a release late.** `verify-release` reads each changeset
+  with its own small reader. When the lint was widened to what Changesets reads (a BOM, `#` comments, a quoted bump)
+  the reader was not, and a changeset the PR checks accepted would have failed in `push`. The reader is now the same
+  grammar and a test feeds both the same forms.
+
 ## The contract runner in `@sssb/kit/testing/contract` (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
 
 - **The Data API pass catches what the `pg` passes cannot.** Probe: the starter's migration 1001 with its two

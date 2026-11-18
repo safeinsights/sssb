@@ -3611,6 +3611,72 @@ init-app my-app` in a copy of the repository followed by its real `cdk synth` (`
   project, so `parserOptions.project` or `projectService` makes every probe a parse error, which check-fences reports
   with that reason (a false red, not a hole).
 
+## Release notes are assembled from the changesets by a script, and committed with the release (2026-11-18, `feat/release-notes`)
+
+The entry on requiring changesets (`ci/changeset-required`) deferred this until `@sssb/tools` existed; this ends that deferral, but in `scripts/` rather than in `@sssb/tools` (below). #21 made every PR
+that changes what ships carry a changeset with a Kind and an Action; ADR-0014 part 10 wants notes with "Seam changes",
+"Framework migrations", "Operator actions" and "Scaffold changes to apply by hand", and the stock Changesets changelog
+ignores Kind and Action and deletes the files. `scripts/release-notes.mjs` reads the files first and writes those
+sections, with each entry's What changed, To adopt and Now deletable.
+
+- **Taken from CanopyCMS** (`scripts/migration-notes.mjs`): the entries are the changeset files, assembled by a script
+  that lints them first and gives the same bytes for the same files; the idea that a later candidate says what changed
+  since the earlier one (`--since`, and the corrections to entries edited after it). **Not taken:** its area table, int
+  labels, `## Unreleased` table, rewriting a changelog in the repository and `--promote`, which serve an npm
+  prerelease channel. The whole of that script is 3,286 lines, about half of them its own self-test.
+- **A script in `scripts/`, not an `@sssb/tools` command.** Only SSSB's maintainers release SSSB. `@sssb/tools` ships
+  to adopters, so a command there would ship maintainer-only code, and P4 left `scripts/` for what is the repository's
+  own. `pnpm release:notes` runs it. Rejected: `sssb release-notes`.
+- **One shape lint, and it is the assembler's.** `lintChangeset` moved from `tests/support/changeset-shape.ts` into the
+  script, which the test file re-exports: the tests, `release.mjs check`, `release.mjs prepare` and the command lint a
+  changeset with the same code. It no longer uses the `yaml` package, because the `push` and `publish` jobs install
+  nothing and the module must load there: the frontmatter is read one quoted `'@sssb/pkg': bump` per line, with `#`
+  comments and a quoted bump allowed and a BOM skipped, as Changesets reads it. A changeset using YAML's other forms
+  is refused. `release.mjs` has its own small reader for the same frontmatter (`changesetReleases`, which `verify-release`
+  runs in the key-holding job), and a test holds the two together: a reader stricter than the lint would pass every
+  PR and then stop a release in `push`. Review found exactly that, after the lint was widened to what Changesets reads.
+- **Loaded dynamically.** release.yml's `push` job copies `scripts/release.mjs` out of the commit and `publish` checks
+  out three files (`release.mjs` among them, `release-notes.mjs` not), so `release.mjs` imports the notes module only inside `check` and `prepare`; a test runs the lone
+  copy to pin it.
+- **`check` lints every changeset on every PR; `prepare` always assembles before `changeset version`.** A changeset that
+  is not a readable entry would otherwise fail a release after its plan was accepted. Both leave the package names and
+  bumps to the plan's own checks (`judgePackages: false`), so a bump Changesets accepts (`none`) cannot pass one and
+  stop the other. While every package is private `prepare` returns before this point, so a release stays dormant;
+  the lint on PRs does not.
+- **The notes are a file in the release commit, `docs/releases/v<version>.md`.** The first version kept them out (the
+  `push` job is hash-pinned, and a lone `verifyRelease` cannot regenerate them to compare) and offered an artifact and
+  the run summary. Review answered that `verifyRelease` already accepts any bytes in `packages/*/CHANGELOG.md`, so one
+  more plain file is the same class of trust, and that an artifact expires: ADR-0014 part 10 says these sections
+  "replace the merge-time discovery ADR-0013 relied on", and a fork merging `main` gets the deleted changesets and no
+  notes unless a file carries them. So `prepare` writes the file before `changeset version`, `verifyRelease` accepts
+  exactly one added plain file at that path whose first line is `# Release notes: v<version>` and requires it, and the
+  `plan` job also appends the notes to its summary. The job's YAML (its hash) does not change. Its content is not
+  regenerated and compared, because the checker runs alone; it comes from reviewed changesets, like the changelogs.
+  Rejected: an artifact only (expires, and not in the repository).
+- **`docs/releases/` is exempt from the doc-path gate** (`sssb.docPaths.exempt`), like the other dated records: the
+  notes cite paths in an adopter's tree (`apps/<app>/…`) that this repository does not hold. They are also held to
+  prettier, since `pnpm lint` checks every markdown file and a red release commit blocks the publish: the first draft
+  left two blank lines between sections and review found it; a test now checks the notes of the repository's own
+  changesets and of fixtures against the repository's prettier config.
+- **`--since <ref>` and corrections.** A release candidate's notes are what was added since the previous one, with the
+  range in the heading, and the changesets EDITED since (the README allows editing one only to correct it) come back
+  under "Corrections to earlier notes", so an adopter who followed an earlier, wrong instruction is told. `--since`
+  and `--at` read git, never the working tree.
+- **No GitHub release is created.** That is publishing, which P7 (a release candidate, from `--since <previous tag>`)
+  and P14 (npm) own.
+- **Order inside a section:** Action required first, then optional, then none, then by file name, so the entries that
+  break an adopter who does nothing come first. The Action line names the packages, not their bumps: the group is
+  fixed, and the Action says what the adopter must do.
+- **The `release.test.ts` fixtures now carry a shaped body**, since `check` and `prepare` refuse any other.
+- **Not done, left for P7 and P14** (review raised each; none is needed for a first release candidate to be honest):
+  the history since 24b0589 (the rename among it) is still hand-written, so P14's unattended notes would omit it unless
+  it is backfilled as changesets or a hand-written `docs/releases/` file first; labelling each entry with the
+  candidate that first carried it; refusing a rename or deletion of a changeset a candidate already carried;
+  ordering entries so a scaffold step an adopter needs first comes before the seam change that presupposes it;
+  prepending sha512s and install lines to the notes for P7's GitHub release (a header file or `--no-title`); whether
+  GitHub's release body renders these hard-wrapped lines as it should (unverified); and the VPC entry from P9, which
+  is filed Operator actions with Action none though its body says lookups by tag need the new value.
+
 ## `@sssb/kit/testing/e2e`: compiled when packed, source in the repo (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
 
 ADR-0014 part 2: Playwright loads e2e specs with Node, so a spec reaches the kit only through
