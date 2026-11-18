@@ -9,15 +9,17 @@ import { changesetDir } from '../support/changeset-files'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
- * THE WHOLE SET OF TOOLS THAT READ `.changeset/`, over a tree that has been through a release in pre mode.
+ * THE TOOLS THAT READ `.changeset/`, over a tree that has been through a release in pre mode.
  *
  * The first release candidate (v0.2.0-rc.0) was cut by the release flow, and its commit failed CI: in pre mode
  * `changeset version` MOVES each changeset it consumes to `.changeset/pre/` and keeps `.changeset/pre.json`, and a
  * test that walked `.changeset/` read `pre` as a stray directory. `release.mjs` already knew about pre/ (P7); one
  * test did not, and nothing ran the tools together over such a tree. This does: a fixture workspace is prepared (the
- * `plan` job), staged and checked (the `push` job's `verifyRelease`), committed, and then every tool that enumerates
- * `.changeset/` is run over the committed tree, as the CI run on the release commit and on every later PR does, and the
- * next candidate is cut from it. Written from the shape of that commit, so the next rc cannot meet it unprepared.
+ * `plan` job), staged and checked (the `push` job's `verifyRelease`), committed, and then the tools that enumerate
+ * `.changeset/` (the directory reader the shape test uses, `release.mjs check`, the notes tool) are run over the committed
+ * tree, as the CI run on the release commit and on every later PR does, and the next candidate is cut from it. The
+ * `changeset-required` gate (a shell script that diffs two commits) is pinned for a release commit's merge-back in
+ * tests/tooling/changesets.test.ts. Written from the shape of that commit, so the next rc cannot meet it unprepared.
  */
 const REPO = fileURLToPath(new URL('../..', import.meta.url))
 const CONFIG = path.join(REPO, '.changeset/config.json')
@@ -66,7 +68,7 @@ function commit(root: string, message: string) {
 }
 
 describe('a tree that has been through a release in pre mode', () => {
-    it('is read alike by every tool that enumerates .changeset/, and cuts the next candidate', async () => {
+    it('is read alike by the tools that enumerate .changeset/, and cuts the next candidate', async () => {
         const root = candidateWorkspace({
             'a-seam.md': entry('A seam gains a hook', 'seam', 'required', 'minor'),
             'b-operator.md': entry('A secret is needed', 'operator', 'optional', 'patch'),
@@ -101,13 +103,7 @@ describe('a tree that has been through a release in pre mode', () => {
         expect(judged.changesets).toBe(0)
         // the shape lint and the notes tool: nothing pending to refuse, and the notes of nothing say so
         expect(lintChangesets(root)).toEqual([])
-        expect(lintChangesets(root, { consumed: true })).toEqual([])
         expect(releaseNotes(root).markdown).toMatch(/No change in this release asks anything of an adopter\./)
-        // the consumed changesets are still there to read, as the notes of everything the series carried
-        const series = releaseNotes(root, { consumed: true, version: '0.2.0' }).markdown
-        expect(series).toMatch(/### A seam gains a hook/)
-        expect(series).toMatch(/### A secret is needed/)
-        expect(series).toMatch(/2 changes, 1 requiring action\. 1 change has no adopter-visible effect/)
         // and nothing pending means no release, until a changeset is added
         expect(await prepare(root, { fetchImpl: NO_REGISTRY })).toEqual({
             release: false,
@@ -135,13 +131,10 @@ describe('a tree that has been through a release in pre mode', () => {
             consumed: ['pre/a-seam.md', 'pre/b-operator.md', 'pre/c-nothing.md', 'pre/d-fix.md'],
             problems: [],
         })
-        // rc.1's notes can be regenerated from the commit before it, and from the tag after it (what moved since rc.0)
+        // rc.1's notes can be regenerated from the commit before it (the release commit moved the changeset they come from)
         expect(releaseNotes(root, { at: `${rc1}^`, version: '0.2.0-rc.1' }).markdown).toBe(notes)
-        const since = releaseNotes(root, { since: 'v0.2.0-rc.0', at: 'v0.2.0-rc.1', consumed: true })
-        expect(since.markdown).toMatch(/^# Release notes\n\nChanges since v0\.2\.0-rc\.0\.\n/)
-        expect(since.markdown).toMatch(/### A label is fixed/)
-        expect(since.markdown).not.toMatch(/A seam gains a hook/)
-        // without `consumed`, since the changeset moved, nothing was added since rc.0 that is still pending
+        // and since the changeset moved to pre/, nothing is pending from rc.0 to the rc.1 commit: `--since` reads
+        // `.changeset/`, so a finished candidate's notes are the file its release commit carries, or `--at <commit>^`
         expect(releaseNotes(root, { since: 'v0.2.0-rc.0', at: 'v0.2.0-rc.1' }).entries).toBe(0)
         // rc.0's own notes, from the commit before it
         expect(readChangesets(root, { at: `${rc0}^` }).map((c: { file: string }) => c.file)).toEqual([

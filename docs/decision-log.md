@@ -4741,28 +4741,31 @@ The first release candidate (`v0.2.0-rc.0`, commit 28a04c1) was cut by the relea
 []`). In pre mode `changeset version` moves each changeset it consumes to `.changeset/pre/`, byte for byte, and keeps
 `.changeset/pre.json`; that test read `pre` as a stray subdirectory. The tag run's `candidate` job refused to publish
 because `checks` had failed on the commit, which is what it is for, and nothing was published. Reproduced first on the
-`.changeset/` directory of 28a04c1: that test failed, and `release.mjs check`, `release-notes.mjs --check` and the
-`changeset-required` gate (run over a merge of `main` into `integration`) all passed. `release.mjs` already knew about
-`pre/` (P7); only that test, and nothing that ran the tools together over such a tree, did not.
+`.changeset/` directory of 28a04c1 (the whole directory, with the earlier pending files removed as a merge-back would
+leave it): that test failed, and `release.mjs check`, `release-notes.mjs --check` and the `changeset-required` gate (run
+over a merge of `main` into `integration`) all passed. `release.mjs` already knew about `pre/` (P7); only that test, and
+nothing that ran the tools together over such a tree, did not.
 
 What each tool does with the moved files, decided one by one (`.changeset/README.md`, "What reads `.changeset/pre/`"):
 
 - **The shape lint over the tree** reads `.changeset/*.md` only, and does not lint `pre/`: they were linted when they
   were pending, and a rule tightened since must not turn a shipped candidate's record red. It does fail on anything in
-  `pre/` that is not a `.md` file and on any other subdirectory, so a stray is still caught. The enumeration is one
+  `pre/` that is not a changeset file and on any other subdirectory, so a stray is still caught. The enumeration is one
   helper, `tests/support/changeset-files.ts`, which the whole-flow test uses too. Rejected: lint `pre/` as well (it
   would pin every old rule forever), and skip every subdirectory (a stray directory would pass).
 - **`release.mjs` `check`, `prepare`, `verify-release`**: unchanged; they already treat `pre/` as consumed.
-- **`release-notes.mjs`**: pending only by default, so a candidate's notes hold what is new. A new `--consumed` also reads
-  `pre/`, by whole path (a pending `x.md` and a consumed `pre/x.md` are two), for the notes of the whole series (what
-  the final release will want at P14) and, with `--since <tag>`, to regenerate a candidate's notes after its release
-  commit moved the changesets. It lints what it reads, `pre/` files included, only on request.
+- **`release-notes.mjs`**: unchanged, pending only. A candidate's notes hold what is new, and are regenerated after its
+  release commit moved the changesets with `--at <release commit>^` (the flow test pins that they equal the committed
+  file). A `--consumed` flag to read `pre/` for the whole series' notes (what the release that leaves pre mode, P14, will
+  want) was written and then cut in review: nothing calls it before P14, it adds a way to lint `pre/`, which the rule
+  above says not to do, and it brought its own edge cases (a `pre` that is a file, symlinks). P14 will decide how it
+  gets the series' notes, from the `docs/releases/` files or from `pre/`.
 - **The `changeset-required` gate**: unchanged; it counts only `.changeset/<name>.md`, so what a release commit adds to
   `pre/` never satisfies it, and a release commit merged back from `main` is not charged to the PR (a test pins both).
 - **Added: `tests/tooling/release-pre-mode.test.ts`**, which prepares a fixture workspace (the `plan` job), stages and
-  checks it (`verify-release`), commits and tags it as a candidate, then runs every tool over the committed tree and cuts
-  the next candidate from it, checking its notes carry only what is new and regenerate from the commit before it and from
-  the tag after it.
+  checks it (`verify-release`), commits and tags it as a candidate, builds the prerelease's notes from it
+  (`candidateNotes`), then runs the directory reader, `release.mjs check` and the notes tool over the committed tree and
+  cuts the next candidate from it, checking its notes carry only what is new and regenerate from the commit before it.
 - **No changeset in this PR**: nothing it changes is a gated path. The changeset on `integration` already (`@sssb/tools`,
-  `@sssb/create`: doctor from the root) is what lets the next merge to `main` cut `rc.1`; the simulated merge-back
-  above planned `0.2.0-rc.0 -> 0.2.0-rc.1` from it.
+  `@sssb/create`: doctor from the root) is what lets the next merge to `main` cut `rc.1`; a merge of `main` into
+  `integration` planned `0.2.0-rc.0 -> 0.2.0-rc.1` from it.

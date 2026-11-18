@@ -12,7 +12,7 @@ import path from 'node:path'
  * Changesets' own rule for what is not a changeset: README in any case, the agent files by exact case, and dotfiles.
  *
  * @returns `pending`: the changesets still to be released (`x.md`); `consumed`: the ones moved to `pre/` (`pre/x.md`);
- *   `problems`: anything else that does not belong there.
+ *   `problems`: anything else that does not belong there (another directory, or a file in `pre/` that is not a changeset).
  */
 export function changesetDir(dir: string) {
     const pending: string[] = []

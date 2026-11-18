@@ -2356,5 +2356,6 @@ tree, and the first release commit failed its own CI on that assertion. The rele
 `pre/` and tested against fixtures that include it; this test, which reads the real tree, was not. The lesson is the
 fixture's, not the assertion's: when a tool writes into a directory other checks walk, the test that proves the tool
 works has to run the walkers over what it left. `tests/tooling/release-pre-mode.test.ts` does, and the first thing to do
-with a red release commit is to rebuild its tree in scratch and run the failing test over it (`git archive <sha> .changeset`,
-copied over the worktree's, restored with `git restore --staged --worktree .changeset && git clean -fd .changeset`).
+with a red release commit is to rebuild its tree in scratch and run the failing test over it (`rm -rf .changeset`, extract `git archive <sha> .changeset` in its place, and afterwards
+`git restore --staged --worktree .changeset && git clean -fd .changeset`; extracting over the old directory leaves the
+old pending files beside their `pre/` copies, which is not that tree).
