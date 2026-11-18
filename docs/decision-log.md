@@ -4099,7 +4099,9 @@ names what was rejected; ADR-0014's addendum of the same date summarises them.
   nothing; the changesets stay pending. Rejected: skipping `push` when the app is missing, which would turn a missing
   release into a green run, the failure the review question names.
 - **What the reviews added (P7).** Both found the flow sound: no path to npm, to a non-candidate version while private,
-  off `main`, or to tarballs other than the tested ones. Closed after them, each seen failing in a test:
+  off `main`, or to tarballs other than the tested ones. Closed after them; each is seen failing in a test except
+  three no unit test reaches: `prepare`'s cross-check reading the manifests (`check` refuses a split group first), pack
+  and consume's unpacked-package check (CI runs it), and `overwrite` on the `candidate` artifact (a workflow setting):
     - `check` refuses a fixed group at more than one version (a package joining mid-cycle at `0.1.0` passed `check` and
       `prepare`, then stalled `push`), and a pending changeset named like one in `.changeset/pre/` (Changesets would
       overwrite it); `prepare`'s cross-check reads the manifests, not the plan, whose `oldVersion` Changesets evens out.

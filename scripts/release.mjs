@@ -422,7 +422,8 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
         }
     }
 
-    // THE RELEASE NOTES, from the changesets as they are NOW: `changeset version` deletes them. They are judged here,
+    // THE RELEASE NOTES, from the changesets as they are NOW: `changeset version` consumes them (deletes them, or in pre
+    // mode moves them to `.changeset/pre/`, where they are no longer pending). They are judged here,
     // before anything is changed, so a changeset that is not a readable entry stops the release instead of failing it
     // after its plan was accepted. The package names and bumps are judged by `check` above, as in `check` itself.
     // The notes are a new file in the release commit, which verifyRelease accepts at exactly this path.
@@ -804,10 +805,11 @@ export function changesetReleases(text, where) {
  * public ones, or in pre mode the private group's, whose candidate it is) under
  * packages/ (where `check` keeps the group) moved
  * to the one version those changesets imply. The index may then differ from HEAD by exactly that: the
- * changesets deleted, each of those manifests changed in its version line and nowhere else, plain-file
- * changelogs beside them, and one new plain file, the release notes `docs/releases/v<version>.md`, which must begin
- * `# Release notes: v<version>` and is required. The version must also be newer than every `vX.Y.Z` tag. Needs no
- * installed dependency.
+ * changesets deleted (in pre mode, each also added unchanged as `.changeset/pre/<name>.md`, where Changesets moves
+ * it), each of those manifests changed in its version line and nowhere else, plain-file changelogs beside them, and
+ * one new plain file, the release notes `docs/releases/v<version>.md`, which must begin `# Release notes: v<version>`
+ * and is required. The version must also be newer than every `vX.Y.Z` tag, judged by the release it leads to, and
+ * its own tag must not exist yet. Needs no installed dependency.
  */
 export function verifyRelease(root, version) {
     const problems = []

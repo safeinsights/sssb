@@ -778,7 +778,16 @@ describe('a release candidate, end to end, against a local fake tag', () => {
         expect(notes).toContain(`"@sssb/kit": "${url}"`)
         expect(notes).toContain(`| \`@sssb/kit\` | [\`sssb-kit-0.2.0-rc.0.tgz\`](${url}) | \`${assets[0].sha512}\` |`)
         expect(notes).toContain(`cut from \`${SHA}\``)
-        expect(notes).toContain('gh attestation verify <tarball> --repo safeinsights/sssb')
+        // pinned to the release workflow, the candidate's tag and this commit, not just the repository
+        expect(notes).toContain(
+            'gh attestation verify <tarball> --repo safeinsights/sssb --signer-workflow ' +
+                'safeinsights/sssb/.github/workflows/release.yml \\\n' +
+                `    --source-ref refs/tags/v0.2.0-rc.0 --source-digest ${SHA}`,
+        )
+        // unwrapped: the install paragraph, wrapped in the source, is one line in the release body
+        expect(notes).toMatch(
+            /\nIn `pnpm-workspace\.yaml`, map every package to its tarball, so that .* release candidate:\n/,
+        )
         // the CLI the workflow runs, with no sibling module and no node_modules
         const alone = path.join(makeTestTmpDir('sssb-release-alone-'), 'release.mjs')
         copyFileSync(SCRIPT, alone)

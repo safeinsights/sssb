@@ -32,7 +32,7 @@ that came with changesets of their own (`@sssb/tools`, `@sssb/eslint-plugin`, th
 
 #### Peer floors (safeinsights/sssb#8, #11, #16; jpslav/keel#36, #37, #41)
 
-- The app provides `@sssb/kit`'s peers: `react` `~19.3.1` (with `react-dom` at the same version), `@types/react`
+- The app provides `@sssb/kit`'s peers: `react` `~19.3.1` (keep the app's own `react-dom` at the same version), `@types/react`
   `~19.3.0`, `next` `^16.4.6`, `next-intl` `^4.14.9`, `@mantine/core` `^9.7.3`, `kysely` `^0.29.7` (no longer a
   dependency of the kit), `typescript` `~6.0.3` and `@types/node` `^26.6.5`. `vitest` `^4.1.12` and
   `embedded-postgres` are optional peers, for the conformance and contract suites. `sssb doctor` fails while any
@@ -100,7 +100,7 @@ with a reason, `{ 'sssb/no-raw-db-handle': [{ file: 'src/…', reason: '…' }] 
 #### Four framework controls have new accessible names (safeinsights/sssb#18)
 
 The team switcher, the account menu, the Simulator pill and its Hide button are named from their visible text:
-"{team}, switch team", "{full name}, account menu", "Simulator, open the panel" (or "Simulator, 3 unread emails,
+"{team}, switch team", "{name}, account menu" (the user's name, or their email when it is blank), "Simulator, open the panel" (or "Simulator, 3 unread emails,
 open the panel") and "Hide the Simulator panel". An e2e spec that finds them by their old names needs the new ones.
 
 #### New, and nothing to change

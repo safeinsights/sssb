@@ -16,8 +16,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 ## Vendors, environment and parameters
 
 - Vendor SDKs (`@clerk/*`, `@aws-sdk/*`, `@anthropic-ai/*`, `@sentry/*`, `posthog-*`, `mailgun.js`, `pg`) are
-  imported only inside an adapters directory. Everything else codes against a port: `@sssb/kit/ports/*`, or a port the
-  app owns.
+  imported only in an app's real adapters, `adapters/real/` (and in what runs outside the request path: `next.config.*`
+  for the Sentry build plugin, the contract tests in `tests/contract/`, the deployment in `infra/`). Everything else
+  codes against a port: `@sssb/kit/ports/*`, or a port the app owns.
 - A vendor SSSB has no port for gets a port the app owns, under `src`: the port module (`ports/<name>.ts`), a registry
   (`adapters/index.ts`) that takes the run mode from SSSB's `isSimulated` (`@sssb/kit/adapters/index`) and loads the
   real adapter only with `import()`, a fake, and the real adapter in `adapters/real/`, the one directory that imports
@@ -42,7 +43,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - App migrations live in `src/app-config/db/migrations/`, numbered 1001 and up (0001–0999 are the framework's), and
   are listed in `src/app-config/db/migrations/index.ts`. A new tenant table copies the RLS pattern of
   `src/app-config/db/migrations/1001_items.ts`, and its isolation proofs go in `src/app-config/db/rls-proofs.ts`.
-- After any migration or database change, run `pnpm test:contract`. After renumbering or renaming a migration, wipe
+- After any migration or database change, run the contract tests on real Postgres (`pnpm test:contract` from the
+  workspace root). After renumbering or renaming a migration, wipe
   the local `.data` first.
 
 ## Authorization
