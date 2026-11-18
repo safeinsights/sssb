@@ -12,7 +12,7 @@ import { ErrorsApp, type ScrubResult } from './errors-app'
 import { type AuditEntry, EventsApp, type AnalyticsEvent } from './events-app'
 import { HooksApp, type HookDeliveryRow, type HookEndpointRow } from './hooks-app'
 import { InboundApp, type InboundAppProps } from './inbound-app'
-import { JobsApp, type ScheduleRowLike, type WorldClockLike, type WorldJobLike } from './jobs-app'
+import { type DevTickerLike, JobsApp, type ScheduleRowLike, type WorldClockLike, type WorldJobLike } from './jobs-app'
 import { MailApp, type MailItem } from './mail-app'
 import { MessagesApp, type SmsMessageRow } from './messages-app'
 import { ToursApp, type ToursAppProps } from './tours-app'
@@ -138,6 +138,8 @@ export interface JobsAppProps {
     /** Scheduled work — the world's schedules and clock control, both wired by the host. */
     schedules?: ScheduleRowLike[]
     clock?: WorldClockLike
+    /** The dev ticker control: wired only by a host whose server offers it (never the static demo). */
+    ticker?: DevTickerLike | undefined
 }
 
 export interface HooksAppProps {
@@ -255,6 +257,12 @@ export function SimulatorPanel({
 
     const totalUnread = people.reduce((sum, person) => sum + person.unreadMail, 0)
     const badgeRef = useRef<HTMLDivElement | null>(null)
+    // Focus follows a toggle (WCAG 2.4.3): the control the user pressed unmounts (the pill) or is hidden with the panel
+    // (Hide), so focus goes to the one that replaces it. Only after toggle(): the first render and a collapsed state
+    // restored from localStorage never move focus on page load.
+    const pillRef = useRef<HTMLButtonElement | null>(null)
+    const collapseRef = useRef<HTMLButtonElement | null>(null)
+    const focusAfterToggle = useRef(false)
     const prevUnread = useRef(totalUnread)
 
     useEffect(() => {
@@ -295,6 +303,12 @@ export function SimulatorPanel({
         prevUnread.current = totalUnread
     }, [totalUnread, collapsed])
 
+    useEffect(() => {
+        if (!focusAfterToggle.current) return
+        focusAfterToggle.current = false
+        ;(collapsed ? pillRef : collapseRef).current?.focus()
+    }, [collapsed])
+
     function dismissCoach() {
         setCoachDismissed(true)
         window.localStorage.setItem(COACH_KEY, 'true')
@@ -302,6 +316,7 @@ export function SimulatorPanel({
 
     function toggle() {
         const next = !collapsed
+        focusAfterToggle.current = true
         setCollapsed(next)
         window.localStorage.setItem(COLLAPSED_KEY, String(next))
         if (!coachDismissed) dismissCoach()
@@ -418,6 +433,7 @@ export function SimulatorPanel({
                 </Box>
             ) : null}
             <UnstyledButton
+                ref={pillRef}
                 data-testid="simulator-pill"
                 data-hydrated={hydrated ? 'true' : undefined}
                 onClick={toggle}
@@ -558,6 +574,7 @@ export function SimulatorPanel({
                             />
                         ) : null}
                         <UnstyledButton
+                            ref={collapseRef}
                             data-testid="simulator-collapse"
                             aria-label={t('collapseAriaLabel')}
                             onClick={toggle}
