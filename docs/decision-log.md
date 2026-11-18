@@ -1838,7 +1838,7 @@ primitive (S3 `CopyObject` server-side; a file copy in the fake), so it passes t
   2.5.3, Level A), but fixing it means choosing new accessible names in two locales, which is a11y design
   work rather than part of a dependency catch-up. The tilde keeps the hold through a lockfile
   regeneration: with 4.14.0 already in the lockfile, `^4.12.1` resolved to 4.14.0. The fix and the way to
-  lift the hold are in `.claude/future-tasks/label-in-name-axe-4-14.md`.
+  lift the hold are in `.claude/future-tasks/resolved/label-in-name-axe-4-14.md`.
 - **`react`, `react-dom` and their types are held at 19.2 (`~19.2.8`, `~19.2.17`, `~19.2.3`).** The group
   took React to 19.3.1, which put the showcase's static demo at 845,719 bytes, over the 840,000 budget
   re-based the same day (starter 755,326 of 820,000). With only `react` and `react-dom` pinned back to
@@ -2931,7 +2931,7 @@ Dependabot's #1.
   integrity hash; no other package's version moved, and the full run passed.
 - **`@axe-core/playwright` stays held at `~4.12.1`.** The other half of #1 is not decided:
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
-  hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
+  hold are still `.claude/future-tasks/resolved/label-in-name-axe-4-14.md`.
 
 ## A second npm owner is not needed (2026-11-17, `chore/post-p2-cleanup`)
 
@@ -3160,3 +3160,23 @@ This is the "next step if it is wanted" that "`pnpm dev` without the Simulator h
   (`scripts/ports.mjs` and the like) has no row for them yet.
 - **Lint.** The `scripts/**` block gained the globals these two scripts use (`fetch`, `URL`, `AbortController`,
   `AbortSignal`, `setTimeout`, `clearTimeout`).
+
+## Label in Name fixed, and the axe hold lifted (2026-11-18, `fix/axe-label-in-name`)
+
+JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/label-in-name-axe-4-14.md`, the reason
+`@axe-core/playwright` was held at `~4.12.1` (the "held at `~4.12.1`" entries above).
+
+- **The hold is lifted.** `apps/showcase/package.json` has `^4.14.0` again, and `.github/dependabot.yml` no longer
+  ignores minor and major updates to it. The React rules there stay. 4.14.0 is the newest stable release, published
+  2026-10-15, well past the two-day `minimumReleaseAge`.
+- **Each control's accessible name starts with its visible text,** in both locales: the team switcher "{team}, switch
+  team", the account menu "{user's full name}, account menu", the Simulator pill "Simulator" or "Simulator 3 unread
+  emails", then "open the panel", and the Hide button "Hide the Simulator panel".
+- **Three of them are named by content, not by `aria-label`.** axe 4.14 compares an `aria-label` with the text on
+  screen, word by word and in order, and it counts `aria-hidden` text. The switcher shows initials before the team
+  name, the account menu shows only initials, and the pill's label and badge sit in sibling elements with no space, so
+  axe reads "Simulator1". No sensible `aria-label` contains those. A `VisuallyHidden` name that starts with what a
+  sighted user reads meets WCAG 2.5.3, and the rule only applies to `aria-label`/`aria-labelledby`. The visible pieces
+  are `aria-hidden` so nothing is announced twice.
+- **Avatar initials are decorative.** `PreviewRow`'s avatar is `aria-hidden` wherever it appears. A voice-control user
+  says the person's or team's name, which is in the accessible name, rather than the initials.
