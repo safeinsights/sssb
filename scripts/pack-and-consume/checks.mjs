@@ -22,15 +22,36 @@ export const STRICT_FLAGS = [
 
 /**
  * The framework's seam-conformance suites, relative to the package root, that run from the tarball
- * against each app's own seam. `demo-presets-seam.test.ts` is the fifth, and is absent until P3 (the
- * workaround `demo-presets-seam-skipped`).
+ * against each app's own seam. They are the only test files the package ships: packages/kit/package.json's
+ * `files` re-includes exactly these (tests/tooling/pack-and-consume.test.ts holds the two lists equal), and
+ * `shippedFileProblems` checks the tarball itself. P5 replaces them with `@sssb/kit/testing`.
  */
 export const CONFORMANCE_SUITES = [
     'src/i18n/namespaces.test.ts',
     'src/i18n/messages-parity.test.ts',
     'src/db/rls-pglite.test.ts',
     'src/db/migrate.test.ts',
+    'src/server-lib/demo-presets-seam.test.ts',
 ]
+
+/**
+ * What the packed framework must not ship: a test or story file other than the conformance suites, or
+ * anything of the test fixture (ADR-0014 part 2, "a `files` allowlist"). Returns the problems; empty means
+ * the tarball holds only what an adopter needs.
+ * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
+ */
+export function shippedFileProblems(files) {
+    const problems = []
+    const suites = new Set(CONFORMANCE_SUITES)
+    for (const file of files) {
+        if (file.startsWith('test-fixture/')) problems.push(`${file}: the test fixture is shipped`)
+        else if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file) && !suites.has(file))
+            problems.push(`${file}: a test or story file that is not a conformance suite is shipped`)
+    }
+    for (const suite of CONFORMANCE_SUITES)
+        if (!files.includes(suite)) problems.push(`${suite}: a conformance suite is not shipped`)
+    return problems
+}
 
 /**
  * The manifest shape P1 chose: the seam is an optional peer declared in `peerDependenciesMeta` ALONE.

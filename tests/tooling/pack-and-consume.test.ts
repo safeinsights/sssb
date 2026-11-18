@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import {
@@ -7,6 +9,7 @@ import {
     lockfileMoves,
     lockfileProblems,
     seamPeerProblems,
+    shippedFileProblems,
     tscErrors,
     undeclaredImports,
 } from '../../scripts/pack-and-consume/checks.mjs'
@@ -200,6 +203,52 @@ describe('the workaround register', () => {
             expect(workaround.removedBy, id).toMatch(/^P\d+$/)
             expect(workaround.what.length, id).toBeGreaterThan(40)
         }
+    })
+
+    it('holds no workaround a step that has landed was to remove', () => {
+        // P3 removed its four (types-pg, undeclared-typescript, demo-presets-seam-skipped,
+        // strict-flags-kit-baseline). Raise this as each later step lands.
+        const landed = new Set(['P1', 'P1b', 'P2', 'P3'])
+        for (const [id, workaround] of Object.entries(WORKAROUNDS))
+            expect(landed.has(workaround.removedBy), id).toBe(false)
+    })
+})
+
+describe('shippedFileProblems', () => {
+    const shipped = ['package.json', 'LICENSE', 'src/theme.ts', 'src/testing/tmp-dir.ts', ...CONFORMANCE_SUITES]
+
+    it('accepts source plus exactly the conformance suites', () => {
+        expect(shippedFileProblems(shipped)).toEqual([])
+    })
+
+    it('refuses any other test or story file, and anything of the fixture', () => {
+        expect(
+            shippedFileProblems([
+                ...shipped,
+                'src/core/roles.test.ts',
+                'src/components/app-header.stories.tsx',
+                'src/demo-static/world-invite.test.tsx',
+                'src/adapters/real/db.contract.test.ts',
+                'test-fixture/app-config/seed.ts',
+            ]),
+        ).toHaveLength(5)
+    })
+
+    it('refuses a tarball missing a conformance suite', () => {
+        expect(shippedFileProblems(shipped.filter((file) => file !== CONFORMANCE_SUITES[0]))).toEqual([
+            `${CONFORMANCE_SUITES[0]}: a conformance suite is not shipped`,
+        ])
+    })
+
+    it("matches packages/kit/package.json's files allowlist, which re-includes exactly the suites", () => {
+        const manifest = JSON.parse(
+            readFileSync(path.resolve(import.meta.dirname, '../../packages/kit/package.json'), 'utf8'),
+        ) as { files: string[] }
+        const negated = manifest.files.filter((entry) => entry.startsWith('!'))
+        const reincluded = manifest.files.slice(Math.max(...negated.map((entry) => manifest.files.indexOf(entry))) + 1)
+        expect(manifest.files[0]).toBe('src')
+        expect(negated).toEqual(['!src/**/*.test.ts', '!src/**/*.test.tsx', '!src/**/*.stories.tsx'])
+        expect([...reincluded].sort()).toEqual([...CONFORMANCE_SUITES].sort())
     })
 })
 

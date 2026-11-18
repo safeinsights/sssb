@@ -52,21 +52,13 @@ import {
     lockfileMoves,
     lockfileProblems,
     seamPeerProblems,
+    shippedFileProblems,
     tscErrors,
     undeclaredImports,
 } from './pack-and-consume/checks.mjs'
 import { WORKAROUNDS, unusedWorkarounds, applyWorkaround } from './pack-and-consume/workarounds.mjs'
 
 const REPO = path.resolve(import.meta.dirname, '..')
-
-/**
- * Errors inside @sssb/kit's own source under the strict-flag set, per app, measured from the tarball.
- * The workaround `strict-flags-kit-baseline` (removed by P3, which makes the framework compile under the
- * set): a count above this fails, and so does a count below it, so the number is lowered as P3's work
- * lands instead of leaving room for new errors. 122 when P2 landed, over every published module (each app
- * re-exports the whole surface); ADR-0014 part 2 counted 116 over the framework's non-test source at 6d67a7c.
- */
-const STRICT_KIT_ERROR_BASELINE = 122
 
 // ---- arguments ------------------------------------------------------------------------------------
 
@@ -277,8 +269,6 @@ function scaffoldApp({ app, slug, tarball }) {
     manifest.name = app
     manifest.dependencies['@sssb/kit'] = `file:${path.relative(dir, tarball)}`
     manifest.dependencies['@sssb/app-config'] = 'link:./src/app-config'
-    applyWorkaround('types-pg')
-    manifest.devDependencies['@types/pg'] = rangeOf('@types/pg')
     writeJson(path.join(dir, 'package.json'), manifest)
 
     // The seam package (ADR-0014 part 1, option C). Its exports cover every seam module the framework
@@ -799,13 +789,19 @@ function checkLayout() {
 }
 
 /**
- * Every package the shipped source imports is declared in the packed manifest. Today's one exception is
- * a named workaround; any other fails, and so does the exception once the manifest declares it.
+ * The packed package ships only what an adopter needs (`shippedFileProblems`), and every package its shipped
+ * source imports is declared in the packed manifest: an undeclared one resolves here only through pnpm's
+ * hoist, so it fails.
  */
-const UNDECLARED_TODAY = { typescript: 'undeclared-typescript' }
-
 function checkDeclaredImports() {
     const kit = kitOf(appDir('console')).kit
+    const shipped = filesUnder(kit).map((file) => path.relative(kit, file).split(path.sep).join('/'))
+    const shippedProblems = shippedFileProblems(shipped)
+    if (shippedProblems.length > 0)
+        fail(`the packed @sssb/kit ships what its files allowlist should keep out:\n  ${shippedProblems.join('\n  ')}`)
+    console.log(
+        `the packed @sssb/kit ships ${shipped.length} files, of which the tests are the ${CONFORMANCE_SUITES.length} conformance suites`,
+    )
     const sources = filesUnder(path.join(kit, 'src'))
         .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
         .map((file) => ({ file: path.relative(kit, file), text: readFileSync(file, 'utf8') }))
@@ -815,20 +811,13 @@ function checkDeclaredImports() {
     const specifiersOf = (text) =>
         ts.preProcessFile(text, true, true).importedFiles.map((/** @type {{ fileName: string }} */ f) => f.fileName)
     const found = undeclaredImports(sources, KIT_MANIFEST, builtinModules, specifiersOf)
-    const unexpected = []
-    for (const [name, files] of found) {
-        const workaround = UNDECLARED_TODAY[/** @type {keyof typeof UNDECLARED_TODAY} */ (name)]
-        if (workaround) applyWorkaround(workaround)
-        else unexpected.push(`${name} (${[...new Set(files)].join(', ')})`)
-    }
+    const unexpected = [...found].map(([name, files]) => `${name} (${[...new Set(files)].join(', ')})`)
     if (unexpected.length > 0) {
         fail(
             `@sssb/kit's source imports packages its manifest does not declare; they resolve here only through pnpm's hoist:\n  ${unexpected.join('\n  ')}`,
         )
     }
-    console.log(
-        `the shipped source under src/ imports only what @sssb/kit declares, bar ${[...found.keys()].join(', ') || 'nothing'}`,
-    )
+    console.log('the shipped source under src/ imports only what @sssb/kit declares')
 }
 
 function typecheck() {
@@ -849,8 +838,12 @@ function typecheck() {
     run('pnpm', ['--dir', 'packages/gate', 'run', 'typecheck'], { cwd: WS })
 }
 
+/**
+ * ADR-0014 part 2's promise, from the tarball: the app compiles with every strict flag on, and so does
+ * every file of @sssb/kit it reaches, so an adopter who turns one on cannot break SSSB. In-repo, the same
+ * set is packages/kit/tsconfig.strict.json, which `pnpm typecheck` runs.
+ */
 function typecheckStrict() {
-    applyWorkaround('strict-flags-kit-baseline')
     for (const app of ['console', 'ledger']) {
         const result = run(
             'pnpm',
@@ -861,7 +854,7 @@ function typecheckStrict() {
         const appErrors = errors.filter((e) => e.owner === 'app')
         const kitErrors = errors.filter((e) => e.owner === 'kit')
         console.log(
-            `${app}: strict flags (${STRICT_FLAGS.join(', ')}): ${appErrors.length} error(s) in the app, ${kitErrors.length} in @sssb/kit (baseline ${STRICT_KIT_ERROR_BASELINE})`,
+            `${app}: strict flags (${STRICT_FLAGS.join(', ')}): ${appErrors.length} error(s) in the app, ${kitErrors.length} in @sssb/kit`,
         )
         if (result.status !== 0 && errors.length === 0) {
             console.error(result.stdout + result.stderr)
@@ -871,22 +864,14 @@ function typecheckStrict() {
             console.error(appErrors.map((e) => e.text).join('\n'))
             fail(`${app}: the app's own code fails the strict-flag set`)
         }
-        if (kitErrors.length > STRICT_KIT_ERROR_BASELINE) {
+        if (kitErrors.length > 0) {
             console.error(kitErrors.map((e) => e.text).join('\n'))
-            fail(
-                `${app}: @sssb/kit has ${kitErrors.length} strict-flag errors, above the baseline of ${STRICT_KIT_ERROR_BASELINE}`,
-            )
-        }
-        if (kitErrors.length < STRICT_KIT_ERROR_BASELINE) {
-            fail(
-                `${app}: @sssb/kit has ${kitErrors.length} strict-flag errors, BELOW the baseline of ${STRICT_KIT_ERROR_BASELINE}: lower STRICT_KIT_ERROR_BASELINE in scripts/pack-and-consume.mjs`,
-            )
+            fail(`${app}: @sssb/kit's own source fails the strict-flag set`)
         }
     }
 }
 
 function unitTests() {
-    applyWorkaround('demo-presets-seam-skipped')
     mkdirSync(REPORTS, { recursive: true })
     const report = path.join(REPORTS, 'vitest.json')
     rmSync(report, { force: true })
@@ -1046,7 +1031,7 @@ step('install the tarball', () => {
     }
 })
 step('layout: lockfile, seam links, one instance per app', checkLayout)
-step('the packed source imports only what it declares', checkDeclaredImports)
+step('the packed package ships and imports only what it declares', checkDeclaredImports)
 step('typecheck at the ES2022 floor', typecheck)
 step('typecheck with the strict-flag set', typecheckStrict)
 step('unit tests and seam conformance, from the workspace root', unitTests)

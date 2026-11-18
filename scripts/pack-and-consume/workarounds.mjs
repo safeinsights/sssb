@@ -13,22 +13,6 @@
 
 /** @type {Record<string, Workaround>} */
 export const WORKAROUNDS = {
-    'types-pg': {
-        removedBy: 'P3',
-        what: "each app declares @types/pg itself: @sssb/kit's source imports pg's types, and the package does not declare them (they are a devDependency of SSSB's workspace root). The framework's copy finds them only through pnpm's hidden hoist (node_modules/.pnpm/node_modules), which is also how an adopter's would",
-    },
-    'undeclared-typescript': {
-        removedBy: 'P3',
-        what: "src/authz/route-scan.ts imports `typescript`, which @sssb/kit does not declare; it resolves only through the consumer's own typescript and pnpm's hoist (P3 makes typescript a peer)",
-    },
-    'demo-presets-seam-skipped': {
-        removedBy: 'P3',
-        what: 'demo-presets-seam.test.ts is not run from the tarball: it imports ../../../../tests/support/tmp-dir, a path outside the package, so it cannot load from node_modules',
-    },
-    'strict-flags-kit-baseline': {
-        removedBy: 'P3',
-        what: "the strict-flag typecheck tolerates exactly STRICT_KIT_ERROR_BASELINE errors inside @sssb/kit's own source (scripts/pack-and-consume.mjs); the apps' own code must be clean",
-    },
     'prune-plugin-copied': {
         removedBy: 'P4',
         what: "scripts/vite-prune-mantine-css.ts is copied into the consumer, because the static demo's Vite config imports it from the repo's scripts/ (P4 moves it into @sssb/tools' Vite preset)",
