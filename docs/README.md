@@ -38,8 +38,9 @@ ejected or renamed it, so a doc merged in from upstream cannot turn an adopter's
   (e-sign, SMS, web push, per-person cloud workspaces) and generic UI it has no invariant to encode (the list/table kit); copy one
   when an instance needs the capability
 - [runbooks/](runbooks/) — [demo.md](runbooks/demo.md), the guided tour of everything the scaffold does,
-  [deploy.md](runbooks/deploy.md), the deploy shape, and [data-api.md](runbooks/data-api.md), the live proof
-  that closes the RDS Data API driver's cutover row
+  [deploy.md](runbooks/deploy.md), the deploy shape, [data-api.md](runbooks/data-api.md), the live proof
+  that closes the RDS Data API driver's cutover row, and [release-app.md](runbooks/release-app.md), making the
+  GitHub App that SSSB's own release workflow pushes with
 - [cutover-checklist.md](cutover-checklist.md) — your instance's live list of deferred credential-needing
   items and what unlocks each
 

@@ -2948,6 +2948,54 @@ second, human owner would be added once a maintainer had one.
 - **Releases do not depend on it.** Publishing runs from GitHub Actions through trusted publishing (D11), so the
   shared credentials are for administering the names, not for shipping a version.
 
+## The release app, made by a script (2026-11-17, `ci/release-app-setup`)
+
+`release.yml` (P1b) needs a GitHub App whose token pushes the release commit and its tag. JP asked to make it the
+way CanopyCMS makes its App, by GitHub's App-manifest flow from a script, not by hand in settings.
+`pnpm release-app:init` (`scripts/release-app.ts`, `scripts/release-app/`) is that script, with
+`docs/runbooks/release-app.md` and the `release-app` cutover row. Decisions:
+
+- **Borrowed, not shared.** The loopback callback server, the manifest form, the JWT over `node:crypto` and the
+  read-back come from CanopyCMS's `src/cli/init-github-app.ts`, adapted rather than imported: Canopy's is a
+  per-site tool for adopters, and this one has one fixed repository and one fixed destination for the key.
+- **The key goes to `gh secret set` on stdin and nowhere else.** No file, no argv, no output. If `gh` fails, the
+  operator retries while the key is in memory; giving up costs one "Generate a private key" on the App's page.
+  Canopy also offers a key file as a fallback; this does not, so the only file the script writes is the creation
+  form (the manifest, no key), in a private temporary directory it removes. A failed manifest exchange (no answer,
+  or a GitHub error) is retried too, since only this process holds the one-time code.
+- **The client id is a variable, not a secret.** `release.yml` reads `vars.RELEASE_BOT_CLIENT_ID`, and a client id
+  is not secret.
+- **Who the App is, checked before anything trusts it.** The exchange's answer is checked before the key is stored
+  (owned by safeinsights, exactly `contents: write` and `metadata: read`). `bypass` and `verify` take `--app-id` on
+  the command line, so both look that id up in the organisation's installations, with the client id the
+  environment holds, on selected repositories, with exactly those permissions: a typo, or another App's id, never
+  becomes the bypass on `main`.
+- **The token asks for the App's permissions explicitly** (`permission-contents: write` on
+  `create-github-app-token`), so an App widened later mints nothing wider in `release.yml`.
+- **Four rulesets, not two.** A bypass covers every rule in its ruleset. Adding the App to `release tags: v*` as it
+  stood (creation, update, deletion, non-fast-forward) would have let it move and delete release tags, and the App
+  must also bypass the organisation's `require-pr`, which carries deletion and non-fast-forward on `main`. So the
+  rules the App passes and the rules nobody passes are split: `release tags: v*` keeps creation (App bypass), new
+  `release tags: v* immutable` holds the rest (no bypass), and new `main: history` re-states deletion and
+  non-fast-forward on `main` with no bypass. The script creates the no-bypass ones first. `main: required checks`
+  may hold only its checks, or the App would bypass whatever else was added there.
+- **The script never changes an organisation ruleset.** `require-pr` is shared by the org's repositories and needs
+  `admin:org`; the script lists it, and `verify` fails until it lists the App as "Always allow" and no other
+  actor. It also reports any other ruleset the release's push would meet (on `main`, or a tag ruleset that might
+  cover a release tag, judged generously), so `verify` cannot pass while the push would be refused.
+- **The drift guard pins the job that holds the key.** Canopy's guard drives its worker against a recording proxy;
+  the only consumer here is a workflow, so `tests/tooling/release-app-drift.test.ts` parses every workflow file
+  (the `yaml` package, a new root devDependency). It began as rules alone, a deny-by-default reading of the shell in
+  the step holding the token; each review round then found shell forms it let through (`PATH=`, `printf -v`, a
+  step before the mint writing `$GITHUB_ENV`, `container:`, a moving action ref). So the `push` job is pinned by a
+  hash of its parsed form, and any edit to it fails until it is re-reviewed; the rules stay, to say why the pinned
+  job needs exactly the App's permissions and to cover what lies outside that job (triggers, other jobs and
+  workflows, environment names in any case). In-memory mutations of the real workflow show the rules failing.
+- **What the key is worth is written down.** The App bypasses review and checks on `main`, so its key can land a
+  fast-forward commit there (including a merge through the API) and tag it, which starts a publish; it cannot
+  change workflow files. The runbook says so, and names a required reviewer on `npm-publish` as the setting that
+  would still stand between a stolen key and npm. That setting is JP's call and is not made here.
+
 ## Transitive dependency advisories, handled by reach (2026-11-17, `deps/advisories`)
 
 JP's call on 2026-11-17: "address the transitive dependencies appropriately with judgement". Before this branch
