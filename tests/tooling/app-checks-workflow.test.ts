@@ -218,7 +218,8 @@ describe("checks.yml's call to it", () => {
 // (or, if the ruleset is edited to match the wrong name, lets one through). So the names are pinned here: a job
 // renamed or added fails this, and the rulesets change in the same step as the merge.
 describe('the check names the rulesets require', () => {
-    const REQUIRED = [
+    // The names that do not depend on which apps the tree holds: a job renamed or added fails this.
+    const FIXED = [
         'adoption-probe',
         'changeset-required',
         'pack-and-consume',
@@ -227,41 +228,62 @@ describe('the check names the rulesets require', () => {
         'secret-scan',
         'sssb / all-checks',
         'sssb / contract',
-        'sssb / demo-static (showcase)',
-        'sssb / demo-static (starter)',
         'sssb / discover',
-        'sssb / e2e (showcase)',
-        'sssb / e2e (showcase-destructive)',
-        'sssb / e2e (starter)',
         'sssb / lint-typecheck-unit',
         'sssb / synth',
     ]
+    // One per e2e shard and one per static demo, named from the tree's own apps, so this holds in a tree `pnpm
+    // init-app` has renamed or ejected (the adoption probe runs it there). In SSSB's own tree they are
+    // `sssb / e2e (showcase)`, `sssb / e2e (showcase-destructive)`, `sssb / e2e (starter)`,
+    // `sssb / demo-static (showcase)` and `sssb / demo-static (starter)`.
+    const PER_APP = ['sssb / e2e (<shard>)', 'sssb / demo-static (<app>)']
 
-    it('are what the two workflows produce for this repository', () => {
-        const matrix = execFileSync(process.execPath, [path.join(ROOT, 'packages/tools/bin/sssb.js'), 'ci', 'matrix'], {
-            cwd: ROOT,
-            encoding: 'utf8',
-            env: { ...process.env, GITHUB_OUTPUT: '' },
-        })
-        const listOf = (label: string) =>
-            JSON.parse(
-                /^.*: (.*)$/m.exec(matrix.split('\n').find((line) => line.startsWith(label)) ?? '')?.[1] ?? '[]',
-            ) as {
-                name: string
-            }[]
+    const matrix = execFileSync(process.execPath, [path.join(ROOT, 'packages/tools/bin/sssb.js'), 'ci', 'matrix'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_OUTPUT: '', GITHUB_ACTIONS: '' },
+    })
+    const listOf = (label: string) =>
+        JSON.parse(
+            /^.*?: (.*)$/.exec(matrix.split('\n').find((line) => line.startsWith(label)) ?? '')?.[1] ?? '[]',
+        ) as {
+            name: string
+        }[]
+    const shards = listOf('e2e shards')
+    const demos = listOf('static demos')
+
+    it('are what the two workflows produce for this tree', () => {
+        expect(shards.length).toBeGreaterThan(0)
+        expect(demos.length).toBeGreaterThan(0)
         const names: string[] = []
+        const generic: string[] = []
         for (const [id, job] of Object.entries(checks.jobs)) {
             if (id !== 'sssb') {
                 names.push(job.name ?? id)
                 continue
             }
             for (const [inner, called] of Object.entries(reusable.jobs)) {
-                if (inner === 'e2e') names.push(...listOf('e2e shards').map((s) => `sssb / e2e (${s.name})`))
-                else if (inner === 'demo-static')
-                    names.push(...listOf('static demos').map((d) => `sssb / demo-static (${d.name})`))
-                else names.push(`sssb / ${called.name ?? inner}`)
+                if (inner === 'e2e') {
+                    generic.push('sssb / e2e (<shard>)')
+                    names.push(...shards.map((s) => `sssb / e2e (${s.name})`))
+                } else if (inner === 'demo-static') {
+                    generic.push('sssb / demo-static (<app>)')
+                    names.push(...demos.map((d) => `sssb / demo-static (${d.name})`))
+                } else names.push(`sssb / ${called.name ?? inner}`)
             }
         }
-        expect(names.sort()).toEqual([...REQUIRED].sort())
+        expect(generic.sort()).toEqual([...PER_APP].sort())
+        const expected = [
+            ...FIXED,
+            ...shards.map((s) => `sssb / e2e (${s.name})`),
+            ...demos.map((d) => `sssb / demo-static (${d.name})`),
+        ]
+        expect(names.sort()).toEqual(expected.sort())
+    })
+
+    // The per-app names come from the matrix jobs' `name:` templates, which are pinned here like the fixed names.
+    it('name the matrix jobs by shard and by app', () => {
+        expect(reusable.jobs['e2e']!.name).toBe('e2e (${{ matrix.shard.name }})')
+        expect(reusable.jobs['demo-static']!.name).toBe('demo-static (${{ matrix.demo.name }})')
     })
 })
