@@ -3,7 +3,7 @@ import { loadAppMessages } from '@sssb/app-config/messages'
 import { organizations, people } from '@sssb/app-config/seed'
 import { appPresetOperations, presets } from '@sssb/app-config/presets'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { KNOWN_FLAGS } from '../adapters/fake/analytics'
 import { composePresetOperations, expandPreset, presetProblems } from '../core/presets'
 import { inboundHandlers } from '../inbound-email/handlers'
@@ -33,10 +33,10 @@ import type { MessageTree } from '../i18n/messages'
  */
 const tmp = makeTestTmpDir('app-demo-presets-seam-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 const cookieStore = new Map<string, { value: string }>()

@@ -10,7 +10,7 @@ export function createRealAnalytics(apiKey: string, host: string): AnalyticsPort
 
     return {
         async capture(event, properties, distinctId = 'server') {
-            client.capture({ distinctId, event, properties })
+            client.capture({ distinctId, event, ...(properties === undefined ? {} : { properties }) })
         },
 
         async isFlagEnabled(flag, defaultValue = false) {

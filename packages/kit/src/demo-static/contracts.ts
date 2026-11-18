@@ -100,7 +100,7 @@ export interface StaticPresetOperationContext {
  * its own kind's arguments fits the `Record<string, StaticPresetOperationHandler>` registry.
  */
 export type StaticPresetOperationHandler<Args = unknown> = {
-    method(args: Args, ctx: StaticPresetOperationContext): { ref?: string } | false
+    method(args: Args, ctx: StaticPresetOperationContext): { ref?: string | undefined } | false
 }['method']
 
 export interface DemoWorldOptions {

@@ -49,7 +49,7 @@ export interface ServerPresetOperationContext {
  * its own kind's arguments fits the `Record<string, ServerPresetOperationHandler>` registry.
  */
 export type ServerPresetOperationHandler<Args = unknown> = {
-    method(args: Args, ctx: ServerPresetOperationContext): Promise<{ ref?: string } | void>
+    method(args: Args, ctx: ServerPresetOperationContext): Promise<{ ref?: string | undefined } | void>
 }['method']
 
 /** A preset names a team by slug (seed vocabulary); the server's writes need its tenant and org uuids. */

@@ -129,7 +129,7 @@ export function DemoShell({
                     people={world.allPeople.map((p) => ({
                         id: p.id,
                         name: p.name,
-                        role: p.memberships[0].role,
+                        role: p.memberships[0]?.role ?? '',
                         tenantName: findTenant(p.tenantSlug)?.name ?? p.tenantSlug,
                     }))}
                     onPick={world.signIn}

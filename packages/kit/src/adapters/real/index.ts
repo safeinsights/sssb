@@ -57,25 +57,33 @@ export function assertRealEnv(): void {
 
 export async function createRealPorts(): Promise<RealPorts> {
     assertRealEnv()
-    const env = process.env as Record<string, string>
+    const env = process.env
+    // assertRealEnv above already proved every required variable is set; this narrows the type.
+    const need = (name: string): string => {
+        const value = env[name]
+        if (value === undefined) throw new Error(`missing env: ${name}`)
+        return value
+    }
     // The Data API transport is a dynamic import, so a `pg` deployment never loads the RDS Data SDK.
     const db =
         databaseTransport() === 'data-api'
             ? (await import('./db-data-api')).createRealDataApiDb({
-                  resourceArn: env.DATABASE_CLUSTER_ARN,
-                  secretArn: env.DATABASE_SECRET_ARN,
-                  database: env.DATABASE_NAME,
-                  region: env.AWS_REGION,
+                  resourceArn: need('DATABASE_CLUSTER_ARN'),
+                  secretArn: need('DATABASE_SECRET_ARN'),
+                  database: need('DATABASE_NAME'),
+                  region: need('AWS_REGION'),
               })
-            : createRealDb(env.DATABASE_URL)
+            : createRealDb(need('DATABASE_URL'))
     return {
         auth: realAuth,
         db,
-        storage: createRealStorage(env.STORAGE_BUCKET, env.AWS_REGION),
-        llm: createRealLlm(env.ANTHROPIC_API_KEY),
-        email: createRealEmail(env.MAILGUN_DOMAIN, env.MAILGUN_API_KEY, env.EMAIL_FROM),
-        jobs: createRealJobs(env.JOBS_CODEBUILD_PROJECT, env.AWS_REGION),
+        storage: createRealStorage(need('STORAGE_BUCKET'), need('AWS_REGION')),
+        llm: createRealLlm(need('ANTHROPIC_API_KEY')),
+        email: createRealEmail(need('MAILGUN_DOMAIN'), need('MAILGUN_API_KEY'), need('EMAIL_FROM')),
+        jobs: createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION')),
         // PostHog only where a key is configured (staging/prod per ADR-0010); no-op otherwise.
-        analytics: env.POSTHOG_KEY ? createRealAnalytics(env.POSTHOG_KEY, env.POSTHOG_HOST ?? '') : fakeAnalytics,
+        analytics: env['POSTHOG_KEY']
+            ? createRealAnalytics(env['POSTHOG_KEY'], env['POSTHOG_HOST'] ?? '')
+            : fakeAnalytics,
     }
 }

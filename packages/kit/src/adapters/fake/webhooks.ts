@@ -28,7 +28,7 @@ export interface CaughtWebhook {
     body: string
     at: string
     ok: boolean
-    error?: string
+    error?: string | undefined
 }
 
 function catchFile(deliveryId: string): string {

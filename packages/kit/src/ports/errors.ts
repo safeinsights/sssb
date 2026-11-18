@@ -36,11 +36,11 @@ export class PreconditionFailedError extends Error {
 
 /** Thrown by real adapters when their cutover items are unfilled (fail-fast for dev:real). */
 export class CutoverPendingError extends Error {
-    constructor(
-        readonly cutoverItems: string[],
-        detail: string,
-    ) {
+    readonly cutoverItems: string[]
+
+    constructor(cutoverItems: string[], detail: string) {
         super(`real adapters unavailable — open cutover items: ${cutoverItems.join(', ')}. ${detail}`)
+        this.cutoverItems = cutoverItems
         this.name = 'CutoverPendingError'
     }
 }

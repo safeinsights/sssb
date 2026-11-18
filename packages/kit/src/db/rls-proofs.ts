@@ -350,10 +350,10 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
             .execute(),
     )
     const written = details.find((r) => r.subject_id === 'membership-with-detail')?.detail
-    expect(written?.refusal).toBe('revoked')
-    expect(written?.removed).toBe(3)
-    expect(Array.isArray(written?.steps) && written.steps.join(',')).toBe('a,b')
-    expect((written?.nested as { ok?: unknown } | undefined)?.ok).toBe(true)
+    expect(written?.['refusal']).toBe('revoked')
+    expect(written?.['removed']).toBe(3)
+    expect(Array.isArray(written?.['steps']) && written['steps'].join(',')).toBe('a,b')
+    expect((written?.['nested'] as { ok?: unknown } | undefined)?.ok).toBe(true)
     expect(details.find((r) => r.subject_id === 'membership-by-token')?.detail).toBe(null)
 
     // (b) append-only: as app_user (with tenant context set) an UPDATE FAILS at the privilege layer —

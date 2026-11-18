@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { orgIdForSlug } from './org-lookup'
 import { tenantIdForSlug } from './tenant-lookup'
 import { backoffDelayMs } from '../core/webhook-events'
@@ -10,10 +10,10 @@ import { verifyWebhookSignature, WEBHOOK_REPLAY_TOLERANCE_MS, WEBHOOK_SIGNATURE_
 // dispatch (catch-store + failure toggle) under this dir.
 const tmp = makeTestTmpDir('app-webhooks-db-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 async function ids(slug: string, orgSlug: string): Promise<{ tenantId: string; orgId: string }> {

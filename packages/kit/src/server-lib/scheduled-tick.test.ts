@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { JobsPort, SubmittedJob } from '../ports/jobs'
 
 // The registry is the one thing `runScheduledTick` takes from '../adapters/index' (a real import trips
@@ -23,10 +23,10 @@ vi.mock('../adapters/index', async () => {
 
 const tmp = makeTestTmpDir('app-scheduled-tick-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 afterEach(async () => {
     state.calls.length = 0

@@ -490,7 +490,7 @@ const sssbPublicSurfaceRule = {
 // ---------------------------------------------------------------------------------------------
 // NO RAW mkdtemp IN TESTS. A test that calls `mkdtemp`/`mkdtempSync` itself leaves the directory
 // behind on every run, and enough runs filled a dev machine's temp filesystem past 100GB. Tests make
-// scratch directories through tests/support/tmp-dir.ts, which queues the removal. Its own rule id,
+// scratch directories through packages/kit/src/testing/tmp-dir.ts, which queues the removal. Its own rule id,
 // not a `no-restricted-syntax` selector: that rule's config merges by key, so a later block that
 // re-declares it for overlapping files REPLACES this one without a word (the merge trap above).
 //
@@ -502,12 +502,15 @@ const sssbPublicSurfaceRule = {
 const sssbNoDirectMkdtempRule = {
     meta: {
         type: 'problem',
-        docs: { description: 'Tests make scratch directories through tests/support/tmp-dir.ts, never a raw mkdtemp.' },
+        docs: {
+            description:
+                'Tests make scratch directories through packages/kit/src/testing/tmp-dir.ts, never a raw mkdtemp.',
+        },
         schema: [],
         messages: {
             direct:
                 '`{{name}}()` leaves its directory behind on every test run. Use makeTestTmpDir() / ' +
-                'makeTestTmpDirAsync() from tests/support/tmp-dir.ts, which removes the directory when the ' +
+                'makeTestTmpDirAsync() from packages/kit/src/testing/tmp-dir.ts, which removes the directory when the ' +
                 'test file finishes — or, in a Playwright spec, testInfo.outputPath(), which Playwright ' +
                 'clears at the start of every run.',
         },
@@ -654,8 +657,8 @@ const sssbNoDynamicFrameworkImportInCoreRule = declarationlessImportBan({
 // it lands, not how it is spelled: `../../../../apps/showcase/src/domain/tickets` from SSSB's server-lib, the same
 // with `//` or `\` separators, or `../../../../packages/seed/src/index`. Each names app content with no alias for a
 // pattern to see. This rule resolves the path against the importing file and reports it if it lands in an app (`apps/`) or
-// the app's seed package (`packages/seed/`, which `@app/seed` names). Every other path out of packages/kit stays
-// open: SSSB's tests reach the repo's `tests/support/` helpers that way. Matching ignores case, as macOS's file
+// the app's seed package (`packages/seed/`, which `@app/seed` names). Any other path out of packages/kit is the
+// package-edge rule's finding (sssbNoPathOutOfPackageRule, below), not this one's. Matching ignores case, as macOS's file
 // system does, and follows symlinks: the path is judged by where it really lands, so neither a symlink into app
 // code nor a checkout opened through a symlinked directory (an editor's workspace, say) moves it out of reach.
 // A specifier that is not a path is the pattern fence's (bareTraversalPattern for a `..` in one), and so is a
@@ -688,11 +691,116 @@ const pathTarget = (filename, specifier) => {
     if (!/^(\.{1,2}([\\/]|$)|[\\/])/.test(specifier)) return undefined
     return resolve(dirname(filename), specifier.replaceAll('\\', '/'))
 }
-const appCodeDirOfPath = (filename, specifier) => {
+// Where a path specifier really lands, relative to the repo root and `/`-separated; undefined for a specifier that is
+// not a path, or a path through node_modules (the pattern fence's).
+const landingOfPath = (filename, specifier) => {
     const target = throughNodeModules.test(specifier) ? undefined : pathTarget(filename, specifier)
     if (!target) return undefined
-    const fromRoot = relative(REPO_ROOT, realPathOf(target).toLowerCase()).replaceAll('\\', '/')
-    return APP_CODE_DIRS.find((dir) => fromRoot === dir || fromRoot.startsWith(`${dir}/`))
+    return relative(REPO_ROOT, realPathOf(target).toLowerCase()).replaceAll('\\', '/')
+}
+const isUnder = (fromRoot, dir) => fromRoot === dir || fromRoot.startsWith(`${dir}/`)
+const appCodeDirOfPath = (filename, specifier) => {
+    const fromRoot = landingOfPath(filename, specifier)
+    if (fromRoot === undefined) return undefined
+    return APP_CODE_DIRS.find((dir) => isUnder(fromRoot, dir))
+}
+// THE PACKAGE'S EDGE (ADR-0014 P3). @sssb/kit is installed from a tarball of packages/kit's `files` alone, so a path
+// to anything else names a file an adopter does not have: until P3, 23 of SSSB's tests and one shipped conformance
+// suite reached the repo's tests/support/tmp-dir.ts that way, and the suite could not run from the tarball. A path
+// is judged where it really lands, exactly as the app-code rule above judges one (case-insensitive, symlinks
+// followed), and a landing in app code is that rule's finding, not this one's. This rule reports, from any file in
+// packages/kit (fixture included):
+//  - a path that lands outside packages/kit;
+//  - an absolute path or a `file:` URL, wherever it lands: it names this checkout, which an adopter's machine has not;
+//  - from a SHIPPED file, a path to a file the tarball leaves out (a test, a story, the fixture, a config), which
+//    exists here, so it typechecks and runs here and fails only once installed.
+// "Shipped" reads packages/kit/package.json's `files`: `src`, minus every test and story, plus the files it names
+// back, and package.json and LICENSE, which ship whatever `files` says. tests/tooling/pack-and-consume.test.ts holds
+// the whole list to exactly `src`, the two negations (every test and every story, any extension) and then
+// CONFORMANCE_SUITES. A `/// <reference path=…>` or
+// relative `types=…` counts as a path too. Its own rule id; the two exemptions are named in the block that applies it.
+const KIT_DIR = 'packages/kit'
+const kitFiles = JSON.parse(readFileSync(join(import.meta.dirname, `${KIT_DIR}/package.json`), 'utf8')).files
+const SCRIPT_EXT = /\.[cm]?[jt]sx?$/
+const reincludedKitFiles = new Set(
+    kitFiles
+        .filter((entry) => !entry.startsWith('!') && entry !== 'src')
+        .map((entry) => `${KIT_DIR}/${entry}`.toLowerCase()),
+)
+// A suite named back is shipped by its exact name, or by its name less the extension when a specifier omits it.
+const isReincluded = (fromRoot) =>
+    reincludedKitFiles.has(fromRoot) ||
+    (!SCRIPT_EXT.test(fromRoot) && [...reincludedKitFiles].some((file) => file.replace(SCRIPT_EXT, '') === fromRoot))
+const TEST_OR_STORY = /\.(test|stories)(\.[cm]?[jt]sx?)?$/
+// npm and pnpm ship a package's own package.json (and its LICENSE) whatever `files` says.
+const ALWAYS_SHIPPED = new Set([`${KIT_DIR}/package.json`, `${KIT_DIR}/license`])
+const isShippedKitFile = (fromRoot) =>
+    ALWAYS_SHIPPED.has(fromRoot) ||
+    (isUnder(fromRoot, `${KIT_DIR}/src`) && (!TEST_OR_STORY.test(fromRoot) || isReincluded(fromRoot)))
+const isAbsoluteSpecifier = (specifier) => /^file:/i.test(specifier) || /^[\\/]/.test(specifier)
+// The message id and landing for a specifier that crosses the package's edge, or undefined when it does not. A
+// relative path's `?query` or `#hash` is dropped first: Vite and Vitest load the file it names (a `file:` URL's are
+// URL syntax, which fileURLToPath reads).
+const packageEdgeFinding = (filename, rawSpecifier) => {
+    const specifier = /^file:/i.test(rawSpecifier) ? rawSpecifier : rawSpecifier.replace(/[?#].*$/, '')
+    const landing = landingOfPath(filename, specifier)
+    if (landing === undefined || APP_CODE_DIRS.some((dir) => isUnder(landing, dir))) return undefined
+    if (!isUnder(landing, KIT_DIR)) return { messageId: 'outside', landing: landing || '.' }
+    if (isAbsoluteSpecifier(specifier)) return { messageId: 'absolute', landing }
+    const importer = relative(REPO_ROOT, realPathOf(filename).toLowerCase()).replaceAll('\\', '/')
+    if (isShippedKitFile(importer) && !isShippedKitFile(landing)) return { messageId: 'unshipped', landing }
+    return undefined
+}
+// A triple-slash `path=` or `types=` reference, in any case and with its attributes in any order; a `types=` that names
+// a package is not a path, and pathTarget leaves it alone.
+const REFERENCE_PATH = /^\/\s*<reference\s[^>]*?\b(?:path|types)\s*=\s*(["'])(.+?)\1/i
+/** @type {import('eslint').Rule.RuleModule} */
+const sssbNoPathOutOfPackageRule = {
+    meta: {
+        type: 'problem',
+        docs: {
+            description: "Framework code reaches only what @sssb/kit's tarball holds, and only by a relative path.",
+        },
+        schema: [],
+        messages: {
+            outside:
+                '`{{specifier}}` leaves packages/kit (it lands in {{landing}}): @sssb/kit is installed from a ' +
+                'tarball of packages/kit alone, so an adopter has nothing there. Move what it needs into the ' +
+                'package (ADR-0014 P3).',
+            absolute:
+                '`{{specifier}}` is an absolute path or a `file:` URL: it names this checkout ({{landing}}), which ' +
+                "an adopter's machine does not have. Use a relative path (ADR-0014 P3).",
+            unshipped:
+                "`{{specifier}}` reaches {{landing}}, which packages/kit/package.json's `files` leaves out of the " +
+                'tarball, from a file that ships: it resolves here and fails once installed. Ship it, or move ' +
+                'what this file needs into shipped source (ADR-0014 P3).',
+        },
+    },
+    create(context) {
+        const report = (loc, specifier) => {
+            const finding = packageEdgeFinding(context.filename, specifier.trim())
+            if (finding)
+                context.report({ ...loc, messageId: finding.messageId, data: { specifier, landing: finding.landing } })
+        }
+        const check = (node) => {
+            const specifier = literalSpecifier(node)
+            if (typeof specifier === 'string') report({ node }, specifier)
+        }
+        return {
+            ImportDeclaration: (node) => check(node.source),
+            ExportNamedDeclaration: (node) => check(node.source),
+            ExportAllDeclaration: (node) => check(node.source),
+            TSExternalModuleReference: (node) => check(node.expression),
+            ...declarationlessVisitors(check),
+            // `/// <reference path="…" />` makes the compiler load a file just as an import does.
+            Program: () => {
+                for (const comment of context.sourceCode.getAllComments()) {
+                    const match = comment.type === 'Line' ? REFERENCE_PATH.exec(comment.value) : null
+                    if (match?.[2]) report({ loc: comment.loc }, match[2])
+                }
+            },
+        }
+    },
 }
 /** @type {import('eslint').Rule.RuleModule} */
 const sssbNoPathToAppCodeRule = {
@@ -798,6 +906,7 @@ const sssbPlugin = {
         'no-dynamic-framework-import-in-core': sssbNoDynamicFrameworkImportInCoreRule,
         'no-jsx-in-core': sssbNoJsxInCoreRule,
         'no-path-to-app-code': sssbNoPathToAppCodeRule,
+        'no-path-out-of-package': sssbNoPathOutOfPackageRule,
         'no-raw-db-handle': sssbNoRawDbHandleRule,
     },
 }
@@ -1155,6 +1264,19 @@ const eslintConfig = [
         plugins: { sssb: sssbPlugin },
         rules: { 'sssb/no-dynamic-app-import': 'error', 'sssb/no-path-to-app-code': 'error' },
     },
+    // THE PACKAGE'S EDGE (sssbNoPathOutOfPackageRule): no framework file, fixture included, reaches outside
+    // packages/kit by path. Two named exemptions, both P5's: the real-Postgres contract tests start their server
+    // through the repo's tests/support/contract-postgres.ts, which reads scripts/ports.mjs and embedded-postgres. P5
+    // moves the contract runner into @sssb/kit/testing; neither file ships (the `files` allowlist keeps tests out).
+    {
+        files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
+        ignores: [
+            'packages/kit/src/adapters/real/db.contract.test.ts',
+            'packages/kit/src/adapters/real/rds-data.contract.test.ts',
+        ],
+        plugins: { sssb: sssbPlugin },
+        rules: { 'sssb/no-path-out-of-package': 'error' },
+    },
     // The fixture's syntax bans, decided one at a time rather than by inheriting the app's set.
     // APPLIED: getDb (its api/ + domain/ files are the app-shaped request path this template teaches —
     // tenant access goes through withTenant, ADR-0004; enforced by sssb/no-raw-db-handle, whose blocks name
@@ -1216,13 +1338,13 @@ const eslintConfig = [
     // contract test, packages/kit/test-fixture included; `apps/*/tests/**` adds the Playwright specs
     // and their support files, which are `.spec.ts` or plain helpers and which no leak guard wraps; the
     // fixture glob is named anyway (FIXTURE_FILES_GLOB, as every framework-invariant gate here does) so
-    // a future non-`.test` helper added there is covered too. tests/support/tmp-dir.ts is the one place the raw call is
+    // a future non-`.test` helper added there is covered too. packages/kit/src/testing/tmp-dir.ts is the one place the raw call is
     // meant to live — it matches neither glob, and is ignored explicitly so that stays true if either
     // glob is ever widened. `apps/*/tests/**` takes every extension because Playwright's default
     // testMatch picks up a `.spec.mjs` or `.test.js` there too, and neither app's config narrows it.
     {
         files: [TEST_FILES, `apps/*/tests/**/*.${SRC_EXT}`, FIXTURE_FILES_GLOB],
-        ignores: ['tests/support/tmp-dir.ts'],
+        ignores: ['packages/kit/src/testing/tmp-dir.ts'],
         plugins: { sssb: sssbPlugin },
         rules: { 'sssb/no-direct-mkdtemp': 'error' },
     },

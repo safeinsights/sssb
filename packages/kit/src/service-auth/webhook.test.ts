@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import { devWebhookSecret } from '../adapters/fake/service-auth'
 import { AuthRequiredError } from '../ports/errors'
 import { verifyWebhookCaller, withWebhookSecret } from './webhook'
@@ -15,19 +15,19 @@ vi.mock('../adapters/index', () => ({
 
 const tmp = makeTestTmpDir('app-webhook-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 afterEach(() => {
     state.fake = true
-    delete process.env.WEBHOOK_SECRET
+    delete process.env['WEBHOOK_SECRET']
 })
 
 function req(secret?: string, scheme = 'Bearer'): Request {
     const headers: Record<string, string> = {}
-    if (secret !== undefined) headers.authorization = `${scheme} ${secret}`
+    if (secret !== undefined) headers['authorization'] = `${scheme} ${secret}`
     return new Request('http://localhost/api/webhooks/jobs', { method: 'POST', headers })
 }
 
@@ -53,17 +53,17 @@ describe('verifyWebhookCaller (simulated mode)', () => {
 describe('verifyWebhookCaller (real mode, env secret)', () => {
     test('the configured WEBHOOK_SECRET passes', () => {
         state.fake = false
-        process.env.WEBHOOK_SECRET = 'env-secret-abcdef0123456789'
+        process.env['WEBHOOK_SECRET'] = 'env-secret-abcdef0123456789'
         expect(() => verifyWebhookCaller(req('env-secret-abcdef0123456789'))).not.toThrow()
     })
     test('a wrong secret is rejected in real mode', () => {
         state.fake = false
-        process.env.WEBHOOK_SECRET = 'env-secret-abcdef0123456789'
+        process.env['WEBHOOK_SECRET'] = 'env-secret-abcdef0123456789'
         expect(() => verifyWebhookCaller(req('nope'))).toThrow(AuthRequiredError)
     })
     test('no configured secret rejects everything', () => {
         state.fake = false
-        delete process.env.WEBHOOK_SECRET
+        delete process.env['WEBHOOK_SECRET']
         expect(() => verifyWebhookCaller(req('anything'))).toThrow(AuthRequiredError)
     })
 })
@@ -125,7 +125,7 @@ describe('withWebhookSecret', () => {
         state.fake = false
         const guarded = withWebhookSecret(async () => Response.json({ ok: true }))
         expect((await guarded(req('anything'))).status).toBe(401)
-        process.env.WEBHOOK_SECRET = 'real-secret-value'
+        process.env['WEBHOOK_SECRET'] = 'real-secret-value'
         expect((await guarded(req('real-secret-value'))).status).toBe(200)
         expect((await guarded(req(devWebhookSecret()))).status).toBe(401)
     })

@@ -314,9 +314,9 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
             const stored = await sql<{ k: string; v: Date }>`
                 select k, v from data_api_retype where k in ('pg', 'warm', 'expiring')`.execute(viaPg.getDb())
             const at = Object.fromEntries(stored.rows.map((row) => [row.k, row.v.toISOString()]))
-            expect(at.pg).toBe('2026-11-16T15:30:00.000Z')
-            expect(at.expiring).toBe(at.pg)
-            expect(at.warm).not.toBe(at.pg)
+            expect(at['pg']).toBe('2026-11-16T15:30:00.000Z')
+            expect(at['expiring']).toBe(at['pg'])
+            expect(at['warm']).not.toBe(at['pg'])
         } finally {
             await expiring.getDb().destroy()
         }

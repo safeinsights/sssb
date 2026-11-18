@@ -83,7 +83,7 @@ export interface ScanRoot {
      * The tsconfig whose module resolution (its `paths`, its `moduleResolution`) re-exports and imported
      * handlers are followed with. Without one, relative specifiers and packages resolve, aliases do not.
      */
-    tsconfig?: string
+    tsconfig?: string | undefined
 }
 
 /**
@@ -175,7 +175,7 @@ export interface ScanPolicy {
     /** Gates a non-exempt handler under a prefix must pass IN ADDITION to reaching `authorize`. */
     requiredAlongside: Readonly<Record<string, Exemption>>
     /** Appended to the "does not reach authorize" failure. */
-    hint?: string
+    hint?: string | undefined
 }
 
 export function exemptionFor(policy: ScanPolicy, rel: string): Exemption | undefined {
@@ -296,11 +296,10 @@ const DEFAULT_RESOLUTION: ts.CompilerOptions = {
 class RootScanner {
     private readonly sources = new Map<string, Source | string>()
     private readonly resolution: ts.CompilerOptions
+    private readonly authorizeModules: readonly string[]
 
-    constructor(
-        root: ScanRoot,
-        private readonly authorizeModules: readonly string[],
-    ) {
+    constructor(root: ScanRoot, authorizeModules: readonly string[]) {
+        this.authorizeModules = authorizeModules
         this.resolution = root.tsconfig ? readCompilerOptions(root.tsconfig) : DEFAULT_RESOLUTION
     }
 
@@ -483,10 +482,13 @@ class Reach {
     authorize = false
     private readonly invoked = new Set<ts.Node>()
 
-    constructor(
-        private readonly src: Source,
-        private readonly authorizeModules: readonly string[],
-    ) {}
+    private readonly src: Source
+    private readonly authorizeModules: readonly string[]
+
+    constructor(src: Source, authorizeModules: readonly string[]) {
+        this.src = src
+        this.authorizeModules = authorizeModules
+    }
 
     invoke(fn: ts.FunctionLikeDeclaration): void {
         if (this.invoked.has(fn)) return

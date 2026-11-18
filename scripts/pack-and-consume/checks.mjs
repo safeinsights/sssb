@@ -22,15 +22,36 @@ export const STRICT_FLAGS = [
 
 /**
  * The framework's seam-conformance suites, relative to the package root, that run from the tarball
- * against each app's own seam. `demo-presets-seam.test.ts` is the fifth, and is absent until P3 (the
- * workaround `demo-presets-seam-skipped`).
+ * against each app's own seam. They are the only test files the package ships: packages/kit/package.json's
+ * `files` re-includes exactly these (tests/tooling/pack-and-consume.test.ts holds the two lists equal), and
+ * `shippedFileProblems` checks the tarball itself. P5 replaces them with `@sssb/kit/testing`.
  */
 export const CONFORMANCE_SUITES = [
     'src/i18n/namespaces.test.ts',
     'src/i18n/messages-parity.test.ts',
     'src/db/rls-pglite.test.ts',
     'src/db/migrate.test.ts',
+    'src/server-lib/demo-presets-seam.test.ts',
 ]
+
+/**
+ * What the packed framework must not ship: a test or story file other than the conformance suites, or
+ * anything of the test fixture (ADR-0014 part 2, "a `files` allowlist"). Returns the problems; empty means
+ * the tarball holds only what an adopter needs.
+ * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
+ */
+export function shippedFileProblems(files) {
+    const problems = []
+    const suites = new Set(CONFORMANCE_SUITES)
+    for (const file of files) {
+        if (file.startsWith('test-fixture/')) problems.push(`${file}: the test fixture is shipped`)
+        else if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file) && !suites.has(file))
+            problems.push(`${file}: a test or story file that is not a conformance suite is shipped`)
+    }
+    for (const suite of CONFORMANCE_SUITES)
+        if (!files.includes(suite)) problems.push(`${suite}: a conformance suite is not shipped`)
+    return problems
+}
 
 /**
  * The manifest shape P1 chose: the seam is an optional peer declared in `peerDependenciesMeta` ALONE.
@@ -204,9 +225,10 @@ export function conformanceProblems(report, kitDirsByApp, requiredByApp = {}) {
  * (node_modules/.pnpm/node_modules) lends every package in the graph to every other, so an undeclared
  * import resolves in the consumer and the job stays green; an adopter whose graph lacks the package, or
  * who turns hoisting off, gets "cannot find module" inside node_modules/@sssb/kit. This reads the
- * source instead of trusting resolution. Test and story files are not the shipped surface, and are skipped.
- * The specifiers come from `specifiersOf`, which the job backs with TypeScript's own `preProcessFile`, so
- * comments, strings and template literals cannot hide an import or invent one.
+ * source instead of trusting resolution. Test and story files are not the shipped surface, and are skipped,
+ * bar the conformance suites, which ship. The specifiers come from `specifiersOf`, which the job backs
+ * with TypeScript's own `preProcessFile`, so comments, strings and template literals cannot hide an
+ * import or invent one.
  * @param {{ file: string, text: string }[]} sources
  * @param {{ dependencies?: Record<string, string>, peerDependencies?: Record<string, string>, peerDependenciesMeta?: Record<string, unknown>, name?: string }} manifest
  * @param {readonly string[]} builtins Node's builtin module names
@@ -224,7 +246,7 @@ export function undeclaredImports(sources, manifest, builtins, specifiersOf) {
     /** @type {Map<string, string[]>} */
     const found = new Map()
     for (const { file, text } of sources) {
-        if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file)) continue
+        if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file) && !CONFORMANCE_SUITES.includes(file)) continue
         for (const spec of specifiersOf(text)) {
             if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:')) continue
             const parts = spec.split('/')

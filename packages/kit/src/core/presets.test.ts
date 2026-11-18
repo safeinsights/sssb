@@ -385,7 +385,7 @@ describe('presetProblems: the operation registry', () => {
             check: (args) => (args.flag === 'jobs-held' ? ['the harbor never holds its jobs'] : []),
         }
         const replaced = composePresetOperations([harborFlag])
-        expect(replaced.flag).toBe(harborFlag)
+        expect(replaced['flag']).toBe(harborFlag)
         expect(
             presetProblems(
                 [

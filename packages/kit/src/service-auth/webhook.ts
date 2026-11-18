@@ -10,7 +10,7 @@ import { AuthRequiredError } from '../ports/errors'
  * the environment (a cutover row). Null when real mode has no secret configured → auth always fails.
  */
 function expectedSecret(): string | null {
-    return isSimulated ? devWebhookSecret() : (process.env.WEBHOOK_SECRET ?? null)
+    return isSimulated ? devWebhookSecret() : (process.env['WEBHOOK_SECRET'] ?? null)
 }
 
 /**

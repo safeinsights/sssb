@@ -86,15 +86,10 @@ function ScheduleSpecSummary({ spec }: { spec: ScheduleSpec }) {
     const time = `${String(spec.atUtcHour).padStart(2, '0')}:${String(spec.atUtcMinute).padStart(2, '0')}`
     if (spec.type === 'daily') return <>{t('scheduleDaily', { time })}</>
     // Weekday names are seven literal keys so the lookup typechecks without a dynamic key.
-    const weekday = [
-        t('weekday0'),
-        t('weekday1'),
-        t('weekday2'),
-        t('weekday3'),
-        t('weekday4'),
-        t('weekday5'),
-        t('weekday6'),
-    ][spec.utcDay]
+    const weekday =
+        [t('weekday0'), t('weekday1'), t('weekday2'), t('weekday3'), t('weekday4'), t('weekday5'), t('weekday6')][
+            spec.utcDay
+        ] ?? ''
     return <>{t('scheduleWeekly', { weekday, time })}</>
 }
 

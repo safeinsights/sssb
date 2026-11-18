@@ -68,7 +68,7 @@ function checkedName(database: string): string {
 
 export async function startContractServer(label: string): Promise<ContractServer> {
     let embedded: InstanceType<typeof EmbeddedPostgres> | null = null
-    let serverUrl = process.env.CONTRACT_DATABASE_URL ?? ''
+    let serverUrl = process.env['CONTRACT_DATABASE_URL'] ?? ''
     if (!serverUrl) {
         const port = portFor('contractPg')
         embedded = new EmbeddedPostgres({

@@ -9,7 +9,7 @@ export interface AnalyticsEvent {
     id: string
     at: string
     event: string
-    properties?: Record<string, unknown>
+    properties?: Record<string, unknown> | undefined
 }
 
 /**
@@ -148,8 +148,8 @@ export function EventsApp({ events, audit = [] }: { events: AnalyticsEvent[]; au
                         {events.map((event) => {
                             // The one-line hint prefers a page path, then a tenant slug — either identifies
                             // the event at a glance. Only strings qualify (properties is loose).
-                            const path = event.properties?.path
-                            const tenant = event.properties?.tenant
+                            const path = event.properties?.['path']
+                            const tenant = event.properties?.['tenant']
                             const hint = typeof path === 'string' ? path : typeof tenant === 'string' ? tenant : null
                             return (
                                 <LogRow

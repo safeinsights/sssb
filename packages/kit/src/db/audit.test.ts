@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
-import { makeTestTmpDir } from '../../../../tests/support/tmp-dir'
+import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { DbPort } from '../ports/db'
 import type { AuditDetail, AuditEventInput } from './audit'
 import { orgIdForSlug } from './org-lookup'
@@ -8,10 +8,10 @@ import { tenantIdForSlug } from './tenant-lookup'
 // Point all fake-adapter state at a throwaway dir BEFORE importing anything that touches pglite.
 const tmp = makeTestTmpDir('app-audit-db-')
 beforeAll(() => {
-    process.env.APP_DATA_DIR = tmp
+    process.env['APP_DATA_DIR'] = tmp
 })
 afterAll(() => {
-    delete process.env.APP_DATA_DIR
+    delete process.env['APP_DATA_DIR']
 })
 
 /** Resolve a tenant id and one of its org ids from the seed. */
@@ -183,7 +183,8 @@ describe('the time an audit event carries', () => {
         const { advanceClockMs } = await import('../adapters/fake/clock')
         advanceClockMs(DAY_MS)
         // The fake's pglite, minus the one thing only a simulated world adds: its clock.
-        const realLike: DbPort = { ...fakeDb, now: undefined }
+        const realLike: DbPort = { ...fakeDb }
+        delete realLike.now
 
         const before = Date.now()
         const at = await recordedAt(realLike)
@@ -200,7 +201,8 @@ describe('the time an audit event carries', () => {
         expect(noAtKey).toBe(true)
 
         // Run-time: forced through anyway, on a database with no world clock, the forged 1970 never reaches the row.
-        const realLike: DbPort = { ...fakeDb, now: undefined }
+        const realLike: DbPort = { ...fakeDb }
+        delete realLike.now
         const before = Date.now()
         const at = await recordedAt(realLike, { at: new Date(0).toISOString() })
 
@@ -247,7 +249,10 @@ describe('recordAuditEvent detail', () => {
         const without = `docket-${Date.now()}-none`
         const detail = { refusal: 'revoked', removed: 3, steps: ['a', 'b'], nested: { ok: true, none: null } }
         // A type with an optional property, as an adopter would write one; the property is left undefined.
-        const withOptional: typeof detail & { hint?: string } = { ...detail, hint: undefined }
+        const withOptional: typeof detail & { hint?: string } = { ...detail }
+        // exactOptionalPropertyTypes forbids writing `hint: undefined` as a literal; assign it at run time so the key
+        // is present and undefined, which is the case under test.
+        Object.assign(withOptional, { hint: undefined })
         await recordAuditEvent(fakeDb, {
             tenantId,
             orgId,
@@ -321,7 +326,7 @@ describe('recordAuditEvent detail', () => {
     }
 
     const cycle: Record<string, unknown> = {}
-    cycle.self = cycle
+    cycle['self'] = cycle
     const symbolKeyed = { ok: 1, [Symbol('s')]: 2 }
     const holed: number[] = []
     holed[0] = 1

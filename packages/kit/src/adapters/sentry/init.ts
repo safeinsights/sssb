@@ -9,7 +9,7 @@ import { SENTRY_V10_BASELINE } from './baseline'
  */
 export function initServerSentry(): void {
     Sentry.init({
-        dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+        dsn: (process.env as { NEXT_PUBLIC_SENTRY_DSN?: string }).NEXT_PUBLIC_SENTRY_DSN,
         tracesSampleRate: 0.1,
         ...SENTRY_V10_BASELINE,
         beforeSend: (event) => scrubEvent(event),

@@ -42,7 +42,7 @@ Three kinds of thing live in this repo (see
   anything SSSB reaches for that only exists because the showcase supplies it fails to compile there.
 - **The repo scaffold**: the verify gate, lint fences, CI, docs doctrine, infra draft. You keep it.
   One rule in it reaches your own tests: a test that needs a scratch directory calls
-  `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `tests/support/tmp-dir.ts`, never `mkdtemp` (lint
+  `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `tests/support/tmp-dir.ts` (a re-export of `packages/kit/src/testing/tmp-dir.ts`), never `mkdtemp` (lint
   bans it), and `test:unit`, `test:coverage` and `test:contract` run through
   `scripts/check-tmpdir-leak.mjs`, which fails the run if a directory made that way survives it.
 
@@ -327,7 +327,7 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 `packages/kit/package.json`'s `exports` map is the contract: it lists the 132 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 47 modules of the package are internals — private sub-components, the fake-db plumbing, the
+other 48 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. If you find yourself
