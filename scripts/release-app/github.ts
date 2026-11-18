@@ -2,11 +2,12 @@
  * The two ways this tool talks to GitHub.
  *
  * - `githubRequest`: `fetch` to api.github.com, for the calls that authenticate AS THE APP (a JWT signed with
- *   the key held in memory, or an installation token minted from it) or not at all (the manifest exchange,
- *   where the one-hour code is the credential). Plain `fetch`, as CanopyCMS does: an App JWT needs
+ *   the key held in memory, or an installation token minted from it) or not at all (the name check, and the
+ *   manifest exchange, where the one-hour code is the credential). Plain `fetch`, as CanopyCMS does: an App JWT needs
  *   `Authorization: Bearer`, and nothing here is worth a dependency.
- * - `gh` (see `runGh`): JP's own GitHub CLI login, for what only a repository admin can do: read the
- *   environment and rulesets, set the environment's secret and variable, and change rulesets.
+ * - `gh` (see `runGh`): JP's own GitHub CLI login, for what needs a repository admin or an org owner: read the
+ *   environment, the rulesets and the organisation's App installations, set the environment's secret and
+ *   variable, and change rulesets.
  *
  * Every response or error that reaches a terminal goes through `redact` first.
  */

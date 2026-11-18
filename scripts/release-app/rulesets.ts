@@ -16,7 +16,8 @@
  *   - `release tags: v* immutable` — update, deletion and non-fast-forward on `v*`, NO bypass, so nobody,
  *     the App included, moves or deletes a release tag.
  * The organisation ruleset is not this tool's to change: it is shared by every repository in the org and
- * needs `admin:org`. The CLI prints that step for JP; `orgRulesetsToBypass` says which ones.
+ * needs `admin:org`. The CLI prints that step for JP; `externalGates` says which ones, and finds any other
+ * ruleset the release's push would meet.
  */
 import { RELEASE_REPO } from './manifest'
 
@@ -214,9 +215,10 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 /**
- * Whether a tag ruleset might apply to some release tag. Fails closed: any include that could start with `v`
- * (or is a wildcard there) counts, and excludes are not trusted to carve release tags out, since judging every
- * glob GitHub accepts against every future version is not something to get subtly wrong.
+ * Whether a tag ruleset might apply to some release tag, judged generously: an include that does not start
+ * `refs/tags/` (`~ALL`, `refs/**`) counts, as does one whose next character is `v` or a
+ * wildcard; excludes are ignored. Over-counting only reports a ruleset to check by hand; under-counting would
+ * let `verify` pass while the push is refused.
  */
 function mayCoverReleaseTags(ruleset: RulesetBody): boolean {
     return (ruleset.conditions?.ref_name?.include ?? []).some((pattern) => {

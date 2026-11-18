@@ -21,16 +21,18 @@ export type PermissionSet = Readonly<Record<string, PermissionLevel>>
 
 /**
  * The App's entire security surface. Each entry names what in release.yml forces it, and
- * tests/tooling/release-app-drift.test.ts reads release.yml to keep it so, in both directions.
+ * tests/tooling/release-app-drift.test.ts reads release.yml to keep it so, in both directions (and pins the
+ * job that holds the key, so any edit to it is re-reviewed against this).
  * - `contents: write`: the `push` job's one `git push`, which lands the release commit on `main` and
  *   creates its `vX.Y.Z` tag. GitHub's permissions reference puts git pushes under Contents/write.
  * - `metadata: read`: implied by any repository permission; declared so this object states the whole
  *   surface, not just the part that is not automatic.
- * Nothing else. No `workflows`: a release commit that touched `.github/workflows/` is refused by GitHub for
- * lack of it, which is a lock we want (scripts/release.mjs verify-release refuses it first). No `actions`,
+ * Nothing else. No `workflows`: GitHub refuses a push that changes `.github/workflows/` without it
+ * (scripts/release.mjs verify-release refuses any file but the released manifests and changelogs first).
+ * That keeps workflow FILES out of a stolen key's reach, not what they run: `scripts/release.mjs`, `package.json`
+ * scripts and `.nvmrc` are contents (docs/runbooks/release-app.md, "What the key is worth"). No `actions`,
  * `checks`, `pull_requests` or `administration`: the CI gate reads runs with the job's own GITHUB_TOKEN,
- * and the App never opens a PR, edits a setting or touches a ruleset. Bypassing a ruleset needs no
- * permission at all: it is the ruleset's bypass list that names the App.
+ * and the App never opens a PR, edits a setting or edits a ruleset (rulesets name it as a bypass actor).
  */
 export const RELEASE_APP_PERMISSIONS: PermissionSet = {
     contents: 'write',

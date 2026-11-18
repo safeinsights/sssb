@@ -14,8 +14,9 @@
  * manifest, no key), in a private temporary directory it removes.
  *
  * THE APP'S REACH. `RELEASE_APP_PERMISSIONS` (contents: write, metadata: read) on one repository, checked
- * three times: in the manifest, in the exchange's answer (before the key is stored), and on the installation
- * after JP installs it. Its rulesets are in rulesets.ts.
+ * in the manifest, in the exchange's answer (before the key is stored), on the installation read back as the
+ * App after JP installs it, and in the organisation's list of installations (`identifyApp`, which also gates
+ * `bypass` and `verify`). Its rulesets are in rulesets.ts.
  */
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'

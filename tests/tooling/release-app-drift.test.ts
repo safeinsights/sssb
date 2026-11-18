@@ -2,28 +2,35 @@
  * The guard that keeps `RELEASE_APP_PERMISSIONS` (scripts/release-app/manifest.ts) honest against
  * release.yml, the only thing that uses the release app. Modeled on CanopyCMS's
  * github-app-permission-drift.test.ts, which drives its worker against a recording proxy; here the only
- * consumer is a workflow, so this reads the workflow PARSED (the `yaml` package), never grepped.
+ * consumer is a workflow, so this reads every workflow file PARSED (the `yaml` package), never grepped.
  *
- * WHAT IT HOLDS
- *   1. The App's key and client id are read in exactly one step: the one that mints the token, in a job
- *      that runs in the `release` environment.
- *   2. That step asks for exactly the App's permissions (`permission-*`) and nothing that widens the token's
- *      reach (`owner`, `repositories`, `enterprise`, `skip-token-revoke`, another API URL).
- *   3. The token is used only through a later `run` step's `env`, never in `with:` (an action this cannot
- *      read) or inlined into a script, and that step writes nothing to $GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH,
- *      so the token cannot travel to another step.
- *   4. Every command in that step is CLASSIFIED: a known local command needs no permission, `git push` needs
- *      contents: write, and anything else (gh, curl, node, an unknown program) is red until someone names the
- *      permission it needs here. Deny by default is what keeps a new call from passing unseen.
- *   5. Every `git push` goes to this repository, without force, deletion or a bulk refspec, and only to
- *      `main` and the `v$VERSION` tag: the two refs the rulesets let the App past.
- *   6. The permissions the commands force, plus metadata (implied by any repository permission), equal
- *      `RELEASE_APP_PERMISSIONS` exactly. Both directions: an unforced permission is red too, which is what
- *      stops this passing while watching nothing.
+ * TWO LAYERS
+ *   1. THE PIN (`PUSH_JOB_SHA256`): the `push` job, the one that can read the App's key, is hashed whole, so
+ *      any edit to it goes red until someone re-reviews it and updates the hash. Review rounds on this test
+ *      kept finding forms a list of forbidden shell constructs missed; a pin does not depend on the list.
+ *   2. THE RULES, which say why the pinned job needs exactly `RELEASE_APP_PERMISSIONS`, and catch the edits
+ *      the pin cannot see (outside that job). In release.yml:
+ *      - the triggers are pinned, and no workflow-level `env` or `defaults` reaches the job;
+ *      - exactly one step mints the token, in the one job in the `release` environment (names compared without
+ *        regard to case, as GitHub does); only its two inputs read `secrets` or `vars`, in any spelling;
+ *      - the token asks for exactly the App's permissions (`permission-*`) and nothing that widens its reach
+ *        (`owner`, `repositories`, `enterprise`, `skip-token-revoke`, another API URL);
+ *      - one later `run` step, the job's last, holds the token, only through its `env`, which is fixed; it
+ *        sets no `shell:`, writes no $GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH, redirects only to the step
+ *        summary, /dev/null or stdout/stderr, and reads $TOKEN on one line only, the one that builds the
+ *        auth header;
+ *      - every command in that step is classified, deny by default: a known local command needs nothing,
+ *        `git push` needs contents: write, anything else is red until named here. Each `git push` goes to this
+ *        repository, with hooks off, no force or deletion, landing exactly `main` and the `v$VERSION` tag;
+ *      - the permissions forced, plus metadata (implied by any repository permission), equal
+ *        `RELEASE_APP_PERMISSIONS`, in both directions, so an unforced permission is red too.
+ *      In every other workflow: no job runs in the `release` environment, names it by expression, calls a
+ *      reusable workflow from another repository, or names the key or client id.
  *
- * WHAT IT CANNOT SEE: the shell is read by a small tokenizer, not bash. It splits commands on newlines, `;`,
- * `&&`, `||` and `|`, follows `$(…)`, and strips quotes. Anything it cannot place is red, not skipped. The
- * mutation tests at the bottom are its proof that each rule can fail.
+ * WHAT IT CANNOT SEE: the shell is read by a small tokenizer, not bash; the pin is what covers its gaps in the
+ * job that matters. Code the pinned job runs from the commit (`scripts/release.mjs`, `.nvmrc`) is covered by
+ * its own tests, not this one. The mutation tests at the bottom show each rule failing, except "needs a permission
+ * RELEASE_APP_PERMISSIONS lacks", which no command the classifier knows can reach yet.
  */
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'

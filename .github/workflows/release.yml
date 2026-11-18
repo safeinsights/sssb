@@ -168,8 +168,8 @@ jobs:
             # The release app's token, from its key in this job's `release` environment. The generic GITHUB_TOKEN
             # would not do: GitHub starts no workflow run for a push made with it, so its tag would never publish.
             # The token is asked for exactly the App's permissions (scripts/release-app/manifest.ts), so an App
-            # widened later still mints nothing wider here; tests/tooling/release-app-drift.test.ts holds the two
-            # together and keeps every use of the token to the push below.
+            # widened later still mints nothing wider here. tests/tooling/release-app-drift.test.ts holds the two
+            # together and pins this job by hash, so any edit to it fails until it is re-reviewed.
             - name: mint the release app's token
               id: app-token
               uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
