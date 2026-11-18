@@ -131,7 +131,7 @@ const vendorSdkPattern = {
 const KIT_ADAPTERS_GLOB = 'packages/kit/src/adapters/**'
 const APP_ADAPTERS_GLOB = 'apps/*/src/adapters/**'
 const APP_REAL_ADAPTERS_GLOB = 'apps/*/src/adapters/real/**'
-// The files both halves of the vendor ban cover, and the two carve-outs both leave out (the ports-boundary
+// The files both halves of the vendor ban cover, and the three carve-outs both leave out (the ports-boundary
 // block below says why each carve-out exists). Named once for the same reason as the zones above.
 // `next.config.*` is the four names Next loads its config from (CONFIG_FILES in next's
 // shared/lib/constants), and no other file at the app root.
@@ -1315,7 +1315,7 @@ const eslintConfig = [
     },
     // The dynamic half of the vendor boundary (see sssbNoDynamicVendorImportRule). Its own rule id, so the
     // merge trap cannot touch it; its scope is every file the static ban covers, minus the same two vendor
-    // zones and the same two carve-outs — the fixture included, as in the framework fence below.
+    // zones and the same three carve-outs — the fixture included, as in the framework fence below.
     {
         files: [...VENDOR_FENCE_FILES, FIXTURE_FILES_GLOB],
         ignores: [KIT_ADAPTERS_GLOB, APP_REAL_ADAPTERS_GLOB, ...VENDOR_CARVE_OUTS],

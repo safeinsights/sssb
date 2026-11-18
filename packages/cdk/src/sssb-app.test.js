@@ -4,7 +4,7 @@
 // environment (moved here from packages/kit's production-guard test, which read the old stack's source), and
 // each synth assertion the construct makes, seen to FAIL on the thing it guards. Offline, like synth: nothing
 // is deployed and no credentials are read.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as cdk from 'aws-cdk-lib'
@@ -45,7 +45,7 @@ function synthesize({ appDir, slug, transport, bundle = true, configure }) {
     })
     configure?.(construct)
     const assembly = app.synth()
-    const all = /** @type {Resources} */ (Template.fromStack(stack).toJSON().Resources)
+    const all = /** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])
     return { all, assembly: assembly.directory }
 }
 
@@ -71,8 +71,8 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
             const migrator = lambdaFunction(all, 'Migrator')
             const cluster = Object.values(all).find((r) => r.Type === 'AWS::RDS::DBCluster')?.Properties ?? {}
 
-            expect(server.env.DATABASE_TRANSPORT).toBe(transport)
-            expect(migrator.env.DATABASE_TRANSPORT).toBe(transport)
+            expect(server.env['DATABASE_TRANSPORT']).toBe(transport)
+            expect(migrator.env['DATABASE_TRANSPORT']).toBe(transport)
             for (const variable of Object.keys(DATABASE_ENV[transport])) {
                 expect(server.env, `the server sets ${variable}, which the runtime requires`).toHaveProperty([variable])
             }
@@ -80,7 +80,7 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
             // Encrypted at rest, on both shapes. An Aurora instance takes its encryption from its cluster.
             const clusters = Object.values(all).filter((r) => r.Type === 'AWS::RDS::DBCluster')
             expect(clusters.length).toBeGreaterThan(0)
-            expect(clusters.every((r) => r.Properties?.StorageEncrypted === true)).toBe(true)
+            expect(clusters.every((r) => r.Properties?.['StorageEncrypted'] === true)).toBe(true)
 
             // What each bundled Lambda really contains (the migrator's own expectations are the construct's
             // synth assertion, which `synthesize` has already passed).
@@ -92,10 +92,10 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
 
             // The production fail-closed guard (packages/kit/src/adapters/index.ts) is irrelevant only while
             // every deployed environment pins APP_MODE=real and sets neither opt-in.
-            expect(server.env.APP_MODE).toBe('real')
+            expect(server.env['APP_MODE']).toBe('real')
             for (const [id, r] of Object.entries(all)) {
                 if (r.Type !== 'AWS::Lambda::Function') continue
-                const env = JSON.stringify(r.Properties?.Environment ?? {})
+                const env = JSON.stringify(r.Properties?.['Environment'] ?? {})
                 expect(env, `${id} sets DEMO_MODE`).not.toContain('DEMO_MODE')
                 expect(env, `${id} sets E2E_BUILD`).not.toContain('E2E_BUILD')
             }
@@ -107,7 +107,7 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
                 expect(server.env).not.toHaveProperty(['DATABASE_URL'])
                 expect(migrator.env).not.toHaveProperty(['DATABASE_URL'])
                 expect(server.inVpc || migrator.inVpc).toBe(false)
-                expect(cluster.EnableHttpEndpoint).toBe(true)
+                expect(cluster['EnableHttpEndpoint']).toBe(true)
                 expect(count(all, 'AWS::EC2::NatGateway')).toBe(0)
                 expect(count(all, 'AWS::EC2::InternetGateway')).toBe(0)
                 expect(dataApiShapeProblems(all)).toEqual([])
@@ -282,6 +282,28 @@ describe('the synth assertions fail', () => {
         )
     })
 
+    it('when the app has no migration index, or no lock file above it', () => {
+        const scratch = scratchApp()
+        expect(construct({ appDir: scratch, slug: 'scratch' })).toThrow(/no lock file \(.*\) at or above/)
+        rmSync(path.join(scratch, 'src/app-config/db/migrations/index.ts'))
+        expect(construct({ appDir: scratch, slug: 'scratch' })).toThrow(/has no migration index at/)
+    })
+
+    it('when the project root installs no esbuild to bundle with', () => {
+        // The framework copied INTO the scratch project, so that the root is all that is missing.
+        const scratch = makeTestTmpDir('sssb-cdk-app-')
+        const kit = path.join(scratch, 'node_modules/@sssb/kit')
+        cpSync(path.join(REPO, 'packages/kit'), kit, {
+            recursive: true,
+            filter: (source) => !source.includes(`${path.sep}node_modules`),
+        })
+        mkdirSync(path.join(scratch, 'src/app-config/db/migrations'), { recursive: true })
+        writeFileSync(path.join(scratch, 'src/app-config/db/migrations/index.ts'), 'export const appMigrations = {}\n')
+        writeFileSync(path.join(scratch, 'package.json'), JSON.stringify({ name: 'scratch', private: true }))
+        writeFileSync(path.join(scratch, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n")
+        expect(construct({ appDir: scratch, slug: 'scratch' })).toThrow(/no esbuild at .*, the project root/)
+    })
+
     it('when the framework is installed outside the project root', () => {
         const scratch = scratchApp()
         writeFileSync(path.join(scratch, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n")
@@ -311,7 +333,7 @@ describe('a stack whose synthesizer prefixes its asset keys', () => {
             production: false,
         })
         const migrator = lambdaFunction(
-            /** @type {Resources} */ (Template.fromStack(stack).toJSON().Resources),
+            /** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources']),
             'Migrator',
         )
         expect(migrator.id).toMatch(/^Migrator/)
@@ -349,6 +371,6 @@ describe('a synth that does not bundle this stack', () => {
         const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
         const slug = /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))
         const { all } = synthesize({ appDir, slug: /** @type {string} */ (slug?.[1]), transport: 'pg', bundle: false })
-        expect(lambdaFunction(all, 'Server').env.APP_MODE).toBe('real')
+        expect(lambdaFunction(all, 'Server').env['APP_MODE']).toBe('real')
     })
 })

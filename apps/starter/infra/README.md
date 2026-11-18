@@ -41,25 +41,29 @@ CIDRs and rolls back. Changing shape later means a new stack and a snapshot rest
 
 ## What synth asserts
 
-`cdk synth` fails unless all three hold, for the shape the params choose:
+`cdk synth` fails unless each of these holds, for the shape the params choose (the construct's header,
+`packages/cdk/src/sssb-app.js` in SSSB's repository, is the full list):
 
 - the `@sssb/kit` this app resolves is the construct's own version (SSSB's packages are released in
-  lockstep);
+  lockstep), installed under the project root (the lock file's directory), which also installs esbuild: the
+  migrator is bundled locally, never in CDK's Docker fallback;
+- the slug is the `APP_SLUG` in `../config/app.ts`, and a linked `@sssb/app-config` is this app's own
+  `src/app-config`;
 - the server's final environment, escape-hatch overrides included, sets `APP_MODE=real` and has neither
-  `DEMO_MODE` nor `E2E_BUILD`, so fake adapters cannot serve a deployment;
-- the migrator's bundle, as esbuild staged it during this synth, carries every one of this app's migrations
-  by its registry's names, names the framework's and the app's migration registries in esbuild's path
-  comments (so a minified bundle fails instead of passing unread), and holds no code from a test fixture. The
-  construct resolves the migrator from this app's `@sssb/kit` and passes the seam to esbuild explicitly
-  (`--alias:@sssb/app-config=<app>/src/app-config`): in SSSB's own repository the nearest tsconfig points that
-  alias at SSSB's test fixture, and a migrator bundled with it would ship the fixture's migrations instead of
-  the app's.
+  `DEMO_MODE` nor `E2E_BUILD`, so fake adapters cannot serve a deployment; the migrator carries neither either;
+- the migrator deploys the bundle esbuild staged during this synth, and that bundle carries every migration the
+  app's registry names under a literal key, names the framework's and the app's migration registries in
+  esbuild's path comments (so a minified bundle fails instead of passing unread), and holds no code from a test
+  fixture. The construct resolves the migrator from this app's `@sssb/kit` and passes the seam to esbuild
+  explicitly (`--alias:@sssb/app-config=<app>/src/app-config`): in SSSB's own repository the nearest tsconfig
+  points that alias at SSSB's test fixture, and a migrator bundled with it would ship the fixture's migrations
+  instead of the app's.
 
 SSSB's own repository also synthesizes both shapes for every app and checks the way in (`packages/cdk`'s
-test): each statement that can grant a Secrets Manager action names the cluster's own secret alone, each that
-can grant an `rds-data` action names the cluster alone, no role attaches an AWS-managed policy beyond the two
-Lambda execution policies, every database cluster is encrypted at rest, and on `data-api` the database's
-security group admits nothing.
+test): on both, each statement that can grant a Secrets Manager action names the cluster's own secret alone, no
+role attaches an AWS-managed policy beyond the two Lambda execution policies, and every database cluster is
+encrypted at rest; on `data-api`, each statement that can grant an `rds-data` action names the cluster alone and
+the database's security group admits nothing.
 
 ## Deploys — checks in CI, deploys in your own pipeline
 

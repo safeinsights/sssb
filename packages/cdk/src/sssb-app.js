@@ -22,9 +22,10 @@ const OWN_VERSION = /** @type {{ version: string }} */ (
 const TRANSPORTS = /** @type {const} */ (['pg', 'data-api'])
 
 /**
- * The framework's migration registry and the migrator entry, as paths inside the `@sssb/kit` an app resolves.
- * They are not published subpaths a resolver could ask for by name, so they are named here; the version check
- * below is what makes naming them safe, since this construct is released with that one layout.
+ * The migrator entry, a published subpath of `@sssb/kit` (its `exports` map), resolved through that map from the
+ * app; and the framework's migration registry, which is not published, so it is named by its path inside the
+ * package. The version check below is what makes naming that path safe: this construct is released with that one
+ * layout.
  */
 const KIT_MIGRATOR = 'adapters/real/migrate-handler'
 const KIT_MIGRATIONS_INDEX = 'src/db/migrations/index.ts'
@@ -136,9 +137,10 @@ function resolveMigrator(appDir) {
                 'checkout from elsewhere.',
         )
     }
-    // CDK bundles with the esbuild it can run from the project root (`pnpm exec esbuild`, `npx --no-install`),
-    // and otherwise falls back to Docker, where the seam alias and the path comments the check reads, both host
-    // paths, would name nothing. So the project root must install it.
+    // CDK bundles with an esbuild its own `require` finds, run from the project root (`pnpm exec esbuild`,
+    // `npx --no-install`), else with an `esbuild` on PATH, else in Docker, where the seam alias and the path
+    // comments the check reads, both host paths, would name nothing. The first is the one a project installs, so
+    // the construct requires it at the project root, and refuses a global esbuild CDK would accept.
     if (!existsSync(path.join(projectRoot, 'node_modules/esbuild/package.json'))) {
         throw new Error(
             `SssbApp: no esbuild at ${projectRoot}, the project root the migrator is bundled from. Add esbuild to ` +
@@ -215,12 +217,19 @@ function stagedBundle(fn) {
  * - `data-api` (opt-in): only the database lives in the VPC, in isolated subnets with no NAT. Both Lambdas run
  *   outside it and reach Aurora through the RDS Data API, authorised by IAM alone.
  *
- * AT SYNTH it asserts, and `cdk synth` fails otherwise:
- * - that the `@sssb/kit` the app resolves is this construct's own version (at construction);
- * - that the server's final environment is fail-closed: `APP_MODE` is `real`, and neither `DEMO_MODE` nor
- *   `E2E_BUILD` is present, overrides included;
- * - that the migrator's bundle carries the app's own migrations, built from the app's seam and no test
- *   fixture (when this synth bundles the stack at all: `cdk deploy OtherStack` skips it).
+ * AT SYNTH it asserts, and `cdk synth` fails otherwise. At construction:
+ * - the `@sssb/kit` the app resolves is this construct's own version, installed under the project root (the lock
+ *   file's directory), which also installs esbuild;
+ * - the slug is the `APP_SLUG` the app's `config/app.ts` declares (where it has one), `production` is a boolean
+ *   and the transport is `pg` or `data-api`;
+ * - a linked `@sssb/app-config` is the app's own `src/app-config`, whose migration index registers its migrations
+ *   under literal keys.
+ * Then, as a validation over the rendered template, overrides included:
+ * - the server's final environment is fail-closed: `APP_MODE` is `real`, and neither `DEMO_MODE` nor `E2E_BUILD`
+ *   is present; the migrator carries neither switch either;
+ * - the migrator deploys the bundle this synth staged, and that bundle carries the app's own migrations, built
+ *   from the app's seam and no test fixture (when this synth bundles the stack at all: `cdk deploy --exclusively
+ *   OtherStack` skips it).
  *
  * The migrator is bundled LOCALLY, by the esbuild the project root installs, never in CDK's Docker fallback: the
  * seam alias and the bundle's path comments the check reads are paths on the machine running the synth.

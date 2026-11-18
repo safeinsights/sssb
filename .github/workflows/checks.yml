@@ -46,10 +46,11 @@ jobs:
             # whose paths have already rotted unnoticed once; docs/provenance.md cites the spike as the
             # harness that de-risked ADR-0004 before anything was built on it, which makes it
             # doc-load-bearing with no guard. Both are fast and fully offline. The synth runs once per app
-            # (ADR-0014, P9), and with it the SssbApp construct's assertions for that app: its @sssb/kit at
-            # the construct's version, the fail-closed environment, and its own migrations in the migrator
-            # bundle (jpslav/keel#54). Both network shapes of every app, and the way in, are checked by
-            # packages/cdk's own test, which `test:coverage` above runs.
+            # (ADR-0014, P9), and with it the SssbApp construct's assertions for that app (the full list heads
+            # packages/cdk/src/sssb-app.js), among them its @sssb/kit at the construct's version, the
+            # fail-closed environment, and its own migrations in the migrator bundle (jpslav/keel#54). Both
+            # network shapes of every app, and the way in, are checked by packages/cdk's own test, which
+            # `test:coverage` above runs.
             - run: pnpm --filter './apps/*/infra' --fail-if-no-match synth
             - run: pnpm --filter spike-kysely-pglite test
 

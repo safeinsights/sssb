@@ -2084,11 +2084,13 @@ here, so a PR can still show a conflict there that a local merge of `main` resol
 - **The migrator bundles locally, never in Docker.** CDK's `NodejsFunction` falls back to bundling in a Docker image
   when it finds no esbuild, and there it runs from `/` with the project mounted at `/asset-input`: the seam alias,
   an absolute host path, would name nothing, and the bundle's path comments would no longer be relative to the
-  project root the check computes them from. What CDK runs locally is `pnpm exec -- esbuild` (or `npx --no-install`)
-  from the project root, so the project root's own `node_modules/esbuild` is what matters: a dependency of
-  `@sssb/cdk` is found by CDK's `require` through pnpm's hidden hoist, which stops the Docker fallback, and then the
-  `exec` fails (reproduced by P9's second review round). The construct checks the project root instead. Read from
-  aws-cdk-lib 2.277's `aws-lambda-nodejs/lib/bundling.js` and `package-installation.js`; no Docker was run.
+  project root the check computes them from. CDK looks for esbuild with its own `require` first and runs that one as
+  `pnpm exec -- esbuild` (or `npx --no-install`) from the project root; failing that, it runs an `esbuild` on PATH;
+  only then Docker. So the project root's own `node_modules/esbuild` is what matters: a dependency of `@sssb/cdk` is
+  found by CDK's `require` through pnpm's hidden hoist, which stops the fallbacks, and then the `exec` fails
+  (reproduced by P9's second review round). The construct checks the project root instead, and so refuses a project
+  whose only esbuild is a global one, which CDK would accept. Read from aws-cdk-lib 2.277's
+  `aws-lambda-nodejs/lib/bundling.js` and `package-installation.js`; no Docker was run.
 
 ## `@sssb/tools` (2026-11-18, ADR-0014 P4, `feat/sssb-tools`)
 

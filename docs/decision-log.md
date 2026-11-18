@@ -3223,10 +3223,11 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
 - **Each app's infra is outside the app's vendor fence** (`APP_INFRA_GLOB`), as ADR-0014 part 8 asked: a CDK custom
   resource there may call the AWS SDK. Pinned in `tests/lint/extensions.test.ts`, and seen failing without the
   carve-out.
-- **`@sssb/cdk` typechecks under the strict set except `exactOptionalPropertyTypes`**, which aws-cdk-lib's own
-  declarations are not written for (five errors, every one between two of CDK's own types: `Vpc` against `IVpc`,
-  `Bucket` against `IBucket`, and the props objects that carry them). It ships JavaScript and a declaration
-  file, so an adopter's flags never reach its sources.
+- **`@sssb/cdk` typechecks under every flag of the framework's strict set but `exactOptionalPropertyTypes`**
+  (`packages/cdk/tsconfig.json` against `packages/kit/tsconfig.strict.json`), which aws-cdk-lib's own declarations
+  fail: six errors, every one between two of CDK's own types (`Vpc` against `IVpc`, `Bucket` against `IBucket`,
+  `DefaultStackSynthesizer` against `IStackSynthesizer`, and the props objects that carry them). It ships
+  JavaScript and a declaration file, so an adopter's flags never reach its sources.
 - **`init-app` renames the app's infra package** (`<slug>-infra`) with the app, and refuses a slug that names one.
   Nothing else in an app's `infra/` names the app, so nothing else is rewritten.
 - **CI synthesizes with `--fail-if-no-match`**, because `pnpm --filter` with no match exits 0: a tree whose apps all
@@ -3261,8 +3262,13 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
       module that happens to be called `infra`.
     - The VPC's `Name` tags carry the construct path (`…/Default/Vpc`), so they change in place on the first deploy
       after P9.
-    - What synth cannot see (the server's uploaded zip, a synth with validation off, changes after synth) is
+    - What synth cannot see (the server's uploaded zip, a synth with validation off, changes after synth, a seam
+      index that spreads another app's registry beside a literal key) is
       `.claude/future-tasks/deployed-artifact-identity.md`.
+    - A project whose only esbuild is a global one is refused, though CDK would bundle with it locally.
+    - The migration-key regex reads text: a `//` or `/*` inside a key's string can hide later keys from the check
+      (it then fails closed if none is left), and a comment directly after a quote can count a key that is not
+      there (a false alarm, never a pass).
 - **Found, not this branch's:** `defaultDatabaseName` is the slug, and `init-app` accepts dashes, which an Aurora
   database name cannot hold. A follow-up.
 

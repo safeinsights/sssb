@@ -7,10 +7,11 @@ synth and every check pass. It found no accidental route. These are the delibera
 
 ## What the `SssbApp` construct asserts, and where that stops
 
-At synth the construct (`packages/cdk/src/sssb-app.js`) fails unless the app's `@sssb/kit` is its own version,
-the server's final environment pins `APP_MODE=real` with neither `DEMO_MODE` nor `E2E_BUILD`, the slug is the one
-`apps/<app>/config/app.ts` declares, a linked `@sssb/app-config` is the app's own `apps/<app>/src/app-config`, and the migrator
-deploys the bundle this synth staged, carrying every one of the app's migrations. Each is seen failing in
+At synth the construct (`packages/cdk/src/sssb-app.js`, whose header lists every check) fails unless, among
+others, the app's `@sssb/kit` is its own version, the server's final environment pins `APP_MODE=real` with neither
+`DEMO_MODE` nor `E2E_BUILD`, the slug is the one `apps/<app>/config/app.ts` declares, a linked `@sssb/app-config`
+is the app's own `apps/<app>/src/app-config`, and the migrator deploys the bundle this synth staged, carrying every
+migration the app's registry names under a literal key. Each is seen failing in
 `packages/cdk/src/sssb-app.test.js`. Four things are outside its reach:
 
 1. **The server's code.** The construct ships a placeholder asset; the deploy pipeline uploads the real
@@ -19,15 +20,19 @@ deploys the bundle this synth staged, carrying every one of the app's migrations
    load (`packages/kit/src/adapters/index.ts`), so a demo build under `APP_MODE=real` runs real adapters for
    everything dynamic. Whether any page prerendered during a simulated build bakes fake-mode output was not
    checked route by route.
-2. **A synth with validation off.** `app.synth({ skipValidation: true })` skips every construct validation; only
-   the version check, which runs at construction, still holds. Reproduced: a server with `APP_MODE=simulated` and
-   `DEMO_MODE=1` synthesized without error.
+2. **A synth with validation off.** `app.synth({ skipValidation: true })` skips every construct validation: the
+   environment and bundle checks. The ones that run at construction (version, slug, seam link, migration keys,
+   project root, esbuild) still hold. Reproduced: a server with `APP_MODE=simulated` and `DEMO_MODE=1`
+   synthesized without error.
 3. **Changes made after synth**: an environment edited in the console, a pipeline `run.sh` that exports a bypass,
    a CloudFormation macro or transform that rewrites the template at deploy time (`addTransform` synthesizes
    cleanly).
-4. **A seam index that re-exports another app's registry.** Reproduced with an empty migrations directory: the
-   bundle names the index file and the other app's migrations, and nothing expected says otherwise. Any
-   migration file in the app's own directory is now required by name, so this needs an app with none.
+4. **A seam index that also spreads another app's registry.** The check expects the names the index registers
+   under literal keys; an index with migration files and no literal key at all is refused, but one with a literal
+   key that also spreads another registry (`...otherApp`) would pass, carrying both sets (read from
+   `seamMigrationNames`, not run). Reproduced, with no literal
+   key, before that refusal existed: the bundle named the index file and the other app's migrations. Closing it
+   means reading the registry as the framework does, not as text.
 
 ## The design sketched
 

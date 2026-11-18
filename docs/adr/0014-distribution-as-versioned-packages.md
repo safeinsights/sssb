@@ -883,7 +883,7 @@ P9 built `@sssb/cdk` and moved the root `infra/` into each app. Details the body
 - **The version check runs at construction**, when the construct resolves `@sssb/kit` from the app, and fails the
   synth with both versions named. The environment and bundle checks run as a construct validation, so they read
   the final rendered template, escape-hatch overrides included. The bundle check is skipped only when the synth does
-  not bundle the stack at all (`cdk deploy OtherStack`), the one case in which there is no bundle to read.
+  not bundle the stack at all (`cdk deploy --exclusively OtherStack`), the one case in which there is no bundle to read.
 - **`@sssb/cdk` depends on `@sssb/tools`**, for the assembly checks (`@sssb/tools/assembly-checks`) and for rule 4's
   one resolver (`@sssb/tools/kit`). This refines part 10, which says SSSB's packages carry no dependency on each
   other. Its reason holds: what part 10 guards against is a release bumping a package through another's **peer**
