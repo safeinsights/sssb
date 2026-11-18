@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -309,8 +309,14 @@ describe('release verify-release (the job holding the release key)', () => {
             ],
             [(_root, run) => run('tag', 'v0.2.0'), /0\.2\.0 is not newer than v0\.2\.0/],
         ]
+        // One `prepare` (a Changesets subprocess, ~0.7 s) for the whole test: each case works on its own copy of the
+        // prepared tree, `.git` and the staged index included. Preparing per case took ~7 s alone and blew the 20 s
+        // timeout once under machine load.
+        const base = await prepared()
         for (const [tamper, reason] of cases) {
-            const { root, run } = await prepared()
+            const root = makeTestTmpDir('sssb-release-case-')
+            cpSync(base.root, root, { recursive: true })
+            const run = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' })
             tamper(root, run)
             run('add', '-A')
             expect(() => verifyRelease(root, '0.2.0')).toThrow(reason)

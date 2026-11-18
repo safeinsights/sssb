@@ -2933,6 +2933,21 @@ Dependabot's #1.
   4.14's `label-content-name-mismatch` fails twelve showcase e2e tests, and the fix and the way to lift the
   hold are still `.claude/future-tasks/label-in-name-axe-4-14.md`.
 
+## A second npm owner is not needed (2026-11-17, `chore/post-p2-cleanup`)
+
+JP's call on 2026-11-17: the `sssb` npm organization and its packages keep `safeinsights-bot` as their only owner,
+and no second owner is added. The account's credentials are shared among the maintainers and its email is a group
+address, so losing one person does not lose the account. That answers the known risk ADR-0014 recorded on
+2026-11-17 ("The npm names have a single owner"), which rested on JP having no personal npm account and said a
+second, human owner would be added once a maintainer had one.
+
+- **ADR-0014 gets a dated addendum, and its body is untouched.** The addendum says the Consequences bullet no
+  longer describes a risk to carry and that the follow-up "add a second, human owner" is dropped.
+- **Nothing that would let someone reach the account is written here or in the ADR**: no credential, address or
+  place where one is kept. Where the credentials live is the maintainers' to know.
+- **Releases do not depend on it.** Publishing runs from GitHub Actions through trusted publishing (D11), so the
+  shared credentials are for administering the names, not for shipping a version.
+
 ## Package hygiene (2026-11-17, ADR-0014 P3, `chore/package-hygiene`)
 
 - **A `files` allowlist, with the conformance suites re-included by name.** `packages/kit/package.json` ships

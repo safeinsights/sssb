@@ -10,6 +10,11 @@ on:
         branches: [main]
     pull_request:
 
+# Least privilege: nothing by default, and each job below states its own. None needs more than a read of the
+# repository (the checkout); release.yml trusts this workflow's result as its gate, so a job that could write
+# would be a way into a release. Adding a write permission to a job here is a decision for review, not a default.
+permissions: {}
+
 concurrency:
     # A PR's newer push cancels its older run. A push to main never does: release.yml waits for this workflow to
     # pass on each merge commit and on each release commit, and a cancelled run there would hold a release back.
@@ -19,10 +24,12 @@ concurrency:
 jobs:
     lint-typecheck-unit:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         steps:
-            - uses: actions/checkout@v7
-            - uses: pnpm/action-setup@v6
-            - uses: actions/setup-node@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
                   cache: pnpm
@@ -53,9 +60,9 @@ jobs:
         permissions:
             contents: read
         steps:
-            - uses: actions/checkout@v7
-            - uses: pnpm/action-setup@v6
-            - uses: actions/setup-node@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
                   cache: pnpm
@@ -68,6 +75,8 @@ jobs:
     # fixture: two migration sets cannot share a database (tests/support/contract-postgres.ts).
     contract:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         services:
             postgres:
                 image: postgres:16
@@ -79,9 +88,9 @@ jobs:
                     --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s
                     --health-retries 10
         steps:
-            - uses: actions/checkout@v7
-            - uses: pnpm/action-setup@v6
-            - uses: actions/setup-node@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
                   cache: pnpm
@@ -96,10 +105,12 @@ jobs:
     # dependencies, so it runs before `pnpm install` even starts on the shards below.
     e2e-shards:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         outputs:
             matrix: ${{ steps.discover.outputs.matrix }}
         steps:
-            - uses: actions/checkout@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
             - name: discover e2e shards from apps/*
               id: discover
               # One shard per app running its own `test:e2e` script — UNLESS the app declares a
@@ -142,6 +153,8 @@ jobs:
         name: e2e (${{ matrix.shard.name }})
         needs: e2e-shards
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         strategy:
             # One red shard should not hide the others — a flake in destructive still leaves the
             # chromium result on the PR.
@@ -149,16 +162,16 @@ jobs:
             matrix:
                 shard: ${{ fromJson(needs.e2e-shards.outputs.matrix) }}
         steps:
-            - uses: actions/checkout@v7
-            - uses: pnpm/action-setup@v6
-            - uses: actions/setup-node@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
             # Browsers are ~150MB and were re-downloaded on every run. Keyed on the lockfile because
             # that is what pins the Playwright version the browser build must match.
-            - uses: actions/cache@v6
+            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               id: playwright-cache
               with:
                   path: ~/.cache/ms-playwright
@@ -178,7 +191,7 @@ jobs:
                   # else here does. `packages/kit/src/adapters/index.ts` fails closed unless this is
                   # set explicitly; `production-guard.test.ts` proves it still closes without it.
                   E2E_BUILD: '1'
-            - uses: actions/upload-artifact@v7
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               if: failure()
               with:
                   # Per shard, or every shard races for one artifact name and only one survives.
@@ -190,15 +203,17 @@ jobs:
     # they need the vite build and nothing else — they used to queue behind the whole server suite.
     demo-static:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         steps:
-            - uses: actions/checkout@v7
-            - uses: pnpm/action-setup@v6
-            - uses: actions/setup-node@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
-            - uses: actions/cache@v6
+            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               id: playwright-cache
               with:
                   path: ~/.cache/ms-playwright
@@ -210,7 +225,7 @@ jobs:
             - run: pnpm build:demo-static
             - run: pnpm check:demo-size
             - run: pnpm e2e:demo-static
-            - uses: actions/upload-artifact@v7
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               if: failure()
               with:
                   name: playwright-report-demo-static
@@ -218,7 +233,7 @@ jobs:
                   retention-days: 7
             # Every app's artifact — the glob must not name one app, or adding an app silently drops
             # it from CI's evidence.
-            - uses: actions/upload-artifact@v7
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
                   name: static-demo
                   path: apps/*/dist-demo/index.html
@@ -237,10 +252,12 @@ jobs:
     # macOS runner, rather than quietly relying on a Linux-only accident.
     adoption-probe:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         steps:
-            - uses: actions/checkout@v7
-            - uses: pnpm/action-setup@v6
-            - uses: actions/setup-node@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
                   cache: pnpm
@@ -256,7 +273,7 @@ jobs:
               run: pnpm install
               working-directory: ${{ env.PROBE_DIR }}
             # Same cache the e2e/demo-static jobs use — `pnpm verify` below runs the full e2e suite.
-            - uses: actions/cache@v6
+            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               id: playwright-cache
               with:
                   path: ~/.cache/ms-playwright
@@ -290,7 +307,7 @@ jobs:
             - name: pnpm --filter infra synth
               run: pnpm --filter infra synth
               working-directory: ${{ env.PROBE_DIR }}
-            - uses: actions/upload-artifact@v7
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               if: failure()
               with:
                   name: playwright-report-adoption-probe
@@ -310,22 +327,24 @@ jobs:
     # a store holding only the consumer's packages for every other job to restore.
     pack-and-consume:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         steps:
-            - uses: actions/checkout@v7
-            - uses: pnpm/action-setup@v6
-            - uses: actions/setup-node@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
             - name: locate the pnpm store
               id: pnpm-store
               run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-            - uses: actions/cache@v6
+            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
                   path: ${{ steps.pnpm-store.outputs.path }}
                   key: pack-and-consume-pnpm-${{ runner.os }}-${{ hashFiles('scripts/pack-and-consume/consumer-lock.yaml') }}
                   restore-keys: pack-and-consume-pnpm-${{ runner.os }}-
             # The consumer's own Playwright, pinned by the same seed, has its own browser revision.
-            - uses: actions/cache@v6
+            - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
                   path: ~/.cache/ms-playwright
                   key: pack-and-consume-playwright-${{ runner.os }}-${{ hashFiles('scripts/pack-and-consume/consumer-lock.yaml') }}
@@ -333,7 +352,7 @@ jobs:
             - run: node scripts/pack-and-consume.mjs --dir "$RUNNER_TEMP/pack-and-consume"
             # On CI the starter's Playwright reporter is `github`, so the evidence on a failure is the
             # traces under test-results/ (trace: on-first-retry), not an HTML report.
-            - uses: actions/upload-artifact@v7
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               if: failure()
               with:
                   name: pack-and-consume-e2e
@@ -344,8 +363,10 @@ jobs:
 
     secret-scan:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         steps:
-            - uses: actions/checkout@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   fetch-depth: 0 # full history — a secret committed then deleted is still leaked
             - name: gitleaks (pinned binary; gitleaks-action requires a license key for org repos)
