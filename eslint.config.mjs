@@ -921,6 +921,8 @@ const eslintConfig = [
             'out/**',
             'build/**',
             'dist/**',
+            // @sssb/kit's compiled e2e entry, written by `pnpm pack` (packages/kit/scripts/build-testing-e2e.mjs).
+            'packages/kit/dist/**',
             '**/next-env.d.ts',
             '.*',
             '!.ladle',

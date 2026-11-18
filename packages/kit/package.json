@@ -14,12 +14,11 @@
         "src",
         "!src/**/*.test.*",
         "!src/**/*.stories.*",
-        "src/i18n/namespaces.test.ts",
-        "src/i18n/messages-parity.test.ts",
-        "src/db/rls-pglite.test.ts",
-        "src/db/migrate.test.ts",
-        "src/server-lib/demo-presets-seam.test.ts"
+        "dist"
     ],
+    "scripts": {
+        "prepack": "node scripts/build-testing-e2e.mjs"
+    },
     "exports": {
         "./package.json": "./package.json",
         "./i18n/messages/en.json": "./src/i18n/messages/en.json",
@@ -96,6 +95,7 @@
         "./core/state-machine": "./src/core/state-machine.ts",
         "./core/webhook-events": "./src/core/webhook-events.ts",
         "./core/webhook-signing": "./src/core/webhook-signing.ts",
+        "./cutover/rows.json": "./src/cutover/rows.json",
         "./db/agreements": "./src/db/agreements.ts",
         "./db/audit": "./src/db/audit.ts",
         "./db/inbound-email": "./src/db/inbound-email.ts",
@@ -153,6 +153,9 @@
         "./service-auth/mailgun": "./src/service-auth/mailgun.ts",
         "./service-auth/verify": "./src/service-auth/verify.ts",
         "./service-auth/webhook": "./src/service-auth/webhook.ts",
+        "./testing": "./src/testing/index.ts",
+        "./testing/checks.json": "./src/testing/checks.json",
+        "./testing/e2e": "./dist/testing/e2e.js",
         "./theme": "./src/theme.ts"
     },
     "dependencies": {
@@ -197,6 +200,7 @@
         }
     },
     "devDependencies": {
+        "esbuild": "^0.28.2",
         "typescript": "~6.0.3",
         "vitest": "^4.1.12"
     }

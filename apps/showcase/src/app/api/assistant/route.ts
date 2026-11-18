@@ -29,7 +29,7 @@ import { withPortErrors } from '../respond'
  * Chosen over SSE because there is nothing to reconnect to and no event taxonomy to invent.
  *
  * Authorize-exempt: like GET /api/tickets it only READS the caller's own active-team data under their
- * own session and persists nothing — see the exemption map in authz/authorized-mutations.test.ts.
+ * own session and persists nothing — see the framework's exemption map in @sssb/kit's authz/route-policy.ts.
  */
 export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {

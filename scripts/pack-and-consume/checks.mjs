@@ -21,35 +21,26 @@ export const STRICT_FLAGS = [
 ]
 
 /**
- * The framework's seam-conformance suites, relative to the package root, that run from the tarball
- * against each app's own seam. They are the only test files the package ships: packages/kit/package.json's
- * `files` re-includes exactly these (tests/tooling/pack-and-consume.test.ts holds the two lists equal), and
- * `shippedFileProblems` checks the tarball itself. P5 replaces them with `@sssb/kit/testing`.
+ * What the conformance suite an app runs (`@sssb/kit/testing`, ADR-0014 P5) needs from the tarball besides its
+ * modules: the registry of its checks, which `sssb doctor` reads without loading the kit, and the seam specifiers
+ * its `seam-map` check resolves. The suite's modules are source and ship with `src`; a test file never ships.
  */
-export const CONFORMANCE_SUITES = [
-    'src/i18n/namespaces.test.ts',
-    'src/i18n/messages-parity.test.ts',
-    'src/db/rls-pglite.test.ts',
-    'src/db/migrate.test.ts',
-    'src/server-lib/demo-presets-seam.test.ts',
-]
+export const CONFORMANCE_DATA = ['src/testing/checks.json', 'src/testing/seam-specifiers.json']
 
 /**
- * What the packed framework must not ship: a test or story file other than the conformance suites, or
- * anything of the test fixture (ADR-0014 part 2, "a `files` allowlist"). Returns the problems; empty means
- * the tarball holds only what an adopter needs.
+ * What the packed framework must not ship: a test or story file, or anything of the test fixture (ADR-0014 part 2,
+ * "a `files` allowlist"); and what it must: the conformance suite's data (`CONFORMANCE_DATA`). Returns the problems;
+ * empty means the tarball holds only what an adopter needs, and that.
  * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
  */
 export function shippedFileProblems(files) {
     const problems = []
-    const suites = new Set(CONFORMANCE_SUITES)
     for (const file of files) {
         if (file.startsWith('test-fixture/')) problems.push(`${file}: the test fixture is shipped`)
-        else if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file) && !suites.has(file))
-            problems.push(`${file}: a test or story file that is not a conformance suite is shipped`)
+        else if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test or story file is shipped`)
     }
-    for (const suite of CONFORMANCE_SUITES)
-        if (!files.includes(suite)) problems.push(`${suite}: a conformance suite is not shipped`)
+    for (const file of CONFORMANCE_DATA)
+        if (!files.includes(file)) problems.push(`${file}: the conformance suite's data is not shipped`)
     return problems
 }
 
@@ -176,46 +167,67 @@ export function tscErrors(output) {
 }
 
 /**
- * Each app's conformance suites must have RUN, from that app's own copy of the package, with at least
- * one passing test and no failure; so must each test file of the app's own that the job relies on
- * (`requiredByApp`, absolute paths). A file that was filtered out, skipped whole or never collected is a
- * problem, so the gate cannot pass vacuously: Vitest exits 0 when some OTHER project ran tests.
- * @param {{ testResults?: { name: string, status?: string, assertionResults?: { status: string }[] }[] }} report Vitest's JSON report
- * @param {Record<string, string[]>} kitDirsByApp each app's spellings of its own @sssb/kit directory (symlinked and real)
+ * The full name of every test the conformance suite registers for an app with no opt-outs, as `vitest list` and the
+ * suite itself spell it (`[sssb:<id>] <title> > <test>`), from the packed `@sssb/kit/testing/checks.json`.
+ * @param {{ checks: { id: string, runner: string, title: string, tests: string[] }[] }} registry
+ */
+export function expectedConformanceTests(registry) {
+    return registry.checks
+        .filter((check) => check.runner === 'unit')
+        .flatMap((check) => check.tests.map((test) => `[sssb:${check.id}] ${check.title} > ${test}`))
+}
+
+/**
+ * Each app's conformance file (`src/sssb.conformance.test.ts`, which calls `@sssb/kit/testing`) must have RUN and
+ * passed EVERY check the suite registers, by name (`expectedTests`), with the file itself not failed (the suite's
+ * skip guard fails the file); so must each test file of the app's own that the job relies on (`requiredByApp`,
+ * absolute paths), with at least one passing test and no failure. A file that was filtered out, skipped whole or never
+ * collected is a problem, so the gate cannot pass vacuously: Vitest exits 0 when some OTHER project ran tests.
+ * @param {{ testResults?: { name: string, status?: string, assertionResults?: { status: string, title?: string, ancestorTitles?: string[] }[] }[] }} report Vitest's JSON report
+ * @param {Record<string, string>} conformanceFileByApp each app's conformance file, absolute
+ * @param {readonly string[]} expectedTests `expectedConformanceTests` of the packed registry
  * @param {Record<string, string[]>} [requiredByApp]
  */
-export function conformanceProblems(report, kitDirsByApp, requiredByApp = {}) {
+export function conformanceProblems(report, conformanceFileByApp, expectedTests, requiredByApp = {}) {
     /** @type {string[]} */
     const problems = []
     const results = report.testResults ?? []
     const norm = (/** @type {string} */ file) => file.replaceAll('\\', '/')
-    /**
-     * @param {string} label
-     * @param {string[]} spellings
-     */
-    const check = (label, spellings) => {
-        const files = spellings.map(norm)
-        const result = results.find((r) => files.includes(norm(r.name)))
+    /** @param {string} file */
+    const resultFor = (file) => results.find((r) => norm(r.name) === norm(file))
+    for (const [app, file] of Object.entries(conformanceFileByApp)) {
+        const result = resultFor(file)
         if (!result) {
-            problems.push(`${label} did not run`)
-            return
+            problems.push(`${app}: ${path.basename(file)} did not run`)
+            continue
         }
-        const statuses = (result.assertionResults ?? []).map((a) => a.status)
-        const passed = statuses.filter((s) => s === 'passed').length
-        const failed = statuses.filter((s) => s === 'failed').length
-        if (failed > 0) problems.push(`${label} has ${failed} failing test(s)`)
-        if (passed === 0) problems.push(`${label} ran no passing test (${statuses.join(', ') || 'none collected'})`)
-    }
-    for (const [app, kitDirs] of Object.entries(kitDirsByApp)) {
-        for (const suite of CONFORMANCE_SUITES) {
-            check(
-                `${app}: ${suite} from the app's own @sssb/kit`,
-                kitDirs.map((dir) => path.join(dir, suite)),
-            )
+        if (result.status === 'failed') problems.push(`${app}: ${path.basename(file)} failed`)
+        /** @type {Map<string, string>} */
+        const statusByName = new Map(
+            (result.assertionResults ?? []).map((a) => [
+                [...(a.ancestorTitles ?? []), a.title ?? ''].join(' > '),
+                a.status,
+            ]),
+        )
+        for (const name of expectedTests) {
+            const status = statusByName.get(name)
+            if (status !== 'passed') problems.push(`${app}: ${name} ${status ?? 'did not run'}`)
         }
     }
     for (const [app, files] of Object.entries(requiredByApp)) {
-        for (const file of files) check(`${app}: ${path.basename(file)}`, [file])
+        for (const file of files) {
+            const label = `${app}: ${path.basename(file)}`
+            const result = resultFor(file)
+            if (!result) {
+                problems.push(`${label} did not run`)
+                continue
+            }
+            const statuses = (result.assertionResults ?? []).map((a) => a.status)
+            const passed = statuses.filter((s) => s === 'passed').length
+            const failed = statuses.filter((s) => s === 'failed').length
+            if (failed > 0) problems.push(`${label} has ${failed} failing test(s)`)
+            if (passed === 0) problems.push(`${label} ran no passing test (${statuses.join(', ') || 'none collected'})`)
+        }
     }
     return problems
 }
@@ -225,8 +237,8 @@ export function conformanceProblems(report, kitDirsByApp, requiredByApp = {}) {
  * (node_modules/.pnpm/node_modules) lends every package in the graph to every other, so an undeclared
  * import resolves in the consumer and the job stays green; an adopter whose graph lacks the package, or
  * who turns hoisting off, gets "cannot find module" inside node_modules/@sssb/kit. This reads the
- * source instead of trusting resolution. Test and story files are not the shipped surface, and are skipped,
- * bar the conformance suites, which ship. The specifiers come from `specifiersOf`, which the job backs
+ * source instead of trusting resolution. Test and story files are not the shipped surface, and are skipped
+ * (the conformance suite at `@sssb/kit/testing` is source, and is read). The specifiers come from `specifiersOf`, which the job backs
  * with TypeScript's own `preProcessFile`, so comments, strings and template literals cannot hide an
  * import or invent one.
  * @param {{ file: string, text: string }[]} sources
@@ -246,7 +258,7 @@ export function undeclaredImports(sources, manifest, builtins, specifiersOf) {
     /** @type {Map<string, string[]>} */
     const found = new Map()
     for (const { file, text } of sources) {
-        if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file) && !CONFORMANCE_SUITES.includes(file)) continue
+        if (/\.(test|stories)\.[cm]?[jt]sx?$/.test(file)) continue
         for (const spec of specifiersOf(text)) {
             if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:')) continue
             const parts = spec.split('/')

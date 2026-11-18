@@ -11,7 +11,7 @@
 //
 // The workspace, laid out like the first adopter's (safeinsights/pages):
 //   apps/console   the full verify: typecheck at the ES2022 floor and with the strict-flag set on, unit
-//                  tests with the framework's seam-conformance suites run from the tarball, the
+//                  tests with the conformance suite (@sssb/kit/testing) run from the tarball, the
 //                  migrator bundle, `next build`, e2e, the static demo, its size and its e2e. It owns an
 //                  adapter (src/adapters/real/), and a seam module that imports through its `@/` alias.
 //   apps/ledger    a second app with a different seam (its own slug and an extra migration, imported
@@ -45,7 +45,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-    CONFORMANCE_SUITES,
+    expectedConformanceTests,
     STRICT_FLAGS,
     conformanceProblems,
     kitIntegrities,
@@ -684,19 +684,17 @@ console.log(WEBHOOK_SIGNATURE_HEADER)
     )
 
     // Vitest from the workspace root, as Pages runs it: a project per app, each with only its own `@`
-    // alias, and nothing pointing the seam anywhere.
-    applyWorkaround('conformance-by-include')
+    // alias, and nothing pointing the seam anywhere. The framework's conformance suite is reached the way
+    // an adopter reaches it: each app's own src/sssb.conformance.test.ts (copied with the starter) calls
+    // @sssb/kit/testing, so the app's ordinary include runs it, and Vitest's default exclude, node_modules
+    // and all, stays in force (ADR-0014 part 3).
     write(
         path.join(WS, 'vitest.config.ts'),
         `import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
-
-// The framework's seam-conformance suites, run from each app's own copy of the package. Vitest's default
-// exclude drops node_modules, so each app project sets its own (ADR-0014 part 3; P5 replaces this).
-const CONFORMANCE = ${JSON.stringify(CONFORMANCE_SUITES.map((suite) => `node_modules/@sssb/kit/${suite}`))}
 
 const app = (name: string) => ({
     plugins: [react()],
@@ -705,8 +703,8 @@ const app = (name: string) => ({
         name,
         root: at(\`./apps/\${name}\`),
         environment: 'happy-dom',
-        include: ['src/**/*.test.{ts,tsx}', ...CONFORMANCE],
-        exclude: ['**/.next/**', '**/dist-demo/**', 'node_modules/@sssb/kit/node_modules/**'],
+        include: ['src/**/*.test.{ts,tsx}'],
+        exclude: [...configDefaults.exclude, '**/.next/**', '**/dist-demo/**'],
         setupFiles: [at('./vitest.setup.ts')],
         testTimeout: 20_000,
     },
@@ -808,7 +806,7 @@ function checkDeclaredImports() {
     if (shippedProblems.length > 0)
         fail(`the packed @sssb/kit ships what its files allowlist should keep out:\n  ${shippedProblems.join('\n  ')}`)
     console.log(
-        `the packed @sssb/kit ships ${shipped.length} files, of which the tests are the ${CONFORMANCE_SUITES.length} conformance suites`,
+        `the packed @sssb/kit ships ${shipped.length} files, no test among them, and the conformance suite's data`,
     )
     const sources = filesUnder(path.join(kit, 'src'))
         .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
@@ -886,10 +884,14 @@ function unitTests() {
     run('pnpm', ['exec', 'vitest', 'run', '--reporter=default', '--reporter=json', `--outputFile.json=${report}`], {
         cwd: WS,
     })
-    /** @type {Record<string, string[]>} */
-    const kitDirs = {}
+    // Each app's conformance file, held to every check the PACKED registry names: the suite as an adopter gets it.
+    /** @type {Record<string, string>} */
+    const conformanceFiles = {}
     for (const app of ['console', 'ledger'])
-        kitDirs[app] = [path.join(appDir(app), 'node_modules/@sssb/kit'), kitOf(appDir(app)).kit]
+        conformanceFiles[app] = path.join(appDir(app), 'src/sssb.conformance.test.ts')
+    const expected = expectedConformanceTests(
+        readJson(path.join(kitOf(appDir('console')).kit, 'src/testing/checks.json')),
+    )
     // The app tests this job's claims rest on must have run too, not merely the suite as a whole.
     const required = {
         console: ['src/seam-identity.test.ts', 'src/adapters/fake/object-store.test.ts'].map((f) =>
@@ -897,10 +899,10 @@ function unitTests() {
         ),
         ledger: ['src/seam-identity.test.ts'].map((f) => path.join(appDir('ledger'), f)),
     }
-    const problems = conformanceProblems(readJson(report), kitDirs, required)
+    const problems = conformanceProblems(readJson(report), conformanceFiles, expected, required)
     if (problems.length > 0)
-        fail(`the seam-conformance suites did not all run from the tarball:\n  ${problems.join('\n  ')}`)
-    console.log(`seam-conformance: ${CONFORMANCE_SUITES.length} suites ran and passed from each app's own @sssb/kit`)
+        fail(`the conformance suite did not run and pass in full from the tarball:\n  ${problems.join('\n  ')}`)
+    console.log(`conformance: all ${expected.length} checks' tests ran and passed in each app, from @sssb/kit/testing`)
 }
 
 function migratorBundles() {
@@ -984,6 +986,32 @@ function negativeFixture() {
     )
 }
 
+/**
+ * `@sssb/kit/testing/e2e` is the one entry Node loads directly (Playwright does not transform `node_modules`), so
+ * it ships compiled and seam-free (ADR-0014 part 2). Plain Node, no tsx, loads it from the package that has NO
+ * seam, and the verifier it exports checks a signature.
+ */
+function e2eEntryUnderNode() {
+    const script = [
+        "const e2e = await import('@sssb/kit/testing/e2e')",
+        "const result = e2e.verifyWebhookSignature('{}', 't=1,v1=00', 'k', { toleranceMs: e2e.WEBHOOK_REPLAY_TOLERANCE_MS, now: new Date(1000) })",
+        "if (result.ok || result.reason !== 'signature') throw new Error('unexpected verdict ' + JSON.stringify(result))",
+        "console.log(import.meta.resolve('@sssb/kit/testing/e2e'))",
+    ].join('\n')
+    const result = run('node', ['--input-type=module', '-e', script], {
+        cwd: path.join(WS, 'packages/seamless'),
+        capture: true,
+        allowFailure: true,
+    })
+    if (result.status !== 0) {
+        fail(`plain Node could not load @sssb/kit/testing/e2e without a seam:\n${result.stdout}\n${result.stderr}`)
+    }
+    if (!/\/dist\/testing\/e2e\.js$/.test(result.stdout.trim())) {
+        fail(`@sssb/kit/testing/e2e resolved to ${result.stdout.trim()}, not the compiled dist/testing/e2e.js`)
+    }
+    console.log(`plain Node, no seam: @sssb/kit/testing/e2e -> ${result.stdout.trim()}`)
+}
+
 // ---- the run --------------------------------------------------------------------------------------
 
 const started = Date.now()
@@ -1042,9 +1070,10 @@ step('layout: lockfile, seam links, one instance per app', checkLayout)
 step('the packed package ships and imports only what it declares', checkDeclaredImports)
 step('typecheck at the ES2022 floor', typecheck)
 step('typecheck with the strict-flag set', typecheckStrict)
-step('unit tests and seam conformance, from the workspace root', unitTests)
+step('unit tests and the conformance suite, from the workspace root', unitTests)
 step('migrator bundles, with no alias and no tsconfig', migratorBundles)
 step('negative fixture: an importer with no seam', negativeFixture)
+step('the compiled e2e entry loads under plain Node, with no seam', e2eEntryUnderNode)
 if (SKIP_BUILD_AND_E2E) {
     console.log('\n--skip-build-and-e2e: next build, e2e and the static demo were NOT run')
 } else {

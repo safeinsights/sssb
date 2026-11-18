@@ -61,10 +61,6 @@ export const WORKAROUNDS = {
         removedBy: 'P5',
         what: "each app's tests/contract is deleted from the copy: the real-Postgres contract test runs through this repo's tests/support harness (P5: the conformance suite's contract runner)",
     },
-    'conformance-by-include': {
-        removedBy: 'P5',
-        what: "the framework's seam-conformance suites are reached by including their test files under node_modules, with Vitest's default node_modules exclude dropped for that (P5: src/sssb.conformance.test.ts calls @sssb/kit/testing)",
-    },
     'allow-builds-copied': {
         removedBy: 'P12',
         what: "the consumer's pnpm-workspace.yaml takes allowBuilds from this repo's, so a build script a kit dependency newly needs is approved here before an adopter would have to (P12: @sssb/create writes allowBuilds)",

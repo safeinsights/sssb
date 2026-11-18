@@ -6,6 +6,7 @@ import { contractApps } from '../support/contract-apps'
 import { contractDatabaseName } from '../support/contract-postgres'
 import {
     appNames,
+    callsConformanceSuite,
     callsDefineContractSuite,
     citedCutoverRows,
     cutoverRows,
@@ -23,7 +24,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
  * ever passed is not what the first block rests on.
  */
 describe('the apps in this repo', () => {
-    it('each carries config/params.ts of one shape, citing cutover rows that exist, and a contract suite for its migrations', async () => {
+    it('each carries config/params.ts of one shape, citing cutover rows that exist, a contract suite for its migrations, and runs the conformance suite', async () => {
         const apps = await Promise.all(appNames(REPO_ROOT).map((name) => readAppFacts(REPO_ROOT, name)))
         const checklist = readFileSync(path.join(REPO_ROOT, 'docs', 'cutover-checklist.md'), 'utf8')
         expect(apps.length).toBeGreaterThan(0)
@@ -73,6 +74,7 @@ describe('scaffoldProblems fails when an app is missing what it must carry', () 
             hasMigrations: true,
             contractSuites: ['rls-contract.test.ts'],
             contractDatabase: `${name}_contract`,
+            runsConformanceSuite: true,
             ...over,
         }
     }
@@ -111,6 +113,12 @@ describe('scaffoldProblems fails when an app is missing what it must carry', () 
         ])
         expect(scaffoldProblems([app({ contractSuites: [], hasMigrations: false })], rows)).toEqual([])
     })
+
+    it('flags an app that does not run the conformance suite from its own tree', () => {
+        expect(scaffoldProblems([app({ runsConformanceSuite: false })], rows)).toEqual([
+            expect.stringMatching(/apps\/one: no src\/sssb\.conformance\.test\.ts calling conformanceSuite/),
+        ])
+    })
 })
 
 describe('scaffoldProblems fails when two suites would share a database, or take SSSB’s', () => {
@@ -122,6 +130,7 @@ describe('scaffoldProblems fails when two suites would share a database, or take
         hasMigrations: false,
         contractSuites: [],
         contractDatabase,
+        runsConformanceSuite: true,
     })
 
     it('flags two apps whose slugs fold to one database name, once', () => {
@@ -152,6 +161,11 @@ describe('the helpers behind it', () => {
             callsDefineContractSuite('// defineContractSuite(...) is what it calls\n/* defineContractSuite( */'),
         ).toBe(false)
         expect(callsDefineContractSuite('/**\n * defineContractSuite(\n */\nexport {}')).toBe(false)
+    })
+
+    it('callsConformanceSuite counts a call and not a mention in a comment', () => {
+        expect(callsConformanceSuite("conformanceSuite({ appDir: '.', optOut: {} })")).toBe(true)
+        expect(callsConformanceSuite('// conformanceSuite({ appDir })\nexport {}')).toBe(false)
     })
 
     it('leafPaths reads every leaf of nested params, sorted', () => {

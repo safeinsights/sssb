@@ -30,8 +30,8 @@ terminal.
 - **`tickOnce` reads the secret from `.data`**, the same file the server writes, so the in-process ticker needs no new
   secret path. It could call `runScheduledTick` directly instead of over HTTP; do not, unless the marker and the guard
   story below are kept: going through the route is what keeps "the route is the only door" true.
-- **Mutating route, so it must call `authorize(...)`** (the build-time scan in
-  `packages/kit/src/authz/authorized-mutations.test.ts`); gate it like the other Simulator routes, and 404 outside a
+- **Mutating route, so it must call `authorize(...)`** (the build-time scan, the conformance suite's
+  `authz-mutations` check in `packages/kit/src/authz/app-exemptions.ts`); gate it like the other Simulator routes, and 404 outside a
   simulated world, which is how `apps/showcase/src/app/api/simulator/flags/route.ts` already refuses real mode.
 - **Policy stays the control's, not the module's.** Off by default (nothing starts it until someone clicks). Never under
   e2e: the e2e suites click through the Simulator, so the control must be absent or inert when the app is built with

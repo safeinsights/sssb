@@ -300,10 +300,13 @@ it. Nothing in that fixture is deletable by adoption, and its vocabulary is deli
 apps' — so a framework test that reacquires a dependency on YOUR world fails loudly instead of passing
 by coincidence. `pnpm verify` is green on a freshly ejected repo, end to end.
 
-The one thing that DOES stay app-shaped is the seam-conformance set — the i18n partition/parity tests,
-the pglite RLS suite and the demo-presets check — which keep running under every app's own vitest
-project, against your catalog, your tables and your presets. That is what stops the fixture becoming the only world the framework is ever
-proved against.
+The one thing that DOES stay app-shaped is the conformance suite, `@sssb/kit/testing` — the authorization scan of
+your route tree, the i18n partition/parity checks, the pglite RLS suite, migration order, the demo-presets check and
+the seam map — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
+`conformanceSuite({ appDir, optOut })`, against your catalog, your tables, your routes and your presets. Leaving a
+check out takes a named opt-out with a reason (the check ids are in `@sssb/kit/testing/checks.json`); a typo in one
+fails the run, and so does a check that is skipped without one. That is what stops the fixture becoming the only world
+the framework is ever proved against.
 
 ## Layout
 
@@ -327,10 +330,14 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 `packages/kit/package.json`'s `exports` map is the contract: it lists the 132 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 48 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 58 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
-`pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. If you find yourself
+`pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
+less: Node loads a spec without your seam and without compiling anything under `node_modules`, so a spec reaches
+SSSB only through `@sssb/kit/testing/e2e`, which ships compiled and seam-free (today, the webhook signature
+verifier). A spec that needs one of your app's constants reads it from a module that imports nothing from SSSB
+but types, as the showcase's pagination spec reads `apps/showcase/src/domain/ticket-page-size.ts`. If you find yourself
 reaching for an internal, that is a signal the capability needs a seam, not a wider fence; if a module
 really is part of the contract and merely has no importer yet, that is an SSSB change: add the line upstream
 (ADR-0013, "Sending an SSSB fix back upstream") and take it back by merge, because in your fork the map is a
@@ -429,9 +436,8 @@ there.
 **How a second app keeps the seam honest**: `apps/starter/tsconfig.json` includes the whole of
 `packages/kit/src` (minus tests and stories), so `pnpm typecheck` compiles the ENTIRE framework
 against the starter's registrations — a framework module that assumed the showcase's tables or
-vocabulary fails there and nowhere else. `vitest.config.ts` then runs SSSB's seam-conformance tests
-(the i18n partition/parity pair, the composed pglite RLS suite and the demo-presets check) a second
-time under the starter's aliases. Each was watched failing before being trusted.
+vocabulary fails there and nowhere else. `apps/starter/src/sssb.conformance.test.ts` then runs SSSB's
+conformance suite a second time, under the starter's aliases. Each check was watched failing before being trusted.
 
 ### The scheduled tick
 
@@ -443,8 +449,8 @@ the showcase carries the same route over the same function.
 
 - **Who may call it** is a machine, not a person. The route is guarded by the shared webhook secret
   (`Authorization: Bearer …`, compared in constant time; anything else is an opaque 401 before the tick runs). The
-  authorization scan (`authorized-mutations.test.ts`) exempts a `webhooks/` route only if its file calls
-  `withWebhookSecret(`, so if you edit the route keep that call, and keep the logic in SSSB's function.
+  authorization scan (the conformance suite's `authz-mutations` check) exempts a `webhooks/` route only if its handler
+  is the `withWebhookSecret(…)` call, so if you edit the route keep that wrapper, and keep the logic in SSSB's function.
 - **In a deployment** nothing calls it until you set up the scheduler: that is the `scheduled-tick` row of the
   [cutover checklist](cutover-checklist.md).
 - **In `pnpm dev`** nothing ticks it unless you ask. The dev server runs no scheduler, and the starter's server app has

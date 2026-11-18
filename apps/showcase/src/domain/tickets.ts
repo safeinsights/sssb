@@ -33,13 +33,8 @@ export function isTicketStatus(value: string): value is TicketStatus {
  */
 export const TICKET_SLA_HOURS = 48
 
-/**
- * How many tickets the queue shows at once, and how many each "load more" adds. An APP decision, not
- * a framework one: the framework caps a page (`KEYSET_MAX_LIMIT`) but has no opinion on what reads
- * well on a support desk. Deliberately small so the seeded demo actually paginates in front of you —
- * a page size no seeded world ever reaches would be a pagination feature nobody can see working.
- */
-export const TICKET_PAGE_SIZE = 5
+/** How many tickets a page holds: ./ticket-page-size.ts, which a Playwright spec reads without the kit. */
+export { TICKET_PAGE_SIZE } from './ticket-page-size'
 
 /** True when an unresolved ticket has been open longer than the desk's SLA. Resolved is never late. */
 export function isSlaBreached(status: string, createdAtIso: string, nowMs: number): boolean {

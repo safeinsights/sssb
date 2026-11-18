@@ -36,7 +36,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   tests are the named exceptions). **The framework must compile under `packages/kit/tsconfig.strict.json`**
   (the strict-flag set at the ES2022 lib floor; `pnpm typecheck` runs it), because adopters compile the shipped
   `.ts` under their own options. **`@sssb/kit`'s `files` allowlist in its `package.json` decides what ships**
-  (tests and stories out, the five seam-conformance tests in); a new file that must ship, or a new import of a
+  (tests and stories out; the conformance suite ships as source, `@sssb/kit/testing`); a new file that must ship, or a new import of a
   package the source needs, goes in the manifest — pack and consume checks the tarball. A package the app must
   share one copy of is a peer: `react`, `next`, `next-intl`, `@mantine/core`, `kysely` (the app's migrations get
   the framework's `Kysely`), the compiler and the global types an adopter's program shares (`typescript`,
@@ -55,7 +55,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   `pnpm init-app --eject-showcase` with a red gate.
-- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 132 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 136 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it);
   the rest of the package is internal and reachable only by relative import inside it. Lint-enforced
   (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
@@ -125,18 +125,21 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   migrations are numbered ≥1001; framework migrations 0001–0999 live in
   `packages/kit/src/db/migrations` — ADR-0012).
 - **Every mutating route handler (POST/PUT/PATCH/DELETE) must call `authorize(...)`**
-  (`@sssb/kit/authz/authorize.ts`) — a build-time scan
-  (`packages/kit/src/authz/authorized-mutations.test.ts`) walks every `route.{ts,tsx,js,jsx,mjs}` under
-  EVERY app's whole `apps/*/src/app` tree, not only `api/` (Next serves a `route.ts` from anywhere
-  there), **plus the framework's own reference tree, `packages/kit/test-fixture/api`**. It judges EACH
+  (`@sssb/kit/authz/authorize.ts`) — a build-time scan walks every `route.{ts,tsx,js,jsx,mjs}` under the app's
+  whole `apps/<app>/src/app` tree, not only `api/` (Next serves a `route.ts` from anywhere there): the conformance
+  suite's `authz-mutations` check, which each app runs from its own `apps/<app>/src/sssb.conformance.test.ts`
+  (`packages/kit/src/authz/app-exemptions.ts`). The framework's own reference tree, `packages/kit/test-fixture/api`,
+  is scanned by `packages/kit/src/authz/authorized-mutations.test.ts`. The scan judges EACH
   exported mutating handler, read with the TypeScript parser (`packages/kit/src/authz/route-scan.ts`), never
   the file's text: the handler must reach the `authorize` imported from `@sssb/kit/authz/authorize` on its own path,
-  or its route must have a justified entry in that test's exemption map and the handler must pass that entry's
+  or its route must have a justified exemption and the handler must pass that entry's
   gate. A string, a comment, another verb, a dead branch, an uncalled function or a helper in another module
   does not count, and a handler the scan cannot follow fails. Exemption keys are paths relative to each app's
   `apps/<app>/src/app/api`, so a mutating route OUTSIDE `api/` can match no exemption and must call
-  `authorize(...)` itself. The exemption map's staleness is measured against the FIXTURE tree, so a new
-  exemption needs a file there to demonstrate it; the fixture's routes are scanned, never served. **Every
+  `authorize(...)` itself. The FRAMEWORK's exemption map is `packages/kit/src/authz/route-policy.ts`, and its
+  staleness is measured against the FIXTURE tree, so a new framework exemption needs a file there to demonstrate it;
+  the fixture's routes are scanned, never served. An app names its own in `apps/<app>/authz-exemptions.mjs`
+  (`{ files, prefixes }`), measured against the app's own tree, and an entry that overlaps a framework one fails. **Every
   exemption MUST carry a `mustMatch`**, a gate checked on each verb (the handler IS the guard's call, reaches a
   port call, or opens with the simulated-mode 404), every name in it a value import kept under its exported name,
   so a local look-alike or an alias is not the gate — entries are matched by relative path in every root, so a
@@ -151,9 +154,12 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - Unit tests are colocated (`*.test.ts(x)`), run by Vitest — `vitest.config.ts` has ONE PROJECT PER APP
   because `@sssb/app-config/*` is a bare specifier and a single alias can only name one app, PLUS a `kit`
   project that runs the packages' suites against the framework's own seam
-  (**`packages/kit/test-fixture`** — see below). SSSB's seam-conformance tests (i18n partition/parity,
-  the pglite RLS suite, the demo-presets check, the migration numbering and upgrade check) run under every app project as well, and that is what proves the seam against
-  real apps rather than only against the fixture. E2E
+  (**`packages/kit/test-fixture`** — see below). SSSB's **conformance suite** (`@sssb/kit/testing`: the
+  authorization scan, i18n partition/parity, the pglite RLS suite, migration order, the demo-presets check, the seam
+  map; its checks and fixed test names are `packages/kit/src/testing/checks.json`) runs in every app from the app's
+  own `apps/<app>/src/sssb.conformance.test.ts` (`tests/tooling/app-scaffold.test.ts` fails an app without one), and in the
+  `kit` project against the fixture; that is what proves the seam against real apps rather than only against the
+  fixture. A check is left out only by a named opt-out with a reason, and the suite fails a run that skips one. E2E
   lives in `apps/*/tests/e2e/` (showcase on :3000, starter on :3100). In a LINKED WORKTREE both ports
   are derived per checkout by `scripts/ports.mjs`, so parallel agent sessions don't adopt each other's
   dev server; `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last

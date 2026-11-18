@@ -3,8 +3,9 @@ import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import {
+    CONFORMANCE_DATA,
     conformanceProblems,
-    CONFORMANCE_SUITES,
+    expectedConformanceTests,
     kitIntegrities,
     lockfileMoves,
     lockfileProblems,
@@ -144,52 +145,71 @@ describe('tscErrors', () => {
 })
 
 describe('conformanceProblems', () => {
-    const kitDirs = {
-        console: ['/ws/apps/console/node_modules/@sssb/kit', '/ws/node_modules/.pnpm/kit-a/node_modules/@sssb/kit'],
+    const registry = {
+        checks: [
+            { id: 'i18n-parity', runner: 'unit', title: 'parity', tests: ['framework', 'merged'] },
+            { id: 'seam-map', runner: 'unit', title: 'seam', tests: ['resolves'] },
+            { id: 'contract-rls', runner: 'contract', title: 'rls', tests: ['proofs'] },
+        ],
     }
-    const ran = (dir: string, statuses: string[]) =>
-        CONFORMANCE_SUITES.map((suite) => ({
-            name: `${dir}/${suite}`,
-            assertionResults: statuses.map((status) => ({ status })),
-        }))
+    const expected = expectedConformanceTests(registry)
+    const files = { console: '/ws/apps/console/src/sssb.conformance.test.ts' }
+    /** The conformance file's result, each expected test with the given status unless overridden by name. */
+    const ran = (status: string, over: Record<string, string> = {}, fileStatus = 'passed') => [
+        {
+            name: files.console,
+            status: fileStatus,
+            assertionResults: expected.map((name) => {
+                const [describe, title] = name.split(' > ') as [string, string]
+                return { status: over[name] ?? status, ancestorTitles: [describe], title }
+            }),
+        },
+    ]
 
-    it('accepts every suite run from the app’s own copy, by either spelling of its path', () => {
-        expect(conformanceProblems({ testResults: ran(kitDirs.console[1], ['passed']) }, kitDirs)).toEqual([])
-        expect(conformanceProblems({ testResults: ran(kitDirs.console[0], ['passed']) }, kitDirs)).toEqual([])
+    it('names every unit check test, and no contract one', () => {
+        expect(expected).toEqual([
+            '[sssb:i18n-parity] parity > framework',
+            '[sssb:i18n-parity] parity > merged',
+            '[sssb:seam-map] seam > resolves',
+        ])
     })
 
-    it("fails a suite that ran only from ANOTHER app's copy", () => {
-        const problems = conformanceProblems(
-            { testResults: ran('/ws/node_modules/.pnpm/kit-b/node_modules/@sssb/kit', ['passed']) },
-            kitDirs,
-        )
-        expect(problems).toHaveLength(CONFORMANCE_SUITES.length)
+    it("accepts an app's conformance file that ran and passed every check", () => {
+        expect(conformanceProblems({ testResults: ran('passed') }, files, expected)).toEqual([])
     })
 
-    it('fails a suite that was skipped whole, collected nothing, or failed', () => {
-        expect(conformanceProblems({ testResults: ran(kitDirs.console[1], ['skipped']) }, kitDirs)).toHaveLength(
-            CONFORMANCE_SUITES.length,
-        )
-        expect(conformanceProblems({ testResults: ran(kitDirs.console[1], []) }, kitDirs)).toHaveLength(
-            CONFORMANCE_SUITES.length,
-        )
+    it('fails a check that was skipped, failed or never registered, by name', () => {
         expect(
-            conformanceProblems({ testResults: ran(kitDirs.console[1], ['passed', 'failed']) }, kitDirs),
-        ).toHaveLength(CONFORMANCE_SUITES.length)
+            conformanceProblems(
+                { testResults: ran('passed', { '[sssb:i18n-parity] parity > merged': 'skipped' }) },
+                files,
+                expected,
+            ),
+        ).toEqual(['console: [sssb:i18n-parity] parity > merged skipped'])
+        const missing = ran('passed')
+        missing[0]!.assertionResults.pop()
+        expect(conformanceProblems({ testResults: missing }, files, expected)).toEqual([
+            'console: [sssb:seam-map] seam > resolves did not run',
+        ])
     })
 
-    it("fails an app's own required test that did not run, even when the kit suites all passed", () => {
+    it("fails a file the suite's skip guard failed, even when every test it lists passed", () => {
+        expect(conformanceProblems({ testResults: ran('passed', {}, 'failed') }, files, expected)).toEqual([
+            'console: sssb.conformance.test.ts failed',
+        ])
+    })
+
+    it("fails an app's conformance file that did not run, and an empty report", () => {
+        expect(conformanceProblems({}, files, expected)).toEqual(['console: sssb.conformance.test.ts did not run'])
+    })
+
+    it("fails an app's own required test that did not run, even when the conformance suite passed", () => {
         const own = '/ws/apps/console/src/seam-identity.test.ts'
-        const kitRan = ran(kitDirs.console[1], ['passed'])
-        expect(conformanceProblems({ testResults: kitRan }, kitDirs, { console: [own] })).toEqual([
+        expect(conformanceProblems({ testResults: ran('passed') }, files, expected, { console: [own] })).toEqual([
             'console: seam-identity.test.ts did not run',
         ])
-        const withOwn = [...kitRan, { name: own, assertionResults: [{ status: 'passed' }] }]
-        expect(conformanceProblems({ testResults: withOwn }, kitDirs, { console: [own] })).toEqual([])
-    })
-
-    it('fails an empty report', () => {
-        expect(conformanceProblems({}, kitDirs)).toHaveLength(CONFORMANCE_SUITES.length)
+        const withOwn = [...ran('passed'), { name: own, status: 'passed', assertionResults: [{ status: 'passed' }] }]
+        expect(conformanceProblems({ testResults: withOwn }, files, expected, { console: [own] })).toEqual([])
     })
 })
 
@@ -207,7 +227,8 @@ describe('the workaround register', () => {
 
     it('holds no workaround a step that has landed was to remove', () => {
         // P3 removed its four (types-pg, undeclared-typescript, demo-presets-seam-skipped,
-        // strict-flags-kit-baseline). Raise this as each later step lands.
+        // strict-flags-kit-baseline). P5 removed conformance-by-include; contract-test-dropped is P5's too, and
+        // goes with the contract runner. Raise this as each later step lands.
         const landed = new Set(['P1', 'P1b', 'P2', 'P3'])
         for (const [id, workaround] of Object.entries(WORKAROUNDS))
             expect(landed.has(workaround.removedBy), id).toBe(false)
@@ -215,40 +236,41 @@ describe('the workaround register', () => {
 })
 
 describe('shippedFileProblems', () => {
-    const shipped = ['package.json', 'LICENSE', 'src/theme.ts', 'src/testing/tmp-dir.ts', ...CONFORMANCE_SUITES]
+    const shipped = ['package.json', 'LICENSE', 'src/theme.ts', 'src/testing/tmp-dir.ts', ...CONFORMANCE_DATA]
 
-    it('accepts source plus exactly the conformance suites', () => {
+    it("accepts source plus the conformance suite's data", () => {
         expect(shippedFileProblems(shipped)).toEqual([])
     })
 
-    it('refuses any other test or story file, and anything of the fixture', () => {
+    it('refuses every test or story file, and anything of the fixture', () => {
         expect(
             shippedFileProblems([
                 ...shipped,
                 'src/core/roles.test.ts',
+                'src/i18n/namespaces.test.ts',
                 'src/components/app-header.stories.tsx',
                 'src/demo-static/world-invite.test.tsx',
                 'src/adapters/real/db.contract.test.ts',
                 'test-fixture/app-config/seed.ts',
             ]),
-        ).toHaveLength(5)
+        ).toHaveLength(6)
     })
 
-    it('refuses a tarball missing a conformance suite', () => {
-        expect(shippedFileProblems(shipped.filter((file) => file !== CONFORMANCE_SUITES[0]))).toEqual([
-            `${CONFORMANCE_SUITES[0]}: a conformance suite is not shipped`,
+    it("refuses a tarball missing the conformance suite's data", () => {
+        expect(shippedFileProblems(shipped.filter((file) => file !== CONFORMANCE_DATA[0]))).toEqual([
+            `${CONFORMANCE_DATA[0]}: the conformance suite's data is not shipped`,
         ])
     })
 
-    it("matches packages/kit/package.json's files allowlist, which re-includes exactly the suites", () => {
+    it("matches packages/kit/package.json's files allowlist, which re-includes no source file", () => {
         const manifest = JSON.parse(
             readFileSync(path.resolve(import.meta.dirname, '../../packages/kit/package.json'), 'utf8'),
         ) as { files: string[] }
-        // Exactly: `src`, the two negations, then the suites named back, and nothing else anywhere in the list.
+        // `src`, then the two negations; nothing after them names back a file under src/ (a test, above all).
         const [first, ...rest] = manifest.files
         expect(first).toBe('src')
         expect(rest.slice(0, 2)).toEqual(['!src/**/*.test.*', '!src/**/*.stories.*'])
-        expect([...rest.slice(2)].sort()).toEqual([...CONFORMANCE_SUITES].sort())
+        expect(rest.slice(2).filter((entry) => entry.startsWith('src/'))).toEqual([])
     })
 })
 
@@ -302,8 +324,8 @@ describe('undeclaredImports', () => {
         expect(undeclaredImports(sources, manifest, builtins, specifiersOf).size).toBe(0)
     })
 
-    it('reads the conformance suites, which ship, as source', () => {
-        const suite = CONFORMANCE_SUITES[0] as string
+    it('reads the conformance suite, which ships as source', () => {
+        const suite = 'src/testing/conformance/suite.ts'
         const found = undeclaredImports(
             [{ file: suite, text: "import { z } from 'left-pad'" }],
             manifest,

@@ -3186,3 +3186,102 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
   `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
+
+## `@sssb/kit/testing/e2e`: compiled when packed, source in the repo (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+ADR-0014 part 2: Playwright loads e2e specs with Node, so a spec reaches the kit only through
+`@sssb/kit/testing/e2e`, shipped compiled and seam-free, and packing fails if that entry imports the seam.
+
+- **The split.** `core/webhook-signing.ts` read `APP_SLUG` from the seam when it loaded. The pure half (SHA-256,
+  HMAC, sign/verify, the replay tolerance, the Mailgun recompute) moved to `core/webhook-hmac.ts`, which imports
+  nothing; `webhook-signing.ts` keeps the three `APP_SLUG` header names and `export *`s the rest, so its published
+  surface and every importer are unchanged. The `node:crypto` cross-check moved with the code
+  (`webhook-hmac.test.ts`). `webhook-hmac.ts` gets no `exports` line: only `webhook-signing` and the e2e entry
+  import it, so it is one more internal module.
+- **The mechanism: `exports` names the compiled file, and a `prepack` script builds it.**
+  `"./testing/e2e": "./dist/testing/e2e.js"`, with `dist` in the `files` allowlist and gitignored.
+  `packages/kit/scripts/build-testing-e2e.mjs` (the kit's `prepack`; `pnpm pack`, and so pack and consume, runs
+  it) bundles `src/testing/e2e.ts` with esbuild into one ES2022 module with no imports, and emits its declarations
+  with the TypeScript API (`dist/testing/e2e.d.ts`, found by the sibling rule, so the map keeps one string per key;
+  relative specifiers get `.js` so `nodenext` resolves them too). esbuild became a kit devDependency (the root already had it).
+- **Why not the alternatives.** `publishConfig.exports` replaces the whole map, so it would repeat 130-odd entries.
+  Conditions (`"sssb-source"` in the repo, `default` for Node) would make the map's values objects, which the
+  public-surface test reads as strings, and would need the condition passed to tsc, Vitest and
+  Playwright. A `prepare` script was not needed: **nothing in this repo resolves through `exports`.** Every tool
+  aliases `@sssb/kit/*` to `packages/kit/src` (tsconfig `paths`, both Vitest configs, each app's Vite build), and
+  Playwright honours tsconfig `paths` too: `playwright test --list` loads `simulator-webhooks.spec.ts` with no
+  `dist/` on disk. So in the repo a spec runs the entry's source through Playwright's transform, and building on
+  every install would only add a step that can fail an install. `public-surface.test.ts` reads a `./dist/<p>.js`
+  target as its source `./src/<p>.ts`, for both the "target exists" check and the internal-module count.
+- **The seam guard is the build.** It fails, naming the importer, if the closure imports `@sssb/app-config/*` or
+  any other package (a plugin records every bare specifier before esbuild resolves it; no tsconfig is read, since
+  the root one maps the seam to the test fixture), or if the bundle or the declarations reach a file outside an
+  explicit allowed set (`src/testing/e2e.ts`, `src/core/webhook-hmac.ts`). A failed build deletes `dist/`, so a
+  half-built entry is never packed. Seen failing: with the entry re-exporting from `../core/webhook-signing`, the
+  build exited 1 with `@sssb/app-config/identity (imported by src/core/webhook-signing.ts)`; with
+  `../core/state-machine` added, it exited 1 naming that file; restored, it passed.
+- **Proven from the tarball.** Pack and consume gained a step: plain Node, from the consumer's `seamless` package
+  (the one with no seam), imports `@sssb/kit/testing/e2e`, checks it resolved to `dist/testing/e2e.js`, and calls
+  the verifier. The consumer's whole-surface typecheck now covers the entry's declarations.
+- **The apps' specs moved onto it.** Bundling every file under `apps/*/tests/{e2e,demo-static}` (and the Playwright
+  configs) with esbuild, through each app's tsconfig, found three that reached the kit at run time:
+  `simulator-webhooks.spec.ts` (`core/webhook-signing`, now `@sssb/kit/testing/e2e`), `tickets-pagination.spec.ts`
+  (`src/domain/tickets` imports `core/state-machine`; `TICKET_PAGE_SIZE` moved to `src/domain/ticket-page-size.ts`,
+  which `tickets.ts` re-exports) and the static demo's `static-shell.spec.ts` (`src/app-config/presets` imports the
+  `ticket.assign` definition, which runs `core/abilities` and `core/roles`; the preset list moved to
+  `src/app-config/presets/list.ts`, which `presets.ts` re-exports). `tours.spec.ts` reads `src/app-config/tours`,
+  whose kit import is type-only and erased. The starter's specs reach nothing. The check is not yet a gate: it
+  becomes `sssb check-e2e`, and the lint ban on other `@sssb/kit/*` imports from specs is P6's preset (ADR-0014
+  part 4).
+
+## The conformance suite's unit half: what moved, what stayed, and the choices the design left open (2026-11-18, ADR-0014 P5, `feat/conformance-suite`)
+
+`@sssb/kit/testing` (`conformanceSuite({ appDir, optOut })`) replaces the five seam-conformance test files and the
+authorization scan's walk of `apps/*`; each app calls it from `src/sssb.conformance.test.ts`. The design (checks as
+data in `checks.json`, fixed test names, named opt-outs, the file-level skip guard, app-owned exemptions, the seam
+map, the cutover rows as data) was set before the work; these are the calls it did not pin down.
+
+- **The app file passes `appDir: path.resolve(import.meta.dirname, '..')`.** Measured under the app projects'
+  happy-dom environment (Vitest 4.1.12): `import.meta.dirname` and `import.meta.url` are the file's real path and
+  `file:` URL, in the app and in kit code alike; only the global `URL` mis-resolves a relative reference. So the
+  suite takes a directory, never reads `process.cwd()`, and resolves nothing with `new URL`.
+- **An app's `authz-exemptions.mjs` is loaded with Node's `require`, not `import()`.** Under happy-dom, Vite reads an
+  absolute path as a URL under the project root and refuses a `file:` URL, so a dynamic import of the file failed
+  ("Cannot find module") for any app outside the Vitest root. `require` of an ES module is Node's own (22.12+), and
+  the file is plain JavaScript, as `lint-exceptions.mjs` is.
+- **"Collides with a framework entry" means overlaps, not only equals.** An app entry fails if its key equals a
+  framework exemption or required-alongside key, sits under a framework prefix, or is a prefix over one: an exact
+  entry wins over a prefix in the scan, and an exemption is checked before the `service/` gate, so an app file entry
+  at `webhooks/x/route.ts` or `service/x/route.ts` would otherwise weaken a framework gate. A malformed or colliding
+  entry is reported AND not applied.
+- **The per-handler results are one assertion.** The test names are fixed (doctor computes them), so
+  `every mutating handler reaches authorize(...) or passes its exemption's gate` lists every failing
+  `<app>: <rel> <VERB> …` line; likewise the numbering, catalog-key and preset-copy checks list every offender instead
+  of stopping at the first (`expect.soft` for the ICU placeholders).
+- **Three migration cases stay the kit's own** (`packages/kit/src/db/migrate.test.ts`): `outOfSequence`'s unit case,
+  the synthetic-registry case, and the refuse/renamed cases. The last two exercise the guard on the FRAMEWORK
+  sequence (the first and second framework migrations), and nothing an app registers changes the outcome: the
+  app's migrations only ride along in `migrateToLatest`, and if they fail, `rls-pglite` and `migration-order` fail
+  first. Moving them would add two pglite migrations to every app's run for no new coverage. `migration-order` keeps
+  the numbering and the upgrade-to-the-same-schema case, which are about how the two sequences compose.
+- **The demo-presets mocks are `vi.doMock`, registered while the file is collected, and proven applied.** A
+  library's `vi.mock` is not hoisted; `doMock` (resolved relative to the calling module, measured) applies to every
+  later import, and the suite imports everything that reaches the adapter registry inside a test. The mocked
+  registry carries a marker, and the two tests that replay check it first, so a mock that silently did not apply
+  fails with a sentence instead of replaying on the real adapters. `APP_DATA_DIR` is set with `vi.stubEnv`, since
+  kit source outside adapters may not touch `process.env`.
+- **`seam-specifiers.json` is checked against the `files` allowlist read in order** (npm's last-match-wins), and a
+  seam module's spelling anywhere other than an import specifier (a template, a string) fails the scan. Today the
+  shipped source imports 18 specifiers, all literal.
+- **`cutover/rows.json` holds `{ id, what }` verbatim from the "## Rows" table**, markdown and all, including
+  `release-app`, which is SSSB's own repository's row: equality with the doc is the rule, and whether doctor should
+  skip a row that names itself SSSB-only is doctor's call when it lands.
+- **The contract checks' names are reserved in `checks.json` now** (`contract-owner-pass`, `contract-rls`,
+  `contract-data-api`, `runner: "contract"`), from today's `tests/support/contract-suite.ts` tests and two of
+  `rds-data.contract.test.ts`'s; the contract runner that registers them is a later piece of P5. The unit suite
+  refuses an opt-out naming one.
+- **Pack and consume** drops `conformance-by-include`: the consumer apps carry the starter's
+  `src/sssb.conformance.test.ts`, their Vitest projects keep `configDefaults.exclude` (node_modules and all), and the
+  job requires every unit check's every test, named from the PACKED `checks.json`, to pass in each app, with the
+  file itself not failed by the skip guard. The tarball must ship `checks.json` and `seam-specifiers.json` and no
+  test file at all.

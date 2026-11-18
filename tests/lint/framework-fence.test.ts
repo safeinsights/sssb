@@ -335,13 +335,14 @@ describe('a path into app code crosses the framework/app fence too', () => {
             ['a test', '../core/state-machine.test', 1],
             ['a story', '../components/app-header.stories', 1],
             ['a config beside src', '../../tsconfig.strict.json', 1],
-            ['a test the allowlist names back', '../i18n/namespaces.test', 0],
+            // The allowlist named five seam-conformance tests back until ADR-0014 P5 made them the conformance
+            // suite, which is source; a test it once shipped is now a test like any other.
+            ['a test the allowlist used to name back', '../i18n/namespaces.test', 1],
             ['shipped source', '../core/state-machine', 0],
             ['a shipped catalog', '../i18n/messages/en.json', 0],
+            ['the shipped conformance registry', '../testing/checks.json', 0],
             ['a test, with a query', '../core/state-machine.test.ts?raw', 1],
             ['a test, with a hash', '../core/state-machine.test#a', 1],
-            ['a sibling of a suite named back, by its own extension', '../i18n/namespaces.test.tsx', 1],
-            ['a suite named back, by its extension', '../i18n/namespaces.test.ts', 0],
             ["the package's own manifest, which always ships", '../../package.json', 0],
             ['its LICENSE, which always ships', '../../LICENSE', 0],
             ['another file beside src', '../../README.md', 1],
@@ -352,9 +353,9 @@ describe('a path into app code crosses the framework/app fence too', () => {
                 expected,
             )
         })
-        it('from a conformance suite, which ships too', async () => {
-            const code = "import x from '../core/state-machine.test'\nexport { x }\n"
-            expect(fired(await lint('packages/kit/src/i18n/namespaces.test.ts', code), UNSHIPPED_PATH)).toBe(1)
+        it('from the conformance suite, which ships as source', async () => {
+            const code = "import x from '../../core/state-machine.test'\nexport { x }\n"
+            expect(fired(await lint('packages/kit/src/testing/conformance/suite.ts', code), UNSHIPPED_PATH)).toBe(1)
         })
         it.each(['packages/kit/src/db/kv.test.ts', FIXTURE])('not from %s, which does not ship', async (file) => {
             const code = `import x from ${JSON.stringify(pathFrom(file, 'packages/kit/test-fixture/app-config/seed'))}\nexport { x }\n`

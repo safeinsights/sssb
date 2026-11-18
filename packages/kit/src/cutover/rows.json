@@ -1,0 +1,100 @@
+{
+    "rows": [
+        {
+            "id": "auth-dev",
+            "what": "Managed-auth **development** instance + keys"
+        },
+        {
+            "id": "auth-prod",
+            "what": "Managed-auth **production** instance (typically one per tenant site)"
+        },
+        {
+            "id": "email-outbound",
+            "what": "Email domain + API key (names in `apps/<app>/config/params.ts`)"
+        },
+        {
+            "id": "email-inbound",
+            "what": "Inbound route(s) + the inbound webhook signing key"
+        },
+        {
+            "id": "llm-key",
+            "what": "Model-provider API key"
+        },
+        {
+            "id": "errors",
+            "what": "Error-tracking project + DSN (set your own org in `apps/<app>/config/params.ts`)"
+        },
+        {
+            "id": "analytics",
+            "what": "Analytics/flags project + key and host"
+        },
+        {
+            "id": "db-role-not-superuser",
+            "what": "The role in `DATABASE_URL` holds neither `SUPERUSER` nor `BYPASSRLS`"
+        },
+        {
+            "id": "origin-not-publicly-reachable",
+            "what": "The Lambda origin answers only CloudFront"
+        },
+        {
+            "id": "db-credential-not-in-env",
+            "what": "The database credential is fetched at runtime, not baked into function config"
+        },
+        {
+            "id": "data-api",
+            "what": "The opt-in RDS Data API transport (`params.database.transport: 'data-api'`, so `DATABASE_TRANSPORT=data-api`): the Data API enabled on the cluster, and the cluster ARN, secret ARN and database name in the environment"
+        },
+        {
+            "id": "data-api-access",
+            "what": "The Data API network shape deployed (`params.database.transport: 'data-api'`): the Data API enabled on the cluster, both Lambdas outside the VPC, IAM the only path to the database"
+        },
+        {
+            "id": "cloud-accounts",
+            "what": "Cloud account IDs, region, profiles"
+        },
+        {
+            "id": "storage-list-delete",
+            "what": "The storage port's `list`/`delete` against the real bucket"
+        },
+        {
+            "id": "storage-copy",
+            "what": "The storage port's `copy` against the real bucket"
+        },
+        {
+            "id": "storage-head",
+            "what": "The storage port's `head`, and `copy`'s `ifMatch`, against the real bucket"
+        },
+        {
+            "id": "job-runner",
+            "what": "Async job compute + the shared webhook secret"
+        },
+        {
+            "id": "scheduled-tick",
+            "what": "A scheduler POSTing `/api/webhooks/cron` (in both example apps, over SSSB's `runScheduledTick`) on a fixed cadence with the same shared secret"
+        },
+        {
+            "id": "service-keys",
+            "what": "Registering a real counterparty's public key (key-management UI deliberately deferred)"
+        },
+        {
+            "id": "domains-and-certs",
+            "what": "DNS zones + TLS certs"
+        },
+        {
+            "id": "deploy-pipeline",
+            "what": "CI/CD: PR preview environments, staging on merge"
+        },
+        {
+            "id": "release-app",
+            "what": "SSSB's own repository only: the GitHub App whose token lets `release.yml` push the release commit to `main` and its `vX.Y.Z` tag. Made by `pnpm release-app:init` (`docs/runbooks/release-app.md`)"
+        },
+        {
+            "id": "recurring-cost",
+            "what": "Approval for the managed database, CDN, and friends"
+        },
+        {
+            "id": "demo-url",
+            "what": "Public URL for the `DEMO_MODE` build"
+        }
+    ]
+}
