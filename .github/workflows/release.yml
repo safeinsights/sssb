@@ -104,7 +104,7 @@ jobs:
             # changesets by scripts/release-notes.mjs and written to docs/releases/v<version>.md, a new file in the
             # release commit) and `changeset version` in the working tree. A changeset that cannot be read as a
             # release-note entry stops it before anything is changed.
-            # Until P14 it answers `release: false` on every push, and the run ends here.
+            # Until P14 the release it prepares is a candidate, `0.x.y-rc.N` (pre mode); with nothing pending the run ends here.
             - name: prepare the release
               id: prepare
               run: |
@@ -410,6 +410,8 @@ jobs:
                   path: ${{ runner.temp }}/candidate
                   if-no-files-found: error
                   retention-days: 7
+                  # "Re-run all jobs" uploads it again in the same run.
+                  overwrite: true
 
     # The candidate's provenance: one attestation per tarball, signed with this run's id-token. This job and `publish`
     # never run in the same run (a candidate's tag never reaches `pack`), and it is in no environment, so npm's trusted
@@ -464,15 +466,26 @@ jobs:
                   [ "$(wc -l < "$RUNNER_TEMP/expected")" -gt 0 ] || { echo "::error::no tarballs to attach"; exit 1; }
                   (cd "$dir/tarballs" && sha256sum -- *.tgz | sort) | diff "$RUNNER_TEMP/expected" - || { echo "::error::the tarballs are not the ones candidate checked"; exit 1; }
 
-                  state=$(gh release view "$tag" --repo "$repo" --json isDraft --jq 'if .isDraft then "draft" else "published" end' 2>/dev/null || echo none)
+                  # Only "not found" means no release yet; any other error (the API, the network) stops here, rather
+                  # than create a second draft beside one a lookup failed to see.
+                  if state=$(gh release view "$tag" --repo "$repo" --json isDraft --jq 'if .isDraft then "draft" else "published" end' 2>"$RUNNER_TEMP/view.err"); then
+                      :
+                  elif grep -q 'release not found' "$RUNNER_TEMP/view.err"; then
+                      state=none
+                  else
+                      cat "$RUNNER_TEMP/view.err" >&2
+                      echo "::error::could not read $tag's release"
+                      exit 1
+                  fi
                   if [ "$state" = none ]; then
                       gh release create "$tag" --repo "$repo" --verify-tag --draft --prerelease --title "$tag" --notes-file "$dir/notes.md"
                       state=draft
                   fi
+                  # A draft is not visible, so every tarball is (re)uploaded into it, replacing any a failed run left
+                  # part-written; its title and notes are set again when it is published, below.
                   if [ "$state" = draft ]; then
-                      have=$(gh release view "$tag" --repo "$repo" --json assets --jq '[.assets[].name]')
                       for file in $(jq -r '.[].file' "$dir/assets.json"); do
-                          jq -e --arg f "$file" 'index($f) != null' <<<"$have" >/dev/null || gh release upload "$tag" --repo "$repo" "$dir/tarballs/$file"
+                          gh release upload "$tag" --repo "$repo" --clobber "$dir/tarballs/$file"
                       done
                   fi
 
@@ -483,7 +496,7 @@ jobs:
                   (cd "$got" && sha256sum -- * | sort) | diff "$RUNNER_TEMP/expected" - || { echo "::error::$tag holds other files than this candidate's tarballs"; exit 1; }
 
                   if [ "$state" = draft ]; then
-                      gh release edit "$tag" --repo "$repo" --draft=false --prerelease --latest=false
+                      gh release edit "$tag" --repo "$repo" --title "$tag" --notes-file "$dir/notes.md" --draft=false --prerelease --latest=false
                   fi
                   shown=$(gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
                   [ "$shown" = "false true" ] || { echo "::error::$tag is not a published prerelease ($shown)"; exit 1; }

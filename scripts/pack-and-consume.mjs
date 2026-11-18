@@ -1387,6 +1387,21 @@ step('pack @sssb/kit, @sssb/tools, @sssb/eslint-plugin and @sssb/cdk', () => {
     console.log(
         `${path.basename(cdkTarball)}: ${cdkFiles.length} files, ${Math.round(statSync(cdkTarball).size / 1024)} KB; JavaScript and declarations, no dependency on the framework`,
     )
+
+    // EVERY released package, here, at PR time: a release candidate attaches one tarball per `@sssb/*` package and
+    // refuses to go on without one, after its tag exists (release.mjs `candidate`). So a package added to packages/
+    // fails this job until it is packed (and its shape checked) above.
+    const packed = new Set(['@sssb/kit', '@sssb/tools', '@sssb/eslint-plugin', '@sssb/cdk'])
+    const released = readdirSync(path.join(REPO, 'packages'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && existsSync(path.join(REPO, 'packages', entry.name, 'package.json')))
+        .map((entry) => readJson(path.join(REPO, 'packages', entry.name, 'package.json')).name)
+        .filter((name) => typeof name === 'string' && name.startsWith('@sssb/'))
+    const unpacked = released.filter((name) => !packed.has(name))
+    if (unpacked.length > 0) {
+        fail(
+            `packages/ holds ${unpacked.join(', ')}, which this step does not pack; a release candidate needs every one`,
+        )
+    }
 })
 step('scaffold the consumer workspace', () => scaffold(tarball, toolsTarball, pluginTarball))
 step('install the tarball', () => {

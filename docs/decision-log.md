@@ -4098,3 +4098,18 @@ names what was rejected; ADR-0014's addendum of the same date summarises them.
 - **Until JP makes the release app, a merge to `main` with changesets fails at `push`'s token mint**, having written
   nothing; the changesets stay pending. Rejected: skipping `push` when the app is missing, which would turn a missing
   release into a green run, the failure the review question names.
+- **What the reviews added (P7).** Both found the flow sound: no path to npm, to a non-candidate version while private,
+  off `main`, or to tarballs other than the tested ones. Closed after them, each seen failing in a test:
+    - `check` refuses a fixed group at more than one version (a package joining mid-cycle at `0.1.0` passed `check` and
+      `prepare`, then stalled `push`), and a pending changeset named like one in `.changeset/pre/` (Changesets would
+      overwrite it); `prepare`'s cross-check reads the manifests, not the plan, whose `oldVersion` Changesets evens out.
+    - `candidate` requires each tarball's file name to be the one `pnpm pack` gives it; pack and consume fails when a
+      `@sssb/*` package is not packed, at PR time rather than after a candidate's tag exists.
+    - `prerelease` treats only "release not found" as no release, re-uploads every tarball into a draft with
+      `--clobber`, and publishes with its own title and notes, so neither a lookup failure, a half-written asset nor a
+      draft someone else made decides what goes out; `candidate`'s artifact overwrites on "Re-run all jobs".
+    - The notes' attestation check names the signing workflow, the tag and the commit (`--signer-workflow`,
+      `--source-ref`, `--source-digest`), not just the repository, which any workflow of it could satisfy.
+    - The prerelease notes are unwrapped (`unwrap`): a release body renders each newline as a line break, seen through
+      GitHub's markdown API in `gfm` mode; with soft breaks joined, the rendered sample had none.
+      Left for P14: leaving pre mode (`.claude/future-tasks/p14-leave-pre-mode.md`).

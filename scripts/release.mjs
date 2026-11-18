@@ -252,9 +252,33 @@ export async function check(root) {
         }
     } else if (ws.pre) {
         problems.push(
-            `the fixed group is public: leave pre mode (\`changeset pre exit\`) before releasing it to npm; release ` +
-                'candidates are GitHub prereleases of the private group only',
+            'the fixed group is public: leave pre mode before releasing it to npm (ADR-0014 P14, ' +
+                '.claude/future-tasks/p14-leave-pre-mode.md); release candidates are GitHub prereleases of the private ' +
+                'group only',
         )
+    }
+    // ONE VERSION FOR THE GROUP, as its manifests say. Changesets plans a fixed group from its highest version, but
+    // `verify-release` reads the manifests and refuses a group at two, so a package that joins at another version would
+    // pass here and stall the release after merge. A new package starts at the group's version.
+    const groupVersions = [...new Set(group.map((p) => p.packageJson.version))]
+    if (groupVersions.length > 1) {
+        problems.push(
+            `the fixed group is at several versions (${group.map((p) => `${p.packageJson.name}@${p.packageJson.version}`).join(', ')}); ` +
+                'a package joins it at the version the others are at',
+        )
+    }
+    // In pre mode Changesets moves a consumed changeset to `.changeset/pre/<name>.md`, so a pending one with a name
+    // already there would overwrite it, which `verify-release` refuses after merge. Names are never reused.
+    if (ws.pre) {
+        const consumed = new Set(ws.changesets.filter((c) => c.id.startsWith('pre/')).map((c) => c.id.slice(4)))
+        for (const c of ws.pending) {
+            if (consumed.has(c.id)) {
+                problems.push(
+                    `.changeset/${c.id}.md has the name of a changeset an earlier release candidate consumed ` +
+                        `(.changeset/pre/${c.id}.md); give it another name`,
+                )
+            }
+        }
     }
     for (const changeset of ws.changesets) {
         for (const release of changeset.releases) {
@@ -362,8 +386,10 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
     }
     // The `push` job recomputes the version from the commit alone (verifyRelease), with no Changesets to ask, so the
     // two must agree before anything is changed: a disagreement found there would come after the plan was accepted.
+    // From the manifests, not the plan: Changesets gives every member of a fixed group the group's highest version as
+    // its `oldVersion`, which would hide a member at another one from this cross-check.
     const expected = impliedVersion(
-        releases.map((r) => r.oldVersion),
+        ws.packages.filter((p) => ws.fixed.has(p.packageJson.name)).map((p) => p.packageJson.version),
         ws.pending.flatMap((c) => c.releases.filter((r) => ws.fixed.has(r.name)).map((r) => r.type)),
         ws.pre !== null,
     )
@@ -603,6 +629,9 @@ export function candidate(root, version, files) {
         }
         if (assets.some((a) => a.name === name)) problems.push(`${name} is packed twice`)
         if (manifest.version !== version) problems.push(`${file} holds ${name}@${manifest.version}, not ${version}`)
+        // The name `pnpm pack` gives it: the file name becomes a release asset's name and a URL in the notes.
+        const expectedFile = `${name.slice(1).replace('/', '-')}-${version}.tgz`
+        if (path.basename(file) !== expectedFile) problems.push(`${file} holds ${name}, so is named ${expectedFile}`)
         if (group.get(name) !== version) problems.push(`this commit has ${name} at ${group.get(name)}, not ${version}`)
         const bytes = readFileSync(file)
         assets.push({
@@ -698,7 +727,12 @@ export function candidateNotes(root, version, repo, sha, assets) {
         '| --- | --- | --- |',
         ...assets.map((a) => `| \`${a.name}\` | [\`${a.file}\`](${url(a.file)}) | \`${a.sha512}\` |`),
         '',
-        `Each tarball is attested by this repository's release workflow: \`gh attestation verify <tarball> --repo ${repo}\`.`,
+        "Each tarball is attested by this repository's release workflow, on this candidate's tag, from this commit:",
+        '',
+        '```sh',
+        `gh attestation verify <tarball> --repo ${repo} --signer-workflow ${repo}/.github/workflows/release.yml \\`,
+        `    --source-ref refs/tags/v${version} --source-digest ${sha}`,
+        '```',
         '',
     ]
     return unwrap(out.join('\n'))
@@ -745,7 +779,8 @@ export function changesetReleases(text, where) {
 /**
  * The `push` job's check of the staged release, before it mints the release app's token. The release was
  * prepared in another job, by dependency code, so nothing it says is taken on trust. From HEAD alone this
- * works out what the release must be: every pending changeset consumed, every public fixed-group manifest under
+ * works out what the release must be: every pending changeset consumed, every fixed-group manifest it releases (the
+ * public ones, or in pre mode the private group's, whose candidate it is) under
  * packages/ (where `check` keeps the group) moved
  * to the one version those changesets imply. The index may then differ from HEAD by exactly that: the
  * changesets deleted, each of those manifests changed in its version line and nowhere else, plain-file

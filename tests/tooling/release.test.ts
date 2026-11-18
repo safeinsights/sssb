@@ -180,6 +180,24 @@ describe('release check (every PR)', () => {
         }
     })
 
+    it('refuses a group member at another version, which the release would refuse after merge', async () => {
+        // A package that joins the group mid-cycle at 0.1.0, beside one at a candidate's version.
+        const tools: Pkg = { ...KIT('0.1.0'), dir: 'packages/tools', name: '@sssb/tools' }
+        const root = workspace([KIT('0.2.0-rc.0'), tools], { fix: ['"@sssb/kit": patch'] })
+        expect((await check(root)).problems).toEqual([
+            expect.stringMatching(/several versions \(@sssb\/kit@0\.2\.0-rc\.0, @sssb\/tools@0\.1\.0\)/),
+        ])
+    })
+
+    it('refuses a pending changeset named like one an earlier candidate consumed', async () => {
+        const root = workspace([KIT('0.2.0-rc.0')], { feature: ['"@sssb/kit": minor'] })
+        mkdirSync(path.join(root, '.changeset', 'pre'))
+        copyFileSync(path.join(root, '.changeset', 'feature.md'), path.join(root, '.changeset', 'pre', 'feature.md'))
+        expect((await check(root)).problems).toEqual([
+            expect.stringMatching(/feature\.md has the name of a changeset an earlier release candidate consumed/),
+        ])
+    })
+
     it('requires a config that versions private packages while the group is private', async () => {
         const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] })
         const file = path.join(root, '.changeset', 'config.json')
@@ -764,6 +782,12 @@ describe('a release candidate, end to end, against a local fake tag', () => {
         expect(() => candidate(root, v, tarballs(root, v, ['kit']))).toThrow(/no tarball holds @sssb\/tools/)
         expect(() => candidate(root, v, tarballs(root, v, ['kit', 'tools', 'cdk']))).toThrow(
             /holds @sssb\/cdk, which is not in this commit's fixed group/,
+        )
+        const renamed = tarballs(root, v)
+        const odd = path.join(path.dirname(renamed[0]!), 'kit; rm -rf.tgz')
+        copyFileSync(renamed[0]!, odd)
+        expect(() => candidate(root, v, [odd, renamed[1]!])).toThrow(
+            /holds @sssb\/kit, so is named sssb-kit-0\.2\.0-rc\.0\.tgz/,
         )
         const twice = [...tarballs(root, v), ...tarballs(root, v, ['kit'])]
         expect(() => candidate(root, v, twice)).toThrow(/@sssb\/kit is packed twice/)

@@ -17,8 +17,16 @@ const WORKFLOW = fileURLToPath(new URL('../../.github/workflows/release.yml', im
 const VERSION = '0.2.0-rc.0'
 const TAG = `v${VERSION}`
 
-type Release = { draft: boolean; prerelease: boolean; latest: boolean | null; assets: Record<string, string> }
-type State = { tags: string[]; release: Release | null; calls: string[] }
+type Release = {
+    draft: boolean
+    prerelease: boolean
+    latest: boolean | null
+    assets: Record<string, string>
+    title?: string
+    notes?: string
+}
+/** `viewError`: what `gh release view` fails with instead of answering, as an API or network failure would. */
+type State = { tags: string[]; release: Release | null; calls: string[]; viewError?: string }
 
 function script(): string {
     const workflow = parse(readFileSync(WORKFLOW, 'utf8')) as {
@@ -50,6 +58,7 @@ if (opt('--repo') !== 'safeinsights/sssb') die('wrong repo')
 const r = state.release
 const dir = process.env.FAKE_GH_ASSETS
 if (cmd === 'view') {
+  if (state.viewError) die(state.viewError)
   if (!r) die('release not found')
   const all = { isDraft: r.draft, isPrerelease: r.prerelease, tagName: tag, assets: Object.keys(r.assets).map((name) => ({ name })) }
   const fields = opt('--json').split(',')
@@ -59,12 +68,12 @@ if (cmd === 'view') {
 } else if (cmd === 'create') {
   if (r) die('a release for ' + tag + ' exists')
   if (!state.tags.includes(tag)) die('tag ' + tag + ' does not exist')
-  state.release = { draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), latest: null, assets: {} }
+  state.release = { draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), latest: null, assets: {}, title: opt('--title'), notes: fs.readFileSync(opt('--notes-file'), 'utf8') }
 } else if (cmd === 'upload') {
   if (!r) die('release not found')
   for (const f of args.slice(3).filter((a) => !a.startsWith('--') && a !== opt('--repo'))) {
     const name = path.basename(f)
-    if (r.assets[name]) die('asset ' + name + ' exists')
+    if (r.assets[name] && !args.includes('--clobber')) die('asset ' + name + ' exists')
     fs.mkdirSync(dir, { recursive: true })
     fs.copyFileSync(f, path.join(dir, name))
     r.assets[name] = path.join(dir, name)
@@ -76,6 +85,8 @@ if (cmd === 'view') {
   for (const [name, from] of Object.entries(r.assets)) fs.copyFileSync(from, path.join(to, name))
 } else if (cmd === 'edit') {
   if (!r) die('release not found')
+  if (opt('--title') !== undefined) r.title = opt('--title')
+  if (opt('--notes-file') !== undefined) r.notes = fs.readFileSync(opt('--notes-file'), 'utf8')
   if (args.includes('--draft=false')) r.draft = false
   if (args.includes('--prerelease')) r.prerelease = true
   if (args.includes('--latest=false')) r.latest = false
@@ -185,15 +196,34 @@ describe("release.yml's prerelease job", () => {
         expect(state.calls.filter((c) => /^release (create|upload|edit)/.test(c))).toEqual([])
     })
 
-    it('finishes a draft a failed run left part-way, uploading only what is missing', () => {
+    it('finishes a draft a failed run left part-way, replacing a tarball it left half-written', () => {
         const { temp } = runner()
-        const release = existing(temp, { 'sssb-kit-0.2.0-rc.0.tgz': 'kit' }, true)
+        const release = existing(temp, { 'sssb-kit-0.2.0-rc.0.tgz': 'ki' }, true)
         const { status, state } = run(temp, { ...fresh(), release })
         expect(status).toBe(0)
         expect(state.calls.filter((c) => c.startsWith('release upload'))).toEqual([
-            expect.stringMatching(/sssb-tools-0\.2\.0-rc\.0\.tgz$/),
+            expect.stringMatching(/--clobber .*sssb-kit-0\.2\.0-rc\.0\.tgz$/),
+            expect.stringMatching(/--clobber .*sssb-tools-0\.2\.0-rc\.0\.tgz$/),
         ])
+        expect(readFileSync(state.release!.assets['sssb-kit-0.2.0-rc.0.tgz']!, 'utf8')).toBe('kit')
         expect(state.release).toMatchObject({ draft: false, prerelease: true })
+    })
+
+    it("publishes its own title and notes, never a draft's someone else wrote", () => {
+        const { temp } = runner()
+        const release = { ...existing(temp, {}, true), title: 'mine', notes: 'install from elsewhere' }
+        const { status, state } = run(temp, { ...fresh(), release })
+        expect(status).toBe(0)
+        expect(state.release).toMatchObject({ draft: false, title: TAG, notes: `# Release notes: ${TAG}\n` })
+    })
+
+    it('stops, creating nothing, when the release cannot be read for any reason but "not found"', () => {
+        const { temp } = runner()
+        const { status, stdout, stderr, state } = run(temp, { ...fresh(), viewError: 'HTTP 502: Bad Gateway' })
+        expect(status).toBe(1)
+        expect(stderr).toMatch(/HTTP 502/)
+        expect(stdout).toMatch(/::error::could not read v0\.2\.0-rc\.0's release/)
+        expect(state.calls.filter((c) => !c.startsWith('release view'))).toEqual([])
     })
 
     it('leaves a draft unpublished when it holds a stray file, and fails', () => {
