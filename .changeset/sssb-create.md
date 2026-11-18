@@ -16,8 +16,9 @@ framework imports; `allowBuilds`, `dedupePeerDependents: false` and `sssb.apps`;
 `--owner`; `docs/cutover-checklist.md` with the framework's rows; `.claude/sssb-guide.md`, the app guide as `sssb guide` writes
 it; and `.github/workflows/checks.yml`, which calls SSSB's reusable workflow pinned to a commit. Its `pnpm verify` runs
 what that CI runs, but the secret scan. `--sssb <dir>` depends on packed tarballs instead of published versions.
-The starter's comments and one static-demo test title no longer name SSSB's showcase, "the starter", SSSB's spikes
-and records, or the framework's paths in SSSB's repository unqualified, so they read true in the generated workspace.
+The starter's comments and one static-demo test title no longer name SSSB's showcase, "the starter", paths into
+SSSB's `spikes/`, build notes or decision log, or the framework's paths in SSSB's repository unqualified, so they read
+true in the generated workspace. They still cite SSSB's ADRs by number.
 
 **To adopt.** Nothing for an existing workspace; the starter's reworded comments are yours to take or leave. A new
 one starts with `pnpm create @sssb <dir> --repo <owner/name> --owner <@handle>`, then `git init`, `pnpm install` and
