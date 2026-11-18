@@ -4823,6 +4823,7 @@ What each tool does with the moved files, decided one by one (`.changeset/README
 - **No changeset in this PR**: nothing it changes is a gated path. The changeset on `integration` already (`@sssb/tools`,
   `@sssb/create`: doctor from the root) is what lets the next merge to `main` cut `rc.1`; a merge of `main` into
   `integration` planned `0.2.0-rc.0 -> 0.2.0-rc.1` from it.
+
 ## A vouched-for bypass actor on an organisation ruleset passes `release-app verify` (2026-11-18, `fix/release-app-verify-org-bypass`)
 
 JP created the release app (App 5820735), and `pnpm release-app verify --app-id 5820735` failed on one thing: the
