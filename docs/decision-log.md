@@ -3851,7 +3851,7 @@ map, the cutover rows as data) was set before the work; these are the calls it d
   scratch dir (`removeTestTmpDir`), in one hook so the order holds; and `tmp-dir.ts` registers a hook for each later
   file whose first call comes while it is collected. Rejected: `process.on('exit')` (pool teardown may not fire it)
   and pushing into Vitest's runner hooks (internals, in a shipped file). `@sssb/tools/testing/tmp-dir` has the same
-  single-hook flaw, left for `.claude/future-tasks/tools-tmp-dir-without-isolation.md`.
+  single-hook flaw, left for `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
 - **The demo-presets check's teardown waits for a replay that outlived its test.** A Vitest timeout fails the test
   but cannot stop its body: the replay ran on into `afterAll`, which closed the db and restored APP_DATA_DIR, and the
   replay then wrote `auth/`, `pglite/` and `simulator/` into the working directory's `.data` (reproduced: a probe that
@@ -4051,6 +4051,37 @@ as it stands after three rounds of review (ADR-0014's addendum "P5 as built" lis
   through an app module) check-e2e must exit 1, failing `playwright.config.ts` as unlistable and naming
   `@sssb/kit:src/core/webhook-signing.ts`. Rejected: adding the spec to `apps/starter` itself, whose one e2e spec is
   its tenancy claim.
+
+## `@sssb/tools/testing/tmp-dir` under `isolate: false`: a setup module, and never removing too early (2026-11-18, `fix/tools-tmp-dir-isolation`)
+
+Resolves `.claude/future-tasks/resolved/tools-tmp-dir-without-isolation.md`.
+
+- **No hook registered at a call is both late enough and wide enough.** The task's design, and the kit's fix in P5,
+  register a hook at a later file's first call. Review reproduced, in real Vitest runs, that a hook registered from a
+  `describe` body belongs to that `describe` and removed directories the rest of the file still used, and that it runs
+  before any `afterAll` the file registered earlier, so the cleanup could precede the file closing what lives in the
+  directory. Registering a hook per suite instead still removed a nested `describe`'s directory before an outer test
+  used it. The kit's copy is unchanged here and has the first two: `.claude/future-tasks/kit-tmp-dir-cleanup-order.md`.
+- **A setup module carries the file's hook,** and is the supported path under `isolate: false`. Vitest runs a setup
+  file before every test file even with `isolate: false`, and an `afterAll` it registers runs after the file's own
+  (checked with Vitest 4.1.12, three files in one worker). `@sssb/tools/testing/tmp-dir-setup` calls
+  `registerTestTmpDirCleanup()`; `appTestProject` adds it to every app project, so an app on the preset needs nothing.
+  Rejected: asking adopters to import the helper first in every file (a later file's import is a cache hit, which
+  registers nothing).
+- **Without it, never too early, at the cost of the last file.** A later file's first call registers a hook that removes
+  only EARLIER files' directories (a worker runs files one after another, so those files have finished). Every file's
+  directories are removed except each worker's last file's, which `sssb check-tmpdir-leak` reports, and the helper says once per
+  worker which setup file is missing. A leak the gate names is recoverable; a directory removed under a running test
+  is a false red.
+- **A file's first registration removes what earlier files left.** Vitest runs no `afterAll` for a file whose tests are
+  all skipped (`it.skip`, a `-t` filter), so its directories stayed queued; they go when the next file in the worker
+  registers, and that file's stale registry entries go too, so a watch-mode rerun registers again. With isolation
+  nothing carries to the next file, so a skipped file's directories are left for good; that predates this change and
+  is Vitest's. The cleanup's place after the file's own `afterAll` also assumes `sequence.hooks: 'stack'`, Vitest's
+  default; `'list'` and `'parallel'` reverse it. Both limits are in the module's header.
+- **`removeTestTmpDir` removes only what the helper made.** The kit's removes any path it is given, recursively.
+- **A new `exports` subpath, so the changeset is a `seam` entry,** optional: an app on the preset gets the setup module,
+  and another project with `isolate: false` adds it to `setupFiles`.
 
 ## The first release candidate, cut by a merge to main (2026-11-18, ADR-0014 P7, `feat/release-candidate`)
 
