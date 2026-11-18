@@ -123,9 +123,44 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
 
 describe('the synth assertions fail', () => {
     const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
+    const slug = /** @type {string} */ (
+        /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+    )
     /** @param {(app: SssbApp) => void} configure */
-    const withServer = (configure) => () =>
-        synthesize({ appDir, slug: 'probe', transport: 'pg', bundle: false, configure })
+    const withServer = (configure) => () => synthesize({ appDir, slug, transport: 'pg', bundle: false, configure })
+    /** @param {Partial<import('./index.d.ts').SssbAppProps>} props */
+    const construct = (props) => () =>
+        new SssbApp(new cdk.Stack(new cdk.App()), 'Default', {
+            appDir,
+            slug,
+            params: { database: { transport: 'pg' } },
+            environment: 'Staging',
+            production: false,
+            ...props,
+        })
+
+    /**
+     * A scratch app beside the repository's own framework: its `@sssb/kit` is a link to packages/kit, or a copy of
+     * its manifest at `version` with the source linked in.
+     * @param {{ version?: string }} [options]
+     */
+    function scratchApp({ version } = {}) {
+        const scratch = makeTestTmpDir('sssb-cdk-app-')
+        const kit = path.join(scratch, 'node_modules/@sssb/kit')
+        mkdirSync(path.dirname(kit), { recursive: true })
+        if (version === undefined) {
+            symlinkSync(path.join(REPO, 'packages/kit'), kit)
+        } else {
+            mkdirSync(kit)
+            const manifest = JSON.parse(readFileSync(path.join(REPO, 'packages/kit/package.json'), 'utf8'))
+            writeFileSync(path.join(kit, 'package.json'), JSON.stringify({ ...manifest, version }))
+            symlinkSync(path.join(REPO, 'packages/kit/src'), path.join(kit, 'src'))
+        }
+        writeFileSync(path.join(scratch, 'package.json'), JSON.stringify({ name: 'scratch', private: true }))
+        mkdirSync(path.join(scratch, 'src/app-config/db/migrations'), { recursive: true })
+        writeFileSync(path.join(scratch, 'src/app-config/db/migrations/index.ts'), 'export const appMigrations = {}\n')
+        return scratch
+    }
 
     it('when the server is given a bypass, by its API or by an escape hatch', () => {
         expect(withServer((app) => app.server.addEnvironment('DEMO_MODE', '1'))).toThrow(/DEMO_MODE is set/)
@@ -161,7 +196,7 @@ describe('the synth assertions fail', () => {
             writeFileSync(file, code.replaceAll(`"${removed}"`, '"gone"'))
         }
         try {
-            expect(() => synthesize({ appDir, slug: 'probe', transport: 'pg', configure: tamper })).toThrow(
+            expect(() => synthesize({ appDir, slug, transport: 'pg', configure: tamper })).toThrow(
                 /the migrator bundle is wrong: .*carries the app's migration/,
             )
             expect(removed).toMatch(/^1\d{3}_/)
@@ -172,49 +207,51 @@ describe('the synth assertions fail', () => {
         }
     })
 
+    it('when the migrator deploys code other than the bundle this synth staged', () => {
+        const swap = (/** @type {SssbApp} */ app) => {
+            const cfn = /** @type {cdk.CfnResource} */ (app.migrator.node.defaultChild)
+            cfn.addPropertyOverride('Code.S3Key', 'elsewhere.zip')
+        }
+        expect(() => synthesize({ appDir, slug, transport: 'pg', configure: swap })).toThrow(
+            /the migrator bundle is wrong: it deploys "elsewhere\.zip", not the bundle this synth staged/,
+        )
+    })
+
     it("when the app's @sssb/kit is not the construct's version", () => {
-        // A scratch app whose framework is the repository's own source in every respect but its version.
-        const scratch = makeTestTmpDir('sssb-cdk-app-')
-        const kit = path.join(scratch, 'node_modules/@sssb/kit')
-        mkdirSync(kit, { recursive: true })
-        const manifest = JSON.parse(readFileSync(path.join(REPO, 'packages/kit/package.json'), 'utf8'))
-        writeFileSync(path.join(kit, 'package.json'), JSON.stringify({ ...manifest, version: '0.0.0-other' }))
-        symlinkSync(path.join(REPO, 'packages/kit/src'), path.join(kit, 'src'))
-        writeFileSync(path.join(scratch, 'package.json'), JSON.stringify({ name: 'scratch', private: true }))
-        expect(
-            () =>
-                new SssbApp(new cdk.Stack(new cdk.App()), 'Default', {
-                    appDir: scratch,
-                    slug: 'scratch',
-                    params: { database: { transport: 'pg' } },
-                    environment: 'Staging',
-                    production: false,
-                }),
-        ).toThrow(
+        expect(construct({ appDir: scratchApp({ version: '0.0.0-other' }), slug: 'scratch' })).toThrow(
             new RegExp(
                 `resolves @sssb/kit 0\\.0\\.0-other .*but this @sssb/cdk is ${OWN_VERSION.replaceAll('.', '\\.')}`,
             ),
         )
     })
 
+    it('when the app links a seam other than the one the migrator is bundled with', () => {
+        const scratch = scratchApp()
+        mkdirSync(path.join(scratch, 'elsewhere'))
+        symlinkSync(path.join(scratch, 'elsewhere'), path.join(scratch, 'node_modules/@sssb/app-config'))
+        expect(construct({ appDir: scratch, slug: 'scratch' })).toThrow(
+            /links @sssb\/app-config to .*elsewhere, not to its src\/app-config/,
+        )
+    })
+
+    it("when the slug is not the app's own", () => {
+        expect(construct({ slug: `${slug}-other` })).toThrow(
+            new RegExp(`slug is "${slug}-other", but .*config/app\\.ts declares APP_SLUG "${slug}"`),
+        )
+    })
+
     it('when the params name no transport it builds', () => {
-        expect(
-            () =>
-                new SssbApp(new cdk.Stack(new cdk.App()), 'Default', {
-                    appDir,
-                    slug: 'probe',
-                    params: { database: { transport: /** @type {any} */ ('mysql') } },
-                    environment: 'Staging',
-                    production: false,
-                }),
-        ).toThrow(/params\.database\.transport must be pg or data-api/)
+        expect(construct({ params: { database: { transport: /** @type {any} */ ('mysql') } } })).toThrow(
+            /params\.database\.transport must be pg or data-api/,
+        )
     })
 })
 
 describe('a synth that does not bundle this stack', () => {
     it('still checks the environment, and skips only the bundle it did not build', () => {
         const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
-        const { all } = synthesize({ appDir, slug: 'probe', transport: 'pg', bundle: false })
+        const slug = /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))
+        const { all } = synthesize({ appDir, slug: /** @type {string} */ (slug?.[1]), transport: 'pg', bundle: false })
         expect(lambdaFunction(all, 'Server').env.APP_MODE).toBe('real')
     })
 })

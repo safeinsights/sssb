@@ -1,5 +1,5 @@
 // @ts-check
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 // A namespace import, never a default one: aws-cdk-lib is CommonJS, and a loader that compiles this file to
@@ -60,15 +60,31 @@ function lockFileAbove(appDir) {
 const asBundleComment = (root, file) => path.relative(root, realpathSync(file)).split(path.sep).join('/')
 
 /**
- * The app's own migrations, by the names its registry gives them (the keys Kysely records), read from the
- * app seam's migration index rather than guessed from file names.
+ * The app's own migrations, by the names the bundle must carry (the keys Kysely records): every literal key of
+ * the seam's migration index, and the name of every migration file beside it (`1001_items.ts` is `1001_items`,
+ * the seam's convention). The files are what make the check fail closed: an index whose keys are computed, or
+ * which re-exports another registry, still has to put each of these names into the bundle as a string.
  * @param {string} index
  * @returns {string[]}
  */
 function seamMigrationNames(index) {
-    return [...readFileSync(index, 'utf8').matchAll(/['"](\d+_[^'"]+)['"]\s*:/g)].map(
-        (match) => /** @type {string} */ (match[1]),
-    )
+    const keys = [...readFileSync(index, 'utf8').matchAll(/['"](\d+_[^'"]+)['"]\s*:/g)].map((match) => match[1])
+    const files = readdirSync(path.dirname(index))
+        .map((file) => /^(\d+_[^.]+)\.(?:ts|mts|js|mjs)$/.exec(file)?.[1])
+        .filter((name) => name !== undefined)
+    return [...new Set([...keys, ...files])].map((name) => /** @type {string} */ (name)).sort()
+}
+
+/**
+ * The app's slug as its `config/app.ts` declares it (`export const APP_SLUG = '…'`), or `undefined` for an app
+ * laid out otherwise. Read as text: this package is JavaScript and loads no TypeScript.
+ * @param {string} appDir
+ * @returns {string | undefined}
+ */
+function declaredSlug(appDir) {
+    const file = path.join(appDir, 'config/app.ts')
+    if (!existsSync(file)) return undefined
+    return /export const APP_SLUG = ['"]([^'"]+)['"]/.exec(readFileSync(file, 'utf8'))?.[1]
 }
 
 /**
@@ -91,6 +107,16 @@ function resolveMigrator(appDir) {
     if (!existsSync(seamIndex)) {
         throw new Error(`SssbApp: ${appDir} has no migration index at ${path.join(SEAM_DIR, SEAM_MIGRATIONS_INDEX)}`)
     }
+    // An app that links its seam as a package (an adopter's, ADR-0014 part 1) must link THIS directory: the
+    // server's build resolves the link, and the migrator would otherwise bundle a different seam from the one the
+    // server runs on.
+    const linked = path.join(appDir, 'node_modules/@sssb/app-config')
+    if (existsSync(linked) && realpathSync(linked) !== realpathSync(seamDir)) {
+        throw new Error(
+            `SssbApp: ${appDir} links @sssb/app-config to ${realpathSync(linked)}, not to its ${SEAM_DIR}, ` +
+                'which is the seam the migrator is bundled with',
+        )
+    }
     const lockFile = lockFileAbove(appDir)
     const projectRoot = path.dirname(lockFile)
     return {
@@ -109,36 +135,39 @@ function resolveMigrator(appDir) {
 }
 
 /**
- * A function's final environment as it will be deployed: the rendered CloudFormation, escape-hatch overrides
- * included, with every token the stack can resolve resolved.
+ * A function's properties as they will be deployed: the rendered CloudFormation, escape-hatch overrides included,
+ * with every token the stack can resolve resolved.
  * @param {cdk.aws_lambda.Function} fn
- * @returns {Record<string, unknown>}
+ * @returns {{ Environment?: { Variables?: Record<string, unknown> }, Code?: { S3Key?: unknown } }}
  */
-function finalEnvironment(fn) {
+function renderedProperties(fn) {
     const cfn = /** @type {any} */ (fn.node.defaultChild)
     if (typeof cfn?._toCloudFormation !== 'function') {
-        throw new Error(`SssbApp: cannot render ${fn.node.path}'s CloudFormation to check its environment`)
+        throw new Error(`SssbApp: cannot render ${fn.node.path}'s CloudFormation to check it`)
     }
     const rendered = cdk.Stack.of(fn).resolve(cfn._toCloudFormation())
-    const resource = /** @type {{ Properties?: { Environment?: { Variables?: Record<string, unknown> } } }} */ (
-        Object.values(rendered.Resources ?? {})[0] ?? {}
-    )
-    return resource.Properties?.Environment?.Variables ?? {}
+    return Object.values(rendered.Resources ?? {})[0]?.Properties ?? {}
 }
 
 /**
- * The code esbuild staged for a NodejsFunction during this synth, or `undefined` when there is none.
+ * Problems with the migrator's code: none staged, or a deployed `Code` that is not the bundle staged in this
+ * synth (an escape-hatch override would deploy something the bundle check never read).
  * @param {cdk.aws_lambda.Function} fn
- * @returns {string | undefined}
+ * @returns {{ code: string | undefined, problems: string[] }}
  */
 function stagedBundle(fn) {
-    const stage = /** @type {{ absoluteStagedPath?: unknown } | undefined} */ (
+    const stage = /** @type {{ absoluteStagedPath?: unknown, assetHash?: unknown } | undefined} */ (
         fn.node.tryFindChild('Code')?.node.tryFindChild('Stage')
     )
     const dir = stage?.absoluteStagedPath
-    if (typeof dir !== 'string') return undefined
+    if (typeof dir !== 'string') return { code: undefined, problems: [] }
     const file = ['index.mjs', 'index.js'].map((name) => path.join(dir, name)).find((name) => existsSync(name))
-    return file === undefined ? undefined : readFileSync(file, 'utf8')
+    const deployed = renderedProperties(fn).Code?.S3Key
+    const problems =
+        deployed === `${String(stage?.assetHash)}.zip`
+            ? []
+            : [`it deploys ${JSON.stringify(deployed)}, not the bundle this synth staged (${String(stage?.assetHash)})`]
+    return { code: file === undefined ? undefined : readFileSync(file, 'utf8'), problems }
 }
 
 /**
@@ -179,6 +208,12 @@ export class SssbApp extends Construct {
         const slug = props.slug
         if (!/^[a-z][a-z0-9-]*$/.test(slug ?? '')) {
             throw new Error(`SssbApp: slug must be lowercase letters, digits and dashes (got "${String(slug)}")`)
+        }
+        // The slug names the database the migrator migrates and the server reads, so it must be this app's: a
+        // root infra/ composing several apps could otherwise pair one app's directory with another's slug.
+        const declared = declaredSlug(appDir)
+        if (declared !== undefined && declared !== slug) {
+            throw new Error(`SssbApp: slug is "${slug}", but ${appDir}/config/app.ts declares APP_SLUG "${declared}"`)
         }
         const transport = props.params?.database?.transport
         if (!TRANSPORTS.includes(/** @type {any} */ (transport))) {
@@ -432,14 +467,17 @@ export class SssbApp extends Construct {
         // environment and the bundle as they will be deployed, not as this constructor left them.
         this.node.addValidation({
             validate: () => {
-                const problems = failClosedEnvironmentProblems(finalEnvironment(server)).map(
+                const environment = renderedProperties(server).Environment?.Variables ?? {}
+                const problems = failClosedEnvironmentProblems(environment).map(
                     (problem) => `the server is not fail-closed: ${problem}`,
                 )
                 if (cdk.Stack.of(this).bundlingRequired) {
+                    const bundle = stagedBundle(migrator)
                     problems.push(
-                        ...migratorBundleProblems({ code: stagedBundle(migrator), ...migratorSource.expected }).map(
-                            (problem) => `the migrator bundle is wrong: ${problem}`,
-                        ),
+                        ...[
+                            ...bundle.problems,
+                            ...migratorBundleProblems({ code: bundle.code, ...migratorSource.expected }),
+                        ].map((problem) => `the migrator bundle is wrong: ${problem}`),
                     )
                 }
                 return problems
