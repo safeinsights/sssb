@@ -47,7 +47,7 @@
         {
             "package": "caniuse-lite",
             "license": "CC-BY-4.0",
-            "reason": "Browser-support data read at build time by Browserslist users (Next, PostCSS). A data licence whose only condition is attribution, which the package's own LICENSE carries."
+            "reason": "Browser-support data read at build and lint time by Browserslist (through Babel, which @sssb/eslint-plugin's React Hooks rules load, and through Next's styled-jsx). A data licence whose only condition is attribution, which the package's own LICENSE carries."
         }
     ]
 }
