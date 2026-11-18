@@ -5,6 +5,7 @@
 ## Checklist
 
 - [ ] `pnpm verify` green (typecheck, lint, unit, e2e, static demo)
+- [ ] A changeset in `.changeset/` if the PR changes what ships to adopters (the kit's shipped files, `apps/starter`); an empty one if they would see no difference
 - [ ] `pnpm test:contract` green if migrations/db code changed
 - [ ] New strings in BOTH `messages/en.json` and `messages/es.json`
 - [ ] Vendor SDK imports only under `packages/kit/src/adapters/` (lint enforces, but say so if you added one)

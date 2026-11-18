@@ -1,16 +1,53 @@
 # Changesets
 
 SSSB's packages are released with [Changesets](https://github.com/changesets/changesets) (ADR-0014 part 10).
-A changeset is a markdown file here naming the packages a change affects and how far it bumps them, for example
-`.changeset/short-name.md`:
+A changeset is a markdown file here, and it is also the release-note entry for its change. ADR-0014 P7's release
+notes have four sections ("Seam changes", "Framework migrations", "Operator actions", "Scaffold changes to apply by
+hand"); each changeset says which one it belongs to and what an adopter does, so the notes can be written from them.
+The shape follows CanopyCMS's changelog, whose entries end with "Now deletable"; its assembly script is not copied. Name the file after the change, in kebab-case: `.changeset/short-name.md`.
+
+## When one is required
+
+CI's `changeset-required` job fails a PR that changes what ships to adopters and adds no changeset. What ships is
+`packages/kit/package.json`, the files `@sssb/kit`'s `files` allowlist ships (`packages/kit/src`, less tests and
+stories, plus the five seam-conformance tests), and `apps/starter`. Not `apps/showcase`, `packages/seed`, the
+kit's `test-fixture`, tests, scripts, docs, infra or the lockfile. Dependabot's PRs and the release merge from
+`integration` are exempt; so is a PR opened before the gate reached its base branch. The rule and its cases are
+`.github/scripts/require-changeset.sh` and `tests/tooling/changesets.test.ts`.
+
+If adopters would see no difference (a refactor, an internal fix), add an **empty changeset**: a file holding only
+`---` and `---`. `pnpm changeset add --empty` writes one once the packages are public; until then write it by hand.
+
+## Template
+
+Copy it; `tests/tooling/changesets.test.ts` checks every file here against it.
 
 ```md
 ---
 '@sssb/kit': minor
 ---
 
-What changed, for the changelog.
+### Short title
+
+**Kind.** seam
+
+**What changed.** One or two sentences.
+
+**To adopt.** What the adopter does, with the import path and the call shape.
+
+**Now deletable.** The PATTERN of local code this supersedes ("a hand-rolled wrapper around X"), recognisable in any
+adopter's tree.
 ```
+
+- **Kind** is one of `seam` (the `@sssb/app-config/*` contract or a public subpath changed), `migration` (a
+  framework migration an app must take or order around), `operator` (something the deployer does: params, secrets,
+  infra), `scaffold` (the starter changed and an adopter applies it by hand), or `none` (a fix adopters need not act
+  on). They are P7's four sections, in that order.
+- **To adopt** is required for every kind but `none`; **Now deletable** is left out when nothing becomes deletable.
+- **A kind that asks the adopter to act is a `minor`**, since a patch must be compatible; `none` may be a `patch`.
+  Never `major` (next section).
+- The title is `###`, so entries nest under the release notes' headings. Describe the change an adopter sees, not
+  the PR; never name another adopter's files or hosts.
 
 `.github/workflows/release.yml` versions the pending ones on the next push to `main` and publishes the result.
 `pnpm changeset` writes one once the packages are public; until then it stops at "No versionable packages found",

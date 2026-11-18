@@ -3186,3 +3186,29 @@ JP approved the fix on 2026-11-17. It closes `.claude/future-tasks/resolved/labe
   notification bell's plain `{count}` renders "1000", like its badge, so it stays as it was.
 - The keyboard pass found that opening or hiding the Simulator panel drops focus. That was already on main; it is
   `.claude/future-tasks/simulator-panel-focus-on-toggle.md`.
+
+## Changesets are required on PRs that change what ships, and carry the release note (2026-11-18, `ci/changeset-required`)
+
+JP asked whether CanopyCMS's way of keeping a changelog up to date could be copied. Its mechanism: every PR that
+changes a published package adds a `.changeset/*.md` that is its changelog entry, in a fixed template ending with a
+"Now deletable" part, and CI fails the PR without one. SSSB already had Changesets but no rule, template or lint.
+
+- **What was taken:** the gate, the template, the explicit "no adopter-visible effect" answer (an empty changeset),
+  and "Now deletable". The template's `**Kind.**` is one of P7's four release-note sections (`seam`, `migration`,
+  `operator`, `scaffold`) or `none`, so the notes can be written from the files by section.
+- **What was not:** CanopyCMS's 3,286-line assembly script, its area table and its int-prerelease labels. They serve
+  an npm prerelease channel; SSSB's release candidates are tarballs on a GitHub prerelease (ADR-0014 P7). Assembling
+  the notes from the files waits for `@sssb/tools` to exist to host it. Rejected alternative: port the script whole.
+- **The gate is path-based, not `changeset status`.** Every package is `private` until P14 and `status` ignores
+  private packages, so it would pass for any change. "Ships" is `packages/kit/package.json`, what the kit's `files`
+  allowlist ships (the seam-conformance tests included, other tests and stories not) and `apps/starter`, the scaffold
+  an adopter copies. `apps/showcase`, `packages/seed`, the lockfile and the kit's `test-fixture` are not shipped. The
+  lockfile counts in CanopyCMS because its worker is an esbuild bundle; SSSB ships source. A test pins the script's
+  list of shipped tests to the manifest's.
+- **Exemptions:** Dependabot's PRs (it cannot write one; a bump to the kit's dependencies still reaches adopters, so
+  a human adding a changeset on it is welcome), the release merge from `integration`, and a PR opened before the gate
+  reached its base branch (read from git, so no date is written down).
+- **The logic is a shell script under `.github/scripts/`, tested by a vitest file** that builds real git repositories,
+  and the shape lint is `tests/support/changeset-shape.ts` run by the same file. Neither adds a `scripts/` file, a
+  `package.json` script or a `knip.json` entry, because P4 is moving `scripts/` and P4, P5 and P6 own the root
+  manifest.

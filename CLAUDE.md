@@ -174,6 +174,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   default** and stays off under e2e (the playwright configs blank the variable, and refuse to load while a ticking
   dev server's marker is live) and the demo. The ticking is `scripts/ticker.mjs` (start, stop, status), policy-free. Never add a bypass to the
   route for either: it stays `withWebhookSecret`.
+- **A PR that changes what ships to adopters adds a changeset** (`.changeset/README.md` has the template and what
+  counts): the kit's shipped files and `apps/starter`. It is the release-note entry, with a "Now deletable" part,
+  and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset.
 - Before opening a PR, run `/pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.
   **Never squash a PR another PR is stacked on**: squashing rewrites the commits, the stacked branch then
