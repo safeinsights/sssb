@@ -4672,7 +4672,11 @@ cause, in pnpm's source). Each decision, and what was rejected:
   installs ends in `-app-config`. `workspace:` resolves only to a workspace package, so this unscoped name is never
   fetched from a registry; the name the kit's peer declares stays `@sssb/app-config`, in SSSB's scope.
 - **`@sssb/kit`'s manifest does not change**, so P2's dead-registry check of the packed kit is not re-run: the seam
-  stays an optional peer in `peerDependenciesMeta` alone.
+  stays an optional peer in `peerDependenciesMeta` alone. Its shipped source does: the conformance suite's `seam-map`
+  check (`packages/kit/src/testing/conformance/seam-map.ts`) refused a seam package not named `@sssb/app-config`, which
+  pack and consume's unit step found. It now reads the app's declaration and requires the name a
+  `workspace:<name>@<range>` names, else `@sssb/app-config`. Rejected: dropping the name check (a seam package whose
+  name matches nothing the app declares is a seam pnpm does not link).
 - **`sssb doctor` fails a `link:` seam even while it is linked** (`importerSeamProblems`,
   `packages/tools/src/commands/doctor-checks.js`), with the four changes in the message. Rejected: reporting it
   without failing, which leaves an adopter green until their next `pnpm add`, then red with a message about the kit.

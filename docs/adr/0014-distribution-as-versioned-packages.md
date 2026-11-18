@@ -1180,7 +1180,9 @@ it, and `sssb doctor` fails. Option C stands; only the way the app declares its 
   its own seam; the settings and hooks that did not help are in the decision log.
 - **`sssb doctor` fails a `link:` seam**, naming the change, though it is linked when doctor runs: the next `pnpm add`
   would unlink it. It also fails an importer whose declared seam is another importer's. Its check of the seam's
-  target reads the importer's `node_modules` link for a `workspace:` seam, as it did for any form but `link:`.
+  target reads the importer's `node_modules` link for a `workspace:` seam, as it did for any form but `link:`. The
+  conformance suite's `seam-map` check, which required the seam's `package.json` to be named `@sssb/app-config`, now
+  requires the name the app's `workspace:` declaration names (`@sssb/app-config` for any other form).
 - **Pack and consume's generated shape runs `pnpm add`, `pnpm remove` and `pnpm update` in the app after every other
   step**, each followed by `sssb doctor` and the lockfile's seam check. With the `link:` seam it failed at the first.
 - **The plugin's workaround is gone.** P13's commands told authors to edit `package.json` and run `pnpm install`
