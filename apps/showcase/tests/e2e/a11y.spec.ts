@@ -50,7 +50,7 @@ for (const route of adminRoutes) {
 // The Events/Errors screens used to get swept via their /dev/* routes; they now live only inside
 // the Simulator panel, and the panel's own dark skin is a surface of its own — so sweep the
 // expanded panel once per tab. Pages above cover the collapsed-pill default state.
-const simulatorTabs = ['people', 'mail', 'events', 'errors', 'snapshots']
+const simulatorTabs = ['people', 'mail', 'events', 'jobs', 'errors', 'snapshots']
 
 for (const tab of simulatorTabs) {
     test(`axe: simulator panel, ${tab} tab (admin)`, async ({ page }) => {

@@ -26,8 +26,9 @@ export function frameworkGuard(appDir) {
             const file = id.split('?', 1)[0] ?? id
             // Virtual modules (`\0…`, `virtual:…`) and ids that are not files have no package to judge.
             if (checked.has(file) || !path.isAbsolute(file) || !existsSync(file)) return null
-            checked.add(file)
+            // Remembered only once it passes, so a foreign file fails every test file that loads it, not just the first.
             assertNoForeignFramework(appDir, file)
+            checked.add(file)
             return null
         },
     }

@@ -92,7 +92,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `@sssb/kit` from the APP's directory and checks the real path of what it got. `sssb/no-bare-kit-import` bans a bare
   `@sssb/kit` specifier in every package under `packages/` but the framework and the showcase's seed. A preset loads
   the tools it configures (Vite's React plugin, next-intl's plugin, jest-dom) from the app, never its own copies. A
-  new CLI command is a module in `packages/tools/src/commands/` plus one line in `bin/sssb.js`; a new published
+  new CLI command is a module in `packages/tools/src/commands/` plus one entry in `bin/sssb.js`'s `COMMANDS`; a new published
   helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.
@@ -195,10 +195,15 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - Component workshop: `pnpm ladle` (screens AND react-email templates).
 - **Scheduled work in dev only runs when something ticks it.** `pnpm tick` (`pnpm tick:starter`) calls the running
   dev server's `/api/webhooks/cron` once with the dev secret (`sssb tick`); `DEV_TICK_SECONDS=<n> pnpm dev`
-  does it every n seconds (`sssb dev-tick`, which `pnpm dev` runs `next dev` through). The ticker is **off by
+  does it every n seconds (`sssb dev-tick`, which `pnpm dev` runs `next dev` through), and the showcase's Simulator
+  (Jobs tab) starts and stops it inside the dev server (`apps/showcase/src/app/api/simulator/ticker`, 404 outside a simulated
+  `next dev`: kit's `isSimulatedDevServer`). The ticker is **off by
   default** and stays off under e2e (the playwright configs blank the variable, and refuse to load while a ticking
   dev server's marker is live) and the demo. The ticking is `@sssb/tools/ticker` (start, stop, status), policy-free;
-  all of it lives in `packages/tools/src/tick`. Never add a bypass to the route for either: it stays `withWebhookSecret`.
+  all of it lives in `packages/tools/src/tick`. Never add a bypass to the route for any of them: it stays `withWebhookSecret`.
+- **A PR that changes what ships to adopters adds a changeset** (`.changeset/README.md` has the template and what
+  counts): every `@sssb/*` package's shipped files (today the kit and the tools) and `apps/starter`. It is the release-note entry, with a "Now deletable" part,
+  and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset.
 - Before opening a PR, run `/pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.
   **Never squash a PR another PR is stacked on**: squashing rewrites the commits, the stacked branch then
@@ -248,4 +253,5 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   the app's own catalog via `apps/*/tests/catalog.ts`. See `docs/adopting.md`.
 - At the end of a slice or before a PR, run the `doc-steward` agent on the branch diff — it
   proposes updates to development-approach, an ADR addendum, decision-log, build-notes, and the
-  cutover checklist so the docs keep telling the truth.
+  cutover checklist so the docs keep telling the truth. It also reports the net line delta of each doctrine doc
+  the diff touches, and proposes deleting superseded text in the same pass (records excepted).

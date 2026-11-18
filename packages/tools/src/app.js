@@ -103,19 +103,29 @@ export function workspaceApps(root) {
 /**
  * A short, unique label for each app directory (relative to `root`), for names a person reads: CI shard and job
  * names, the browser pane's configurations. The directory's own name (`showcase`), or, when two apps share one, the
- * whole relative path with `/` as `-` (`services-web`). An app at the root is named by the root's directory.
+ * whole relative path with `/` as `-` (`services-web`). An app at the root is named by the root's directory. Two
+ * spellings that still meet (`a/x/web`, `a-x/web`) are told apart by a number on the later one (`a-x-web-2`).
  * @param {string} root
  * @param {string[]} apps
  * @returns {Map<string, string>}
  */
 export function appLabels(root, apps) {
     const base = (/** @type {string} */ app) => path.basename(path.resolve(root, app))
+    const rel = (/** @type {string} */ app) => path.relative(root, path.resolve(root, app)).split(path.sep).join('-')
+    /** @type {Map<string, number>} */
     const counts = new Map()
     for (const app of apps) counts.set(base(app), (counts.get(base(app)) ?? 0) + 1)
-    return new Map(
-        apps.map((app) => [
-            app,
-            counts.get(base(app)) > 1 && app !== '.' ? app.replace(/^\.\//, '').split('/').join('-') : base(app),
-        ]),
-    )
+    /** @type {Map<string, string>} */
+    const labels = new Map()
+    /** @type {Set<string>} */
+    const taken = new Set()
+    for (const app of apps) {
+        const wanted = (counts.get(base(app)) ?? 0) > 1 && rel(app) !== '' ? rel(app) : base(app)
+        // Two spellings can still meet (`a/x/web` and `a-x/web`): the later one gets a number, so a label is unique.
+        let label = wanted
+        for (let n = 2; taken.has(label); n++) label = `${wanted}-${n}`
+        taken.add(label)
+        labels.set(app, label)
+    }
+    return labels
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // @ts-check
-// THE sssb CLI (ADR-0014, step P4). Every command acts on the app in the working directory, or the one `--app
+// THE sssb CLI (ADR-0014, step P4). Every app-level command acts on the app in the working directory, or the one `--app
 // <dir>` names, so each package's own scripts work as they are (part 9). Run it as `pnpm exec sssb`, never
 // `npx sssb`: outside a package that installs @sssb/tools, npx would fetch an unscoped `sssb` from the registry.
 //

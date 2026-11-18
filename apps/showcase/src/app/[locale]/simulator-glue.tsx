@@ -15,7 +15,7 @@ import type { ScrubResult } from '@sssb/kit/components/simulator/errors-app'
 import type { AnalyticsEvent, AuditEntry } from '@sssb/kit/components/simulator/events-app'
 import type { HookDeliveryRow, HookEndpointRow } from '@sssb/kit/components/simulator/hooks-app'
 import type { InboundComposeInput, InboundEmailRow } from '@sssb/kit/components/simulator/inbound-app'
-import type { ScheduleRowLike, WorldJobLike } from '@sssb/kit/components/simulator/jobs-app'
+import type { DevTickerLike, ScheduleRowLike, WorldJobLike } from '@sssb/kit/components/simulator/jobs-app'
 import type { MailItem } from '@sssb/kit/components/simulator/mail-app'
 import type { SmsMessageRow } from '@sssb/kit/components/simulator/messages-app'
 import type { FeatureFlag, Snapshot, SnapshotAgreement } from '@sssb/kit/components/simulator/snapshots-app'
@@ -76,6 +76,9 @@ interface SchedulesResponse {
     clockOffsetMs: number
     worldNow: string
 }
+
+/** GET /api/simulator/ticker: the dev ticker's status, which the control renders as it is. */
+type TickerResponse = Omit<DevTickerLike, 'onStart' | 'onStop'>
 
 interface HooksResponse {
     endpoints: HookEndpointRow[]
@@ -150,6 +153,10 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     const [jobsData, setJobsData] = useState<JobsResponse>(EMPTY_JOBS)
     const [schedulesData, setSchedulesData] = useState<SchedulesResponse>(EMPTY_SCHEDULES)
     const [hooksData, setHooksData] = useState<HooksResponse>(EMPTY_HOOKS)
+    // The dev ticker exists only where its route answers (a simulated `next dev`). Null until it does, and once it
+    // answers 404 (a production build: the demo, e2e) it is not asked again while this glue is mounted.
+    const [tickerData, setTickerData] = useState<TickerResponse | null>(null)
+    const tickerOffered = useRef(true)
     const [snapshotsBusy, setSnapshotsBusy] = useState(false)
     const [busySnapshot, setBusySnapshot] = useState<string | null>(null)
     const [busyPreset, setBusyPreset] = useState<string | null>(null)
@@ -248,6 +255,18 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
         setSchedulesData((await response.json()) as SchedulesResponse)
     }, [])
 
+    const refreshTicker = useCallback(async () => {
+        if (!tickerOffered.current) return
+        const response = await fetch('/api/simulator/ticker')
+        if (response.status === 404) {
+            tickerOffered.current = false
+            setTickerData(null)
+            return
+        }
+        if (!response.ok) return
+        setTickerData((await response.json()) as TickerResponse)
+    }, [])
+
     const refreshHooks = useCallback(async () => {
         const response = await fetch('/api/simulator/webhooks')
         if (!response.ok) return
@@ -309,8 +328,11 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
                 // The Actors tab's world strip reads this SAME jobsData (see the `actors` prop
                 // below) rather than polling its own copy, so it rides the Jobs tab's poll condition.
                 if (expanded && (activeTab === 'jobs' || activeTab === 'actors')) void refreshJobs()
-                // Schedules + world clock live on the Jobs tab.
-                if (expanded && activeTab === 'jobs') void refreshSchedules()
+                // Schedules, the world clock and the dev ticker live on the Jobs tab.
+                if (expanded && activeTab === 'jobs') {
+                    void refreshSchedules()
+                    void refreshTicker()
+                }
                 // Endpoints + deliveries live on the Hooks tab.
                 if (expanded && activeTab === 'hooks') void refreshHooks()
             },
@@ -328,6 +350,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
         refreshAudit,
         refreshJobs,
         refreshSchedules,
+        refreshTicker,
         refreshHooks,
     ])
 
@@ -362,10 +385,13 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (expanded && (activeTab === 'jobs' || activeTab === 'actors')) void refreshJobs()
 
-        if (expanded && activeTab === 'jobs') void refreshSchedules()
+        if (expanded && activeTab === 'jobs') {
+            void refreshSchedules()
+            void refreshTicker()
+        }
 
         if (expanded && activeTab === 'hooks') void refreshHooks()
-    }, [expanded, activeTab, refreshJobs, refreshSchedules, refreshHooks])
+    }, [expanded, activeTab, refreshJobs, refreshSchedules, refreshTicker, refreshHooks])
 
     useEffect(() => {
         // Snapshots hosts the feature-flag knobs too, so it needs the events payload (flags ride on
@@ -525,6 +551,45 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
         if (!response.ok) return
         const { spawned } = (await response.json()) as { spawned: number }
         await afterSchedulesChanged(spawned, null)
+    }
+
+    // The ticker's route answers its status on every outcome (with `error` on a refusal), so the control always shows
+    // what the server holds, and the notice says what happened to the click.
+    async function postTicker(request: { action: 'start'; seconds: number } | { action: 'stop' }) {
+        const response = await fetch('/api/simulator/ticker', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(request),
+        })
+        if (response.status === 404) {
+            tickerOffered.current = false
+            setTickerData(null)
+            return null
+        }
+        const body = (await response.json().catch(() => null)) as (TickerResponse & { error?: string }) | null
+        // A body without the status (a 500 while the route compiles, say) leaves the control as it was.
+        if (typeof body?.running !== 'boolean') return null
+        // Stored whole, `error` and all (the control ignores it; the next GET replaces it): a rest destructure here
+        // makes the React Compiler skip this component, and its lint with it.
+        setTickerData(body)
+        return { error: body.error, status: body }
+    }
+
+    async function handleStartTicker(seconds: number) {
+        const result = await postTicker({ action: 'start', seconds })
+        if (!result) return
+        if (result.error === 'invalid-interval') {
+            pushNotice(t('noticeTickerInvalid', { min: result.status.minSeconds, max: result.status.maxSeconds }))
+        } else if (result.error === 'running-elsewhere') {
+            pushNotice(t('noticeTickerElsewhere'))
+        } else if (result.status.running && result.status.seconds !== null) {
+            pushNotice(t('noticeTickerStarted', { seconds: result.status.seconds }))
+        }
+    }
+
+    async function handleStopTicker() {
+        const result = await postTicker({ action: 'stop' })
+        if (result && !result.status.running) pushNotice(t('noticeTickerStopped'))
     }
 
     async function handleToggleFail(endpointId: string, failing: boolean) {
@@ -765,6 +830,9 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
                         onReset: handleResetClock,
                         onRunDue: handleRunDue,
                     },
+                    ticker: tickerData
+                        ? { ...tickerData, onStart: handleStartTicker, onStop: handleStopTicker }
+                        : undefined,
                 }}
                 hooks={{
                     endpoints: hooksData.endpoints,

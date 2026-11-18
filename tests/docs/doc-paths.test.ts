@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { citedPaths, doctrineDocs, resolves } from './doc-set'
+import { citedPaths, doctrineDocs, missingIncludes, resolves } from './doc-set'
 
 /**
  * The docs must not send you somewhere that no longer exists.
@@ -18,6 +18,10 @@ describe('doctrine docs cite paths that exist', () => {
 
     it('scans the whole doctrine set', () => {
         expect(docs.length).toBeGreaterThan(20)
+    })
+
+    it('lists no include entry that names nothing, so a typo cannot quietly shrink the set', () => {
+        expect(missingIncludes()).toEqual([])
     })
 
     it.each(docs)('%s', (file) => {

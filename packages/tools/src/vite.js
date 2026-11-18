@@ -16,7 +16,7 @@
 // resolve against this app's registrations rather than another's. `@` is the app's own `src`. The framework itself
 // resolves as a package, through its `exports` map.
 //
-// The framework itself resolves as a package; a guard plugin (framework-guard.js) fails the build if any module it
+// A guard plugin (framework-guard.js) fails the build if any module it
 // loads is framework source from an instance other than the app's own.
 //
 // Vite loads this file with Node, which is why it is JavaScript (part 2), and the Vite plugins it configures are

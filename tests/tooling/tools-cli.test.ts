@@ -11,6 +11,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { appLabels } from '../../packages/tools/src/app.js'
 import { TMP_DIR_MARKER_SUFFIX } from '../../packages/tools/src/testing/tmp-dir-marker.js'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
@@ -366,5 +367,111 @@ describe('sssb check-tmpdir-leak', () => {
         const result = sssb(cwd, ['check-tmpdir-leak'])
         expect(result.status).toBe(1)
         expect(result.stderr).toContain('usage: sssb check-tmpdir-leak')
+    })
+})
+
+describe('appLabels', () => {
+    it('names each app by its directory, the path with dashes when two share a name, and `.` by the root', () => {
+        const root = path.join('/ws', 'my-repo')
+        expect([...appLabels(root, ['apps/showcase', 'apps/starter'])]).toEqual([
+            ['apps/showcase', 'showcase'],
+            ['apps/starter', 'starter'],
+        ])
+        expect([...appLabels(root, ['apps/web', 'services/web', 'apps/api'])]).toEqual([
+            ['apps/web', 'apps-web'],
+            ['services/web', 'services-web'],
+            ['apps/api', 'api'],
+        ])
+        expect([...appLabels(root, ['.'])]).toEqual([['.', 'my-repo']])
+    })
+
+    it('keeps every label unique when two spellings of a path meet', () => {
+        const root = path.join('/ws', 'my-repo')
+        for (const apps of [
+            ['services/web', 'other/web', 'services-web'],
+            ['a/x/web', 'a-x/web'],
+            ['apps/web', './apps/web'],
+        ]) {
+            const labels = appLabels(root, apps)
+            expect(new Set(labels.values()).size).toBe(apps.length)
+        }
+        expect([...appLabels(root, ['services/web', 'other/web', 'services-web']).values()]).toEqual([
+            'services-web',
+            'other-web',
+            'services-web-2',
+        ])
+        expect([...appLabels(root, ['a/x/web', 'a-x/web']).values()]).toEqual(['a-x-web', 'a-x-web-2'])
+        expect([...appLabels(root, ['apps/web', './apps/web']).values()]).toEqual(['apps-web', 'apps-web-2'])
+    })
+
+    it('keeps `ci e2e-shards` names unique when an app labelled `x-destructive` sits beside a splitting app `x`', () => {
+        const root = workspace('labels-destructive', { sssb: { apps: ['apps/x', 'apps/x-destructive'] } })
+        app(root, 'apps/x', { name: 'x' })
+        write(
+            path.join(root, 'apps/x/playwright.config.ts'),
+            "export default { projects: [{ name: 'chromium' }, { name: 'destructive' }] }\n",
+        )
+        app(root, 'apps/x-destructive', { name: 'x-destructive' })
+        write(path.join(root, 'apps/x-destructive/playwright.config.ts'), 'export default {}\n')
+        const result = sssb(root, ['ci', 'e2e-shards'])
+        expect(result.status).toBe(0)
+        const line = result.stdout.split('\n').find((l) => l.startsWith('computed matrix: '))!
+        const names = JSON.parse(line.slice('computed matrix: '.length)).map((shard: { name: string }) => shard.name)
+        expect(names).toHaveLength(3)
+        expect(new Set(names).size).toBe(3)
+        expect(names).toEqual(['x', 'x-destructive', 'x-destructive-2'])
+    })
+
+    it('gives `ci e2e-shards` unique names for two apps that share a basename', () => {
+        const root = workspace('labels', { sssb: { apps: ['apps/web', 'services/web'] } })
+        for (const dir of ['apps/web', 'services/web']) {
+            app(root, dir, { name: dir.replace('/', '-') })
+            write(path.join(root, dir, 'playwright.config.ts'), 'export default {}\n')
+        }
+        const result = sssb(root, ['ci', 'e2e-shards'])
+        expect(result.status).toBe(0)
+        const line = result.stdout.split('\n').find((l) => l.startsWith('computed matrix: '))!
+        const names = JSON.parse(line.slice('computed matrix: '.length)).map((shard: { name: string }) => shard.name)
+        expect(names).toEqual(['apps-web', 'services-web'])
+    })
+})
+
+describe('sssb tick and dev-tick with --app', () => {
+    it('`tick --app <dir>` takes the slot from the app’s declared port, so it gets as far as reaching for the server', () => {
+        const root = workspace('tick-app')
+        const dir = app(root, 'apps/web', { name: 'web', sssb: { port: 'starter' } })
+
+        const result = sssb(root, ['tick', '--app', dir, '--url', 'http://127.0.0.1:1', '--timeout', '2'])
+
+        expect(result.stderr).toContain('tick: request to http://127.0.0.1:1')
+        expect(result.status).toBe(1)
+    })
+
+    it('`tick <slot> --url …` from a directory with no package.json gets past argument parsing', () => {
+        const scratch = realpathSync(makeTestTmpDir('sssb-cli-tick-bare-'))
+
+        const result = sssb(scratch, ['tick', 'showcase', '--url', 'http://127.0.0.1:1', '--timeout', '2'])
+
+        expect(result.stderr).toContain('tick: request to http://127.0.0.1:1')
+        expect(result.stderr).not.toContain('is not a package')
+        expect(result.status).toBe(1)
+    })
+
+    it('`dev-tick --app <dir> -- <cmd>` runs the command in the app’s directory and returns its status', () => {
+        const root = workspace('devtick-app')
+        const dir = app(root, 'apps/web', { name: 'web', sssb: { port: 'starter' } })
+
+        const result = sssb(root, [
+            'dev-tick',
+            '--app',
+            dir,
+            '--',
+            process.execPath,
+            '-e',
+            'console.log(process.cwd()); process.exit(3)',
+        ])
+
+        expect(result.status).toBe(3)
+        expect(result.stdout.split('\n').map((l) => l.trim())).toContain(realpathSync(dir))
     })
 })
