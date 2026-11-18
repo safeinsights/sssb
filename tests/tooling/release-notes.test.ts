@@ -621,3 +621,21 @@ describe('a fence under a list item is still a fence', () => {
         expect(markdown).toContain('    a = 1\n\n\n    b = 2')
     })
 })
+
+describe('a fence closes only on a bare fence of its own character', () => {
+    it('is not closed by a different character, so a heading inside it is still code', () => {
+        const block = ['```md', '~~~', '# not a heading', '~~~', '```'].join('\n')
+        expect(lintChangeset(changeset({ kind: 'seam', action: 'required', adopt: `See:\n\n${block}` }))).toEqual([])
+        // opened with a tilde fence, a backtick line does not close it either
+        const tilde = ['~~~md', '```', '# nor this', '```', '~~~'].join('\n')
+        expect(lintChangeset(changeset({ kind: 'seam', action: 'required', adopt: `See:\n\n${tilde}` }))).toEqual([])
+    })
+
+    it('is not closed by a fence line that has an info string, which opens nothing inside code', () => {
+        const block = ['```md', '```sh', '# not a heading', '```', '```'].join('\n')
+        // the first bare ``` closes the block; the info-string line did not, and the final bare fence opens a new one
+        expect(lintChangeset(changeset({ kind: 'seam', action: 'required', adopt: `See:\n\n${block}` }))).toEqual([
+            expect.stringMatching(/code fence is never closed/),
+        ])
+    })
+})

@@ -2196,8 +2196,8 @@ and #19 changed paths in earlier entries after their files moved to `resolved/`.
 ## `release.mjs` runs as a lone file in two release jobs, and its output is a file in a commit (2026-11-18, `feat/release-notes`)
 
 release.yml's `push` job copies `scripts/release.mjs` out of the commit to a temp path (so a patch that rewrote it
-would not be the code that judges it) and `publish` checks out that one file; neither has `node_modules`, and neither
-has `scripts/release-notes.mjs` beside it. A static `import './release-notes.mjs'` would have failed both with
+would not be the code that judges it) and `publish` checks out three files (`.nvmrc`, `.changeset/config.json` and
+`scripts/release.mjs`); neither has `node_modules`, and neither has `scripts/release-notes.mjs` beside it. A static `import './release-notes.mjs'` would have failed both with
 `ERR_MODULE_NOT_FOUND`, in the one job that holds the release app's key, after the release was already planned. So the
 notes module is imported inside `check` and `prepare`, and `tests/tooling/release.test.ts` copies `release.mjs` alone
 and runs it. A script run through a symlinked temp directory (macOS's `/var`) also never reaches `main` if it compares

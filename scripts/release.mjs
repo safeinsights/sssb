@@ -9,7 +9,8 @@
 //                                 nothing for a private package, and a check of that plan could never fail. It
 //                                 also fails on what would stall a release later: a changeset naming a package
 //                                 outside the fixed group, a group member outside packages/ or without
-//                                 repository.url, a group that is part private.
+//                                 repository.url, a group that is part private, and a changeset whose body is not a
+//                                 readable release-note entry (scripts/release-notes.mjs).
 //   prepare [--allow-dirty]       The `plan` job. Plans, guards, writes the release notes (assembled from the pending
 //                                 changesets by scripts/release-notes.mjs) to docs/releases/v<version>.md, then runs
 //                                 `changeset version` in the working tree and commits nothing. stdout is one JSON
@@ -461,8 +462,10 @@ export function changesetReleases(text, where) {
  * works out what the release must be: every pending changeset consumed, every public fixed-group manifest under
  * packages/ (where `check` keeps the group) moved
  * to the one version those changesets imply. The index may then differ from HEAD by exactly that: the
- * changesets deleted, each of those manifests changed in its version line and nowhere else, and plain-file
- * changelogs beside them. The version must also be newer than every `vX.Y.Z` tag. Needs no installed dependency.
+ * changesets deleted, each of those manifests changed in its version line and nowhere else, plain-file
+ * changelogs beside them, and one new plain file, the release notes `docs/releases/v<version>.md`, which must begin
+ * `# Release notes: v<version>` and is required. The version must also be newer than every `vX.Y.Z` tag. Needs no
+ * installed dependency.
  */
 export function verifyRelease(root, version) {
     const problems = []

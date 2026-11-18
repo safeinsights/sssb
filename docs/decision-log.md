@@ -3590,7 +3590,7 @@ JP asked what is worth borrowing from CanopyCMS's documentation setup. Two thing
 
 ## Release notes are assembled from the changesets by a script, and committed with the release (2026-11-18, `feat/release-notes`)
 
-The Canopy survey deferred this until `@sssb/tools` existed; it exists, so this reverses that deferral. #21 made every PR
+The Canopy survey deferred this until `@sssb/tools` existed; this ends that deferral, but in `scripts/` rather than in `@sssb/tools` (below). #21 made every PR
 that changes what ships carry a changeset with a Kind and an Action; ADR-0014 part 10 wants notes with "Seam changes",
 "Framework migrations", "Operator actions" and "Scaffold changes to apply by hand", and the stock Changesets changelog
 ignores Kind and Action and deletes the files. `scripts/release-notes.mjs` reads the files first and writes those
@@ -3600,7 +3600,7 @@ sections, with each entry's What changed, To adopt and Now deletable.
   that lints them first and gives the same bytes for the same files; the idea that a later candidate says what changed
   since the earlier one (`--since`, and the corrections to entries edited after it). **Not taken:** its area table, int
   labels, `## Unreleased` table, rewriting a changelog in the repository and `--promote`, which serve an npm
-  prerelease channel and cost 3,286 lines.
+  prerelease channel. The whole of that script is 3,286 lines, about half of them its own self-test.
 - **A script in `scripts/`, not an `@sssb/tools` command.** Only SSSB's maintainers release SSSB. `@sssb/tools` ships
   to adopters, so a command there would ship maintainer-only code, and P4 left `scripts/` for what is the repository's
   own. `pnpm release:notes` runs it. Rejected: `sssb release-notes`.
@@ -3613,7 +3613,7 @@ sections, with each entry's What changed, To adopt and Now deletable.
   runs in the key-holding job), and a test holds the two together: a reader stricter than the lint would pass every
   PR and then stop a release in `push`. Review found exactly that, after the lint was widened to what Changesets reads.
 - **Loaded dynamically.** release.yml's `push` job copies `scripts/release.mjs` out of the commit and `publish` checks
-  out only that file, so `release.mjs` imports the notes module only inside `check` and `prepare`; a test runs the lone
+  out three files (`release.mjs` among them, `release-notes.mjs` not), so `release.mjs` imports the notes module only inside `check` and `prepare`; a test runs the lone
   copy to pin it.
 - **`check` lints every changeset on every PR; `prepare` always assembles before `changeset version`.** A changeset that
   is not a readable entry would otherwise fail a release after its plan was accepted. Both leave the package names and

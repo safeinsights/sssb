@@ -946,8 +946,8 @@ fixed group, no dependency on `@sssb/kit`). Part 4 holds as written; these are t
 
 ## Addendum — 2026-11-18: release notes are assembled from the changesets
 
-Part 10 and the P7 row say the notes' "Seam changes" and "Framework migrations" sections are written by hand "until
-Changesets exists". Changesets exists, and its changelog does not carry Kind and Action, so the notes are assembled
+Part 10 says the notes' "Seam changes" and "Framework migrations" sections are written by hand "until Changesets
+exists", and the P7 row writes all four by hand. Changesets exists, and its changelog does not carry Kind and Action, so the notes are assembled
 instead: `scripts/release-notes.mjs` reads the pending changesets (each filed by its `**Kind.**` into the four
 sections of part 10, which are always present, then "Other changes" when there is one) and writes them with each
 entry's What changed, To adopt and Now deletable. `release.mjs prepare` runs it before `changeset version` deletes the
