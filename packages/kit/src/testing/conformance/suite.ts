@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { authzMutations } from './authz'
-import { migrationOrder, rlsPglite } from './db'
+import { appRolesCheck, migrationOrder, rlsPglite } from './db'
 import { demoPresets } from './demo-presets'
 import { i18nParity, i18nPartition } from './i18n'
 import { checkOptOut, registerChecks } from './register'
@@ -32,6 +32,7 @@ const IMPLEMENTATIONS: Readonly<Record<string, CheckImpl>> = {
     'i18n-parity': i18nParity,
     'rls-pglite': rlsPglite,
     'migration-order': migrationOrder,
+    'app-roles': appRolesCheck,
     'demo-presets': demoPresets,
     'seam-map': seamMap,
 }

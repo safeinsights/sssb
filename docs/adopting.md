@@ -416,8 +416,8 @@ one with the packed `@sssb/create` from the packed packages and runs its `pnpm v
 `adoption-probe`.
 
 The one thing that DOES stay app-shaped is the conformance suite, `@sssb/kit/testing` — the authorization scan of
-your route tree, the i18n partition/parity checks, the pglite RLS suite, migration order, the demo-presets check and
-the seam map — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
+your route tree, the i18n partition/parity checks, the pglite RLS suite, migration order, the app's named roles, the
+demo-presets check and the seam map — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
 `conformanceSuite({ appDir, optOut })`, against your catalog, your tables, your routes and your presets. Leaving a
 check out takes a named opt-out with a reason (the check ids are in `@sssb/kit/testing/checks.json`); a typo in one
 fails the run, and so does a check that is skipped without one. That is what stops the fixture becoming the only world
@@ -482,7 +482,7 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 `packages/kit/package.json`'s `exports` map is the contract: it lists the 139 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 62 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 63 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import

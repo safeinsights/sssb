@@ -2,6 +2,7 @@ import { Kysely, sql } from 'kysely'
 import { type Migration, Migrator } from 'kysely/migration'
 import { expect } from 'vitest'
 import { openPglite, PGliteDialect } from '../../adapters/fake/pglite-dialect'
+import type { FoundRole } from '../../db/app-roles'
 import type { DB } from '../../db/schema'
 import type { CheckImpl } from './types'
 
@@ -82,6 +83,113 @@ export async function buildPreUpdate(
         ran.push(...results.map((result) => result.migrationName))
     }
 }
+
+/** The roles a pglite cluster holds, by name. */
+const roleNames = async (db: Kysely<DB>): Promise<Set<string>> =>
+    new Set((await sql<{ rolname: string }>`SELECT rolname FROM pg_roles`.execute(db)).rows.map((row) => row.rolname))
+
+/**
+ * The cluster-wide roles the APP's migrations create, measured on a fresh pglite: the framework's migrations run first,
+ * alone, and whatever roles they add (`app_user`) are the framework's; then the app's run, and whatever roles THEY add
+ * are the app's. Nothing is assumed about the framework's roles but what its own migrations do. With them, `app_user`
+ * and the roles `named`, as the migrations left them (`refusedOf`, ../../db/app-roles.ts).
+ */
+async function rolesTheAppCreates(named: readonly string[]): Promise<{ created: string[]; found: FoundRole[] }> {
+    const { migrateRegistryToLatest } = await migrate()
+    const { frameworkMigrations, migrations } = await registry()
+    const { refusedOf } = await import('../../db/app-roles')
+    const db = pglite()
+    try {
+        const server = await roleNames(db)
+        await migrateRegistryToLatest(db, frameworkMigrations)
+        const framework = await roleNames(db)
+        await migrateRegistryToLatest(db, migrations)
+        const after = await roleNames(db)
+        return {
+            created: [...after].filter((role) => !server.has(role) && !framework.has(role)).sort(),
+            found: await refusedOf(db, named),
+        }
+    } finally {
+        await db.destroy()
+    }
+}
+
+/**
+ * `app-roles`: the roles the app's migrations create are exactly the ones it names in `appRoles`
+ * (../../db/app-roles.ts). A role it creates and does not name breaks the owner pass's second run, where a later owner
+ * has no ADMIN on it; a name it does not create is one the owner pass would grant ADMIN on all the same, so a stale or
+ * hostile name is refused here before any server sees it. And every named role, and the framework's `app_user`, is
+ * still ORDINARY once the migrations ran (`refusedOf`): a migration that makes one LOGIN or CREATEDB, the owner of a
+ * database, or a member of a privileged role, is caught here, before the owner pass hands every later owner ADMIN on it. Measured once per file,
+ * on one pglite.
+ */
+export const appRolesCheck: CheckImpl = (() => {
+    let measured: Promise<{ created: string[]; found: FoundRole[] }> | undefined
+    const named = async () => {
+        const { appRolesOf } = await import('../../db/app-roles')
+        return appRolesOf(await import('@sssb/app-config/db/migrations'))
+    }
+    const measure = async () => (measured ??= rolesTheAppCreates(await named()))
+    const created = async () => (await measure()).created
+    return {
+        // A fresh measurement for each file that registers the check, even where one worker runs several.
+        setup: () => {
+            measured = undefined
+        },
+        timeouts: {
+            "every role the app's migrations create is named in appRoles": 60_000,
+            "every role appRoles names is created by the app's migrations": 60_000,
+            "every role appRoles names is an ordinary role once the app's migrations ran": 60_000,
+            "app_user is an ordinary role once the app's migrations ran": 60_000,
+        },
+        tests: {
+            'appRoles, where the app exports it, lists distinct role names the app may own': async () => {
+                await named()
+            },
+            "every role the app's migrations create is named in appRoles": async () => {
+                const { APP_ROLES_HOME } = await import('../../db/app-roles')
+                const names = await named()
+                const unnamed = (await created()).filter((role) => !names.includes(role))
+                expect(
+                    unnamed,
+                    `the app's migrations create ${unnamed.map((role) => `role "${role}"`).join(', ')}, which ` +
+                        `appRoles does not name: ${APP_ROLES_HOME}, listing every role they create, so the contract ` +
+                        "suite's owner pass can grant a later owner the ADMIN on it its creator holds",
+                ).toEqual([])
+            },
+            "every role appRoles names is created by the app's migrations": async () => {
+                const { APP_ROLES_HOME } = await import('../../db/app-roles')
+                const roles = await created()
+                const stale = (await named()).filter((role) => !roles.includes(role))
+                expect(
+                    stale,
+                    `appRoles names ${stale.map((role) => `role "${role}"`).join(', ')}, which no migration of the app ` +
+                        `creates: the owner pass grants ADMIN on every role named, so name only the roles the app's ` +
+                        `migrations create (${APP_ROLES_HOME})`,
+                ).toEqual([])
+            },
+            "every role appRoles names is an ordinary role once the app's migrations ran": async () => {
+                const { FRAMEWORK_ROLE, ORDINARY_NAMED, shownRefused } = await import('../../db/app-roles')
+                const strayed = shownRefused((await measure()).found.filter((role) => role.rolname !== FRAMEWORK_ROLE))
+                expect(
+                    strayed,
+                    `after the app's migrations, appRoles names ${strayed}: the contract suite's owner pass grants every ` +
+                        `later owner ADMIN on these roles, so each must stay ordinary: ${ORDINARY_NAMED}`,
+                ).toBe('')
+            },
+            "app_user is an ordinary role once the app's migrations ran": async () => {
+                const { FRAMEWORK_ROLE, ORDINARY_APP_USER, shownRefused } = await import('../../db/app-roles')
+                const strayed = shownRefused((await measure()).found.filter((role) => role.rolname === FRAMEWORK_ROLE))
+                expect(
+                    strayed,
+                    `after the app's migrations, ${strayed}: the contract suite's owner pass grants every later owner ` +
+                        "ADMIN on the framework's app_user, so the app's migrations must leave it ordinary: " +
+                        ORDINARY_APP_USER,
+                ).toBe('')
+            },
+        },
+    }
+})()
 
 /** `rls-pglite`: the app's own tables through SSSB's composed proof runner, on the in-process database. */
 export const rlsPglite: CheckImpl = {
