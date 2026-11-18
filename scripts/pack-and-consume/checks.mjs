@@ -96,8 +96,9 @@ export function lockfileProblems(lockfile) {
         if (indent === 4 && /^\s+[A-Za-z]+:\s*$/.test(line)) group = line.trim().slice(0, -1)
         if (!line.includes('@sssb/')) continue
 
-        // A workspace generated from tarballs (`@sssb/create --sssb <dir>`) overrides every @sssb package to its
-        // tarball, and pnpm records the overrides: `  '@sssb/kit': file:/…/sssb-kit-0.1.0.tgz`.
+        // An adopter's `overrides` of an @sssb package, which pnpm records: `  '@sssb/kit': file:/…/sssb-kit-0.1.0.tgz`.
+        // The generator no longer writes any (no SSSB package depends on another); one that sends a package anywhere
+        // but a local tarball is still a problem.
         const override =
             section === 'overrides' && indent === 2 ? /^ {2}'(@sssb\/[^']+)':\s*(\S+)\s*$/.exec(line) : null
         if (override) {

@@ -14,7 +14,8 @@ package depends on another. A release candidate's tarballs now install by URL as
 `blockExoticSubdeps` on and no `overrides`: before, the notes' `overrides` made pnpm refuse `@sssb/tools` as an exotic
 subdependency (`ERR_PNPM_EXOTIC_SUBDEP`), and without them pnpm looked for it on npm. The release notes' install
 lines and `pnpm create @sssb --sssb <dir>` no longer write `overrides`, and the starter's `infra/package.json` declares
-`@sssb/tools` beside `@sssb/cdk`.
+`@sssb/tools` beside `@sssb/cdk`. `SssbApp` refuses to synth beside an `@sssb/tools` that is not its own version
+(pnpm only warns about a peer at another version).
 
 **To adopt.** In every package that depends on `@sssb/cdk` (each app's `infra/package.json`), add `@sssb/tools` at the
 same release (the same tarball URL, or `file:` path, as your other packages use for it). Then delete the `@sssb/*`

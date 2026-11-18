@@ -4863,6 +4863,11 @@ records the first. Decisions, each with what was rejected:
   documenting `blockExoticSubdeps: false` (it turns off a supply-chain guard for every dependency of the workspace, to
   admit one); keeping the dependency and `overrides` (the error above); publishing release candidates to a registry
   (npm publishing waits for P14, and it would not fix the tarball recipe `@sssb/create --sssb` writes).
+- **`SssbApp` refuses to synth beside an `@sssb/tools` of another version** (`toolsVersionProblem`,
+  `packages/cdk/src/sssb-app.js`, read from cdk's own resolution of `@sssb/tools/package.json`). The exact dependency
+  used to pin it; a peer at another version is only pnpm's warning (`strictPeerDependencies` is off), and cdk's
+  deploy-time checks are that tools release's, while `sssb doctor`'s version check reads each app's own packages, never
+  its `infra/`. The review found it. Rejected: `strictPeerDependencies` (an adopter's whole-workspace setting).
 - **Each app's `infra/` declares `@sssb/tools`** beside `@sssb/cdk` (`apps/starter/infra/package.json`,
   `apps/showcase/infra/package.json`), so the peer is met by a dependency of the package itself rather than by pnpm's
   `resolvePeersFromWorkspaceRoot` finding the root's copy, or `autoInstallPeers` asking the registry.
@@ -4874,12 +4879,19 @@ records the first. Decisions, each with what was rejected:
   required peer at exactly cdk's version, and fails it as a dependency.
 - **Pack and consume proves the notes' recipe** (`notesRecipe`, the pages shape): `candidateNotes` rendered for the
   packed tarballs, its JSON block taken verbatim into a workspace package, the URLs pointed at a local server (a child
-  process, stopped when the step ends or the run exits), the generated workspace's `allowBuilds` kept (as an
-  adopter's workspace has them) and nothing else set. Rejected: rewriting the whole pages shape to install by URL (the
-  shape's `file:` installs and committed seed would need a URL token, for no more coverage of the recipe).
+  process, stopped when the step ends or the run exits), the generated workspace's `minimumReleaseAge` guard kept and
+  nothing else set, installed with `--ignore-scripts`. The guard and the flag came from review: the install has no
+  lockfile, and this job's tarballs become a release candidate's assets, so a package published in the last days must
+  not be installed, nor any install script run, beside them. Past pre mode (P14) `candidateNotes` has no notes to
+  render, so the step says it is skipped (`.claude/future-tasks/p14-leave-pre-mode.md` has the follow-up). Rejected:
+  rewriting the whole pages shape to install by URL (the shape's `file:` installs and committed seed would need a URL
+  token, for no more coverage of the recipe); a committed lockfile seed for the recipe (one more seed to refresh, for a
+  step that checks only how the `@sssb` packages resolve).
 - **Next's lint gets each app as its root dir** (`settings.next.rootDir` on the preset's `next` block,
   `packages/eslint-plugin/src/app-config.js`). `@next/next/no-html-link-for-pages` looked for `pages/` and `app/`
   under the directory ESLint ran from, so from a workspace root it printed "Pages directory cannot be found" on every
-  run (exit 0), and found no app to check links against. The preset already knows the apps (`resolveRoot`); each is
-  passed glob-escaped, since Next reads them with fast-glob. Rejected: switching the rule off (it then checks nothing
-  anywhere); an option adopters set (the preset has the answer).
+  run (exit 0), and found no app to check links against. The preset already knows the apps (`resolveRoot`). Next
+  reads each as a fast-glob pattern after turning every backslash into a slash, so a backslash escape broke any path
+  with a special character (the review found it); each special character is a one-character class instead
+  (`nextRootDir`), and `!` is left as it is (`[!]` is a negated class). Rejected: switching the rule off (it then checks
+  nothing anywhere); an option adopters set (the preset has the answer).

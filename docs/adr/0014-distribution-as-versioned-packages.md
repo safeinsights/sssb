@@ -1205,7 +1205,8 @@ notes' `overrides` mapping it to its URL, pnpm refused it as an exotic subdepend
   and as a dev dependency for its own tests. A package that uses `@sssb/cdk` installs `@sssb/tools` beside it: each
   app's `infra/` (the starter's, the showcase's, and so what `@sssb/create` writes) declares both. **No SSSB package
   now depends on another**, which is part 10's statement again, and an install by URL needs no `overrides` and keeps
-  `blockExoticSubdeps` on. The peer range is the exact version, so pnpm warns when the two are out of step.
+  `blockExoticSubdeps` on. A peer at another version is only a pnpm warning, so `SssbApp` refuses to synth beside an
+  `@sssb/tools` that is not its own version, as it refuses an `@sssb/kit` that is not.
 - **Part 10's reason for avoiding peers between SSSB packages does not apply under Changesets 3.** Measured with
   `@changesets/cli` 3.0.3 on scratch copies of the manifests: a `minor` (or `patch`) changeset on `@sssb/tools` moved
   `@sssb/cdk` with the fixed group to 0.3.0 (0.2.1), never to 1.0.0, whether cdk took tools as a `workspace:*` peer,
