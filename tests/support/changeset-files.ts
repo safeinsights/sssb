@@ -4,7 +4,7 @@ import path from 'node:path'
 /**
  * What a `.changeset/` directory may hold, as Changesets and this repository's release flow leave it. In pre mode
  * (release candidates, `.changeset/pre.json`) `changeset version` MOVES each changeset it consumes to
- * `.changeset/pre/<name>.md`, byte for byte, where it is no longer pending (scripts/release.mjs refuses an edit). A
+ * `.changeset/pre/<name>.md`, byte for byte, where it is no longer pending (`verify-release` refuses an edit in a release commit). A
  * check that walks the directory must therefore not read `pre` as a stray subdirectory, and must not hold its files to
  * the rules for pending changesets: they were linted when they were pending, and a rule tightened since must not turn
  * the record of a shipped candidate red.

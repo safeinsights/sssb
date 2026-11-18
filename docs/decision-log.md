@@ -4753,7 +4753,11 @@ What each tool does with the moved files, decided one by one (`.changeset/README
   `pre/` that is not a changeset file and on any other subdirectory, so a stray is still caught. The enumeration is one
   helper, `tests/support/changeset-files.ts`, which the whole-flow test uses too. Rejected: lint `pre/` as well (it
   would pin every old rule forever), and skip every subdirectory (a stray directory would pass).
-- **`release.mjs` `check`, `prepare`, `verify-release`**: unchanged; they already treat `pre/` as consumed.
+- **`release.mjs` `check`, `prepare`, `verify-release`**: they already treat `pre/` as consumed, with one change in
+  `check`: its package-name and 0.x-major rules judged every changeset, `pre/`'s included, so a group or a rule that
+  changed after a candidate could have turned that candidate's record red on every later PR (found by claim-check, by
+  adding a `pre/` file naming another package). They now judge the pending ones only; the name-reuse rule still reads
+  `pre/`'s names.
 - **`release-notes.mjs`**: unchanged, pending only. A candidate's notes hold what is new, and are regenerated after its
   release commit moved the changesets with `--at <release commit>^` (the flow test pins that they equal the committed
   file). A `--consumed` flag to read `pre/` for the whole series' notes (what the release that leaves pre mode, P14, will

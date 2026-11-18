@@ -280,7 +280,9 @@ export async function check(root) {
             }
         }
     }
-    for (const changeset of ws.changesets) {
+    // Only the PENDING ones: a consumed changeset (`pre/`) was released with its candidate, and a rule or a group that
+    // changed since must not turn that record red on every later PR.
+    for (const changeset of ws.pending) {
         for (const release of changeset.releases) {
             // A changeset that names a package outside the group is never consumed while that package is
             // private, and a mixed one makes Changesets refuse the whole plan: either would stop every release.

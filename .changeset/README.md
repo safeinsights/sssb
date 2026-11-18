@@ -155,8 +155,8 @@ changeset it consumed is moved byte for byte. A tool that enumerates `.changeset
 what to do with the moved files:
 
 - **Held to the rules for changesets: `.changeset/*.md` only.** The shape lint over the tree
-  (`tests/tooling/changesets.test.ts`), `release.mjs` (`check` and `prepare` assemble and lint what is pending) and the
-  notes tool read the files directly in `.changeset/`. `release.mjs` also reads `pre/`'s names (`check` and `prepare`
+  (`tests/tooling/changesets.test.ts`), `release.mjs` (`check` and `prepare` judge and assemble what is pending: the package
+  names, the 0.x rule and the body shape) and the notes tool read the files directly in `.changeset/`. `release.mjs` also reads `pre/`'s names (`check` and `prepare`
   refuse a pending changeset with the name of a consumed one) and, in `verify-release`, requires that a release commit
   move each consumed changeset to `pre/<name>.md` unchanged. That check runs on a release commit only: a PR may edit a
   file in `pre/`, which is why the shape lint does not trust them.

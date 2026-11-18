@@ -202,6 +202,27 @@ describe('release check (every PR)', () => {
         ])
     })
 
+    it('judges only the pending changesets: a consumed one (pre/) is a record of a release that was cut', async () => {
+        // a candidate consumed changesets that named a package since removed from the group, and filed a major, which a
+        // rule added since would refuse: neither turns the record red
+        const root = workspace([KIT('0.2.0-rc.0')], { feature: ['"@sssb/kit": minor'] })
+        mkdirSync(path.join(root, '.changeset', 'pre'))
+        writeFileSync(
+            path.join(root, '.changeset', 'pre', 'old.md'),
+            '---\n"@other/pkg": major\n"@sssb/kit": major\n---\n\nnot even a shaped body\n',
+        )
+        expect((await check(root)).problems).toEqual([])
+        // the same changeset still pending is refused, for both
+        writeFileSync(
+            path.join(root, '.changeset', 'new.md'),
+            '---\n"@other/pkg": major\n"@sssb/kit": major\n---\n\n### T\n\n**Kind.** none\n\n**Action.** none\n\n**What changed.** x\n',
+        )
+        const problems = (await check(root)).problems.join('\n')
+        expect(problems).toMatch(/new\.md names @other\/pkg, which is not released/)
+        expect(problems).toMatch(/new\.md files a major for @sssb\/kit/)
+        expect(problems).not.toMatch(/old\.md/)
+    })
+
     it('requires a config that versions private packages while the group is private', async () => {
         const root = workspace([KIT('0.1.0'), APP], { feature: ['"@sssb/kit": minor'] })
         const file = path.join(root, '.changeset', 'config.json')
