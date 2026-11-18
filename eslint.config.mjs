@@ -162,6 +162,9 @@ const eslintConfig = [
         files: [FRAMEWORK_FILES_GLOB],
         plugins: { '@next/next': nextPlugin },
         rules: nextPlugin.configs.recommended.rules,
+        // The framework's screens render inside the apps, so Next's rules read the apps' routes (a glob to Next):
+        // without it they look under the directory ESLint runs from and warn "Pages directory cannot be found".
+        settings: { next: { rootDir: join(import.meta.dirname, 'apps', '*') } },
     },
 
     // ---- BOTH APPS: the preset, exactly as an adopter's app takes it --------------------------------------------

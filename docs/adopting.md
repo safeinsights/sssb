@@ -45,9 +45,9 @@ node packages/create/bin/create.js ~/acme --sssb ~/sssb-tarballs --name "Acme Re
   because it stamps that commit into `dist/release.json`; the same variable turns that refusal into a warning.
 - **`--sssb <dir>` wants exactly one `sssb-<package>-<version>.tgz` for each of `kit`, `tools`, `eslint-plugin`
   and `cdk`, all of the generator's own version** (`packages/create/package.json`'s). The workspace depends on them
-  by absolute `file:` path, and `pnpm-workspace.yaml` gets an `overrides` block mapping every `@sssb/*` package to
-  its tarball, because `@sssb/cdk` depends on `@sssb/tools` at a registry version that pnpm would otherwise look up.
-  When you move to published versions, remove the block and replace the `file:` paths with the version.
+  by absolute `file:` path, in each package that takes one, and needs no `overrides`: no SSSB package depends on
+  another (`@sssb/tools` is a peer of `@sssb/cdk`, which `apps/<app>/infra/` installs beside it). When you move to
+  published versions, replace the `file:` paths with the version.
 
 The workspace has no showcase. The showcase stays in SSSB's repository as the worked example you will read most in
 week one: keep a checkout of SSSB beside your own (`pnpm install && pnpm dev` there), read the slice you need, and
@@ -390,8 +390,8 @@ rest of this repository's are SSSB's own: the second app's (`dev:starter`, `tick
 
 One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 138 published subpaths from its source (39
-counting its tests), so the same setting would start demanding you delete the other 103 — capabilities you merely have not
+nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 139 published subpaths from its source (39
+counting its tests), so the same setting would start demanding you delete the other 104 — capabilities you merely have not
 reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration. The generated `knip.json` carries a few narrow entries beside the app's entry files: at the root,
@@ -480,7 +480,7 @@ apps/<app>/tests/             your e2e, static-demo and contract specs
 
 ### What you may import from SSSB
 
-`packages/kit/package.json`'s `exports` map is the contract: it lists the 138 subpaths your app may
+`packages/kit/package.json`'s `exports` map is the contract: it lists the 139 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 62 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's

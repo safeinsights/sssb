@@ -267,7 +267,7 @@ export function generate({
     checkPackageNames(slug, meta)
     const { spec, tarballs } = resolveSssb(sssb, meta.version)
     /** @type {import('./files.js').Context} */
-    const c = { slug, name: displayName(name), repo, owners, meta, sssbSpec: spec, tarballs, workflowRef: ref }
+    const c = { slug, name: displayName(name), repo, owners, meta, sssbSpec: spec, workflowRef: ref }
 
     /** What this run made: the first directory it created on the way to the target (maybe the target), the stage. */
     const made = {

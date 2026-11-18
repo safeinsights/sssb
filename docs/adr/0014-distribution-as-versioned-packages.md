@@ -1191,3 +1191,39 @@ it, and `sssb doctor` fails. Option C stands; only the way the app declares its 
 - **The plugin's workaround is gone.** P13's commands told authors to edit `package.json` and run `pnpm install`
   rather than `pnpm add`, and its gate failed a command that said `pnpm add`; they now say
   `pnpm --filter <app> add <pkg>`.
+
+## Addendum — 2026-11-18: keep the gitleaks entry for keel's `webhook.test.ts`
+
+Step 2 of part 11 ("Pages' migration from fork to dependency") listed the `.gitleaks.toml` allowlist entry for keel's
+`packages/keel/src/service-auth/webhook.test.ts` among what to delete. It stays: the entry is history-only once the
+directory is gone, and the secret scan reads the whole history, where the file's placeholder secret still is. rc.2's
+notes carry the correction (`docs/decision-log.md`, "The real S3 storage adapter is published as a factory").
+
+## Addendum — 2026-11-18: `@sssb/tools` is a peer of `@sssb/cdk`
+
+The P9 addendum made `@sssb/cdk` depend on `@sssb/tools` at the exact version, refining rule 4 and part 10. Pages,
+switching to v0.2.0-rc.1, found that a release candidate installed by URL could not resolve it under pnpm 11: with the
+notes' `overrides` mapping it to its URL, pnpm refused it as an exotic subdependency (`ERR_PNPM_EXOTIC_SUBDEP`,
+`blockExoticSubdeps` being on by default), and without them it looked for `@sssb/tools` on npm, which holds only
+placeholders (`0.0.0`, `0.0.0-stage`) and no release candidate. Both reproduced here with the packed tarballs served over a local URL. So
+(`docs/decision-log.md`, "`@sssb/tools` is a peer of `@sssb/cdk`"):
+
+- **`@sssb/cdk` takes `@sssb/tools` as a peer** (`workspace:*`, packed as the exact version; required, not optional),
+  and as a dev dependency for its own tests. A package that uses `@sssb/cdk` installs `@sssb/tools` beside it: each
+  app's `infra/` (the starter's, the showcase's, and so what `@sssb/create` writes) declares both. **No SSSB package
+  now depends on another**, which is part 10's statement again, and an install by URL needs no `overrides` and keeps
+  `blockExoticSubdeps` on. A peer at another version is only a pnpm warning, so `SssbApp` refuses to synth beside an
+  `@sssb/tools` that is not its own version, as it refuses an `@sssb/kit` that is not.
+- **Part 10's reason for avoiding peers between SSSB packages does not apply under Changesets 3.** Measured with
+  `@changesets/cli` 3.0.3 on scratch copies of the manifests: a `minor` (or `patch`) changeset on `@sssb/tools` moved
+  `@sssb/cdk` with the fixed group to 0.3.0 (0.2.1), never to 1.0.0, whether cdk took tools as a `workspace:*` peer,
+  a `^0.2.0` peer, or a dependency; with the fixed group removed, a `minor` gave cdk only a patch (0.2.1) in all three,
+  the `^0.2.0` peer it leaves out of range included, never a major; in pre mode, `release:check` planned `0.2.0-rc.2` for the set. Part 10's backstop (CI fails a release plan at
+  1.0.0 or above) stays.
+- **The install lines a release candidate's notes print** (`release.mjs` `candidateNotes`) drop `overrides`: each
+  package that uses one depends on it by URL, and one that uses `@sssb/cdk` also on `@sssb/tools`. `@sssb/create`'s
+  `--sssb <dir>` drops its `overrides` block for the same reason, which supersedes the P12 addendum's "Part 7's 'No
+  overrides are used' holds for published versions only": it now holds for tarballs too.
+- **Pack and consume's pages shape installs the notes' recipe** (`notesRecipe`): the notes `candidateNotes` renders
+  for the packed tarballs, their JSON of URLs taken verbatim, served from a local server, with pnpm's defaults but for
+  the generated workspace's `minimumReleaseAge` guard, installed with `--ignore-scripts`.
