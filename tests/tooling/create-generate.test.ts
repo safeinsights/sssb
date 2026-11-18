@@ -357,11 +357,10 @@ describe('@sssb/create: the generated workspace', () => {
         expect(app.devDependencies['@sssb/tools']).toBe(file('tools'))
         expect(app.devDependencies['@sssb/eslint-plugin']).toBe(file('eslint-plugin'))
         expect(readJson(out, 'apps/acme/infra/package.json').dependencies['@sssb/cdk']).toBe(file('cdk'))
+        // @sssb/cdk's peer, which the infra installs itself: no override sends one package's dependency anywhere.
+        expect(readJson(out, 'apps/acme/infra/package.json').dependencies['@sssb/tools']).toBe(file('tools'))
         expect(readJson(out, 'package.json').devDependencies['@sssb/tools']).toBe(file('tools'))
-        // @sssb/cdk's own dependency on @sssb/tools is a registry version in its manifest: overridden too.
-        const workspace = read(out, 'pnpm-workspace.yaml')
-        for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk'])
-            expect(workspace).toContain(`    '@sssb/${pkg}': '${file(pkg)}'`)
+        expect(read(out, 'pnpm-workspace.yaml')).not.toMatch(/^overrides:/m)
 
         // A directory missing one is refused; so is a value that is neither a directory nor a version.
         const partial = makeTestTmpDir('create-partial-')
@@ -496,10 +495,12 @@ describe('@sssb/create: the generated workspace', () => {
         const out = path.join(makeTestTmpDir('create-yaml-out-'), 'ws')
         generate({ templateDir: template, target: out, slug: 'acme', name: 'Acme', sssb: tarballs })
         const workspace = parseYaml(read(out, 'pnpm-workspace.yaml'))
-        for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk'])
-            expect(workspace.overrides[`@sssb/${pkg}`]).toBe(
-                `file:${path.join(tarballs, `sssb-${pkg}-${VERSION}.tgz`)}`,
-            )
+        // No overrides: no SSSB package depends on another (@sssb/tools is @sssb/cdk's peer), so each package's own
+        // `file:` tarball is all an install needs, with pnpm's default blockExoticSubdeps on.
+        expect(workspace.overrides).toBeUndefined()
+        const infra = readJson(out, 'apps/acme/infra/package.json')
+        for (const pkg of ['cdk', 'tools'])
+            expect(infra.dependencies[`@sssb/${pkg}`]).toBe(`file:${path.join(tarballs, `sssb-${pkg}-${VERSION}.tgz`)}`)
         expect(workspace.allowBuilds).toEqual(parseYaml(read(REPO, 'pnpm-workspace.yaml')).allowBuilds)
         expect(prettierCheck(out)).toBe('')
         for (const file of filesUnder(out).filter((f) => /\.ya?ml$/.test(f)))

@@ -60,7 +60,7 @@
 //
 // The workspaces are left in place after a run, so a failure can be inspected; the next run wipes them.
 
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
     cpSync,
@@ -109,6 +109,7 @@ import {
     undeclaredImports,
 } from './pack-and-consume/checks.mjs'
 import { WORKAROUNDS, unusedWorkarounds } from './pack-and-consume/workarounds.mjs'
+import { candidateNotes } from './release.mjs'
 
 const REPO = path.resolve(import.meta.dirname, '..')
 
@@ -168,12 +169,12 @@ const LEDGER_SOURCE = path.join(BASE, 'ledger-source')
 const REPORTS = path.join(BASE, 'reports')
 const LOCK_SEED = path.join(REPO, 'scripts/pack-and-consume/consumer-lock.yaml')
 /**
- * The generator writes the tarballs' ABSOLUTE paths (each app's and the root's `file:` specifiers, and the
- * pnpm-workspace.yaml `overrides` that pnpm copies into the lockfile), and this run's directory differs between
+ * The generator writes the tarballs' ABSOLUTE paths (each package's `file:` specifiers, which pnpm copies into the
+ * lockfile), and this run's directory differs between
  * machines; each tarball's file name carries the fixed group's version, which every release candidate moves
  * (`sssb-kit-0.2.0-rc.0.tgz`). The seed holds a token for each (checks.mjs' SEED_TARBALLS and SEED_VERSION), swapped
  * for TARBALLS and the version just packed when it is copied in and back when it is written, so the seed's specifiers
- * and overrides match the workspace's exactly, on any machine and at any version, and pnpm keeps its resolution.
+ * match the workspace's exactly, on any machine and at any version, and pnpm keeps its resolution.
  */
 /** The fixed group's version, as every packed manifest holds it. */
 let PACKED_VERSION = ''
@@ -1236,6 +1237,111 @@ function e2eEntryUnderNode() {
     console.log(`plain Node, no seam: @sssb/kit/testing/e2e -> ${result.stdout.trim()}`)
 }
 
+/** A static file server for one directory (argv: dir, port, ready file), run as a child: every step here blocks. */
+const SERVE_DIRECTORY = `
+const http = require('node:http')
+const fs = require('node:fs')
+const path = require('node:path')
+const [dir, port, ready] = process.argv.slice(1)
+http.createServer((request, response) => {
+    const file = path.join(dir, path.basename(decodeURIComponent(new URL(request.url, 'http://x').pathname)))
+    fs.readFile(file, (error, body) => {
+        if (error) { response.writeHead(404); response.end(); return }
+        response.writeHead(200, { 'content-type': 'application/octet-stream' })
+        response.end(body)
+    })
+}).listen(Number(port), '127.0.0.1', () => fs.writeFileSync(ready, ''))
+`
+
+/** Serves TARBALLS on 127.0.0.1:`port` until the returned function stops it (or this process exits). */
+function serveTarballs(port) {
+    const ready = path.join(BASE, 'tarball-server.ready')
+    rmSync(ready, { force: true })
+    const server = spawn(process.execPath, ['-e', SERVE_DIRECTORY, TARBALLS, String(port), ready], { stdio: 'ignore' })
+    const stop = () => server.kill()
+    process.once('exit', stop)
+    const until = Date.now() + 10_000
+    while (!existsSync(ready)) {
+        if (Date.now() > until) {
+            stop()
+            fail(`the local tarball server on port ${port} did not start`)
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
+    }
+    return stop
+}
+
+/**
+ * THE RELEASE NOTES' INSTALL RECIPE, as an adopter follows it: the notes a release candidate's prerelease carries
+ * (release.mjs `candidateNotes`, for these very tarballs), their JSON of `@sssb/*` packages by URL taken verbatim into
+ * one workspace package, the URLs pointed at a local server holding the same files, and nothing else of SSSB's: no
+ * `overrides`, and pnpm's default `blockExoticSubdeps` (on in pnpm 11). A package installed by URL that depended on
+ * another SSSB package by version would fail here, looked for in the registry or, overridden to a URL, refused as an
+ * exotic subdependency (pages' finding on v0.2.0-rc.1). The workspace keeps the generated one's `allowBuilds`, as an
+ * adopter's does; `@sssb/cdk`'s peer must resolve to the package's own `@sssb/tools`.
+ */
+function notesRecipe() {
+    const root = path.join(BASE, 'notes-root')
+    rmSync(root, { recursive: true, force: true })
+    mkdirSync(path.join(root, 'docs', 'releases'), { recursive: true })
+    writeFileSync(path.join(root, 'docs', 'releases', `v${PACKED_VERSION}.md`), `# Release notes: v${PACKED_VERSION}\n`)
+    const assets = readdirSync(TARBALLS)
+        .filter((file) => file.endsWith('.tgz'))
+        .sort()
+        .map((file) => ({
+            name: packedManifest(path.join(TARBALLS, file)).name,
+            file,
+            sha512: `sha512-${createHash('sha512')
+                .update(readFileSync(path.join(TARBALLS, file)))
+                .digest('base64')}`,
+        }))
+    const notes = candidateNotes(root, PACKED_VERSION, 'safeinsights/sssb', '0'.repeat(40), assets)
+    if (/^overrides:/m.test(notes)) fail("the release notes' install recipe still sets `overrides`")
+    const block = /\nIn each workspace package that uses one[^\n]*\n\n```json\n([\s\S]*?)\n```\n/.exec(notes)
+    if (!block) fail("the release notes carry no JSON block of the packages' URLs")
+    const released = `https://github.com/safeinsights/sssb/releases/download/v${PACKED_VERSION}/`
+    const stop = serveTarballs(notesPort)
+    try {
+        /** @type {Record<string, string>} */
+        const sssb = JSON.parse(block[1].replaceAll(released, `http://127.0.0.1:${notesPort}/`))
+        const dir = path.join(BASE, 'notes-recipe')
+        rmSync(dir, { recursive: true, force: true })
+        const allowBuilds = /\nallowBuilds:\n(?: {4}.*\n)+/.exec(
+            readFileSync(path.join(WS, 'pnpm-workspace.yaml'), 'utf8'),
+        )
+        if (!allowBuilds) fail('the generated pnpm-workspace.yaml has no allowBuilds block to keep')
+        write(path.join(dir, 'pnpm-workspace.yaml'), `packages:\n    - infra\n${allowBuilds[0]}`)
+        write(
+            path.join(dir, 'package.json'),
+            `${JSON.stringify({ name: 'notes-recipe', private: true, packageManager: readJson(path.join(REPO, 'package.json')).packageManager }, null, 4)}\n`,
+        )
+        const infra = readJson(path.join(appDir('console'), 'infra', 'package.json')).dependencies
+        write(
+            path.join(dir, 'infra', 'package.json'),
+            `${JSON.stringify({ name: 'infra', private: true, dependencies: { ...sssb, 'aws-cdk-lib': infra['aws-cdk-lib'], constructs: infra.constructs } }, null, 4)}\n`,
+        )
+        run('pnpm', ['install'], { cwd: dir })
+        const at = (/** @type {string} */ name) => realpathSync(path.join(dir, 'infra', 'node_modules', '@sssb', name))
+        const peer = realpathSync(path.join(path.dirname(at('cdk')), 'tools'))
+        if (peer !== at('tools')) fail(`@sssb/cdk's peer @sssb/tools is ${peer}, not the package's own ${at('tools')}`)
+        const fromElsewhere = readFileSync(path.join(dir, 'pnpm-lock.yaml'), 'utf8')
+            .split('\n')
+            .filter(
+                (line) =>
+                    /^ {2}'@sssb\//.test(line) &&
+                    !line.includes(`127.0.0.1+${notesPort}+`) &&
+                    !line.includes(`127.0.0.1:${notesPort}/`),
+            )
+        if (fromElsewhere.length > 0)
+            fail(`@sssb packages resolved from somewhere else:\n  ${fromElsewhere.join('\n  ')}`)
+        console.log(
+            `the notes' ${Object.keys(sssb).length} packages installed by URL, with no overrides and blockExoticSubdeps on; @sssb/cdk's peer is the package's own @sssb/tools`,
+        )
+    } finally {
+        stop()
+    }
+}
+
 // ---- the generated shape (shape 2) ----------------------------------------------------------------
 
 /** The generated workspace's app, the generator's `--slug`: the seed's own (see LOCK_SEED), so its resolution holds. */
@@ -1284,8 +1390,8 @@ function generateWorkspace() {
 
 /**
  * The seed, then `pnpm install`, as an adopter installs a workspace whose lockfile is committed. No `.npmrc` guard as in
- * the pages shape: that would be a file the generator did not write, and the generated pnpm-workspace.yaml's
- * `overrides` already send every @sssb package to its tarball, which the lockfile check below holds.
+ * the pages shape: that would be a file the generator did not write, and every @sssb package is a `file:` tarball in
+ * the package that takes it (no SSSB package depends on another), which the lockfile check below holds.
  */
 function installGenerated() {
     seedLockfile(GEN)
@@ -1520,6 +1626,8 @@ const port = await freePort()
 // The consumer's contract suites' embedded Postgres: a free port, never the per-checkout one this repo's own uses.
 const contractPort = await freePort()
 const generatedPort = await freePort()
+// The local server the release notes' install recipe takes the tarballs from.
+const notesPort = await freePort()
 const generatedContractPort = await freePort()
 console.log(
     `pack and consume (${[RUN_PAGES && 'pages', RUN_GENERATED && 'generated'].filter(Boolean).join(' and ')}): ${BASE}`,
@@ -1682,6 +1790,7 @@ if (RUN_PAGES) {
         }
     })
     step('pages: layout: seam links, one instance per app', checkLayout)
+    step("pages: the release notes' install recipe, by URL, with no overrides and blockExoticSubdeps on", notesRecipe)
     step('pages: the packed package ships and imports only what it declares', checkDeclaredImports)
     step('pages: typecheck at the ES2022 floor', typecheck)
     step('pages: typecheck with the strict-flag set', typecheckStrict)

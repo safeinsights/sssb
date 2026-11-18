@@ -3,6 +3,7 @@ import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import {
+    cdkPackProblems,
     checkE2eFailProblems,
     checkE2eOkProblems,
     CI_UNIT_SCRIPTS,
@@ -984,6 +985,42 @@ describe("the consumer's check-e2e verdicts (sssb check-e2e's own output format)
         const elsewhere = red.replace(named, '')
         expect(checkE2eFailProblems({ status: 1, stdout: elsewhere }, { config, kitFile })).toEqual([
             `sssb check-e2e failed ${config} without naming ${kitFile}`,
+        ])
+    })
+})
+
+describe('cdkPackProblems', () => {
+    const FILES = ['package.json', 'src/index.js', 'src/index.d.ts']
+    const manifest = (extra: Record<string, unknown>) => ({ name: '@sssb/cdk', version: '0.2.0-rc.2', ...extra })
+    const peers = { '@sssb/tools': '0.2.0-rc.2', 'aws-cdk-lib': '^2.274.0', constructs: '^10.8.1' }
+
+    it('passes @sssb/tools as a peer at exactly its own version, and a dev dependency beside it', () => {
+        expect(cdkPackProblems(manifest({ peerDependencies: peers, devDependencies: peers }), FILES)).toEqual([])
+    })
+
+    it('fails @sssb/tools as a dependency, which an install by URL looks for in the registry', () => {
+        const problems = cdkPackProblems(
+            manifest({ dependencies: { '@sssb/tools': '0.2.0-rc.2' }, peerDependencies: { constructs: '^10.8.1' } }),
+            FILES,
+        )
+        expect(problems).toEqual([
+            "dependencies names @sssb/tools: it must be a peer, which an install by URL resolves to the adopter's own copy, not a dependency, which it looks for in the registry",
+            'peerDependencies does not name @sssb/tools, which @sssb/cdk imports',
+        ])
+    })
+
+    it('fails a peer at another version, an optional one, and any other SSSB package', () => {
+        const other = { ...peers, '@sssb/tools': '^0.2.0-rc.1' }
+        expect(cdkPackProblems(manifest({ peerDependencies: other }), FILES)).toEqual([
+            '@sssb/tools is ^0.2.0-rc.1, not exactly 0.2.0-rc.2: the set moves together',
+        ])
+        const optional = { peerDependencies: peers, peerDependenciesMeta: { '@sssb/tools': { optional: true } } }
+        expect(cdkPackProblems(manifest(optional), FILES)).toEqual([
+            '@sssb/tools is an optional peer: @sssb/cdk cannot run without it',
+        ])
+        const plugin = { ...peers, '@sssb/eslint-plugin': '0.2.0-rc.2' }
+        expect(cdkPackProblems(manifest({ peerDependencies: plugin }), FILES)).toEqual([
+            "peerDependencies names @sssb/eslint-plugin: @sssb/cdk's one SSSB peer is @sssb/tools",
         ])
     })
 })

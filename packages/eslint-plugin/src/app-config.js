@@ -243,6 +243,10 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             files: files('src'),
             plugins: { '@next/next': nextPlugin },
             rules: nextPlugin.configs.recommended.rules,
+            // Where Next's rules look for each app's `app/` and `pages/` (`no-html-link-for-pages`): the apps, not the
+            // directory ESLint runs from, which from the workspace root has neither, and warns "Pages directory cannot
+            // be found". Each is a glob to Next (fast-glob), so a special character in a path is escaped.
+            settings: { next: { rootDir: apps.map((app) => app.dir.replace(GLOB_SPECIALS, '\\$&')) } },
         }),
 
         // ---- the fences ----------------------------------------------------------------------------------------

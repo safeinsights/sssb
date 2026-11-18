@@ -811,16 +811,17 @@ describe('a release candidate, end to end, against a local fake tag', () => {
         const notes = candidateNotes(root, '0.2.0-rc.0', 'safeinsights/sssb', SHA, assets)
         expect(notes).toMatch(/^# Release notes: v0\.2\.0-rc\.0\n/)
         const url = 'https://github.com/safeinsights/sssb/releases/download/v0.2.0-rc.0/sssb-kit-0.2.0-rc.0.tgz'
-        expect(notes).toContain(`overrides:\n    '@sssb/kit': ${url}\n`)
+        // No overrides: no SSSB package depends on another, so pnpm's default blockExoticSubdeps holds.
+        expect(notes).not.toMatch(/^overrides:/m)
+        expect(notes).toContain('a package that uses `@sssb/cdk` also depends on `@sssb/tools`')
         expect(notes).toContain(`"@sssb/kit": "${url}"`)
         expect(notes).toContain(`| \`@sssb/kit\` | [\`sssb-kit-0.2.0-rc.0.tgz\`](${url}) | \`${assets[0].sha512}\` |`)
         expect(notes).toContain(`cut from \`${SHA}\``)
         expect(notes).not.toContain('package/bin/create.js')
-        // the generator is listed and said how to run, never overridden or depended on
+        // the generator is listed and said how to run, never depended on
         const generator = { name: '@sssb/create', file: 'sssb-create-0.2.0-rc.0.tgz', sha512: 'sha512-AAAA' }
         const withGenerator = candidateNotes(root, '0.2.0-rc.0', 'safeinsights/sssb', SHA, [...assets, generator])
-        expect(withGenerator).toContain(`overrides:\n    '@sssb/kit': ${url}\n`)
-        expect(withGenerator).not.toContain(`'@sssb/create':`)
+        expect(withGenerator).not.toMatch(/^overrides:/m)
         expect(withGenerator).not.toContain(`"@sssb/create":`)
         expect(withGenerator).toContain('| `@sssb/create` | [`sssb-create-0.2.0-rc.0.tgz`]')
         expect(withGenerator).toContain(
@@ -834,7 +835,7 @@ describe('a release candidate, end to end, against a local fake tag', () => {
         )
         // unwrapped: the install paragraph, wrapped in the source, is one line in the release body
         expect(notes).toMatch(
-            /\nIn `pnpm-workspace\.yaml`, map every package to its tarball, so that .* release candidate:\n/,
+            /\nIn each workspace package that uses one, depend on it by its URL; .* `blockExoticSubdeps` stays on:\n/,
         )
         // the CLI the workflow runs, with no sibling module and no node_modules
         const alone = path.join(makeTestTmpDir('sssb-release-alone-'), 'release.mjs')

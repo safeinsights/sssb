@@ -347,9 +347,12 @@ export function toolsShippedFileProblems(files) {
 }
 
 /**
- * The packed @sssb/cdk: named so, depending on no framework (ADR-0014 rule 4) and on `@sssb/tools` at exactly its own
- * version (the fixed group's lockstep, which the pack resolved from `workspace:*`), shipping JavaScript, declarations
- * and its Lambda placeholder asset, and no test. Returns the problems.
+ * The packed @sssb/cdk: named so, depending on no framework (ADR-0014 rule 4), taking `@sssb/tools` as a PEER at
+ * exactly its own version (the fixed group's lockstep, which the pack resolved from `workspace:*`), shipping
+ * JavaScript, declarations and its Lambda placeholder asset, and no test. A peer, never a dependency: a package
+ * installed by URL that depends on another by version makes pnpm look for it in the registry, which has no release
+ * candidate, or, overridden to its URL, refuse it as an exotic subdependency (`blockExoticSubdeps`, on by default in
+ * pnpm 11). As a peer it resolves to the `@sssb/tools` the adopter's package installs itself. Returns the problems.
  * @param {Record<string, unknown>} manifest
  * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
  */
@@ -365,8 +368,15 @@ export function cdkPackProblems(manifest, files) {
         const deps = /** @type {Record<string, string> | undefined} */ (manifest[field]) ?? {}
         for (const [dep, range] of Object.entries(deps)) {
             if (dep === '@sssb/kit') problems.push(`${field} names @sssb/kit: @sssb/cdk depends on no framework`)
-            else if (dep.startsWith('@sssb/') && (field !== 'dependencies' || dep !== '@sssb/tools')) {
-                problems.push(`${field} names ${dep}: @sssb/cdk's one SSSB dependency is @sssb/tools`)
+            // The peer's meta is checked below (it must not be optional).
+            else if (dep === '@sssb/tools' && field === 'peerDependenciesMeta') continue
+            else if (dep === '@sssb/tools' && field === 'dependencies') {
+                problems.push(
+                    'dependencies names @sssb/tools: it must be a peer, which an install by URL resolves to the ' +
+                        "adopter's own copy, not a dependency, which it looks for in the registry",
+                )
+            } else if (dep.startsWith('@sssb/') && (field !== 'peerDependencies' || dep !== '@sssb/tools')) {
+                problems.push(`${field} names ${dep}: @sssb/cdk's one SSSB peer is @sssb/tools`)
             } else if (dep === '@sssb/tools' && range !== manifest.version) {
                 problems.push(
                     `@sssb/tools is ${range}, not exactly ${String(manifest.version)}: the set moves together`,
@@ -374,6 +384,10 @@ export function cdkPackProblems(manifest, files) {
             }
         }
     }
+    const peers = /** @type {Record<string, string> | undefined} */ (manifest.peerDependencies) ?? {}
+    if (!('@sssb/tools' in peers)) problems.push('peerDependencies does not name @sssb/tools, which @sssb/cdk imports')
+    const meta = /** @type {Record<string, { optional?: boolean }> | undefined} */ (manifest.peerDependenciesMeta) ?? {}
+    if (meta['@sssb/tools']?.optional) problems.push('@sssb/tools is an optional peer: @sssb/cdk cannot run without it')
     for (const file of files) {
         if (['package.json', 'README.md', 'LICENSE', 'CHANGELOG.md'].includes(file)) continue
         if (/\.test\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test file is shipped`)

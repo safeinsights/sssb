@@ -755,7 +755,7 @@ export function candidateNotes(root, version, repo, sha, assets) {
         throw new Error(`${notesPath(version)} is not the release notes of v${version}`)
     }
     const url = (/** @type {string} */ file) => `https://github.com/${repo}/releases/download/v${version}/${file}`
-    // The generator is run, never depended on: it is left out of the overrides and dependencies, and said how to run.
+    // The generator is run, never depended on: it is left out of the dependencies, and said how to run.
     const generator = assets.find((a) => a.name === GENERATOR)
     const libraries = assets.filter((a) => a.name !== GENERATOR)
     const out = [
@@ -768,15 +768,9 @@ export function candidateNotes(root, version, repo, sha, assets) {
         "replaced under the same URL, and the lockfile's `integrity`, checked against the sha512 below, is what pins the",
         'bytes.',
         '',
-        'In `pnpm-workspace.yaml`, map every package to its tarball, so that a package that depends on another (`@sssb/cdk`',
-        'on `@sssb/tools`) resolves it here rather than on npm, which has no release candidate:',
-        '',
-        '```yaml',
-        'overrides:',
-        ...libraries.map((a) => `    '${a.name}': ${url(a.file)}`),
-        '```',
-        '',
-        'and in each workspace package that uses one, depend on the same URL:',
+        'In each workspace package that uses one, depend on it by its URL; a package that uses `@sssb/cdk` also depends on',
+        "`@sssb/tools`, cdk's peer. No SSSB package depends on another, so this needs no `overrides`, and pnpm's default",
+        '`blockExoticSubdeps` stays on:',
         '',
         '```json',
         JSON.stringify(Object.fromEntries(libraries.map((a) => [a.name, url(a.file)])), null, 4),
