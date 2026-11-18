@@ -21,9 +21,10 @@ import { registerTestTmpDirCleanup } from './tmp-dir'
  *     (../db/owner-pass.ts says why no other pass could see a missing role switch). It runs first so that on a fresh
  *     server the owner's own migration 0001 is what creates `app_user`; then the same again, now that `app_user`
  *     exists: the branch a reused server takes (CI's service container is shared, so every suite after the first takes
- *     it). Each makes a throwaway database and role and removes them. The same holds for every cluster-wide role the
- *     app's own migrations create and name in `appRoles` (../db/app-roles.ts): the second pass finds it there, and the
- *     owner is granted the ADMIN its creator holds.
+ *     it). Each makes a throwaway database and role and removes them, with what the role granted; a role it cannot
+ *     remove fails the pass. The same holds for every cluster-wide role the app's own migrations create and name in
+ *     `appRoles` (../db/app-roles.ts): the second pass finds it there, and the owner is granted the ADMIN its creator
+ *     holds, on an ordinary role only.
  *  2. `contract-rls`: the full proof suite as a superuser, in the app's own database (`<slug>_contract`).
  *  3. `contract-data-api`: the same app's migrations and proofs over the RDS Data API transport, through the
  *     emulator (../adapters/real/rds-data-emulator.ts) on the same server, in a database of its own made empty first,

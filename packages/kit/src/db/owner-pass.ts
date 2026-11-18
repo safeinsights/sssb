@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { type Kysely, sql } from 'kysely'
-import { appRoles, checkAppRoles } from './app-roles'
+import { appRoles, checkAppRoles, refusedOf, shownRefused } from './app-roles'
 import { migrateToLatest } from './migrate'
 import { runRlsProofs } from './rls-proof-runner'
 import type { ProofExpectation } from './rls-proofs'
@@ -20,8 +20,12 @@ import { runWithTenant } from './with-tenant'
  *
  * The app's own roles. `app_user` is not the only cluster-wide role a migration may create: an app's may create its
  * own, which it names in `appRoles` (./app-roles.ts). Where an earlier pass created one, a later owner is granted the
- * creator's membership in it too, as in `app_user` (`grantAppRoles`), and on no role the app does not name. Teardown
- * leaves them, as it leaves `app_user`: a role a migration creates is the cluster's, not the pass's.
+ * creator's membership in it too, as in `app_user` (`grantAppRoles`), and on no role the app does not name, nor on a
+ * named role that is not ordinary; after the migrations, every named role must still be ordinary. Teardown leaves the
+ * roles themselves, as it leaves `app_user` (a role a migration creates is the cluster's, not the pass's), but not what
+ * the owner granted on them: `DROP OWNED BY` revokes a membership the owner's migration granted (`GRANT <role> TO
+ * app_user`), which would otherwise keep the owner from being dropped (`dropPassRole`). An owner the teardown cannot
+ * drop fails the pass.
  *
  * How it is built, so another transport can run it. The pass only ever reaches the server through
  * `admin` and `connect`, and migrates through `migrate`. The `pg` contract run (../adapters/real/db.contract.test.ts)
@@ -56,45 +60,43 @@ export interface OwnerPassConnections {
  * does not exist yet is the owner's own migration's to create, and the owner gets that membership by creating it. A
  * role that is not named is never touched.
  *
- * It refuses, before granting anything, a named role that holds more than an app's ordinary role may: a superuser, or a
- * role with BYPASSRLS, REPLICATION or CREATEROLE. ADMIN on such a role would hand the owner more than ADMIN on the
- * app's own role, and the names alone (validated by `checkAppRoles`) cannot rule it out on a server another hand set up.
+ * It refuses, before granting anything, a named role that is not ORDINARY (`refusedOf`, ./app-roles.ts): one that
+ * can log in, create databases or roles, is a superuser or bypasses RLS, or is a member, at any depth, of any role but
+ * `app_user` and the other named roles. ADMIN lets its holder grant itself SET on the role and so act as everything the
+ * role is a member of, and, with CREATEROLE, reset a LOGIN role's password: on such a role it gives the owner more than
+ * an app's own role, and the names alone (validated again here by `checkAppRoles`, as a caller may pass any list)
+ * cannot rule that out on a server another hand set up.
  */
 export async function grantAppRoles(admin: Kysely<DB>, owner: string, named: readonly string[]): Promise<void> {
-    const roles = checkAppRoles(named)
-    const found: { rolname: string; refused: string[] }[] = []
-    for (const role of roles) {
-        const { rows } = await sql<{
-            rolname: string
-            rolsuper: boolean
-            rolbypassrls: boolean
-            rolreplication: boolean
-            rolcreaterole: boolean
-        }>`
-            SELECT rolname, rolsuper, rolbypassrls, rolreplication, rolcreaterole
-            FROM pg_roles WHERE rolname = ${role}`.execute(admin)
-        const row = rows[0]
-        if (!row) continue
-        const refused = [
-            row.rolsuper && 'SUPERUSER',
-            row.rolbypassrls && 'BYPASSRLS',
-            row.rolreplication && 'REPLICATION',
-            row.rolcreaterole && 'CREATEROLE',
-        ].filter((attribute): attribute is string => typeof attribute === 'string')
-        found.push({ rolname: row.rolname, refused })
-    }
-    const privileged = found.filter((role) => role.refused.length > 0)
-    if (privileged.length > 0) {
+    const found = await refusedOf(admin, checkAppRoles(named))
+    const privileged = shownRefused(found)
+    if (privileged !== '') {
         throw new Error(
-            'owner pass: refusing to grant ADMIN on ' +
-                privileged.map((role) => `"${role.rolname}" (${role.refused.join(', ')})`).join(', ') +
-                ', which appRoles names: an app names only its own ordinary roles, and ADMIN on this one would give the ' +
-                'owner more than that. Create the role without those attributes, or stop naming it in appRoles.',
+            `owner pass: refusing to grant ADMIN on ${privileged}, which appRoles names: an app names only its own ` +
+                'ordinary roles, and ADMIN on this one would give the owner more than that. Create the role NOLOGIN, ' +
+                "with no other attribute and no membership but app_user and the app's other roles, or stop naming it in " +
+                'appRoles.',
         )
     }
     for (const { rolname } of found) {
         await sql`GRANT ${sql.id(rolname)} TO ${sql.id(owner)} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`.execute(admin)
     }
+}
+
+/**
+ * Drops a role the pass created, if it is there: `DROP OWNED BY` first, on `admin`'s database, which revokes what the
+ * role GRANTED as well as what it was granted, the role memberships it granted included (a migration's
+ * `GRANT <app role> TO app_user`, run as the owner, makes the owner that membership's grantor, a dependency `DROP ROLE`
+ * refuses to break), then `DROP ROLE`. Objects the role owns in another database still block it, so the caller drops
+ * that database first. Throws when the role is still there.
+ */
+export async function dropPassRole(admin: Kysely<DB>, role: string): Promise<void> {
+    const { rows } = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_roles WHERE rolname = ${role}`.execute(
+        admin,
+    )
+    if (rows[0]!.n === 0) return
+    await sql`DROP OWNED BY ${sql.id(role)}`.execute(admin)
+    await sql`DROP ROLE ${sql.id(role)}`.execute(admin)
 }
 
 export async function runOwnerPass(
@@ -113,8 +115,9 @@ export async function runOwnerPass(
 
     let ownerDb: Kysely<DB> | undefined
     let superDb: Kysely<DB> | undefined
-    // ONE teardown for everything from CREATE ROLE on: a failure at any step must not leave a LOGIN
-    // CREATEROLE role (which may hold ADMIN on app_user) on a server that outlives the run.
+    // ONE teardown for everything from CREATE ROLE on, run whatever happened: a failure at any step must not leave a
+    // LOGIN CREATEROLE role (which may hold ADMIN on app_user and the app's roles) on a server that outlives the run.
+    let failed: { error: unknown } | undefined
     try {
         // Aurora's master user, as a role: may log in, create roles and databases, and is no superuser.
         await sql`CREATE ROLE ${sql.id(owner)} LOGIN CREATEROLE CREATEDB NOSUPERUSER PASSWORD ${sql.lit(login.password)}`.execute(
@@ -176,6 +179,17 @@ export async function runOwnerPass(
             // As text, so a failure names the role.
             expect(`ADMIN on ${role}: ${String(held.rows[0]?.admin ?? false)}`).toBe(`ADMIN on ${role}: true`)
         }
+        // ...and every named role is still ordinary. The owner's migration ran with ADMIN and CREATEROLE on it, which
+        // let it make the role LOGIN with a password it chose, CREATEDB or CREATEROLE (never SUPERUSER, BYPASSRLS or
+        // REPLICATION, which the owner lacks): a role every later owner is handed ADMIN on must not be one.
+        const strayed = shownRefused(await refusedOf(admin, roles))
+        if (strayed !== '') {
+            throw new Error(
+                `owner pass: after the migrations, appRoles names ${strayed}: the migrations made it more than an ` +
+                    "app's ordinary role. Leave it NOLOGIN, with no other attribute and no membership but app_user " +
+                    "and the app's other roles.",
+            )
+        }
 
         // The failure itself, named: inside withTenant the owner IS app_user, in the tenant it asked for.
         const [tenant] = await superDb
@@ -192,12 +206,31 @@ export async function runOwnerPass(
 
         // ...and the whole composed proof suite, every role switch made by the owner.
         await runRlsProofs(superDb, expect, { appDb: ownerDb })
-    } finally {
-        await ownerDb?.destroy()
-        await superDb?.destroy()
-        // Best effort, each step on its own: a failed teardown must not mask the result.
-        await sql`DROP DATABASE IF EXISTS ${sql.id(database)} WITH (FORCE)`.execute(admin).catch(() => undefined)
-        await sql`DROP ROLE IF EXISTS ${sql.id(probe)}`.execute(admin).catch(() => undefined)
-        await sql`DROP ROLE IF EXISTS ${sql.id(owner)}`.execute(admin).catch(() => undefined)
+    } catch (error) {
+        failed = { error }
     }
+    await ownerDb?.destroy().catch(() => undefined)
+    await superDb?.destroy().catch(() => undefined)
+    // Every step runs, each on its own. The database goes first (what the owner owns there would block its drop),
+    // best effort: a role it leaves behind is reported below.
+    await sql`DROP DATABASE IF EXISTS ${sql.id(database)} WITH (FORCE)`.execute(admin).catch(() => undefined)
+    const leaked: string[] = []
+    for (const role of [probe, owner]) {
+        await dropPassRole(admin, role).catch((error: unknown) => {
+            leaked.push(`"${role}" (${error instanceof Error ? error.message : String(error)})`)
+        })
+    }
+    // A role left behind is a failure of its own: the owner may log in, create roles, and holds ADMIN on app_user and
+    // the app's roles, on a server that outlives the run. It never hides the pass's own failure: both are reported.
+    if (leaked.length > 0) {
+        const teardown = new Error(`owner pass: teardown left ${leaked.join(', ')} on the server; drop it by hand`)
+        if (failed) {
+            throw new AggregateError(
+                [failed.error, teardown],
+                `${failed.error instanceof Error ? failed.error.message : String(failed.error)}\n...and ${teardown.message}`,
+            )
+        }
+        throw teardown
+    }
+    if (failed) throw failed.error
 }

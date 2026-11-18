@@ -12,7 +12,15 @@
  *
  * Read with `in` on the module namespace, because the seam need not declare it: the starter does not, and the
  * framework compiles against the starter's seam (`packages/kit/tsconfig.strict.json`).
+ *
+ * An app's role is ORDINARY (`refusedOf`): it cannot log in, create databases or roles, is no superuser and bypasses
+ * no RLS, and it is a member of no role but `app_user` and the app's other named roles, at any depth. ADMIN on a role
+ * lets its holder grant itself SET on it, and so act as every role that role is a member of: ADMIN on a role that is a
+ * member of a superuser, of `pg_execute_server_program` or of `rds_superuser` is that role's power, not the app's.
  */
+
+import { type Kysely, sql } from 'kysely'
+import type { DB } from './schema'
 
 /** The framework's own role, which migration 0001 creates and the owner pass handles itself. */
 const FRAMEWORK_ROLE = 'app_user'
@@ -62,6 +70,69 @@ export function appRolesOf(seam: object): readonly string[] {
 /** The running app's named roles, read from its seam when called. */
 export async function appRoles(): Promise<readonly string[]> {
     return appRolesOf(await import('@sssb/app-config/db/migrations'))
+}
+
+/** A named role that exists on a server, and what makes it more than an ordinary role there (none when it is one). */
+export interface FoundRole {
+    rolname: string
+    refused: string[]
+}
+
+/**
+ * Reads each named role that exists on the server `db` reaches, with what makes it more than an app's ordinary role:
+ * SUPERUSER, BYPASSRLS, REPLICATION, CREATEROLE, CREATEDB or LOGIN, and `member of "<role>"` for every role it is a
+ * member of, at any depth through `pg_auth_members`, other than `app_user` and the named roles themselves. A named role
+ * that does not exist is left out. Membership counts whatever its INHERIT and SET options say: ADMIN on the named role
+ * lets its holder grant itself both.
+ */
+export async function refusedOf(db: Kysely<DB>, named: readonly string[]): Promise<FoundRole[]> {
+    const allowed = new Set([FRAMEWORK_ROLE, ...named])
+    const found: FoundRole[] = []
+    for (const role of named) {
+        const { rows } = await sql<{
+            rolname: string
+            rolsuper: boolean
+            rolbypassrls: boolean
+            rolreplication: boolean
+            rolcreaterole: boolean
+            rolcreatedb: boolean
+            rolcanlogin: boolean
+        }>`
+            SELECT rolname, rolsuper, rolbypassrls, rolreplication, rolcreaterole, rolcreatedb, rolcanlogin
+            FROM pg_roles WHERE rolname = ${role}`.execute(db)
+        const row = rows[0]
+        if (!row) continue
+        // Every role this one is a member of, directly or through another: UNION, not UNION ALL, so a role reached
+        // twice is followed once.
+        const memberships = await sql<{ rolname: string }>`
+            WITH RECURSIVE up(roleid) AS (
+                SELECT m.roleid FROM pg_auth_members m JOIN pg_roles me ON me.oid = m.member WHERE me.rolname = ${role}
+                UNION
+                SELECT m.roleid FROM pg_auth_members m JOIN up ON m.member = up.roleid
+            )
+            SELECT r.rolname FROM up JOIN pg_roles r ON r.oid = up.roleid ORDER BY r.rolname`.execute(db)
+        const refused = [
+            row.rolsuper && 'SUPERUSER',
+            row.rolbypassrls && 'BYPASSRLS',
+            row.rolreplication && 'REPLICATION',
+            row.rolcreaterole && 'CREATEROLE',
+            row.rolcreatedb && 'CREATEDB',
+            row.rolcanlogin && 'LOGIN',
+            ...memberships.rows
+                .filter((membership) => !allowed.has(membership.rolname))
+                .map((membership) => `member of "${membership.rolname}"`),
+        ].filter((reason): reason is string => typeof reason === 'string')
+        found.push({ rolname: row.rolname, refused })
+    }
+    return found
+}
+
+/** The named roles `refusedOf` found more than ordinary, as one clause: `"a" (LOGIN), "b" (member of "c")`. */
+export function shownRefused(found: readonly FoundRole[]): string {
+    return found
+        .filter((role) => role.refused.length > 0)
+        .map((role) => `"${role.rolname}" (${role.refused.join(', ')})`)
+        .join(', ')
 }
 
 function shown(value: unknown): string {

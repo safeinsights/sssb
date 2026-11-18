@@ -1,12 +1,12 @@
 import { sql } from 'kysely'
-import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, onTestFinished, test, vi } from 'vitest'
 import { startContractServer, type ContractServer } from './contract-postgres'
 import { randomUUID } from 'node:crypto'
 import { migrateToLatest } from '../../db/migrate'
 import { up as grantAppUser } from '../../db/migrations/0015_app_user_grant'
 import { runWithTenant } from '../../db/with-tenant'
 import { appRoles } from '../../db/app-roles'
-import { grantAppRoles, runOwnerPass } from '../../db/owner-pass'
+import { dropPassRole, grantAppRoles, runOwnerPass } from '../../db/owner-pass'
 import { runRlsProofs } from '../../db/rls-proof-runner'
 import type { DbPort } from '../../ports/db'
 import { createRealDb } from './db'
@@ -151,6 +151,17 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         const login = { user: second, password: randomUUID() }
         const creatorLogin = { user: creator, password: randomUUID() }
         let ownerDb: ReturnType<typeof connect> | undefined
+        // The roles go once the test is over, whatever it did, and a role that cannot be dropped fails the test: the
+        // second owner may log in and create roles, and its migration's 1004 granted the clerk to app_user (as the
+        // owner pass's teardown, ../../db/owner-pass.ts). `second` first: the creator granted it app_user.
+        onTestFinished(async () => {
+            try {
+                await dropPassRole(admin, second)
+                await dropPassRole(admin, creator)
+            } finally {
+                await admin.destroy()
+            }
+        })
         try {
             // Someone else made app_user; this owner holds no membership in it at all. The role that runs
             // the remedy below holds what a creator holds (ADMIN only), not superuser.
@@ -208,45 +219,204 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         } finally {
             await ownerDb?.destroy()
             await sql`DROP DATABASE IF EXISTS ${sql.id(database)} WITH (FORCE)`.execute(admin).catch(() => undefined)
-            await sql`DROP ROLE IF EXISTS ${sql.id(second)}`.execute(admin).catch(() => undefined)
-            await sql`DROP ROLE IF EXISTS ${sql.id(creator)}`.execute(admin).catch(() => undefined)
+        }
+    })
+
+    /** The server's superuser login, its maintenance database, and a superuser connection to `database` (that one). */
+    function asSuperuser(database?: string) {
+        const server = new URL(serverUrl)
+        const superuser = { user: decodeURIComponent(server.username), password: decodeURIComponent(server.password) }
+        const maintenanceDatabase = server.pathname.slice(1) || 'postgres'
+        return {
+            admin: connect({ ...superuser, database: database ?? maintenanceDatabase }),
+            superuser,
+            maintenanceDatabase,
+        }
+    }
+
+    /** The memberships `role` holds, as `<the role it is a member of>:<its ADMIN option>`. */
+    const membershipsOf = async (admin: ReturnType<typeof connect>, role: string) =>
+        (
+            await sql<{ held: string }>`
+                SELECT r.rolname || ':' || m.admin_option AS held FROM pg_auth_members m
+                JOIN pg_roles r ON r.oid = m.roleid
+                JOIN pg_roles me ON me.oid = m.member AND me.rolname = ${role}
+                ORDER BY 1`.execute(admin)
+        ).rows.map((row) => row.held)
+
+    // The owner pass grants ADMIN on the roles an app names, and on nothing more: a named role that is more than an
+    // app's ordinary role is refused before anything is granted, so a hostile or mistaken name cannot lift the owner.
+    // ADMIN lets its holder grant itself SET on the role, so the role's memberships are its power too, at any depth.
+    test("the owner pass refuses ADMIN on a named role that is not ordinary: an attribute, or a membership beyond app_user and the app's roles", async () => {
+        const { admin } = asSuperuser()
+        const stamp = Date.now()
+        const owner = `sssb_refused_owner_${stamp}`
+        const created: string[] = [owner]
+        const role = async (name: string, ...statements: string[]) => {
+            created.push(name)
+            for (const statement of statements) await sql.raw(statement).execute(admin)
+            return name
+        }
+        try {
+            await sql`CREATE ROLE ${sql.id(owner)} NOLOGIN NOSUPERUSER CREATEROLE`.execute(admin)
+            const boss = await role(`fixture_boss_${stamp}`, `CREATE ROLE fixture_boss_${stamp} NOLOGIN SUPERUSER`)
+            const middle = await role(
+                `fixture_middle_${stamp}`,
+                `CREATE ROLE fixture_middle_${stamp} NOLOGIN`,
+                `GRANT pg_read_server_files TO fixture_middle_${stamp}`,
+            )
+            // [what it is, the role, what the refusal names]
+            const cases: [string, string, string][] = []
+            for (const attribute of ['SUPERUSER', 'BYPASSRLS', 'REPLICATION', 'CREATEROLE', 'CREATEDB']) {
+                const name = `fixture_${attribute.toLowerCase()}_${stamp}`
+                cases.push([attribute, await role(name, `CREATE ROLE ${name} NOLOGIN ${attribute}`), attribute])
+            }
+            // A LOGIN role: ADMIN and CREATEROLE would let the owner reset its password, and log in as it.
+            const login = `fixture_login_${stamp}`
+            cases.push(['LOGIN', await role(login, `CREATE ROLE ${login} LOGIN`), 'LOGIN'])
+            const underBoss = `fixture_under_boss_${stamp}`
+            cases.push([
+                'a member of a superuser role',
+                await role(underBoss, `CREATE ROLE ${underBoss} NOLOGIN`, `GRANT ${boss} TO ${underBoss}`),
+                `member of "${boss}"`,
+            ])
+            const program = `fixture_program_${stamp}`
+            cases.push([
+                'a member of pg_execute_server_program',
+                await role(program, `CREATE ROLE ${program} NOLOGIN`, `GRANT pg_execute_server_program TO ${program}`),
+                'member of "pg_execute_server_program"',
+            ])
+            // Two levels down: the role it is a member of is an ordinary-looking one, and what THAT is a member of is not.
+            const chain = `fixture_chain_${stamp}`
+            cases.push([
+                'a member, two levels down, of pg_read_server_files',
+                await role(chain, `CREATE ROLE ${chain} NOLOGIN`, `GRANT ${middle} TO ${chain}`),
+                `member of "${middle}", member of "pg_read_server_files"`,
+            ])
+            for (const [label, name, reasons] of cases) {
+                // Named beside the fixture's ordinary role: the refusal grants neither.
+                await expect(grantAppRoles(admin, owner, ['fixture_docket_clerk', name]), label).rejects.toThrow(
+                    `refusing to grant ADMIN on "${name}" (${reasons}), which appRoles names`,
+                )
+            }
+            expect(await membershipsOf(admin, owner)).toEqual([])
+
+            // The names are validated again where they are granted, whoever passes them: a predefined role (whose own
+            // attributes and memberships are all an ordinary role's) and the framework's role are never the app's.
+            for (const name of ['pg_execute_server_program', 'app_user']) {
+                await expect(grantAppRoles(admin, owner, [name]), name).rejects.toThrow(
+                    `appRoles: "${name}" is not the app's own role`,
+                )
+            }
+            expect(await membershipsOf(admin, owner)).toEqual([])
+
+            // A named role that does not exist is the owner's migration's to create: nothing to grant, nothing refused.
+            await grantAppRoles(admin, owner, [`fixture_absent_${stamp}`])
+            expect(await membershipsOf(admin, owner)).toEqual([])
+
+            // A named role that is a member of app_user and of another named role is ordinary, and is granted.
+            const sibling = await role(
+                `fixture_sibling_${stamp}`,
+                `CREATE ROLE fixture_sibling_${stamp} NOLOGIN`,
+                `GRANT app_user TO fixture_sibling_${stamp}`,
+                `GRANT fixture_docket_clerk TO fixture_sibling_${stamp}`,
+            )
+            await grantAppRoles(admin, owner, ['fixture_docket_clerk', sibling])
+            expect(await membershipsOf(admin, owner)).toEqual(['fixture_docket_clerk:true', `${sibling}:true`])
+        } finally {
+            for (const name of created.reverse()) {
+                await sql`DROP ROLE IF EXISTS ${sql.id(name)}`.execute(admin).catch(() => undefined)
+            }
             await admin.destroy()
         }
     })
 
-    // The owner pass grants ADMIN on the roles an app names, and on nothing more: a named role that holds more than an
-    // app's ordinary role may is refused before anything is granted, so a hostile or mistaken name cannot lift the owner.
-    test('the owner pass refuses ADMIN on a named role that is a superuser, or has BYPASSRLS, REPLICATION or CREATEROLE', async () => {
-        const server = new URL(serverUrl)
-        const admin = connect({
-            database: server.pathname.slice(1) || 'postgres',
-            user: decodeURIComponent(server.username),
-            password: decodeURIComponent(server.password),
-        })
-        const stamp = Date.now()
-        const owner = `sssb_refused_owner_${stamp}`
-        const created: string[] = [owner]
+    /**
+     * The owner pass, with `after` run once the owner's migrations have: on the owner's own connection, with the owner's
+     * name and a superuser connection. Resolves to what the pass threw (null when it passed), and the owner's name.
+     */
+    async function ownerPassThen(
+        after: (ownerDb: ReturnType<typeof connect>, owner: string, admin: ReturnType<typeof connect>) => Promise<void>,
+    ) {
+        const { admin, superuser, maintenanceDatabase } = asSuperuser()
+        let owner = ''
         try {
-            await sql`CREATE ROLE ${sql.id(owner)} NOLOGIN NOSUPERUSER CREATEROLE`.execute(admin)
-            for (const attribute of ['SUPERUSER', 'BYPASSRLS', 'REPLICATION', 'CREATEROLE']) {
-                const role = `fixture_${attribute.toLowerCase()}_${stamp}`
-                created.push(role)
-                await sql`CREATE ROLE ${sql.id(role)} NOLOGIN ${sql.raw(attribute)}`.execute(admin)
-                // Named beside the fixture's ordinary role: the refusal grants neither.
-                await expect(grantAppRoles(admin, owner, ['fixture_docket_clerk', role]), attribute).rejects.toThrow(
-                    new RegExp(`refusing to grant ADMIN on "${role}" \\(${attribute}\\)`),
-                )
-            }
-            // A named role that does not exist is the owner's migration's to create: nothing to grant, nothing refused.
-            await grantAppRoles(admin, owner, [`fixture_absent_${stamp}`])
-            const memberships = await sql<{ n: number }>`
-                SELECT count(*)::int AS n FROM pg_auth_members m
-                JOIN pg_roles me ON me.oid = m.member AND me.rolname = ${owner}`.execute(admin)
-            expect(memberships.rows[0]!.n).toBe(0)
+            const outcome = await runOwnerPass(
+                {
+                    admin,
+                    superuser,
+                    maintenanceDatabase,
+                    connect,
+                    migrate: async (ownerDb) => {
+                        await migrateToLatest(ownerDb)
+                        owner = (await sql<{ me: string }>`SELECT current_user AS me`.execute(ownerDb)).rows[0]!.me
+                        await after(ownerDb, owner, admin)
+                    },
+                },
+                expect,
+            ).then(
+                () => null,
+                (error: unknown) => error,
+            )
+            return { owner, outcome }
         } finally {
-            for (const role of created.reverse()) {
-                await sql`DROP ROLE IF EXISTS ${sql.id(role)}`.execute(admin).catch(() => undefined)
-            }
+            await admin.destroy()
+        }
+    }
+
+    // The migration itself runs as the owner, with ADMIN and CREATEROLE on the app's role: it can make that role LOGIN
+    // with a password it chose, or CREATEDB. Once the migrations ran, the pass checks every named role is still ordinary,
+    // and fails naming the role and what it gained.
+    test('the owner pass fails when its migrations leave a named role able to log in, or to create databases', async () => {
+        try {
+            const { outcome } = await ownerPassThen(async (ownerDb) => {
+                await sql`ALTER ROLE fixture_docket_clerk LOGIN CREATEDB PASSWORD 'known'`.execute(ownerDb)
+            })
+            expect(String(outcome)).toMatch(
+                /after the migrations, appRoles names "fixture_docket_clerk" \(CREATEDB, LOGIN\)/,
+            )
+        } finally {
+            const { admin } = asSuperuser()
+            await sql`ALTER ROLE fixture_docket_clerk NOLOGIN NOCREATEDB PASSWORD NULL`.execute(admin)
+            await admin.destroy()
+        }
+    })
+
+    // Whichever branch each named role took (created by the owner's migration, or granted before it), the owner holds
+    // ADMIN on it after the migrations: the pass checks that, so a grant that stops reaching the owner is seen.
+    test('the owner pass fails when the owner does not hold ADMIN on a named role after its migrations', async () => {
+        const { outcome } = await ownerPassThen(async (_ownerDb, owner, admin) => {
+            // CASCADE: the owner's migration granted the clerk to app_user on the strength of that ADMIN.
+            await sql`REVOKE fixture_docket_clerk FROM ${sql.id(owner)} CASCADE`.execute(admin)
+        })
+        expect(String(outcome)).toMatch(/ADMIN on fixture_docket_clerk: false/)
+    })
+
+    // The teardown drops the owner, and an owner it cannot drop fails the pass rather than staying behind quietly: the
+    // role may log in, create roles, and holds ADMIN on app_user and the app's roles, on a server that outlives the run.
+    // Here the owner owns a table in a database the teardown does not drop, which only a hand can clear.
+    test('the owner pass fails when its teardown cannot drop the owner, after every other step ran', async () => {
+        const table = `sssb_kept_${Date.now()}`
+        const contract = asSuperuser(DATABASE).admin
+        let database = ''
+        const { owner, outcome } = await ownerPassThen(async (ownerDb, owner) => {
+            database = (await sql<{ db: string }>`SELECT current_database() AS db`.execute(ownerDb)).rows[0]!.db
+            await sql`CREATE TABLE ${sql.id(table)} (i int)`.execute(contract)
+            await sql`ALTER TABLE ${sql.id(table)} OWNER TO ${sql.id(owner)}`.execute(contract)
+        })
+        const { admin } = asSuperuser()
+        try {
+            expect(outcome).toBeInstanceOf(Error)
+            expect(String(outcome)).toContain(`owner pass: teardown left "${owner}" (`)
+            // Every other step ran: the owner's database and its probe role are gone.
+            const left = await sql<{ db: number; probe: number }>`
+                SELECT (SELECT count(*)::int FROM pg_database WHERE datname = ${database}) AS db,
+                       (SELECT count(*)::int FROM pg_roles WHERE rolname = ${`${owner}_probe`}) AS probe`.execute(admin)
+            expect(left.rows[0]).toEqual({ db: 0, probe: 0 })
+        } finally {
+            await sql`DROP TABLE IF EXISTS ${sql.id(table)}`.execute(contract)
+            await contract.destroy()
+            await dropPassRole(admin, owner)
             await admin.destroy()
         }
     })

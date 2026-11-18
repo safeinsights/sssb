@@ -4885,3 +4885,45 @@ FALSE`, what it already grants on `app_user`) on each NAMED role that already ex
 - **Rejected: an option on `contractSuite`.** The conformance check, and any production code that needs the list (a
   migrator granting a second owner, say), could not see it, and the list would be kept in step with the migrations in
   two places with nothing to compare them.
+
+Review round 1 (same day, Fable and Opus, each finding confirmed on Postgres 18.4 and pglite) changed three things.
+These bullets replace the refusal and the "Teardown is unchanged" sentences above.
+
+- **An app's role must be ORDINARY, and the refusal reads its memberships, not only its attributes.** ADMIN on a role
+  lets its holder grant itself SET and INHERIT on it, and so act as every role it is a member of: a named role that was
+  a member of a SUPERUSER role, of `pg_execute_server_program` (Fable ran `COPY ... FROM PROGRAM` as the owner) or of
+  `rds_superuser` handed the owner that power while all four attributes read false; and with ADMIN and CREATEROLE the
+  owner can reset a LOGIN role's password. The rule (`refusedOf`, `packages/kit/src/db/app-roles.ts`): no SUPERUSER,
+  BYPASSRLS, REPLICATION, CREATEROLE, CREATEDB or LOGIN, and no membership, at any depth through `pg_auth_members`
+  (recursive, whatever its INHERIT and SET options), in any role but `app_user` and the other named roles. Refused
+  before anything is granted, as before. _Rejected:_ an allow-list of "harmless" predefined roles
+  (`pg_read_all_stats`, say): which ones are harmless changes by Postgres release and by provider, and an app's own role
+  has no reason to hold any. _Rejected:_ counting only the memberships whose INHERIT or SET is on: ADMIN turns them on.
+- **The owner pass checks the roles again after the migrations.** The owner's migration runs with ADMIN and CREATEROLE
+  on every named role, which lets it (Fable's probe, Postgres 18) make one LOGIN with a password it chose, CREATEDB or
+  CREATEROLE, though never SUPERUSER, BYPASSRLS or REPLICATION. The pass fails, naming the role and what it gained,
+  when a named role is no longer ordinary once the migrations ran; the conformance check `app-roles` gains the same
+  check on pglite ("every role appRoles names is an ordinary role once the app's migrations ran"), so an adopter sees
+  it in the unit run. pglite reports the attributes and memberships faithfully: `packages/kit/src/db/app-roles.test.ts`
+  reads each case back from it. _Rejected:_ the conformance check alone: pglite migrates as a superuser, so it cannot
+  see what depends on running as the owner.
+- **Teardown revokes what the owner granted, and a role it cannot drop fails the pass.** A migration that grants a
+  membership as the owner (`GRANT fixture_docket_clerk TO app_user`) makes the owner that membership's grantor, a
+  cluster-wide dependency: `DROP ROLE` failed with "cannot be dropped because some objects depend on it", the teardown
+  swallowed it, and every run on a reused server left LOGIN CREATEROLE owners holding ADMIN behind, green (measured: 3
+  `sssb_owner_*` roles and a `sssb_creator_*` after one kit run, 6 and 2 after two). Now `dropPassRole`
+  (`packages/kit/src/db/owner-pass.ts`) runs `DROP OWNED BY` in the maintenance database, once the owner's own database
+  is dropped, then `DROP ROLE`; on Postgres 18 that revokes the memberships the owner granted and leaves a superuser's
+  grant of the same membership in place (no role left after two runs). An owner the teardown cannot drop fails the
+  pass after every other teardown step ran, together with the pass's own failure when there is one (an
+  `AggregateError`). The fixture's 1004 now grants the clerk to `app_user`, so every pass exercises it; that weakens no
+  proof, since `app_user` already holds SELECT on `dockets`, the clerk holds nothing else, and `tenant_isolation` is a
+  policy for every role. _Rejected:_ `REVOKE ... GRANTED BY <owner>` for each membership read from `pg_auth_members`:
+  it clears the memberships alone, where `DROP OWNED BY` also clears any other shared-object grant the owner made.
+  _Rejected:_ `REASSIGN OWNED BY <owner> TO postgres`: it keeps the pass's grants on the server as the superuser's, so a
+  later pass would meet them as though a real creator had made them.
+- **The two checks no test reached now have one each** (Opus). `grantAppRoles` validates the names it is handed again
+  (`checkAppRoles`), because a caller other than `runOwnerPass` may pass any list, and `pg_execute_server_program` or
+  `app_user` read as ordinary roles to `refusedOf`; the post-migration ADMIN assertion fails when the owner's ADMIN on a
+  named role is revoked during the migration. Both are in `packages/kit/src/adapters/real/db.contract.test.ts`, and
+  each was seen red with its check removed.

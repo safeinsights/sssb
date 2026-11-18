@@ -11,8 +11,15 @@
 **What changed.** An app whose migrations create a role of their own (beside the framework's `app_user`) now names it
 in an optional `appRoles` export of its `@sssb/app-config/db/migrations` module. The contract suite's owner pass grants a
 later owner ADMIN on exactly those roles, as it does on `app_user`, so a migration that alters such a role passes on
-every pass, not only the first. A new conformance check, `app-roles`, fails a role the migrations create that
-`appRoles` does not name, and a name no migration creates. An app that creates no role changes nothing.
+every pass, not only the first. It grants on an ordinary role only: it refuses, before granting anything, a named role
+that can log in, has CREATEDB, CREATEROLE, SUPERUSER, BYPASSRLS or REPLICATION, or is a member, at any depth, of any role
+but `app_user` and the app's other named roles (ADMIN lets the owner grant itself SET on the role and act as all of
+those), and it fails when the owner's own migrations leave a named role more than ordinary. A new conformance check,
+`app-roles`, fails a role the migrations create that `appRoles` does not name, a name no migration creates, and a named
+role the migrations leave more than ordinary, on pglite in the unit run. The owner pass's teardown now also revokes what
+its owner granted (`DROP OWNED BY`), so a migration that grants a role TO `app_user` no longer leaves the owner behind,
+and an owner it cannot drop fails the pass instead of staying on the server. An app that creates no role changes
+nothing.
 
 **To adopt.** If your migrations create a role, export its name beside `appMigrations`, from the module
 `@sssb/app-config/db/migrations` resolves to (`src/app-config/db/migrations.ts`, or `migrations/index.ts`):
@@ -21,8 +28,9 @@ every pass, not only the first. A new conformance check, `app-roles`, fails a ro
 export const appRoles = ['app_maintainer'] as const
 ```
 
-Create the role only where it does not exist yet, as an ordinary role (the owner pass refuses one that is a superuser
-or has BYPASSRLS, REPLICATION or CREATEROLE):
+Create the role only where it does not exist yet, as an ordinary role, and keep it one in every later migration:
+NOLOGIN, no other attribute, and no membership but `app_user` and your other named roles (granting it TO `app_user` is
+fine):
 
 ```sql
 DO $$ BEGIN
