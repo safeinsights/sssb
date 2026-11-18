@@ -2995,6 +2995,7 @@ way CanopyCMS makes its App, by GitHub's App-manifest flow from a script, not by
   fast-forward commit there (including a merge through the API) and tag it, which starts a publish; it cannot
   change workflow files. The runbook says so, and names a required reviewer on `npm-publish` as the setting that
   would still stand between a stolen key and npm. That setting is JP's call and is not made here.
+
 ## Transitive dependency advisories, handled by reach (2026-11-17, `deps/advisories`)
 
 JP's call on 2026-11-17: "address the transitive dependencies appropriately with judgement". Before this branch
