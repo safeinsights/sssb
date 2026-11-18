@@ -118,7 +118,7 @@ function resolveMigrator(appDir) {
 /**
  * A function's final environment as it will be deployed: the rendered CloudFormation, escape-hatch overrides
  * included, with every token the stack can resolve resolved.
- * @param {cdk.aws_lambda.Function} fn
+ * @param {cdkNamespace.aws_lambda.Function} fn
  * @returns {Record<string, unknown>}
  */
 function finalEnvironment(fn) {
@@ -135,7 +135,7 @@ function finalEnvironment(fn) {
 
 /**
  * The code esbuild staged for a NodejsFunction during this synth, or `undefined` when there is none.
- * @param {cdk.aws_lambda.Function} fn
+ * @param {cdkNamespace.aws_lambda.Function} fn
  * @returns {string | undefined}
  */
 function stagedBundle(fn) {
@@ -241,7 +241,7 @@ export class SssbApp extends Construct {
             storageEncrypted: true,
             removalPolicy,
         })
-        const secret = /** @type {cdk.aws_secretsmanager.ISecret} */ (db.secret)
+        const secret = /** @type {cdkNamespace.aws_secretsmanager.ISecret} */ (db.secret)
 
         // ---- buckets ----------------------------------------------------------------------
         // CDN-served build assets — written by the deploy pipeline only.
@@ -286,7 +286,7 @@ export class SssbApp extends Construct {
         // pg: read the secret and open the database port to the function's security group. data-api: the
         // RDS Data API actions on THIS cluster and read on its secret, nothing else; IAM is the whole
         // boundary on that path, so it is scoped to the one cluster (cutover row `data-api-access`).
-        /** @param {cdk.aws_lambda.Function} fn */
+        /** @param {cdkNamespace.aws_lambda.Function} fn */
         const grantDatabase = (fn) => {
             if (dataApi) {
                 db.grantDataApiAccess(fn)

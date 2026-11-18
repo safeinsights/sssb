@@ -32,8 +32,8 @@
                 "test-fixture/app-config/db/migrations/*.ts"
             ]
         },
-        "infra": {
-            "entry": ["app.ts"]
+        "packages/cdk": {
+            "ignore": ["src/_p4/**"]
         }
     },
     "ignore": ["spikes/**"]

@@ -1,22 +1,27 @@
-# infra/ — CDK app (DRAFT)
+# infra/ — this app's CDK app (DRAFT)
 
-The application stack per ADR-0001: Next standalone server in one Lambda via the AWS Lambda Web
-Adapter, Function URL behind CloudFront, static assets from S3, migrator NodejsFunction bundling the
-app's own migration registry, Aurora PostgreSQL Serverless v2 (min-capacity 0 outside production),
-budget alarm.
+This app's deployment, per ADR-0001 and ADR-0014 (D8): one stack holding SSSB's `SssbApp` construct
+(`@sssb/cdk`, `packages/cdk` in SSSB's repository). The construct builds the Next standalone server in one
+Lambda via the AWS Lambda Web Adapter, its Function URL behind CloudFront, static assets from S3, the
+framework's migrator bundled with this app's own migrations, Aurora PostgreSQL Serverless v2 (min-capacity 0
+outside production), alarms and a budget. `app.ts` instantiates it with `..` as the app's directory and the
+app's own `config/params.ts`; `lib/tags.ts` is your organisation's tagging, applied to the whole stack.
 
 This is a **draft you are meant to take over**, not a finished deployment. It exists so the hosting
-decision is written down in runnable form rather than as prose — and so `pnpm --filter infra synth`
-proves the shape compiles offline before anyone has an AWS account.
+decision is written down in runnable form rather than as prose, and so `pnpm synth` here proves the shape
+compiles offline before anyone has an AWS account. The stack in `app.ts` is yours: add your own constructs
+beside `SssbApp`. The construct reads only the app's directory and params, so this directory can also move
+into an infrastructure repository or a root `infra/` that composes several apps; give each `SssbApp` an id of
+its own there.
 
 ## Status: authored — cutover
 
-- `pnpm --filter infra synth` is the verification bar: green, offline, zero credentials
-  (environment-agnostic stack, no lookups).
+- `pnpm synth` in this directory is the verification bar: green, offline, zero credentials
+  (environment-agnostic stack, no lookups). CI runs it for every app.
 - **Nothing here deploys until** (see `docs/cutover-checklist.md`): `cloud-accounts` fills
-  `apps/showcase/config/params.ts` · `recurring-cost` — Aurora, the NAT gateway (on the `pg` shape), and
-  CloudFront need explicit approval. Not a checklist row, but do it first: if your organisation ships its own CDK
-  construct library, replace `lib/tags.ts` and the IAM/secrets/monitoring drafts with it.
+  `../config/params.ts` · `recurring-cost` — Aurora, the NAT gateway (on the `pg` shape), and CloudFront need
+  explicit approval. Not a checklist row, but do it first: if your organisation ships its own CDK construct
+  library, replace `lib/tags.ts` with it.
 
 ## Two network shapes — decide before the first deploy
 
@@ -34,41 +39,35 @@ CIDRs and rolls back. Changing shape later means a new stack and a snapshot rest
     Cutover rows `data-api` (the transport, proven live by `docs/runbooks/data-api.md`) and
     `data-api-access` (this shape, deployed) close it.
 
-`pnpm --filter infra synth` builds both shapes offline: `cdk synth` builds the one the params choose, then
-`check-shapes.ts` builds both and checks each against the runtime's list of required variables. It also
-checks the way in. In every IAM policy, managed policy and role's inline policy the stack defines, each
-statement that can grant a Secrets Manager action names the cluster's own secret alone, and each that can
-grant an `rds-data` action names this cluster alone. A statement that "can grant" includes a wildcard
-action such as `*` and any `NotAction`. No role may attach an AWS-managed policy other than the two Lambda
-execution policies, whose contents the check cannot read. On `data-api` the database's security group
-admits nothing.
+## What synth asserts
 
-It reads what each bundled Lambda really holds, too: the bundles that synth's own esbuild produced with the
-tsconfig the stack passes. No bundle may hold code from `packages/kit/test-fixture`, and the migrator's
-must carry every one of the app's own migrations, by its registry's names. It must also name the framework's
-and the app's migration registries in esbuild's path comments, so a minified bundle fails instead of
-passing unread. Every database cluster must be encrypted at rest
-(`StorageEncrypted`), on both shapes. The stack bundles with the APP's tsconfig
-(`APP_TSCONFIG` in `stack.ts`). The root `tsconfig.json` points `@sssb/app-config/*` at SSSB's test fixture,
-and a migrator bundled with it would ship the fixture's migrations instead of the app's.
+`cdk synth` fails unless all three hold, for the shape the params choose:
+
+- the `@sssb/kit` this app resolves is the construct's own version (SSSB's packages are released in
+  lockstep);
+- the server's final environment, escape-hatch overrides included, sets `APP_MODE=real` and has neither
+  `DEMO_MODE` nor `E2E_BUILD`, so fake adapters cannot serve a deployment;
+- the migrator's bundle, as esbuild staged it during this synth, carries every one of this app's migrations
+  by its registry's names, names the framework's and the app's migration registries in esbuild's path
+  comments (so a minified bundle fails instead of passing unread), and holds no code from a test fixture. The
+  construct resolves the migrator from this app's `@sssb/kit` and passes the seam to esbuild explicitly
+  (`--alias:@sssb/app-config=<app>/src/app-config`): in SSSB's own repository the nearest tsconfig points that
+  alias at SSSB's test fixture, and a migrator bundled with it would ship the fixture's migrations instead of
+  the app's.
+
+SSSB's own repository also synthesizes both shapes for every app and checks the way in (`packages/cdk`'s
+test): each statement that can grant a Secrets Manager action names the cluster's own secret alone, each that
+can grant an `rds-data` action names the cluster alone, no role attaches an AWS-managed policy beyond the two
+Lambda execution policies, every database cluster is encrypted at rest, and on `data-api` the database's
+security group admits nothing.
 
 ## Deploys — checks in CI, deploys in your own pipeline
 
 `.github/workflows/checks.yml` runs checks only; there is deliberately no GitHub Actions CD here,
 because the deploy pipeline is the piece most tied to an organisation's accounts and approval gates.
 The shape this stack assumes: a pipeline that uploads the standalone build zip the `Server` function
-expects (see `assets/placeholder-lambda/run.sh`) and invokes the `Migrator` before shifting traffic.
-Cutover row `deploy-pipeline` is where that gets built.
+expects (the construct's placeholder asset is a `run.sh` that execs `node server.js`) and invokes the
+`Migrator` before shifting traffic. Cutover row `deploy-pipeline` is where that gets built.
 
-## Moving it out of the app repo
-
-Infra often belongs in an organisation's own infrastructure repo rather than beside the app. If that
-is your situation:
-
-1. Copy this directory there (drop `lib/tags.ts`; import your own tagging construct instead).
-2. Wire `apps/<app>/config/params.ts` values through CDK context per that repo's conventions.
-3. `cdk synth` from its new home; delete this directory from the app repo.
-
-Nothing in `infra/` may depend on app source beyond `config/app.ts` and `config/params.ts`, which is
-what makes that move mechanical. Note that `infra/` is not covered by `pnpm typecheck` — it is
-excluded from the root program and verified by `synth`.
+Nothing in this directory may depend on app source beyond `config/app.ts` and `config/params.ts`, which is
+what makes moving it mechanical. It is not covered by `pnpm typecheck` — `synth` verifies it.

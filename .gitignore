@@ -43,7 +43,7 @@ test-results/
 dist-demo/
 
 # cdk synth output
-infra/cdk.out/
+apps/*/infra/cdk.out/
 
 # generated per checkout by scripts/write-launch-json.mjs (ports differ per worktree)
 .claude/launch.json

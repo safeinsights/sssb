@@ -268,6 +268,22 @@ importers:
         specifier: ^2.3.4
         version: 2.3.4(rollup@4.62.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  apps/starter/infra:
+    dependencies:
+      '@sssb/cdk':
+        specifier: workspace:*
+        version: link:../../../packages/cdk
+      aws-cdk-lib:
+        specifier: ^2.274.0
+        version: 2.277.0(constructs@10.8.1)
+      constructs:
+        specifier: ^10.8.1
+        version: 10.8.1
+    devDependencies:
+      aws-cdk:
+        specifier: ^2.1146.0
+        version: 2.1148.1
+
   packages/cdk:
     devDependencies:
       aws-cdk-lib:

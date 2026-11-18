@@ -1,0 +1,24 @@
+{
+    // @sssb/cdk is JavaScript that Node loads directly (ADR-0014, part 2), checked here through its JSDoc and
+    // its declaration file. `pnpm typecheck` runs it, under the framework's strict set except
+    // `exactOptionalPropertyTypes`, which aws-cdk-lib's own declarations are not written for. What the package
+    // ships is JavaScript and a declaration file, so an adopter's compiler options never reach its sources.
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": ["es2022"],
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "allowJs": true,
+        "checkJs": true,
+        "noEmit": true,
+        "strict": true,
+        "skipLibCheck": true,
+        "types": ["node"],
+        "noUncheckedIndexedAccess": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noImplicitReturns": true,
+        "noFallthroughCasesInSwitch": true
+    },
+    "include": ["src/**/*.js", "src/**/*.d.ts"]
+}

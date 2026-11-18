@@ -136,7 +136,10 @@ const APP_REAL_ADAPTERS_GLOB = 'apps/*/src/adapters/real/**'
 // `next.config.*` is the four names Next loads its config from (CONFIG_FILES in next's
 // shared/lib/constants), and no other file at the app root.
 const VENDOR_FENCE_FILES = [`apps/*/**/*.${SRC_EXT}`, `packages/*/src/**/*.${SRC_EXT}`]
-const VENDOR_CARVE_OUTS = ['apps/*/next.config.{ts,mts,js,mjs}', 'apps/*/tests/contract/**']
+// An app's deployment (ADR-0014, D8): a CDK project of its own beside the app, with its own package.json, and
+// never on the app's module graph. It is not app source, so the app's rules do not apply to it.
+const APP_INFRA_GLOB = 'apps/*/infra/**'
+const VENDOR_CARVE_OUTS = ['apps/*/next.config.{ts,mts,js,mjs}', 'apps/*/tests/contract/**', APP_INFRA_GLOB]
 
 // An app's real adapter is reached through the app's adapter registry (apps/<app>/src/adapters/index.ts),
 // the module that picks the fake in simulated mode — the role SSSB's exports map plays for SSSB's own
@@ -936,7 +939,7 @@ const eslintConfig = [
             '**/playwright-report/**',
             '**/coverage/**',
             'spikes/*/node_modules/**',
-            'infra/cdk.out/**',
+            'apps/*/infra/cdk.out/**',
             '**/dist-demo/**',
         ],
     },
@@ -1184,7 +1187,7 @@ const eslintConfig = [
     // CONTRIBUTING.md called this "the one rule that matters most". A fence with a hole in the wall
     // is worse than no fence, because the claim keeps people from looking.
     //
-    // The two carve-outs are the only files that legitimately reach a vendor directly, and both are
+    // The three carve-outs are the only files that legitimately reach a vendor directly, and all three are
     // outside the request path:
     //  - `next.config.ts` composes the Sentry BUILD plugin (`withSentryConfig`), which is a bundler
     //    wrapper, not an SDK call the product makes. ADR-0010 records Sentry as instrumentation
@@ -1193,6 +1196,8 @@ const eslintConfig = [
     //    fenced like the rest of the app.
     //  - `tests/contract/**` drives real Postgres through `pg`/`embedded-postgres` on purpose — that
     //    IS the anti-drift proof, and routing it through a port would prove nothing about the port.
+    //  - `infra/**` is the app's deployment, a CDK project that runs at synth and never on the app's
+    //    module graph (ADR-0014, D8; APP_INFRA_GLOB).
     //
     // An app's own adapters directory is carved out too, and fenced by the two blocks right below
     // instead. Everywhere else in the app this block also bans a STATIC import of the app's real
