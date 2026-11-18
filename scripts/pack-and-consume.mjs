@@ -17,7 +17,8 @@
 //                  adapter (src/adapters/real/), a seam module that imports through its `@/` alias, and an e2e spec
 //                  that imports `@sssb/kit/testing/e2e` and an app domain module, which `sssb check-e2e` must pass,
 //                  Playwright must load (`--list`, even with `--skip-build-and-e2e`), and whose negatives (specs
-//                  reaching the framework's source, dropped in for one run) check-e2e must fail by name.
+//                  reaching the framework's source, dropped in for one run, which Playwright cannot list) check-e2e
+//                  must fail, naming the kit file.
 //   apps/ledger    a second app with a different seam (its own slug and an extra migration, imported
 //                  through `@/`): typecheck, unit + conformance, contract, and the migrator bundle, which must
 //                  hold its own migrations and not the console's.
@@ -1040,7 +1041,9 @@ function staticDemo() {
  * doctor must NOT find itself in in-repo mode here, and it walks a workspace whose every importer links its own seam.
  * In the console, check-e2e must have checked the spec that reaches the framework through `@sssb/kit/testing/e2e`,
  * resolved through the installed exports map to the compiled entry; and then, with two specs dropped in that reach the
- * framework's source (one directly, one through an app module), it must fail naming both.
+ * framework's source (one directly, one through an app module), it must fail. Here that source is TypeScript under
+ * node_modules, which Node will not load, so Playwright cannot list the console's config at all: check-e2e fails the
+ * config with Playwright's error, naming the kit file it reaches.
  */
 function doctorAndCheckE2e() {
     for (const app of ['console', 'ledger']) {
@@ -1075,16 +1078,13 @@ function doctorAndCheckE2e() {
     } finally {
         for (const file of Object.keys(probes)) rmSync(path.join(appDir('console'), file))
     }
-    const failProblems = checkE2eFailProblems(probed, [
-        { spec: 'tests/e2e/reaches-kit-source.spec.ts', kitFile },
-        { spec: 'tests/e2e/reaches-kit-through-app.spec.ts', kitFile },
-    ])
+    const failProblems = checkE2eFailProblems(probed, { config: 'playwright.config.ts', kitFile })
     if (failProblems.length > 0) {
         console.error(`${probed.stdout}\n${probed.stderr}`)
         fail(`console: sssb check-e2e with specs reaching the framework's source:\n  ${failProblems.join('\n  ')}`)
     }
     console.log(
-        `sssb check-e2e failed the two specs reaching ${kitFile}, as it must:\n  ${probed.stdout
+        `sssb check-e2e failed the config whose specs reach ${kitFile}, as it must:\n  ${probed.stdout
             .split('\n')
             .filter((line) => /^FAIL|^ {10}/.test(line))
             .join('\n  ')}`,

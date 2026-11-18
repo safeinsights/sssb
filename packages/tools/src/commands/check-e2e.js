@@ -15,23 +15,25 @@
 // alias, a sibling workspace package and whatever that imports) or is framework source in any copy (its nearest named
 // package.json is `@sssb/kit`'s), and the seam always; every other package stays external. A `require()` esbuild can
 // see is followed like an import. A function made by `createRequire(...)` it cannot see through, so a followed file
-// outside the kit that mentions `createRequire` and names, as a string literal, an `@sssb/kit` specifier esbuild did
-// not resolve (other than the entry) fails too. A computed specifier stays out of reach of any static check.
+// outside the kit that names `createRequire` in its code and, as a string literal in its code, an `@sssb/kit`
+// specifier esbuild did not resolve (other than the entry and the kit's `package.json`) fails too; the file is read
+// by the app's own TypeScript parser, so a comment is not code. A computed specifier stays out of reach of any static
+// check.
 //
-// WHICH FILES: each Playwright config of the app (`playwright.config.*`, `playwright.<name>.config.*` in its
-// directory), plus each `--config <file>` given (repeatable, relative to the working directory, as `playwright test -c`
-// takes one: for a config kept outside the app's directory). Each config is LOADED, as Playwright loads it: bundled
-// by esbuild into a temporary module and imported by a child Node process (a config is code: it may compute
-// `testDir`, read ports, or refuse to load while a ticking dev server's marker is live; Playwright runs it all the
-// same). From the loaded config, Playwright's own resolution: one project per entry of `projects` (the config itself
-// when it has none), each with its `testDir`, `testMatch` and `testIgnore` (the project's, else the config's, else
-// Playwright's defaults: the config's directory, `**/*.@(spec|test).?(c|m)[jt]s?(x)`, nothing), matched as Playwright
-// matches them (globs against the absolute path, case-insensitive, dotfiles included; RegExps as given), skipping
-// node_modules; and `globalSetup` and `globalTeardown`, a string or an array. The checked files are the configs,
-// their global scripts and the matched specs; a support module is checked through every spec that imports it. A
-// config that does not load, or matches no spec file at all, fails: Playwright would find no tests in it either. One
-// approximation: where Playwright honours `.gitignore` (a project with no `testDir` anywhere), this does not, so it
-// may check a file Playwright would skip, never the reverse.
+// WHICH FILES: Playwright is asked. Each Playwright config of the app (`playwright.config.*`,
+// `playwright.<name>.config.*` in its directory), plus each `--config <file>` given (repeatable, relative to the
+// working directory, as `playwright test -c` takes one: for a config kept outside the app's directory), is listed by
+// the app's own Playwright, from the app's directory: `playwright test --list --reporter=json --config <file>`, the
+// report written to a file (`PLAYWRIGHT_JSON_OUTPUT_FILE`), since a spec's own output shares stdout. Listing loads the
+// config and every file it matches as a run does (so a config that computes its `testDir` or `require`s, and every
+// project's `testDir`, `testMatch` and `testIgnore`, count exactly as Playwright counts them), but starts no
+// `webServer`, runs no global setup and needs no browser. The checked files are each config, the global setup and
+// teardown the report names, and every file holding a listed test; a support module is checked through every spec
+// that imports it. A config Playwright cannot list fails with Playwright's own error, and when that error names a kit
+// file other than the allowed entry, the kit file is named too (a spec reaching the kit's TypeScript under
+// node_modules, as in an adopter's workspace, stops the listing: Node will not load it). A config that lists no test
+// fails as well. Where the report falls short: it names only the FIRST entry of a `globalSetup` or `globalTeardown`
+// array (Playwright's public config holds one), and a matched file holding no test is not listed.
 //
 // THE ENTRY: whatever `@sssb/kit/testing/e2e` resolves to from the app. For an installed kit that is the compiled
 // `dist/testing/e2e.js`, and only that file is allowed (in any copy of the kit a sibling package installs). In IN-REPO
@@ -39,38 +41,27 @@
 // entry's source, so the entry's own source closure, computed by bundling the entry alone, is allowed, and that
 // closure must itself reach no `@sssb/app-config` module.
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { createRequire, isBuiltin } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
+import { stripVTControlCharacters as plain } from 'node:util'
 import * as esbuild from 'esbuild'
 import { takeAppDir, takeOption, UsageError, workspaceRootOf } from '../app.js'
-import { kitDirOf } from '../kit.js'
+import { kitDirOf, resolveFromApp } from '../kit.js'
 import { isInRepoKit, seamOfKit } from './doctor-checks.js'
 
 const KIT = '@sssb/kit'
 const ENTRY = `${KIT}/testing/e2e`
+/** Kit specifiers beside `createRequire` that load no framework code. */
+const NOT_FRAMEWORK = new Set([ENTRY, `${KIT}/package.json`])
 const KEEP = /^@sssb\/(kit|app-config)(\/|$)/
 const PROBE = 'sssbCheckE2eProbe'
 const CONFIG = /^playwright(\.[\w-]+)?\.config\.(c|m)?[jt]s$/
 const USAGE = 'usage: check-e2e [--app <dir>] [--config <file>]...'
-/** Playwright's own default `testMatch`, and the extensions it considers a test file at all. */
-const DEFAULT_TEST_MATCH = '**/*.@(spec|test).?(c|m)[jt]s?(x)'
-const TEST_EXTENSIONS = new Set([
-    '.js',
-    '.ts',
-    '.mjs',
-    '.mts',
-    '.cjs',
-    '.cts',
-    '.jsx',
-    '.tsx',
-    '.mjsx',
-    '.mtsx',
-    '.cjsx',
-    '.ctsx',
-])
+/** Indents a detail line under a FAIL line. */
+const DETAIL = '\n          '
 
 /** @param {string} child @param {string} parent */
 const inside = (child, parent) => child === parent || child.startsWith(parent + path.sep)
@@ -121,70 +112,10 @@ function kitRootOf(file) {
 }
 
 /**
- * A Playwright `testMatch`/`testIgnore` value as the child process hands it over: RegExps as `{ regexp, flags }`.
- * @typedef {string | { regexp: string, flags: string }} Pattern
+ * Bundles one entry the way check-e2e reads it, and returns esbuild's metafile, or the error that stopped it.
+ * @param {{ appDir: string, entry: { file: string } | { contents: string } }} options
  */
-
-/**
- * Playwright's `createFileMatcher`: a RegExp is tested against the absolute path; a glob is prefixed with `**` unless
- * it starts with one and matched by minimatch with `{ nocase: true, dot: true }`. Node's `path.matchesGlob` takes no
- * options, so case is folded on both sides, and a path segment starting with a dot is also tried without it (what
- * `dot: true` buys: a `*` or `**` matching such a segment).
- * @param {Pattern | Pattern[]} patterns
- * @returns {(file: string) => boolean}
- */
-export function fileMatcher(patterns) {
-    /** @type {RegExp[]} */
-    const regexps = []
-    /** @type {string[]} */
-    const globs = []
-    for (const pattern of Array.isArray(patterns) ? patterns : [patterns]) {
-        if (typeof pattern === 'string')
-            globs.push((pattern.startsWith('**/') ? pattern : `**/${pattern}`).toLowerCase())
-        else regexps.push(new RegExp(pattern.regexp, pattern.flags))
-    }
-    return (file) => {
-        for (const re of regexps) {
-            re.lastIndex = 0
-            if (re.test(file)) return true
-        }
-        const folded = file.toLowerCase()
-        const undotted = folded
-            .split('/')
-            .map((segment) => (segment.startsWith('.') ? `\u0001${segment.slice(1)}` : segment))
-            .join('/')
-        return globs.some(
-            (glob) => path.matchesGlob(folded, glob) || (undotted !== folded && path.matchesGlob(undotted, glob)),
-        )
-    }
-}
-
-/**
- * Every file under `dir`, as Playwright's collector walks it: node_modules skipped, dot-directories not.
- * @param {string} dir
- * @returns {string[]}
- */
-function filesUnder(dir) {
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) return []
-    /** @type {string[]} */
-    const out = []
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name)
-        if (entry.isDirectory()) {
-            if (entry.name !== 'node_modules') out.push(...filesUnder(full))
-        } else if (entry.isFile()) out.push(full)
-    }
-    return out
-}
-
-/**
- * Bundles one entry the way check-e2e reads it, and returns esbuild's metafile, or the error that stopped it. With
- * `outfile`, the bundle is also written there to be RUN (a Playwright config): every bundled file that names
- * `import.meta`, `__dirname` or `__filename` gets its own location defined in, since the bundle runs from elsewhere,
- * and `require` is defined for what stays external.
- * @param {{ appDir: string, entry: { file: string } | { contents: string }, outfile?: string }} options
- */
-async function bundle({ appDir, entry, outfile }) {
+async function bundle({ appDir, entry }) {
     const tsconfig = path.join(appDir, 'tsconfig.json')
     try {
         const result = await esbuild.build({
@@ -194,55 +125,18 @@ async function bundle({ appDir, entry, outfile }) {
             absWorkingDir: appDir,
             bundle: true,
             metafile: true,
+            write: false,
             platform: 'node',
             format: 'esm',
             logLevel: 'silent',
-            ...(outfile
-                ? {
-                      outfile,
-                      write: true,
-                      banner: {
-                          js: "import { createRequire as sssbCreateRequire } from 'node:module'\nconst require = sssbCreateRequire(import.meta.url)",
-                      },
-                  }
-                : { write: false }),
             ...(existsSync(tsconfig) ? { tsconfig } : {}),
             loader: { '.css': 'empty', '.svg': 'empty', '.png': 'empty', '.jpg': 'empty', '.woff2': 'empty' },
             plugins: [
                 {
                     name: 'sssb-check-e2e-external',
                     setup(build) {
-                        if (outfile) {
-                            build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
-                                const text = readFileSync(args.path, 'utf8')
-                                if (!/import\.meta|__dirname|__filename/.test(text)) return undefined
-                                const ext = path.extname(args.path).replace(/^\.[cm]?/, '.')
-                                const loader =
-                                    ext === '.tsx' ? 'tsx' : ext === '.ts' ? 'ts' : ext === '.jsx' ? 'jsx' : 'js'
-                                const meta = {
-                                    url: pathToFileURL(args.path).href,
-                                    dirname: path.dirname(args.path),
-                                    filename: args.path,
-                                }
-                                // A define replaces free references only: a file's own `const __dirname = …` stays.
-                                const { code } = await esbuild.transform(text, {
-                                    loader,
-                                    format: 'esm',
-                                    jsx: 'preserve',
-                                    sourcefile: args.path,
-                                    define: {
-                                        'import.meta': JSON.stringify(meta),
-                                        __dirname: JSON.stringify(meta.dirname),
-                                        __filename: JSON.stringify(meta.filename),
-                                    },
-                                    logLevel: 'silent',
-                                })
-                                return { contents: code, loader: loader === 'tsx' || loader === 'jsx' ? 'jsx' : 'js' }
-                            })
-                        }
                         // A bare specifier is followed when it lands outside node_modules or in framework source (as
-                        // Playwright transforms it); every other package stays external, as Node would load it, by the
-                        // URL of the file esbuild resolved it to, so a written bundle loads it from where it sits.
+                        // Playwright transforms it); every other package stays external, as Node would load it.
                         build.onResolve({ filter: /^[^./]/ }, async (args) => {
                             if (args.pluginData?.[PROBE] || KEEP.test(args.path)) return undefined
                             if (isBuiltin(args.path)) return { external: true }
@@ -256,7 +150,7 @@ async function bundle({ appDir, entry, outfile }) {
                                 return { external: true }
                             const target = real(resolved.path)
                             if (!underNodeModules(target) || kitRootOf(target) !== null) return { path: resolved.path }
-                            return { path: pathToFileURL(target).href, external: true }
+                            return { path: args.path, external: true }
                         })
                     },
                 },
@@ -278,101 +172,101 @@ async function bundle({ appDir, entry, outfile }) {
 }
 
 /**
- * The child process that imports a bundled config and writes what check-e2e needs of it as JSON (argv: the bundle,
- * the output file). Playwright's own unwrapping: the module's `default` when it has one, else the module. It exits
- * itself, so a config that leaves a timer or a handle open cannot hang the check.
- */
-const LOADER = `
-import { writeFileSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
-const [bundled, out] = process.argv.slice(1)
-let config = await import(pathToFileURL(bundled).href)
-if (config && typeof config === 'object') config = 'default' in config ? config.default : { ...config }
-const pattern = (v) =>
-    v instanceof RegExp ? { regexp: v.source, flags: v.flags }
-    : Array.isArray(v) ? v.map(pattern)
-    : v === undefined || typeof v === 'string' ? v
-    : { unsupported: typeof v }
-const scripts = (v) => (v === undefined || typeof v === 'string' || Array.isArray(v) ? v : { unsupported: typeof v })
-const pick = (o) => ({
-    testDir: o?.testDir,
-    testMatch: pattern(o?.testMatch),
-    testIgnore: pattern(o?.testIgnore),
-})
-writeFileSync(out, JSON.stringify({
-    isObject: !!config && typeof config === 'object',
-    ...pick(config),
-    globalSetup: scripts(config?.globalSetup),
-    globalTeardown: scripts(config?.globalTeardown),
-    projects: Array.isArray(config?.projects) ? config.projects.map((p) => ({ name: p?.name, ...pick(p) })) : null,
-}))
-process.exit(0)
-`
-
-/**
- * @typedef {{ testDir?: unknown, testMatch?: unknown, testIgnore?: unknown }} LoadedProject
- * @typedef {LoadedProject & { isObject: boolean, globalSetup?: unknown, globalTeardown?: unknown,
- *   projects: (LoadedProject & { name?: unknown })[] | null }} LoadedConfig
+ * What check-e2e reads of Playwright's JSON report (`playwright test --list --reporter=json`): a suite names its file,
+ * relative to `config.rootDir`, and holds suites and specs; every path in `config` is absolute.
+ * @typedef {{ file?: string, suites?: ListedSuite[], specs?: { file?: string }[] }} ListedSuite
+ * @typedef {{
+ *   config: { rootDir: string, globalSetup: string | null, globalTeardown: string | null,
+ *     projects: { testDir: string }[] },
+ *   suites: ListedSuite[], errors: { message?: string }[] }} ListReport
  */
 
 /**
- * Loads one Playwright config as Playwright would run it: bundled, then imported by a child Node process.
- * @param {string} config
- * @param {string} appDir
- * @returns {Promise<{ config: LoadedConfig } | { error: string }>}
+ * The app's own Playwright CLI, or why there is none.
+ * @param {string} app
+ * @returns {{ cli: string } | { error: string }}
  */
-async function loadConfig(config, appDir) {
+function playwrightCliOf(app) {
+    try {
+        const manifest = resolveFromApp(
+            app,
+            '@playwright/test/package.json',
+            'lists the files its Playwright configs load',
+        )
+        const bin = JSON.parse(readFileSync(manifest, 'utf8')).bin
+        const relative = typeof bin === 'string' ? bin : bin?.playwright
+        if (typeof relative !== 'string') return { error: `${manifest} names no \`playwright\` bin` }
+        return { cli: path.join(path.dirname(manifest), relative) }
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) }
+    }
+}
+
+/**
+ * Asks the app's own Playwright which files one config loads: lists it from the app's directory, the JSON report
+ * written to a temporary file.
+ * @param {string} cli
+ * @param {string} config absolute
+ * @param {string} app
+ * @returns {{ report: ListReport, status: number | null } | { error: string }}
+ */
+function listConfig(cli, config, app) {
     const out = mkdtempSync(path.join(tmpdir(), 'sssb-check-e2e-'))
     try {
-        const outfile = path.join(out, 'config.mjs')
-        const built = await bundle({ appDir, entry: { file: config }, outfile })
-        if (!built.ok) return { error: `could not be bundled: ${built.error}` }
-        const json = path.join(out, 'config.json')
-        const child = spawnSync(process.execPath, ['--input-type=module', '-e', LOADER, outfile, json], {
-            cwd: appDir,
-            env: process.env,
+        const json = path.join(out, 'list.json')
+        /** @type {NodeJS.ProcessEnv} */
+        const env = { ...process.env, PLAYWRIGHT_JSON_OUTPUT_FILE: json, FORCE_COLOR: '0' }
+        delete env['PLAYWRIGHT_JSON_OUTPUT_DIR']
+        delete env['PLAYWRIGHT_JSON_OUTPUT_NAME']
+        const child = spawnSync(process.execPath, [cli, 'test', '--list', '--reporter=json', '--config', config], {
+            cwd: app,
+            env,
             encoding: 'utf8',
-            timeout: 60_000,
+            timeout: 120_000,
+            maxBuffer: 64 * 1024 * 1024,
         })
-        if (child.status !== 0 || !existsSync(json)) {
-            const said = `${child.stderr ?? ''}\n${child.stdout ?? ''}`
-                .split('\n')
-                .map((line) => line.trim())
-                .filter((line) => line && !line.startsWith('at '))
-            // Node prints the throwing source line first; the error itself is the line that names one.
-            const thrown = said.filter((line) => /^([\w$.]*Error|Uncaught)\b/.test(line))
-            const shown = (thrown.length > 0 ? thrown : said).slice(0, 3).join(' | ') || 'no output'
-            return { error: `could not be loaded (exit ${child.status ?? child.signal}): ${shown}` }
-        }
-        return { config: JSON.parse(readFileSync(json, 'utf8')) }
+        if (existsSync(json)) return { report: JSON.parse(readFileSync(json, 'utf8')), status: child.status }
+        // A config that does not load stops Playwright before any reporter: its error is on stderr. Node may print a
+        // warning and the throwing source line first; the error itself is the line that names one.
+        const said = plain(`${child.stderr ?? ''}\n${child.stdout ?? ''}`)
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((line) => line && !line.startsWith('at '))
+        const thrown = said.filter((line) => /^([\w$.]*Error|Uncaught)\b/.test(line))
+        const shown = (thrown.length > 0 ? thrown : said).slice(0, 3).join(' | ') || 'no output'
+        return { error: `(exit ${child.status ?? child.signal}): ${child.error ? child.error.message : shown}` }
     } finally {
         rmSync(out, { recursive: true, force: true })
     }
 }
 
 /**
- * A `testMatch`/`testIgnore` value as loaded, or why it cannot be used.
- * @param {unknown} value
- * @param {Pattern | Pattern[]} fallback
- * @returns {Pattern | Pattern[] | string}
+ * The absolute paths `text` names as `file://` URLs or quoted absolute paths.
+ * @param {string} text
  */
-function patternOf(value, fallback) {
-    if (value === undefined) return fallback
-    /** @param {unknown} v */
-    const ok = (v) =>
-        typeof v === 'string' || (typeof v === 'object' && v !== null && 'regexp' in v && typeof v.regexp === 'string')
-    if (ok(value) || (Array.isArray(value) && value.every(ok))) return /** @type {Pattern | Pattern[]} */ (value)
-    return `unsupported (${JSON.stringify(value)})`
+function pathsNamedIn(text) {
+    const found = new Set()
+    for (const [url] of text.matchAll(/file:\/\/[^\s"'`)]+/g)) {
+        try {
+            found.add(fileURLToPath(url))
+        } catch {
+            // not a file URL after all
+        }
+    }
+    for (const [, file] of text.matchAll(/["'`](\/[^"'`\s]+)["'`]/g)) if (file !== undefined) found.add(file)
+    return [...found]
 }
 
 /**
- * The app's Playwright configs and every file they load, as above. `extraConfigs` are `--config` files, already
- * absolute. `problems` holds each config that does not load, names something unusable, or matches no spec file.
+ * The app's Playwright configs and every file Playwright says they load, as above. `extraConfigs` are `--config`
+ * files, already absolute. `problems` holds each config Playwright cannot list or that lists no test. `kitFile`, when
+ * given, says whether a path is a kit file a spec may not reach, and shows it: a listing error naming one says so.
  * @param {string} appDir
  * @param {string[]} [extraConfigs]
+ * @param {(file: string) => string | null} [kitFile]
  * @returns {Promise<{ configs: string[], testDirs: string[], files: string[], problems: string[] }>}
  */
-export async function playwrightFiles(appDir, extraConfigs = []) {
+export async function playwrightFiles(appDir, extraConfigs = [], kitFile = () => null) {
     const app = real(appDir)
     const discovered = readdirSync(app)
         .filter((name) => CONFIG.test(name))
@@ -380,83 +274,56 @@ export async function playwrightFiles(appDir, extraConfigs = []) {
     const configs = [...new Set([...discovered, ...extraConfigs.map(real)])].sort()
     /** @param {string} file */
     const shown = (file) => path.relative(app, file) || '.'
+    if (configs.length === 0) return { configs, testDirs: [], files: [], problems: [] }
     const files = new Set(configs)
     /** @type {Set<string>} */
     const testDirs = new Set()
     /** @type {string[]} */
     const problems = []
+    const playwright = playwrightCliOf(app)
+    if ('error' in playwright) {
+        problems.push(`Playwright cannot be run from the app to list its configs: ${playwright.error}`)
+        return { configs, testDirs: [], files: [...files].sort(), problems }
+    }
     for (const config of configs) {
-        const loaded = await loadConfig(config, app)
-        if ('error' in loaded) {
-            problems.push(`${shown(config)} ${loaded.error}`)
+        const listed = listConfig(playwright.cli, config, app)
+        if ('error' in listed) {
+            problems.push(`${shown(config)} could not be listed by Playwright ${listed.error}`)
             continue
         }
-        const c = loaded.config
-        if (!c.isObject) {
-            problems.push(`${shown(config)} does not export a config object`)
+        const { report, status } = listed
+        const searched = [...new Set(report.config.projects.map((project) => project.testDir))].sort()
+        const errors = [...new Set(report.errors.map((e) => plain(e.message ?? '').trim()).filter(Boolean))]
+        const onlyNoTests = errors.length > 0 && errors.every((message) => message === 'Error: No tests found')
+        if (errors.length > 0 && !onlyNoTests) {
+            const reached = [...new Set(errors.flatMap(pathsNamedIn).map(kitFile))].filter((f) => f !== null).sort()
+            problems.push(
+                `${shown(config)} could not be listed by Playwright (exit ${status}): ` +
+                    errors.map((message) => message.split('\n')[0]).join(' | ') +
+                    reached
+                        .map((f) => `${DETAIL}a file Playwright loads reaches ${f}, other than through ${ENTRY}`)
+                        .join(''),
+            )
             continue
         }
-        const configDir = path.dirname(config)
-        for (const key of /** @type {const} */ (['globalSetup', 'globalTeardown'])) {
-            const value = c[key]
-            const ids = value === undefined ? [] : Array.isArray(value) ? value : [value]
-            for (const id of ids) {
-                if (!id) continue
-                if (typeof id !== 'string') {
-                    problems.push(`${shown(config)}: ${key} is ${JSON.stringify(id)}, not a path`)
-                    continue
-                }
-                // Playwright's resolveScript: a path from the config's directory, else a module resolved from there.
-                const local = path.resolve(configDir, id)
-                if (existsSync(local)) files.add(real(local))
-                else {
-                    try {
-                        files.add(real(createRequire(path.join(configDir, 'package.json')).resolve(id)))
-                    } catch {
-                        problems.push(`${shown(config)}: ${key} ${id} resolves to no file`)
-                    }
-                }
-            }
-        }
+        for (const dir of searched) testDirs.add(dir)
+        for (const script of [report.config.globalSetup, report.config.globalTeardown])
+            if (script) files.add(real(script))
         /** @type {Set<string>} */
         const specs = new Set()
-        /** @type {string[]} */
-        const searched = []
-        for (const project of c.projects ?? [c]) {
-            const dirOf = /** @param {unknown} d */ (d) =>
-                typeof d === 'string' ? path.resolve(configDir, d) : undefined
-            if (
-                (project.testDir !== undefined && typeof project.testDir !== 'string') ||
-                (c.testDir !== undefined && typeof c.testDir !== 'string')
-            ) {
-                problems.push(`${shown(config)}: a testDir is not a string`)
-                continue
-            }
-            const testDir = dirOf(project.testDir) ?? dirOf(c.testDir) ?? configDir
-            const testMatch = patternOf(project.testMatch ?? c.testMatch, DEFAULT_TEST_MATCH)
-            const testIgnore = patternOf(project.testIgnore ?? c.testIgnore, [])
-            if (typeof testMatch === 'string' && testMatch.startsWith('unsupported')) {
-                problems.push(`${shown(config)}: testMatch is ${testMatch}`)
-                continue
-            }
-            if (typeof testIgnore === 'string' && testIgnore.startsWith('unsupported')) {
-                problems.push(`${shown(config)}: testIgnore is ${testIgnore}`)
-                continue
-            }
-            testDirs.add(testDir)
-            searched.push(shown(testDir))
-            const match = fileMatcher(testMatch)
-            const ignore = fileMatcher(testIgnore)
-            for (const file of filesUnder(testDir)) {
-                if (TEST_EXTENSIONS.has(path.extname(file)) && !ignore(file) && match(file)) specs.add(file)
-            }
+        /** @param {ListedSuite} suite */
+        const collect = (suite) => {
+            for (const file of [suite.file, ...(suite.specs ?? []).map((spec) => spec.file)])
+                if (file) specs.add(real(path.resolve(report.config.rootDir, file)))
+            for (const child of suite.suites ?? []) collect(child)
         }
-        if (specs.size === 0 && searched.length > 0) {
+        for (const suite of report.suites) collect(suite)
+        if (specs.size === 0) {
             problems.push(
-                `${shown(config)} matches no spec file (under ${[...new Set(searched)].join(', ')}): Playwright would find no tests`,
+                `${shown(config)} lists no test (under ${searched.map(shown).join(', ')}): Playwright would find no tests in it`,
             )
         }
-        for (const spec of specs) files.add(real(spec))
+        for (const spec of specs) files.add(spec)
     }
     return { configs, testDirs: [...testDirs].sort(), files: [...files].sort(), problems }
 }
@@ -498,8 +365,54 @@ function chain(metafile, from, to) {
     return steps[0] === from ? steps : [to]
 }
 
-/** An `@sssb/kit` specifier written as a string literal. */
-const KIT_LITERAL = /(['"`])(@sssb\/kit(?:\/[\w./-]*)?)\1/g
+/** @type {Map<string, typeof import('typescript')>} the app's own TypeScript, by app */
+const typescripts = new Map()
+
+/**
+ * The `@sssb/kit` specifiers `file` writes as string literals in its CODE, when its code also names `createRequire`
+ * (none otherwise). Read by the app's own TypeScript parser, as doctor reads the app's tsconfig: comments are not code.
+ * @param {string} app
+ * @param {string} file
+ * @param {string} text
+ * @returns {string[]}
+ */
+function kitLiteralsBesideCreateRequire(app, file, text) {
+    let ts = typescripts.get(app)
+    if (ts === undefined) {
+        const resolved = resolveFromApp(
+            app,
+            'typescript',
+            'sssb check-e2e reads the files that name `createRequire` with',
+        )
+        ts = /** @type {typeof import('typescript')} */ (createRequire(import.meta.url)(resolved))
+        typescripts.set(app, ts)
+    }
+    const ext = path.extname(file)
+    const kind =
+        ext === '.tsx'
+            ? ts.ScriptKind.TSX
+            : ext === '.jsx'
+              ? ts.ScriptKind.JSX
+              : /^\.[cm]?ts$/.test(ext)
+                ? ts.ScriptKind.TS
+                : ts.ScriptKind.JS
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false, kind)
+    let creates = false
+    /** @type {string[]} */
+    const literals = []
+    /** @param {import('typescript').Node} node */
+    const visit = (node) => {
+        if (ts.isIdentifier(node) && node.text === 'createRequire') creates = true
+        else if (
+            (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+            /^@sssb\/kit(\/|$)/.test(node.text)
+        )
+            literals.push(node.text)
+        ts.forEachChild(node, visit)
+    }
+    visit(source)
+    return creates ? literals : []
+}
 
 /**
  * @typedef {{ file: string, error?: string, reached: { kitFile: string, via: string[] }[], count: number,
@@ -563,7 +476,14 @@ export async function e2eReach(appDir, extraConfigs = []) {
         return kitRoot !== null && allowed.has(path.relative(kitRoot, file))
     }
 
-    const { configs, testDirs, files, problems: configProblems } = await playwrightFiles(app, extraConfigs)
+    const {
+        configs,
+        testDirs,
+        files,
+        problems: configProblems,
+    } = await playwrightFiles(app, extraConfigs, (file) =>
+        isKit(real(file)) && !isAllowed(real(file)) ? show(real(file)) : null,
+    )
     /** @type {SpecReach[]} */
     const reach = []
     for (const file of files) {
@@ -600,8 +520,8 @@ export async function e2eReach(appDir, extraConfigs = []) {
             const text = readFileSync(source, 'utf8')
             if (!/\bcreateRequire\b/.test(text)) continue
             const seen = new Set(input.imports.map((i) => i.original))
-            for (const [, , specifier] of text.matchAll(KIT_LITERAL)) {
-                if (specifier !== undefined && specifier !== ENTRY && !seen.has(specifier))
+            for (const specifier of kitLiteralsBesideCreateRequire(app, source, text)) {
+                if (!NOT_FRAMEWORK.has(specifier) && !seen.has(specifier))
                     unfollowed.push(`${show(source)} names '${specifier}' beside createRequire`)
             }
         }

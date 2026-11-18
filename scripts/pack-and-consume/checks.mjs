@@ -392,29 +392,29 @@ export function checkE2eOkProblems(result, spec) {
 }
 
 /**
- * What `sssb check-e2e` must say once a spec reaching the framework's source is dropped into the app: exit 1, and each
- * such spec named in a FAIL line, with the kit file where it enters the framework on an indented line below it.
+ * What `sssb check-e2e` must say once a spec reaching the framework's source is dropped into the app. In the consumer
+ * that source is TypeScript under node_modules, which Node will not load, so Playwright cannot even list the config
+ * the spec belongs to: exit 1, a FAIL line for that config, and under it, on an indented line, the kit file
+ * Playwright's error names, reached other than through `@sssb/kit/testing/e2e`.
  * @param {{ status: number | null, stdout: string }} result
- * @param {readonly { spec: string, kitFile: string }[]} expected
+ * @param {{ config: string, kitFile: string }} expected the config relative to the app, and the kit file as shown
  */
-export function checkE2eFailProblems(result, expected) {
+export function checkE2eFailProblems(result, { config, kitFile }) {
     const problems = []
     if (result.status !== 1) problems.push(`sssb check-e2e exited ${result.status}, not 1`)
     const lines = result.stdout.split('\n')
-    for (const { spec, kitFile } of expected) {
-        const at = lines.findIndex((line) => line.startsWith(`FAIL    ${spec} reaches `))
-        if (at < 0) {
-            problems.push(`sssb check-e2e did not fail ${spec}`)
-            continue
-        }
-        /** @type {string[]} */
-        const detail = []
-        for (const line of lines.slice(at + 1)) {
-            if (!line.startsWith('          ')) break
-            detail.push(line.trim())
-        }
-        if (!detail.some((line) => line.startsWith(`${kitFile}  (`)))
-            problems.push(`sssb check-e2e failed ${spec} without naming ${kitFile}`)
+    const at = lines.findIndex((line) => line.startsWith(`FAIL    ${config} could not be listed by Playwright `))
+    if (at < 0) {
+        problems.push(`sssb check-e2e did not fail ${config} as one Playwright cannot list`)
+        return problems
     }
+    /** @type {string[]} */
+    const detail = []
+    for (const line of lines.slice(at + 1)) {
+        if (!line.startsWith('          ')) break
+        detail.push(line.trim())
+    }
+    if (!detail.includes(`a file Playwright loads reaches ${kitFile}, other than through @sssb/kit/testing/e2e`))
+        problems.push(`sssb check-e2e failed ${config} without naming ${kitFile}`)
     return problems
 }

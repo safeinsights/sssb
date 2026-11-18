@@ -457,37 +457,36 @@ describe("the consumer's check-e2e verdicts (sssb check-e2e's own output format)
         expect(checkE2eOkProblems({ status: 0, stdout: '' }, spec)).toHaveLength(2)
     })
 
+    // In the consumer the kit is TypeScript under node_modules, which Node will not load: a spec reaching it stops
+    // Playwright's own listing, so check-e2e fails the CONFIG, with Playwright's error and the kit file it names.
     const kitFile = '@sssb/kit:src/core/webhook-signing.ts'
+    const config = 'playwright.config.ts'
+    const named = `          a file Playwright loads reaches ${kitFile}, other than through @sssb/kit/testing/e2e`
     const red = [
         head,
-        'FAIL    tests/e2e/a.spec.ts reaches 2 @sssb/kit file(s) other than @sssb/kit/testing/e2e:',
-        `          ${kitFile}  (tests/e2e/a.spec.ts -> ${kitFile})`,
-        'ok      tests/e2e/c.spec.ts',
-        'FAIL    tests/e2e/b.spec.ts reaches 2 @sssb/kit file(s) other than @sssb/kit/testing/e2e:',
-        `          ${kitFile}  (tests/e2e/b.spec.ts -> src/domain/e2e-probe.ts -> ${kitFile})`,
-        'sssb check-e2e: 2 problem(s): a spec may reach the kit only through @sssb/kit/testing/e2e, which Node can load',
+        `FAIL    playwright.demo.config.ts could not be listed by Playwright (exit 1): Error: boom`,
+        `          a file Playwright loads reaches @sssb/kit:src/core/other.ts, other than through @sssb/kit/testing/e2e`,
+        `FAIL    ${config} could not be listed by Playwright (exit 1): Error: Stripping types is currently unsupported for files under node_modules, for "file:///ws/node_modules/.pnpm/@sssb+kit@0.1.0/node_modules/@sssb/kit/src/core/webhook-signing.ts"`,
+        named,
+        'ok      playwright.config.ts',
+        'sssb check-e2e: 2 problem(s)',
     ].join('\n')
-    const expected = [
-        { spec: 'tests/e2e/a.spec.ts', kitFile },
-        { spec: 'tests/e2e/b.spec.ts', kitFile },
-    ]
 
-    it('accepts a red run naming each spec with the kit file it enters', () => {
-        expect(checkE2eFailProblems({ status: 1, stdout: red }, expected)).toEqual([])
+    it('accepts a red run that fails the config Playwright cannot list, naming the kit file', () => {
+        expect(checkE2eFailProblems({ status: 1, stdout: red }, { config, kitFile })).toEqual([])
     })
 
-    it('fails a run that exits 0, a spec it does not fail, and a failure that names another kit file', () => {
-        expect(checkE2eFailProblems({ status: 0, stdout: red }, expected)).toEqual(['sssb check-e2e exited 0, not 1'])
-        expect(
-            checkE2eFailProblems({ status: 1, stdout: red }, [...expected, { spec: 'tests/e2e/c.spec.ts', kitFile }]),
-        ).toEqual(['sssb check-e2e did not fail tests/e2e/c.spec.ts'])
-        // The kit file under a's FAIL line does not count for b.
-        const elsewhere = red.replace(
-            `          ${kitFile}  (tests/e2e/b.spec.ts -> src/domain/e2e-probe.ts -> ${kitFile})`,
-            '          @sssb/kit:src/core/other.ts  (tests/e2e/b.spec.ts -> @sssb/kit:src/core/other.ts)',
+    it('fails a run that exits 0, a config it does not fail, and a failure that names another kit file', () => {
+        expect(checkE2eFailProblems({ status: 0, stdout: red }, { config, kitFile })).toEqual([
+            'sssb check-e2e exited 0, not 1',
+        ])
+        expect(checkE2eFailProblems({ status: 1, stdout: red }, { config: 'playwright.x.config.ts', kitFile })).toEqual(
+            ['sssb check-e2e did not fail playwright.x.config.ts as one Playwright cannot list'],
         )
-        expect(checkE2eFailProblems({ status: 1, stdout: elsewhere }, expected)).toEqual([
-            `sssb check-e2e failed tests/e2e/b.spec.ts without naming ${kitFile}`,
+        // The kit file under another config's FAIL line does not count.
+        const elsewhere = red.replace(named, '')
+        expect(checkE2eFailProblems({ status: 1, stdout: elsewhere }, { config, kitFile })).toEqual([
+            `sssb check-e2e failed ${config} without naming ${kitFile}`,
         ])
     })
 })
