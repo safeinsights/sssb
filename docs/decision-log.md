@@ -5992,7 +5992,7 @@ route from a ticker Lambda instead).
   URL event for `/api/webhooks/cron`, which the Lambda Web Adapter serves like any request; the route stays behind
   `withWebhookSecret`. Rejected: **POSTing through CloudFront**, which today refuses an unsigned POST (the sibling fix
   `fix/cdk-function-url-post` addresses it) and would make the tick depend on that; **signing a request to the Function
-  URL**, which needs a SigV4 signer that the runtime ships only inside its SDK, not as a documented module; **an EventBridge API destination
+  URL**, which needs a SigV4 signer the function would have to bundle (the runtime documents none to import); **an EventBridge API destination
   and connection**, which needs the secret's value at deploy time; and **on by default with a generated secret**: the
   construct never puts a secret's value in an environment (pages keeps its secrets by ARN), so the server could not know
   a secret the construct made, and every tick would be a 401.
@@ -6049,8 +6049,7 @@ route from a ticker Lambda instead).
     - **The 20-second deadline is gone.** A handler abandoned at a soft deadline keeps running in a Lambda environment
       that is frozen once the invocation returns, holding any transaction it had open (its row locks, its pooled
       connection) until a later invocation thaws it, and finishing its side effects for a job already marked failed. The
-      server's own time limit ends the process instead, so the job's open transaction rolls back (at once on `pg`; on
-      the Data API when that transaction times out, within the sweep's five minutes), and the sweep fails the job. A per-job deadline also never bounded the invocation, whose total the runner cannot know.
+      server's own time limit ends the process instead, so the job's open transaction rolls back (at once on `pg`; on the Data API when that transaction times out, after three minutes with no call: the BeginTransaction API reference), within the sweep's five minutes), and the sweep fails the job. A per-job deadline also never bounded the invocation, whose total the runner cannot know.
     - **The sweep fails only jobs this runner claimed.** Its `running` entry carries `IN_PROCESS_CLAIM`, so a job
       another runner holds `running` (a service caller's, through its status route, or one the jobs webhook is walking
       to its end) is left to it. A CodeBuild build in flight holds its job `queued`, which the sweep never reads. It is fault-isolated per
