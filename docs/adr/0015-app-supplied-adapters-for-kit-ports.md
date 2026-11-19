@@ -544,3 +544,107 @@ Checked on 2026-11-19; each would be re-checked when its port's step is built.
 - Auth0 Next.js SDK v4, middleware in `proxy.ts` mounting `/auth/*`:
   `https://auth0.com/blog/handling-auth-nextjs16-with-server-actions-middleware/`.
 - Turso, multi-DB schemas deprecated for new users: `https://docs.turso.tech/features/multi-db-schemas`.
+
+## Addendum (2026-11-19): auth as a provider bundle, and datastores in tiers that each state their guarantee
+
+JP's questions after reading the study, and his framing, which this addendum adopts: SSSB separates an app's business
+logic, its simulated world, its tours and presets from the vendors underneath, and it should embrace that, while staying
+honest about what it can and cannot guarantee in each arrangement. He asked why real auth is tied to Clerk when the fake
+works as an adapter, and whether an app could choose to forgo the tenancy promise, or keep its data in another store,
+DynamoDB for example. Two parts of the body change direction; the rest stands.
+
+### Auth: the adapter is a bundle, and Clerk is one bundle among several
+
+The fake already shows the port is a real seam: `packages/kit/src/adapters/fake/auth.ts` names Clerk only in comments,
+and SSSB's auth screens (`packages/kit/src/components/auth/`) import nothing of it. What ties real mode to Clerk is
+everything around the port that section 5 lists: the request middleware `withAuthProxy` imports by name, the browser
+forms that must talk to the vendor, the client provider, the boot settings, and the in-process job runner handed
+`realAuth`. In real mode an auth adapter is more than the port's server methods, so the unit of swapping should be the
+whole of it:
+
+- the server port (`AuthPort`);
+- the request middleware, run around the app's proxy;
+- the client provider, mounted by the locale layout in real mode;
+- the sign-in body and the invite-acceptance body that SSSB's screens render as slots;
+- the settings it requires, each with its cutover row.
+
+The fake is the simulated bundle (a people picker, a signed cookie, no middleware, no provider), and Clerk becomes SSSB's
+real bundle, with no change in behaviour. Section 3's `auth: 'app'` then registers a bundle rather than a port; the
+`auth-proxy` seam module becomes the bundle's middleware field. The two port changes the body lists under Auth0
+(sign-in as a slot that may redirect, `signOut` returning where the browser goes next) are what most hosted or OIDC
+providers need too, so they belong to the bundle refactor, not to any one vendor.
+
+Two options this opens, to weigh when an adopter needs them, not now:
+
+- **An OIDC bundle in the kit, a protocol choice like `smtp`.** It would make sign-in and the session configuration for
+  most identity providers. It covers identity only: who an org's members are, their roles and invitations
+  (`listMembers`, `getMember`, `createInvite`) are each vendor's management API, which OIDC does not define.
+- **Identity from the provider, membership in SSSB's own tables.** SSSB already keeps `organizations` and owns every
+  membership screen; keeping memberships, roles and invitations in Postgres too would leave the provider only the
+  credential, and make any OIDC provider a full bundle. The cost: new tables, migrations and proofs, and an app gives up
+  its vendor's own organization features (per-org SSO, directory sync). No membership table exists today.
+
+### Datastores: tiers, each with the guarantee it can make
+
+The body said "the database engine stays fixed". That is replaced by tiers. Postgres stays the default and the only tier
+in which SSSB proves isolation for the app's own tables; the others are chosen with their guarantee written down, never
+reached by accident.
+
+| Tier        | Where the data lives                                                                                | What SSSB guarantees, and how it is shown                                                                                                                                                                                                                        |
+| ----------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 (default) | The framework's and the app's tables in Postgres                                                    | Tenant isolation for both, by row-level security, proven by the RLS suite on pglite and real Postgres, with `proveRlsCoverage` failing any reachable table without a policy (ADR-0004). Unchanged.                                                               |
+| 2           | The framework's tables in Postgres; the app's own data in a store it chooses, through ports it owns | Isolation for the framework's tables only, as in tier 1. The app's store is the app's to isolate, and SSSB says so where the app declares its tier. Possible today: an app-owned port (`docs/recipes/app-owned-adapter.md`) can front DynamoDB or anything else. |
+| 3           | The framework's own data in another store                                                           | Only what that store's mechanism enforces, proven per backend, and stated per backend (below). Needs the framework's data behind repository ports first.                                                                                                         |
+
+**What tier 3 costs.** The framework's data is about ten stores, each a module in `packages/kit/src/db/` over
+fourteen tables: tenants and organizations, jobs and their status changes, job schedules, service keys, the audit trail,
+notifications and their preferences, webhook endpoints and deliveries, inbound email, agreements and their acceptances.
+Each would become a repository port with today's Postgres code as its first implementation, and each backend would need
+those ports implemented, a contract suite (section 4's idea, applied to the framework's own stores) and isolation
+proofs of its own. The app's handle changes with the tier: in tier 1 it is `Kysely<DB>` as now; in tiers 2 and 3 the
+framework speaks only its repository ports, and the app reaches its store through its own. `withTenant` stays the
+framework's idea in every tier, implemented per backend.
+
+**What each backend could honestly promise:**
+
+- **Postgres**: row-level security, as tier 1.
+- **libsql or Turso, a database per tenant**: isolation by which database a handle can reach, which holds only if each
+  tenant's credential is scoped to its own database. The framework's reads that come before a tenant is known need a
+  control database beside the tenants'. Proven by showing a handle for one tenant cannot address another's database.
+- **DynamoDB, the tenant id as the partition key**: isolation by IAM, with each tenant's requests made under
+  credentials whose policy carries the `dynamodb:LeadingKeys` condition (AWS's "Using IAM policy conditions for
+  fine-grained access control"). That is enforced by the database's access control, not by query discipline. But
+  DynamoDB local takes any credentials ("These values don't have to be valid AWS values", its usage notes) and its
+  documentation describes no policy evaluation, so the proof cannot run hermetically: it runs against AWS, as a cutover
+  check. Weaker evidence than tier 1's, and stated as such.
+- **A query-layer filter alone** (a `tenant_id = ?` added to every query): no mechanism, the query discipline ADR-0004
+  rejected. Offered only as "unenforced", chosen by name.
+
+**A declared single-tenant app.** An app may declare that it serves one tenant per deployment and makes no cross-tenant
+promise. ADR-0004's addendum already lets such an app seed one tenant. On Postgres the declaration changes little:
+row-level security costs one statement per transaction, so it stays. On another store it is what permits the
+query-layer tier, with the promise given up named in the declaration.
+
+**Where the guarantee is stated.** Each app declares its tier and, in tier 3, its backend in one place (its seam or
+`params`). `sssb doctor` prints it, the conformance suite runs the proofs that tier and backend have, and the adopter
+guide says what each promises. Nothing about tenancy is left implied.
+
+### Order, revised
+
+0. Done or now: the analytics patch (safeinsights/sssb#81); tier 2 written down in the adopter reference, since it
+   needs no code.
+1. The protocol choices (storage endpoint, `smtp`), each when an adopter asks.
+2. **Auth as a bundle**: Clerk refactored into one with no change in behaviour, then the port changes. This moves ahead
+   of section 8's `app` mechanism for the other ports, because it is what makes any other identity provider possible,
+   and an OIDC bundle or membership in SSSB's tables can follow it.
+3. The `app` mechanism for the LLM, analytics and jobs, as section 8 says.
+4. Tier 3, only when an adopter needs it, one backend at a time, its guarantee written before its code. It is the most
+   expensive thing on this list: every framework store, every backend, every proof.
+
+### Consequences
+
+- SSSB's promise becomes a statement per arrangement rather than one sentence for all of them. That is more to say, and
+  it is what keeps the promise true as the arrangements grow.
+- Tier 1 loses nothing: its proofs, its default, and its place as the only tier that covers the app's own tables.
+- Section 6's libsql verdict stands for tier 1, and becomes tier 3's "a database per tenant" entry, with its cost
+  named.

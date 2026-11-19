@@ -6795,3 +6795,25 @@ and record the rejected alternative.
   `lint-typecheck-unit` (5m41s on the probe) is the critical path and runs in full. Recorded as a future task
   (`.claude/future-tasks/docs-only-lint-typecheck-unit.md`): a docs-only mode for that job that runs only what reads
   the docs.
+
+## ADR-0015 addendum: auth as a provider bundle, datastores in tiers (2026-11-19, `docs/adr-0015-addendum`)
+
+JP asked, after reading ADR-0015, why real auth is tied to Clerk when the fake works as an adapter, and whether an app
+could forgo the tenancy promise or keep its data in another store (DynamoDB, say). He framed SSSB as separating an app's
+logic, its simulated world and its tours from the vendors underneath, while staying honest about what each arrangement
+can guarantee, and asked for this addendum. Decisions taken in writing it:
+
+- **The unit of an auth swap is a bundle** (server port, request middleware, client provider, sign-in and invite
+  bodies, required settings), with Clerk refactored into SSSB's real bundle first. Rejected: keeping `auth: 'app'` as a
+  port alone, which leaves every other piece still naming Clerk.
+- **Datastores in three tiers, each stating its guarantee**: Postgres with RLS for both the framework's and the app's
+  tables (the default, unchanged); the framework on Postgres with the app's data elsewhere (possible today, its store
+  the app's to isolate); and the framework's own data on another store, behind repository ports, proven per backend.
+  Rejected: the body's "the engine stays fixed", which answered "can it be done" where the honest answer is "here is
+  what each choice promises"; and offering other stores without a stated guarantee.
+- **DynamoDB's isolation is IAM's `LeadingKeys`, proven against AWS only**, because DynamoDB local accepts any
+  credentials. Rejected: claiming a hermetic proof for it.
+- **A declared single-tenant app keeps RLS on Postgres** (one statement per transaction) and may use the query-layer
+  tier only on another store, by name. Rejected: dropping RLS for single-tenant Postgres apps, which saves almost
+  nothing and loses the proof.
+- **Auth as a bundle moves ahead of the `app` mechanism for the other ports**; tier 3 comes last, on demand.
