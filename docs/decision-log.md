@@ -6471,6 +6471,7 @@ Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-r
 - **Seen, not changed here:** real mode still reads tenants and organizations from the seed for display (the theme's
   `findTenant`, and the showcase's `findTenant` and `findOrg` in its layouts, sign-in, org page and invitations). Those are tenant
   configuration, not people, and moving them to the database is a design of its own.
+
 ## No `starter` in a generated app (2026-11-19, `feat/no-starter-in-generated-app`)
 
 The adoption review's follow-up 5 (`docs/adoption-review-2026-11.md`, ranked item 5 and "What surprised" item 7): an app
