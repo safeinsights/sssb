@@ -195,7 +195,14 @@ export function withUpgradeSection(markdown, section) {
         lines.splice(start, end - start, ...block, ...(end < lines.length ? [''] : []))
     } else {
         const at = headings[0] ?? lines.length
-        lines.splice(at, 0, ...block, ...(at < lines.length ? [''] : []))
+        // appended after prose that has no `##`: a blank line first, so it stays a heading of its own
+        lines.splice(
+            at,
+            0,
+            ...(at === lines.length && lines.length > 0 ? [''] : []),
+            ...block,
+            ...(at < lines.length ? [''] : []),
+        )
     }
     return lines.join('\n') + '\n'
 }

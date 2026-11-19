@@ -265,6 +265,15 @@ describe('withUpgradeSection', () => {
         expect(withUpgradeSection('# Release notes: v0.2.0\n', upgradeSection({ version: '0.2.0' }))).toContain(HEADING)
     })
 
+    it('appends to notes with no `##` after a blank line, so the result is prettier-clean', async () => {
+        const out = withUpgradeSection('# Release notes: v0.2.0\n\nSome prose.\n', upgradeSection({ version: '0.2.0' }))
+        expect(out).toContain('Some prose.\n\n## Upgrading to this release\n')
+        const target = path.join(ROOT, 'docs/releases/v0.2.0.md')
+        expect(
+            await prettierCheck(out, { ...(await resolveConfig(target, { editorconfig: true })), filepath: target }),
+        ).toBe(true)
+    })
+
     it('reads a heading inside a code block as code, never as the section’s end or start', () => {
         const fenced = [
             '# Release notes: v0.2.0',
