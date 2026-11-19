@@ -62,7 +62,12 @@ type BaseSubjectType =
 /** The full subject union: framework base + the app's registered subjects (src/app-config/abilities.ts). */
 export type SubjectType = BaseSubjectType | AppSubjectType
 
-export interface AbilitySubject extends AppSubjectFields {
+/**
+ * The subject an ability is checked against: the shape below, with the app's own fields (`AppSubjectFields`) intersected in.
+ * An INTERSECTION, not an `interface extends`, so the app may declare those fields as an interface, a type alias or a mapped type, and
+ * an app with none writes `Record<never, never>` rather than an empty interface it must silence the linter for.
+ */
+export type AbilitySubject = AppSubjectFields & {
     type: SubjectType
     /** The org the subject lives in. `null`/absent means "not org-scoped" and never satisfies sameOrg. */
     orgId?: string | null

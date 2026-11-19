@@ -15,8 +15,8 @@ import { canManageOrg } from '@sssb/kit/core/roles'
 export type AppSubjectType = 'Ticket' | 'Escalation' | 'Attachment'
 
 /**
- * App-specific fields merged into the framework's AbilitySubject (core/abilities.ts `extends
- * AppSubjectFields`). The two-sided escalation carries a named org id per side instead of a single
+ * App-specific fields merged into the framework's AbilitySubject (core/abilities.ts `AbilitySubject =
+ * AppSubjectFields & { … }`). The two-sided escalation carries a named org id per side instead of a single
  * `orgId`, so its scoping fields live with the app that defines Escalation. The two sides keep the
  * neutral requester/responder names: the desk that RAISES an escalation is the requester, the team
  * that DECIDES it is the responder.
