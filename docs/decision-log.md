@@ -6432,3 +6432,42 @@ Decisions, each with the alternative rejected:
   a rerun finishes it); a `settings.json` that exists but declares no SSSB marketplace refuses, where an absent one does
   not (a file that is there and says nothing about the plugin is more likely a mistake than a workspace without one); a
   `uses:` line inside a `run: |` block scalar counts as a pin, in doctor's report too.
+
+## Real mode reads people from the identity provider, never the seed, and loads only the SDKs it chose (2026-11-19, `fix/realmode-digest-and-static-loads`)
+
+Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-real-ports`).
+
+- **The framework's `digest-email` handler addresses the auth port's members, not the seed's people.** It took its
+  recipient from `@sssb/app-config/seed`'s `people`, so in a deployment, whatever the job runner, a team's digest went
+  to a seed person's address, or to a synthetic `<org>@digest.example` one. It now asks `auth.listMembers(orgSlug)`, the
+  identity provider in a deployment (the same call the jobs' notifications make), and picks the team's first active
+  admin, else its first active member: the rule it had, applied to the real store. People are not in the database
+  (there is no users table), so "the real store" is the auth port; the `withTenant` read is the digest's rows, which the seam's `digestBodies` makes under `withTenant`, as its contract (`DigestBodySource`) requires.
+    - **Handlers get the auth port in their context** (`JobContext.auth`), as they get `llm` and `email`, rather than
+      reaching for the adapter registry, which loads the handlers. Every runner supplies it: the simulated one, the
+      in-process one (the registry's hook), and the artifact producer. Rejected: **importing `auth` from the registry in
+      the handler**, a static cycle with the module that loads it, which the context exists to avoid.
+    - **The locale** is the person's own only in a simulated world: the fake auth adapter's `personLocale`, imported
+      dynamically behind `isSimulated` (`makeNotifyDeps`'s precedent). The auth port carries no locale, so a deployment
+      writes in the app's default, as its notifications do. The handler reads the run mode from `adapters/run-mode`, as
+      the request proxy does, since the registry is what loads it.
+    - **Nobody to address:** a deployment's team with no active member gets no digest (the job completes, having sent
+      nothing); the simulated world keeps the synthetic address so a demo never shows an empty digest. An org that no
+      longer exists gets none either. Rejected: **failing the job**, which would turn a schedule on an empty team into a
+      failure every period.
+    - **Pinned twice.** `packages/kit/src/jobs/digest-email.test.ts` runs the handler in real mode with every read of the
+      seed throwing, and `tests/tooling/jobs-seed-free.test.ts` walks each seam's `jobs` module (the fixture and both
+      apps) by static imports alone and fails if one reaches a seed module; a dynamic import behind `isSimulated` is
+      allowed. Every other job kind (the showcase's `export-tickets`, the fixture's `export-dockets`) was already seed-free.
+- **`adapters/real/index` loads `pg` and `posthog-node` only when chosen.** The `pg` transport (`./db`) and PostHog
+  (`./analytics`) were static imports, so every deployment loaded both, a Data API one included, and one with no
+  PostHog key. Both are dynamic imports now, as the Data API transport and the optional ports already were, and
+  `dbPortFor`, which the Data API transport shares, moved to its own module (`./db-port`), since importing it from
+  `./db` loaded `pg` too. `DATABASE_TRANSPORT` behaves as before. Auth (Clerk) and storage (S3) stay static: every
+  deployment uses both. `packages/kit/src/adapters/real/index.test.ts` pins it from esbuild's account of the static
+  graph: of the SDKs a choice brings, none is reached before the choice, and the Data API transport reaches no `pg`.
+  The migrator (`migrate-handler.ts`) still imports the `pg` transport statically; it is bundled whole into its own
+  Lambda either way, so a dynamic import there would change nothing it loads.
+- **Seen, not changed here:** real mode still reads tenants and organizations from the seed for display (the theme's
+  `findTenant`, and the showcase's `findTenant` and `findOrg` in its layouts, sign-in, org page and invitations). Those are tenant
+  configuration, not people, and moving them to the database is a design of its own.

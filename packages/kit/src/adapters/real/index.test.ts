@@ -329,3 +329,62 @@ describe('the real ports, as the dev:real preflight bundles them', () => {
         ).toEqual([])
     })
 })
+
+/**
+ * What a deployment loads as the real ports load, before it has chosen anything: the vendor SDKs `adapters/real/index`
+ * reaches by static imports alone. Only the two ports every deployment uses may be among them, auth (Clerk) and
+ * storage (S3); the database transports, PostHog and the optional ports' SDKs load only when chosen (dynamic imports).
+ * And the Data API transport, once chosen, loads no `pg`. Read from esbuild's account of the bundle, following static
+ * edges only.
+ */
+describe('the vendor SDKs the real ports load before anything is chosen', () => {
+    /** The packages `entry` reaches by static imports alone (dynamic ones are not followed). */
+    async function staticPackages(entry: string): Promise<string[]> {
+        const { build } = await import('esbuild')
+        const here = import.meta.dirname
+        const result = await build({
+            entryPoints: [path.join(here, entry)],
+            bundle: true,
+            write: false,
+            platform: 'node',
+            format: 'esm',
+            metafile: true,
+            logLevel: 'silent',
+            packages: 'external',
+            alias: { '@sssb/app-config': path.resolve(here, '../../../test-fixture/app-config') },
+        })
+        const inputs = result.metafile.inputs
+        const start = Object.keys(inputs).find((file) => file.endsWith(path.join('adapters', 'real', entry)))
+        if (start === undefined) throw new Error(`esbuild did not bundle ${entry}`)
+        const seen = new Set([start])
+        const packages = new Set<string>()
+        const queue = [start]
+        while (queue.length > 0) {
+            for (const edge of inputs[queue.shift() as string]?.imports ?? []) {
+                if (edge.kind === 'dynamic-import') continue
+                if (edge.external) packages.add(edge.path)
+                else if (!seen.has(edge.path)) {
+                    seen.add(edge.path)
+                    queue.push(edge.path)
+                }
+            }
+        }
+        return [...packages].sort()
+    }
+
+    // The SDK of each choice a deployment makes: never loaded until it makes it.
+    const CHOSEN =
+        /^(pg|posthog-node|@aws-sdk\/client-rds-data|@anthropic-ai\/sdk|mailgun\.js|@aws-sdk\/client-codebuild)(\/|$)/
+
+    it('are only those of the ports every deployment uses', async () => {
+        const packages = await staticPackages('index.ts')
+        expect(packages.some((name) => name.startsWith('@clerk/'))).toBe(true) // the walk saw the auth adapter
+        expect(packages.filter((name) => CHOSEN.test(name))).toEqual([])
+    })
+
+    it('and the Data API transport, once chosen, loads no pg', async () => {
+        const packages = await staticPackages('db-data-api.ts')
+        expect(packages).toContain('@aws-sdk/client-rds-data')
+        expect(packages.filter((name) => /^pg(\/|$)/.test(name))).toEqual([])
+    })
+})
