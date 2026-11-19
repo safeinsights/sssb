@@ -223,20 +223,21 @@ describe('sssb add-app', () => {
         () => {
             const ws = workspace('add-app-signal-')
             const before = read(ws, 'package.json')
-            // The signal is raised before addApp starts and, the work being synchronous, dispatched once it returns: the
-            // case a Ctrl-C during the write meets.
+            // The signal is raised while addApp holds signals, once the app is in place and the caller's change made, and,
+            // the work being synchronous, dispatched only once addApp returns: the case a Ctrl-C during the write meets.
+            // (Raised before addApp, with no listener yet, it would end the process before anything was written.)
             const script = [
                 `import { addApp } from ${JSON.stringify(path.join(REPO, 'packages/create/src/add-app.js'))}`,
                 "import { readFileSync, writeFileSync } from 'node:fs'",
                 `const root = ${JSON.stringify(ws)}`,
                 "const file = root + '/package.json'",
-                "process.kill(process.pid, 'SIGINT')",
                 'addApp({',
                 `    templateDir: ${JSON.stringify(template)}, root, slug: 'ledger',`,
                 "    port: { name: 'ledger', default: 3700 }, like: root + '/apps/console',",
                 '    finish: () => {',
                 "        const text = readFileSync(file, 'utf8')",
                 '        writeFileSync(file, text.replace(\'"apps/console"\', \'"apps/console", "apps/ledger"\'))',
+                "        process.kill(process.pid, 'SIGINT')",
                 '        return () => writeFileSync(file, text)',
                 '    },',
                 '})',
