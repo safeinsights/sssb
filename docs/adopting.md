@@ -411,7 +411,7 @@ rest of this repository's are SSSB's own: the second app's (`dev:starter`, `tick
 
 One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 139 published subpaths from its source (39
+nearly all of it. A one-entity app does not: `apps/starter` imports 36 of SSSB's 140 published subpaths from its source (40
 counting its tests), so the same setting would start demanding you delete the other 104 — capabilities you merely have not
 reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
@@ -515,9 +515,9 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 139 subpaths your app may
+lists the 140 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 63 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 65 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
