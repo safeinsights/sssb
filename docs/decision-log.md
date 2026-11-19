@@ -5999,6 +5999,7 @@ Decided without asking, as JP's standing rule for these sessions says.
 - **Hunks are not anchored to the ends of a file.** A hunk with fewer than three lines of context sits at a file's start or
   end, and anchoring it there refused an adopter who had added a comment above the imports. A hunk applies when what it names
   occurs exactly once, anywhere, and a file deletion needs the file to be exactly what the starter wrote. Rejected: anchoring.
+
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 
 `sssb pin [--app <dir>]` (`packages/tools/src/commands/pin.js`) reads the release commit from the installed kit's stamp
