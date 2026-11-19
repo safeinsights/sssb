@@ -6046,7 +6046,7 @@ standing rule for these sessions says.
   rewrite is decorated, a "next" becoming a rewrite) and check the headers a route receives with Next's own merge.
 - **Clerk's Frontend API proxy is not provided for** (round-4 review): it would forward the stripped copy, with no body
   and no `Authorization`, but it runs only with `frontendApiProxy` set or a production key on a `.vercel.app` host,
-  and SSSB sets neither. An app that turns it on must exempt its proxy path from the copy.
+  and SSSB sets neither. Turning it on first needs `withClerk` to leave the proxy path's request whole.
 
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 

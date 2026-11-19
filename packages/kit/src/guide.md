@@ -39,7 +39,10 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - `src/proxy.ts` default-exports the app's proxy wrapped in `withAuthProxy` from `@sssb/kit/adapters/proxy`, and its
   `config.matcher` sends it every page and every `/api` route: in real mode SSSB's auth adapter needs its provider's
   middleware to have seen the request, and `withAuthProxy` runs that middleware around your proxy (loading none of it
-  in simulated mode). Never import the provider's middleware yourself.
+  in simulated mode). Never import the provider's middleware yourself. A page path has no dot in it (the generated
+  matcher leaves those out, as static files), and Next buffers at most `proxyClientMaxBodySize` (10MB by default) of a
+  body the proxy sees, so an upload limit above it raises
+  `experimental.proxyClientMaxBodySize` in `next.config.ts` too.
 
 ## Data
 

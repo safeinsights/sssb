@@ -6,7 +6,9 @@ import { NextRequest, type NextFetchEvent, type NextProxy } from 'next/server'
  * Real mode's half of `withAuthProxy` (../proxy.ts): the app's proxy run inside Clerk's `clerkMiddleware`, which the
  * Clerk auth adapter (./auth.ts) needs. Clerk's `auth()` and `currentUser()` refuse to run in a request its middleware
  * did not see, in a page or an API route alike, so without this every real sign-in fails. Clerk runs on every request
- * the proxy sees, and always writes its own `x-clerk-auth-*` request headers over any a client sent.
+ * the proxy sees, and on every one that goes on to a route of this app it writes its own `x-clerk-auth-*` request
+ * headers over any a client sent (`decorateRequest` in @clerk/nextjs; a redirect or a rewrite to another origin it
+ * leaves alone).
  *
  * It protects no route itself: each route's own `authorize()` does. Clerk reads `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
  * and `CLERK_SECRET_KEY` from the environment itself, the same ones the auth adapter needs. Clerk may answer a request
@@ -51,7 +53,10 @@ export function withClerk(
     }
 }
 
-/** The request as Clerk is shown it: no `Authorization` header, and no body, which Clerk never reads. */
+/**
+ * The request as Clerk is shown it: no `Authorization` header, and no body. Clerk reads a body only in its Frontend API
+ * proxy (`frontendApiProxy`, or a production key on a `.vercel.app` host), which SSSB does not use.
+ */
 function withoutAuthorization(request: NextRequest): NextRequest {
     const headers = new Headers(request.headers)
     headers.delete('authorization')

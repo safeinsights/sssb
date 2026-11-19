@@ -10,7 +10,8 @@ type ProxyResult = Awaited<ReturnType<NextProxy>>
  * code is loaded: the real half is reached only by `import()`, on the first request in real mode.
  *
  * The app's proxy still decides what each path gets (locale routing on pages, nothing on an API route); the app's
- * `config.matcher` must send it every page AND every `/api/...` route, since Clerk needs to see both. Next runs a
+ * `config.matcher` must send it every page AND every `/api/...` route, since Clerk needs to see both. (The starter's
+ * matcher leaves out a page path with a dot in it, so a page path has none.) Next runs a
  * proxy on the Node.js runtime, so the `import()` here is an ordinary one.
  *
  * Use it as the default export of `src/proxy.ts`:
