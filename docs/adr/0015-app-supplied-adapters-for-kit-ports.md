@@ -233,7 +233,7 @@ out by name with a reason and guarded against skipping, as the conformance suite
   cutover. Without credentials it fails unless the app opts out with a reason naming the open cutover row; a suite that
   skips quietly when a secret is missing would be the vacuous gate this repository keeps refusing.
 - **`sssb doctor`** fails when the app declares a port in `adapter-env` and no Vitest config runs that port's suite,
-  less named opt-outs. Doctor evaluates none of an app's TypeScript today (it runs `vitest list` and reads text), so it
+  less named opt-outs. Doctor evaluates none of an app's TypeScript today (it runs `vitest list` and parses config files), so it
   would read `adapter-env` the way `sssb check-real-env` reads the real registry, bundled through esbuild. It keys on
   that module and not on `params.ports`: `packages/tools` has no reader for `config/params.ts`, and a deployment that
   does not use `SssbApp` may never read `params.ports`. The conformance
@@ -358,7 +358,7 @@ The port's methods map onto Auth0 with work, and four things do not map without 
   Organizations, so a headless email-and-password form posting from SSSB's Mantine screen is not possible; sign-in is a
   redirect to Auth0's hosted Universal Login. The sign-in body is already a slot the app's own route file fills (the
   starter's `src/app/[locale]/signin/page.tsx` imports SSSB's Clerk form in real mode), so an Auth0 app can render a
-  "continue" step there. But ADR-0003's "exactly one auth UI, used in every mode" stops being true for the credential
+  "continue" step there. But ADR-0003's "exactly one auth UI — custom Mantine components used in every mode" stops being true for the credential
   step in real mode, and needs an addendum saying so. The invite-acceptance form is the same case: Auth0's invitation
   URL goes to Universal Login.
 - **Sign-out.** The port's `signOut(): Promise<void>` ends the session server-side, and the app's glue then navigates
