@@ -5517,3 +5517,49 @@ licenses` reads, so it needs the same install; what it would add is Google's lic
       (docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbcluster.html).
     - "Release snapshots": the snapshot gate's exemptions also include a PR opened before the gate's cutover, since
       that early exit runs first (`.github/scripts/require-changeset.sh`).
+
+## Every release's notes carry a standing "Upgrading to this release" section (2026-11-18, `feat/release-notes-upgrade-section`)
+
+Pages, taking v0.2.0-rc.2, hit three steps the notes did not list: `sssb doctor` failed until `sssb guide` was rerun, the
+reusable-workflow pin and the plugin pin had to move to the release commit, and knip flagged three AWS SDK packages the
+app no longer used after it switched to `createS3Storage`. The first two are what every upgrade takes, so they are now
+a section of every release's notes, written by `upgradeSection` in `scripts/release-notes.mjs`; the third is a step in
+that section too.
+
+- **The section is generated, not a changeset.** It is the first `##` section of the notes, ahead of the entries (an
+  adopter does it first), with the version filled in: move the `@sssb/*` packages (from npm for a plain release, by
+  tarball URL for a candidate), `pnpm exec sssb guide`, both pins, apply the entries and `pnpm knip`, then `sssb doctor`
+  and `pnpm verify`. `assembleNotes` adds it whenever it is given a version, so `prepare`'s notes, `--since` notes and
+  `--at --version` regenerations all carry it, and `pnpm release:notes` with no version (a preview) does not. Rejected: a
+  changeset for it, which only the release that carried it would show, and an entry in each release's `docs/adopting.md`
+  alone, which an adopter reading the notes would not see. `docs/adopting.md`'s "Upgrading by release" now points at the
+  section and keeps the reasons.
+- **How it names the release commit.** The notes are a file in the release commit, so `prepare` cannot know its SHA, and
+  `verify-release` accepts only the staged patch it plans. A plain release's section therefore has the pins as
+  `<sha>` and the one command that reads it off the release's tag
+  (`git ls-remote https://github.com/safeinsights/sssb 'refs/tags/vX.Y.Z' 'refs/tags/vX.Y.Z^{}' | tail -n 1 | cut -f 1`,
+  which prints the peeled commit when a tag is annotated and the commit when it is lightweight, as release.yml's
+  `git tag "v$VERSION"` makes it; run against v0.2.0-rc.2 it printed the commit `git rev-parse` gives). A candidate's
+  prerelease notes are written by `release.mjs candidate-notes` on the tag, with the SHA in hand, and it writes the SHA
+  into the section (`withUpgradeSection` replaces it, or inserts it into a file that has none). Rejected: pinning the
+  tag, which `sssb doctor` reports as differing ("a branch or tag, not a commit"), a follow-up commit that edits the
+  file with its own SHA (the notes of a release would then differ from the file at its tag), and leaving the SHA to
+  `sssb doctor`, which prints it only beside a pin that already differs. A test drops the section's own yaml and json
+  blocks into a workspace and runs doctor's `pinReport` on them: `ok` with the SHA, a report with the tag.
+- **The knip step is general, not a second changeset.** After an adopter deletes what an entry's "Now deletable"
+  describes, a vendor SDK its `package.json` listed only for that code is flagged, because the kit's adapter that
+  replaces it depends on the SDK itself (`@aws-sdk/client-s3`, `s3-presigned-post`, `s3-request-presigner` are kit
+  dependencies). That holds for any release that publishes an adapter, so it is a step of the standing section (and of
+  "Upgrading by release", step 5) with `@aws-sdk/client-s3` as the example. Rejected: a new changeset beside
+  `kit-s3-storage-factory`, which would name the S3 case and leave the next one unlisted; and an edit to that changeset,
+  which an earlier candidate already carried (`.changeset/README.md`: a name is never reused, a file is edited only to
+  correct it).
+- **`candidateNotes` stays synchronous** and loads `release-notes.mjs` with `createRequire` (Node 24 requires an ES
+  module). Rejected: a static import, which breaks the `push` and `publish` jobs' lone copy of `release.mjs` (it is
+  loaded in `candidateNotes` alone, and `candidate-notes` runs on a full checkout), and an `async` `candidateNotes`,
+  which `pack-and-consume`'s synchronous `step()` and every caller would follow.
+- **The repository is `safeinsights/sssb` by default.** `upgradeSection` takes `repo` (`candidateNotes` passes the one it
+  is given); `prepare` does not, since the notes tool takes no environment. Rejected: reading it from the kit's
+  `repository` field, which would make a dependency-free module read manifests for one string.
+- **Ranges.** The package step shows `^<version>`, as `@sssb/create` writes them, not an exact version: `sssb doctor`
+  checks that the packages resolve to one version, which a range over one release line does.
