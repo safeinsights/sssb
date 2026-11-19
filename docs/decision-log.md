@@ -5698,6 +5698,7 @@ asking JP, as his standing rule for these sessions says.
       the `@sssb/app-config/notifications` alias, which has no "absent" form a type checker accepts, so an optional
       export means a framework contract change (a default the seam falls back to) that deserves its own entry. The
       future task stays open for that half, and says so.
+
 ## A hosted showcase demo on each release (2026-11-18, `feat/hosted-showcase-demo`)
 
 Adoption follow-up 4 (`docs/adoption-review-2026-11.md`): an evaluator should see the Simulator without cloning SSSB.
