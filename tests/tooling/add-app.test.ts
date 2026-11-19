@@ -71,7 +71,7 @@ describe('sssb add-app', () => {
             expect(manifest.name).toBe('ledger')
             expect(manifest.description).toBe('Ledger Books: the app.')
             expect(manifest.sssb).toEqual({ port: { name: 'ledger', default: 3800 } })
-            // Its scripts and Playwright config read its own slot, never the starter's (which the console holds).
+            // Its scripts and Playwright config read its own slot, and name no other.
             expect(manifest.scripts.dev).toContain('sssb dev-tick -- next dev')
             expect(manifest.scripts.tick).toBe('sssb tick')
             for (const text of Object.values(manifest.scripts)) expect(text).not.toMatch(/\bstarter\b/)

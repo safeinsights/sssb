@@ -6252,8 +6252,10 @@ standing rule for these sessions: decide, and record the rejected alternative.
   `starter` kept as an alias): a new built-in in `@sssb/tools`' ports with alias rules, and every generated app on one
   shared name, so a second app still needs a slot of its own, which custom slots (built since the task was written)
   already give. Rejected: **keeping `starter`** (the P12 addendum's reasoning, and CLAUDE.md's "the slot is a port band,
-  not the app's name"): the review found it the newcomer's main "not mine" signal, and the risk the P12 addendum named,
-  a declaration and a Playwright config that agree only by spelling one literal, is gone (next).
+  not the app's name"): the review found it the newcomer's main "not mine" signal, and the risk `docs/adopting.md` named
+  before this change (its paragraph "The port key keeps its old name, on purpose"), a declaration and a Playwright
+  config that agree only by spelling one literal, is gone (next). This supersedes the 2026-11-18 "`@sssb/create`"
+  entry's "The port service stays `starter`".
 - **The starter names its slot only in its `package.json`.** Its scripts call `sssb dev-tick` and `sssb tick` with no
   slot, and its Playwright config `originForApp(__dirname)`; all read the declaration. So the generator's rename of the
   slot is one value in one file, which it finds by checking that the template declares `starter`, and it fails on a

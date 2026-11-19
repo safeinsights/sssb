@@ -644,7 +644,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
  * What `sssb add-app ledger` must have written, which the rest of the run then proves works (its install, typecheck,
  * unit and contract runs, migrator bundle, lint and `sssb doctor`, which fails two apps on one port slot): the app as
  * the generator writes one, its own slug, a port slot of its own, with scripts and a Playwright config that name no
- * other slot (an app on a slot of its own may not use `starter`: it would tick and test another app's port), and its
+ * other slot (an app on a slot of its own may not name `starter`: `sssb tick`, `sssb port` and `portFor` refuse it), and its
  * entry in `sssb.apps`, which the generated Vitest configs read.
  */
 function checkAddedLedger() {
@@ -654,7 +654,7 @@ function checkAddedLedger() {
     // The console, as the generator writes it, holds 3700, so the ledger takes the next default.
     if (JSON.stringify(manifest.sssb?.port) !== JSON.stringify({ name: 'ledger', default: 3800 }))
         fail(`sssb add-app gave the ledger the port slot ${JSON.stringify(manifest.sssb?.port)}`)
-    const starter = Object.entries(manifest.scripts ?? {}).filter(([, text]) => /\bstarter\b/.test(String(text)))
+    const starter = Object.entries(manifest.scripts ?? {}).filter(([, text]) => /starter/i.test(String(text)))
     if (starter.length > 0)
         fail(`the ledger's ${starter.map(([name]) => name).join(', ')} script(s) name the starter's slot`)
     if (!readFileSync(path.join(dir, 'playwright.config.ts'), 'utf8').includes('originForApp(__dirname)'))

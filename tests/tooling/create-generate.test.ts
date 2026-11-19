@@ -286,6 +286,32 @@ describe('@sssb/create: the generated workspace', () => {
         expect(FIRST_APP_PORT).toBe(3700)
     })
 
+    it('refuses a template whose scripts or Playwright config still name the starter’s slot, in any spelling', () => {
+        const cases: [string, (text: string) => string, RegExp][] = [
+            [
+                'app/package.json',
+                (t) => t.replace('"tick": "sssb tick"', '"tick": "STARTER_PORT=1 sssb tick"'),
+                /tick script/,
+            ],
+            ['app/package.json', (t) => t.replace('"tick": "sssb tick"', '"tick": "sssb tick starter"'), /tick script/],
+            [
+                'app/playwright.config.ts',
+                (t) => t.replace('originForApp(__dirname)', 'originForApp(__dirname) // "starter"'),
+                /playwright\.config\.ts names/,
+            ],
+        ]
+        for (const [file, change, message] of cases) {
+            const copy = path.join(makeTestTmpDir('create-starter-slot-'), 'template')
+            cpSync(template, copy, { recursive: true })
+            const text = readFileSync(path.join(copy, file), 'utf8')
+            expect(change(text)).not.toBe(text)
+            writeFileSync(path.join(copy, file), change(text))
+            const target = path.join(makeTestTmpDir('create-starter-slot-ws-'), 'acme')
+            expect(() => generate({ templateDir: copy, target, slug: 'acme', name: 'Acme' })).toThrow(message)
+            expect(existsSync(target)).toBe(false)
+        }
+    })
+
     it('puts the flags in the owner files, and placeholders without them', () => {
         expect(read(ws, 'CODEOWNERS')).toMatch(/^\* +@acme-org\/devs @jdoe$/m)
         for (const file of ['SECURITY.md', 'CODE_OF_CONDUCT.md', '.github/ISSUE_TEMPLATE/config.yml'])

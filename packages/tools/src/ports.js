@@ -21,8 +21,9 @@
 // anything: `SHOWCASE_PORT=3210 pnpm dev`.
 //
 // A SERVICE is one of the built-ins below, named by a string, or a SLOT an app declares for itself in its package.json,
-// `"sssb": { "port": { "name": "ledger", "default": 3700 } }`, for a workspace whose apps are not SSSB's two: without
-// it two apps made from the starter share `starter`, and so one port. A custom slot follows the same three rules: its
+// `"sssb": { "port": { "name": "ledger", "default": 3800 } }`. Every app of a workspace needs a slot of its own, since two
+// apps on one slot bind one port (`@sssb/create` and `sssb add-app` give each app a slot named for it, and an app
+// generated before keeps the built-in `starter`). A custom slot follows the same three rules: its
 // variable is `LEDGER_PORT`, a main checkout gets its `default`, and a linked worktree derives from a band the
 // built-ins do not use (CUSTOM_BAND), keyed on the name as well as the checkout so two slots of one worktree differ.
 //

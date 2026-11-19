@@ -1301,5 +1301,6 @@ app `@sssb/create` writes declares a port slot of its own, named for its slug, a
 `sssb add-app` names a slot for each app it adds. The starter, SSSB's reference app, keeps the built-in `starter` slot
 but names it only in its `package.json`: its scripts and Playwright config read the declaration (`sssb tick`,
 `sssb dev-tick`, `originForApp(__dirname)`), so the generator's rename of the slot is one value in one file, and the
-half-applied rename the P12 addendum feared cannot happen. `starter` keeps working for every workspace generated before.
+half-applied rename that `docs/adopting.md` warned of before this change (its paragraph "The port key keeps its old
+name, on purpose") cannot happen. `starter` keeps working for every workspace generated before.
 `docs/decision-log.md` (2026-11-19, "No `starter` in a generated app") has the choices and what was rejected.
