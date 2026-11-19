@@ -1574,7 +1574,7 @@ function generateWorkspace() {
     console.log(`the packed generator wrote ${generatedFiles.size} files`)
     // Not one of them says `starter`, SSSB's reference app's name and port slot: the app takes a slot of its own.
     const starter = [...generatedFiles.keys()].filter((file) =>
-        /\bstarter\b/i.test(readFileSync(path.join(GEN, file), 'utf8')),
+        /starter/i.test(readFileSync(path.join(GEN, file), 'utf8')),
     )
     if (starter.length > 0) fail(`the packed generator's workspace says "starter" in: ${starter.join(', ')}`)
 }

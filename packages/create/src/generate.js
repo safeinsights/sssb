@@ -494,11 +494,12 @@ function ownPortSlot(appDir, manifest, port) {
         )
     manifest.sssb = { ...manifest.sssb, port }
     for (const [script, text] of Object.entries(manifest.scripts ?? {})) {
-        if (/\bstarter\b/.test(String(text)))
+        // `_` counts as a letter of a word to `\b`, so `STARTER_PORT` would pass it: any `starter` not inside a longer word.
+        if (/(?<![a-z])starter(?![a-z])/i.test(String(text)))
             throw new CreateError(`the template's ${script} script names the starter's port slot`)
     }
     for (const file of readdirSync(appDir).filter((entry) => /^playwright.*\.config\.[cm]?[jt]s$/.test(entry))) {
-        if (readFileSync(path.join(appDir, file), 'utf8').includes("'starter'"))
+        if (/(?<![a-z])starter(?![a-z])/i.test(readFileSync(path.join(appDir, file), 'utf8')))
             throw new CreateError(`the template's ${file} names the starter's port slot`)
     }
 }
