@@ -5728,6 +5728,7 @@ record the rejected alternative here, report it.
 - **The starter's e2e budget grows by one spec** (`apps/starter/tests/e2e/simulator.spec.ts`): signed out, open the
   panel, become a person in the other tenant, see Mail and Jobs and not Hooks, run what is due. It is what makes the
   mount a gate in every generated workspace.
+
 ## Small starter fixes: a paged items list, the eslint 10 peers, an empty `AppSubjectFields` (2026-11-18, `fix/starter-small-fixes`)
 
 Adoption follow-up 9 (`docs/adoption-review-2026-11.md`, ranked item 9 and "What surprised" 2 and 9). Decided without
