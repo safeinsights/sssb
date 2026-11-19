@@ -16,7 +16,8 @@ override is `<SLUG>_PORT`. The app's `dev` and `tick` scripts (`sssb dev-tick`, 
 `playwright.config.ts` (`originForApp(__dirname)`) name no slot and read the declaration. Before, the app declared
 SSSB's built-in `starter` slot (port 3100, `STARTER_PORT`) and named it in all three. The app guide's example now shows
 a slot of the app's own. The generated README, `CLAUDE.md` and CI workflow name `pnpm exec sssb pin` where they say to
-raise SSSB's pins.
+raise SSSB's pins. In `@sssb/tools`, `sssb tick`'s usage and `sssb port`'s refusal of an app with no declaration
+lead with the app's own slot rather than SSSB's built-in ones.
 
 **To adopt.** Nothing is required: `"sssb": { "port": "starter" }` keeps working, on the same port. To give your app a
 slot of its own, as a new workspace's has:
