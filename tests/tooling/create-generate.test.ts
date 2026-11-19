@@ -328,6 +328,11 @@ describe('@sssb/create: the generated workspace', () => {
         expect(readme).toContain('**Claude Code 2.1.324 or later**')
         expect(readme).toContain('`/sssb:new-entity`')
         expect(readme).toContain("the plugin marketplace's `ref` in `.claude/settings.json`")
+        // Each place that says to raise SSSB's pins names the command that raises them (@sssb/tools' `sssb pin`).
+        expect(readme).toContain('(`pnpm exec sssb pin`, which reads it from the installed `@sssb/kit`)')
+        expect(readme).toContain('`pnpm exec sssb pin` raises both')
+        expect(read(ws, 'CLAUDE.md')).toContain('`pnpm exec sssb pin` raises the CI workflow')
+        expect(read(ws, '.github/workflows/checks.yml')).toContain('`pnpm exec sssb pin` raises it')
         // Playwright is the app's dependency, not the root's: the root form works only where pnpm hoists its bin.
         expect(readme).toContain(`\n${PLAYWRIGHT_INSTALL}   # once`)
         expect(readme).not.toMatch(/^pnpm exec playwright/m)
