@@ -358,9 +358,9 @@ export class SssbApp extends Construct {
         // unchanged (a new one would replace the secret, and with it the password the cluster was created with).
         // `db.secret` is not the secret: it is the SecretTargetAttachment that CDK returns from `secret.attach`, so the
         // policy goes on the underlying `AWS::SecretsManager::Secret`, found in the cluster's subtree. Nothing else
-        // holds the credentials: no KMS key (the cluster, the secret and the buckets use AWS-managed or S3-managed
-        // keys), no rotation schedule, and the attachment only tells Secrets Manager which cluster the secret is
-        // for, so it holds nothing of its own to keep.
+        // holds the credentials: no KMS key (the cluster and the secret name none, so they use the account's AWS-managed
+        // keys; the buckets use S3's), no rotation schedule, and the attachment names a secret and a cluster
+        // and nothing else, the username and password being the secret's own `GenerateSecretString`.
         const generatedSecrets = db.node.findAll().filter((c) => c instanceof cdk.aws_secretsmanager.CfnSecret)
         if (generatedSecrets.length !== 1) {
             throw new Error(

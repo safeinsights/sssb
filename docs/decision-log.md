@@ -5581,12 +5581,14 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
   throws if the cluster does not own exactly one `CfnSecret`, so a CDK change that moves it fails the synth rather than
   quietly dropping the policy.
 - **Nothing else needs it.** There is no KMS key (the cluster uses the account's AWS-managed key, the secret the
-  AWS-managed `aws/secretsmanager` key, the buckets S3-managed keys or none) and no rotation schedule; a test pins both
-  as absent, so one added later is a decision made then. The secret's attachment stays `Delete`: it only records which
-  cluster the secret is for. Not exercised against AWS (no live calls), so that deleting an attachment leaves the
-  secret's value as it was rests on the resource's documented behaviour, not a run.
-- **Rejected: leaving the secret `Delete`.** It keeps the database and discards its credentials, which is worse than
-  retaining nothing: the operator has a cluster they can only reach by resetting the master password. **Rejected:
+  AWS-managed `aws/secretsmanager` key, the buckets S3's own) and no rotation schedule; a test pins both
+  as absent on both shapes, so one added later is a decision made then. The secret's attachment stays `Delete`: its
+  synthesized properties are the secret, the cluster and the target type, and the username and password are the secret's
+  own `GenerateSecretString`. Not exercised against AWS (no live calls): whether deleting the attachment while the secret
+  stays also strips the connection details (host, port) the attachment adds to the secret's value is not known here, and
+  the credentials survive either way.
+- **Rejected: leaving the secret `Delete`.** It keeps the database and discards its credentials: the operator has a
+  cluster they can only reach by resetting its master password. **Rejected:
   retaining it in every stage.** A non-production stack is meant to disappear whole (`removalPolicy` DESTROY on the
   cluster and the buckets), and a retained secret per torn-down staging stack is an orphan that costs money and names a
   cluster that no longer exists.

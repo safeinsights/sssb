@@ -13,7 +13,8 @@
 `UpdateReplacePolicy: Delete`. Deleting or replacing a production stack therefore kept the database and deleted the only
 credentials to it. The secret now takes the same policy as the cluster: `Retain` for both in production, `Delete` for
 both otherwise. Its logical id (`DbSecretCF6D79B0`) is unchanged, and the stateful snapshot is too. No KMS key or
-rotation schedule exists to retain beside it: the cluster, the secret and the buckets use AWS-managed or S3-managed keys.
+rotation schedule exists to retain beside it: the cluster and the secret use the account's AWS-managed keys, and the
+buckets S3's own.
 
 **To adopt.** Nothing breaks if you do nothing. Take `@sssb/cdk` and run `cdk diff` against a production stack: the only
 change is the two policy attributes on the secret, which CloudFormation applies without touching the secret, its value

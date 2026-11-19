@@ -419,8 +419,9 @@ describe('a production deployment', () => {
     it.each(/** @type {Transport[]} */ (['pg', 'data-api']))(
         'has no other holder of what the retained data needs on the %s shape: no KMS key, no rotation schedule',
         (transport) => {
-            // The cluster, the secret and the buckets use AWS-managed or S3-managed keys, so there is no customer key to
-            // retain, and the secret is never rotated. One added later is a decision: retain it in production too.
+            // The cluster and the secret use the account's AWS-managed keys and the buckets S3's own, so there is no
+            // customer key to retain, and the secret is never rotated. One added later is a decision: retain it in
+            // production too.
             for (const type of ['AWS::KMS::Key', 'AWS::SecretsManager::RotationSchedule']) {
                 expect(templateOf(transport, true)(type), type).toHaveLength(0)
             }
