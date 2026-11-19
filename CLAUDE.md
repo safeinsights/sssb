@@ -11,9 +11,10 @@ release and the gates are made. Nothing the guide says is repeated here. An app-
 checks its paths against `apps/starter`.
 
 Multi-tenant web app foundation, built to be adopted: `docs/adopting.md` is the adopter guide; keep it truthful.
-Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0014) and don't relitigate them;
-0014 is a plan carried out in steps (its implementation plan), so until a step lands, the tree and the docs
-describe what is built, not what 0014 will build.
+Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0012 and 0014) and don't
+relitigate them; 0013 (fork and merge) is Superseded by 0014, so nothing here tells an adopter to fork, merge or
+send a change "upstream" from a fork. 0014 is a plan carried out in steps (its implementation plan), so until a step
+lands, the tree and the docs describe what is built, not what 0014 will build.
 The philosophy behind these rules — thin slices, ports/adapters, hermetic dev, demo mode, one-app default —
 is `docs/development-approach.md`; read it to understand the why, not just the what.
 Before adding a new vendor adapter, check the template/instance doctrine
@@ -271,8 +272,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   records (`build-notes.md`, `decision-log.md`, ADR bodies and anything appended to them) are exempt — see
   `docs/README.md` for the split. If you move a directory, the gate is what tells you which docs you
   just falsified. A citation of `apps/showcase` or `apps/starter` is checked strictly while that app
-  exists and passes where it does not (it then names SSSB's reference app, and a doc merged in from
-  upstream must not turn an adopter's gate red); write `apps/<app>/…` when you mean the reader's own app.
+  exists and passes where it does not (it then names SSSB's reference app; `sssb.docPaths.referenceApps` lists
+  them, for any doc set the engine checks); write `apps/<app>/…` when you mean the reader's own app.
 - **An adopter's workspace is generated, not forked**: `pnpm create @sssb <dir>` (`@sssb/create`, ADR-0014 P12)
   writes it from `apps/starter` plus generated root config, renaming the app on the way. The generator renames
   only the app's identity, each in one place that `packages/create/src/generate.js` names: `APP_SLUG` and the

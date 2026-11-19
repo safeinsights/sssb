@@ -1,5 +1,5 @@
 // @ts-check
-// `sssb guide [--out <file>] [--check]`: copies the app guide that @sssb/kit ships (the rules an app author follows:
+// `sssb guide [--app <dir>] [--out <file>] [--check]`: copies the app guide that @sssb/kit ships (the rules an app author follows:
 // the seam, vendor SDKs, getDb, i18n, router-agnostic screens, hermetic dev) into the repository, with a hash of its
 // content stamped in a header line. The adopter's own CLAUDE.md imports that copy with Claude Code's `@path` import.
 //
@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { readJson, takeAppDir, takeFlag, takeOption, UsageError, workspaceRootOf } from '../app.js'
+import { readJson, takeAppDir, takeFlag, takeOption, UsageError, workspaceApps, workspaceRootOf } from '../app.js'
 import { kitDirOf, resolveAppsKit } from '../kit.js'
 
 const STAMP = /^<!-- sssb-guide sha256:([0-9a-f]{64}) /
@@ -22,9 +22,47 @@ const STAMP = /^<!-- sssb-guide sha256:([0-9a-f]{64}) /
 /** @param {string | Buffer} text */
 const sha256 = (text) => createHash('sha256').update(text).digest('hex')
 
+/**
+ * The app whose kit's guide is copied. The copy is the workspace's, so the command has to work where people type it,
+ * the root, as `sssb doctor` does: with no `--app`, a working directory that resolves `@sssb/kit` is the app, and a
+ * workspace root that does not (a generated workspace's root takes no framework) uses the workspace's first app
+ * (`sssb.apps`, else `apps/*`).
+ * @param {string[]} args
+ * @param {string} [cwd]
+ * @returns {string}
+ */
+function guideApp(args, cwd = process.cwd()) {
+    if (args.includes('--app')) return takeAppDir(args, cwd)
+    const here = path.resolve(cwd)
+    const isRoot = existsSync(path.join(here, 'pnpm-workspace.yaml')) && existsSync(path.join(here, 'package.json'))
+    if (isRoot && !resolvesKit(here)) {
+        const apps = workspaceApps(here)
+        if (apps.length === 0) {
+            throw new UsageError(
+                `sssb guide: ${here} is a workspace root that takes no @sssb/kit and has no apps (\`sssb.apps\` in its ` +
+                    'package.json, or apps/<name>): pass --app <dir>',
+            )
+        }
+        console.log(`sssb guide: no --app, and ${here} takes no @sssb/kit: using the guide of ${apps[0]}'s kit`)
+        return path.resolve(here, /** @type {string} */ (apps[0]))
+    }
+    // Anything else: the app is the working directory, and kitDirOf's refusal says to name one with --app.
+    return takeAppDir(args, cwd)
+}
+
+/** @param {string} dir */
+function resolvesKit(dir) {
+    try {
+        kitDirOf(dir)
+        return true
+    } catch {
+        return false
+    }
+}
+
 /** @param {string[]} args */
 export async function run(args) {
-    const appDir = takeAppDir(args)
+    const appDir = guideApp(args)
     const check = takeFlag(args, '--check')
     const out = takeOption(args, '--out')
     if (args.length > 0) throw new UsageError('usage: sssb guide [--app <dir>] [--out <file>] [--check]')

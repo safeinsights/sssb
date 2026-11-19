@@ -114,8 +114,8 @@ the tests in the next section, belongs to that app: `apps/<app>/src/ports/` for 
 `adapters/real/`. The fence is the same one, drawn twice: the app's registry and fake are as vendor-free
 and `process.env`-free as the rest of the app, the registry takes the run mode from SSSB's `isSimulated`,
 and nothing else on the app's request path imports a real adapter statically, its own or SSSB's. `docs/recipes/app-owned-adapter.md` is the
-how-to. The reason it is not "add it to SSSB" is ADR-0013: an adopter does not edit `packages/kit`, and
-a port SSSB would never accept upstream would otherwise be a merge conflict in their fork forever.
+how-to. The reason it is not "add it to SSSB" is that an adopter cannot edit `@sssb/kit` (it is an installed
+package, ADR-0014), and a port SSSB would never accept would otherwise be a local patch to it carried forever.
 
 **Why.** A small owned interface makes the fake trivial to write, keeps dev/demo/test hermetic and
 deterministic, and turns a vendor swap into a local change. Stubbing the vendor's surface instead couples
