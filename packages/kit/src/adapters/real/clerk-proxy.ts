@@ -18,7 +18,7 @@ import { NextRequest, type NextFetchEvent, type NextProxy } from 'next/server'
  * choosing:
  * - A token in `Authorization`. Clerk accepts any kind of token there and verifies its machine tokens (`ak_`, `mt_`,
  *   `oat_`) through its API on every request. SSSB signs its users in by Clerk's session cookie and never sends a Clerk
- *   token in a header; its bearer tokens are its own (the webhook secret, service callers' JWTs), checked by the route.
+ *   token in a header; its machine credentials are its own (the webhook secret, service callers' JWTs), checked by the route.
  *   So Clerk is shown the request without its `Authorization` header (`withoutAuthorization`), and the app's proxy and
  *   the route still get it (`keepAuthorization`).
  * - A session token whose key id Clerk has not cached, which makes Clerk fetch its signing keys. `CLERK_JWT_KEY` stops

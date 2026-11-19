@@ -50,6 +50,34 @@ describe('verifyWebhookCaller (simulated mode)', () => {
     })
 })
 
+describe('verifyWebhookCaller: the secret in its own header', () => {
+    // Behind a deployment's CloudFront, `Authorization` reaches the server as CloudFront's own SigV4 signature.
+    const SIGNED = 'AWS4-HMAC-SHA256 Credential=AKIA/20261119/us-east-1/lambda/aws4_request, Signature=abc'
+    const via = (headers: Record<string, string>) =>
+        new Request('http://localhost/api/webhooks/cron', { method: 'POST', headers })
+
+    test('x-sssb-webhook-secret passes, beside a SigV4 Authorization header', async () => {
+        const { WEBHOOK_SECRET_HEADER } = await import('./webhook')
+        expect(WEBHOOK_SECRET_HEADER).toBe('x-sssb-webhook-secret')
+        expect(() =>
+            verifyWebhookCaller(via({ [WEBHOOK_SECRET_HEADER]: devWebhookSecret(), authorization: SIGNED })),
+        ).not.toThrow()
+    })
+    test('the header wins: a wrong or empty one is refused even beside the right Bearer', async () => {
+        const { WEBHOOK_SECRET_HEADER } = await import('./webhook')
+        const bearer = `Bearer ${devWebhookSecret()}`
+        expect(() => verifyWebhookCaller(via({ [WEBHOOK_SECRET_HEADER]: 'wrong', authorization: bearer }))).toThrow(
+            AuthRequiredError,
+        )
+        expect(() => verifyWebhookCaller(via({ [WEBHOOK_SECRET_HEADER]: '', authorization: bearer }))).toThrow(
+            AuthRequiredError,
+        )
+    })
+    test('a SigV4 Authorization header alone is refused', () => {
+        expect(() => verifyWebhookCaller(via({ authorization: SIGNED }))).toThrow(AuthRequiredError)
+    })
+})
+
 describe('verifyWebhookCaller (real mode, env secret)', () => {
     test('the configured WEBHOOK_SECRET passes', () => {
         state.fake = false
