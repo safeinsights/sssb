@@ -142,6 +142,50 @@ describe('the one way onto npm', () => {
         expect(publishCommands(runs(release.jobs.attest))).toEqual([])
     })
 
+    // A job added to release.yml is held here before it runs: the list is the whole file, so a new one fails this test
+    // until someone has said where it stands relative to the one way onto npm.
+    it('has exactly the jobs this test knows, and none that publish waits on but pack', () => {
+        expect(Object.keys(release.jobs).sort()).toEqual(
+            ['attest', 'candidate', 'demo', 'github-release', 'pack', 'plan', 'prerelease', 'publish', 'push'].sort(),
+        )
+        const needs = (job: Job) => (job.needs === undefined ? [] : [job.needs].flat())
+        // everything `publish` waits on, transitively
+        const upstream = new Set<string>()
+        for (let todo = needs(release.jobs.publish); todo.length > 0;) {
+            const next = todo.pop()!
+            if (!upstream.has(next)) todo.push(...needs(release.jobs[next]))
+            upstream.add(next)
+        }
+        expect([...upstream]).toEqual(['pack'])
+        // and nothing waits on `publish`: no job's success or failure is tied to npm's
+        for (const [name, job] of Object.entries(release.jobs)) expect(needs(job), name).not.toContain('publish')
+    })
+
+    // A plain release's GitHub page (adoption follow-up 4) runs beside `publish`, after the same `pack`: it can neither
+    // hold up nor start a publish, and holds nothing npm would take.
+    it("makes a plain release's GitHub page beside publish, with no id-token, environment or secret", () => {
+        const { demo, 'github-release': page } = release.jobs
+        expect(demo.needs).toBe('pack')
+        expect(page.needs).toEqual(['pack', 'demo'])
+        for (const job of [demo, page]) {
+            // inheriting `pack`'s gates: a plain tag on main, after checks passed on it
+            expect(job.if).toBeUndefined()
+            expect(environment(job)).toBeUndefined()
+            expect(JSON.stringify(job)).not.toMatch(/\bsecrets\b|id-token|npm-publish/)
+            expect(publishCommands(runs(job))).toEqual([])
+            for (const step of job.steps ?? []) expect(step.uses ?? '', step.name).not.toMatch(/publish/i)
+        }
+        expect(demo.permissions).toEqual({ contents: 'read', actions: 'read' })
+        expect(page.permissions).toEqual({ contents: 'write' })
+        // what `demo` fetches is what app-checks.yml's demo-static job uploads for the showcase, which checks.yml runs
+        expect(runs(demo)).toMatch(/release\.mjs checks-run "\$GITHUB_SHA"/)
+        expect(runs(demo)).toContain('--name static-demo-showcase')
+        const upload = read('app-checks.yml').jobs['demo-static']?.steps?.find(
+            (s) => s.with?.['name'] === 'static-demo-${{ matrix.demo.name }}',
+        )
+        expect(upload?.with?.['path']).toBe('${{ matrix.demo.app }}/dist-demo/index.html')
+    })
+
     it('runs no publish anywhere else, but as a dry run, and nothing else holds an id-token, environment or secret', () => {
         const others = files.filter((f) => f !== 'release.yml')
         expect(others.sort()).toEqual(['app-checks.yml', 'checks.yml'])
