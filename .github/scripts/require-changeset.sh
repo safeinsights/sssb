@@ -16,8 +16,8 @@
 #   - apps/starter: the scaffold an adopter keeps and edits, which becomes @sssb/create's template (P12);
 #   - plugins/ and .claude-plugin/: the Claude Code plugin and its marketplace, which an adopter's Claude Code loads
 #     from this repository at the commit their `.claude/settings.json` pins (P13).
-# Not gated: apps/showcase, packages/seed (`@app/seed`), tests, scripts, docs, infra, the lockfile. A forking adopter
-# receives some of those too; .changeset/README.md lists the known gaps.
+# Not gated: apps/showcase, packages/seed (`@app/seed`), tests, scripts, docs, the lockfile. Some of what an adopter
+# receives is outside these paths; .changeset/README.md lists the known gaps.
 #
 # A RELEASE SNAPSHOT (`packages/<dir>/release-snapshots/*`, ADR-0014 part 10) asks more: a PR that changes one must add
 # a changeset filing `minor` for an `@sssb/*` package, since what it guards changing is breaking (below, where it is

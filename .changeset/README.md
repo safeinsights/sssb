@@ -20,13 +20,13 @@ CI's `changeset-required` job fails a PR that changes what ships to adopters and
   the changeset: the plugin is no npm package, and the generator is what writes that pin.
 
 Not gated: `apps/showcase`, `packages/seed` (the showcase's world, `@app/seed`), tests, scripts, docs and the
-lockfile. **Known gaps:** while adoption is still a fork that takes updates by merge (ADR-0013), a forking adopter
-receives those too, and also `docs/cutover-checklist.md`, the ESLint config, `.gitleaks.toml` and the CI workflows;
-a change to any of them is not gated. Write a changeset for it anyway when it is an "Operator actions" or "Scaffold
-changes" item. Each app's deployment is in the app since ADR-0014's P9, so `apps/starter/infra/` is gated with the
-starter and `packages/cdk` as a package, while `apps/showcase/infra/` is not. ADR-0014's later steps move more of
-these into packages and the starter, which the gate covers, and some elsewhere (a generator's write-once files);
-until each step lands, check whether the gate sees your change.
+lockfile. Each app's deployment is in the app, so `apps/starter/infra/` is gated with the starter, while
+`apps/showcase/infra/` is not. The files `@sssb/create` writes once are written by `packages/create`, which the gate
+covers. **Known gaps:** what adopters receive from outside those paths is not gated: the reusable workflow
+(`.github/workflows/app-checks.yml`), which a workspace runs at the commit it pins, the root files the generator
+copies as they are (`ROOT_FILES` in `packages/create/src/template.js`), and what it reads from this repository's root
+when it is packed (`TemplateMeta` in the same file: the root's dependency ranges and engines, `pnpm-workspace.yaml`'s
+build approvals and release age, the gitleaks version in `checks.yml`). Write a changeset for a change to one anyway.
 
 Exempt: a PR from `integration` into `main` in this repository (the release merge); Dependabot's PRs, unless one
 changes the kit's `peerDependencies` (a raised peer floor is breaking); a PR opened before the gate reached its base

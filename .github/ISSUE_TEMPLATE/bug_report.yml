@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in the template behaves differently than it says it does
+description: Something in SSSB behaves differently than it says it does
 labels: [bug]
 body:
     - type: markdown
@@ -38,9 +38,8 @@ body:
       attributes:
           label: Environment
           description: |
-              Output of `node -v`, `pnpm -v`, `git rev-parse --short HEAD`, and your OS. The commit
-              matters more here than it usually would: this template is not versioned and has no
-              changelog, so it is the only way to say which SSSB you are running.
+              Output of `node -v`, `pnpm -v`, the `@sssb/kit` version (`pnpm exec sssb doctor` prints it
+              in its opening lines; in a checkout of SSSB, `git rev-parse --short HEAD`), and your OS.
           render: shell
       validations:
           required: true

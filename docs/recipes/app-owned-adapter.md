@@ -9,8 +9,8 @@ repo, for the reason given in §9.
 
 ## 1. Whose port is it?
 
-Run the vendor through the two tests that govern vendor code (`docs/development-approach.md`, "What the
-template ships"):
+Run the vendor through the two tests that govern vendor code (`docs/development-approach.md`, "What
+SSSB ships"):
 
 - **It passes one of them** (every instance needs it, or it teaches an integration mechanic SSSB lacks),
   or **SSSB's own code calls it.** Then it is SSSB's port, under `packages/kit/src/ports/` in SSSB's repository.

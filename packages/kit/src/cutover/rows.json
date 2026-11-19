@@ -70,7 +70,7 @@
         },
         {
             "id": "scheduled-tick",
-            "what": "A scheduler POSTing `/api/webhooks/cron` (in both example apps, over SSSB's `runScheduledTick`) on a fixed cadence with the same shared secret"
+            "what": "A scheduler POSTing `/api/webhooks/cron` (the app's route, over SSSB's `runScheduledTick`) on a fixed cadence with the same shared secret"
         },
         {
             "id": "service-keys",
