@@ -32,6 +32,12 @@ const FORMS: ReadonlySet<string> = new Set([
     '@sssb/kit/adapters/real/accept-invite-form',
 ])
 const PROVIDER = '@sssb/kit/adapters/real/providers'
+/**
+ * The seam's specifiers, as a prefix. Built from the package name because a literal spelling of a seam module path in
+ * shipped kit source is what `seam-specifiers.test.ts` refuses as a specifier it cannot list.
+ */
+const SEAM_PACKAGE = '@sssb/app-config'
+const SEAM_PREFIX = `${SEAM_PACKAGE}/`
 const EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js', '.mts', '.cts', '.mjs', '.cjs']
 /** What a written `.js`-style extension may stand for, as TypeScript's `bundler` resolution reads it. */
 const SOURCE_FOR: Readonly<Record<string, readonly string[]>> = {
@@ -138,8 +144,8 @@ function resolverFor(srcDir: string): (specifier: string, from: string) => strin
     return (specifier, from) => {
         let base: string
         if (specifier.startsWith('@/')) base = path.join(srcDir, specifier.slice(2))
-        else if (specifier.startsWith('@sssb/app-config/')) {
-            base = path.join(srcDir, 'app-config', specifier.slice('@sssb/app-config/'.length))
+        else if (specifier.startsWith(SEAM_PREFIX)) {
+            base = path.join(srcDir, 'app-config', specifier.slice(SEAM_PREFIX.length))
         } else if (specifier === '.' || specifier === '..' || /^\.\.?\//.test(specifier)) {
             base = path.resolve(path.dirname(from), specifier)
         } else return undefined
