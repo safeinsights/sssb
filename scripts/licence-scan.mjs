@@ -19,7 +19,9 @@
 //     licence fails again;
 //   - an exception that matches nothing (it rots otherwise), unless it is marked `platform` (a native binary that
 //     exists on some platforms only);
-//   - a policy that is not well formed.
+//
+// Exits 2, judging nothing, on a policy that is not well formed, a report that cannot be read or holds no packages,
+// a failed `pnpm licenses` and an unknown flag.
 //
 // DEPENDENCY-FREE: plain Node, loaded directly.
 import { execFileSync } from 'node:child_process'

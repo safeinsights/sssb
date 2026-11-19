@@ -5168,13 +5168,14 @@ real at a cost worth a check. It does, and it earns a job. JP's standing rule ap
   advisory beside the required names, and moves to the required list with the ruleset.
 - **Rejected: Trivy** (`trivy fs --scanners license`), the tool the request named. Not run here: this session could not
   fetch and run the binary (the sandbox refused the download) and Docker's daemon was down, so this is its documented
-  behaviour, not a measurement. For Node it reads each installed package's `package.json` in `node_modules`, the same data `pnpm
-licenses` reads, so it needs the same install and finds the same licences; what it would add is its own severity
-  classes for licences, and what it would cost is a downloaded binary or an action to pin and keep current, a second
-  tool in a repo that already has one for secrets, and no place in the repository to record WHY a licence was accepted,
-  which the policy file is for. Revisit if the gate should also cover container images, which this project has none of.
-- **Rejected: `license-checker` and its forks.** The same installed-package data through a new dependency to keep
-  current, with the same policy and exception work still to write.
+  behaviour, not a measurement. For pnpm it reads the `package.json` files under `node_modules` ("you need to download
+  dependencies to `node_modules` beforehand", trivy.dev/latest/docs/coverage/language/nodejs/), the same data `pnpm
+licenses` reads, so it needs the same install; what it would add is Google's licence classification mapped to
+  severities (trivy.dev/latest/docs/scanner/license/), and what it would cost is a downloaded binary or an action to pin and
+  keep current (the repository already pins gitleaks that way), and no place in the repository to record WHY a licence was
+  accepted, which the policy file is for. Both pages were read on 2026-11-18. Revisit if the gate should also cover container images, which this project has none of.
+- **Rejected: `license-checker` and its forks.** Not evaluated beyond this: it would be a new dependency to keep
+  current for the data `pnpm licenses` already gives, and the policy and exception work would still be ours to write.
 - **Rejected: the exact production closure only.** See scope.
 - **Rejected: a step in `repo-checks`.** That job is required, so the step would have made the licence scan a required
   check by the back door, which is the ruleset change JP keeps.

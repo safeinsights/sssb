@@ -20,7 +20,7 @@
         {
             "package": "sentry",
             "license": "FSL-1.1-Apache-2.0",
-            "reason": "Sentry's own CLI, a dependency of @sentry/bundler-plugins, which @sentry/nextjs (the kit's observability adapter) pulls in. The Functional Source License is source-available, not open source: it forbids using the software to compete with Sentry and turns into Apache-2.0 two years after each release. Using it as a build-time upload tool is permitted. An adopter that does not take Sentry's build plugin never runs it."
+            "reason": "Sentry's own CLI package, a dependency of @sentry/bundler-plugins (imported by its core/cli.js), which @sentry/nextjs (the kit's observability adapter) depends on. The Functional Source License is source-available, not open source: it allows any purpose except a Competing Use (a commercial product that substitutes for the software) and converts to Apache-2.0 on the second anniversary of each release. Sentry's own build plugin using it at build time is no competing use."
         },
         {
             "package": "@img/sharp-libvips-*",
