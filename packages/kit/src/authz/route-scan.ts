@@ -536,18 +536,26 @@ class Reach {
     /**
      * A handler that is a call's result. The call and its non-function arguments ran when the module loaded;
      * per request, only the functions handed to it run (a nested wrapper's, too: `withA(withB(fn))`). The wrapper
-     * is what Next calls, and is trusted to carry their failure to Next (see the header).
+     * is what Next calls, and is trusted to carry their failure to Next (see the header). A wrapper declared in
+     * this file is not: the scan can read it, but does not follow a function through its parameter, so what it
+     * is handed counts for nothing.
      */
     wrapped(call: ts.CallExpression): void {
+        const outcome = this.isSameFile(unwrap(call.expression)) ? LOST : HANDLER_OUTCOME
         for (const argument of call.arguments) {
             const a = unwrap(argument)
-            if (isFunctionLiteral(a)) this.invoke(a)
+            if (isFunctionLiteral(a)) this.invoke(a, outcome)
             else if (ts.isCallExpression(a)) this.wrapped(a)
             else {
                 const local = this.localFunction(a)
-                if (local) this.invoke(local)
+                if (local) this.invoke(local, outcome)
             }
         }
+    }
+
+    /** A callee whose code is in this file: a function literal, or a name bound to a same-file function. */
+    private isSameFile(callee: ts.Expression): boolean {
+        return isFunctionLiteral(callee) || this.localFunction(callee) !== undefined
     }
 
     private visit(node: ts.Node, outcome: Outcome): void {
@@ -590,16 +598,23 @@ class Reach {
             const local = this.localFunction(callee)
             if (local) this.invoke(local, direct(local))
         }
-        // A function handed to a call is assumed to be invoked, but the callee is not read: it may run it now or
-        // later (`.then`, a timer, an async wrapper), so its failure counts only through the call's own result.
-        const handed: Outcome = result ? HANDLER_OUTCOME : LOST
+        // A function handed to a call is assumed to be invoked, and its failure to come out of the call's own result:
+        // the callee is not read, and may run it now or later (`.then`, a timer, an async wrapper). Two exceptions.
+        // An array's iteration method runs it in place, so a sync one throws through the call and an async one's
+        // promise is dropped, awaited or not. A callee declared in this file is read, but a function is not followed
+        // through its parameter, so what it is handed counts for nothing.
+        const handed = (fn: ts.FunctionLikeDeclaration): Outcome => {
+            if (this.isSameFile(callee)) return LOST
+            if (isIterationMethod(callee)) return isAsync(fn) ? LOST : { thrown: outcome.thrown, returned: false }
+            return result ? HANDLER_OUTCOME : LOST
+        }
         for (const argument of node.arguments ?? []) {
             const a = unwrap(argument)
-            if (isFunctionLiteral(a)) this.invoke(a, handed)
+            if (isFunctionLiteral(a)) this.invoke(a, handed(a))
             else {
                 this.visit(a, outcome)
                 const local = this.localFunction(a)
-                if (local) this.invoke(local, handed)
+                if (local) this.invoke(local, handed(local))
             }
         }
     }
@@ -657,8 +672,15 @@ class Reach {
             if (condition !== true && s.elseStatement) this.statement(s.elseStatement, outcome)
         } else if (ts.isBlock(s)) this.statements(s.statements, outcome)
         else if (ts.isTryStatement(s)) {
-            this.statements(s.tryBlock.statements, outcome)
-            if (s.catchClause) this.statements(s.catchClause.block.statements, outcome)
+            // A throw in the `try` goes on only if the `catch` cannot fall through (it rethrows or exits), and a
+            // throw in either only if the `finally` does not exit in its place. A promise the `try` returns is not
+            // caught by it.
+            const finallyExits = s.finallyBlock !== undefined && alwaysExits(this.src, s.finallyBlock)
+            const catchFallsThrough = s.catchClause !== undefined && !alwaysExits(this.src, s.catchClause.block)
+            const thrown = outcome.thrown && !finallyExits
+            const returned = outcome.returned && !finallyExits
+            this.statements(s.tryBlock.statements, { thrown: thrown && !catchFallsThrough, returned })
+            if (s.catchClause) this.statements(s.catchClause.block.statements, { thrown, returned })
             if (s.finallyBlock) this.statements(s.finallyBlock.statements, outcome)
         } else if (ts.isWhileStatement(s)) {
             const condition = constantTruth(this.src, s.expression)
@@ -696,16 +718,39 @@ function isAsync(fn: ts.FunctionLikeDeclaration): boolean {
     return hasModifier(fn, ts.SyntaxKind.AsyncKeyword)
 }
 
+/** The array methods that call their function argument in place, before they return. */
+const ITERATION_METHODS = new Set([
+    'every',
+    'filter',
+    'find',
+    'findIndex',
+    'findLast',
+    'findLastIndex',
+    'flatMap',
+    'forEach',
+    'map',
+    'reduce',
+    'reduceRight',
+    'some',
+])
+
+/** `xs.forEach`, `xs.map` and the like: a method call the scan takes to run its function argument in place. */
+function isIterationMethod(callee: ts.Expression): boolean {
+    return ts.isPropertyAccessExpression(callee) && ITERATION_METHODS.has(callee.name.text)
+}
+
 /**
  * What happens to the value of `call` on the spot: it is `await`ed, or returned from the function it sits in (by
- * `return`, or as an arrow's expression body). On the way it may pass through parentheses, a type assertion, a
- * ternary's arm, or the right of `&&`, `||`, `??` or a comma, which hand it on. Anything else (a statement of its
- * own, `void`, a variable, an argument, a `.then`) leaves its promise floating, as far as the scan can see.
+ * `return`, or as an arrow's expression body). On the way it may pass through parentheses, a type assertion
+ * (`as`, `satisfies`, `!`, `<T>`), a ternary's arm, the right of `&&`, `||`, `??` or a comma, or the left of `||` or
+ * `??` (a promise is truthy and never nullish, so it is their value), which hand it on. Anything else (a statement
+ * of its own, `void`, a variable, an argument, a `.then`) leaves its promise floating, as far as the scan can see.
  */
 function settledBy(call: ts.Expression): 'await' | 'return' | undefined {
     let node: ts.Node = call
     for (;;) {
         const parent: ts.Node = node.parent
+        const operator = ts.isBinaryExpression(parent) ? parent.operatorToken.kind : undefined
         if (
             ts.isParenthesizedExpression(parent) ||
             ts.isAsExpression(parent) ||
@@ -715,7 +760,11 @@ function settledBy(call: ts.Expression): 'await' | 'return' | undefined {
             (ts.isConditionalExpression(parent) && parent.condition !== node) ||
             (ts.isBinaryExpression(parent) &&
                 parent.right === node &&
-                (isShortCircuit(parent.operatorToken.kind) || parent.operatorToken.kind === ts.SyntaxKind.CommaToken))
+                operator !== undefined &&
+                (isShortCircuit(operator) || operator === ts.SyntaxKind.CommaToken)) ||
+            (ts.isBinaryExpression(parent) &&
+                parent.left === node &&
+                (operator === ts.SyntaxKind.BarBarToken || operator === ts.SyntaxKind.QuestionQuestionToken))
         ) {
             node = parent
             continue
