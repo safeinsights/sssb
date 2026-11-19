@@ -40,7 +40,12 @@
 // them); `dedupePeerDependents: false` missing from pnpm-workspace.yaml (advice); framework cutover rows the
 // workspace's checklist never mentions; and the commits the workspace pins SSSB's reusable workflow and the plugin's
 // marketplace at (`.github/workflows/*.yml`, `.claude/settings.json`), against the release commit the installed
-// @sssb/kit stamps into its package (`dist/release.json`), naming both commits where they differ.
+// @sssb/kit stamps into its package (`dist/release.json`), naming both commits where they differ; and the adopter's own
+// settings (doctor-settings.js): on the workspace's GitHub repository, read-only through `gh`, whether `sssb /
+// all-checks` is a required check on the default branch, private vulnerability reporting is on, and, for a private
+// repository in an organization, its Actions policy lets it call SSSB's reusable workflow, and whether the plugin
+// `.claude/settings.json` enables is installed on this machine. A `gh` that is missing, signed out, offline or refused
+// reads "not checked", with the reason; none of it runs when `CI` is set.
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -68,6 +73,7 @@ import {
     versionProblems,
     vitestInvocations,
 } from './doctor-checks.js'
+import { settingsReports } from './doctor-settings.js'
 import {
     projectsRunning,
     runKey,
@@ -201,6 +207,7 @@ export async function run(args) {
         pins(root, kitDir, version, inRepo),
         dedupeAdvice(root, inRepo),
         cutover(root, appDir),
+        ...settings(root, kitDir),
     ]
     return print(results)
 }
@@ -883,25 +890,51 @@ async function guides(root, apps, inRepo) {
  * @returns {Result}
  */
 function pins(root, kitDir, version, inRepo) {
-    const read = (/** @type {string} */ file) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
-    const workflowsDir = path.join(root, '.github', 'workflows')
-    const workflows = existsSync(workflowsDir)
-        ? readdirSync(workflowsDir)
+    const settingsText = readIfThere(path.join(root, '.claude', 'settings.json'))
+    return pinReport({
+        inRepo,
+        version,
+        stamp: readIfThere(path.join(kitDir, 'dist', 'release.json')),
+        repository: githubRepositoryOf(readJson(path.join(kitDir, 'package.json')).repository),
+        workflows: workflowFiles(root),
+        settings: settingsText === null ? null : { file: '.claude/settings.json', text: settingsText },
+    })
+}
+
+/** @param {string} file */
+const readIfThere = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
+
+/**
+ * The workspace root's `.github/workflows/*.{yml,yaml}`, sorted, with their text.
+ * @param {string} root
+ */
+function workflowFiles(root) {
+    const dir = path.join(root, '.github', 'workflows')
+    return existsSync(dir)
+        ? readdirSync(dir)
               .filter((name) => /\.ya?ml$/.test(name))
               .sort()
               .map((name) => ({
                   file: `.github/workflows/${name}`,
-                  text: /** @type {string} */ (read(path.join(workflowsDir, name))),
+                  text: /** @type {string} */ (readIfThere(path.join(dir, name))),
               }))
         : []
-    const settingsText = read(path.join(root, '.claude', 'settings.json'))
-    return pinReport({
-        inRepo,
-        version,
-        stamp: read(path.join(kitDir, 'dist', 'release.json')),
-        repository: githubRepositoryOf(readJson(path.join(kitDir, 'package.json')).repository),
-        workflows,
-        settings: settingsText === null ? null : { file: '.claude/settings.json', text: settingsText },
+}
+
+/**
+ * THE ADOPTER'S OWN SETTINGS, REPORTED, never failed and never written (doctor-settings.js): the workspace's GitHub
+ * repository (`sssb / all-checks` required, private vulnerability reporting, the Actions policy a private organization
+ * repository needs for SSSB's reusable workflow) read through `gh`, and the plugin `.claude/settings.json` enables
+ * against what this machine has installed. Skipped in CI, with a line saying so.
+ * @param {string} root
+ * @param {string} kitDir
+ * @returns {Result[]}
+ */
+function settings(root, kitDir) {
+    return settingsReports({
+        root,
+        workflows: workflowFiles(root),
+        kitRepository: githubRepositoryOf(readJson(path.join(kitDir, 'package.json')).repository),
     })
 }
 
