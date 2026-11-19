@@ -585,10 +585,10 @@ export class SssbApp extends Construct {
         }
 
         // ---- the host the viewer asked for (CloudFront Function) ------------------------------
-        // CloudFront sends the Function URL its own Host (it signs for it), so the app would build its redirects,
-        // absolute links and Clerk's URLs on the Function URL's host, or on whatever `X-Forwarded-Host` a viewer
-        // sent. This viewer-request function sets it, and its port, from the request CloudFront received
-        // (src/forwarded-host.js). A viewer-request CloudFront Function beside an origin-request Lambda@Edge is a
+        // CloudFront sends the Function URL its own Host (it signs for it), so what reads `x-forwarded-host` (Clerk's
+        // URLs, Next's server-action origin check, next-intl's domain redirects) would see the Function URL's host,
+        // or whatever a viewer sent. This viewer-request function sets it, and its port, from the request CloudFront
+        // received (src/forwarded-host.js). A viewer-request CloudFront Function beside an origin-request Lambda@Edge is a
         // combination CloudFront allows on one behavior.
         // Its name is unique per account across regions, so it is keyed like the deployment: by region, stack name and
         // construct path (CDK's default leaves the stack name out, and one stack deployed under two names into one

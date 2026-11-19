@@ -9,10 +9,11 @@
 **Action.** optional
 
 **What changed.** CloudFront sends the server's Function URL its own `Host`, and forwarded a viewer's
-`X-Forwarded-Host` as sent, so a deployed app built its redirects, absolute links and Clerk's URLs on the Function URL's
-host, or on one the viewer chose. `SssbApp` now runs a viewer-request CloudFront Function on the default behavior that
-sets `x-forwarded-host` from the `Host` CloudFront received and `x-forwarded-port` to 443, overwriting what the viewer
-sent, and drops a viewer's `Forwarded`. It is exposed as `forwardedHost`: associate it with any behavior of your own
+`X-Forwarded-Host` as sent, so what reads that header in a deployed app (Clerk's request URL, Next's server-action origin
+check, next-intl's domain redirects) saw the Function URL's host, or one the viewer chose. `SssbApp` now runs a
+viewer-request CloudFront Function on the default behavior that sets `x-forwarded-host` from the `Host` CloudFront
+received (lowercased, any port dropped) and `x-forwarded-port` to 443, overwriting what the viewer sent, and drops a
+viewer's `Forwarded`. Next's own `request.url` still names the Function URL's host. It is exposed as `forwardedHost`: associate it with any behavior of your own
 that reaches the server. The `/_next/static/*` and `/assets/*` behaviors now redirect HTTP to HTTPS, as the default
 behavior already did.
 
