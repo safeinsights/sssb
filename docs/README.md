@@ -78,3 +78,5 @@ By task. The list under Doctrine is by document.
 The records name branches, dates and slices from SSSB's own construction. That is what makes them
 worth keeping — a lesson without its circumstances is a slogan — but it also means they describe a repo
 that has moved on. When a record and a doctrine doc disagree about the present, the doctrine doc wins.
+
+<!-- probe of the docs-only fast path (ci/docs-only-fast-path); this PR is closed, never merged -->
