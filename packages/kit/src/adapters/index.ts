@@ -106,7 +106,7 @@ if (isSimulated && process.env.NODE_ENV === 'production') {
 
 const real =
     appMode === 'real'
-        ? await (await import('./real/index')).createRealPorts({ notifyJobTerminal: notifyJobTerminalFromRegistry })
+        ? await (await import('./real/index')).createRealPorts({ inProcessJobs: buildInProcessJobs })
         : null
 
 export const auth: AuthPort = real?.auth ?? fakeAuth
@@ -118,9 +118,14 @@ export const analytics: AnalyticsPort = real?.analytics ?? fakeAnalytics
 export const jobs: JobsPort = real?.jobs ?? fakeJobs
 
 /**
- * The in-process job runner's notification (real mode): the jobs webhook route's, with the request path's deps. The
+ * The in-process job runner (real mode, `JOBS_RUNNER=in-process`), built here rather than by the real ports
+ * (./real/index.ts says why). Its notification is the jobs webhook route's, with the request path's deps; the
  * notification modules import this registry, so they are imported when a job ends, never while it loads.
  */
+async function buildInProcessJobs(ports: Parameters<typeof import('./real/jobs-in-process').createInProcessJobs>[0]) {
+    return (await import('./real/jobs-in-process')).createInProcessJobs(ports, notifyJobTerminalFromRegistry)
+}
+
 async function notifyJobTerminalFromRegistry(input: {
     tenantId: string
     jobId: string

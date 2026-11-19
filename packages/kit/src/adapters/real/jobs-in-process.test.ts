@@ -4,7 +4,7 @@ import { makeTestTmpDir } from '../../testing/tmp-dir'
 /**
  * The in-process runner (`JOBS_RUNNER=in-process`) run against the simulated world's ports: the runner is given its
  * ports and its notifier, so the fakes stand in for the deployment's real ones here, and what is tested is what it does
- * with them (claim, handler, deadline, terminal status, notification, the sweep of lost jobs).
+ * with them (claim, handler, terminal status, notification, the sweep of lost jobs).
  */
 const tmp = makeTestTmpDir('app-jobs-in-process-')
 beforeAll(() => {
@@ -62,7 +62,9 @@ async function harness() {
 describe('the in-process jobs runner', () => {
     test("start runs the job's handler before it returns, records its timeline and notifies", async () => {
         const { ports, notify, notified, createInProcessJobs, submit, tenantId, orgId } = await harness()
+        const { IN_PROCESS_CLAIM } = await import('./jobs-in-process')
         const view = await submit(createInProcessJobs(ports, notify))
+        expect(view.timeline.find((t) => t.status === 'running')?.message).toBe(IN_PROCESS_CLAIM)
         expect(view.status).toBe('completed')
         expect(view.resultKey).toBe(`exports/${tenantId}/${orgId}/${view.id}.csv`)
         expect(view.timeline.map((t) => t.status)).toEqual(['queued', 'running', 'completed'])
@@ -82,33 +84,6 @@ describe('the in-process jobs runner', () => {
         expect(view.status).toBe('failed')
         expect(view.error).toBe('bucket unreachable')
         expect(notified).toEqual([{ tenantId, jobId: view.id, status: 'failed' }])
-    })
-
-    test('a handler still running at the deadline fails its job, and its late end changes nothing', async () => {
-        const { ports, notify, notified, createInProcessJobs, submit, tenantId } = await harness()
-        const { IN_PROCESS_DEADLINE_MS } = await import('./jobs-in-process')
-        let release: (() => void) | undefined
-        const storage = {
-            ...ports.storage,
-            // Never settles until released, then rejects: the abandoned handler's late failure must go nowhere.
-            put: () =>
-                new Promise<void>((_, reject) => {
-                    release = () => reject(new Error('late'))
-                }),
-        }
-        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-        try {
-            const submitted = submit(createInProcessJobs({ ...ports, storage }, notify))
-            await vi.waitFor(() => expect(release).toBeDefined())
-            await vi.advanceTimersByTimeAsync(IN_PROCESS_DEADLINE_MS)
-            const view = await submitted
-            expect(view.status).toBe('failed')
-            expect(view.error).toBe(`timed out after ${IN_PROCESS_DEADLINE_MS / 1000} seconds in the in-process runner`)
-            expect(notified).toEqual([{ tenantId, jobId: view.id, status: 'failed' }])
-        } finally {
-            vi.useRealTimers()
-        }
-        release?.()
     })
 
     test('a failed notification is logged and never fails a finished job', async () => {
@@ -136,18 +111,28 @@ describe('the in-process jobs runner', () => {
         expect(notified).toHaveLength(1)
     })
 
-    test('the sweep fails a job left running past the lost-after window, and only that one', async () => {
+    test('the sweep fails a job it claimed and left running past the lost-after window, and only that one', async () => {
         const { ports, notify, notified, createInProcessJobs, view, tenantId, orgId } = await harness()
-        const { IN_PROCESS_LOST_AFTER_MS } = await import('./jobs-in-process')
+        const { IN_PROCESS_CLAIM, IN_PROCESS_LOST_AFTER_MS } = await import('./jobs-in-process')
         const { submitJob, recordJobStatus } = await import('../../db/jobs')
-        // Two jobs left `running`, as an invocation cut off mid-handler leaves one: a held runner starts nothing.
+        // Jobs left `running`, as an invocation cut off mid-handler leaves one (a held runner starts nothing): one
+        // this runner claimed long ago, one it claimed just now, and one another runner (CodeBuild) claimed long ago.
         const held = { start: async () => {} }
-        const lost = await submitJob(ports.db, held, { tenantId, orgId, kind: 'export-dockets', payload: {} })
-        const fresh = await submitJob(ports.db, held, { tenantId, orgId, kind: 'export-dockets', payload: {} })
-        for (const { id } of [lost, fresh]) await recordJobStatus(ports.db, tenantId, id, 'running')
+        const submit = () => submitJob(ports.db, held, { tenantId, orgId, kind: 'export-dockets', payload: {} })
+        const lost = await submit()
+        const fresh = await submit()
+        const foreign = await submit()
+        for (const { id } of [lost, fresh]) {
+            await recordJobStatus(ports.db, tenantId, id, 'running', { message: IN_PROCESS_CLAIM })
+        }
+        await recordJobStatus(ports.db, tenantId, foreign.id, 'running', { message: 'completion webhook' })
         const stale = new Date(Date.now() - IN_PROCESS_LOST_AFTER_MS - 60_000)
         await ports.db.withTenant(tenantId, (trx) =>
-            trx.updateTable('jobs').set({ updated_at: stale.toISOString() }).where('id', '=', lost.id).execute(),
+            trx
+                .updateTable('jobs')
+                .set({ updated_at: stale.toISOString() })
+                .where('id', 'in', [lost.id, foreign.id])
+                .execute(),
         )
 
         const jobs = createInProcessJobs(ports, notify)
@@ -155,6 +140,7 @@ describe('the in-process jobs runner', () => {
         expect((await view(lost.id)).status).toBe('failed')
         expect((await view(lost.id)).error).toMatch(/^lost: /)
         expect((await view(fresh.id)).status).toBe('running')
+        expect((await view(foreign.id)).status, "another runner's job is left to it").toBe('running')
         expect(notified).toEqual([{ tenantId, jobId: lost.id, status: 'failed' }])
         expect(await jobs.sweep?.(new Date())).toBe(0)
     })

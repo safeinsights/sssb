@@ -12,7 +12,6 @@ import { createRealAnalytics } from './analytics'
 import { realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { createRealDb } from './db'
-import type { NotifyJobTerminal } from './jobs-in-process'
 import { optionalPortsEnv, portChoice } from './optional-ports'
 import { createRealStorage } from './storage'
 
@@ -53,15 +52,19 @@ export function assertRealEnv(): void {
 }
 
 /**
- * What the adapter registry hands the real ports. `notifyJobTerminal` is how the in-process job runner notifies a
- * job's org: the notification modules import the registry, so this module, which the registry loads while it is being
- * evaluated, and which `sssb check-real-env` bundles on its own, must never import them.
+ * What the adapter registry hands the real ports: how to build the in-process job runner (`JOBS_RUNNER=in-process`).
+ * The runner runs the app's registered job handlers, so it reaches the app's seam, and through it whatever the app's
+ * handlers import, the registry included. This module must reach none of that: the registry loads it while being
+ * evaluated, and `sssb check-real-env` bundles it on its own, as CommonJS, which refuses the registry's top-level
+ * await. So the registry builds the runner (./jobs-in-process.ts) and hands it in, already given its notifier.
+ * Optional, so a caller that builds the real ports itself is unchanged; such a caller gets a named error at boot if it
+ * selects the in-process runner without handing one in.
  */
 interface RealPortsHooks {
-    notifyJobTerminal: NotifyJobTerminal
+    inProcessJobs?: (ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort }) => Promise<JobsPort>
 }
 
-export async function createRealPorts(hooks: RealPortsHooks): Promise<RealPorts> {
+export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealPorts> {
     assertRealEnv()
     const env = process.env
     // assertRealEnv above already proved every required variable is set; this narrows the type.
@@ -98,10 +101,7 @@ export async function createRealPorts(hooks: RealPortsHooks): Promise<RealPorts>
         runner === 'codebuild'
             ? (await import('./jobs')).createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION'))
             : runner === 'in-process'
-              ? (await import('./jobs-in-process')).createInProcessJobs(
-                    { db, storage, email, llm },
-                    hooks.notifyJobTerminal,
-                )
+              ? await inProcessJobs(hooks, { db, storage, email, llm })
               : absentJobs
     return {
         auth: realAuth,
@@ -115,4 +115,17 @@ export async function createRealPorts(hooks: RealPortsHooks): Promise<RealPorts>
             ? createRealAnalytics(env['POSTHOG_KEY'], env['POSTHOG_HOST'] ?? '')
             : fakeAnalytics,
     }
+}
+
+function inProcessJobs(
+    hooks: RealPortsHooks,
+    ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort },
+): Promise<JobsPort> {
+    if (!hooks.inProcessJobs) {
+        throw new Error(
+            'JOBS_RUNNER=in-process needs the adapter registry to build the runner: take the ports from ' +
+                '@sssb/kit/adapters/index, or pass createRealPorts an inProcessJobs hook',
+        )
+    }
+    return hooks.inProcessJobs(ports)
 }

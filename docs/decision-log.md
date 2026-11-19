@@ -6044,6 +6044,29 @@ route from a ticker Lambda instead).
   had the same defect in the same shape, so both moved in one change. The sibling keeps the origin access control (it
   adds a body hash at the edge), so the defect stands with it; a live POST through the host is in the `job-runner` and
   `scheduled-tick` rows' proofs.
+- **From the second review round, which revises the first.**
+    - **The 20-second deadline is gone.** A handler abandoned at a soft deadline keeps running in a Lambda environment
+      that is frozen once the invocation returns, holding any transaction it had open (its row locks, its pooled
+      connection) until a later invocation thaws it, and finishing its side effects for a job already marked failed. The
+      server's own time limit ends the process instead, so Postgres rolls the job's open transaction back, and the
+      sweep fails the job. A per-job deadline also never bounded the invocation, whose total the runner cannot know.
+    - **The sweep fails only jobs this runner claimed.** Its `running` entry carries `IN_PROCESS_CLAIM`, so a CodeBuild
+      job still in flight when a deployment switches runners is left to its completion webhook. It is fault-isolated per
+      tenant and per job, and the tick catches a sweep that throws, as `runDueSchedules` isolates each schedule.
+    - **The registry builds the in-process runner** and hands it to `createRealPorts` (`inProcessJobs`). The first
+      round's fix had kept the notification modules out of `adapters/real/index`, but the runner itself runs the app's
+      handlers, so an adopter whose handler reached the registry would have broken `dev:real` again;
+      `packages/kit/src/adapters/real/index.test.ts` now reads esbuild's account of that module's CommonJS bundle and
+      fails if it reaches the registry, `server-lib` or the seam's jobs. The hook is optional, so
+      `createRealPorts()` (a published subpath) still takes no argument; choosing `in-process` without the hook fails at
+      boot, naming it.
+    - **Accepted, recorded:** a tick that spawns several in-process jobs runs them one after another inside one
+      invocation, so a backlog can outrun the time limit (the cut-off job is swept; schedules after it wait for the next
+      tick, and that tick's deliveries do too). Threading an invocation budget through the tick is a design of its own;
+      in-process is for short jobs. A job whose `start` was never reached (an audit write failing between the spawn and
+      the start) stays `queued`: `queued` is also a CodeBuild job's state while it builds, so the sweep cannot tell it
+      lost. The sweep's per-tenant scan of `running` jobs has no index of its own; a partial index is a framework
+      migration, for when a deployment's job history makes it matter.
 
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 

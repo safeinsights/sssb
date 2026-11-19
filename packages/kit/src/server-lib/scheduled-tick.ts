@@ -34,7 +34,14 @@ export async function runScheduledTick(): Promise<ScheduledTickResult> {
     const now = isSimulated ? worldNow() : new Date()
     // A runner that can lose a job mid-run (JOBS_RUNNER=in-process) fails the lost ones first; its own count is not
     // reported here, the failed jobs' errors say it.
-    await jobs.sweep?.(now)
+    try {
+        await jobs.sweep?.(now)
+    } catch (error) {
+        // A sweep that fails must not stop the schedules and deliveries behind it.
+        console.warn(
+            `SSSB tick: the jobs port's sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+    }
     const { spawned, failed } = await runDueSchedules(db, jobs, now)
     const deliveries = await runDueDeliveries(db, now, dispatchWebhook)
     return { spawned, failed, deliveries }

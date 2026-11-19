@@ -41,8 +41,8 @@ const DATA_API_ENV = {
     DATABASE_NAME: 'app',
 }
 
-/** What the registry hands createRealPorts. */
-const HOOKS = { notifyJobTerminal: async () => {} }
+/** What the registry hands createRealPorts: an in-process runner that says what it was built with. */
+const HOOKS = { inProcessJobs: async (ports: object) => ({ start: async () => {}, kind: 'in-process', ports }) }
 
 function stubEnv(env: Record<string, string | undefined>): void {
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
@@ -74,11 +74,10 @@ beforeEach(() => {
         loaded.codebuild += 1
         return { createRealJobs: () => ({ kind: 'codebuild' }) }
     })
+    // The registry builds the in-process runner; this module must never load it (a counter that stays 0).
     vi.doMock('./jobs-in-process', () => {
         loaded.inProcess += 1
-        return {
-            createInProcessJobs: (ports: unknown, notify: unknown) => ({ kind: 'in-process', ports, notify }),
-        }
+        return { createInProcessJobs: () => ({}) }
     })
     stubEnv({ ...COMMON_ENV, DATABASE_TRANSPORT: undefined, DATABASE_URL: undefined })
     stubEnv(Object.fromEntries(Object.keys(DATA_API_ENV).map((name) => [name, undefined])))
@@ -171,13 +170,28 @@ describe('the optional ports follow their switches, and a port switched off is a
         stubEnv({ ...PG, JOBS_RUNNER: 'in-process', JOBS_CODEBUILD_PROJECT: undefined })
         const { createRealPorts } = await import('./index')
         const ports = await createRealPorts(HOOKS)
-        expect(loaded).toMatchObject({ codebuild: 0, inProcess: 1 })
-        // It runs jobs with the deployment's own ports, and notifies through the registry's hook.
-        expect(ports.jobs).toEqual({
-            kind: 'in-process',
-            ports: { db: ports.db, storage: ports.storage, email: ports.email, llm: ports.llm },
-            notify: HOOKS.notifyJobTerminal,
-        })
+        // The registry's hook built it, with the deployment's own ports; this module loaded no runner of its own.
+        expect(loaded).toMatchObject({ codebuild: 0, inProcess: 0 })
+        expect(ports.jobs).toMatchObject({ kind: 'in-process' })
+        const given = (ports.jobs as unknown as { ports: Record<string, unknown> }).ports
+        expect(given['db']).toBe(ports.db)
+        expect(given['storage']).toBe(ports.storage)
+        expect(given['email']).toBe(ports.email)
+        expect(given['llm']).toBe(ports.llm)
+        await ports.db.getDb().destroy()
+    })
+
+    it("JOBS_RUNNER=in-process without the registry's hook fails at boot, naming what is missing", async () => {
+        stubEnv({ ...PG, JOBS_RUNNER: 'in-process' })
+        const { createRealPorts } = await import('./index')
+        await expect(createRealPorts()).rejects.toThrow(/JOBS_RUNNER=in-process needs the adapter registry/)
+    })
+
+    it('takes no hooks at all for the other runners, as it did before', async () => {
+        stubEnv(PG)
+        const { createRealPorts } = await import('./index')
+        const ports = await createRealPorts()
+        expect(ports.jobs).toEqual({ kind: 'codebuild' })
         await ports.db.getDb().destroy()
     })
 
@@ -280,5 +294,37 @@ describe('the required environment', () => {
         const required = new Set<string>()
         for (const transport of DATABASE_TRANSPORTS) for (const name of await requiredOn(transport)) required.add(name)
         expect(needed.filter((name) => !required.has(name))).toEqual([])
+    })
+})
+
+/**
+ * `sssb check-real-env` (the `dev:real` preflight) bundles this module as CommonJS, every dynamic import's target
+ * included, and CommonJS refuses the adapter registry's top-level await. So nothing this module can load may reach the
+ * registry: not the notification modules, and not the app's job handlers (`@sssb/app-config/jobs`), which may import
+ * anything an app module may. Read from esbuild's own account of what it bundled, with the fixture as the seam.
+ */
+describe('the real ports, as the dev:real preflight bundles them', () => {
+    it("reach neither the adapter registry, the server's libraries, nor the app's job handlers", async () => {
+        const { build } = await import('esbuild')
+        const here = import.meta.dirname
+        const result = await build({
+            entryPoints: [path.join(here, 'index.ts')],
+            bundle: true,
+            write: false,
+            platform: 'node',
+            format: 'cjs',
+            metafile: true,
+            logLevel: 'silent',
+            packages: 'external',
+            alias: { '@sssb/app-config': path.resolve(here, '../../../test-fixture/app-config') },
+        })
+        const reached = [
+            ...Object.keys(result.metafile.inputs),
+            ...Object.values(result.metafile.outputs).flatMap((output) => output.imports.map((i) => i.path)),
+        ]
+        expect(reached.some((file) => file.endsWith(path.join('adapters', 'real', 'index.ts')))).toBe(true)
+        expect(
+            reached.filter((file) => /adapters[\\/]index\.ts$|server-lib[\\/]|app-config[\\/]jobs/.test(file)),
+        ).toEqual([])
     })
 })
