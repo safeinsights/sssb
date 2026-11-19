@@ -6024,6 +6024,7 @@ standing rule for these sessions says.
 - **`CLERK_JWT_KEY` is read as a secret store often holds it** (`\n` escapes, surrounding space) **and refused at the
   first real request if it is not a PEM public key** (round-2 review): Clerk would otherwise fail every session check
   with it and sign everyone out, without saying why.
+
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 
 `sssb pin [--app <dir>]` (`packages/tools/src/commands/pin.js`) reads the release commit from the installed kit's stamp
