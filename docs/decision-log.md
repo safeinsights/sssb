@@ -5738,6 +5738,7 @@ without asking, as JP's standing rule for these sessions says.
   budget or an in-repo skip would be a second mechanism for a cost of about a second. `sha_pinning_required` is not
   modelled. `githubRepositoryOf` (shared with the pin report) keeps its unanchored host match: tightening it changes
   the pin report too, and a look-alike origin only changes which repository doctor reads, by GET.
+
 ## A hosted showcase demo on each release (2026-11-18, `feat/hosted-showcase-demo`)
 
 Adoption follow-up 4 (`docs/adoption-review-2026-11.md`): an evaluator should see the Simulator without cloning SSSB.
