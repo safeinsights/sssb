@@ -631,6 +631,34 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         "import * as m1002 from '@/db/1002_ledger_marker'\nimport * as m1001 from './1001_items'\n",
     )
     replaceOnce(index, "    '1001_items': m1001,\n", "    '1001_items': m1001,\n    '1002_ledger_marker': m1002,\n")
+
+    // A slot of its own, as docs/adopting.md tells a second app to take: both apps are made from the starter, so both
+    // declare `starter` and `sssb doctor` fails the workspace until the ledger leaves it. Its Playwright config reads
+    // the declaration, and its scripts name no slot (the starter's say `starter`, which an app on a slot of its own
+    // may not use: it would tick and test the console's port).
+    const manifestFile = path.join(dir, 'package.json')
+    const manifest = readJson(manifestFile)
+    if (manifest.sssb?.port !== 'starter')
+        fail(`the generated ledger declares port ${JSON.stringify(manifest.sssb?.port)}`)
+    manifest.sssb.port = { name: 'ledger', default: 3700 }
+    for (const [script, from, to] of [
+        ['dev', 'sssb dev-tick starter -- ', 'sssb dev-tick -- '],
+        ['tick', 'sssb tick starter', 'sssb tick'],
+    ]) {
+        if (!manifest.scripts?.[script]?.includes(from))
+            fail(`the generated ledger's ${script} script has no "${from}"`)
+        manifest.scripts[script] = manifest.scripts[script].replace(from, to)
+    }
+    writeJson(manifestFile, manifest)
+    // `originForApp(__dirname)` names the app wherever the config is loaded from: `pnpm knip` loads every workspace's
+    // config from the root, where a bare `originFor()` finds no app. Playwright compiles the config to CommonJS.
+    const config = path.join(dir, 'playwright.config.ts')
+    replaceOnce(
+        config,
+        "import { originFor } from '@sssb/tools/ports'",
+        "import { originForApp } from '@sssb/tools/ports'",
+    )
+    replaceOnce(config, "originFor('starter')", 'originForApp(__dirname)')
 }
 
 /**

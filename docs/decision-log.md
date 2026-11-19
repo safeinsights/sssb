@@ -5237,6 +5237,71 @@ either requires a `minor` changeset; its P14 row lands them. Built as two commit
   `production` is true, while the cluster, its instance, its subnet group and both buckets are retained. The snapshot
   records it by type, so it is covered either way; whether the secret should be retained is a question for `@sssb/cdk`.
 
+## An app declares a port slot of its own (2026-11-18, `feat/app-declared-port-slots`)
+
+Built from `.claude/future-tasks/resolved/port-slots-for-adopter-apps.md` (the future task, moved there by this change; an
+earlier entry names its old path): a workspace with two apps of its own, both made from the starter, both declared
+`starter` and bound one port. The design stood as written (`"sssb": { "port": { "name": "ledger", "default": 3700 } }`
+beside the string form); the judgement calls it left open, each with what it beat:
+
+- **The override variable is `<NAME>_PORT`, from the slot's name with `-` as `_` (`LEDGER_PORT`, `BACK_OFFICE_PORT`).**
+  The built-ins already follow it (`STARTER_PORT`, `CONTRACT_PG_PORT`), and a name made of lowercase words and `-` maps
+  to exactly one variable. Rejected: an `env` field in the declaration, which is one more thing for two apps to
+  declare the same way by mistake (it is refused: a slot has `name` and `default` only). A name whose variable is a
+  built-in's (`contract-pg`) is refused too, since the two services would then read one variable.
+- **A worktree's port comes from 20000-29999, `20000 + sha1(root NUL name) % 10000`.** The design asked for a band the
+  four built-in slots do not use, keyed on the name as well as the checkout. It is clear of every built-in default and
+  derived band (3000, 3100, 3200-3599, 5439-5639, 61000-61199) and below the ephemeral ranges (Linux 32768, macOS 49152),
+  so the OS never hands one out. Ten thousand ports make two slots of one worktree collide about once in ten thousand,
+  and a collision is a loud EADDRINUSE, as it already is for the built-ins. Rejected: a narrow band beside the built-ins
+  (3600-3999, 400 ports), where two slots of one worktree would collide forty times as often; and a scan for a free port,
+  which the module's header rules out (two processes could disagree on the answer).
+- **A declared default may not lie in a port band SSSB's own services use, nor above 49151 or below 1024.** In a main
+  checkout it is the port; if it sat in a built-in's derived band a linked worktree of SSSB could derive the very port
+  an adopter's main checkout binds, the collision the built-ins' separate bands exist to rule out. The task's own
+  example, 3300, is inside the showcase and starter band (3200-3599), so the examples use 3700 and 3710. Rejected: accepting
+  any port and leaving a collision to a loud bind failure, which the doctor cannot see in advance.
+- **Two apps on one slot, and two on distinct slots with one default, both fail `sssb doctor`.** The second is the
+  collision the first check cannot see: in a main checkout two distinct names with one default still bind one port. A
+  worktree's derived ports differ by name, so only the default needs checking. An app with no declaration is not
+  checked (launch-json already skips it), and an invalid declaration is a failure naming its package.json, where it was
+  a failure of `sssb port` alone before.
+- **`originFor()` and `portFor()` with no argument read the app the working directory is in, the nearest package.json at or
+  above it that declares a port (no higher than the checkout root); a Playwright config names its own app with
+  `originForApp(__dirname)`.** The first design read the working directory's package.json alone and told adopters to
+  call `originFor()` in the config. Review found `pnpm knip` (in `pnpm verify` and the generated workflow) loads every
+  workspace's Playwright config from the workspace root, where the call threw and knip exited 2, as `playwright test -c
+apps/x/…` from the root does; and a test run from `apps/x/tests` read no declaration at all. The config's own
+  directory is the one place that names the app wherever it is loaded, and Playwright and knip both compile the config
+  to CommonJS, so `__dirname` holds; `originForApp` resolves symlinks, as `sssb port` (which runs in a real working
+  directory) does. Rejected: the nearest package.json of any kind, which lets a package nested in the app (its `infra/`)
+  hide the app's slot, and `originFor(readPortDeclaration(__dirname))`, which hands an undefined declaration to the
+  no-argument form when the app declares none, a worse error than the one `originForApp` gives. With no app around it
+  throws, and says to name a service, run from the app, or use `originForApp`.
+- **`tick` and `dev-tick` know a custom slot only for the app in the working directory (or `--app`).** A slot is the
+  declaring app's alone, so `sssb tick portal` run from the ledger app is an unknown app, listing the known ones, rather
+  than a guess at another app's default. Rejected: reading every app's declaration in the workspace, which the commands
+  (which run in one app's directory, and from a package script) do not otherwise do.
+- **An app on a slot of its own may not name `showcase` or `starter`.** Review found the hole in the design as written: a
+  second app made from the starter keeps `originFor('starter')`, `sssb tick starter` and `sssb dev-tick starter --` in
+  files the generator copies, so its dev server would bind its own slot while its ticker and e2e run used the first
+  app's port, the wrong-app adoption this exists to stop, with `sssb doctor` green because the declarations differ.
+  `portFor`, `sssb port`, `serve-standalone`, `tick` and `dev-tick` now refuse another app's built-in slot when the
+  app in the working directory declares a custom one (`foreignAppSlotProblem`, `packages/tools/src/ports.js`), naming
+  what to do. `ladle` and `contractPg` stay free to name. Rejected: a doctor check that reads each app's scripts and
+  Playwright config for a stale slot name, which has to parse shell command lines and TypeScript to find what a
+  one-line refusal at the point of use catches with certainty. The pack-and-consume pages shape, which has two apps
+  made from the starter, now gives its ledger a slot of its own the way `docs/adopting.md` tells an adopter to; with
+  both on `starter` it failed `sssb doctor` by design.
+- **The string form is untouched**: `portForRoot(…, 'starter')` takes the same code path to the same numbers (the
+  existing tests pass unchanged), and a built-in's derived port is still keyed on the checkout alone. One message
+  changed: a declaration naming an unknown service now says `unknown service "x"` with the known ones and the slot form,
+  where it said `declares port service "x"`.
+
+Not done: `.claude/future-tasks/neutral-app-port-service.md` (a neutral slot the generator writes in place of
+`starter`) still stands; this makes it buildable without a new built-in. The starter and the showcase keep their string
+declarations, so an app the generator writes is unchanged.
+
 ## P15: ADR-0013 superseded, and the adopter guide rewritten around the generator and upgrading by release (2026-11-18, `docs/p15-adopting-by-release`)
 
 ADR-0014's P15 row. Its two dependencies are done: the generator (P12) and Pages' switch (P8:

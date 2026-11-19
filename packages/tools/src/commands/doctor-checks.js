@@ -6,6 +6,7 @@
 import { existsSync, globSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { readJson, UsageError, workspaceApps } from '../app.js'
+import { portForRoot, readPortDeclaration } from '../ports.js'
 
 const KIT = '@sssb/kit'
 const SEAM = '@sssb/app-config'
@@ -993,6 +994,63 @@ export function cutoverReport(rows, checklist) {
         .filter((row) => checklist === null || !checklist.includes(`\`${row.id}\``))
         .map((row) => row.id)
     return { unmentioned, sssbOnly }
+}
+
+/**
+ * PORT SLOTS: two apps of one workspace must not bind one port. An app declares its slot in its package.json
+ * (`"sssb": { "port": "starter" }`, or a slot of its own, `{ "name": "ledger", "default": 3700 }`), the slot fixes the
+ * port its dev server, its Playwright config and its ticker use, so two apps on one slot start on one port: the second
+ * server fails to bind, or, under Playwright's `reuseExistingServer`, the second app's suite ADOPTS the first app's
+ * server and tests the wrong app (docs/build-notes.md). Fails: a declaration that is not valid, two apps on one slot
+ * name, and two apps on distinct names whose main-checkout default is one port (a worktree's derived ports differ by
+ * name, so the default is the one that can still collide). An app with no declaration is not checked.
+ * @param {string} root the workspace root, for the names the problems give
+ * @param {readonly string[]} apps the apps' directories (absolute)
+ * @returns {{ problems: string[], slots: string[] }} the problems, and one line per declaring app for the check's notes
+ */
+export function portSlotProblems(root, apps) {
+    /** @type {string[]} */
+    const problems = []
+    /** @type {string[]} */
+    const slots = []
+    /** @type {Map<string, string[]>} app directories by slot name */
+    const byName = new Map()
+    /** @type {Map<number, { app: string, name: string }[]>} */
+    const byDefault = new Map()
+    for (const app of apps) {
+        const where = path.relative(root, app) || '(the workspace root)'
+        let declared
+        try {
+            declared = readPortDeclaration(app)
+        } catch (error) {
+            problems.push(`${where}: ${error instanceof Error ? error.message.replace(/^ports: /, '') : String(error)}`)
+            continue
+        }
+        if (declared === undefined) continue
+        const name = typeof declared === 'string' ? declared : declared.name
+        // A main checkout's port (the filesystem root is no worktree), whatever this workspace's own path is.
+        const fallback = portForRoot(path.sep, declared, {})
+        slots.push(`${where}: slot "${name}", port ${fallback} in a main checkout`)
+        byName.set(name, [...(byName.get(name) ?? []), where])
+        byDefault.set(fallback, [...(byDefault.get(fallback) ?? []), { app: where, name }])
+    }
+    for (const [name, dirs] of byName) {
+        if (dirs.length < 2) continue
+        problems.push(
+            `${dirs.join(' and ')} declare the same port slot "${name}", so their dev servers, e2e servers and tickers ` +
+                "bind one port (and the second suite adopts the first app's server). Give each its own: " +
+                '"sssb": { "port": { "name": "<name>", "default": <port> } } in its package.json',
+        )
+    }
+    for (const [port, holders] of byDefault) {
+        const distinct = [...new Set(holders.map(({ name }) => name))]
+        if (distinct.length < 2) continue
+        problems.push(
+            `${holders.map(({ app }) => app).join(' and ')} declare port slots (${distinct.map((n) => `"${n}"`).join(', ')}) ` +
+                `with one default, ${port}, so in a main checkout they bind one port: give each its own default`,
+        )
+    }
+    return { problems, slots }
 }
 
 /** A full commit SHA, the only pin that cannot move. */

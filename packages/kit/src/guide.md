@@ -108,6 +108,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   under e2e. The cron route (`src/app/api/webhooks/cron/route.ts`) stays behind `withWebhookSecret`: never add a
   bypass for the ticker.
 - In a linked git worktree the app's ports are derived per checkout, so parallel sessions never adopt each other's dev
-  server; `pnpm exec sssb port`, run from the app, prints its port.
+  server; `pnpm exec sssb port`, run from the app, prints its port. An app declares its port slot in its package.json
+  (`"sssb": { "port": "starter" }`), and every app of a workspace needs a slot of its own: a second app declares
+  `"sssb": { "port": { "name": "ledger", "default": 3700 } }`, which `sssb doctor` checks, and reads its override from
+  `LEDGER_PORT`.
 - Before finishing a change, run `pnpm verify` from the workspace root. Format with `pnpm lint:fix`, never by hand.
   Commit messages are conventional commits; the commit-msg hook runs commitlint.

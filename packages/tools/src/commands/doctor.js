@@ -21,6 +21,8 @@
 //     seam goes through aliases instead, every tsconfig `paths` entry and every Vitest alias that would resolve the
 //     seam for an app must send it into that app's own);
 //   - an @sssb/* package an app resolves at another version than its @sssb/kit;
+//   - an app's port declaration (`"sssb": { "port": … }`) that is not valid, two apps that declare one port slot, or two
+//     custom slots with one default port: their dev servers and e2e runs would bind one port (portSlotProblems);
 //   - a check of the conformance suite that would not run, unless the app opted out of it by name in its own suite
 //     file: the MAIN unit run (the config a bare `vitest` would load for the app: the root's when it runs the app's
 //     `src/` tests, else the one Vitest finds walking up from the app, else Vitest's defaults there) must list every
@@ -58,6 +60,7 @@ import {
     packageDirFrom,
     parseWorkspaceYaml,
     pinReport,
+    portSlotProblems,
     PROBE,
     realish,
     singletonProblems,
@@ -191,6 +194,7 @@ export async function run(args) {
         ...targets.map((target) => singletons(root, target)),
         inRepo ? await inRepoAliases(root, workspace, plans) : importers(root, workspace),
         ...targets.map((target) => versions(root, target)),
+        portSlots(root, apps),
         ...apps.flatMap((app) => RUNNERS.flatMap((runner) => conformance(root, app, runner, plans, cache))),
         ...commandLines(root, appDir, apps, plans),
         ...(await guides(root, apps, inRepo)),
@@ -238,6 +242,17 @@ const nestedIn = (packages, app) =>
     packages
         .map((dir) => realpathSync(dir))
         .filter((dir) => dir !== app && dir.startsWith(app + path.sep) && dir !== path.join(app, 'src', 'app-config'))
+
+/**
+ * PORT SLOTS: each app of the workspace binds a port of its own (see portSlotProblems).
+ * @param {string} root
+ * @param {readonly string[]} apps
+ * @returns {Result}
+ */
+function portSlots(root, apps) {
+    const { problems, slots } = portSlotProblems(root, apps)
+    return verdict('port slots: no two apps bind one port', problems, slots)
+}
 
 /**
  * THE WALK REACHES THE APP: what every workspace-wide check below covers is what the walk found, so an app it missed
