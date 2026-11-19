@@ -1053,6 +1053,112 @@ export function portSlotProblems(root, apps) {
     return { problems, slots }
 }
 
+/**
+ * JSONC as JSON: its comments and trailing commas taken out, strings (a `$schema` URL's `//` among them) left whole.
+ * @param {string} text
+ */
+function withoutJsonComments(text) {
+    let out = ''
+    // A comma is held until the next token: dropped before a `}` or `]` (a trailing comma), written before anything else.
+    let comma = ''
+    const token = (/** @type {string} */ value) => {
+        out += /^[}\]]/.test(value) ? comma.slice(1) : comma
+        comma = ''
+        out += value
+    }
+    for (let i = 0; i < text.length; i++) {
+        const char = /** @type {string} */ (text[i])
+        if (char === '"') {
+            let end = i + 1
+            while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1
+            token(text.slice(i, end + 1))
+            i = end
+        } else if (char === '/' && text[i + 1] === '/') {
+            while (i + 1 < text.length && text[i + 1] !== '\n') i++
+        } else if (char === '/' && text[i + 1] === '*') {
+            const end = text.indexOf('*/', i + 2)
+            i = end < 0 ? text.length : end + 1
+        } else if (char === ',') {
+            token('')
+            comma = ','
+        } else if (/\s/.test(char)) {
+            if (comma) comma += char
+            else out += char
+        } else token(char)
+    }
+    return out + comma
+}
+
+/** Where knip looks for its JSON config at a workspace root, in its own order. */
+const KNIP_JSON = ['knip.json', 'knip.jsonc', '.knip.json', '.knip.jsonc']
+
+/**
+ * KNIP'S WORKSPACES against the workspace's apps: a generated workspace's knip.json gives each app, and its seam, an
+ * entry of its own (their entry files, and the dependencies SSSB's tools load from the app), so an app it does not name
+ * is read with knip's defaults, which flag the seam's modules (the framework reads them from node_modules, which knip
+ * does not follow) and the presets' dependencies as unused. Reported, never failed: knip's own run is the gate.
+ * It also says when the root installs `@sssb/create` (as `sssb add-app` asks) and knip's root config does not ignore it:
+ * nothing imports it (the command loads it from node_modules), so knip calls it an unused dependency.
+ * Returns null when the root has no knip JSON config; `missing` is null when it has no `workspaces` (one config for
+ * every package).
+ * @param {string} root
+ * @param {readonly string[]} apps absolute
+ * @param {readonly string[]} packages the workspace's packages, absolute (workspacePackages)
+ * @returns {{ file: string, missing: string[] | null, generator: boolean } | { file: string, unread: string } | null}
+ */
+export function knipGaps(root, apps, packages) {
+    const file = KNIP_JSON.find((name) => existsSync(path.join(root, name)))
+    if (file === undefined) return null
+    let config
+    try {
+        // As knip reads it: a byte-order mark dropped, and comments and trailing commas allowed in every one of its names
+        // (it falls back to JSONC for a `.json` too). Plain JSON passes through unchanged.
+        const text = readFileSync(path.join(root, file), 'utf8').replace(/^\uFEFF/, '')
+        config = JSON.parse(withoutJsonComments(text))
+    } catch (error) {
+        return { file, unread: error instanceof Error ? error.message : String(error) }
+    }
+    const workspaces = config?.workspaces
+    const hasWorkspaces = workspaces !== null && typeof workspaces === 'object'
+    const rootConfig = hasWorkspaces ? workspaces['.'] : config
+    const ignored = /** @type {unknown[]} */ (
+        [config?.ignoreDependencies, rootConfig?.ignoreDependencies].flatMap((list) =>
+            Array.isArray(list) ? list : [],
+        )
+    )
+    const manifestFile = path.join(root, 'package.json')
+    const rootManifest = existsSync(manifestFile) ? readJson(manifestFile) : {}
+    const installs = ['dependencies', 'devDependencies'].some((field) => rootManifest?.[field]?.['@sssb/create'])
+    // knip reads an entry with a regular expression's characters as one (its `toRegexOrString`).
+    const ignores = (/** @type {unknown} */ entry) => {
+        if (typeof entry !== 'string') return false
+        if (entry === '@sssb/create') return true
+        if (!/[*+\\(|{^$]/.test(entry)) return false
+        try {
+            return new RegExp(entry).test('@sssb/create')
+        } catch {
+            return false
+        }
+    }
+    const generator = Boolean(installs) && !ignored.some(ignores)
+    if (!hasWorkspaces) return { file, missing: null, generator }
+    const keys = Object.keys(workspaces)
+    const named = (/** @type {string} */ rel) =>
+        keys.some((key) => key === rel || path.posix.matchesGlob(rel, key.replace(/\/+$/, '')))
+    /** @type {string[]} */
+    const missing = []
+    for (const app of apps) {
+        const rel = path.relative(root, app).split(path.sep).join('/')
+        // An app at the root is knip's `.` workspace, which a config with workspaces always has a say over; an app that
+        // is no workspace package is part of the root's for knip, and needs no key of its own.
+        if (rel !== '' && packages.includes(app) && !named(rel)) missing.push(rel)
+        const seam = path.join(app, 'src', 'app-config')
+        const seamRel = path.relative(root, seam).split(path.sep).join('/')
+        if (packages.includes(seam) && !named(seamRel)) missing.push(seamRel)
+    }
+    return { file, missing, generator }
+}
+
 /** A full commit SHA, the only pin that cannot move. */
 const COMMIT = /^[0-9a-f]{40}$/
 
