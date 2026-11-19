@@ -1,0 +1,53 @@
+{
+    "$comment": "The policy scripts/licence-scan.mjs judges the installed dependency closure against (CI's `licence-scan` job). `allowed` is a list of SPDX identifiers; a package whose licence expression is not satisfied by it (an `A OR B` needs one side, an `A AND B` both) fails the scan unless an `exceptions` entry names the package AND the licence it carries today. Adding to either list is a decision for review: a new copyleft, source-available or unknown licence in what an adopter inherits is a fact the adopter should be told, and a reason is required.",
+    "scope": {
+        "exclude": ["showcase"],
+        "reason": "The showcase is the demo app: nothing an adopter installs depends on it, so its own tooling (the component workshop, the a11y test driver) is no adopter's inheritance. Everything else is in: every published package with its dev and peer-installed tools, the starter (which @sssb/create copies) and the workspace root (whose tools the generated root repeats)."
+    },
+    "allowed": [
+        "0BSD",
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "BlueOak-1.0.0",
+        "CC0-1.0",
+        "ISC",
+        "MIT",
+        "Python-2.0",
+        "Unlicense"
+    ],
+    "exceptions": [
+        {
+            "package": "sentry",
+            "license": "FSL-1.1-Apache-2.0",
+            "reason": "Sentry's own CLI package, a dependency of @sentry/bundler-plugins (imported by its core/cli.js), which @sentry/nextjs (the kit's observability adapter) depends on. The Functional Source License is source-available, not open source: it allows any purpose except a Competing Use (a commercial product that substitutes for the software) and converts to Apache-2.0 on the second anniversary of each release. Sentry's own build plugin using it at build time is no competing use."
+        },
+        {
+            "package": "@img/sharp-libvips-*",
+            "license": "LGPL-3.0-or-later",
+            "platform": true,
+            "reason": "The prebuilt libvips that `sharp` loads as a shared library, optional per platform, a dependency of `next` for image optimisation. LGPL permits that dynamic use of an unmodified library by software under any licence; nothing in SSSB links it statically or copies its code."
+        },
+        {
+            "package": "lightningcss",
+            "license": "MPL-2.0",
+            "reason": "Pulled in by Vite 8 and by webpack's CSS minimiser as a build tool. MPL-2.0 is file-level copyleft: it binds changes to its own files, and nothing here modifies or redistributes them."
+        },
+        {
+            "package": "lightningcss-*",
+            "license": "MPL-2.0",
+            "platform": true,
+            "reason": "lightningcss's per-platform native binaries; the same reasoning as lightningcss."
+        },
+        {
+            "package": "axe-core",
+            "license": "MPL-2.0",
+            "reason": "The accessibility rules engine of eslint-plugin-jsx-a11y (part of @sssb/eslint-plugin's preset), used as a lint-time tool and never shipped inside an app. File-level copyleft, unmodified."
+        },
+        {
+            "package": "caniuse-lite",
+            "license": "CC-BY-4.0",
+            "reason": "Browser-support data read at build and lint time by Browserslist (through Babel, which @sssb/eslint-plugin's React Hooks rules load, and through Next's styled-jsx). A data licence whose only condition is attribution, which the package's own LICENSE carries."
+        }
+    ]
+}

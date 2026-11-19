@@ -5188,3 +5188,66 @@ apps/x/…` from the root does; and a test run from `apps/x/tests` read no decla
 Not done: `.claude/future-tasks/neutral-app-port-service.md` (a neutral slot the generator writes in place of
 `starter`) still stands; this makes it buildable without a new built-in. The starter and the showcase keep their string
 declarations, so an app the generator writes is unchanged.
+## Licence scan: a pnpm-native CI job, not a required check (2026-11-18, `ci/licence-scan`)
+
+The Canopy survey deferred a licence scan ("Trivy or equivalent"), and P14 is about to put SSSB's packages on public
+npm, so what an adopter inherits through them matters now. The question was whether a licence gate catches anything
+real at a cost worth a check. It does, and it earns a job. JP's standing rule applied: decided here, not asked.
+
+- **What the survey found, today.** `pnpm licenses list --json` over the workspace less the showcase: 763 packages,
+  of which 745 are MIT, Apache-2.0, ISC or BSD, and the rest is a short list worth knowing: `sentry` 0.49.0 (**FSL-1.1-Apache-2.0**,
+  source-available, with a competing-use restriction), which `@sentry/bundler-plugins` depends on, so it
+  arrives with `@sentry/nextjs`, one of the kit's own dependencies; `@img/sharp-libvips-*` (**LGPL-3.0-or-later**), `next`'s image
+  library as a shared native library; `lightningcss` and its platform binaries, and `axe-core` (**MPL-2.0**);
+  `caniuse-lite` (CC-BY-4.0, data); and BlueOak, Python-2.0, Unlicense, CC0 and `(MIT OR CC0-1.0)`, which are permissive.
+  Over the whole workspace there is also `only` (**no licence declared**), a dependency of Koa under the showcase's
+  component workshop, which is why the showcase is out of scope. None of the first group is a defect; each is a fact
+  an adopter's legal review would want and nobody had written down, and the FSL one is invisible from a dependency list
+  (it is two hops below a package the kit names). That is the case for the job. The probe below also met
+  `parse-cache-control` declaring `BSD`, which is not an SPDX identifier: a registry's loose strings are noise the
+  policy must be able to except, not a reason to loosen it.
+- **The tool is `pnpm licenses`, run by `scripts/licence-scan.mjs`, judged against `.github/licence-policy.json`.**
+  No new binary, action or package to pin or trust, no network beyond the install CI does anyway, and the scan takes about a
+  second. The policy is an allowlist of SPDX identifiers (an `OR` expression needs one side, an `AND` both) plus named
+  exceptions, each naming the package and the licence it carries today (so a bump that changes the licence fails
+  again) and a reason. An exception that matches no installed package fails too, unless marked `platform`, so the
+  ledger cannot rot. Weak copyleft (MPL, LGPL), source-available and data licences are exceptions with reasons, never
+  in `allowed`: a new one is a decision for review.
+- **Scope: every workspace project but the showcase**, which is a superset of what ships: the published packages with
+  their dev and peer-installed tools, the starter that `@sssb/create` copies, and the workspace root whose tools the generated
+  root repeats. A superset, because reading the exact closure of each published package (`--prod` per project) would
+  miss the starter's and the root's dev tools, which an adopter inherits too, and a dev-only copyleft tool
+  is still a fact to tell them. The cost is that a repo-only tool (Changesets, jscpd) is held to the same list;
+  none is a problem today.
+- **A job of its own in `checks.yml` (`licence-scan`), not a step of `repo-checks`**, so a licence failure is a red
+  check named for it and does not hide in a bigger one; and not a step of the reusable `app-checks.yml`, which every
+  adopter calls: an adopter's own dependencies are theirs to judge, and what SSSB hands them is judged here. The script is
+  dependency-free, so an adopter who wants the same gate can copy it and a policy (a recipe if one asks).
+- **Not a required check, by instruction, and what that means.** Making it required is a ruleset change, which is JP's:
+  add the status check `licence-scan` to the required checks of the rulesets on `main` and `integration` (and on any
+  integration branch of the day, `int-p14` now). Until then a red `licence-scan` blocks no merge. It still holds a
+  _release_ back: `release.yml` waits for the whole `checks` workflow to conclude `success` on the merge commit, so a
+  licence the policy fails, merged to `main`, stops the next release until it is decided. That is the right place for
+  it to bite; it is stated so nobody is surprised. `tests/tooling/app-checks-workflow.test.ts` lists the job as
+  advisory beside the required names, and moves to the required list with the ruleset.
+- **Rejected: Trivy** (`trivy fs --scanners license`), the tool the request named. Not run here: this session could not
+  fetch and run the binary (the sandbox refused the download) and Docker's daemon was down, so this is its documented
+  behaviour, not a measurement. For pnpm it reads the `package.json` files under `node_modules` ("you need to download
+  dependencies to `node_modules` beforehand", trivy.dev/latest/docs/coverage/language/nodejs/), the same data `pnpm
+licenses` reads, so it needs the same install; what it would add is Google's licence classification mapped to
+  severities (trivy.dev/latest/docs/scanner/license/), and what it would cost is a downloaded binary or an action to pin and
+  keep current (the repository already pins gitleaks that way), and no place in the repository to record WHY a licence was
+  accepted, which the policy file is for. Both pages were read on 2026-11-18. Revisit if the gate should also cover container images, which this project has none of.
+- **Rejected: `license-checker` and its forks.** Not evaluated beyond this: it would be a new dependency to keep
+  current for the data `pnpm licenses` already gives, and the policy and exception work would still be ours to write.
+- **Rejected: the exact production closure only.** See scope.
+- **Rejected: a step in `repo-checks`.** That job is required, so the step would have made the licence scan a required
+  check by the back door, which is the ruleset change JP keeps.
+- **A limit, stated:** `pnpm licenses` sees what this machine installed, so a per-platform native package is judged on the
+  platform that runs the scan (CI is Linux; a local run on macOS sees the `darwin` binaries, which the `platform`
+  exceptions cover by prefix). A licence that exists only on a platform CI does not run is not seen.
+- **Seen red.** The scan was run over the real install: with `ffmpeg-static` (GPL-3.0-or-later) added to the root's
+  dev dependencies it failed naming it (and `parse-cache-control`, `BSD`), and passed again once the manifest and
+  lockfile were restored; with the `sentry` exception removed from a copy of the policy it failed naming `sentry@0.49.0`;
+  with an exception for a package that is not installed added, it failed naming the stale entry.
+  `tests/tooling/licence-scan.test.ts` holds the same cases against fixed reports, with the expression grammar.
