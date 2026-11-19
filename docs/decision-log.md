@@ -6511,3 +6511,43 @@ standing rule for these sessions: decide, and record the rejected alternative.
   the packed generator's workspace says `starter`.
 - **`pnpm exec sssb pin` is named** where the generated README, `CLAUDE.md` and CI workflow say to raise the pins
   (follow-up 7, #66, left them saying it in words).
+
+## `SssbApp` sends HSTS and safe security headers on every behavior (2026-11-19, `fix/cdk-hsts`)
+
+The security review of `fix/cdk-forwarded-host-https` rated a missing `Strict-Transport-Security` MEDIUM. Every
+behavior now redirects HTTP to HTTPS, but without HSTS a visitor's first `http://` request can be intercepted before
+its redirect. Pages, the first adopter, sets its own response headers policy. JP's standing rule for these sessions is
+to decide and record; each choice below is one he would otherwise have been asked.
+
+- **A response headers policy on every behavior**: the app's pages and the static files alike. Rejected: **headers
+  set by the app** (Next's `headers()`), which would never reach the S3 behaviors.
+- **HSTS for two years (`max-age=63072000`).** It is MDN's recommended value, and what hstspreload.org asks of a
+  preload submission. Rejected: **one year**, the floor some guides give: the header is renewed on every visit, so the
+  shorter value buys nothing but a shorter window.
+- **`includeSubDomains` off by default, behind `hstsIncludeSubdomains`.** It binds every subdomain of the host the app
+  is served on, which on an adopter's domain may include hosts SSSB knows nothing about. Rejected: **on by default**.
+  `preload` is never set: a submission to browsers' lists is the domain owner's act.
+- **Also `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` and `X-Frame-Options:
+SAMEORIGIN`.** Nothing in the kit, the tools or the starter sets any of them (searched), so there is no duplicate.
+  The referrer policy is browsers' own default, stated. SAMEORIGIN refuses other sites' frames (clickjacking) and keeps
+  the app's own. Rejected:
+    - **DENY**, which would break an app that frames its own pages;
+    - **a default Content-Security-Policy**, as one that fits every app would allow everything;
+    - **`X-XSS-Protection`**, which browsers have dropped.
+- **Every header yields to the app's own (`override: false`).** An app that must be framed by another site sends its
+  own CSP `frame-ancestors`, which browsers prefer to `X-Frame-Options`. Rejected: **overriding**, which would leave an
+  app no way to answer differently.
+- **An adopter's own policy replaces SSSB's on every behavior (`responseHeadersPolicy`), and `hstsIncludeSubdomains`
+  beside it is refused**, rather than silently ignored.
+- **The policy's name is keyed like the forwarded-host function's** (region, stack name, construct path). CDK's
+  default name carries the stack name but not the region, and response headers policy names are unique per account.
+- **A correction to the entry above (`fix/cdk-forwarded-host-https`):** it says Next's own `request.url` keeps the
+  Function URL's host. Next 16.4.6 builds it from the server's own bind address, `localhost` and its port for a server
+  bound to `0.0.0.0` (`next/dist/server/next-server.js`, `start-server.js`). Either way it is not the visitor's host.
+  The code comment, the changeset and the cutover row now say so, and `.claude/future-tasks/request-url-is-not-the-public-url.md`
+  records the fix.
+- **Recorded as future tasks, not built:**
+    - that public-URL helper;
+    - `X-Forwarded-For`'s viewer-chosen first entry (`x-forwarded-for-first-entry.md`);
+    - the default certificate's minimum TLS (`viewer-tls-minimum.md`);
+    - the live check of a tagged Lambda@Edge function (`edge-function-tags-live-check.md`).
