@@ -16,7 +16,7 @@ import ts from 'typescript'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import { CreateError } from '../../packages/create/src/args.js'
-import { generate } from '../../packages/create/src/generate.js'
+import { FIRST_APP_PORT, firstAppSlot, generate } from '../../packages/create/src/generate.js'
 import { buildTemplate, filesUnder, fromStored, ROOT_FILES } from '../../packages/create/src/template.js'
 import { verifyGateProblems } from '../../scripts/pack-and-consume/checks.mjs'
 import { makeTestTmpDir } from '../support/tmp-dir'
@@ -146,11 +146,11 @@ describe('@sssb/create: the generated workspace', () => {
     /**
      * NOTHING OF SSSB'S REPOSITORY SURVIVES: its apps' names, its workspace's name, its framework's path, its own
      * repository (but the pinned workflow), its maintainer, the project's old name, and its spikes and dated records
-     * (build notes, decision log), which a workspace does not have. Two allowances, each pinned to
-     * its exact form: the reusable workflow's `uses:` line and the plugin marketplace's `repo` in .claude/settings.json
-     * name SSSB's repository, and `starter` is the name of the
-     * port service in @sssb/tools (`sssb port`, `originFor`, `sssb tick`/`dev-tick`), which the app keeps when it is
-     * renamed (@sssb/tools' ports.js). And every relative path stays inside its own app, or inside the workspace.
+     * (build notes, decision log), which a workspace does not have. One allowance, pinned to its exact
+     * forms: the reusable workflow's `uses:` line and the plugin marketplace's `repo` in .claude/settings.json name
+     * SSSB's repository. `starter` has none: the generated app takes a port slot of its own (firstAppSlot), so not even
+     * the name of SSSB's reference app's slot survives. And every relative path stays inside its own app, or inside the
+     * workspace.
      */
     it('carries no survivor of SSSB’s repository', () => {
         const allowed: Record<string, RegExp[]> = {
@@ -158,7 +158,6 @@ describe('@sssb/create: the generated workspace', () => {
                 /^ {8}uses: safeinsights\/sssb\/\.github\/workflows\/app-checks\.yml@[0-9a-f]{40} /,
                 /^ {16}"repo": "safeinsights\/sssb",$/,
             ],
-            starter: [/originFor\('starter'\)/, /"port": "starter"/, /sssb (?:dev-)?tick starter\b/],
         }
         // The README's links to SSSB's guide and its reference app, each a line of its own, at the pinned commit, with
         // exactly the link text the generator writes: any other wording on such a line is a survivor like any other.
@@ -223,6 +222,15 @@ describe('@sssb/create: the generated workspace', () => {
         expect(read(ws, 'apps/acme/config/app.ts')).toMatch(/export const APP_SLUG = 'acme'\n/)
         expect(read(ws, 'apps/acme/config/app.ts')).toContain('`acme_session`')
         expect(readJson(ws, 'apps/acme/package.json').name).toBe('acme')
+        // A port slot of the app's own, named for it, at the first port `sssb add-app` offers; the scripts and the
+        // Playwright config read the declaration, and name no slot.
+        expect(readJson(ws, 'apps/acme/package.json').sssb).toEqual({ port: { name: 'acme', default: 3700 } })
+        expect(readJson(bare, 'apps/console/package.json').sssb).toEqual({ port: { name: 'console', default: 3700 } })
+        expect(readJson(ws, 'apps/acme/package.json').scripts).toMatchObject({
+            dev: expect.stringContaining('sssb dev-tick -- next dev'),
+            tick: 'sssb tick',
+        })
+        expect(read(ws, 'apps/acme/playwright.config.ts')).toContain('const BASE_URL = originForApp(__dirname)')
         expect(readJson(ws, 'apps/acme/infra/package.json').name).toBe('acme-infra')
         expect(readJson(ws, 'package.json').name).toBe('acme-workspace')
         for (const locale of ['en', 'es']) {
@@ -240,6 +248,68 @@ describe('@sssb/create: the generated workspace', () => {
             expect(read(ws, config)).not.toContain('acme')
         }
         expect(readJson(ws, 'knip.json').workspaces).toHaveProperty(['apps/acme'])
+    })
+
+    it("names the app's port slot for its slug where @sssb/tools takes the name, and `sssb-app` where it does not", async () => {
+        const { parsePortDeclaration } = await import('../../packages/tools/src/ports.js')
+        const { SERVICE_NAMES } = await import('../../packages/tools/src/ports.js')
+        const slugs = [
+            'acme',
+            'acme-research',
+            'a1',
+            'x'.repeat(32),
+            'x'.repeat(33),
+            'a--b',
+            'ledger-',
+            'app',
+            'sssb-app',
+        ]
+        // Every built-in service of @sssb/tools, as the slug that would read its variable (`contractPg` reads
+        // CONTRACT_PG_PORT, as `contract-pg` would), so a service added there fails here until the copy has it.
+        const builtIns = SERVICE_NAMES.flatMap((service) => [
+            service.toLowerCase(),
+            service.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`),
+        ])
+        for (const slug of [...slugs, ...builtIns]) {
+            const slot = firstAppSlot(slug)
+            // Whatever it chooses, @sssb/tools takes it (the copy of its rules agrees with the original)...
+            expect(parsePortDeclaration(slot)).toEqual(slot)
+            // ...and it falls back only where @sssb/tools would refuse the slug itself.
+            let takesSlug = true
+            try {
+                parsePortDeclaration({ name: slug, default: FIRST_APP_PORT })
+            } catch {
+                takesSlug = false
+            }
+            expect(slot).toEqual({ name: takesSlug ? slug : 'sssb-app', default: FIRST_APP_PORT })
+        }
+        expect(FIRST_APP_PORT).toBe(3700)
+    })
+
+    it('refuses a template whose scripts or Playwright config still name the starter’s slot, in any spelling', () => {
+        const cases: [string, (text: string) => string, RegExp][] = [
+            [
+                'app/package.json',
+                (t) => t.replace('"tick": "sssb tick"', '"tick": "STARTER_PORT=1 sssb tick"'),
+                /tick script/,
+            ],
+            ['app/package.json', (t) => t.replace('"tick": "sssb tick"', '"tick": "sssb tick starter"'), /tick script/],
+            [
+                'app/playwright.config.ts',
+                (t) => t.replace('originForApp(__dirname)', 'originForApp(__dirname) // "starter"'),
+                /playwright\.config\.ts names/,
+            ],
+        ]
+        for (const [file, change, message] of cases) {
+            const copy = path.join(makeTestTmpDir('create-starter-slot-'), 'template')
+            cpSync(template, copy, { recursive: true })
+            const text = readFileSync(path.join(copy, file), 'utf8')
+            expect(change(text)).not.toBe(text)
+            writeFileSync(path.join(copy, file), change(text))
+            const target = path.join(makeTestTmpDir('create-starter-slot-ws-'), 'acme')
+            expect(() => generate({ templateDir: copy, target, slug: 'acme', name: 'Acme' })).toThrow(message)
+            expect(existsSync(target)).toBe(false)
+        }
     })
 
     it('puts the flags in the owner files, and placeholders without them', () => {
@@ -301,6 +371,11 @@ describe('@sssb/create: the generated workspace', () => {
         expect(readme).toContain('**Claude Code 2.1.324 or later**')
         expect(readme).toContain('`/sssb:new-entity`')
         expect(readme).toContain("the plugin marketplace's `ref` in `.claude/settings.json`")
+        // Each place that says to raise SSSB's pins names the command that raises them (@sssb/tools' `sssb pin`).
+        expect(readme).toContain('(`pnpm exec sssb pin`, which reads it from the installed `@sssb/kit`)')
+        expect(readme).toContain('`pnpm exec sssb pin` raises both')
+        expect(read(ws, 'CLAUDE.md')).toContain('`pnpm exec sssb pin` raises the CI workflow')
+        expect(read(ws, '.github/workflows/checks.yml')).toContain('`pnpm exec sssb pin` raises it')
         // Playwright is the app's dependency, not the root's: the root form works only where pnpm hoists its bin.
         expect(readme).toContain(`\n${PLAYWRIGHT_INSTALL}   # once`)
         expect(readme).not.toMatch(/^pnpm exec playwright/m)
@@ -874,6 +949,9 @@ describe('@sssb/create: the command', () => {
         expect(result.stderr).not.toMatch(/\n\s+at /)
         expect(result.status).toBe(0)
         expect(result.stdout).toContain('Created Research Hub in')
+        expect(result.stdout).toMatch(
+            /Its port slot is "[a-z0-9-]+": port 3700 in a main checkout, [A-Z0-9_]+_PORT overrides it\./,
+        )
         expect(result.stdout).toContain(`  cd '${target}'\n`)
         expect(result.stdout).toContain('`sssb / all-checks`')
         expect(result.stdout).toContain('Still to fill in: the code owner in CODEOWNERS (--owner)')

@@ -38,9 +38,9 @@ export function appPortService(appDir) {
     const declared = declaredPortService(appDir)
     if (declared === undefined) {
         throw new UsageError(
-            `sssb: ${path.join(appDir, 'package.json')} declares no port service. Add "sssb": { "port": "<service>" } ` +
-                `(one of ${SERVICE_NAMES.join(', ')}) or { "port": { "name": "<name>", "default": <port> } } for a slot ` +
-                'of your own, or name a built-in one: sssb port <service>',
+            `sssb: ${path.join(appDir, 'package.json')} declares no port service. Add a slot of the app's own, ` +
+                '"sssb": { "port": { "name": "<name>", "default": <port> } }, or a built-in service, "sssb": { "port": ' +
+                `"<service>" } (one of ${SERVICE_NAMES.join(', ')}), or name one: sssb port <service>`,
         )
     }
     return declared

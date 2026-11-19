@@ -17,7 +17,7 @@ it ticks). Stage 1 left it out because the kit cannot take it as written:
   line), or the policy moves into `@sssb/tools` and the kit's route asks for it by a seam module.
 - The origin must be the port the dev server was started on, never one taken from the request (the dev secret goes to
   it as a bearer). The showcase names its slot; a generated app would read its own declaration
-  (`.claude/future-tasks/neutral-app-port-service.md` is related).
+  (`.claude/future-tasks/resolved/neutral-app-port-service.md` is related).
 - It keeps the ticker route's JSON-only rule and its second gate (`isSimulatedDevServer`), and imports its module only
   after both.
 

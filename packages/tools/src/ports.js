@@ -21,8 +21,9 @@
 // anything: `SHOWCASE_PORT=3210 pnpm dev`.
 //
 // A SERVICE is one of the built-ins below, named by a string, or a SLOT an app declares for itself in its package.json,
-// `"sssb": { "port": { "name": "ledger", "default": 3700 } }`, for a workspace whose apps are not SSSB's two: without
-// it two apps made from the starter share `starter`, and so one port. A custom slot follows the same three rules: its
+// `"sssb": { "port": { "name": "ledger", "default": 3800 } }`. Every app of a workspace needs a slot of its own, since two
+// apps on one slot bind one port (`@sssb/create` and `sssb add-app` give each app a slot named for it, and an app
+// generated before keeps the built-in `starter`). A custom slot follows the same three rules: its
 // variable is `LEDGER_PORT`, a main checkout gets its `default`, and a linked worktree derives from a band the
 // built-ins do not use (CUSTOM_BAND), keyed on the name as well as the checkout so two slots of one worktree differ.
 //
@@ -58,8 +59,8 @@ function findCheckoutRoot(start) {
 const SLOTS = 200
 
 /**
- * The port services. They are SSSB's two reference apps' slots plus two tools, and an app keeps the slot it was
- * generated with when it is renamed (the starter's `starter` slot is the adopter's app's). Derived showcase and
+ * The port services. They are SSSB's two reference apps' slots plus two tools. An app `@sssb/create` writes declares a
+ * slot of its own instead (named for its slug), and one generated before it did keeps `starter`. Derived showcase and
  * starter ports share a slot and sit adjacent (3200/3201, 3202/3203, …) so one session's pair never straddles
  * another's. No derived band overlaps the defaults.
  * @type {Record<string, { env: string, fallback: number, derive: (slot: number) => number }>}

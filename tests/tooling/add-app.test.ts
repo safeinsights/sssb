@@ -70,8 +70,8 @@ describe('sssb add-app', () => {
             const manifest = readJson(ws, 'apps/ledger/package.json')
             expect(manifest.name).toBe('ledger')
             expect(manifest.description).toBe('Ledger Books: the app.')
-            expect(manifest.sssb).toEqual({ port: { name: 'ledger', default: 3700 } })
-            // Its scripts and Playwright config read its own slot, never the starter's (which the console holds).
+            expect(manifest.sssb).toEqual({ port: { name: 'ledger', default: 3800 } })
+            // Its scripts and Playwright config read its own slot, and name no other.
             expect(manifest.scripts.dev).toContain('sssb dev-tick -- next dev')
             expect(manifest.scripts.tick).toBe('sssb tick')
             for (const text of Object.values(manifest.scripts)) expect(text).not.toMatch(/\bstarter\b/)
@@ -80,7 +80,7 @@ describe('sssb add-app', () => {
             expect(playwright).toContain('const BASE_URL = originForApp(__dirname)')
             expect(playwright).not.toContain("'starter'")
             // The console keeps its own.
-            expect(readJson(ws, 'apps/console/package.json').sssb).toEqual({ port: 'starter' })
+            expect(readJson(ws, 'apps/console/package.json').sssb).toEqual({ port: { name: 'console', default: 3700 } })
 
             // The generator's renames, the app's identity, as they are in a generated app.
             expect(read(ws, 'apps/ledger/config/app.ts')).toMatch(/export const APP_SLUG = 'ledger'\n/)
@@ -113,7 +113,7 @@ describe('sssb add-app', () => {
             // What it says is left: the root scripts and the CI synth name the console alone, by design.
             expect(result.stdout).toContain('Added Ledger Books in apps/ledger/')
             expect(result.stdout).toContain(
-                'Its port slot is "ledger": port 3700 in a main checkout, LEDGER_PORT overrides it.',
+                'Its port slot is "ledger": port 3800 in a main checkout, LEDGER_PORT overrides it.',
             )
             expect(result.stdout).toMatch(/the root's dev, tick, start script\(s\) run console alone/)
             expect(result.stdout).toContain('.github/workflows/checks.yml synthesizes ./apps/console/infra alone')
@@ -134,10 +134,10 @@ describe('sssb add-app', () => {
         () => {
             const ws = workspace('add-app-ports-')
             expect(sssb(ws, ['add-app', 'ledger']).status).toBe(0)
-            const taken = sssb(ws, ['add-app', 'audit', '--port', '3700'])
-            expect(taken.stderr).toMatch(/apps\/ledger binds port 3700 in a main checkout already/)
+            const taken = sssb(ws, ['add-app', 'audit', '--port', '3800'])
+            expect(taken.stderr).toMatch(/apps\/ledger binds port 3800 in a main checkout already/)
             expect(sssb(ws, ['add-app', 'audit']).status).toBe(0)
-            expect(readJson(ws, 'apps/audit/package.json').sssb.port).toEqual({ name: 'audit', default: 3800 })
+            expect(readJson(ws, 'apps/audit/package.json').sssb.port).toEqual({ name: 'audit', default: 3900 })
             expect(readJson(ws, 'apps/audit/messages/en.json').welcome.appName).toBe('Audit')
             expect(sssb(ws, ['add-app', 'reports', '--slot', 'books', '--port', '4321']).status).toBe(0)
             expect(readJson(ws, 'apps/reports/package.json').sssb.port).toEqual({ name: 'books', default: 4321 })
@@ -172,7 +172,8 @@ describe('sssb add-app', () => {
             )
             refused(['pages'], /apps\/console is the app "pages" \(its config\/app.ts APP_SLUG\)/)
             writeFileSync(path.join(ws, 'apps/console/config/app.ts'), appTs)
-            refused(['ledger', '--slot', 'starter'], /apps\/console already declares the port slot "starter"/)
+            refused(['ledger', '--slot', 'console'], /apps\/console already declares the port slot "console"/)
+            refused(['ledger', '--port', '3700'], /apps\/console binds port 3700 in a main checkout already/)
             refused(['ledger', '--port', '3100'], /default 3100 is the default of the built-in "starter"/)
             refused(['ledger', '--port', '3000'], /default 3000 is the default of the built-in "showcase"/)
             refused(['ledger', '--port', '0x1000'], /--port 0x1000 is not a port number/)

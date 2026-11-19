@@ -1292,3 +1292,15 @@ an adopter's app (adoption follow-up 2). They are data a command reads at run ti
 is untouched; `toolsShippedFileProblems` (`scripts/pack-and-consume/checks.mjs`) names exactly these two files, and any
 other non-JavaScript file in the packed package still fails the run. `docs/decision-log.md` (2026-11-19, "One command
 removes the starter's Items slice") has the choices and what was rejected.
+
+## Addendum — 2026-11-19: a generated app's port slot is its own
+
+The P12 addendum's "The generated app keeps the `starter` port service" no longer holds (adoption follow-up 5). The
+app `@sssb/create` writes declares a port slot of its own, named for its slug, at port 3700
+(`"sssb": { "port": { "name": "<slug>", "default": 3700 } }`, or `sssb-app` for a slug a slot cannot be named for), as
+`sssb add-app` names a slot for each app it adds. The starter, SSSB's reference app, keeps the built-in `starter` slot
+but names it only in its `package.json`: its scripts and Playwright config read the declaration (`sssb tick`,
+`sssb dev-tick`, `originForApp(__dirname)`), so the generator's rename of the slot is one value in one file, and the
+half-applied rename that `docs/adopting.md` warned of before this change (its paragraph "The port key keeps its old
+name, on purpose") cannot happen. `starter` keeps working for every workspace generated before.
+`docs/decision-log.md` (2026-11-19, "No `starter` in a generated app") has the choices and what was rejected.
