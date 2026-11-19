@@ -124,6 +124,12 @@ by file name. Each entry is its title, a line saying the action and the packages
 Action: What changed, To adopt, Now deletable. An empty changeset is counted in the opening line and not listed. There
 are no dates, so the same changesets give the same bytes.
 
+Before them, in every release's notes whatever the changesets say, is "Upgrading to this release": the steps every
+upgrade takes (move the `@sssb/*` packages, refresh the guide copy, move the two pins to the release commit, drop what
+the entries left unused, check), with the version filled in. No changeset writes it; `upgradeSection` in
+`scripts/release-notes.mjs` does, and `release.mjs candidate-notes` fills in the commit's SHA, which a notes file
+committed in the release commit cannot name. A step every upgrade takes belongs there, not in an entry.
+
 `--since <ref>` puts the range in the heading and lists the changesets ADDED since the ref. One EDITED since (allowed
 only to correct it) comes back under "Corrections to earlier notes", so an adopter who followed the earlier text is
 told. `--since` and `--at` read git, not the working tree, so a changeset not yet committed is not in them.
