@@ -15,6 +15,7 @@ import { fakeEmail } from './fake/email'
 import { fakeJobs } from './fake/jobs'
 import { fakeLlm } from './fake/llm'
 import { fakeStorage } from './fake/storage'
+import { lazyJobs } from './lazy-jobs'
 
 /**
  * The adapter registry: the ONE place run mode selects implementations. Simulated is the default —
@@ -119,11 +120,16 @@ export const jobs: JobsPort = real?.jobs ?? fakeJobs
 
 /**
  * The in-process job runner (real mode, `JOBS_RUNNER=in-process`), built here rather than by the real ports
- * (./real/index.ts says why). Its notification is the jobs webhook route's, with the request path's deps; the
- * notification modules import this registry, so they are imported when a job ends, never while it loads.
+ * (./real/index.ts says why), and loaded on its first use (./lazy-jobs.ts): never while this module is evaluated, which
+ * would deadlock on a job handler that imports it. Its notification is the jobs webhook route's, with the request
+ * path's deps; the notification modules import this registry, so they too are imported when a job ends.
  */
-async function buildInProcessJobs(ports: Parameters<typeof import('./real/jobs-in-process').createInProcessJobs>[0]) {
-    return (await import('./real/jobs-in-process')).createInProcessJobs(ports, notifyJobTerminalFromRegistry)
+async function buildInProcessJobs(
+    ports: Parameters<typeof import('./real/jobs-in-process').createInProcessJobs>[0],
+): Promise<JobsPort> {
+    return lazyJobs(async () =>
+        (await import('./real/jobs-in-process')).createInProcessJobs(ports, notifyJobTerminalFromRegistry),
+    )
 }
 
 async function notifyJobTerminalFromRegistry(input: {

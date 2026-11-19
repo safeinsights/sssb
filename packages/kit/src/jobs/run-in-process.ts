@@ -50,7 +50,9 @@ export async function runJobInProcess(
         await recordJobStatus(ports.db, job.tenantId, job.id, 'failed', { error: `unknown job kind: ${job.kind}` })
         return true
     }
-    let status: 'completed' | 'failed'
+    // Only the handler's own failure fails the job. Recording the outcome stays outside: a failure there (say, after
+    // `completed` has committed) must not be answered by recording `failed` over it, which the state machine refuses.
+    let outcome: { status: 'completed'; resultKey: string | undefined } | { status: 'failed'; error: string }
     try {
         const handler = jobHandlers[job.kind]
         if (!handler) throw new Error(`no job handler registered for kind: ${job.kind}`)
@@ -60,14 +62,17 @@ export async function runJobInProcess(
             orgId: job.orgId,
             jobId: job.id,
         })
-        await recordJobStatus(ports.db, job.tenantId, job.id, 'completed', { resultKey })
-        status = 'completed'
+        outcome = { status: 'completed', resultKey }
     } catch (error) {
-        await recordJobStatus(ports.db, job.tenantId, job.id, 'failed', {
-            error: error instanceof Error ? error.message : String(error),
-        })
-        status = 'failed'
+        outcome = { status: 'failed', error: error instanceof Error ? error.message : String(error) }
     }
-    await notify(status)
+    await recordJobStatus(
+        ports.db,
+        job.tenantId,
+        job.id,
+        outcome.status,
+        outcome.status === 'completed' ? { resultKey: outcome.resultKey } : { error: outcome.error },
+    )
+    await notify(outcome.status)
     return true
 }
