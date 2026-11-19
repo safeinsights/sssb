@@ -143,7 +143,9 @@ export function newPortSlot({ root, apps, slug, slot, port }) {
     }
     // Every offer refused: a name the slot cannot carry refuses them all, so the first refusal says why.
     throw new UsageError(
-        `${first?.message ?? 'sssb add-app: no free default port from 3700 to 9900'} (pass --slot <name> or --port <port>)`,
+        first === undefined
+            ? 'sssb add-app: no free default port from 3700 to 9900 (pass --port <port>)'
+            : `${first.message} (pass --slot <name>)`,
     )
 }
 
@@ -198,7 +200,7 @@ export function leftToDo(root, { slug, appDir, like }) {
             if (synth && rel(like) !== '' && synth.includes(rel(like)) && !synth.includes('*')) {
                 left.push(
                     `.github/workflows/${file} synthesizes ${synth} alone: make its \`synth\` a selector that takes ` +
-                        `${rel(appDir)}/infra too (./apps/*/infra takes every app's)`,
+                        "every added app's infra/ too (./apps/*/infra takes every app's)",
                 )
             }
         }
@@ -210,7 +212,7 @@ export function leftToDo(root, { slug, appDir, like }) {
     if (existsSync(jscpd) && /apps\/\*/.test(readFileSync(jscpd, 'utf8'))) {
         left.push(
             `\`pnpm jscpd\` fails while ${rel(appDir)} is the starter and ${rel(like) || 'your first app'} still holds ` +
-                `starter code: make the two apps your own, or, while you do, add "${rel(appDir)}/src/**" to .jscpd.json's ` +
+                `starter code: make the apps your own, or, while you do, add "${rel(appDir)}/src/**" to .jscpd.json's ` +
                 '`ignore` and take it out again once the app is its own',
         )
     }

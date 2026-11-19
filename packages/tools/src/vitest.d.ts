@@ -30,7 +30,7 @@ export interface WorkspaceAppProjectsOptions {
 /**
  * One `appTestProject` per app of the workspace, in the order `sssb.apps` names them: the root's Vitest configs read the
  * workspace's one list of apps rather than keeping a copy. Each project is named for its app's directory, or its path
- * from the root when two apps' directories share a name (unless `options` names it). Throws when the workspace names
+ * from the root with `/` as `-` when two apps' directories share a name (unless `options` names it). Throws when the workspace names
  * no app.
  */
 export declare function workspaceAppProjects(

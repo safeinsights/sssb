@@ -46,8 +46,9 @@ apps, and `sssb add-app`").
   `workspaceApps` (the root's `sssb.apps`, else `apps/*`), with per-app options from a callback. Both Vitest configs
   `@sssb/create` writes call it; neither names an app. This repository's own `vitest.config.ts` uses it too (its
   `env` and `alias` per app through the callback); its contract config already discovered its apps and is unchanged.
-- **knip.** `sssb doctor` reports (never fails) an app, or an app's seam package, that the root's `knip.json` gives no
-  workspace (`knipGaps` in `packages/tools/src/commands/doctor-checks.js`). The generator still writes the entries.
+- **knip.** `sssb doctor` reports (never fails) an app, or an app's seam package, that the root's knip config gives no
+  workspace, and a root `@sssb/create` knip would call unused (`knipGaps` in
+  `packages/tools/src/commands/doctor-checks.js`). The generator still writes the entries.
 - **`sssb add-app <slug>`** (`packages/tools/src/commands/add-app.js`): writes the starter under `apps/<slug>/` with the
   generator's own code (`writeApp`, split out of `packages/create/src/generate.js`, exported as
   `@sssb/create/add-app`), taking each `@sssb` package as the workspace's first app takes it, on a port slot of its

@@ -3,7 +3,7 @@
 '@sssb/create': patch
 ---
 
-### The root's Vitest configs read `sssb.apps`, and `sssb doctor` reports a `knip.json` gap
+### The root's Vitest configs read `sssb.apps`, and `sssb doctor` reports a knip config gap
 
 **Kind.** scaffold
 
@@ -13,7 +13,8 @@
 app the root package.json's `sssb.apps` names (else every `apps/<name>`), in that order, with `options(appDir)` passed
 to each. The two Vitest configs `@sssb/create` writes call it instead of keeping an `APPS` list, so `sssb.apps` is the
 one list of a workspace's apps. `sssb doctor` reports (never fails) an app, or an app's seam package, that the root's
-`knip.json` gives no workspace of its own.
+knip config (`knip.json`, `knip.jsonc`, `.knip.json` or `.knip.jsonc`) gives no workspace of its own, and a root
+`@sssb/create` that knip would call unused.
 
 **To adopt.** Optional: a workspace that keeps its `APPS` lists keeps working, and `sssb doctor` still fails a config
 that stops running an app's conformance suite. To read `sssb.apps` instead, in `vitest.config.ts`:

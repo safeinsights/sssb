@@ -38,7 +38,8 @@
 // package.json scripts pass to vitest (doctor proves what each configuration would run, never what a CI step's own
 // command line adds); which script runs each app's contract config (doctor lists the contract checks, it never runs
 // them); `dedupePeerDependents: false` missing from pnpm-workspace.yaml (advice); framework cutover rows the
-// workspace's checklist never mentions; an app, or an app's seam package, the root's knip.json gives no workspace; and the commits the workspace pins SSSB's reusable workflow and the plugin's
+// workspace's checklist never mentions; an app, or an app's seam package, that the root's knip JSON config (`knip.json`, `knip.jsonc`, `.knip.json` or
+// `.knip.jsonc`) gives no workspace, and a root `@sssb/create` that knip would call unused; and the commits the workspace pins SSSB's reusable workflow and the plugin's
 // marketplace at (`.github/workflows/*.yml`, `.claude/settings.json`), against the release commit the installed
 // @sssb/kit stamps into its package (`dist/release.json`), naming both commits where they differ; and the adopter's own
 // settings (doctor-settings.js): on the workspace's GitHub repository, read-only through `gh`, whether `sssb /
@@ -961,7 +962,8 @@ function dedupeAdvice(root, inRepo) {
 
 /**
  * KNIP: each app, and each app's seam package, has a workspace of its own in the root's knip.json (knipGaps).
- * Reported, never failed; nothing when the root has no knip.json with `workspaces`.
+ * Reported, never failed; nothing per app when the root's knip config has no `workspaces`, and nothing at all when
+ * the root has no knip JSON config.
  * @param {string} root
  * @param {readonly string[]} apps
  * @param {readonly string[]} packages

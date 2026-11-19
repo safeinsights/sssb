@@ -220,7 +220,7 @@ export function checkPackageNames(slug, meta) {
         if (names.has(pkg)) {
             throw new CreateError(
                 `the slug "${slug}" would name a package "${pkg}", which is also a dependency the workspace installs ` +
-                    `(npm's ${pkg}): pnpm mistakes one for the other. Pass another --slug`,
+                    `(npm's ${pkg}): pnpm mistakes one for the other. Pick another slug`,
             )
         }
     }

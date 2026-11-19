@@ -5995,7 +5995,7 @@ nothing wrote a second app. JP's standing rule for these sessions: decide, and r
   apps (`tests/support/contract-apps.ts`) and aliases the kit's source, and keeps no copy of the list.
 - **knip: `sssb doctor` reports, never fails, an app or an app's seam package that the root's `knip.json` gives no
   workspace** (`knipGaps`), as the future task preferred. A seam that is not a workspace package (this repository's)
-  is not looked for; a `knip.json` without `workspaces`, or none, gives no line; one that does not parse is "not
+  is not looked for; a knip config without `workspaces` gives no per-app line, and no knip config gives none at all; one that does not parse is "not
   checked". Rejected: a `knip.config.ts` building its workspaces from `sssb.apps`, one more file to run, and failing,
   since knip's own run is the gate.
 - **Pack and consume's pages shape adds its ledger with `sssb add-app`**, run with the packed `@sssb/tools`' bin and
