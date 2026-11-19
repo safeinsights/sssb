@@ -17,9 +17,9 @@
 #   - HEAD is the pull request's merge commit, two parents, as actions/checkout leaves it for `pull_request`. Its
 #     first parent is the base branch's tip when the run started, so the diff is what the pull request changes on top
 #     of the CURRENT base: a branch brought up to date gets a new run, judged on its new merge commit;
-#   - that diff is not empty, and names no path outside the list above. `--no-renames` lists a rename's old path
-#     too, so moving a file from packages/ into docs/ is not docs-only; a path git quotes (an unusual character)
-#     matches nothing, so it is not docs-only either.
+#   - that diff is not empty, and names no path outside the list above. With no rename detection a rename lists its
+#     old path too, so moving a file from packages/ into docs/ is not docs-only; a path git quotes (an unusual
+#     character) matches nothing, so it is not docs-only either.
 #
 # Inputs, all environment: EVENT_NAME (github.event_name). The checkout needs depth 2 (the merge commit's parents).
 # Writes `docs-only=true|false` to $GITHUB_OUTPUT when it is set, and prints the answer and why either way. Exits 0
@@ -38,7 +38,9 @@ answer() {
 parents=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')
 [ "$parents" = 3 ] || answer false "HEAD is not a pull request's merge commit ($((parents - 1)) parents): everything runs"
 
-files=$(git diff --no-renames --name-only HEAD^1 HEAD)
+# Plumbing, not `git diff`: diff-tree reads no diff.* configuration (`diff.ignoreSubmodules` would hide a gitlink),
+# detects no renames unless asked, and quotes an unusual path whatever core.quotePath says.
+files=$(git -c core.quotePath=true diff-tree -r --name-only --ignore-submodules=none HEAD^1 HEAD)
 [ -n "$files" ] || answer false "the pull request changes nothing against its base: everything runs"
 
 while IFS= read -r file; do

@@ -6741,9 +6741,20 @@ and record the rejected alternative.
   a reusable workflow's input must be known when the call starts. Rejected: every job `needs: changes`. A job whose
   dependency failed is skipped, and a skipped job reports as a passing check, so a failed `changes` would have turned
   `repo-checks`, `adoption-probe` and `pack-and-consume` green unrun. The `sssb` call runs `if: ${{ !cancelled() }}`
-  and passes `docs-only` only when the output is exactly `true`, so a failed `changes` gives the full run.
-- **What it saves.** On #78's full run (2026-11-19) the jobs took 32 runner-minutes, 5m36s end to end. The fast path
-  skips about 25 of those minutes, less about 2 for the skip jobs' checkouts, so roughly 70% fewer runner-minutes. The
-  wall clock barely moves: `lint-typecheck-unit` (5m22s there) is the critical path and runs in full, and the `sssb`
-  call now starts after `changes` (some seconds, on every run). Recorded as a future task: a docs-only mode for that
-  job that runs only what reads the docs.
+  and passes `docs-only` only when the output is exactly `true`, so a failed `changes` never reads as the fast path:
+  the call runs with `docs-only` false, and should GitHub skip the called jobs for the failed dependency, `all-checks`
+  fails. Either way the check is red or does the work, never green unrun.
+- **What the fast path trusts, and what still catches a mistake in it.** That no job with a fast path reads a path
+  the script counts as documentation: true when it was written (the readers of `docs/` outside `docs/releases/` are
+  the unit tests and `sssb doctor`, all in `lint-typecheck-unit`), held only by review for a script added later, and
+  by a test for a tracked symlink into those directories (`tests/tooling/docs-only.test.ts`). The push run on `main`
+  is always the full one, and the release gate reads only push runs (`wait-for-checks`, `scripts/release.mjs`), so a
+  mistake can reach `main` but never a release. And a docs-only pull request no longer notices a base that is already
+  red: its own checks pass on the base's tested tree, as they would have on the same tree before.
+- **What it saves, measured.** #78's full run (2026-11-19): 32 runner-minutes, 5m36s end to end. The probe,
+  safeinsights/sssb#79 (one line of `docs/README.md`, closed unmerged): 8 runner-minutes, 5m57s end to end, every check
+  green, each fast-path job done in 2 to 8 seconds with only its skip step run, and `contract` starting no database.
+  So a docs-only pull request costs a quarter of the runner time, and the wall clock does not move:
+  `lint-typecheck-unit` (5m41s on the probe) is the critical path and runs in full. Recorded as a future task
+  (`.claude/future-tasks/docs-only-lint-typecheck-unit.md`): a docs-only mode for that job that runs only what reads
+  the docs.
