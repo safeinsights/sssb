@@ -21,6 +21,7 @@ async function harness() {
     const { fakeStorage } = await import('../fake/storage')
     const { fakeEmail } = await import('../fake/email')
     const { fakeLlm } = await import('../fake/llm')
+    const { fakeAuth } = await import('../fake/auth')
     const { createInProcessJobs } = await import('./jobs-in-process')
     const { submitJob, listJobs } = await import('../../db/jobs')
     await fakeDb.ready()
@@ -37,7 +38,7 @@ async function harness() {
         .where('tenant_id', '=', tenant.id)
         .where('slug', '=', 'depot')
         .executeTakeFirstOrThrow()
-    const ports = { db: fakeDb, storage: fakeStorage, email: fakeEmail, llm: fakeLlm }
+    const ports = { db: fakeDb, storage: fakeStorage, email: fakeEmail, llm: fakeLlm, auth: fakeAuth }
     const notified: Notified[] = []
     const notify = async (input: Notified) => {
         notified.push(input)

@@ -3,7 +3,7 @@ import { Kysely } from 'kysely'
 import { migrateToLatest } from '../../db/migrate'
 import type { DB } from '../../db/schema'
 import type { DbPort } from '../../ports/db'
-import { dbPortFor } from './db'
+import { dbPortFor } from './db-port'
 import { lockMigrations, RdsDataDialect, type RdsDataClientLike } from './rds-data-dialect'
 
 export interface DataApiDbConfig {
