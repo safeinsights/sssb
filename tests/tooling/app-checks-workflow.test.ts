@@ -335,8 +335,9 @@ describe('the check names the rulesets require', () => {
     ]
     // A job that is NOT in the rulesets' required list (making it one is a settings change, and JP's): it is red or
     // green on a PR and holds a release back through `checks`' conclusion, but blocks no merge. `licence-scan`:
-    // docs/decision-log.md, "Licence scan". Adding the name to the rulesets moves it into FIXED.
-    const ADVISORY = ['licence-scan']
+    // docs/decision-log.md, "Licence scan". `release-dry-run`: the release rehearsed through release.yml's commands,
+    // publishing nothing (ADR-0014 P14). Adding a name to the rulesets moves it into FIXED.
+    const ADVISORY = ['licence-scan', 'release-dry-run']
     // One per e2e shard and one per static demo, named from the tree's own apps, so this holds whichever apps the tree
     // holds. In SSSB's own tree they are
     // `sssb / e2e (showcase)`, `sssb / e2e (showcase-destructive)`, `sssb / e2e (starter)`,

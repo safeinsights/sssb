@@ -5124,6 +5124,119 @@ _Accepted gap_ and adds to the rule.
   resolves the seam to the fixture, which exports it): reading `.appRoles` directly fails `apps/starter` and
   `apps/showcase` with TS2339 and passes the strict config.
 
+## P14: the first release to public npm (2026-11-18, `release/p14-first-npm-release`)
+
+JP's standing rule for this work: decide, record the decision and what was rejected, and report it.
+
+- **0.2.0, not 0.1.0.** The P14 row predates the candidates; the group is at `0.2.0-rc.2`, and leaving pre mode takes
+  it to `0.2.0`. Recorded in an ADR-0014 addendum rather than by editing the row. Rejected: forcing 0.1.0, which is
+  behind the candidates already installed and which `prepare` refuses as going backwards.
+- **Pre mode is left by deleting `.changeset/pre.json`.** Rejected: `changeset pre exit` (`"mode": "exit"`). Read
+  from `@changesets/assemble-release-plan` 7.0.0 and `apply-release-plan` 8.1.1: both release every `pre/`
+  changeset and delete it; exit mode adds a forced patch when nothing is pending and deletes `pre.json` in the
+  release commit, which `verify-release` would then have to accept. Deleting it in the PR keeps one state fewer.
+- **Out of pre mode the `pre/` changesets are pending everywhere at once**: `loadWorkspace`, `verify-release` and the
+  notes tool. `check` judges them again (the next release reads them); all 31 pass today's lint. `check`'s rule
+  against a pending changeset reusing a consumed one's name now holds in both modes. Rejected: leaving them unlinted
+  out of pre mode, which would let the release find a malformed one after merge.
+- **The first plain release's notes are every changeset since the first candidate.** Rejected: notes that point at
+  the three candidates' prereleases, which an adopter starting on 0.2.0 from npm would have to chase. Pages, on rc.2,
+  gets its delta from `--since v0.2.0-rc.2`; the "Upgrading to this release" section is a sibling task's.
+- **The changeset is `scaffold`, `optional`, a patch on all five packages.** An adopter on a candidate's tarballs
+  keeps working; moving to npm is their choice. A patch and a minor both release 0.2.0 from `0.2.0-rc.2`. Rejected:
+  `required`/`minor`, which would tell pages it breaks by doing nothing.
+- **The release dry-run is a `checks.yml` job that rehearses the real commands**, `prepare` → `verify-release` (from a
+  copied checker) → local commit and tag → `publishable` → `pnpm pack` → `preflight` (reading npm) → `npx
+npm@11.21.2 publish --provenance --dry-run`. Measured: npm 11.21.2 accepts `--provenance --dry-run` with no OIDC
+  token (it signs nothing on a dry run) and refuses a prerelease version without `--tag`, so the rehearsal fails a
+  release that would publish a candidate. The job holds `contents: read` only, keeps no credentials, and sets
+  `SSSB_CREATE_UNPUSHED_PIN` for its packing (its release commit exists only there). Rejected: a dry-run job in
+  `release.yml` (it would run only on `main` and tags, after the decision), and packing at the PR's own version
+  (`0.2.0-rc.2`, which is not what a merge publishes). Not a required check until JP adds it to the rulesets.
+- **"Nothing publishes early" is a test over the workflow files** (`tests/tooling/release-reach.test.ts`), not prose:
+  the triggers, the `if`s and `needs` from a tag to `publish`, the order of `pack`'s gates, the id-token holders, and
+  no publish elsewhere but a dry run. Each was seen red: a `pull_request` trigger added to release.yml, and
+  `--dry-run` dropped from the rehearsal. What it cannot read (environments' deployment rules, the tag ruleset, npm's
+  trusted publishers) stays JP's settings, listed in release.yml's header.
+- **A copy of this repository's own tree is released in a test** (manifests and `.changeset/` only): `prepare` with
+  the real CLI, then `verify-release` and `publishable`. While the group is a candidate, the release must be its own
+  version. Seen red with `verify-release`'s `pre/` handling removed.
+- **Not changed: `pack` still packs again on the tag** rather than publishing the tarballs `checks`' pack-and-consume
+  job tested on the release commit, as a candidate's tag does. Out of this task's scope; the rehearsal packs as `pack`
+  does.
+
+## Pack and consume proves the by-version install against a local registry (2026-11-18, `release/p14-first-npm-release`)
+
+`registryRecipe` (pages shape) installs the packed `@sssb/*` by version, as `@sssb/create` writes them without
+`--sssb`, from a minimal npm registry on 127.0.0.1 that serves the TARBALLS directory (`.npmrc` `@sssb:registry=`, so
+only the scope is local). It runs for every packed version: a caret range on a prerelease matches it.
+
+- **The specifier is read from the packed generator's own output**: the step runs `create.js <dir> --yes` with no
+  `--sssb` and collects the `@sssb/*` specifiers from the generated manifests, rather than hard-coding `^` or importing
+  `generate.js` out of the tarball. The generator is what is under proof, so a hard-coded rule would pass a generator
+  that stopped writing it. Rejected: importing `resolveSssb` (not exported, and a second path to the same rule).
+- **The tarball URL in the packument has npm's own shape** (`/<name>/-/<unscoped>-<version>.tgz`), so pnpm records
+  an integrity alone in the lockfile; the lockfile check then refuses any `tarball:` or `file:` outright, which a
+  free-form URL would have made impossible to tell from a mis-resolution. Rejected: reusing `SERVE_DIRECTORY` with
+  flat file URLs.
+- **The pure helpers sit in `scripts/pack-and-consume.mjs`, between `registry-helpers` markers, and the test loads that
+  text as a module.** The usual home, `scripts/pack-and-consume/checks.mjs`, was outside the files this change was
+  allowed to touch (another session edits the release scripts in parallel), and the script cannot be imported (it runs
+  the job). Move them into `checks.mjs` when that is open: the test's loader then becomes an import.
+- **Correction, same branch: the registry recipe's pure helpers moved to `scripts/pack-and-consume/checks.mjs`**, where
+  the script's other pure checks live, and the test imports them; the marker-delimited block loaded as a data-URL
+  module (the entry above) is gone. The rehearsal job also re-installs, frozen, on its local release commit before
+  packing, as `pack` installs on the tag.
+
+## Release snapshots: stateful logical ids and the required environment, each a `minor` to change (2026-11-18, `release/p14-first-npm-release`)
+
+ADR-0014 part 10 says CI snapshots the logical ids of stateful resources and the `REQUIRED_ENV` list, and a change to
+either requires a `minor` changeset; its P14 row lands them. Built as two committed JSON files and one rule in the
+`changeset-required` gate.
+
+- **Plain JSON compared with `toEqual`, not a Vitest snapshot.** `toMatchFileSnapshot` (or `toMatchSnapshot`) is
+  rewritten by `vitest -u`, and a run outside CI writes a missing one, so deleting or regenerating the file would make
+  the test pass and leave the gate nothing to see. The tests read the file and fail with the full new content in the
+  message, to be copied in by hand beside the changeset. Rejected: a Vitest file snapshot, relying on CI never passing
+  `-u` (true today, but a local `-u` is the habit that would rewrite it silently).
+- **Where they live: `packages/<package>/release-snapshots/`**, outside each package's `files` allowlist, so neither
+  ships (`packages/kit/release-snapshots/required-env.json`, `packages/cdk/release-snapshots/stateful-logical-ids.json`).
+  The gate matches the directory pattern, not two named files, so a package that adds a snapshot is covered the day it
+  lands; `tests/tooling/changesets.test.ts` checks this repository's two exist. Rejected: a repo-level directory (the
+  kit's test would read a path out of the package) and a JSON under `src` (it would ship).
+- **The required environment is read from `assertRealEnv`, not exported.** The kit test empties the environment, sets
+  only `DATABASE_TRANSPORT`, and records the variables `assertRealEnv` names as missing, per transport: that is
+  `REQUIRED_ENV` and `DATABASE_ENV` together, as a deployment meets them at boot. Rejected: exporting `REQUIRED_ENV`
+  from `adapters/real/index.ts` (a published subpath, so a new name on the public surface, for a test), and moving it
+  into an unpublished module of its own (a shipped source change made only to be testable). The cost is that the test
+  parses the error's `Missing env:` list; a change to that message fails the test loudly rather than passing.
+- **What counts as stateful** is `STATEFUL_TYPES` in `packages/cdk/src/stateful-logical-ids.test.js`, with a reason per
+  type: the cluster, its writer instance, its subnet group (a new one has a new name, and CloudFormation's reference
+  lists the cluster's `DBSubnetGroupName` as requiring replacement, so it would take the cluster with it; not
+  re-checked against the reference offline when this was written), the cluster's secret, and the buckets;
+  plus KMS keys, DynamoDB tables, EFS file systems, Cognito user pools and log groups, which `SssbApp` does not create
+  today, so one added later is snapshotted from its first commit; plus any resource whose DeletionPolicy or
+  UpdateReplacePolicy is `Retain`, `RetainExceptOnCreate` or `Snapshot`. Rejected: snapshotting every logical id (a
+  Lambda's or an alarm's replacement loses nothing, and a `minor` for each would teach people to ignore the rule), and
+  the network (VPC, subnets, security groups), whose replacement loses no data.
+- **Synthesized from `apps/starter` under the id `Default`, in four shapes** (each transport, staging and production),
+  the ids an adopter's stack holds. Today all four are the same six resources; they are kept apart so a resource only
+  one shape creates is still caught.
+- **The gate:** a PR that changes, deletes or moves a file under `packages/*/release-snapshots/` must add a changeset
+  with a line filing `minor` for an `@sssb/*` package, read as `scripts/release.mjs`'s `changesetReleases` reads the
+  frontmatter (inlined: the gate's tests run it in scratch repositories without the repo's scripts). Any `@sssb/*`
+  package counts, since the group is fixed and one minor bumps all of them. Rejected: requiring the package that owns
+  the snapshot (the same release either way). Exempt: the release merge, a file merged in from `main` (its PR carried
+  the changeset), and a snapshot's first commit (it records the current state and changes nothing; this PR is one).
+  Not exempt: Dependabot, since a person committing an updated snapshot to a Dependabot branch is how a CDK bump that
+  moves a logical id would arrive, so the check runs before the Dependabot exemption.
+- **`runGate` in `tests/tooling/changesets.test.ts` now removes its scratch repository as soon as the gate has run.**
+  With about twenty more scratch repositories, removing them all in the file's `afterAll` overran the 10-second hook timeout on a loaded machine
+  (load average 18).
+- **Noticed, not changed:** the cluster's secret (`DbSecret…`) synthesizes with `DeletionPolicy: Delete` even when
+  `production` is true, while the cluster, its instance, its subnet group and both buckets are retained. The snapshot
+  records it by type, so it is covered either way; whether the secret should be retained is a question for `@sssb/cdk`.
+
 ## An app declares a port slot of its own (2026-11-18, `feat/app-declared-port-slots`)
 
 Built from `.claude/future-tasks/resolved/port-slots-for-adopter-apps.md` (the future task, moved there by this change; an
@@ -5373,3 +5486,34 @@ licenses` reads, so it needs the same install; what it would add is Google's lic
   lockfile were restored; with the `sentry` exception removed from a copy of the policy it failed naming `sentry@0.49.0`;
   with an exception for a package that is not installed added, it failed naming the stale entry.
   `tests/tooling/licence-scan.test.ts` holds the same cases against fixed reports, with the expression grammar.
+
+## P14 review: what the rounds changed, and corrections to the entries above (2026-11-18, `release/p14-first-npm-release`)
+
+- **Review round 1 (Opus code, Fable "can anything reach npm early").** Fable found no way through, and three LOWs
+  that are now closed: the own-tree test pins the next release to exactly 0.2.0 until `docs/releases/v0.2.0.md`
+  exists (a hand-edited manifest version would otherwise plan another); `release-reach.test.ts` holds every step of
+  `plan`, `push`, `pack` and `publish` to no `continue-on-error`, no `|| true` and no `if:` but on artifact uploads,
+  and each gate's answer to being required; and it counts `secrets: inherit`, `secrets['X']` and a publish through a
+  `uses:` action. Opus found that the rehearsal would cut `main`'s latest release again on a PR into a base behind
+  `main` (`integration` before its sync): it now rehearses this commit with `origin/main` merged in, locally, and says
+  "not rehearsed" when they conflict. Rejected: filtering the job to PRs into `main` and `int-*`, which leaves a
+  stale base unrehearsed. Also from it: the checker is copied before `prepare` runs; the database's network
+  (`AWS::EC2::VPC`, `Subnet`, `SecurityGroup`) joins the logical-id snapshot, since a new one means moving a subnet
+  group RDS refuses to move; and a test holds every `need('X')` in `createRealPorts` to the required environment,
+  which the snapshot alone did not see. Each new assertion was seen red.
+- **Corrections, from the claim check** (the entries above stay as written):
+    - "P14": `prepare` would not refuse a planned 0.1.0 "as going backwards". Its floors are the latest plain `v*` tag
+      (none yet) and npm's `latest` (0.0.0). What stops a hand-edited version is the own-tree pin in
+      `tests/tooling/release-pre-mode.test.ts`.
+    - "P14": the rehearsal does not fail a release that would publish a candidate. A candidate plan ends the step,
+      green, with a summary line, before anything is packed. npm 11.21.2 does refuse a prerelease without `--tag`,
+      measured again, but the rehearsal never asks it. Out of pre mode `check` refuses a public group in pre mode,
+      so no candidate is planned.
+    - "Release snapshots": the four shapes no longer hold "the same six resources". With the network counted, each
+      pg shape holds 14 and each data-api shape 10, and the sets differ: pg has the migrator's and the server's
+      security groups and the public and private subnets, data-api the database subnets. The rejected "including
+      the network" is reversed by the review bullet above. The subnet-group reason is confirmed: `DBSubnetGroupName`
+      on `AWS::RDS::DBCluster` is "Update requires: Replacement"
+      (docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbcluster.html).
+    - "Release snapshots": the snapshot gate's exemptions also include a PR opened before the gate's cutover, since
+      that early exit runs first (`.github/scripts/require-changeset.sh`).

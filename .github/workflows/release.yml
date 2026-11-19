@@ -15,16 +15,21 @@
 # run holds the id-token in one job at most: `publish` on a release's tag, `attest` (to sign, in no environment, so
 # npm's trusted publisher refuses it) on a candidate's.
 #
-# RELEASE CANDIDATES UNTIL P14, AND NOTHING ON NPM (ADR-0014 P7; JP, 2026-11-18: the merge to main is the release
-# decision). Every package is `"private": true` until P14, and Changesets is in pre mode with the tag `rc`
-# (.changeset/pre.json), versioning private packages; scripts/release.mjs `check` fails a PR that breaks that pairing.
-# So a push to main with pending changesets versions the group to `0.x.y-rc.N`, and `push` tags it `v0.x.y-rc.N`.
-# That tag's run is the candidate's: `candidate` waits for `checks` on the release commit and takes the tarballs its
-# pack-and-consume job packed and tested there, `attest` signs them, and `prerelease` attaches them to a GitHub
-# prerelease with the notes. A candidate's tag never runs `pack` or `publish`. On a plain `vX.Y.Z` tag (P14 on),
-# `pack` finds nothing publishable while every package is private and `publish` is skipped; as a third lock, `publish`
-# refuses any tarball whose own manifest says private. Do not count on npm for that: `npm publish <tarball>
-# --dry-run` (11.21.2) accepted a private one.
+# FROM P14, A RELEASE IS A PLAIN VERSION ON NPM (ADR-0014 P14; JP, 2026-11-18: the merge to main is the release
+# decision). The fixed group is public and Changesets is out of pre mode (.changeset/pre.json is gone), so a push to
+# main with pending changesets versions the group to `0.x.y` and `push` tags it `v0.x.y`; that tag's `pack` and
+# `publish` put it on npm. The first such release, 0.2.0, also carries every changeset the candidates consumed
+# (.changeset/pre/), which Changesets releases and deletes once pre mode is left. CI's `release-dry-run` job (checks.yml)
+# rehearses these jobs' commands on every PR, publishing nothing; tests/tooling/release-reach.test.ts holds this file to
+# the one path onto npm.
+#
+# Until P14 every package was `"private": true` and Changesets was in pre mode with the tag `rc`, so each release was
+# a candidate, `0.x.y-rc.N` (ADR-0014 P7): its tag runs `candidate`, which waits for `checks` on the release commit
+# and takes the tarballs its pack-and-consume job packed and tested there, `attest`, which signs them, and
+# `prerelease`, which attaches them to a GitHub prerelease with the notes. Those jobs stay for a candidate tag, which
+# scripts/release.mjs `check` no longer lets a merge cut (a public group in pre mode fails it); a candidate's tag never
+# runs `pack` or `publish`. `publish` refuses any tarball whose own manifest says private. Do not count on npm for
+# that: `npm publish <tarball> --dry-run` (11.21.2) accepted a private one.
 #
 # What the repository and npm must hold (JP's settings; none of it is in this file). The workflow names both
 # environments, and GitHub creates a named environment that does not exist with no rules at all, so each is set
@@ -104,7 +109,8 @@ jobs:
             # changesets by scripts/release-notes.mjs and written to docs/releases/v<version>.md, a new file in the
             # release commit) and `changeset version` in the working tree. A changeset that cannot be read as a
             # release-note entry stops it before anything is changed.
-            # Until P14 the release it prepares is a candidate, `0.x.y-rc.N` (pre mode); with nothing pending the run ends here.
+            # From P14 the release it prepares is a plain `0.x.y` (until then, a candidate `0.x.y-rc.N` in pre mode); with
+            # nothing pending the run ends here.
             - name: prepare the release
               id: prepare
               run: |
@@ -258,8 +264,8 @@ jobs:
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
             - run: pnpm install --frozen-lockfile --ignore-scripts
 
-            # Every non-private workspace package, each in the fixed group at the tag's version. Until P14 the list
-            # is empty, and this run ends here with nothing published.
+            # Every non-private workspace package, each in the fixed group at the tag's version: the whole group since
+            # P14. Were it empty, this run would end here with nothing published.
             - name: list what this tag publishes
               id: list
               env:
@@ -270,7 +276,7 @@ jobs:
                   count=$(jq length <<<"$list")
                   echo "count=$count" >> "$GITHUB_OUTPUT"
                   if [ "$count" -eq 0 ]; then
-                      echo "v$VERSION publishes nothing: every package is private (ADR-0014 P14 makes them public)." >> "$GITHUB_STEP_SUMMARY"
+                      echo "v$VERSION publishes nothing: every package is private." >> "$GITHUB_STEP_SUMMARY"
                       exit 0
                   fi
                   # The tag must be the commit that set the version, not a later one still carrying it.
@@ -342,8 +348,9 @@ jobs:
                   done
                   echo "Published v$VERSION: $(jq -r '[.[].name] | join(", ")' <<<"$todo")" >> "$GITHUB_STEP_SUMMARY"
 
-    # A RELEASE CANDIDATE (ADR-0014 P7). While the packages are private every release is a candidate: `push` tags the
-    # release commit `vX.Y.Z-rc.N`, and that tag's run lands here, never in `pack` or `publish` (nothing reaches npm).
+    # A RELEASE CANDIDATE (ADR-0014 P7). While the packages were private (until P14) every release was a candidate:
+    # `push` tagged the release commit `vX.Y.Z-rc.N`, and that tag's run lands here, never in `pack` or `publish`
+    # (nothing reaches npm).
     # Three jobs, split as the npm pair is: `candidate` holds no token that writes anything and runs no dependency's
     # code; `attest` holds only the id-token, to sign; `prerelease` holds only `contents: write`, to attach. The
     # tarballs are the ones `checks`' pack-and-consume job packed and TESTED on this very commit, handed over as that

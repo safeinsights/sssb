@@ -24,39 +24,12 @@ renamed, its root config on SSSB's presets, its CI (a workflow calling SSSB's re
 versioned dependencies. What it deliberately leaves for you (deployment params, seed data, cutover rows, repository
 settings) is listed under "What the generator leaves for you" below.
 
-## Before SSSB is on npm: a release candidate's tarballs
+SSSB's packages are on npm from 0.2.0 (ADR-0014's P14), so `pnpm create @sssb` fetches the generator from there, and
+its default `--sssb` (`^` and the generator's own version) resolves to that release. The release candidates before it
+(v0.2.0-rc.1 and v0.2.0-rc.2) were GitHub prereleases of `safeinsights/sssb`, installed from tarball URLs; a workspace
+on one moves to npm by replacing each URL with the version, as 0.2.0's release notes say.
 
-**The command above needs SSSB's first npm release** (ADR-0014's P14). Until then npm holds only placeholders under
-these names (`0.0.0`), so `pnpm create @sssb` cannot fetch the generator, and its default `--sssb` (`^` and the
-generator's own version) has no release to resolve. SSSB's releases so far are **release candidates**, published
-from v0.2.0-rc.1 on as GitHub prereleases of `safeinsights/sssb` (v0.2.0-rc.0 was tagged, and its notes are in the
-repository, but CI failed on its commit and nothing was published), each with five tarballs (the four packages and
-the generator) and notes that say
-how to install them. Generate from one by running its generator against its tarballs, here v0.2.0-rc.2 (take the newest
-on the repository's releases page; `gh` must be signed in, or download the five files from that page by hand):
-
-```sh
-mkdir sssb-v0.2.0-rc.2 && cd sssb-v0.2.0-rc.2
-gh release download v0.2.0-rc.2 --repo safeinsights/sssb
-tar -xzf sssb-create-0.2.0-rc.2.tgz
-node package/bin/create.js ~/acme --sssb . --name "Acme Research" \
-    --repo acme-org/acme-research --owner @acme-org/devs
-```
-
-The workspace then depends on each package by an absolute `file:` path into that directory, which resolves on your
-machine and nowhere else, so CI's install would fail. The next steps the generator prints go straight to
-`pnpm install`, so do this first: **before the first `pnpm install`, point each at its URL**, as the JSON in the
-notes' "Installing this release candidate" section gives it
-(`https://github.com/safeinsights/sssb/releases/download/v<version>/<tarball>`): the root `package.json`
-(`@sssb/tools`), `apps/<app>/package.json` (`@sssb/kit`, `@sssb/tools` and `@sssb/eslint-plugin`) and
-`apps/<app>/infra/package.json` (`@sssb/cdk` and `@sssb/tools`). Then install and commit `pnpm-lock.yaml`. A
-release asset can be replaced under the same URL, so the lockfile's `integrity` is what pins the bytes: check it
-against the sha512 each candidate's notes list, and again whenever the lockfile is regenerated (the reusable workflow
-installs with `--frozen-lockfile`). The notes also say how to verify each tarball's attestation.
-
-Once SSSB is on npm, generate with `pnpm create @sssb` as above: the workspace depends on the packages by version.
-
-### From a checkout of SSSB, at an unreleased commit
+## From a checkout of SSSB, at an unreleased commit
 
 To try a commit no release carries yet, run the generator from a checkout of SSSB against SSSB's packages packed into a
 directory:
@@ -756,22 +729,25 @@ older server that migration cannot run. Everything SSSB targets already meets it
 
 SSSB's packages are released together, at one version, from `main` in SSSB's repository, and nothing is backported: a
 fix arrives in the next release (ADR-0014 part 10). While the version is 0.x, a minor (0.2 to 0.3) is where breaking
-changes go and a patch is compatible. Each release is a GitHub release of `safeinsights/sssb`, tagged `v<version>`,
-and its notes are also in SSSB's repository, under `docs/releases/` (`docs/releases/v0.2.0-rc.2.md`, say).
+changes go and a patch is compatible. From 0.2.0 each release is published to npm and tagged `v<version>` in
+`safeinsights/sssb` (the release candidates before it were GitHub prereleases instead), and its notes are in SSSB's
+repository, under `docs/releases/` (`docs/releases/v0.2.0.md`, say).
 
 An upgrade is one change in your repository, made on a branch like any other:
 
 1. **Read the notes of every release after yours, in order.** A release candidate's notes carry only what changed
    since the previous candidate, so a workspace on v0.2.0-rc.1 that skips a candidate reads the skipped one's notes
-   and then the new one's; rc.1's own notes cover the changes since rc.0. Every
+   and then the new one's; rc.1's own notes cover the changes since rc.0. 0.2.0, the first release on npm, carries
+   every candidate's entries again, so a workspace on a candidate has already applied those its candidates carried.
+   Every
    entry sits in one of four sections, which are always there ("Seam changes", "Framework migrations", "Operator
    actions", "Scaffold changes to apply by hand"), or under "Other changes", and says whether its action is required,
    optional or none, what changed, what to do ("To adopt") and the local code it makes deletable ("Now deletable").
 2. **Move every `@sssb/*` package to the new version, together.** Each package of the workspace that uses one
    declares it: the root `package.json` (`@sssb/tools`), `apps/<app>/package.json` (`@sssb/kit`, `@sssb/tools`,
    `@sssb/eslint-plugin`) and `apps/<app>/infra/package.json` (`@sssb/cdk`, `@sssb/tools`), plus any package of your
-   own that took one. Installed from a release candidate, change each URL to the new release's (the version is in
-   it twice, in the tag and in the file name); from npm, once SSSB is published there, change each version. **First
+   own that took one. From npm (0.2.0 on), change each version. Installed from a release candidate's tarballs, change
+   each URL to the new release's version (`^0.2.0`, say), and drop anything that pointed `@sssb/*` at a tarball. **First
    make any "Scaffold changes to apply by hand" entry that touches how the packages install**, or the install keeps
    the old release: a workspace generated before v0.2.0-rc.2 has an `overrides` block for the `@sssb/*` packages in
    `pnpm-workspace.yaml` (and maybe `blockExoticSubdeps: false`), which pins them whatever the `package.json` files
@@ -788,7 +764,8 @@ An upgrade is one change in your repository, made on a branch like any other:
 4. **Raise both pins to the release commit**, the commit of SSSB's repository the release was cut from: in
    `.github/workflows/checks.yml`, the `sssb` job's `uses: safeinsights/sssb/.github/workflows/app-checks.yml@<commit>`
    (and the version in the comment after it), and in `.claude/settings.json`, the `sssb` marketplace's `ref`. A
-   release candidate's notes name the commit ("cut from"), the installed kit records it as `commit` in its
+   release's tag `v<version>` is that commit (a release candidate's notes also name it, "cut from"), the installed kit
+   records it as `commit` in its
    `dist/release.json`, and `sssb doctor` names it beside any pin that differs. Your CI and your Claude Code plugin
    are read at that commit, so a pin left behind runs the old release's checks and commands against the new
    packages. Then each person updates their installed plugin: `claude plugin marketplace update sssb`, then

@@ -56,7 +56,7 @@ function writeJson(file: string, value: unknown) {
  * A workspace with these packages and changesets (`{ id: frontmatter lines }`), committed when `git` is set.
  * `installed` runs `pnpm install --ignore-scripts` first, as the `plan` job does, under a root `prepare` script
  * that leaves a `prepare-ran` file wherever a later step runs scripts after all. `pre` writes `.changeset/pre.json` in
- * pre mode with the tag `rc`; by default it is written when the fixed group is private, as this repository has it
+ * pre mode with the tag `rc`; by default it is written when the fixed group is private, as this repository had it
  * until P14 (a private group's releases are candidates, ADR-0014 P7).
  */
 function workspace(
@@ -479,7 +479,7 @@ describe('release.mjs run alone, as the push and publish jobs run it', () => {
 })
 
 describe('release publishable (the tag)', () => {
-    it('is empty while every package is private: the publish is a no-op until P14', async () => {
+    it('is empty while every package is private: the publish was a no-op until P14', async () => {
         expect(await publishable(workspace([KIT('0.1.0'), APP]), '0.1.0')).toEqual([])
     })
 
