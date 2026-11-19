@@ -324,6 +324,9 @@ describe('the check names the rulesets require', () => {
         'adoption-probe',
         'changeset-required',
         'pack-and-consume',
+        // The release rehearsed through release.yml's commands, publishing nothing (ADR-0014 P14). Not yet required
+        // by a ruleset: adding it there is a repository setting.
+        'release-dry-run',
         'release-plan',
         'repo-checks',
         'secret-scan',
