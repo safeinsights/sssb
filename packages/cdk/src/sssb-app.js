@@ -344,6 +344,18 @@ export class SssbApp extends Construct {
         // is theirs to switch on; with a policy of their own, HSTS is that policy's. `null` is taken as left out, as
         // `??` takes it.
         const ownResponseHeadersPolicy = props.responseHeadersPolicy ?? undefined
+        // CDK reads `responseHeadersPolicyRef` from it deep inside the distribution; a value without one (a policy id
+        // string, `false`) would fail there with a TypeError naming nothing.
+        if (
+            ownResponseHeadersPolicy !== undefined &&
+            typeof (/** @type {any} */ (ownResponseHeadersPolicy)?.responseHeadersPolicyRef) !== 'object'
+        ) {
+            throw new Error(
+                'SssbApp: responseHeadersPolicy must be a response headers policy (a construct, or ' +
+                    '`ResponseHeadersPolicy.fromResponseHeadersPolicyId`), not ' +
+                    JSON.stringify(ownResponseHeadersPolicy),
+            )
+        }
         if (props.hstsIncludeSubdomains != null && typeof props.hstsIncludeSubdomains !== 'boolean') {
             throw new Error(
                 `SssbApp: hstsIncludeSubdomains must be true or false (got ${JSON.stringify(props.hstsIncludeSubdomains)})`,

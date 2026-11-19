@@ -176,6 +176,9 @@ function securityHeadersProblems(all, { ownPolicyId, includeSubdomains = false }
         }
         if (security.ContentSecurityPolicy !== undefined) problems.push('no Content-Security-Policy')
         if (security.XSSProtection !== undefined) problems.push('no X-XSS-Protection')
+        const config = policy.Properties?.ResponseHeadersPolicyConfig ?? {}
+        const beyond = Object.keys(config).filter((k) => !['Name', 'Comment', 'SecurityHeadersConfig'].includes(k))
+        if (beyond.length > 0) problems.push(`security headers and nothing else (also ${beyond.join(', ')})`)
     }
     for (const b of behaviors) {
         if (JSON.stringify(b?.ResponseHeadersPolicyId) !== JSON.stringify(expectedId)) {
@@ -1029,6 +1032,35 @@ describe("the distribution's security headers", () => {
 
     it("are the adopter's own policy, on each behavior, when one is passed", () => {
         expect(securityHeadersProblems(templateWith({}, true), { ownPolicyId: 'own-policy-id' })).toEqual([])
+        // A null includeSubDomains is left out, so it is no conflict with the adopter's policy.
+        const withNull = templateWith({ hstsIncludeSubdomains: /** @type {any} */ (null) }, true)
+        expect(securityHeadersProblems(withNull, { ownPolicyId: 'own-policy-id' })).toEqual([])
+    })
+
+    it("are exposed, for a behavior the adopter adds, as the construct's responseHeadersPolicy", () => {
+        const app = new cdk.App({ outdir: makeTestTmpDir('sssb-cdk-'), context: { 'aws:cdk:bundling-stacks': [] } })
+        const stack = new cdk.Stack(app, 'Extra')
+        const sssb = new SssbApp(stack, 'Default', {
+            appDir,
+            slug,
+            params: { database: { transport: 'data-api' } },
+            environment: 'Staging',
+            production: false,
+        })
+        sssb.distribution.addBehavior(
+            '/extra/*',
+            cdk.aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(sssb.assetsBucket),
+            {
+                viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                responseHeadersPolicy: sssb.responseHeadersPolicy,
+            },
+        )
+        const all = /** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])
+        const config = /** @type {any} */ (
+            Object.values(all).find((r) => r.Type === 'AWS::CloudFront::Distribution')?.Properties
+        )?.DistributionConfig
+        const extra = (config?.CacheBehaviors ?? []).find((/** @type {any} */ b) => b.PathPattern === '/extra/*')
+        expect(extra?.ResponseHeadersPolicyId).toBe(MANAGED_SECURITY_HEADERS_POLICY_ID)
     })
 
     it('take a null as left out', () => {
@@ -1048,6 +1080,11 @@ describe("the distribution's security headers", () => {
         expect(() => templateWith({ hstsIncludeSubdomains: false }, true)).toThrow(
             /with responseHeadersPolicy, set Strict-Transport-Security in that policy/,
         )
+        for (const notAPolicy of ['own-policy-id', false]) {
+            expect(() => templateWith({ responseHeadersPolicy: /** @type {any} */ (notAPolicy) })).toThrow(
+                /responseHeadersPolicy must be a response headers policy/,
+            )
+        }
     })
 })
 
