@@ -321,7 +321,14 @@ describe("this repository's own tree", () => {
         const [current] = new Set(group.map((m) => m.version))
         expect(group.every((m) => m.private === undefined)).toBe(true)
 
+        // UNTIL 0.2.0 IS OUT, THE NEXT RELEASE IS 0.2.0 AND NOTHING ELSE. A hand-edited manifest version (0.3.0-rc.0,
+        // or a plain 0.2.0) would plan another version that `check` accepts, so it is pinned here, by the release
+        // commit's own notes file: once `docs/releases/v0.2.0.md` exists the pin has done its work and steps aside.
+        const firstRelease = !existsSync(path.join(REPO, 'docs/releases/v0.2.0.md'))
+        if (firstRelease) expect(current).toBe('0.2.0-rc.2')
+
         const result = await prepare(root, { fetchImpl: NO_REGISTRY })
+        if (firstRelease) expect(result).toMatchObject({ release: true, version: '0.2.0' })
         if (!result.release) return // nothing pending: nothing to release, which is also nothing published
         // a candidate's group releases its own version; a released one moves on from it
         if (/-rc\.\d+$/.test(current)) expect(result.version).toBe(current.split('-')[0])

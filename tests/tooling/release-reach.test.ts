@@ -78,6 +78,37 @@ describe('the one way onto npm', () => {
         expect([...order].sort((a, b) => a - b)).toEqual(order)
     })
 
+    // A gate softened in place would leave the commands above where they are: a step that may fail and go on, a step
+    // that may be skipped, or a check whose answer is not required. Every step of the jobs on the way to npm is held
+    // to running unconditionally and failing the job, and each gate's answer to being required.
+    it('runs every step on the way to npm unconditionally, and requires each gate to say it passed', () => {
+        for (const name of ['plan', 'push', 'pack', 'publish']) {
+            const job = release.jobs[name] as Job & { 'continue-on-error'?: unknown }
+            expect(job['continue-on-error'], name).toBeUndefined()
+            for (const step of job.steps ?? []) {
+                const s = step as Step & { if?: unknown; 'continue-on-error'?: unknown }
+                expect(s['continue-on-error'], `${name}: ${s.name ?? s.uses ?? s.run}`).toBeUndefined()
+                // `upload-artifact` steps are the one kind gated on an earlier output, and they publish nothing
+                if (s.if !== undefined)
+                    expect(s.uses, `${name}: ${s.name ?? s.run}`).toMatch(/^actions\/upload-artifact@/)
+                expect(s.run ?? '', `${name}: ${s.name}`).not.toMatch(/\|\|\s*(true|:)\s*$/m)
+            }
+        }
+        const gate =
+            '[ "$out" = "passed $GITHUB_SHA" ] || { echo "::error::the CI gate did not report a pass"; exit 1; }'
+        for (const name of ['plan', 'pack']) {
+            const script = runs(release.jobs[name])
+            expect(script, name).toContain('out=$(node scripts/release.mjs wait-for-checks "$GITHUB_SHA")')
+            expect(script, name).toContain(gate)
+            for (const step of release.jobs[name].steps ?? []) {
+                if (step.run?.includes('wait-for-checks')) expect(step.run, name).toMatch(/^set -euo pipefail\n/)
+            }
+        }
+        expect(runs(release.jobs.push)).toContain(
+            '[ "$out" = "verified $VERSION" ] || { echo "::error::verify-release did not report a pass"; exit 1; }',
+        )
+    })
+
     it('cuts a release only on main, behind checks on the merge commit, from a checked patch', () => {
         const { plan, push } = release.jobs
         expect(plan.if).toBe("github.ref == 'refs/heads/main'")
@@ -108,16 +139,21 @@ describe('the one way onto npm', () => {
     it('runs no publish anywhere else, but as a dry run, and nothing else holds an id-token, environment or secret', () => {
         const others = files.filter((f) => f !== 'release.yml')
         expect(others.sort()).toEqual(['app-checks.yml', 'checks.yml'])
+        // the reusable workflow starts only when called, from `checks.yml` here or from an adopter's own CI
+        expect(Object.keys(read('app-checks.yml').on)).toEqual(['workflow_call'])
         for (const file of others) {
             const workflow = read(file)
             // read as parsed, so a comment that names one is not one; `write-all` would grant an id-token too
             expect(JSON.stringify(workflow.permissions ?? {}), file).not.toMatch(/id-token|write-all/)
             for (const [name, job] of Object.entries(workflow.jobs)) {
-                expect(JSON.stringify(job.permissions ?? {}), `${file} ${name}`).not.toMatch(/id-token|write-all/)
-                expect(JSON.stringify(job), `${file} ${name}`).not.toMatch(/\bsecrets\./)
-                expect(job.environment, `${file} ${name}`).toBeUndefined()
-                for (const command of publishCommands(runs(job)))
-                    expect(command, `${file} ${name}`).toMatch(/--dry-run/)
+                const where = `${file} ${name}`
+                expect(JSON.stringify(job.permissions ?? {}), where).not.toMatch(/id-token|write-all/)
+                // `secrets.X`, `secrets['X']` and a reusable call's `secrets: inherit` alike
+                expect(JSON.stringify(job), where).not.toMatch(/\bsecrets\b/)
+                expect(job.environment, where).toBeUndefined()
+                for (const command of publishCommands(runs(job))) expect(command, where).toMatch(/--dry-run/)
+                // a publish through an action rather than a `run:` line
+                for (const step of job.steps ?? []) expect(step.uses ?? '', where).not.toMatch(/publish/i)
             }
         }
         // release.yml: npm's one publish, in `publish`; the candidate's jobs attach to a GitHub release, not npm
