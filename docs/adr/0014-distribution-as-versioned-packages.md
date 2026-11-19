@@ -1243,3 +1243,32 @@ presented as the adopter's. It says how a workspace is generated and upgraded bo
 (P14), from a release candidate's tarballs, and after it, by version. Writing it found that `pnpm exec sssb guide`,
 which the generated `README.md` and `CLAUDE.md` tell people to run and the workspace root is where they run it, failed
 there; it now starts from the workspace's first app as `sssb doctor` does (`docs/decision-log.md`, 2026-11-18, P15).
+
+## Addendum — 2026-11-18: P14, the first release to public npm, as built
+
+P14's row says "0.1.0 goes out through P1b's workflow". The group reached P14 at `0.2.0-rc.2`, its third release
+candidate, so **the first public release is 0.2.0**: leaving Changesets' pre mode takes a candidate to the version it
+was heading for (a patch or a minor on `0.2.0-rc.2` is `0.2.0`; a major, 1.0.0, is refused by `release.mjs check`).
+`docs/decision-log.md` (2026-11-18, P14) has each choice below with what was rejected.
+
+- **`private` comes off all five `@sssb/*` packages, and pre mode is left by deleting `.changeset/pre.json`** in the
+  same change, as the P7 addendum required. Not `changeset pre exit`: its `"mode": "exit"` would be one more state
+  for `release.mjs` and the notes tool to read, and it differs from no pre state only in forcing a patch when
+  nothing is pending and in deleting `pre.json` in the release commit, which `verify-release` would then have to
+  accept. This reverses the P7 addendum's "P14 leaves pre mode (`changeset pre exit`)".
+- **The candidates' changesets are released by the first plain release.** Out of pre mode Changesets counts the files
+  in `.changeset/pre/` as pending, so 0.2.0 versions from them and the new ones and deletes them all; `release.mjs`
+  (`check`, `prepare`, `verify-release`) and `scripts/release-notes.mjs` read the same set, so **0.2.0's notes are
+  every change since the first candidate**, and `--since v0.2.0-rc.2` gives what is new since the last.
+- **The release is rehearsed on every PR**: CI's `release-dry-run` job (`checks.yml`) runs `plan`'s, `push`'s, `pack`'s
+  and `publish`'s commands in its own checkout, ending in the pinned npm's `publish --provenance --dry-run`, with no
+  id-token, environment or token of any kind.
+- **Nothing reaches npm before `int-p14` merges into `main`**, and the reason is held by a test,
+  `tests/tooling/release-reach.test.ts`: release.yml starts only on a push to `main` or a `v*` tag; `publish`, the one
+  job with npm's id-token in `npm-publish`, needs `pack`, which runs only for a plain tag on `main`, after `checks`
+  passes on that commit; no other workflow holds an id-token, an environment or a secret, or runs a publish but as a
+  dry run. The tag is cut only by `push`, on `main`. The repository and npm settings that carry the same path
+  (release.yml's header) are JP's, unchanged by this step.
+- **`docs/adopting.md`'s "Before SSSB is on npm" section, which P15 wrote for a workspace on a candidate's tarballs,
+  becomes one paragraph**: from 0.2.0 `pnpm create @sssb` resolves from npm, and a workspace on a candidate moves to it
+  by replacing each tarball URL with the version. Generating from a checkout at an unreleased commit stays.

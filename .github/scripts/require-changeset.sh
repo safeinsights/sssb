@@ -3,8 +3,8 @@
 #
 # A PR that changes what SSSB hands an adopter must add a changeset: a markdown file in .changeset/. A file holding
 # only `---` and `---` is the explicit "no adopter-visible effect" answer. Changesets' own `changeset status` cannot
-# be this gate: every package is `private` until ADR-0014's P14, and status ignores private packages, so it would
-# pass for any change. The gate is path-based.
+# be this gate: until ADR-0014's P14 every package was `private`, which status ignores, and what ships also includes
+# the starter and the plugin, which no package's status sees. The gate is path-based.
 #
 # WHAT SHIPS (adopters take it as a package, or copy it as a scaffold):
 #   - every `@sssb/*` workspace package under packages/ (read from its package.json, so P4's tools, P6's ESLint
@@ -18,6 +18,11 @@
 #     from this repository at the commit their `.claude/settings.json` pins (P13).
 # Not gated: apps/showcase, packages/seed (`@app/seed`), tests, scripts, docs, infra, the lockfile. A forking adopter
 # receives some of those too; .changeset/README.md lists the known gaps.
+#
+# A RELEASE SNAPSHOT (`packages/<dir>/release-snapshots/*`, ADR-0014 part 10) asks more: a PR that changes one must add
+# a changeset filing `minor` for an `@sssb/*` package, since what it guards changing is breaking (below, where it is
+# checked). Only the release merge, a PR opened before the cutover, a file merged in from `main` and a snapshot's first
+# commit are exempt from it.
 #
 # Inputs, all environment: BASE_REF (the PR's base branch), HEAD_REF (its head branch), CREATED_AT (the PR's creation
 # time, ISO 8601), ACTOR (who opened it), HEAD_REPO and REPO (the head's repository and this one; the release-merge
@@ -113,6 +118,66 @@ is_sssb_dir() {
   return 1
 }
 
+# The changesets this PR adds. What Changesets itself skips: README in any case, the agent files by exact case, and
+# dotfiles. A changeset the PR ADDS counts; editing one that is already pending does not (`--diff-filter=A` with
+# `--no-renames`, so deleting one and adding a similar one is an add, not a rename).
+added=()
+while IFS= read -r -d '' f; do added+=("$f"); done < <(git diff --no-renames --name-only -z --diff-filter=A "$base" HEAD -- '.changeset/*.md')
+changesets=()
+for f in ${added[@]+"${added[@]}"}; do
+  case "$f" in
+    .changeset/[!./]*.md) ;;
+    *) continue ;;
+  esac
+  case "$f" in
+    .changeset/*/*) continue ;;
+    .changeset/AGENTS.md | .changeset/CLAUDE.md | .changeset/GEMINI.md) continue ;;
+  esac
+  lower=$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')
+  [ "$lower" = ".changeset/readme.md" ] && continue
+  changesets+=("$f")
+done
+
+# THE RELEASE SNAPSHOTS (ADR-0014 part 10): `packages/<dir>/release-snapshots/*`, the logical ids of @sssb/cdk's
+# stateful resources (a changed one replaces the resource, the Aurora cluster included, on the next `cdk deploy`) and
+# the environment a real deployment of the kit must set (a new variable stops every deployment that lacks it). Each is
+# a committed file a test holds the code to, so a PR that changes one changed what it guards, and that is breaking: it
+# must add a changeset that files `minor` for an `@sssb/*` package. Dependabot is not exempt (a person's commit on its
+# branch is the usual way a dependency bump changes one); the release merge (above) and a file merged in from `main`,
+# whose own PR carried the changeset, are.
+RELEASE_SNAPSHOT='^packages/[^/]+/release-snapshots/'
+snapshots=()
+for f in ${changed[@]+"${changed[@]}"}; do
+  [[ "$f" =~ $RELEASE_SNAPSHOT ]] || continue
+  # A snapshot the base does not have yet guards nothing so far: its first commit is not a change to what it records.
+  # Its deletion, or a move (`--no-renames` makes one a deletion and an add), is.
+  git cat-file -e "$base:$f" 2>/dev/null || continue
+  from_main "$f" && continue
+  snapshots+=("$f")
+done
+if [ "${#snapshots[@]}" -gt 0 ]; then
+  # The frontmatter as scripts/release.mjs's `changesetReleases` reads it (one `'name': bump` per line, `#` comments,
+  # a quoted bump), from HEAD; a file it cannot read files nothing. Prints each changeset that files a minor.
+  minors=$(node -e '
+    const { execFileSync } = require("node:child_process")
+    for (const file of process.argv.slice(1)) {
+      let text
+      try { text = execFileSync("git", ["show", "HEAD:" + file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }) } catch { continue }
+      const fm = /^﻿?\s*---\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)/.exec(text)
+      if (!fm) continue
+      const minor = (fm[1] ?? "").split(/\r?\n/).map((l) => l.replace(/\s+#.*$/, "").trim()).some((l) =>
+        /^(["'\''"]?)(@sssb\/[^"'\''\s:]+)\1\s*:\s*(["'\''"]?)minor\3$/.test(l))
+      if (minor) console.log(JSON.stringify(file))
+    }
+  ' ${changesets[@]+"${changesets[@]}"})
+  if [ -z "$minors" ]; then
+    echo "::error::This PR changes a release snapshot, which is breaking (ADR-0014 part 10: a replaced stateful resource or a new required environment variable), but adds no changeset that files 'minor' for an @sssb/* package. Add .changeset/<what-changed>.md with \"'@sssb/<package>': minor\" (Kind operator, Action required; template in .changeset/README.md). Changed snapshots:"
+    printf '  %s\n' "${snapshots[@]}"
+    exit 1
+  fi
+  echo "This PR changes a release snapshot and adds a minor changeset: $(printf '%s' "$minors" | tr '\n' ' ')"
+fi
+
 shipped=()
 for f in ${changed[@]+"${changed[@]}"}; do
   [ -n "$f" ] || continue
@@ -163,26 +228,7 @@ if [ "${#shipped[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# What Changesets itself skips: README in any case, the agent files by exact case, and dotfiles. A changeset the PR
-# ADDS counts; editing one that is already pending does not (`--diff-filter=A` with `--no-renames`, so deleting one
-# and adding a similar one is an add, not a rename).
-added=()
-while IFS= read -r -d '' f; do added+=("$f"); done < <(git diff --no-renames --name-only -z --diff-filter=A "$base" HEAD -- '.changeset/*.md')
-real=0
-for f in ${added[@]+"${added[@]}"}; do
-  case "$f" in
-    .changeset/[!./]*.md) ;;
-    *) continue ;;
-  esac
-  case "$f" in
-    .changeset/*/*) continue ;;
-    .changeset/AGENTS.md | .changeset/CLAUDE.md | .changeset/GEMINI.md) continue ;;
-  esac
-  lower=$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')
-  [ "$lower" = ".changeset/readme.md" ] && continue
-  real=$((real + 1))
-done
-
+real=${#changesets[@]}
 if [ "$real" -gt 0 ]; then
   echo "This PR changes what ships and adds $real changeset file(s)."
   exit 0

@@ -2,6 +2,7 @@
 // scripts/pack-and-consume.mjs so tests/tooling/pack-and-consume.test.ts can drive each one with
 // inputs that must fail.
 
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 
 /**
@@ -920,5 +921,96 @@ export function checkE2eFailProblems(result, { config, kitFile }) {
     }
     if (!detail.includes(`a file Playwright loads reaches ${kitFile}, other than through @sssb/kit/testing/e2e`))
         problems.push(`sssb check-e2e failed ${config} without naming ${kitFile}`)
+    return problems
+}
+
+/**
+ * The packument a registry serves for one packed package: its own `package/package.json` as the version's entry, plus
+ * the `dist` an install reads (`integrity` and `shasum`, from the tarball's bytes) and the tarball's URL in the shape
+ * npm's own registry uses (`<registry><name>/-/<unscoped name>-<version>.tgz`), which pnpm leaves out of the lockfile
+ * as it does for npm's. `latest` is the version itself: a caret range on a prerelease matches it.
+ * @template {{ name: string, version: string }} M
+ * @param {M} manifest
+ * @param {Buffer} bytes the tarball
+ * @param {string} registry the registry's URL, ending in a slash
+ */
+export function registryPackument(manifest, bytes, registry) {
+    const unscoped = manifest.name.replace(/^@[^/]+\//, '')
+    const old = '2020-01-01T00:00:00.000Z' // long past any `minimumReleaseAge`
+    return {
+        name: manifest.name,
+        'dist-tags': { latest: manifest.version },
+        versions: {
+            [manifest.version]: {
+                ...manifest,
+                dist: {
+                    tarball: `${registry}${manifest.name}/-/${unscoped}-${manifest.version}.tgz`,
+                    integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+                    shasum: createHash('sha1').update(bytes).digest('hex'),
+                },
+            },
+        },
+        time: { created: old, modified: old, [manifest.version]: old },
+    }
+}
+
+/**
+ * The `@sssb/*` specifiers a generated workspace's manifests (read) carry: one per package, and a problem for each
+ * package two manifests disagree about.
+ * @param {Array<Record<string, any>>} manifests
+ * @returns {{ specs: Record<string, string>, problems: string[] }}
+ */
+export function generatedSssbSpecs(manifests) {
+    /** @type {Record<string, string>} */
+    const specs = {}
+    /** @type {string[]} */
+    const problems = []
+    for (const manifest of manifests) {
+        for (const field of ['dependencies', 'devDependencies', 'peerDependencies']) {
+            for (const [name, spec] of Object.entries(/** @type {Record<string, string>} */ (manifest[field] ?? {}))) {
+                if (!name.startsWith('@sssb/') || spec.startsWith('workspace:')) continue
+                if (specs[name] !== undefined && specs[name] !== spec)
+                    problems.push(`${name} is ${specs[name]} in one manifest and ${spec} in another`)
+                specs[name] = spec
+            }
+        }
+    }
+    return { specs, problems }
+}
+
+/**
+ * What an install from a registry must have written for the `@sssb/*` packages: in the lockfile's `packages:` section,
+ * each expected one resolved at exactly its packed version, with the tarball's own integrity and nothing else in its
+ * resolution (a `tarball:` URL or `file:` is not a registry's), and no other `@sssb/` package there at all.
+ * @param {string} lockfile
+ * @param {Record<string, { version: string, integrity: string }>} expected by package name
+ */
+export function registryLockProblems(lockfile, expected) {
+    const lines = lockfile.split('\n')
+    /** @type {string[]} */
+    const problems = []
+    /** @type {Set<string>} */
+    const seen = new Set()
+    let section = ''
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? ''
+        if (/^[A-Za-z]+:/.test(line)) section = line.slice(0, line.indexOf(':'))
+        if (section !== 'packages' || !/^ {2}'?@sssb\//.test(line)) continue
+        const key = line.trim().replace(/:$/, '').replace(/^'|'$/g, '')
+        const name = key.slice(0, key.lastIndexOf('@'))
+        const version = key.slice(key.lastIndexOf('@') + 1)
+        const resolution = (lines[i + 1] ?? '').trim()
+        const want = expected[name]
+        seen.add(name)
+        if (!want) problems.push(`${key}: not a package this run packed`)
+        else if (version !== want.version)
+            problems.push(`${key}: resolved at ${version}, not the packed ${want.version}`)
+        else if (!/^resolution: \{integrity: sha512-[^,}\s]+\}$/.test(resolution))
+            problems.push(`${key}: not a plain registry resolution (${resolution})`)
+        else if (resolution !== `resolution: {integrity: ${want.integrity}}`)
+            problems.push(`${key}: integrity is not the tarball's (${resolution})`)
+    }
+    for (const name of Object.keys(expected))
+        if (!seen.has(name)) problems.push(`${name}: no registry resolution in the lockfile`)
     return problems
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -287,6 +287,8 @@ function runGate(pr: Pr) {
             CREATED_AT: pr.createdAt ?? '2026-02-01T00:00:00Z',
         },
     })
+    // Removed now rather than all at once in the file's afterAll, which on a loaded machine outlasts the hook timeout.
+    rmSync(cwd, { recursive: true, force: true })
     return { status: r.status, out: r.stdout + r.stderr }
 }
 
@@ -482,6 +484,112 @@ describe('require-changeset gate', () => {
             expect(r.status, r.out).toBe(1)
             const kit = runGate({ files: { 'packages/kit/src/x.test.ts\nb.ts': 'a' } })
             expect(kit.status, kit.out).toBe(1)
+        })
+    })
+
+    describe('a release snapshot needs a minor changeset (ADR-0014 part 10)', () => {
+        const KIT_SNAPSHOT = 'packages/kit/release-snapshots/required-env.json'
+        const CDK_SNAPSHOT = 'packages/cdk/release-snapshots/stateful-logical-ids.json'
+        const changed = (file: string) => ({ [file]: '{"changed": true}\n' })
+        const PATCH = GOOD.replace('minor', 'patch').replace('**Action.** required', '**Action.** optional')
+        /** The base already holds both snapshots: the gate judges a change to one, not its first commit. */
+        const SNAPSHOTS = { [KIT_SNAPSHOT]: '{}\n', [CDK_SNAPSHOT]: '{}\n' }
+
+        it("names this repository's snapshots, which the cdk and kit suites compare with", () => {
+            expect(existsSync(path.join(ROOT, KIT_SNAPSHOT))).toBe(true)
+            expect(existsSync(path.join(ROOT, CDK_SNAPSHOT))).toBe(true)
+        })
+
+        it.each([
+            ['the kit environment snapshot with no changeset', changed(KIT_SNAPSHOT)],
+            ['the cdk logical-id snapshot with no changeset', changed(CDK_SNAPSHOT)],
+            ['a snapshot with a patch changeset', { ...changed(CDK_SNAPSHOT), '.changeset/a.md': PATCH }],
+            ['a snapshot with an empty changeset', { ...changed(KIT_SNAPSHOT), '.changeset/a.md': '---\n---\n' }],
+            [
+                'a snapshot with a minor for a package outside @sssb/*',
+                { ...changed(KIT_SNAPSHOT), '.changeset/a.md': GOOD.replace("'@sssb/kit'", "'showcase'") },
+            ],
+            [
+                'a snapshot whose minor is only in a comment',
+                {
+                    ...changed(KIT_SNAPSHOT),
+                    '.changeset/a.md': PATCH.replace('patch\n', "patch # '@sssb/cdk': minor\n"),
+                },
+            ],
+            ['a snapshot deleted', { [KIT_SNAPSHOT]: null }],
+            ['a snapshot moved', { [KIT_SNAPSHOT]: null, 'packages/kit/release-snapshots/env.json': '{}\n' }],
+            [
+                'a snapshot with a kit source change and a patch',
+                { ...changed(KIT_SNAPSHOT), ...KIT_SRC, '.changeset/a.md': PATCH },
+            ],
+        ])('fails %s', (_name, files) => {
+            const r = runGate({ baseFiles: SNAPSHOTS, files })
+            expect(r.status, r.out).toBe(1)
+            expect(r.out).toContain("adds no changeset that files 'minor'")
+        })
+
+        it('names the snapshots that need it', () => {
+            const r = runGate({ baseFiles: SNAPSHOTS, files: { ...changed(KIT_SNAPSHOT), ...changed(CDK_SNAPSHOT) } })
+            expect(r.out).toContain(KIT_SNAPSHOT)
+            expect(r.out).toContain(CDK_SNAPSHOT)
+        })
+
+        it.each([
+            ['the template (a kit minor)', GOOD],
+            ['a minor for another @sssb package', GOOD.replace("'@sssb/kit'", "'@sssb/cdk'")],
+            ['a double-quoted name and bump', GOOD.replace("'@sssb/kit': minor", '"@sssb/cdk": "minor"')],
+            [
+                'a minor beside a patch, with a comment',
+                GOOD.replace("'@sssb/kit': minor", "'@sssb/kit': patch\n'@sssb/cdk': minor # ids"),
+            ],
+        ])('passes a snapshot change with %s', (_name, changeset) => {
+            const r = runGate({
+                baseFiles: SNAPSHOTS,
+                files: { ...changed(CDK_SNAPSHOT), ...changed(KIT_SNAPSHOT), '.changeset/a.md': changeset },
+            })
+            expect(r.status, r.out).toBe(0)
+            expect(r.out).toContain('adds a minor changeset: ".changeset/a.md"')
+        })
+
+        it('does not count a minor added to a changeset that is already pending', () => {
+            const r = runGate({
+                baseFiles: { ...SNAPSHOTS, '.changeset/old.md': PATCH },
+                files: { ...changed(KIT_SNAPSHOT), '.changeset/old.md': GOOD },
+            })
+            expect(r.status, r.out).toBe(1)
+        })
+
+        it("asks nothing of a snapshot's first commit, which changes nothing it records", () => {
+            const r = runGate({
+                files: { ...changed(KIT_SNAPSHOT), 'packages/cdk/release-snapshots/more/x.json': '{}' },
+            })
+            expect(r.status, r.out).toBe(0)
+            // ...and the same files on a base that has them are changes
+            expect(runGate({ baseFiles: SNAPSHOTS, files: changed(KIT_SNAPSHOT) }).status).toBe(1)
+        })
+
+        it('holds a Dependabot branch to it, which a person updates when a bump moves a snapshot', () => {
+            const bump = { 'pnpm-lock.yaml': 'a', ...changed(CDK_SNAPSHOT) }
+            const r = runGate({ baseFiles: SNAPSHOTS, files: bump, actor: 'dependabot[bot]' })
+            expect(r.status, r.out).toBe(1)
+            expect(runGate({ baseFiles: SNAPSHOTS, files: { ...bump, ...CS }, actor: 'dependabot[bot]' }).status).toBe(
+                0,
+            )
+        })
+
+        it('does not charge a PR for a snapshot it merged in from main, nor the release merge', () => {
+            const fromMain = { baseFiles: SNAPSHOTS, mergedFromMain: changed(KIT_SNAPSHOT) }
+            const r = runGate({ ...fromMain, files: { 'docs/x.md': 'a' } })
+            expect(r.status, r.out).toBe(0)
+            // the PR's own change to the other snapshot beside the merge still needs one
+            expect(runGate({ ...fromMain, files: changed(CDK_SNAPSHOT) }).status).toBe(1)
+            const release = runGate({
+                baseFiles: SNAPSHOTS,
+                files: changed(KIT_SNAPSHOT),
+                headRef: 'integration',
+                baseRef: 'main',
+            })
+            expect(release.status, release.out).toBe(0)
         })
     })
 

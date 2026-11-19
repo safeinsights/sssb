@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { candidateNotes, check, prepare, verifyRelease } from '../../scripts/release.mjs'
+import { candidateNotes, check, prepare, publishable, verifyRelease } from '../../scripts/release.mjs'
 import { lintChangesets, readChangesets, releaseNotes } from '../../scripts/release-notes.mjs'
 import { changesetDir } from '../support/changeset-files'
 import { makeTestTmpDir } from '../support/tmp-dir'
@@ -143,4 +143,201 @@ describe('a tree that has been through a release in pre mode', () => {
             '.changeset/c-nothing.md',
         ])
     }, 120_000)
+})
+
+/** A candidate workspace cut through rc.0 and rc.1, as this repository was before P14 (it stopped at rc.2). */
+async function throughTwoCandidates() {
+    const root = candidateWorkspace({
+        'a-seam.md': entry('A seam gains a hook', 'seam', 'required', 'minor'),
+        'b-operator.md': entry('A secret is needed', 'operator', 'optional', 'patch'),
+        'c-nothing.md': '---\n---\n',
+    })
+    for (const [version, add] of [
+        ['0.2.0-rc.0', null],
+        ['0.2.0-rc.1', 'd-fix.md'],
+    ] as const) {
+        if (add) {
+            writeFileSync(path.join(root, '.changeset', add), entry('A label is fixed', 'none', 'none', 'patch'))
+            commit(root, `feat: ${add}`)
+        }
+        await prepare(root, { fetchImpl: NO_REGISTRY })
+        git(root, 'add', '-A')
+        verifyRelease(root, version)
+        commit(root, `chore: release v${version}`)
+        git(root, 'tag', `v${version}`)
+    }
+    return root
+}
+
+/** ADR-0014 P14's change, as its PR makes it: pre mode left by deleting pre.json, `private` off, one changeset. */
+function leavePreMode(root: string) {
+    rmSync(path.join(root, '.changeset/pre.json'))
+    const manifest = path.join(root, 'packages/kit/package.json')
+    const parsed = JSON.parse(readFileSync(manifest, 'utf8'))
+    delete parsed.private
+    writeFileSync(manifest, JSON.stringify(parsed, null, 4) + '\n')
+    writeFileSync(
+        path.join(root, '.changeset/e-public.md'),
+        entry('The packages are public', 'scaffold', 'optional', 'patch'),
+    )
+    return commit(root, 'feat: the first public release')
+}
+
+/**
+ * LEAVING PRE MODE (ADR-0014 P14, `.claude/future-tasks/resolved/p14-leave-pre-mode.md`). The candidates' changesets sit
+ * in `.changeset/pre/`; once `pre.json` is gone, Changesets counts them as pending again and its next `changeset
+ * version` releases and DELETES them, with the new ones, at the version the candidates were heading for. The tools
+ * here must agree with it at every step, run against the real CLI: `check` judges them, the notes carry them, `prepare`
+ * versions to the plain release, and `verify-release` accepts their deletion and nothing else.
+ */
+describe('leaving pre mode: the first plain release (ADR-0014 P14)', () => {
+    it('releases the version the candidates were heading for, with every candidate change in its notes', async () => {
+        const root = await throughTwoCandidates()
+        leavePreMode(root)
+        const dir = path.join(root, '.changeset')
+
+        // EVERY PR AFTER THE CHANGE: the four consumed changesets are pending again, and judged, with the new one
+        const judged = await check(root)
+        expect(judged.problems).toEqual([])
+        expect(judged.changesets).toBe(5)
+        expect(judged.plan.map((r: { newVersion: string }) => r.newVersion)).toEqual(['0.2.0'])
+        expect(lintChangesets(root)).toEqual([])
+        expect(readChangesets(root).map((c: { file: string }) => c.file)).toEqual([
+            '.changeset/e-public.md',
+            '.changeset/pre/a-seam.md',
+            '.changeset/pre/b-operator.md',
+            '.changeset/pre/c-nothing.md',
+            '.changeset/pre/d-fix.md',
+        ])
+
+        // THE PLAN JOB on the merge to main: 0.2.0, not a candidate, with the whole series in the notes
+        const result = await prepare(root, { fetchImpl: NO_REGISTRY })
+        expect(result).toMatchObject({ release: true, version: '0.2.0', notes: 'docs/releases/v0.2.0.md' })
+        const notes = readFileSync(path.join(root, 'docs/releases/v0.2.0.md'), 'utf8')
+        for (const title of [
+            'A seam gains a hook',
+            'A secret is needed',
+            'A label is fixed',
+            'The packages are public',
+        ]) {
+            expect(notes).toContain(`### ${title}`)
+        }
+        expect(notes).toMatch(/^# Release notes: v0\.2\.0\n\n4 changes, 1 requiring action\. 1 change has no/)
+        // Changesets deleted every one, `pre/` included, and pre.json stays gone
+        expect(changesetDir(dir)).toEqual({ pending: [], consumed: [], problems: [] })
+        // (Changesets deletes the files and leaves the directory, empty, which git does not track)
+        expect(existsSync(path.join(dir, 'pre')) ? readdirSync(path.join(dir, 'pre')) : []).toEqual([])
+        expect(JSON.parse(readFileSync(path.join(root, 'packages/kit/package.json'), 'utf8')).version).toBe('0.2.0')
+
+        // THE PUSH JOB: the staged release is exactly that, the consumed candidates' deletions included
+        git(root, 'add', '-A')
+        expect(() => verifyRelease(root, '0.2.0')).not.toThrow()
+        const release = commit(root, 'chore: release v0.2.0')
+        git(root, 'tag', 'v0.2.0')
+        // THE TAG's pack job: the public group, at the tag's version
+        expect(await publishable(root, '0.2.0')).toEqual([{ name: '@sssb/kit', dir: 'packages/kit' }])
+        // the notes regenerate from the commit before the release, which still had the candidates' changesets
+        expect(releaseNotes(root, { at: `${release}^`, version: '0.2.0' }).markdown).toBe(notes)
+        // and what is new since the last candidate is only the P14 change
+        expect(
+            readChangesets(root, { since: 'v0.2.0-rc.1', at: `${release}^` }).map((c: { file: string }) => c.file),
+        ).toEqual(['.changeset/e-public.md'])
+
+        // AFTER IT: nothing pending, and the next release is a plain patch, never a candidate
+        expect(await prepare(root, { fetchImpl: NO_REGISTRY })).toEqual({
+            release: false,
+            reason: 'no changesets are pending',
+        })
+        writeFileSync(path.join(dir, 'f-fix.md'), entry('Another fix', 'none', 'none', 'patch'))
+        commit(root, 'fix: another')
+        expect(await prepare(root, { fetchImpl: NO_REGISTRY })).toMatchObject({ release: true, version: '0.2.1' })
+    }, 180_000)
+
+    it('takes a candidate to its own version, never another: a patch or a minor is 0.2.0, a major refused', async () => {
+        const root = await throughTwoCandidates()
+        leavePreMode(root)
+        for (const [bump, version] of [
+            ['patch', '0.2.0'],
+            ['minor', '0.2.0'],
+        ]) {
+            writeFileSync(path.join(root, '.changeset/g-more.md'), entry('More', 'none', 'none', bump))
+            const judged = await check(root)
+            expect(judged.problems).toEqual([])
+            expect(new Set(judged.plan.map((r: { newVersion: string }) => r.newVersion))).toEqual(new Set([version]))
+        }
+        writeFileSync(path.join(root, '.changeset/g-more.md'), '---\n"@sssb/kit": major\n---\n')
+        expect((await check(root)).problems.join('\n')).toMatch(/files a major for @sssb\/kit/)
+    }, 180_000)
+
+    it('refuses a release that keeps a consumed candidate, or a public group still in pre mode or in exit mode', async () => {
+        const root = await throughTwoCandidates()
+        leavePreMode(root)
+        await prepare(root, { fetchImpl: NO_REGISTRY })
+        git(root, 'add', '-A')
+        // the push job, had the plan job left one of the candidates' changesets behind
+        git(root, 'reset', '-q', '--', '.changeset/pre/a-seam.md')
+        git(root, 'checkout', '--', '.changeset/pre/a-seam.md')
+        expect(() => verifyRelease(root, '0.2.0')).toThrow(/\.changeset\/pre\/a-seam\.md is not consumed/)
+        git(root, 'reset', '-q', '--hard')
+
+        // pre.json put back on a public group: refused on the PR, and Changesets' own way out (`exit`) refused too
+        writeFileSync(path.join(root, '.changeset/pre.json'), JSON.stringify({ mode: 'pre', tag: 'rc' }))
+        expect((await check(root)).problems.join('\n')).toMatch(/the fixed group is public: leave pre mode/)
+        writeFileSync(path.join(root, '.changeset/pre.json'), JSON.stringify({ mode: 'exit', tag: 'rc' }))
+        await expect(check(root)).rejects.toThrow(/pre\.json must be exactly/)
+    }, 180_000)
+})
+
+/**
+ * THIS REPOSITORY'S OWN TREE, released on a copy: its manifests and `.changeset/` as committed, through `prepare` (the
+ * plan job, with the real Changesets CLI) and `verify-release` (the push job). The version it releases is the one the
+ * group's version leads to, which at a candidate (`0.2.0-rc.2`, where P14 found it) is that candidate's own release,
+ * `0.2.0`: patch and minor both take a prerelease to its version, and a major (1.0.0) is refused before this. Until
+ * 0.2.0's notes file is in the tree, the test also pins the group to `0.2.0-rc.2` and the release to `0.2.0`, so a
+ * hand-edited manifest version fails here. Read with the workflow, which publishes only from a tag the release run on
+ * `main` cut, this is why the merge of int-p14 into main can publish 0.2.0 and nothing else.
+ */
+describe("this repository's own tree", () => {
+    it('releases the version its group is heading for, and the push job accepts it', async () => {
+        const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' }).split('\0')
+        const copied = tracked.filter(
+            (f) =>
+                f === 'package.json' ||
+                f === 'pnpm-workspace.yaml' ||
+                f.startsWith('.changeset/') ||
+                /^(apps|packages|spikes)\/[^/]+\/(package\.json|CHANGELOG\.md)$/.test(f) ||
+                /^apps\/[^/]+\/infra\/package\.json$/.test(f),
+        )
+        const root = makeTestTmpDir('sssb-own-tree-')
+        for (const f of copied) {
+            mkdirSync(path.dirname(path.join(root, f)), { recursive: true })
+            copyFileSync(path.join(REPO, f), path.join(root, f))
+        }
+        git(root, 'init', '-q', '-b', 'main')
+        commit(root, 'the tree')
+        const group = copied
+            .filter((f) => /^packages\/[^/]+\/package\.json$/.test(f))
+            .map((f) => JSON.parse(readFileSync(path.join(root, f), 'utf8')))
+            .filter((m) => m.name.startsWith('@sssb/'))
+        const [current] = new Set(group.map((m) => m.version))
+        expect(group.every((m) => m.private === undefined)).toBe(true)
+
+        // UNTIL 0.2.0 IS OUT, THE NEXT RELEASE IS 0.2.0 AND NOTHING ELSE. A hand-edited manifest version (0.3.0-rc.0,
+        // or a plain 0.2.0) would plan another version that `check` accepts, so it is pinned here, by the release
+        // commit's own notes file: once `docs/releases/v0.2.0.md` exists the pin has done its work and steps aside.
+        // tracked, not merely present: a local `prepare` leaves an untracked one behind
+        const firstRelease = !tracked.includes('docs/releases/v0.2.0.md')
+        if (firstRelease) expect(current).toBe('0.2.0-rc.2')
+
+        const result = await prepare(root, { fetchImpl: NO_REGISTRY })
+        if (firstRelease) expect(result).toMatchObject({ release: true, version: '0.2.0' })
+        if (!result.release) return // nothing pending: nothing to release, which is also nothing published
+        // a candidate's group releases its own version; a released one moves on from it
+        if (/-rc\.\d+$/.test(current)) expect(result.version).toBe(current.split('-')[0])
+        git(root, 'add', '-A')
+        expect(() => verifyRelease(root, result.version)).not.toThrow()
+        expect((await publishable(root, result.version)).map((p: { name: string }) => p.name)).toEqual(
+            group.map((m) => m.name).sort(),
+        )
+    }, 180_000)
 })

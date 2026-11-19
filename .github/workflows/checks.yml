@@ -60,7 +60,7 @@ jobs:
 
     # ADR-0014 part 10: on 0.x a breaking change is a `minor`, because Changesets turns a `major` into 1.0.0 and
     # npm versions cannot be withdrawn. Fails on a `major` changeset and on any release plan reaching 1.0.0,
-    # judged as the plan will be once the packages are public, and on changesets or packages that would stall a
+    # judged as the plan Changesets will apply, and on changesets or packages that would stall a
     # release later (scripts/release.mjs, `check`). release.yml runs the same check again before it versions
     # anything.
     release-plan:
@@ -77,11 +77,110 @@ jobs:
             - run: pnpm install --frozen-lockfile --ignore-scripts
             - run: pnpm release:check
 
+    # THE RELEASE, REHEARSED (ADR-0014 P14): what a merge of this commit to `main` would publish, through release.yml's
+    # own commands, in this job's own checkout and with nothing that can write anywhere. `plan`'s `release.mjs prepare`
+    # versions the pending changesets; `push`'s `verify-release`, from a copy of the checker, judges the staged release,
+    # which is then committed and tagged HERE only (the checkout keeps no credentials, so nothing can be pushed);
+    # `pack`'s frozen install, `publishable` and `pnpm pack` pack each package; `publish`'s `preflight` re-reads each
+    # tarball and asks npm what it already holds; and the pinned npm runs `publish --provenance --dry-run`, which prints
+    # what it would publish. A candidate plan (`-rc.N`) ends the step before packing: out of pre mode none is planned.
+    # Left out: the CI gate (`wait-for-checks`, which this job is part of), and `pack`'s checks that the tag is a plain
+    # version on `main` and is the commit that set the version (true by construction here). The job holds no id-token, no environment and no npm token: npm warns that
+    # publishing needs a login even on the dry run, and its trusted publishers name release.yml's `npm-publish`
+    # environment, which no job here is in (tests/tooling/release-reach.test.ts). Packing sets SSSB_CREATE_UNPUSHED_PIN,
+    # because the rehearsed release commit exists only in this job; on a real tag `pack` packs a commit on `main` with
+    # the check on. With nothing pending (or only empty changesets) there is nothing to rehearse, and the job says so.
+    release-dry-run:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        permissions:
+            contents: read
+        env:
+            HUSKY: '0'
+        steps:
+            # Full history and tags, as `plan` has them: a release never goes behind the latest `vX.Y.Z` tag.
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+            # What a merge to `main` would release is this commit with `main` in it: a base branch (an integration
+            # branch) can be behind `main`'s latest release commit, and rehearsing without it would cut that release
+            # again. Merged here only, never pushed. A base that conflicts with `main` cannot reach it as it is, so
+            # there is nothing to rehearse until it is synced, and the job says so rather than fail every PR into it.
+            - name: take in main, as a merge to main would
+              id: main
+              run: |
+                  set -euo pipefail
+                  if git merge-base --is-ancestor origin/main HEAD; then
+                      echo "rehearse=true" >> "$GITHUB_OUTPUT"
+                  elif git -c user.name=rehearsal -c user.email=rehearsal@example.invalid -c core.hooksPath=/dev/null \
+                      merge -q --no-edit origin/main; then
+                      echo "rehearse=true" >> "$GITHUB_OUTPUT"
+                  else
+                      git merge --abort
+                      echo "::warning::this commit conflicts with main, so what a merge would release cannot be rehearsed"
+                      echo "Not rehearsed: this commit conflicts with main; sync its base with main first." >> "$GITHUB_STEP_SUMMARY"
+                      echo "rehearse=false" >> "$GITHUB_OUTPUT"
+                  fi
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+              if: steps.main.outputs.rehearse == 'true'
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              if: steps.main.outputs.rehearse == 'true'
+              with:
+                  node-version-file: .nvmrc
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile --ignore-scripts
+              if: steps.main.outputs.rehearse == 'true'
+            - name: rehearse plan, push, pack and publish
+              if: steps.main.outputs.rehearse == 'true'
+              run: |
+                  set -euo pipefail
+                  # the checker, copied out before anything the release runs can touch it, as the push job copies it
+                  cp scripts/release.mjs "$RUNNER_TEMP/release.mjs"
+                  # plan
+                  result=$(node scripts/release.mjs prepare)
+                  echo "$result"
+                  if [ "$(jq -r '.release' <<<"$result")" != "true" ]; then
+                      echo "Nothing to rehearse: $(jq -r '.reason' <<<"$result")" >> "$GITHUB_STEP_SUMMARY"
+                      exit 0
+                  fi
+                  version=$(jq -r '.version' <<<"$result")
+                  [[ "$version" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]] || { echo "::error::not a 0.x release version: '$version'"; exit 1; }
+                  # push, without the push
+                  git add -A
+                  out=$(node "$RUNNER_TEMP/release.mjs" verify-release "$version")
+                  [ "$out" = "verified $version" ] || { echo "::error::verify-release did not report a pass"; exit 1; }
+                  git -c user.name=rehearsal -c user.email=rehearsal@example.invalid -c core.hooksPath=/dev/null \
+                      commit -q --no-verify -m "chore: release v$version"
+                  git tag "v$version"
+                  sha=$(git rev-parse HEAD)
+                  if [[ "$version" == *-rc.* ]]; then
+                      echo "v$version is a release candidate: its tag attaches tarballs to a GitHub prerelease and publishes nothing." >> "$GITHUB_STEP_SUMMARY"
+                      exit 0
+                  fi
+                  # pack, which installs on the release commit before it packs, frozen to the lockfile
+                  pnpm install --frozen-lockfile --ignore-scripts
+                  list=$(node scripts/release.mjs publishable "$version")
+                  [ "$(jq length <<<"$list")" -gt 0 ] || { echo "::error::v$version would publish nothing"; exit 1; }
+                  mkdir -p "$RUNNER_TEMP/tarballs"
+                  for dir in $(jq -r '.[].dir' <<<"$list"); do
+                      (cd "$dir" && SSSB_CREATE_UNPUSHED_PIN=1 pnpm pack --pack-destination "$RUNNER_TEMP/tarballs")
+                  done
+                  # publish, as a dry run: the same preflight and the same pinned npm, with no token of any kind
+                  todo=$(node scripts/release.mjs preflight "$version" "$sha" "$RUNNER_TEMP"/tarballs/*.tgz)
+                  [ "$(jq length <<<"$todo")" -gt 0 ] || { echo "::error::preflight left nothing to publish"; exit 1; }
+                  for file in $(jq -r '.[].file' <<<"$todo"); do
+                      npx --yes npm@11.21.2 publish "$file" --access public --provenance --dry-run
+                  done
+                  echo "A merge of this commit to main would publish v$version: $(jq -r '[.[].name] | join(", ")' <<<"$todo")" >> "$GITHUB_STEP_SUMMARY"
+
     # A PR that changes what SSSB hands an adopter (every `@sssb/*` package's shipped files, today the kit, and the starter) adds a changeset: its
-    # release-note entry, which ADR-0014 P7's notes are assembled from. Path-based, because every package is private
-    # until P14 and `changeset status` ignores private packages. The script, its exemptions and its tests:
+    # release-note entry, which ADR-0014 P7's notes are assembled from. Path-based, because what ships includes the
+    # starter and the plugin, which no package's `changeset status` sees (and, until P14, every package was private,
+    # which `status` ignores). The script, its exemptions and its tests:
     # .github/scripts/require-changeset.sh, tests/tooling/changesets.test.ts. A newer push to the PR re-runs it, so
-    # adding the file turns it green.
+    # adding the file turns it green. A PR that changes a release snapshot (packages/*/release-snapshots/, ADR-0014
+    # part 10) needs a changeset that files `minor`.
     changeset-required:
         if: github.event_name == 'pull_request'
         runs-on: ubuntu-latest

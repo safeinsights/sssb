@@ -2,32 +2,41 @@
 
 > **For SSSB's own repository** (`safeinsights/sssb`). The release app is the GitHub App whose token lets
 > `.github/workflows/release.yml` push a release commit to `main` and create its `vX.Y.Z` tag. Since ADR-0014's
-> P7 every merge to `main` that carries changesets cuts a release candidate, so make the app **before the first such
-> merge**: until it exists, that merge's `push` job fails at minting the token, having written nothing, and the
+> P7 every merge to `main` that carries changesets cuts a release (a candidate until P14, a version on npm since), so
+> make the app **before the first such merge**: until it exists, that merge's `push` job fails at minting the token, having written nothing, and the
 > changesets stay pending for the next merge. The cutover row is `release-app` in `docs/cutover-checklist.md`.
 
 ## What a merge to `main` does once the app exists
 
-While the packages are private (until P14), a release is a release candidate, and the merge is the decision: there
-is no other step. Each run is in GitHub's Actions tab, workflow `release`.
+The merge is the decision: there is no other step. Since P14 the packages are public and a release is a plain
+version on npm. Each run is in GitHub's Actions tab, workflow `release`.
 
 1. **`plan`** waits for `checks` to pass on the merge commit, then `release.mjs prepare` versions every `@sssb/*`
-   package to the next candidate (`0.2.0-rc.0` for the first, from `0.1.0` and minor changesets), writes the notes to
-   `v<version>.md` under docs/releases in the release commit, and moves the consumed changesets to `.changeset/pre/`. Nothing pending (or only
-   empty changesets) ends the run here, green, with the reason in its summary.
+   package to the next release (the first, from `0.2.0-rc.2`, is `0.2.0`), writes the notes to `v<version>.md` under
+   docs/releases in the release commit, and deletes the consumed changesets (the first time, the candidates' ones in
+   `.changeset/pre/` too). Nothing pending (or only empty changesets) ends the run here, green, with the reason in its
+   summary.
 2. **`push`** checks that patch with `verify-release`, commits it as `chore: release v<version>`, tags it
    `v<version>`, and pushes both to `main` with the app's token. That push starts `checks` on the release commit and
    a second `release` run for the tag.
-3. **`candidate`** (the tag's run) waits for `checks` to pass on the release commit, downloads the `sssb-tarballs`
-   artifact its pack-and-consume job left, checks them (`release.mjs candidate`) and writes the prerelease's notes.
-4. **`attest`** signs one build-provenance attestation per tarball.
-5. **`prerelease`** creates the GitHub release as a draft, attaches the tarballs, downloads them again to check every
-   byte, and only then publishes it as a prerelease that is never "Latest". A re-run finishes a draft a failed run
-   left, and confirms a published candidate without changing it.
+3. **`pack`** (the tag's run) checks the tag is a plain version on `main`, waits for `checks` to pass on the release
+   commit, lists the public fixed group at the tag's version (`release.mjs publishable`), checks the tag is the
+   commit that set it, and packs each package.
+4. **`publish`**, in the `npm-publish` environment and the only job with npm's id-token, re-reads each tarball
+   (`release.mjs preflight`: the fixed group, this version, not private, not already on npm from another commit, not
+   behind npm's `latest`) and publishes it with provenance through the pinned npm. A re-run skips what is already on
+   npm from this commit, so it resumes a publish that stopped part-way.
 
 The push to `main` also runs `plan` again, on the release commit, which finds nothing pending and stops. If any step
-fails, nothing later runs: a failed `push` leaves no tag (the push is atomic) and the next merge cuts the candidate; a
-failed tag run is re-run from the Actions tab ("Re-run failed jobs"). Nothing is ever published to npm before P14.
+fails, nothing later runs: a failed `push` leaves no tag (the push is atomic) and the next merge cuts the release; a
+failed tag run is re-run from the Actions tab ("Re-run failed jobs"). CI's `release-dry-run` job runs the same
+commands on every PR, with nothing that can write, and its summary says what a merge would publish.
+
+Until P14 a release was a release candidate (`0.x.y-rc.N`): its tag ran **`candidate`** (the CI gate, then the
+`sssb-tarballs` artifact its pack-and-consume job left, checked by `release.mjs candidate`), **`attest`** (one
+build-provenance attestation per tarball) and **`prerelease`** (a draft GitHub release, every byte checked, then a
+prerelease that is never "Latest"), and nothing reached npm. Those jobs still answer a candidate's tag, which a merge
+no longer cuts.
 
 `pnpm release-app:init` makes the App by GitHub's App-manifest flow (borrowed from CanopyCMS's
 `init-github-app`), so its permissions come from code rather than from boxes ticked in settings. The code is

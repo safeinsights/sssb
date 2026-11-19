@@ -10,6 +10,8 @@ import path from 'node:path'
  * the record of a shipped candidate red.
  *
  * Changesets' own rule for what is not a changeset: README in any case, the agent files by exact case, and dotfiles.
+ * Out of pre mode (from ADR-0014 P14) the `pre/` files are pending again until the next release deletes them; this
+ * helper still lists them as `consumed`, by where they sit, since it judges the directory's shape, not the plan.
  *
  * @returns `pending`: the changesets still to be released (`x.md`); `consumed`: the ones moved to `pre/` (`pre/x.md`);
  *   `problems`: anything else that does not belong there (another directory, or a file in `pre/` that is not a changeset).
