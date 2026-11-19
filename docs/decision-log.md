@@ -5236,6 +5236,76 @@ either requires a `minor` changeset; its P14 row lands them. Built as two commit
 - **Noticed, not changed:** the cluster's secret (`DbSecret…`) synthesizes with `DeletionPolicy: Delete` even when
   `production` is true, while the cluster, its instance, its subnet group and both buckets are retained. The snapshot
   records it by type, so it is covered either way; whether the secret should be retained is a question for `@sssb/cdk`.
+## The authorization scan counts a denial only where it reaches the handler's outcome (2026-11-18, `fix/authz-scan-unawaited`)
+
+The 2026-11-17 entry on the scan left a known hole to lint. A handler that calls an `async` same-file helper without
+awaiting it "reaches" `authorize`, yet the helper's `ForbiddenError` becomes an unhandled rejection and the handler goes
+on to mutate. The lint rule that entry named was never added. The session that fixed the hole made these decisions
+under JP's standing rule. Two Opus review rounds, a sweep of the walk's trust points, and an Opus review of the
+second round's fixes widened the fix from the floating helper to every place the walk lost a denial.
+
+- **A scan change, not type-aware lint.** `route-scan.ts` now walks each function under an outcome: whether a throw
+  at that point, and a promise the function returns, reach what Next awaits. `authorize` throws synchronously, so it
+  counts wherever a throw does. A call into an `async` function, or into a call a function is handed to, carries the
+  denial only when its result is `await`ed or returned on the spot (`settledBy`).
+    - Rejected: `@typescript-eslint/no-floating-promises` scoped to route files. It answers a different question. It
+      accepts `void p`, `p.catch(() => {})` and `p.then(ok, onError)` as handled, and each of those drops the denial.
+    - The lint rule would sit beside a conformance check that still passed the route.
+    - An adopter can turn a lint rule off, where a conformance opt-out has to be named and given a reason.
+    - It needs type information in `@sssb/eslint-plugin`'s preset (`parserOptions.projectService`), so every
+      adopter's lint run would build a type-checked program.
+    - The scan needs no types. The only functions it credits are same-file ones and literals, and it can see whether
+      each is `async`.
+- **A function handed to an unknown call needs that call awaited or returned, sync or async.** The scan cannot read
+  the callee. `.then`, a timer, `new Promise` and an `async` wrapper (`db.withTenant`) all run a sync function where
+  its throw never reaches the handler. Rejected: trusting any sync callback to run in place. That passes
+  `load().then((row) => authorize(row))`, and an unawaited `db.withTenant(org, () => { authorize(…) })`.
+- **Array iteration methods are known by name, and an `async` callback to one is dropped.** An array iteration method
+  is recognized when its receiver is neither an import nor an object whose code is in this file (whose `forEach` is
+  its own). An `async` callback to one is dropped, so `await ids.forEach(async (id) => …)` fails: awaiting
+  `forEach`'s `undefined` settles nothing. A sync callback runs in place, so `items.forEach((i) => authorize(…))` and
+  `items.map((i) => { authorize(…); return i })` count as statements of their own. A `map`, `filter` or `flatMap` on
+  a receiver that is visibly an iterator (`ids.values()`, `.keys()`, `.entries()`, `Iterator.from(…)`) runs nothing
+  until consumed, so it counts for nothing.
+    - Rejected: requiring every callback's call to be awaited, the first draft. That failed the `forEach` idiom.
+    - Rejected: trusting the names on any receiver. That passes Ramda's curried `R.forEach(() => authorize(…))`, which
+      only defines a function.
+    - Rejected: treating `map`, `filter` and `flatMap` as lazy everywhere, the second draft. That failed the
+      per-item `map` on an array, a natural bulk-route shape, to catch a lazy iterator nobody consumes.
+- **A callee whose code is in this file is not trusted the way an imported wrapper is.** `isSameFile` covers:
+    - a function, class or object literal, or an array literal holding one;
+    - a function or class declaration;
+    - a variable or destructured name holding one of those, or what such a callee returns (also through either arm
+      of a ternary, either side of `&&`, `||`, `??` or a comma);
+    - anything the file assigns to.
+
+    A function handed to such a callee counts for nothing, and so does one handed to a same-file wrapper handler or to
+    a wrapper nested in one. The scan can read that code, but it does not follow a function through a parameter, so
+    it could neither trust nor check what `async function run(fn) { fn() }` does with `fn`.
+    - Rejected: binding arguments to parameters and following them. Done soundly, that needs a binding environment
+      per call site (bindings merged across call sites credit a floating site through an awaited one). That is too
+      much new machinery in a security gate for a shape no route uses.
+    - An imported wrapper stays trusted, as before. Its code is out of sight either way.
+
+- **A `try` whose `catch` can do anything but rethrow swallows the denial.** That covers a catch that falls through,
+  returns, or leaves by `break` or `continue`. A `finally` that can leave in the throw's place also swallows it. A
+  promise the `try` returns (`return p`) is not caught; `return await p` throws inside it.
+    - Rejected: leaving `try` alone, the first draft. `try { authorize(…) } catch (e) { log(e) }` passed.
+    - Rejected: crediting a catch that returns. A handler's `catch { return new Response(…) }` might answer 403 or 200,
+      and the scan cannot read which. An async helper's `catch { return }` resolves, and the handler goes on.
+      `withPortErrors` or a rethrow is the shape to write.
+    - No route in either app or the fixture has a `try` around `authorize`.
+- **`settledBy` passes through the left of `||` and `??`.** A promise is truthy and never nullish, so it is their
+  value. It does not pass through the left of `&&`.
+- **Fail closed on chains, stored promises and `Promise.all`.** `await check().then(…)`, `const p = check(); …;
+await p` and `await Promise.all(ids.map(async …))` do carry a rejection. The scan does not follow a chain, a
+  variable or `Promise.all`'s array, and a stored promise lets the handler mutate before the await. All three fail;
+  `await check()`, or a `for … of` that awaits each, is the shape to write.
+- **Gate calls are unchanged.** `calls` (`auth.updateProfile`, `auth.setActiveOrg`) still counts an unawaited call,
+  because there the call is the mutation the port guards: a rejected one mutated nothing. A gate proves the kind of
+  route, not that it waits.
+- **No route in either app or the fixture changes verdict.** Every one authorizes in its body, or in a wrapper it
+  returns. The real trees were scanned after each round.
 
 ## Licence scan: a pnpm-native CI job, not a required check (2026-11-18, `ci/licence-scan`)
 
