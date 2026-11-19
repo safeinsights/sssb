@@ -5711,6 +5711,7 @@ record the rejected alternative here, report it.
 - **The starter's e2e budget grows by one spec** (`apps/starter/tests/e2e/simulator.spec.ts`): signed out, open the
   panel, become a person in the other tenant, see Mail and Jobs and not Hooks, run what is due. It is what makes the
   mount a gate in every generated workspace.
+
 ## `sssb doctor` reports the adopter's own settings (2026-11-19, `feat/doctor-reports-settings`)
 
 Adoption review follow-up 8 (`docs/adoption-review-2026-11.md`, "What surprised" 11): the settings only the adopter can
