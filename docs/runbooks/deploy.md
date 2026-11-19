@@ -7,7 +7,9 @@
 ## The moving parts (ADR-0001)
 
 - Artifact: the `output: 'standalone'` build zipped with `run.sh` at its root (the exact thing
-  `pnpm start:demo` runs locally via `sssb serve-standalone`).
+  `pnpm start:demo` runs locally via `sssb serve-standalone`). `run.sh` leaves `HOSTNAME` alone: `SssbApp` sets it to
+  `0.0.0.0` in the function's environment, and a `run.sh` that exports another value (`sssb serve-standalone`'s
+  `127.0.0.1`, say) breaks requests through the auth provider's proxy (ADR-0001, addendum 2026-11-19).
 - Stack: `apps/<app>/infra/`, one stack holding SSSB's `SssbApp` construct
   (`packages/cdk`) — server Lambda + Web Adapter layer, CloudFront, S3 assets, migrator Lambda, Aurora
   Serverless v2, in one of two network shapes (`apps/showcase/infra/README.md`: the Lambdas in the VPC with a
@@ -35,6 +37,15 @@
 6. Record cold-start p50/p95 after the FIRST staging deploy in `docs/build-notes.md`, and size the
    function from the measurement rather than from a guess. It is not a cutover row — nothing is gated on
    it — but it is the number every later performance question starts from.
+
+## Teardown
+
+Deleting a stack can fail on `SssbApp`'s Lambda@Edge function (the origin request's body hash): a function CloudFront
+has replicated cannot be deleted until CloudFront drops the replicas, up to a few hours after the distribution goes.
+Delete the stack again then. A stack with an explicit region outside us-east-1 keeps that function in a us-east-1
+stack of its own (`edge-<region>-…`): delete that one after the app's stack, which depends on it. Deploying such a
+stack, name it (`cdk deploy <stack>` deploys the us-east-1 one first) or pass `--all`; `--exclusively` skips the
+us-east-1 stack, and a first deploy then fails reading its function's ARN.
 
 ## Rollback
 
