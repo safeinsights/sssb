@@ -6464,6 +6464,7 @@ been asked.
 - **Out of scope, reported to the manager:** an HSTS header (a response-headers policy; pages sets its own), without
   which a first `http://` visit can be intercepted before its redirect, and `X-Forwarded-For`, to which
   CloudFront appends the viewer's address after any the viewer sent, so the first entry is the viewer's to choose.
+
 ## No `starter` in a generated app (2026-11-19, `feat/no-starter-in-generated-app`)
 
 The adoption review's follow-up 5 (`docs/adoption-review-2026-11.md`, ranked item 5 and "What surprised" item 7): an app
