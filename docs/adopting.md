@@ -29,43 +29,21 @@ its default `--sssb` (`^` and the generator's own version) resolves to that rele
 (v0.2.0-rc.1 and v0.2.0-rc.2) were GitHub prereleases of `safeinsights/sssb`, installed from tarball URLs; a workspace
 on one moves to npm by replacing each URL with the version, as 0.2.0's release notes say.
 
-## From a checkout of SSSB, at an unreleased commit
-
-To try a commit no release carries yet, run the generator from a checkout of SSSB against SSSB's packages packed into a
-directory:
-
-```sh
-# in a checkout of SSSB, installed (the kit's prepack builds with its devDependencies)
-for p in kit tools eslint-plugin cdk; do pnpm --dir packages/$p pack --pack-destination ~/sssb-tarballs; done
-node packages/create/bin/create.js ~/acme --sssb ~/sssb-tarballs --name "Acme Research" \
-    --repo acme-org/acme-research --owner @acme-org/devs
-```
-
-- **The template is the files git tracks in the checkout's `apps/starter`, as they are in its working tree.** A
-  generator with no packed `template/` (one run from a checkout) builds it from that checkout first, so an
-  uncommitted edit to a tracked file is in your app, and a file git does not track is left out, with a warning naming
-  it (`git add` it to include it). A symlink or submodule there, or a tracked file missing from the working tree, stops
-  the build.
-- **The workflow pin is the checkout's `HEAD`**, which must hold `.github/workflows/app-checks.yml`. Your CI's
-  `uses:` line resolves only if that commit is on GitHub: push it, or pass `--workflow-ref <sha>` naming one that
-  is. Run from a checkout, the generator warns when no remote-tracking branch of a remote at `safeinsights/sssb`
-  holds the commit (as of your last fetch). A packed generator pins the commit it was packed from, and packing it
-  refuses a commit that is not on such a branch, or an `apps/starter` or app guide that differs from that commit
-  (`SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings, for a tarball no workspace will run on GitHub). Packing
-  `@sssb/kit` likewise refuses shipped sources (`packages/kit/src`, its `package.json`) that differ from `HEAD`,
-  because it stamps that commit into `dist/release.json`; the same variable turns that refusal into a warning.
-- **`--sssb <dir>` wants exactly one `sssb-<package>-<version>.tgz` for each of `kit`, `tools`, `eslint-plugin`
-  and `cdk`, all of the generator's own version** (`packages/create/package.json`'s). The workspace depends on them
-  by absolute `file:` path, in each package that takes one, and needs no `overrides`: no SSSB package depends on
-  another (`@sssb/tools` is a peer of `@sssb/cdk`, which `apps/<app>/infra/` installs beside it). Such a workspace is
-  for trying the commit on your machine; generate the one you keep from a release.
-
 The workspace has no showcase. The showcase stays in SSSB's repository as the worked example you will read most in
 week one: keep a checkout of SSSB beside your own (`pnpm install && pnpm dev` there), read the slice you need, and
 build its equivalent in your app.
 
-The rest of this document is what that command does not do: which parts of the tree are yours, how
-your product extends the framework, how you take a new release, and the discipline that keeps the whole thing honest.
+The path from here, in order, and the section for each step:
+
+1. **Boot it and push it**: "First boot", below.
+2. **Replace what the starter put on screen** (its seed world, its welcome copy, its Items slice): "The starter's
+   content is still wired into your UI".
+3. **Build your first slice** through the seam: "Building your product", with `/sssb:new-slice`.
+4. **Cut over to real accounts** when you deploy: "Cutover", and your workspace's `docs/cutover-checklist.md`.
+5. **Take each release**: "Upgrading by release".
+
+Everything else here is reference, to read when you need it: what the generator refuses and writes, what `sssb doctor`
+and the lint fences check, and the dev loop's scheduled tick.
 
 ## What is yours, and what is SSSB's
 
@@ -101,7 +79,10 @@ between framework and app):
   reaches for that only exists because the showcase supplies it fails to compile there. SSSB's docs (this one, the
   ADRs, the recipes, the runbooks) live there too.
 
-Apps live under `apps/`, one per product, each with its own `package.json`, configs and tests (ADR-0007). The root
+Apps live under `apps/`, one per product, each with its own `package.json`, configs and tests (ADR-0007). One app is
+the usual shape: it sits under `apps/` so that a second app, or a package of your own under `packages/` (a CLI, an edge
+function), is a sibling rather than a special case, and so that the root's commands mean the same with one app or
+several. The root
 commands that act on every app (`pnpm build`, `pnpm typecheck`, `pnpm test:e2e`, the fences, the demo-static trio)
 fan out over `apps/*`, so they pick up a second app with no edit; the root's `sssb.apps` and the `APPS` list in each
 root Vitest config name the apps one by one, so a second app is added there. The commands that must pick ONE app
@@ -113,8 +94,9 @@ root script.
 1. In the directory the generator wrote, `pnpm install && pnpm dev`: the app must boot seeded and offline in under
    two minutes. That hermetic boot is the standing acceptance test; if it ever breaks, fix that first.
 2. Run the demo tour ([runbooks/demo.md](runbooks/demo.md)) once, in a checkout of SSSB: it drives the showcase.
-   Fifteen minutes here saves days later: every capability you inherit is shown working, and Simulator is how
-   you'll drive your own app in dev.
+   Fifteen minutes here saves days later: every capability you inherit is shown working. Your app has the same
+   Simulator in its static demo (`pnpm build:demo-static`); on its own `pnpm dev` the panel needs route glue that only
+   the showcase carries today.
 3. Push, then make the repository settings only you can make: require the check `sssb / all-checks` on your
    default branch (and `workspace-checks` and `secret-scan`, your workflow's own jobs), the setting under "Identity
    and the owner files" below, and, if the repository is private and in an organization, allow public reusable
@@ -234,8 +216,7 @@ is written.
 `APP_SLUG` (in the app's `apps/<app>/config/app.ts`) is the single source of MECHANICAL identity — session and
 viewpoint cookies, the fake-auth JWT issuer, the service-token audience, webhook header names, CDK
 stack/DB/budget/tags all derive from it. Other identifiers are deliberately NEUTRAL and never need
-renaming (`APP_DATA_DIR`, the `app-simulator-*` browser keys, the `@app/*` workspace scope, and the
-dev-server port key — see below). What is left is display copy, package naming, and the owner files.
+renaming (`APP_DATA_DIR`, the `app-simulator-*` browser keys, and the dev-server port key — see below). What is left is display copy, package naming, and the owner files.
 
 The owner files route YOUR users — a security report, a code-owner review, a conduct complaint — so they must
 name you, never SSSB's maintainer. The generator writes them from its flags: `--repo` fills the advisory links in
@@ -816,6 +797,37 @@ in SSSB's repository, where it is built and tested against both of SSSB's apps a
 your workspace meanwhile; remove the patch when you upgrade to the release that has the fix. Something that only your
 app needs is not an SSSB change at all: it lives in your app (`docs/recipes/app-owned-adapter.md` for a vendor SSSB
 has no port for).
+
+### Trying an unreleased commit of SSSB
+
+To try a commit no release carries yet, run the generator from a checkout of SSSB against SSSB's packages packed into a
+directory:
+
+```sh
+# in a checkout of SSSB, installed (the kit's prepack builds with its devDependencies)
+for p in kit tools eslint-plugin cdk; do pnpm --dir packages/$p pack --pack-destination ~/sssb-tarballs; done
+node packages/create/bin/create.js ~/acme --sssb ~/sssb-tarballs --name "Acme Research" \
+    --repo acme-org/acme-research --owner @acme-org/devs
+```
+
+- **The template is the files git tracks in the checkout's `apps/starter`, as they are in its working tree.** A
+  generator with no packed `template/` (one run from a checkout) builds it from that checkout first, so an
+  uncommitted edit to a tracked file is in your app, and a file git does not track is left out, with a warning naming
+  it (`git add` it to include it). A symlink or submodule there, or a tracked file missing from the working tree, stops
+  the build.
+- **The workflow pin is the checkout's `HEAD`**, which must hold `.github/workflows/app-checks.yml`. Your CI's
+  `uses:` line resolves only if that commit is on GitHub: push it, or pass `--workflow-ref <sha>` naming one that
+  is. Run from a checkout, the generator warns when no remote-tracking branch of a remote at `safeinsights/sssb`
+  holds the commit (as of your last fetch). A packed generator pins the commit it was packed from, and packing it
+  refuses a commit that is not on such a branch, or an `apps/starter` or app guide that differs from that commit
+  (`SSSB_CREATE_UNPUSHED_PIN=1` turns both into warnings, for a tarball no workspace will run on GitHub). Packing
+  `@sssb/kit` likewise refuses shipped sources (`packages/kit/src`, its `package.json`) that differ from `HEAD`,
+  because it stamps that commit into `dist/release.json`; the same variable turns that refusal into a warning.
+- **`--sssb <dir>` wants exactly one `sssb-<package>-<version>.tgz` for each of `kit`, `tools`, `eslint-plugin`
+  and `cdk`, all of the generator's own version** (`packages/create/package.json`'s). The workspace depends on them
+  by absolute `file:` path, in each package that takes one, and needs no `overrides`: no SSSB package depends on
+  another (`@sssb/tools` is a peer of `@sssb/cdk`, which `apps/<app>/infra/` installs beside it). Such a workspace is
+  for trying the commit on your machine; generate the one you keep from a release.
 
 ## Keeping the docs honest
 

@@ -119,12 +119,13 @@ want is turned off by registering nothing for it.
 pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research --owner @acme-org/devs
 ```
 
-That writes a new workspace in `acme/`: your app in apps/acme/, generated from `apps/starter` and renamed, with its root config,
-its CI (a workflow calling SSSB's reusable one), its owner files and SSSB's packages as dependencies — the whole
-mechanical half of adoption. Until SSSB's packages are on npm, run the generator from a release candidate's
-tarballs; [docs/adopting.md](docs/adopting.md) has the commands. Two example apps ship here: `apps/showcase` (a support desk — tickets, escalations, file
-attachments, an export job run by a simulated external service) so every framework capability has a living
-worked example, and `apps/starter`, the template the generator copies. Build against the showcase as your
+That writes a new workspace in `acme/`: your app in apps/acme/, generated from `apps/starter` and renamed, with its
+root config, its CI (a workflow calling SSSB's reusable one), its owner files and SSSB's packages as dependencies —
+the whole mechanical half of adoption. The app sits under `apps/` so that a second app or a package of your own is a
+sibling rather than a special case; one app is the usual shape.
+
+Two example apps ship here: `apps/showcase` (a support desk — tickets, escalations, file attachments, an export job
+run by a simulated external service) so every framework capability has a living worked example, and `apps/starter`, the template the generator copies. Build against the showcase as your
 reference; it stays here and is never copied.
 
 A generated workspace depends on SSSB's packages by version and upgrades by release: move the packages to the new

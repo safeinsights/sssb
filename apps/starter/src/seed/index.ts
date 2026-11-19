@@ -6,7 +6,7 @@ import type { SeedAgreement, SeedJobSchedule, SeedOrg, SeedPerson, SeedTenant } 
  * WHY IT LIVES INSIDE THE APP (and not in a `packages/*-seed` workspace like SSSB's reference
  * app's `@app/seed`): the seed IS app content. The framework never imports it directly — it reads
  * `@sssb/app-config/seed`, which re-exports this file — so its location is entirely the app's choice, and
- * an app-local module is one fewer workspace for an adopter to find, rename and repoint. It also
+ * an app-local module is one fewer workspace package to keep. It also
  * proves `@sssb/kit/seed/contracts` is a real published surface rather than a private arrangement with one
  * package: this world fills the same contracts with no `@app/seed` anywhere in sight.
  *
