@@ -1858,7 +1858,7 @@ describe.concurrent('sssb doctor with no --app, from the root of a workspace who
 echo "$@" >> '${path.join(tools, 'gh.log')}'
 case "$4" in
   repos/acme-org/acme) echo '{"default_branch":"main","private":false,"owner":{"type":"User"}}';;
-  repos/acme-org/acme/rules/branches/main) echo '[]';;
+  repos/acme-org/acme/rules/branches/main?per_page=100) echo '[]';;
   repos/acme-org/acme/private-vulnerability-reporting) echo '{"enabled":true}';;
   *) echo '{"message":"Branch not protected"}'; echo 'gh: Branch not protected (HTTP 404)' >&2; exit 1;;
 esac

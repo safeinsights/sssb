@@ -153,6 +153,9 @@ export function reusableWorkflowCalls(repository, workflows) {
 /** @param {string} what @param {GhFailure} failure */
 const notChecked = (what, failure) => `${what}: not checked: ${failure.message}`
 
+/** @param {unknown} value @returns {any[]} the value when GitHub sent a list, else none */
+const listOf = (value) => (Array.isArray(value) ? value : [])
+
 /**
  * The classic and ruleset sides of "is this check required on this branch": the contexts a ruleset requires (the
  * rules that apply to the branch, an organization's included), and the ones branch protection requires.
@@ -165,14 +168,14 @@ export function requiredContexts(rules, protection) {
     if (rules.ok && Array.isArray(rules.json))
         for (const rule of rules.json)
             if (rule?.type === 'required_status_checks')
-                for (const check of rule.parameters?.required_status_checks ?? [])
+                for (const check of listOf(rule.parameters?.required_status_checks))
                     if (typeof check?.context === 'string') fromRules.push(check.context)
     /** @type {string[]} */
     const fromProtection = []
     if (protection.ok) {
-        for (const context of protection.json?.contexts ?? [])
+        for (const context of listOf(protection.json?.contexts))
             if (typeof context === 'string') fromProtection.push(context)
-        for (const check of protection.json?.checks ?? [])
+        for (const check of listOf(protection.json?.checks))
             if (typeof check?.context === 'string') fromProtection.push(check.context)
     }
     return { fromRules, fromProtection: [...new Set(fromProtection)] }
@@ -191,16 +194,38 @@ export function requiredContexts(rules, protection) {
 export function requiredCheckReport(repository, branch, gh) {
     const what = `github: ${REQUIRED_CHECK} is a required check on ${branch}`
     const encoded = encodeURIComponent(branch)
-    const rules = gh(`repos/${repository}/rules/branches/${encoded}`)
+    // 100 a page: a branch can carry more than the default 30 rules, and the one that matters can be on page two.
+    const rules = gh(`repos/${repository}/rules/branches/${encoded}?per_page=100`)
     const protection = gh(`repos/${repository}/branches/${encoded}/protection/required_status_checks`)
-    const { fromRules, fromProtection } = requiredContexts(rules, protection)
+    const read = requiredContexts(rules, protection)
+    const { fromRules } = read
+    let { fromProtection } = read
+    // Two 404s say nothing is required by branch protection: the branch is not protected, or it is protected without
+    // required status checks.
+    const unprotected =
+        !protection.ok &&
+        protection.kind === 'not-found' &&
+        /not protected|required status checks not enabled/i.test(protection.message)
+    // Branch protection's own endpoint is admin-only. The branch itself is readable by anyone who can read the
+    // repository, and says whether it is protected and, when it is, what it requires.
+    let protectionRead = protection.ok || unprotected
+    if (!protectionRead) {
+        const branchInfo = gh(`repos/${repository}/branches/${encoded}`)
+        if (branchInfo.ok && typeof branchInfo.json?.protected === 'boolean') {
+            protectionRead = true
+            if (branchInfo.json.protected === true) {
+                const checks = branchInfo.json?.protection?.required_status_checks
+                const contexts = [...listOf(checks?.contexts), ...listOf(checks?.checks).map((check) => check?.context)]
+                fromProtection = [...new Set(contexts.filter((c) => typeof c === 'string'))]
+            }
+        }
+    }
     if (fromRules.includes(REQUIRED_CHECK)) return { status: 'ok', title: `${what} (a ruleset requires it)` }
     if (fromProtection.includes(REQUIRED_CHECK))
         return { status: 'ok', title: `${what} (branch protection requires it)` }
 
-    const unprotected = !protection.ok && protection.kind === 'not-found' && /not protected/i.test(protection.message)
     const required = [...new Set([...fromRules, ...fromProtection])]
-    if (rules.ok && (protection.ok || unprotected))
+    if (rules.ok && protectionRead)
         return {
             status: 'report',
             title:
@@ -215,7 +240,7 @@ export function requiredCheckReport(repository, branch, gh) {
     /** @type {string[]} */
     const unread = []
     if (!rules.ok) unread.push(`rulesets: ${rules.message}`)
-    if (!protection.ok && !unprotected) unread.push(`branch protection: ${protection.message}`)
+    if (!protectionRead && !protection.ok) unread.push(`branch protection: ${protection.message}`)
     return {
         status: 'report',
         title: `${what}: not confirmed: no ruleset requires it, but not everything could be read`,
@@ -257,14 +282,26 @@ function actionsPolicy(scope, calls, gh) {
     const name = scope.startsWith('orgs/') ? "the organization's" : "the repository's"
     const permissions = gh(`${scope}/actions/permissions`)
     if (!permissions.ok) return { allows: null, line: `${name} Actions policy: not read: ${permissions.message}` }
-    const { enabled, allowed_actions: allowed } = permissions.json ?? {}
+    const { enabled, enabled_repositories: enabledRepositories, allowed_actions: allowed } = permissions.json ?? {}
+    // A repository's answer is `enabled`; an organization's is `enabled_repositories`.
     if (enabled === false) return { allows: false, line: `${name} Actions policy: Actions are not enabled` }
-    if (allowed === 'all' || allowed === undefined)
+    if (enabledRepositories === 'none')
+        return { allows: false, line: `${name} Actions policy: Actions are enabled for no repository` }
+    if (allowed === 'all' || typeof allowed !== 'string')
         return { allows: true, line: `${name} Actions policy: all actions and workflows allowed` }
+    // The organization's own actions and reusable workflows are always allowed: only a call into another owner is held
+    // to the policy.
+    const owner = scope.split('/')[1] ?? ''
+    const foreign = calls.filter((call) => call.split('/')[0]?.toLowerCase() !== owner.toLowerCase())
+    if (foreign.length === 0)
+        return {
+            allows: true,
+            line: `${name} Actions policy: ${allowed}, and ${calls.join(', ')} is the organization's own`,
+        }
     if (allowed === 'local_only')
         return {
             allows: false,
-            line: `${name} Actions policy: only actions and reusable workflows in its own ${scope.startsWith('orgs/') ? 'organization' : 'repository'}`,
+            line: `${name} Actions policy: only the organization's own actions and reusable workflows, and ${foreign.join(', ')} is not`,
         }
     const selected = gh(`${scope}/actions/permissions/selected-actions`)
     if (!selected.ok)
@@ -273,12 +310,12 @@ function actionsPolicy(scope, calls, gh) {
             line: `${name} Actions policy: selected actions only; the list was not read: ${selected.message}`,
         }
     /** @type {string[]} */
-    const patterns = selected.json?.patterns_allowed ?? []
-    const blocked = calls.filter((call) => !patterns.some((pattern) => globMatches(pattern, call)))
+    const patterns = Array.isArray(selected.json?.patterns_allowed) ? selected.json.patterns_allowed : []
+    const blocked = foreign.filter((call) => !patterns.some((pattern) => globMatches(pattern, call)))
     return blocked.length === 0
         ? {
               allows: true,
-              line: `${name} Actions policy: selected actions only, and its patterns match ${calls.join(', ')}`,
+              line: `${name} Actions policy: selected actions only, and its patterns match ${foreign.join(', ')}`,
           }
         : {
               allows: false,
@@ -411,7 +448,13 @@ export function pluginReport({ settings, installed, root }) {
     /** @type {string[]} */
     const lines = []
     for (const key of enabled) {
-        const entries = Array.isArray(plugins[key]) ? plugins[key] : []
+        // An older record keeps one entry, not a list, for a plugin: a user-level install.
+        const recorded = plugins[key]
+        const entries = Array.isArray(recorded)
+            ? recorded
+            : typeof recorded === 'object' && recorded
+              ? [{ scope: 'user', ...recorded }]
+              : []
         const mine = entries.filter(
             (/** @type {any} */ entry) =>
                 entry?.scope === 'user' || (typeof entry?.projectPath === 'string' && real(entry.projectPath) === here),
@@ -466,22 +509,48 @@ export function settingsReports({ root, env = process.env, gh = ghGet(env), work
         ]
     /** @type {Report[]} */
     const reports = []
-    const repository = originRepository(root)
-    if (repository === null)
-        reports.push({
-            status: 'report',
-            title: 'github settings: not checked: the workspace has no `origin` remote on github.com to read the settings of',
-        })
-    else reports.push(...githubReports(repository, { gh, workflows, kitRepository }))
-    const read = (/** @type {string} */ file) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
-    const settingsText = read(path.join(root, '.claude', 'settings.json'))
-    const installedFile = path.join(claudeConfigDir(env), 'plugins', 'installed_plugins.json')
-    const installedText = read(installedFile)
-    const plugin = pluginReport({
-        settings: settingsText === null ? null : { file: '.claude/settings.json', text: settingsText },
-        installed: installedText === null ? null : { file: installedFile, text: installedText },
-        root,
-    })
-    if (plugin !== null) reports.push(plugin)
+    // Nothing in here may stop doctor: a file that cannot be read, or an answer shaped unlike GitHub's documents, is a
+    // line that says so.
+    reports.push(
+        ...guarded('github settings', () => {
+            const repository = originRepository(root)
+            return repository === null
+                ? [
+                      {
+                          status: /** @type {const} */ ('report'),
+                          title: 'github settings: not checked: the workspace has no `origin` remote on github.com to read the settings of',
+                      },
+                  ]
+                : githubReports(repository, { gh, workflows, kitRepository })
+        }),
+    )
+    reports.push(
+        ...guarded('claude plugin', () => {
+            const read = (/** @type {string} */ file) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
+            const settingsText = read(path.join(root, '.claude', 'settings.json'))
+            const installedFile = path.join(claudeConfigDir(env), 'plugins', 'installed_plugins.json')
+            const installedText = read(installedFile)
+            const plugin = pluginReport({
+                settings: settingsText === null ? null : { file: '.claude/settings.json', text: settingsText },
+                installed: installedText === null ? null : { file: installedFile, text: installedText },
+                root,
+            })
+            return plugin === null ? [] : [plugin]
+        }),
+    )
     return reports
+}
+
+/**
+ * Run one group of reports; an error it throws is the group's one line, "not checked", with the error's message.
+ * @param {string} what
+ * @param {() => Report[]} produce
+ * @returns {Report[]}
+ */
+function guarded(what, produce) {
+    try {
+        return produce()
+    } catch (error) {
+        return [{ status: 'report', title: `${what}: not checked: ${error instanceof Error ? error.message : error}` }]
+    }
 }

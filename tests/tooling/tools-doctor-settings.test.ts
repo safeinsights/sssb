@@ -41,7 +41,7 @@ function stubGh(table: Record<string, Answer>) {
 }
 
 const REPO = 'acme-org/acme'
-const RULES = `repos/${REPO}/rules/branches/main`
+const RULES = `repos/${REPO}/rules/branches/main?per_page=100`
 const PROTECTION = `repos/${REPO}/branches/main/protection/required_status_checks`
 const ruleset = (...contexts: string[]) => [
     { type: 'deletion' },
@@ -193,9 +193,53 @@ describe('requiredCheckReport: is `sssb / all-checks` required on the default br
         const { gh, asked } = stubGh({})
         requiredCheckReport(REPO, 'release/1', gh)
         expect(asked).toEqual([
-            `repos/${REPO}/rules/branches/release%2F1`,
+            `repos/${REPO}/rules/branches/release%2F1?per_page=100`,
             `repos/${REPO}/branches/release%2F1/protection/required_status_checks`,
+            `repos/${REPO}/branches/release%2F1`,
         ])
+    })
+
+    it('says "it is not" for a branch that is protected without required status checks', () => {
+        const { gh } = stubGh({
+            [RULES]: yes([]),
+            [PROTECTION]: no('not-found', 'Required status checks not enabled', 404),
+        })
+        const report = requiredCheckReport(REPO, 'main', gh)
+        expect(report.title).toMatch(/: it is not \(reported, not failed:/)
+        expect(report.lines).toEqual(['nothing is a required check on main'])
+    })
+
+    it('falls back to the branch itself, which any reader may read, when branch protection is admin-only', () => {
+        const forbidden = no('forbidden', 'GitHub refused (HTTP 403)', 403)
+        const branch = `repos/${REPO}/branches/main`
+        const requires = stubGh({
+            [RULES]: yes([]),
+            [PROTECTION]: forbidden,
+            [branch]: yes({ protected: true, protection: { required_status_checks: { contexts: [REQUIRED_CHECK] } } }),
+        })
+        expect(requiredCheckReport(REPO, 'main', requires.gh)).toMatchObject({
+            status: 'ok',
+            title: expect.stringContaining('(branch protection requires it)'),
+        })
+        const other = stubGh({
+            [RULES]: yes([]),
+            [PROTECTION]: forbidden,
+            [branch]: yes({ protected: true, protection: { required_status_checks: { contexts: ['other'] } } }),
+        })
+        expect(requiredCheckReport(REPO, 'main', other.gh)).toMatchObject({
+            status: 'report',
+            lines: ['required today: other'],
+        })
+        const unprotected = stubGh({ [RULES]: yes([]), [PROTECTION]: forbidden, [branch]: yes({ protected: false }) })
+        expect(requiredCheckReport(REPO, 'main', unprotected.gh).title).toMatch(/: it is not \(reported/)
+    })
+
+    it('survives a body shaped unlike GitHub documents', () => {
+        const { gh } = stubGh({
+            [RULES]: yes([{ type: 'required_status_checks', parameters: { required_status_checks: 'nope' } }]),
+            [PROTECTION]: yes({ contexts: 'nope', checks: { not: 'a list' } }),
+        })
+        expect(requiredCheckReport(REPO, 'main', gh).lines).toEqual(['nothing is a required check on main'])
     })
 })
 
@@ -247,8 +291,43 @@ describe('reusableWorkflowReport: can a private organization repository call SSS
             /: it cannot \(reported, not failed: allow public reusable workflows in the organization/,
         )
         expect(report.lines?.[0]).toBe(
-            "the organization's Actions policy: only actions and reusable workflows in its own organization",
+            `the organization's Actions policy: only the organization's own actions and reusable workflows, and ${CALL} is not`,
         )
+    })
+
+    it("lets the organization's own workflows through whatever the policy says, and holds a foreign one to it", () => {
+        const own = 'acme-org/shared/.github/workflows/checks.yml@main'
+        for (const allowed_actions of ['local_only', 'selected']) {
+            const { gh } = stubGh({
+                [ORG]: yes({ enabled_repositories: 'all', allowed_actions }),
+                [REPOSITORY]: yes({ enabled: true, allowed_actions }),
+            })
+            const report = reusableWorkflowReport(REPO, [own], gh)
+            expect(report.status).toBe('ok')
+            expect(report.lines?.[0]).toBe(
+                `the organization's Actions policy: ${allowed_actions}, and ${own} is the organization's own`,
+            )
+        }
+        const { gh } = stubGh({
+            [ORG]: yes({ enabled_repositories: 'all', allowed_actions: 'local_only' }),
+            [REPOSITORY]: yes(allAllowed),
+        })
+        const mixed = reusableWorkflowReport(REPO, [own, CALL], gh)
+        expect(mixed.status).toBe('report')
+        expect(mixed.lines?.[0]).toBe(
+            `the organization's Actions policy: only the organization's own actions and reusable workflows, and ${CALL} is not`,
+        )
+    })
+
+    it('reports that it cannot when Actions are enabled for no repository of the organization', () => {
+        const { gh } = stubGh({
+            [ORG]: yes({ enabled_repositories: 'none', allowed_actions: 'all' }),
+            [REPOSITORY]: no('forbidden', 'GitHub refused (HTTP 403)', 403),
+        })
+        const report = reusableWorkflowReport(REPO, [CALL], gh)
+        expect(report.status).toBe('report')
+        expect(report.title).toMatch(/: it cannot/)
+        expect(report.lines?.[0]).toBe("the organization's Actions policy: Actions are enabled for no repository")
     })
 
     it('reports that it cannot when Actions are not enabled for the repository', () => {
@@ -339,7 +418,7 @@ describe('githubReports', () => {
     const input = (gh: never) => ({ gh, workflows, kitRepository: 'safeinsights/sssb' })
     const tables = (repo: unknown) => ({
         [`repos/${REPO}`]: yes(repo),
-        [`repos/${REPO}/rules/branches/trunk`]: yes(ruleset(REQUIRED_CHECK)),
+        [`repos/${REPO}/rules/branches/trunk?per_page=100`]: yes(ruleset(REQUIRED_CHECK)),
         [`repos/${REPO}/branches/trunk/protection/required_status_checks`]: NOT_PROTECTED,
         [`repos/${REPO}/private-vulnerability-reporting`]: yes({ enabled: true }),
         [`orgs/acme-org/actions/permissions`]: yes({ enabled: true, allowed_actions: 'all' }),
@@ -388,7 +467,7 @@ describe('githubReports', () => {
         expect([...asked].sort()).toEqual(
             [
                 `repos/${REPO}`,
-                `repos/${REPO}/rules/branches/trunk`,
+                `repos/${REPO}/rules/branches/trunk?per_page=100`,
                 `repos/${REPO}/branches/trunk/protection/required_status_checks`,
                 `repos/${REPO}/private-vulnerability-reporting`,
             ].sort(),
@@ -431,6 +510,15 @@ describe('pluginReport: is the plugin the workspace enables installed', () => {
             root,
         })
         expect(project?.status).toBe('ok')
+    })
+
+    it('reads an older record that keeps one entry, not a list, as a user-level install', () => {
+        const report = pluginReport({
+            settings: settings({ 'sssb@sssb': true }),
+            installed: installed({ 'sssb@sssb': { version: '0.1.0' } }),
+            root,
+        })
+        expect(report).toMatchObject({ status: 'ok', lines: ['sssb@sssb: installed (0.1.0), scope user'] })
     })
 
     it('reports, never fails, a plugin installed only for another folder', () => {
@@ -594,7 +682,7 @@ describe('settingsReports: everything, read from a workspace and a machine', () 
     ]
     const answers = {
         'repos/acme-org/acme': { body: { default_branch: 'main', private: true, owner: { type: 'Organization' } } },
-        'repos/acme-org/acme/rules/branches/main': { body: ruleset(REQUIRED_CHECK) },
+        'repos/acme-org/acme/rules/branches/main?per_page=100': { body: ruleset(REQUIRED_CHECK) },
         'repos/acme-org/acme/private-vulnerability-reporting': { body: { enabled: false } },
         'orgs/acme-org/actions/permissions': { body: { enabled: true, allowed_actions: 'all' } },
         'repos/acme-org/acme/actions/permissions': { body: { enabled: true, allowed_actions: 'all' } },
@@ -626,7 +714,7 @@ describe('settingsReports: everything, read from a workspace and a machine', () 
         ])
         const calls = readFileSync(log, 'utf8').trim().split('\n')
         expect(calls.length).toBeGreaterThan(5)
-        for (const call of calls) expect(call).toMatch(/^api --method GET [\w/%.-]+$/)
+        for (const call of calls) expect(call).toMatch(/^api --method GET [\w/%.?=-]+$/)
     })
 
     it('reports not-required, and a plugin this machine does not have, without failing anything', () => {
@@ -634,7 +722,7 @@ describe('settingsReports: everything, read from a workspace and a machine', () 
         const { bin } = fakeGh(dir, {
             ...answers,
             'repos/acme-org/acme': { body: { default_branch: 'main', private: false, owner: { type: 'User' } } },
-            'repos/acme-org/acme/rules/branches/main': { body: [] },
+            'repos/acme-org/acme/rules/branches/main?per_page=100': { body: [] },
             'repos/acme-org/acme/branches/main/protection/required_status_checks': {
                 body: { message: 'Branch not protected' },
                 fail: 'gh: Branch not protected (HTTP 404)\n',
@@ -696,6 +784,26 @@ describe('settingsReports: everything, read from a workspace and a machine', () 
         expect(reports[0]).toMatchObject({ status: 'report' })
         expect(reports[0]?.title).toMatch(/^github settings and plugin install: not checked: CI is set/)
         expect(readFileSync(log, 'utf8')).toBe('')
+    })
+
+    it('never throws: a record it cannot read is one line, and the GitHub lines are still there', () => {
+        const { dir, root } = workspace('sssb-settings-unreadable-', 'https://github.com/acme-org/acme.git')
+        const { bin } = fakeGh(dir, answers)
+        const config = path.join(dir, 'claude')
+        // A directory where the record should be: reading it throws EISDIR.
+        mkdirSync(path.join(config, 'plugins', 'installed_plugins.json'), { recursive: true })
+        const reports = settingsReports({
+            root,
+            env: { PATH: `${bin}:${PATH}`, CLAUDE_CONFIG_DIR: config },
+            workflows,
+            kitRepository: 'safeinsights/sssb',
+        })
+        expect(reports).toHaveLength(4)
+        expect(reports[0]?.status).toBe('ok')
+        expect(reports[3]).toMatchObject({
+            status: 'report',
+            title: expect.stringMatching(/^claude plugin: not checked: EISDIR/),
+        })
     })
 
     it('has no plugin line for a workspace that enables none', () => {

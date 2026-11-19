@@ -5711,3 +5711,17 @@ without asking, as JP's standing rule for these sessions says.
   rather than silence: a workspace that enables a plugin should hear that this clone lacks it, and the line names the
   one command. Rejected: skipping the line when `claude` is not on PATH (a laptop whose Claude Code lives elsewhere
   would never hear).
+- **From the first review round.** Doctor never throws: each group of reports (GitHub, plugin) runs under a guard that
+  turns an unreadable file or an answer shaped unlike GitHub's documents into one "not checked" line, so a root-owned
+  install record cannot stop a run. The rules are read 100 to a page, because the `required_status_checks` rule can be
+  on page two of the default thirty. A 404 "Required status checks not enabled" counts as "branch protection requires
+  nothing", like "Branch not protected". When branch protection's own endpoint is admin-only, the branch
+  (`repos/<r>/branches/<branch>`, readable by anyone who can read the repository) is the fallback for
+  `protected` and `protection.required_status_checks`: its shape is from GitHub's documentation, not seen here, and a
+  shape that differs leaves "not confirmed". The organization's own reusable workflows are never held to the Actions
+  policy (`local_only` and `selected` both allow them), only a call into another owner is; an enterprise-level
+  `local_only` is not told apart from the organization's. The organization's `enabled_repositories: none` is "Actions
+  off". An older install record with one entry per plugin, not a list, reads as a user-level install.
+  **Rejected: deriving the required check's name from the workflow's calling job** (`checks / all-checks` for a job
+  named `checks`): the generator writes the job `sssb`, the guide and README name `sssb / all-checks`, and an adopter who
+  renamed it chose a name SSSB cannot vouch for; the report says what it looked for.
