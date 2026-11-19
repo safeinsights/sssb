@@ -31,7 +31,7 @@ these names (`0.0.0`), so `pnpm create @sssb` cannot fetch the generator, and it
 generator's own version) has no release to resolve. SSSB's releases so far are **release candidates**: GitHub
 prereleases of `safeinsights/sssb`, each with five tarballs (the four packages and the generator) and notes that say
 how to install them. Generate from one by running its generator against its tarballs, here v0.2.0-rc.2 (take the newest
-on the repository's releases page):
+on the repository's releases page; `gh` must be signed in, or download the five files from that page by hand):
 
 ```sh
 mkdir sssb-v0.2.0-rc.2 && cd sssb-v0.2.0-rc.2
@@ -42,10 +42,12 @@ node package/bin/create.js ~/acme --sssb . --name "Acme Research" \
 ```
 
 The workspace then depends on each package by an absolute `file:` path into that directory, which resolves on your
-machine and nowhere else, so CI's install would fail. **Before the first `pnpm install`, point each at its URL**, the
-ones in the notes' install lines (`https://github.com/safeinsights/sssb/releases/download/v<version>/<tarball>`): the
-root `package.json` (`@sssb/tools`), `apps/<app>/package.json` (`@sssb/kit`, `@sssb/tools` and `@sssb/eslint-plugin`)
-and `apps/<app>/infra/package.json` (`@sssb/cdk` and `@sssb/tools`). Then install and commit `pnpm-lock.yaml`. A
+machine and nowhere else, so CI's install would fail. The next steps the generator prints go straight to
+`pnpm install`, so do this first: **before the first `pnpm install`, point each at its URL**, as the JSON in the
+notes' "Installing this release candidate" section gives it
+(`https://github.com/safeinsights/sssb/releases/download/v<version>/<tarball>`): the root `package.json`
+(`@sssb/tools`), `apps/<app>/package.json` (`@sssb/kit`, `@sssb/tools` and `@sssb/eslint-plugin`) and
+`apps/<app>/infra/package.json` (`@sssb/cdk` and `@sssb/tools`). Then install and commit `pnpm-lock.yaml`. A
 release asset can be replaced under the same URL, so the lockfile's `integrity` is what pins the bytes: check it
 against the sha512 each candidate's notes list, and again whenever the lockfile is regenerated (the reusable workflow
 installs with `--frozen-lockfile`). The notes also say how to verify each tarball's attestation.
@@ -340,7 +342,8 @@ These are the parts that take judgement:
   then on, so keep the import line. Edit nothing in the guide's
   copy (a rerun overwrites it). Its header stamps the hash of the guide it was copied from, and `sssb doctor` fails
   when that is not the installed kit's guide, so after an upgrade `pnpm exec sssb guide` refreshes it and the change
-  reaches your diff. The app-author commands arrive as SSSB's Claude Code plugin, which `.claude/settings.json`
+  reaches your diff (on a release up to v0.2.0-rc.2, add `--app apps/<app>` at the root: "Upgrading by release",
+  step 3). The app-author commands arrive as SSSB's Claude Code plugin, which `.claude/settings.json`
   enables from SSSB's marketplace pinned to the workflow's commit: `/sssb:new-slice`, `/sssb:new-entity` and the
   rest. A commit `ref` needs Claude Code 2.1.324 or later, and enabling it does not install it: each person runs
   `claude plugin install sssb@sssb --scope project` once per clone, after trusting the folder.
@@ -513,9 +516,9 @@ apps/<app>/config/            APP_SLUG and (optionally) deployment params
 apps/<app>/src/app/           Next route files (thin wrappers; framework routes live here too)
 apps/<app>/src/app-config/    THE SEAM — your registrations
 apps/<app>/src/components/    your screens/cards
-apps/<app>/src/domain/        your domain modules
-apps/<app>/src/ports/         your own ports, for a vendor SSSB has no port for (docs/recipes/app-owned-adapter.md)
-apps/<app>/src/adapters/      their registry and fakes; adapters/real/ is the app's only vendor-SDK directory
+apps/<app>/src/domain/        your domain modules (not generated: create it when you need it)
+apps/<app>/src/ports/         your own ports, for a vendor SSSB has no port for (docs/recipes/app-owned-adapter.md; not generated)
+apps/<app>/src/adapters/      their registry and fakes; adapters/real/ is the app's only vendor-SDK directory (not generated)
 apps/<app>/src/demo-static/   your half of the file:// demo twin (the framework half is SSSB's)
 apps/<app>/src/seed/          your seed world (fills in @sssb/kit/seed/contracts)
 apps/<app>/messages/          your i18n namespaces (the framework ships its own catalog)
@@ -554,7 +557,8 @@ explicitly. The app's `typecheck` covers `apps/<app>/infra/` (`tsc -p infra`), a
 ### When a lint fence must let one of your modules through
 
 Some fences take named exceptions. Today one does: `sssb/no-raw-db-handle`, which bans `getDb()` in every
-module of your app (tenant-scoped data goes through `db.withTenant()`, ADR-0004). If a module of yours truly
+module under your app's `src` (tests are exempt, except a route's or a screen's; tenant-scoped data goes through
+`db.withTenant()`, ADR-0004). If a module of yours truly
 needs the raw client, say a maintenance job that runs as the system across every tenant, list it in your app's
 own `apps/<app>/lint-exceptions.mjs`. The fences themselves are `@sssb/eslint-plugin`, an installed package you never
 edit, and switching one off in your `eslint.config.mjs` instead is exactly what `sssb check-fences` reports (below).
@@ -746,10 +750,16 @@ An upgrade is one change in your repository, made on a branch like any other:
    declares it: the root `package.json` (`@sssb/tools`), `apps/<app>/package.json` (`@sssb/kit`, `@sssb/tools`,
    `@sssb/eslint-plugin`) and `apps/<app>/infra/package.json` (`@sssb/cdk`, `@sssb/tools`), plus any package of your
    own that took one. Installed from a release candidate, change each URL to the new release's (the version is in
-   it twice, in the tag and in the file name); from npm, once SSSB is published there, change each version. Then
-   `pnpm install`, check the lockfile's `integrity` for each tarball against the new notes' sha512, and commit the
-   lockfile. `@sssb/create` is no dependency, so there is nothing to move for it. `sssb doctor` fails a workspace
-   whose `@sssb/*` packages are not all at the framework's version.
+   it twice, in the tag and in the file name); from npm, once SSSB is published there, change each version. **First
+   make any "Scaffold changes to apply by hand" entry that touches how the packages install**, or the install keeps
+   the old release: a workspace generated before v0.2.0-rc.2 has an `overrides` block for the `@sssb/*` packages in
+   `pnpm-workspace.yaml` (and maybe `blockExoticSubdeps: false`), which pins them whatever the `package.json` files
+   say, and rc.2's notes remove both. Then `pnpm install`, check that the lockfile resolves each package to the new
+   release and that its `integrity` matches the new notes' sha512, and commit the lockfile. `@sssb/create` is no
+   dependency, so there is nothing to move for it. `sssb doctor` names the `@sssb/kit` version it found in its
+   opening lines, and fails when the `@sssb/*` packages the app resolves (`@sssb/kit`, `@sssb/tools`,
+   `@sssb/eslint-plugin`) are not all at one version; `@sssb/cdk` and the infra's `@sssb/tools` are checked when
+   `SssbApp` synthesizes, which refuses a version other than its own.
 3. **Refresh the app guide's copy**: `pnpm exec sssb guide` from the workspace root, then read the diff of
    `.claude/sssb-guide.md`. Those are the rules every agent in your repository follows, and they change only through
    a diff of your own; `sssb doctor` fails until the copy is the installed kit's. (On a release up to v0.2.0-rc.2 the
@@ -760,9 +770,9 @@ An upgrade is one change in your repository, made on a branch like any other:
    release candidate's notes name the commit ("cut from"), the installed kit records it as `commit` in its
    `dist/release.json`, and `sssb doctor` names it beside any pin that differs. Your CI and your Claude Code plugin
    are read at that commit, so a pin left behind runs the old release's checks and commands against the new
-   packages. Claude Code loads the plugin at the new commit when it next refreshes the marketplace; to do it at
-   once, each person runs `claude plugin marketplace update sssb` and
-   `claude plugin update sssb@sssb --scope project`, then restarts it.
+   packages. Each person's installed copy of the plugin stays where it was installed until it is updated: run
+   `claude plugin marketplace update sssb`, then `claude plugin update sssb@sssb --scope project`, and restart
+   Claude Code.
 5. **Apply each entry's "To adopt"**, section by section:
     - **Seam changes**: what your app must say or satisfy to build (next section). `pnpm typecheck` and `pnpm lint`
       point at most of them, the conformance suite and `sssb doctor` at the rest.
@@ -776,8 +786,10 @@ An upgrade is one change in your repository, made on a branch like any other:
 
     Then delete what each entry's "Now deletable" describes, wherever your tree has it.
 
-6. **Check, then push**: `pnpm exec sssb doctor` (versions in step, one copy of each peer, the guide's copy, the
-   pins, the cutover rows), then `pnpm verify`. CI then runs SSSB's checks at the new pin.
+6. **Check, then push**: `pnpm exec sssb doctor`, which fails on versions out of step, a second copy of a peer and
+   a stale guide copy, and only REPORTS a pin that is not the release commit or a framework cutover row your
+   checklist does not mention: read its `report` lines, not just its last one. Then `pnpm verify`. CI then runs
+   SSSB's checks at the new pin.
 
 Until SSSB's first npm release, every release is a candidate, installed by URL as in step 2. A release that turns your
 app red with no entry saying why is a bug in its notes: report it in SSSB's repository.

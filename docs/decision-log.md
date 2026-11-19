@@ -5165,3 +5165,11 @@ parts; its body is unchanged. ADR-0014 gains a matching addendum.
   citations no longer argued from merged-in docs), `docs/development-approach.md`, and the two recipes that pointed at
   ADR-0013 (`app-owned-adapter.md`, `workspace-coder.md`). `CLAUDE.md`'s "Follow the Accepted ones (0001–0014)" now
   names 0013 as Superseded.
+- **Walked as an adopter, twice.** A workspace generated from v0.2.0-rc.2's tarballs and one generated at rc.1 and
+  upgraded to rc.2 by the new section's steps (`sssb doctor` ok, `pnpm typecheck` and `pnpm lint` green after). The
+  upgrade found the one trap the steps had in the wrong order: a workspace generated before rc.2 carries an
+  `overrides` block mapping the `@sssb/*` packages to the old tarballs, so changing the `package.json` URLs and
+  installing kept rc.1, with doctor still ok at rc.1. rc.2's notes remove the block, but as a scaffold change, which
+  step 5 applied after step 2's install. Step 2 now says to make an install-affecting scaffold change first, and to
+  check what the lockfile resolves. **Rejected:** having `sssb doctor` fail an `overrides` block for `@sssb/*`, a
+  `@sssb/tools` change worth considering separately, since an override is the adopter's own setting.
