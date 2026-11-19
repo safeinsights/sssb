@@ -5187,6 +5187,7 @@ only the scope is local). It runs for every packed version: a caret range on a p
   the script's other pure checks live, and the test imports them; the marker-delimited block loaded as a data-URL
   module (the entry above) is gone. The rehearsal job also re-installs, frozen, on its local release commit before
   packing, as `pack` installs on the tag.
+
 ## Release snapshots: stateful logical ids and the required environment, each a `minor` to change (2026-11-18, `release/p14-first-npm-release`)
 
 ADR-0014 part 10 says CI snapshots the logical ids of stateful resources and the `REQUIRED_ENV` list, and a change to
