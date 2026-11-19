@@ -66,7 +66,8 @@ describe("release.yml's github-release job", () => {
     })
 
     it('fails, and changes nothing, when a published release holds another demo or another file', () => {
-        for (const files of [{ [DEMO]: 'other' }, { [DEMO]: BODY, 'extra.tgz': 'x' }]) {
+        const cases: Record<string, string>[] = [{ [DEMO]: 'other' }, { [DEMO]: BODY, 'extra.tgz': 'x' }]
+        for (const files of cases) {
             const { temp } = runner()
             const { status, stdout, state } = run(temp, { ...fresh(), release: existing(temp, files, false) })
             expect(status).toBe(1)
