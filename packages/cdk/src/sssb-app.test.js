@@ -189,21 +189,39 @@ function securityHeadersProblems(all, { ownPolicyId, includeSubdomains = false }
 }
 
 /**
- * The principals an IAM role's trust policy lets assume it, sorted: from each `Allow` statement whose `Action` is or
- * lists `sts:AssumeRole`, every `Principal.Service` (a string or a list) as the service's name, and any other kind of
- * principal as `<kind>:<value>`, so a test that expects services alone fails on it.
+ * Who an IAM role's trust policy lets assume it, sorted, failing closed. An `Allow` statement that grants
+ * `sts:AssumeRole` (IAM action names ignore case), with at most `sts:TagSession` and `sts:SetSourceIdentity` beside it,
+ * to an object of principals, gives each `Principal.Service` (a string or a list) as the service's name and any other
+ * kind of principal as `<kind>:<value>`. Any other `Allow` statement (another action such as
+ * `sts:AssumeRoleWithWebIdentity`, a wildcard, `NotAction`, `NotPrincipal`, `Principal: '*'`) is given whole, as
+ * `statement:<json>`, so a test that expects services alone fails on it. `Deny` statements only narrow, and are left out.
  * @param {any} role a role's `Properties`
  * @returns {string[]}
  */
 function rolePrincipals(role) {
     /** @param {unknown} value @returns {unknown[]} */
     const asList = (value) => (value === undefined ? [] : Array.isArray(value) ? value : [value])
+    const sessionActions = ['sts:assumerole', 'sts:tagsession', 'sts:setsourceidentity']
     /** @type {string[]} */
     const principals = []
     for (const statement of asList(role?.AssumeRolePolicyDocument?.Statement)) {
         const s = /** @type {any} */ (statement)
-        if (s?.Effect !== 'Allow' || !asList(s.Action).some((action) => action === 'sts:AssumeRole')) continue
-        for (const [kind, value] of Object.entries(s.Principal ?? {})) {
+        if (s?.Effect === 'Deny') continue
+        const actions = asList(s?.Action).map((action) => String(action).toLowerCase())
+        const plainGrant =
+            s?.Effect === 'Allow' &&
+            s.NotAction === undefined &&
+            s.NotPrincipal === undefined &&
+            s.Principal !== null &&
+            typeof s.Principal === 'object' &&
+            !Array.isArray(s.Principal) &&
+            actions.some((action) => action === 'sts:assumerole') &&
+            actions.every((action) => sessionActions.some((allowed) => allowed === action))
+        if (!plainGrant) {
+            principals.push(`statement:${JSON.stringify(s)}`)
+            continue
+        }
+        for (const [kind, value] of Object.entries(s.Principal)) {
             for (const v of asList(value))
                 principals.push(kind === 'Service' ? String(v) : `${kind}:${JSON.stringify(v)}`)
         }
@@ -863,6 +881,45 @@ describe("the server's Function URL behind CloudFront", () => {
             expect(lambdaFunction(all, 'Server').env['HOSTNAME']).toBe('0.0.0.0')
         },
     )
+
+    it('refuses a body-hash role that anyone but Lambda and Lambda@Edge may assume, by any action', () => {
+        /** @param {(role: cdk.aws_iam.Role) => void} widen */
+        const problemsWith = (widen) => {
+            const { all, assembly } = synthesize({
+                appDir,
+                slug,
+                transport: 'data-api',
+                bundle: false,
+                configure: (app) => {
+                    const role = app.node
+                        .findAll()
+                        .find((c) => c instanceof cdk.aws_iam.Role && c.node.path.endsWith('/BodyHash/ServiceRole'))
+                    expect(role).toBeDefined()
+                    widen(/** @type {cdk.aws_iam.Role} */ (role))
+                },
+            })
+            return functionUrlOriginProblems(all, assembly)
+        }
+        /** @param {cdk.aws_iam.PolicyStatementProps} statement */
+        const adding = (statement) => (/** @type {cdk.aws_iam.Role} */ role) =>
+            role.assumeRolePolicy?.addStatements(new cdk.aws_iam.PolicyStatement(statement))
+        const wider = [
+            adding({ actions: ['sts:AssumeRole'], principals: [new cdk.aws_iam.AccountRootPrincipal()] }),
+            // Web-identity (OIDC) trust, as CDK writes it, with another action than sts:AssumeRole.
+            adding({
+                actions: ['sts:AssumeRoleWithWebIdentity'],
+                principals: [new cdk.aws_iam.FederatedPrincipal('arn:aws:iam::123456789012:oidc-provider/example')],
+            }),
+            adding({ actions: ['sts:*'], principals: [new cdk.aws_iam.AnyPrincipal()] }),
+        ]
+        for (const widen of wider) {
+            const problems = problemsWith(widen)
+            expect(problems).toHaveLength(1)
+            expect(
+                problems[0]?.startsWith("Lambda and Lambda@Edge, and nobody else, may assume the function's role"),
+            ).toBe(true)
+        }
+    })
 
     it('refuses a permission that lets anyone else invoke the server', () => {
         const { all, assembly } = synthesize({
