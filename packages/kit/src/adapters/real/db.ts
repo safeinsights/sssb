@@ -1,9 +1,8 @@
-import { Kysely, PostgresDialect, type Transaction } from 'kysely'
+import { Kysely, PostgresDialect } from 'kysely'
 import { Pool, types, type CustomTypesConfig } from 'pg'
-import { migrateToLatest } from '../../db/migrate'
 import type { DB } from '../../db/schema'
-import { runWithTenant } from '../../db/with-tenant'
 import type { DbPort } from '../../ports/db'
+import { dbPortFor } from './db-port'
 
 /**
  * A Postgres `date` is a calendar day — no time, no zone — and it reaches application code as the wire
@@ -67,22 +66,4 @@ export function createRealDb(databaseUrl: string): DbPort {
  */
 function logConnectionError(error: Error & { code?: string }): void {
     console.warn(`SSSB db: a pooled database connection ended (${error.code ?? 'no code'}: ${error.message})`)
-}
-
-/** One port shape for both transports: they differ in how SQL reaches Postgres, never in what it says. */
-export function dbPortFor(db: Kysely<DB>): DbPort {
-    return {
-        getDb() {
-            return db
-        },
-        async ready() {
-            // Real databases are provisioned/migrated by the deploy pipeline, not lazily.
-        },
-        async withTenant<T>(tenantId: string, fn: (trx: Transaction<DB>) => Promise<T>): Promise<T> {
-            return runWithTenant(db, tenantId, fn)
-        },
-        async migrateToLatest() {
-            await migrateToLatest(db)
-        },
-    }
 }

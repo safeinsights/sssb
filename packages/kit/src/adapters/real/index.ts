@@ -8,10 +8,8 @@ import type { LlmPort } from '../../ports/llm'
 import type { StoragePort } from '../../ports/storage'
 import { fakeAnalytics } from '../fake/analytics'
 import { absentEmail, absentJobs, absentLlm } from './absent'
-import { createRealAnalytics } from './analytics'
 import { realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
-import { createRealDb } from './db'
 import { optionalPortsEnv, portChoice } from './optional-ports'
 import { createRealStorage } from './storage'
 
@@ -63,7 +61,13 @@ export function assertRealEnv(): void {
  * selects the in-process runner without handing one in.
  */
 interface RealPortsHooks {
-    inProcessJobs?: (ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort }) => Promise<JobsPort>
+    inProcessJobs?: (ports: {
+        db: DbPort
+        storage: StoragePort
+        email: EmailPort
+        llm: LlmPort
+        auth: AuthPort
+    }) => Promise<JobsPort>
 }
 
 export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealPorts> {
@@ -75,8 +79,10 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
         if (value === undefined) throw new Error(`missing env: ${name}`)
         return value
     }
-    // The Data API transport and every optional adapter below are dynamic imports: a `pg` deployment never loads the
-    // RDS Data SDK, and a port switched off (`none`) never loads its vendor's.
+    // Each database transport, PostHog and every optional adapter below is a dynamic import, so a deployment loads
+    // the SDK of what it chose and nothing else: a `pg` deployment never loads the RDS Data SDK and a Data API one never
+    // loads `pg`, PostHog loads only with a key, and a port switched off (`none`) never loads its vendor's. Auth (Clerk)
+    // and storage (S3) serve every deployment, so they are imported as this module is.
     const db =
         databaseTransport() === 'data-api'
             ? (await import('./db-data-api')).createRealDataApiDb({
@@ -85,7 +91,7 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
                   database: need('DATABASE_NAME'),
                   region: need('AWS_REGION'),
               })
-            : createRealDb(need('DATABASE_URL'))
+            : (await import('./db')).createRealDb(need('DATABASE_URL'))
     const storage = createRealStorage(need('STORAGE_BUCKET'), need('AWS_REGION'))
     const llm =
         portChoice('llm') === 'anthropic' ? (await import('./llm')).createRealLlm(need('ANTHROPIC_API_KEY')) : absentLlm
@@ -102,8 +108,12 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
         runner === 'codebuild'
             ? (await import('./jobs')).createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION'))
             : runner === 'in-process'
-              ? await inProcessJobs(hooks, { db, storage, email, llm })
+              ? await inProcessJobs(hooks, { db, storage, email, llm, auth: realAuth })
               : absentJobs
+    // PostHog only where a key is configured (staging/prod per ADR-0010); the simulated one otherwise.
+    const analytics = env['POSTHOG_KEY']
+        ? (await import('./analytics')).createRealAnalytics(env['POSTHOG_KEY'], env['POSTHOG_HOST'] ?? '')
+        : fakeAnalytics
     return {
         auth: realAuth,
         db,
@@ -111,16 +121,13 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
         llm,
         email,
         jobs,
-        // PostHog only where a key is configured (staging/prod per ADR-0010); no-op otherwise.
-        analytics: env['POSTHOG_KEY']
-            ? createRealAnalytics(env['POSTHOG_KEY'], env['POSTHOG_HOST'] ?? '')
-            : fakeAnalytics,
+        analytics,
     }
 }
 
 function inProcessJobs(
     hooks: RealPortsHooks,
-    ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort },
+    ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort; auth: AuthPort },
 ): Promise<JobsPort> {
     if (!hooks.inProcessJobs) {
         throw new Error(
