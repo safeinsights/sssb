@@ -72,6 +72,10 @@ const COMMANDS = {
         load: () => import('../src/commands/check-e2e.js'),
         summary: 'fail when a Playwright spec reaches @sssb/kit other than through @sssb/kit/testing/e2e',
     },
+    'remove-items': {
+        load: () => import('../src/commands/remove-items.js'),
+        summary: "take the starter's example Items slice out of the app (--drop-migrations for one never deployed)",
+    },
     'add-app': {
         load: () => import('../src/commands/add-app.js'),
         summary:

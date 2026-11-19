@@ -1283,3 +1283,12 @@ it on the release commit, which the README links as `releases/latest/download/ss
 `tests/tooling/release-reach.test.ts` now holds that nothing but `pack` is upstream of `publish` and nothing is
 downstream of it. `docs/decision-log.md` (2026-11-18, "A hosted showcase demo on each release") has the choices and what
 was rejected.
+
+## Addendum — 2026-11-19: `@sssb/tools` ships two diffs, and `sssb remove-items` applies them
+
+Part 2 says every package but the kit ships JavaScript, so that no package needs a build step. `@sssb/tools` now also
+ships `src/remove-items/code.patch` and `database.patch`, the two diffs of the starter that `sssb remove-items` applies to
+an adopter's app (adoption follow-up 2). They are data a command reads at run time, not code, so the reason for the rule
+is untouched; `toolsShippedFileProblems` (`scripts/pack-and-consume/checks.mjs`) names exactly these two files, and any
+other non-JavaScript file in the packed package still fails the run. `docs/decision-log.md` (2026-11-19, "One command
+removes the starter's Items slice") has the choices and what was rejected.
