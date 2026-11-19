@@ -5563,3 +5563,32 @@ that section too.
   `repository` field, which would make a dependency-free module read manifests for one string.
 - **Ranges.** The package step shows `^<version>`, as `@sssb/create` writes them, not an exact version: `sssb doctor`
   checks that the packages resolve to one version, which a range over one release line does.
+
+## A production stack keeps its database secret (2026-11-18, `fix/cdk-retain-db-secret`)
+
+Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluster's `DbSecret…` synthesizing with
+`DeletionPolicy: Delete` in production). JP decided it is fixed before 0.2.0 ships.
+
+- **The secret takes the cluster's removal policy: `Retain` for both policies in production, `Delete` otherwise.**
+  Deleting or replacing a production stack kept the cluster and dropped the only credentials to it. A synth comparison
+  of the pg and data-api stacks, production and not, before and after, differs in exactly two lines: the production
+  secret's `DeletionPolicy` and `UpdateReplacePolicy`. The two non-production templates are byte-identical. The logical
+  id (`DbSecretCF6D79B0`) is unchanged, so the snapshot is too (the secret was already in it, by type), and the changeset
+  is a `patch`, not the snapshot's `minor`.
+- **The policy goes on the underlying `CfnSecret`, found in the cluster's subtree.** `DatabaseCluster.secret` is the
+  `SecretTargetAttachment` CDK returns from `secret.attach`, not the `Secret`: the first attempt, `applyRemovalPolicy`
+  on `db.secret`, retained the attachment and left the secret on `Delete`, and the new test caught it. The construct
+  throws if the cluster does not own exactly one `CfnSecret`, so a CDK change that moves it fails the synth rather than
+  quietly dropping the policy.
+- **Nothing else needs it.** There is no KMS key (the cluster uses the account's AWS-managed key, the secret the
+  AWS-managed `aws/secretsmanager` key, the buckets S3-managed keys or none) and no rotation schedule; a test pins both
+  as absent, so one added later is a decision made then. The secret's attachment stays `Delete`: it only records which
+  cluster the secret is for. Not exercised against AWS (no live calls), so that deleting an attachment leaves the
+  secret's value as it was rests on the resource's documented behaviour, not a run.
+- **Rejected: leaving the secret `Delete`.** It keeps the database and discards its credentials, which is worse than
+  retaining nothing: the operator has a cluster they can only reach by resetting the master password. **Rejected:
+  retaining it in every stage.** A non-production stack is meant to disappear whole (`removalPolicy` DESTROY on the
+  cluster and the buckets), and a retained secret per torn-down staging stack is an orphan that costs money and names a
+  cluster that no longer exists.
+- **Rejected: a fixed secret name.** It would make a redeploy after a teardown collide with the retained secret. CDK's
+  generated name does not, so the retained one is simply left for the operator to delete (the changeset says so).
