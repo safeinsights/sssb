@@ -178,6 +178,7 @@ describe('the optional ports follow their switches, and a port switched off is a
         expect(given['storage']).toBe(ports.storage)
         expect(given['email']).toBe(ports.email)
         expect(given['llm']).toBe(ports.llm)
+        expect(given['auth']).toBe(ports.auth)
         await ports.db.getDb().destroy()
     })
 

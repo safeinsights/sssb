@@ -1,10 +1,14 @@
 import { digestBodies } from '@sssb/app-config/digest'
-import { people } from '@sssb/app-config/seed'
 import { getTranslations } from 'next-intl/server'
+// The run mode without the registry (as the request proxy asks it): the registry loads the job handlers, this one
+// included, so importing it here would close that loop.
+import { isSimulated } from '../adapters/run-mode'
+import type { Locale } from '../core/locale'
 import { orgForId } from '../db/org-lookup'
 import { sendTemplate } from '../email/send'
 import { DigestEmail } from '../email/templates/digest-email'
 import { routing } from '../i18n/routing'
+import type { AuthPort } from '../ports/auth'
 import type { DbPort } from '../ports/db'
 import type { JobHandler } from '../ports/jobs'
 
@@ -38,18 +42,22 @@ function snippet(body: string): string {
 }
 
 /**
- * Resolves who a team's digest is addressed to and in which locale, from the static seed people:
- * the team's admin if there is one, else its first member. A team with no seeded person (e.g. a
- * dynamically-created org) falls back to a synthetic per-org address in the app's default locale —
- * still visible under Simulator Mail's "all" scope, so the demo never shows an empty digest.
+ * Who a team's digest is addressed to, and in which locale: the team's first active admin, else its first active
+ * member, as the auth port lists them (the identity provider in a deployment, the simulated world's people in a
+ * demo). Never the seed: a deployment has none, and its people are the provider's.
+ *
+ * The locale is the person's own only in a simulated world, where the fake auth adapter knows it (loaded only
+ * there, as `makeNotifyDeps` does); the auth port carries none, so a deployment writes in the app's default.
+ *
+ * A team with no active member: in a simulated world, a synthetic per-org address, still visible under Simulator
+ * Mail's "all" scope, so the demo never shows an empty digest; in a deployment, nobody (null), and nothing is sent.
  */
-function digestRecipient(orgSlug: string): { to: string; locale: 'en' | 'es' } {
-    const members = people.filter((p) => p.memberships.some((m) => m.orgSlug === orgSlug))
-    const admin = members.find((p) => p.memberships.some((m) => m.orgSlug === orgSlug && m.role === 'admin'))
-    const chosen = admin ?? members[0]
-    return chosen
-        ? { to: chosen.email, locale: chosen.locale }
-        : { to: `${orgSlug}@digest.example`, locale: routing.defaultLocale }
+async function digestRecipient(auth: AuthPort, orgSlug: string): Promise<{ to: string; locale: Locale } | null> {
+    const members = (await auth.listMembers(orgSlug)).filter((m) => m.status === 'active' && m.email !== '')
+    const chosen = members.find((m) => m.role === 'admin') ?? members[0]
+    const resolveLocale = isSimulated ? (await import('../adapters/fake/auth')).personLocale : undefined
+    if (chosen) return { to: chosen.email, locale: resolveLocale?.(chosen.id) ?? routing.defaultLocale }
+    return isSimulated ? { to: `${orgSlug}@digest.example`, locale: routing.defaultLocale } : null
 }
 
 /**
@@ -59,16 +67,19 @@ function digestRecipient(orgSlug: string): { to: string; locale: 'en' | 'es' } {
  * carries no app table name; a team with nothing to report still gets a valid (empty-state) digest.
  *
  * A scheduled email has no request/user locale at fire time (unlike the invite, sent by an acting
- * user), so the recipient's own seed locale drives the copy — falling back to the app default. Sends
- * nothing to storage: the effect IS the email, so it returns no resultKey.
+ * user), so the recipient's locale drives the copy where it is known (`digestRecipient`), falling back to the app
+ * default. Sends nothing to storage: the effect IS the email, so it returns no resultKey.
  */
 export const digestEmailHandler: JobHandler = async (_payload, ctx) => {
-    const { db, email, tenantId, orgId } = ctx
+    const { db, email, auth, tenantId, orgId } = ctx
     if (orgId === null) return {} // schedules are org-scoped (org_id NOT NULL), so this is unreachable; guard anyway
 
     const org = await orgForId(db, orgId)
-    const orgName = org?.name ?? orgId
-    const { to, locale } = digestRecipient(org?.slug ?? '')
+    if (!org) return {} // the org is gone: nobody to address, and no team to digest
+    const orgName = org.name
+    const recipient = await digestRecipient(auth, org.slug)
+    if (!recipient) return {} // a deployment's team with no active member: nobody to send it to
+    const { to, locale } = recipient
 
     // The app supplies its own rows, newest first; counting and snipping stay here, so every app's
     // digest reads identically and the twin's numbers match the server's by construction.

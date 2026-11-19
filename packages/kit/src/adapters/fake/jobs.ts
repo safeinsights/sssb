@@ -48,9 +48,8 @@ async function notifyTerminal(job: SubmittedJob, status: 'completed' | 'failed')
  */
 async function executeJob(job: SubmittedJob): Promise<boolean> {
     await fakeDb.ready()
-    return runJobInProcess(job, { db: fakeDb, storage: fakeStorage, email: fakeEmail, llm: fakeLlm }, (status) =>
-        notifyTerminal(job, status),
-    )
+    const ports = { db: fakeDb, storage: fakeStorage, email: fakeEmail, llm: fakeLlm, auth: fakeAuth }
+    return runJobInProcess(job, ports, (status) => notifyTerminal(job, status))
 }
 
 export const fakeJobs: JobsPort = {
@@ -228,6 +227,7 @@ export async function produceJobArtifact(
             storage: fakeStorage,
             email: fakeEmail,
             llm: fakeLlm,
+            auth: fakeAuth,
             tenantId: row.tenant_id,
             orgId: row.org_id,
             jobId: row.id,

@@ -1,3 +1,4 @@
+import type { AuthPort } from './auth'
 import type { DbPort } from './db'
 import type { EmailPort } from './email'
 import type { LlmPort } from './llm'
@@ -27,6 +28,12 @@ interface JobContext {
      * handler contract carries the port rather than making a handler reach for the adapter registry.
      */
     llm: LlmPort
+    /**
+     * For handlers that address people: who an org's members are, from the identity provider in a deployment (the
+     * same `listMembers` the jobs' notifications use). A handler never reads people from the seed, which a real
+     * deployment does not have.
+     */
+    auth: AuthPort
     tenantId: string
     orgId: string | null
     jobId: string

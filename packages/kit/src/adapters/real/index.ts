@@ -63,7 +63,13 @@ export function assertRealEnv(): void {
  * selects the in-process runner without handing one in.
  */
 interface RealPortsHooks {
-    inProcessJobs?: (ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort }) => Promise<JobsPort>
+    inProcessJobs?: (ports: {
+        db: DbPort
+        storage: StoragePort
+        email: EmailPort
+        llm: LlmPort
+        auth: AuthPort
+    }) => Promise<JobsPort>
 }
 
 export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealPorts> {
@@ -102,7 +108,7 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
         runner === 'codebuild'
             ? (await import('./jobs')).createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION'))
             : runner === 'in-process'
-              ? await inProcessJobs(hooks, { db, storage, email, llm })
+              ? await inProcessJobs(hooks, { db, storage, email, llm, auth: realAuth })
               : absentJobs
     return {
         auth: realAuth,
@@ -120,7 +126,7 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
 
 function inProcessJobs(
     hooks: RealPortsHooks,
-    ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort },
+    ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort; auth: AuthPort },
 ): Promise<JobsPort> {
     if (!hooks.inProcessJobs) {
         throw new Error(
