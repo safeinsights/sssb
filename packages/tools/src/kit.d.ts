@@ -11,6 +11,12 @@ export declare function kitDirOf(appDir: string): string
 export declare function kitVersionOf(appDir: string): string
 
 /**
+ * The text of the release stamp, `dist/release.json`, in the `@sssb/kit` an app resolves: the commit the package was
+ * packed from. Null when it has none (SSSB's own source, a package packed before the stamp existed or by hand).
+ */
+export declare function kitReleaseStampOf(appDir: string): string | null
+
+/**
  * The shared real-path check: `file` must be part of the `@sssb/kit` that `appDir` resolves. Throws for anything
  * else (the hoisted copy, another app's instance, a framework source tree reached by a path). Returns the file's real
  * path.

@@ -132,6 +132,17 @@ export function kitVersionOf(appDir) {
 }
 
 /**
+ * The text of the release stamp (`dist/release.json`) the app's `@sssb/kit` carries, or null when it has none. It is a
+ * file `@sssb/kit`'s prepack writes into the package, so it is read from the kit directory the app resolves, here.
+ *
+ * @type {import('./kit.d.ts').kitReleaseStampOf}
+ */
+export function kitReleaseStampOf(appDir) {
+    const stamp = path.join(kitDirOf(appDir), 'dist', 'release.json')
+    return existsSync(stamp) ? readFileSync(stamp, 'utf8') : null
+}
+
+/**
  * The shared real-path check: `file` must be part of the `@sssb/kit` that `appDir` resolves. Anything else (the
  * hoisted copy, another app's instance, this repository's source reached by a path) throws.
  *
