@@ -136,7 +136,7 @@ describe('withWebhookSecret', () => {
     })
 
     test('a first request with the WRONG secret still creates the per-checkout dev secret, so a developer can read it', async () => {
-        // docs/adopting.md ("The scheduled tick") tells a developer to POST once, then read the file: pin that it holds.
+        // docs/adopting-reference.md ("The scheduled tick") tells a developer to POST once, then read the file: pin that it holds.
         const { existsSync, rmSync } = await import('node:fs')
         const path = await import('node:path')
         const file = path.join(tmp, 'auth', 'webhook-secret')

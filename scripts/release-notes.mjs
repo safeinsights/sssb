@@ -58,7 +58,7 @@ const RC_VERSION = /-rc\.\d+$/
 const COMMIT = /^[0-9a-f]{40}$/
 
 /**
- * The standing "Upgrading to this release" section (`docs/adopting.md`, "Upgrading by release", says why each step is
+ * The standing "Upgrading to this release" section (`docs/adopting-reference.md`, "Upgrading, step by step", says why each step is
  * there): what every release asks of a workspace, whatever its entries say, with the commands and this release's version
  * filled in. The release commit's SHA is filled in only when the caller has it. The notes are a file IN the release
  * commit, so `prepare` cannot know it, and the pins do not need it: `sssb pin` reads it from the installed kit's release

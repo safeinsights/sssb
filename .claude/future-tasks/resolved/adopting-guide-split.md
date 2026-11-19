@@ -1,6 +1,6 @@
 # Split `docs/adopting.md` into a short guide and a reference
 
-**Priority:** P2 · **Status:** open
+**Priority:** P2 · **Status:** resolved 2026-11-19
 **Found by:** the adoption review, 2026-11-18 (`docs/adoption-review-2026-11.md`, follow-up 1).
 
 ## What is true
@@ -28,3 +28,22 @@ The review added a five-step reading path at the top and moved "Trying an unrele
 
 A newcomer reads one document of about 150 lines from generating to upgrading, every section of the old one exists
 in one of the two, and the doc-path gate and the create tests are green.
+
+## Resolution (2026-11-19, `docs/adopting-guide-split`)
+
+- **`docs/adopting.md` is the guide**, 921 lines down to 130, in the order a newcomer acts: generate, first boot (with
+  the Simulator a generated app's `pnpm dev` now has), take out the starter's content (`sssb remove-items`), a first
+  entity file by file with tenant, organization (team) and the staff team defined where the reader first needs them,
+  deploy and cut over (`SssbApp`, `params.ports`, the scheduled tick, the checklist), and "Upgrading by release" (kept
+  as the heading every generated README links, with `sssb guide` and `sssb pin`).
+- **`docs/adopting-reference.md` holds the rest** (836 lines), moved section by section, with the release-candidate
+  and fork-era history deleted rather than moved, and the stale "the starter has no server-side Simulator" corrected.
+- **Every command the guide shows was run** against a workspace generated from this commit's packed packages (the
+  generator from the checkout, `--sssb` the tarballs): install, Playwright, `pnpm dev` (the app, the Simulator's API),
+  `pnpm tick`, `pnpm build:demo-static`, `pnpm sssb:doctor`, `pnpm synth`, `sssb guide`, `sssb pin`,
+  `sssb remove-items --drop-migrations` (dry run and real) and `pnpm verify` after it, green. `pnpm create @sssb`
+  itself reaches npm's last release, so the run used the checkout's generator; `claude plugin install` was not run
+  (it changes the machine's Claude Code state).
+- Citations of moved sections were repointed (`CLAUDE.md`, `CONTRIBUTING.md`, `docs/README.md`, the release-notes
+  script, `sssb remove-items`' refusal, kit comments, `public-surface.test.ts`, two open future tasks), and ADR-0014 has
+  an addendum naming where its cited sections now live.

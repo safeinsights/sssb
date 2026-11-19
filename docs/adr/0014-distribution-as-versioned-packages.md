@@ -1304,3 +1304,12 @@ but names it only in its `package.json`: its scripts and Playwright config read 
 half-applied rename that `docs/adopting.md` warned of before this change (its paragraph "The port key keeps its old
 name, on purpose") cannot happen. `starter` keeps working for every workspace generated before.
 `docs/decision-log.md` (2026-11-19, "No `starter` in a generated app") has the choices and what was rejected.
+
+## Addendum — 2026-11-19: `docs/adopting.md` is a guide, and the reference is beside it
+
+Adoption follow-up 1 split the adopter guide in two. `docs/adopting.md` is now a short guide in the order a newcomer
+acts, and keeps "Upgrading by release" (the heading every generated README links). Everything else is in
+`docs/adopting-reference.md`, so the sections this ADR's body and earlier addenda cite are there: "When a release
+changes what your seam must say" (part 10), "Cutover" (the Postgres floor), "`pnpm create @sssb`" and its
+subsections, and each upgrade step's reason ("Upgrading, step by step"). `docs/decision-log.md` (2026-11-19, "The
+adoption guide is split in two") has the choices and what was rejected.
