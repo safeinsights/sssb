@@ -5689,6 +5689,7 @@ outside it now, so this is that refresh.
 - **For JP.** The alert should close by itself when Dependabot rescans `int-adoption` and then `main` (the fix
   reaches `main` with the next release merge). If it is still open after that, dismiss nothing: re-read it, because
   it would then name something else. Nothing here needs a setting change.
+
 ## `sssb doctor` reports the adopter's own settings (2026-11-19, `feat/doctor-reports-settings`)
 
 Adoption review follow-up 8 (`docs/adoption-review-2026-11.md`, "What surprised" 11): the settings only the adopter can
