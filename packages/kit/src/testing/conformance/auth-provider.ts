@@ -36,7 +36,7 @@ function sourceFiles(dir: string): string[] {
 }
 
 /** The module specifiers `file` imports: declarations, re-exports, and `import()` of a string literal. */
-export function importedSpecifiers(file: string): Set<string> {
+function importedSpecifiers(file: string): Set<string> {
     const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true)
     const found = new Set<string>()
     const visit = (node: ts.Node): void => {
