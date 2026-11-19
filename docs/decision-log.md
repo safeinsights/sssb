@@ -5999,6 +5999,7 @@ have been asked.
   (`ALL_VIEWER_EXCEPT_HOST_HEADER`), so the app builds absolute URLs and redirects on the Function URL's host. Pages sets
   `x-forwarded-host` from the viewer's `Host` in a CloudFront Function of its own; one in `SssbApp` would also decide
   what becomes of a viewer's own `X-Forwarded-Host`.
+
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 
 `sssb pin [--app <dir>]` (`packages/tools/src/commands/pin.js`) reads the release commit from the installed kit's stamp
