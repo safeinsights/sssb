@@ -425,9 +425,12 @@ test("the framework this app installed reads this app's seam", () => {
 }
 
 /** The app migrations each app's seam registers, and those it must never see. */
-const OWN_MIGRATIONS = { console: ['1001_items'], ledger: ['1001_items', '1002_ledger_marker'] }
+const OWN_MIGRATIONS = {
+    console: ['1001_items', '1002_items_keyset_index'],
+    ledger: ['1001_items', '1002_items_keyset_index', '1003_ledger_marker'],
+}
 const FOREIGN_MIGRATIONS = {
-    console: ['1002_ledger_marker', '1001_dockets'],
+    console: ['1003_ledger_marker', '1001_dockets'],
     ledger: ['1001_dockets'],
 }
 
@@ -614,7 +617,7 @@ const CONSOLE_E2E_SPEC = 'tests/e2e/kit-entry.spec.ts'
 /** The ledger: a different seam, whose extra migration comes in through the app's `@/` alias. */
 function shapeLedger(/** @type {string} */ dir) {
     write(
-        path.join(dir, 'src/db/1002_ledger_marker.ts'),
+        path.join(dir, 'src/db/1003_ledger_marker.ts'),
         `import { type Kysely, sql } from 'kysely'
 
 /** The ledger's own migration: nothing but a marker the migrator bundle must carry and the console's must not. */
@@ -627,9 +630,13 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     replaceOnce(
         index,
         "import * as m1001 from './1001_items'\n",
-        "import * as m1002 from '@/db/1002_ledger_marker'\nimport * as m1001 from './1001_items'\n",
+        "import * as m1003 from '@/db/1003_ledger_marker'\nimport * as m1001 from './1001_items'\n",
     )
-    replaceOnce(index, "    '1001_items': m1001,\n", "    '1001_items': m1001,\n    '1002_ledger_marker': m1002,\n")
+    replaceOnce(
+        index,
+        "    '1002_items_keyset_index': m1002,\n",
+        "    '1002_items_keyset_index': m1002,\n    '1003_ledger_marker': m1003,\n",
+    )
 }
 
 /**

@@ -110,6 +110,15 @@ export function pnpmWorkspace(c) {
         "# part 5). Without it a package that takes the framework and links no seam silently shares an app's; after",
         '# changing it, reinstall from a fresh lockfile. `pnpm exec sssb doctor` checks it.',
         'dedupePeerDependents: false',
+        '',
+        "# @sssb/eslint-plugin's preset needs eslint-plugin-react and eslint-plugin-jsx-a11y, whose latest releases still",
+        '# declare eslint 9 as their highest peer. The preset runs them under eslint 10 (it is what SSSB lints with), so',
+        '# the warning on every first install is noise. These two entries, and only these, allow it; delete them once',
+        '# both plugins list eslint 10 (`pnpm peers check` shows what is left).',
+        'peerDependencyRules:',
+        '    allowedVersions:',
+        "        'eslint-plugin-react>eslint': '10'",
+        "        'eslint-plugin-jsx-a11y>eslint': '10'",
     ]
     if (c.meta.minimumReleaseAge !== null) {
         lines.push(
