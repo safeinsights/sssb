@@ -75,3 +75,12 @@ Whichever is chosen, the adoption probe in `.github/workflows/checks.yml` (a wor
 - `create-blank-option.md` — decides what "the minimum an adopter keeps" is, and a starter that carries
   more wiring has more for `--blank` to sweep.
 - `resolved/demo-size-budget-headroom-thin.md` — the byte cost of anything added to the static demo, and whose budget it is.
+
+## Addendum, 2026-11-18: the adoption review
+
+Fork and merge is gone (ADR-0014), so the ADR-0013 argument above no longer applies as written, and its replacement
+points the same way: the starter is copied once, so wiring in it never improves after generation, while what ships in
+`@sssb/kit` arrives with each release. That favours option 3-shaped work over option 1: the Simulator's server glue
+and its routes as handler factories in the kit, and route files in the starter thin enough never to need a fix. The
+adoption review (`docs/adoption-review-2026-11.md`) ranks this first, because the Simulator is the README's first
+claim and a generated app's own `pnpm dev` does not have it.

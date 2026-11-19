@@ -5517,3 +5517,37 @@ licenses` reads, so it needs the same install; what it would add is Google's lic
       (docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbcluster.html).
     - "Release snapshots": the snapshot gate's exemptions also include a PR opened before the gate's cutover, since
       that early exit runs first (`.github/scripts/require-changeset.sh`).
+
+## Adoption wording review, and `apps/<app>/` kept for a one-app workspace (2026-11-18, `docs/adoption-review`)
+
+At JP's request: reword the README's "not a library" section, sweep the wording an adopter or evaluator meets, and
+judge whether adoption is as simple as it can be (`docs/adoption-review-2026-11.md`).
+
+- **"The template" now names only the generator's template, `apps/starter`.** Across the doctrine docs it meant SSSB
+  itself, a fork-era usage that reads as "what `apps/starter` carries" now that the generator has a template. The
+  section `docs/development-approach.md` and four other docs cite is "What SSSB ships"; `docs/app-coverage-gaps.md`'s
+  "template/instance doctrine" is "What SSSB ships, and what an instance builds". "Instance" for an adopter's product
+  stays: it was never misleading. Rejected: keeping the old heading for its citations' sake, which keeps the
+  ambiguity; ADR-0014's body cites the old heading and stays as written.
+- **README: "It is a framework you start from, not a library you add."** The manager's wording, with the packages
+  named and "writes a workspace that carries" for "hands you". Rejected: keeping "not a library", which is false of
+  `@sssb/kit`.
+- **SSSB's cutover checklist says it is SSSB's own** and the worked reference, not "your instance's": a generated
+  workspace writes its own.
+- **The changeset README's "Known gaps" no longer describes adoption as a fork.** It names the two things adopters
+  receive that the changeset gate does not see: the reusable workflow and the generator's `ROOT_FILES`.
+- **The generated README links SSSB's adoption guide and the showcase at the pinned commit**, and the generator's
+  printed next steps end with what `pnpm dev` does. `tests/tooling/create-generate.test.ts` allows exactly those
+  links in `README.md` (each a line of its own, at a 40-character commit) past its "no survivor of SSSB's repository"
+  check, and holds each linked path to one SSSB's repository has. Rejected: naming SSSB's repository only through the
+  packages' `repository` field, as `SECURITY.md` does, which gives a newcomer no link to click.
+- **`docs/adopting.md` opens with a five-step reading path, and "Trying an unreleased commit of SSSB" moved under
+  "Changing SSSB itself"**, out of the newcomer's way. Its "First boot" no longer says the Simulator drives a generated
+  app's `pnpm dev`: the server-side panel is the showcase's alone. Rejected for this PR: splitting the guide into a
+  short guide and a reference (`.claude/future-tasks/adopting-guide-split.md`), a larger diff that deserves its own
+  review.
+- **A one-app workspace keeps its app under `apps/<app>/`** (ADR-0007 stands), explained in one sentence in the
+  generated README, SSSB's README and `docs/adopting.md`. Rejected, as proposals for JP: the app at the workspace root,
+  and the workspace with its app at `app/`. Both make every tool carry a second layout for good, since pages (a
+  workspace with an app and packages of its own) stays on `apps/`, for a one-segment gain the root scripts already
+  hide. The review doc has the table.

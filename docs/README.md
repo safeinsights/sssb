@@ -29,6 +29,7 @@ By task. The list under Doctrine is by document.
 | Adding a vendor adapter                      | `docs/development-approach.md`, "What SSSB ships", then [recipes/app-owned-adapter.md](recipes/app-owned-adapter.md) |
 | Adding a generic UI component                | the same section's component test, then [recipes/list-kit.md](recipes/list-kit.md) as the worked case                |
 | Adopting SSSB, or upgrading to a new release | [adopting.md](adopting.md)                                                                                           |
+| Weighing how adoption could be simpler       | [adoption-review-2026-11.md](adoption-review-2026-11.md), a dated assessment with ranked follow-ups                  |
 | Working out why a design is the way it is    | [adr/](adr/), then [development-approach.md](development-approach.md)                                                |
 | Adding an auth capability                    | [auth-ui-playbook.md](auth-ui-playbook.md)                                                                           |
 | Deciding whether SSSB should ship a thing    | [app-coverage-gaps.md](app-coverage-gaps.md)                                                                         |
