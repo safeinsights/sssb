@@ -94,8 +94,8 @@ root script.
 2. Run the demo tour ([runbooks/demo.md](runbooks/demo.md)) once, in a checkout of SSSB: it drives the showcase. (To
    look before cloning, open the showcase's single-file demo that SSSB's README links from its latest release.)
    Fifteen minutes here saves days later: every capability you inherit is shown working. Your app has the same
-   Simulator in its static demo (`pnpm build:demo-static`); on its own `pnpm dev` the panel needs route glue that only
-   the showcase carries today.
+   Simulator in its static demo (`pnpm build:demo-static`); on its own `pnpm dev` the panel has People, Mail and Jobs
+   with the world clock so far, served by SSSB through `apps/<app>/src/app/api/simulator/[...path]/route.ts`.
 3. Push, then make the repository settings only you can make: require the check `sssb / all-checks` on your
    default branch (and `workspace-checks` and `secret-scan`, your workflow's own jobs), the setting under "Identity
    and the owner files" below, and, if the repository is private and in an organization, allow public reusable
@@ -414,8 +414,8 @@ rest of this repository's are SSSB's own: the second app's (`dev:starter`, `tick
 
 One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 139 published subpaths from its source (39
-counting its tests), so the same setting would start demanding you delete the other 104 — capabilities you merely have not
+nearly all of it. A one-entity app does not: `apps/starter` imports 40 of SSSB's 141 published subpaths from its source (44
+counting its tests), so the same setting would start demanding you delete the other 101 — capabilities you merely have not
 reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration. The generated `knip.json` carries a few narrow entries beside the app's entry files: at the root,
@@ -518,9 +518,9 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 139 subpaths your app may
+lists the 141 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 63 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 64 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -737,9 +737,8 @@ changes go and a patch is compatible. From 0.2.0 each release is published to np
 repository, under `docs/releases/` (`docs/releases/v0.2.0.md`, say).
 
 An upgrade is one change in your repository, made on a branch like any other. Every release's notes open with the
-section "Upgrading to this release", which carries steps 2, 3, 4 and 6 below as commands, with that release's version in
-them (a candidate's prerelease notes also have its commit, which a plain release's notes read off its tag). The steps
-say why each is there:
+section "Upgrading to this release", which carries steps 2, 3, 4 and 6 below as commands, with that release's version
+in them (a candidate's prerelease notes also name its commit). The steps say why each is there:
 
 1. **Read the notes of every release after yours, in order.** A release candidate's notes carry only what changed
    since the previous candidate, so a workspace on v0.2.0-rc.1 that skips a candidate reads the skipped one's notes
@@ -767,15 +766,21 @@ say why each is there:
    `.claude/sssb-guide.md`. Those are the rules every agent in your repository follows, and they change only through
    a diff of your own; `sssb doctor` fails until the copy is the installed kit's. (On a release up to v0.2.0-rc.2 the
    command needs `--app apps/<app>` at the root, or run it in the app's directory.)
-4. **Raise both pins to the release commit**, the commit of SSSB's repository the release was cut from: in
-   `.github/workflows/checks.yml`, the `sssb` job's `uses: safeinsights/sssb/.github/workflows/app-checks.yml@<commit>`
-   (and the version in the comment after it), and in `.claude/settings.json`, the `sssb` marketplace's `ref`. A
-   release's tag `v<version>` is that commit (a release candidate's notes also name it, "cut from"), the installed kit
-   records it as `commit` in its
-   `dist/release.json`, and `sssb doctor` names it beside any pin that differs. Your CI and your Claude Code plugin
-   are read at that commit, so a pin left behind runs the old release's checks and commands against the new
-   packages. Then each person updates their installed plugin: `claude plugin marketplace update sssb`, then
-   `claude plugin update sssb@sssb --scope project`, and restart Claude Code (the update applies on restart).
+4. **Raise both pins to the release commit**, the commit of SSSB's repository the release was cut from: `pnpm exec sssb pin`
+   from the workspace root (after the install in step 2, which brings the kit it reads). Your CI's `sssb` job calls SSSB's
+   reusable workflow at one pin (`.github/workflows/checks.yml`, `uses: safeinsights/sssb/.github/workflows/app-checks.yml@<commit>`,
+   and the version in the comment after it) and your Claude Code plugin loads from SSSB's marketplace at the other
+   (`.claude/settings.json`, the `sssb` marketplace's `ref`), so a pin left behind runs the old release's checks and commands
+   against the new packages. The installed kit records the commit as `commit` in its `dist/release.json`, and the command
+   writes it to both, printing each pin it changed with the commit it replaced; run again, it changes nothing. It edits the
+   two files' text and nothing else in them but the version in a workflow comment (`# @sssb/create 0.2.0`, `# v0.2.0`) after the pin. It refuses, and writes nothing, when there is no commit to read (SSSB's own
+   repository, where the kit is source, or a kit packed by hand without a stamp) or when a file is not the shape it
+   edits: no workflow calls SSSB's reusable workflow, or `.claude/settings.json` is not JSON or declares no marketplace
+   from SSSB's repository. When it refuses, make the two edits by hand, to the release's commit: the one `sssb doctor` names beside a pin that differs, or, for a kit with no stamp,
+   which doctor cannot compare, the one the release's tag `v<version>` names (a release candidate's notes also name it,
+   "cut from"); the pin takes the SHA, never the tag. A workspace with no `.claude/settings.json` has no second pin, and the command raises
+   the first alone. Then each person updates their installed plugin: `claude plugin marketplace update sssb`, then
+   `claude plugin update sssb@sssb --scope project`, and restarts Claude Code (the update applies on restart).
 5. **Apply each entry's "To adopt"**, section by section:
     - **Seam changes**: what your app must say or satisfy to build (next section). `pnpm typecheck` and `pnpm lint`
       point at most of them, the conformance suite and `sssb doctor` at the rest.

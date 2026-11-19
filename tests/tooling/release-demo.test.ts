@@ -73,7 +73,7 @@ describe('release release-notes (the release page body)', () => {
         const notes = releaseNotes(checkout(), VERSION, 'safeinsights/sssb', SHA, asset)
         expect(notes).toMatch(/^# Release notes: v0\.3\.0\n/)
         expect(notes.match(/^## Upgrading to this release$/gm)).toHaveLength(1)
-        expect(notes).toContain(`"ref": "${SHA}"`)
+        expect(notes).toContain(`**3. Raise both pins to this release's commit (\`${SHA}\`).**`)
         expect(notes).not.toContain('<sha>')
         expect(notes).toContain(
             '[`sssb-showcase.html`](https://github.com/safeinsights/sssb/releases/download/v0.3.0/sssb-showcase.html)',
@@ -134,7 +134,7 @@ describe("release.yml's demo job, then its github-release job, as the tag's run 
         expect(checked.stderr).toBe('')
         expect(checked.status).toBe(0)
         const notes = readFileSync(path.join(temp, 'release-page', 'notes.md'), 'utf8')
-        expect(notes).toContain(`"ref": "${SHA}"`)
+        expect(notes).toContain(`**3. Raise both pins to this release's commit (\`${SHA}\`).**`)
         expect(notes).toContain('releases/download/v0.3.0/sssb-showcase.html')
         expect(readFileSync(path.join(temp, 'summary.md'), 'utf8')).toBe(notes)
 
