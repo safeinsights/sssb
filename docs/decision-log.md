@@ -6067,6 +6067,7 @@ route from a ticker Lambda instead).
       the start) stays `queued`: `queued` is also a CodeBuild job's state while it builds, so the sweep cannot tell it
       lost. The sweep's per-tenant scan of `running` jobs has no index of its own; a partial index is a framework
       migration, for when a deployment's job history makes it matter.
+
 ## One list of apps, and `sssb add-app` (2026-11-19, `feat/one-list-of-apps`)
 
 The adoption review's follow-up 3 (`docs/adoption-review-2026-11.md`, ranked item 3 and "What surprised" item 10):
