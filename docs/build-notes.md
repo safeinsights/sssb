@@ -2360,13 +2360,6 @@ with a red release commit is to rebuild its tree in scratch and run the failing 
 `git restore --staged --worktree .changeset && git clean -fd .changeset`; extracting over the old directory leaves the
 old pending files beside their `pre/` copies, which is not that tree).
 
-## The scheduled tick's Lambda is a knip entry (2026-11-19, `fix/kit-optional-real-ports`)
-
-`knip.json` names `packages/cdk/src/assets/*/index.mjs` as entries of the `packages/cdk` workspace. A file there is a
-Lambda handler that `SssbApp` deploys by its directory (`Code.fromAsset`), so nothing imports its `handler` export and
-knip reported it unused. The tick's own test imports the module's other exports; the entry covers the one the Lambda
-runtime calls.
-
 ## A worktree you were given can be taken over by another session (2026-11-18, `fix/starter-small-fixes`)
 
 A child session started in the manager's worktree switched branches in it, and another session then checked out its own

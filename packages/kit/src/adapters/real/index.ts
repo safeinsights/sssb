@@ -56,7 +56,9 @@ export function assertRealEnv(): void {
  * The runner runs the app's registered job handlers, so it reaches the app's seam, and through it whatever the app's
  * handlers import, the registry included. This module must reach none of that: the registry loads it while being
  * evaluated, and `sssb check-real-env` bundles it on its own, as CommonJS, which refuses the registry's top-level
- * await. So the registry builds the runner (./jobs-in-process.ts) and hands it in, already given its notifier.
+ * await. So the registry hands in a hook that returns the runner (./jobs-in-process.ts, given its notifier) wrapped
+ * to load on its first use (../lazy-jobs.ts): the hook is called while the registry is still being evaluated, so it
+ * must not load the handlers then.
  * Optional, so a caller that builds the real ports itself is unchanged; such a caller gets a named error at boot if it
  * selects the in-process runner without handing one in.
  */
@@ -73,9 +75,8 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
         if (value === undefined) throw new Error(`missing env: ${name}`)
         return value
     }
-    // Every transport and optional adapter below is a dynamic import, so a deployment loads the SDK of what it uses
-    // and nothing else: a `pg` deployment never loads the RDS Data SDK, and a port switched off (`none`) never loads
-    // its vendor's.
+    // The Data API transport and every optional adapter below are dynamic imports: a `pg` deployment never loads the
+    // RDS Data SDK, and a port switched off (`none`) never loads its vendor's.
     const db =
         databaseTransport() === 'data-api'
             ? (await import('./db-data-api')).createRealDataApiDb({

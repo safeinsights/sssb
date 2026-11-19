@@ -759,7 +759,7 @@ before the switches existed.
   apply, and a call through it throws an error that names the switch. Never fill an unused port's settings with
   placeholder values instead: the placeholder reaches the vendor and fails there, far from the cause. `email: 'none'`
   turns off SSSB's own mail too: an invitation or a notification is still created, and its email, sent after the
-  response, fails there (recorded as a `deferred_work_failed` analytics event) instead of sending.
+  response, fails there (recorded as a `deferred_work_failed` analytics event and a `SSSB deferred work … failed` log line) instead of sending.
 - **`jobs: 'in-process'` needs no CodeBuild project.** Each job's handler runs in the server, from the request or the
   scheduled tick that started it, and its status is recorded before that call returns. It shares that invocation's
   time limit (30 seconds on `SssbApp`), so work that may outrun it belongs on `codebuild`, which runs each job as a

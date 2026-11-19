@@ -30,13 +30,15 @@ export const IN_PROCESS_LOST_AFTER_MS = 5 * 60_000
  * submitted it or from the scheduled tick (`/api/webhooks/cron`), so a job shares that invocation's time limit with
  * whatever else it does, and a tick that spawns several runs them one after another. That is the limit of this runner:
  * work that may outrun it belongs on the CodeBuild runner. A job cut off by the limit is left `running`: the
- * invocation is ended with its process, so the job's open transaction rolls back, and `sweep`, which the scheduled
- * tick calls, fails it once `IN_PROCESS_LOST_AFTER_MS` have passed. Only jobs this runner claimed (`IN_PROCESS_CLAIM`)
- * are swept, so a CodeBuild job still in flight when a deployment switches runners is left to its own webhook.
+ * invocation is ended with its process, so the job's open transaction rolls back (at once on `pg`; on the Data API
+ * when that transaction times out), and `sweep`, which the scheduled tick calls, fails it once
+ * `IN_PROCESS_LOST_AFTER_MS` have passed. Only jobs this runner claimed (`IN_PROCESS_CLAIM`) are swept, so a job
+ * another runner holds `running` (a service caller's, through its status route, or one the jobs webhook is walking
+ * to its end) is left to it.
  *
  * A terminal status notifies the job's org admins as the jobs webhook route does, through `notify`, which the adapter
- * registry passes in (the notification modules import the registry). Best effort: a failed notification is logged and
- * never fails a job that already finished.
+ * registry passes in (the notification modules import the registry). Best effort: `notifyJobTerminal` swallows its
+ * own failures, and anything else `notify` throws is logged; neither fails a job that already finished.
  */
 export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTerminal): JobsPort {
     const notifyBestEffort = async (tenantId: string, jobId: string, status: 'completed' | 'failed') => {

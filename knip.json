@@ -35,9 +35,6 @@
                 "test-fixture/app-config/db/migrations/*.ts"
             ]
         },
-        "packages/cdk": {
-            "entry": ["src/assets/*/index.mjs"]
-        },
         "packages/tools": {
             "ignoreDependencies": ["next", "vite", "vitest"]
         }

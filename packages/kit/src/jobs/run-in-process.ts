@@ -21,7 +21,7 @@ export interface JobRunPorts {
  * app's seam registers for its kind (`@sssb/app-config/jobs`), and records completed or failed. `recordJobStatus`
  * enforces the state machine, so the timeline is the one a CodeBuild run reports through the jobs webhook. Shared by
  * the simulated jobs adapter (../adapters/fake/jobs.ts) and the real in-process runner
- * (../adapters/real/jobs-in-process.ts), which differ only in the ports they pass and in how they notify.
+ * (../adapters/real/jobs-in-process.ts), which differ in the ports they pass, in how they notify, and in the real runner's claim message.
  *
  * Returns false when another runner had already claimed the job (losing that race is benign, not an error), true once
  * this call has recorded the job's terminal status. A handler's error fails the job, never the caller; `notify` runs

@@ -22,8 +22,9 @@ function expectedSecret(): string | null {
 }
 
 /**
- * Verifies an inbound webhook's bearer secret in constant time. A missing/malformed header, an
- * unset expected secret, or any mismatch throws the same opaque AuthRequiredError. timingSafeEqual
+ * Verifies an inbound webhook's shared secret, read from `x-sssb-webhook-secret` or else `Authorization: Bearer`
+ * (./credential.ts), in constant time. A missing credential, an unset expected secret, or any mismatch throws the
+ * same opaque AuthRequiredError. timingSafeEqual
  * requires equal-length buffers, so a length mismatch is short-circuited to a non-match rather than
  * allowed to throw — the comparison itself never leaks length via timing.
  */

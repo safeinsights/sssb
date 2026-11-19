@@ -96,9 +96,9 @@ export async function tick({ readSecret, invoke, host, requestId, now }) {
 }
 
 /**
- * The runtime's own AWS SDK, loaded through `require`: CommonJS resolution follows the runtime's NODE_PATH, where the
- * Node.js runtime keeps it, which an ES `import` from the function's directory would not search. Neither this package
- * (which ships the file and depends on no SDK) nor its type check resolves it: only the Lambda runtime does.
+ * The runtime's own AWS SDK, loaded when the handler runs (through `createRequire`), so this module loads, and its
+ * test runs, where no SDK is installed. Neither this package (which ships the file and depends on no SDK) nor its type
+ * check resolves it: only the Lambda runtime does.
  * @param {string} name
  * @returns {Promise<any>}
  */

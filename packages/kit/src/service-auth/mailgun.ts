@@ -5,7 +5,7 @@ import { AuthRequiredError } from '../ports/errors'
 
 /**
  * Mailgun inbound-webhook verification — the RECEIVING half of the Mailgun vendor, beside the
- * bearer-secret job verifier (webhook.ts). It is the counterpart of that file: the pure signature math
+ * shared-secret job verifier (webhook.ts). It is the counterpart of that file: the pure signature math
  * lives in packages/kit/src/core/webhook-hmac.ts (verifyMailgunSignature, cross-checked against node:crypto),
  * while the two STATEFUL pieces live here — the signing-key lookup and the token replay guard.
  *
@@ -25,7 +25,7 @@ import { AuthRequiredError } from '../ports/errors'
  * limit, recorded on purpose: it is per-process, so a multi-instance real deployment (several Lambdas)
  * would need a SHARED store (a small DynamoDB/Redis/Postgres table keyed by token) to make the guard
  * global — a cutover note. The timestamp freshness window is the primary, stateless guard; this token
- * set is the in-window dedupe on top. Like the bearer verifier, this ships in REAL builds; never add
+ * set is the in-window dedupe on top. Like the shared-secret verifier, this ships in REAL builds; never add
  * `runtime = 'edge'` upstream.
  */
 

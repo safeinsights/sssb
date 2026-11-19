@@ -5992,7 +5992,7 @@ route from a ticker Lambda instead).
   URL event for `/api/webhooks/cron`, which the Lambda Web Adapter serves like any request; the route stays behind
   `withWebhookSecret`. Rejected: **POSTing through CloudFront**, which today refuses an unsigned POST (the sibling fix
   `fix/cdk-function-url-post` addresses it) and would make the tick depend on that; **signing a request to the Function
-  URL**, which needs a SigV4 signer the runtime does not provide as a public module; **an EventBridge API destination
+  URL**, which needs a SigV4 signer that the runtime ships only inside its SDK, not as a documented module; **an EventBridge API destination
   and connection**, which needs the secret's value at deploy time; and **on by default with a generated secret**: the
   construct never puts a secret's value in an environment (pages keeps its secrets by ARN), so the server could not know
   a secret the construct made, and every tick would be a 401.
@@ -6008,11 +6008,12 @@ route from a ticker Lambda instead).
 - **From the first review round.** `sssb check-real-env` bundles `adapters/real/index` as CommonJS, and the in-process
   runner's notification imports had pulled in the adapter registry, whose top-level await esbuild refuses there:
   `dev:real` failed for every app. The registry now hands `createRealPorts` the notifier
-  (`notifyJobTerminal`), so the real ports never import a module that imports the registry, and
+  (`notifyJobTerminal`; replaced in round 2: the registry hands in `inProcessJobs`), so the real ports never import a
+  module that imports the registry, and
   `tests/tooling/tools-check-real-env.test.ts` bundles the real framework for both apps (it had bundled only a stub).
   Rejected: bundling the preflight as ESM, which would leave the next such import to break the Next server instead.
 - **A job the in-process runner loses is failed, twice over.** A handler still running after 20 seconds
-  (`IN_PROCESS_DEADLINE_MS`, under `SssbApp`'s 30) fails its job; and a new optional `JobsPort.sweep(now)`, which the
+  (`IN_PROCESS_DEADLINE_MS`, under `SssbApp`'s 30; removed in round 2, below) fails its job; and a new optional `JobsPort.sweep(now)`, which the
   scheduled tick calls before it drains the schedules, fails a job still `running` five minutes after its last status
   change (the invocation was cut off before it recorded anything). Optional on the port, so every other runner,
   an adopter's own included, is untouched. The tick's answer keeps its shape (the starter's route test, which adopters
@@ -6021,8 +6022,8 @@ route from a ticker Lambda instead).
 - **The tick's function is not retried by Lambda either** (`configureAsyncInvoke({ retryAttempts: 0 })`: EventBridge's
   retry policy does not reach Lambda's own two retries of an asynchronous invocation), and an Errors alarm watches it,
   as the server's errors are watched.
-- **A failed deferred side effect is logged in real mode**, beside its analytics event, which is the no-op one without
-  a PostHog key: an invitation sent with `EMAIL_PROVIDER=none` now leaves a log line saying the port is absent.
+- **A failed deferred side effect is logged in real mode**, beside its analytics event, which without a PostHog key is
+  the simulated one, writing only to the server's local disk: an invitation sent with `EMAIL_PROVIDER=none` now leaves a log line saying the port is absent.
 - **Left as they are, with the reason.** `JOBS_RUNNER=none` still commits a submitted or scheduled job's row before
   `start` throws, leaving it `queued`: `none` declares that the app runs no jobs, so a job reaching the port is the
   declaration being wrong, and the throw names the switch. And the framework's `digest-email` handler, which the
@@ -6048,10 +6049,11 @@ route from a ticker Lambda instead).
     - **The 20-second deadline is gone.** A handler abandoned at a soft deadline keeps running in a Lambda environment
       that is frozen once the invocation returns, holding any transaction it had open (its row locks, its pooled
       connection) until a later invocation thaws it, and finishing its side effects for a job already marked failed. The
-      server's own time limit ends the process instead, so Postgres rolls the job's open transaction back, and the
-      sweep fails the job. A per-job deadline also never bounded the invocation, whose total the runner cannot know.
-    - **The sweep fails only jobs this runner claimed.** Its `running` entry carries `IN_PROCESS_CLAIM`, so a CodeBuild
-      job still in flight when a deployment switches runners is left to its completion webhook. It is fault-isolated per
+      server's own time limit ends the process instead, so the job's open transaction rolls back (at once on `pg`; on
+      the Data API when that transaction times out, within the sweep's five minutes), and the sweep fails the job. A per-job deadline also never bounded the invocation, whose total the runner cannot know.
+    - **The sweep fails only jobs this runner claimed.** Its `running` entry carries `IN_PROCESS_CLAIM`, so a job
+      another runner holds `running` (a service caller's, through its status route, or one the jobs webhook is walking
+      to its end) is left to it. A CodeBuild build in flight holds its job `queued`, which the sweep never reads. It is fault-isolated per
       tenant and per job, and the tick catches a sweep that throws, as `runDueSchedules` isolates each schedule.
     - **The registry builds the in-process runner** and hands it to `createRealPorts` (`inProcessJobs`). The first
       round's fix had kept the notification modules out of `adapters/real/index`, but the runner itself runs the app's
@@ -6071,9 +6073,9 @@ route from a ticker Lambda instead).
     - **The registry loads the in-process runner on its first use** (`packages/kit/src/adapters/lazy-jobs.ts`), never
       during its own top-level await. Loading it loads the app's job handlers, and a handler that imports the registry
       (for `isSimulated`, as the guide says to) closes a cycle whose root is the registry, which would then wait
-      forever on its own import: the reviewer reproduced the hang in plain Node ESM and a webpack bundle, and the lazy
-      shape boots there. Vitest's module runner does not reproduce an ESM top-level-await cycle, so the test pins the
-      helper (nothing loaded until the first call, one load, a failed load retried), not the hang.
+      forever on its own import: the hang was reproduced in plain Node ESM (exit 13, "unsettled top-level await"), and
+      the lazy shape boots there. The test pins the helper (nothing loaded until the first call, one load, a failed
+      load retried), not the hang.
     - **Recording a job's outcome is outside the handler's `try`.** Only the handler's own failure fails the job; a
       failure after `completed` has committed (the webhook enqueue that follows it) propagates, instead of an attempt
       to record `failed` over `completed`, which the state machine refuses. The simulated runner shares the change.

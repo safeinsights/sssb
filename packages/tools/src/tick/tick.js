@@ -7,8 +7,8 @@
 //
 // What this is NOT: a way around the route's guard. The route is `withWebhookSecret(...)`, and this sends it the
 // per-checkout dev secret (`<app>/.data/auth/webhook-secret`, the file the simulated server generates) in its header,
-// exactly as an external caller would. It adds nothing to the server: no flag, no header the server honours, no
-// route. A server in real mode checks `WEBHOOK_SECRET` instead, never reads that file, and answers this 401.
+// exactly as an external caller would. It adds nothing to the server: no flag, no header beyond the credential every
+// caller sends, no route. A server in real mode checks `WEBHOOK_SECRET` instead, never reads that file, and answers this 401.
 //
 // Run through the package script (`pnpm tick`, `pnpm tick:starter`): the working directory is then the app's, which is
 // where the server keeps `.data` (`APP_DATA_DIR` overrides it, for both).

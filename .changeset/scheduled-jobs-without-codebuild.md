@@ -10,8 +10,8 @@
 **Action.** optional
 
 **What changed.** `JOBS_RUNNER=in-process` (`params.ports.jobs: 'in-process'`) runs each job's registered handler in
-the server, from the request or the scheduled tick that started it, records its terminal status and notifies its org
-before that call returns: no CodeBuild project and no jobs webhook route. A job shares that invocation's time limit (30
+the server, from the request or the scheduled tick that started it, records its terminal status and, for one of the app's own job kinds,
+notifies its org's admins before that call returns: no CodeBuild project and no jobs webhook route. A job shares that invocation's time limit (30
 seconds on `SssbApp`); longer work stays on `codebuild`. `SssbApp` takes a new option, `scheduledTick: { webhookSecret,
 every? }`: an EventBridge rule (every five minutes unless `every` says otherwise) runs a function that reads that
 secret and invokes the server directly with a POST of `/api/webhooks/cron`, the route behind `withWebhookSecret` that

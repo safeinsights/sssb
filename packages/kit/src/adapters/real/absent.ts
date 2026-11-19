@@ -6,7 +6,8 @@ import { OPTIONAL_PORTS, type OptionalPort } from './optional-ports'
 /**
  * A call through a port the deployment declared unused (`<SWITCH>=none`, ./optional-ports.ts). Thrown at the call,
  * never at boot: the app boots without the port, and only code that reaches for it fails, saying which switch to
- * change. Not one of the port errors routes map (`withPortErrors`), so a route that reaches it answers 500.
+ * change (the framework's deferred mail catches it and logs it: ../../server-lib/defer.ts). Not one of the port
+ * errors routes map (`withPortErrors`), so a route that reaches it answers 500.
  */
 export class AbsentPortError extends Error {
     constructor(port: OptionalPort) {
