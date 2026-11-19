@@ -637,6 +637,7 @@ describe('the synth assertions fail', () => {
         expect(withPorts({ jobs: 'lambda' })).toThrow(
             /params\.ports\.jobs must be codebuild, in-process, none \(got "lambda"\)/,
         )
+        expect(withPorts({ storage: 'gcs' })).toThrow(/params\.ports\.storage must be s3, none \(got "gcs"\)/)
         expect(withPorts('none')).toThrow(/params\.ports must be an object/)
         expect(withPorts({ llm: 'none', jobs: 'in-process' })).not.toThrow()
     })
@@ -664,6 +665,83 @@ describe('the synth assertions fail', () => {
     })
 })
 
+/** The IAM statements attached to the role of the function whose logical id starts with `prefix`. */
+/** @param {Resources} all @param {string} prefix */
+function statementsOf(all, prefix) {
+    const [fnId, fn] = /** @type {[string, any]} */ (
+        Object.entries(all).find(([id, r]) => r.Type === 'AWS::Lambda::Function' && id.startsWith(prefix))
+    )
+    const roleId = fn.Properties.Role['Fn::GetAtt'][0]
+    expect(roleId, `${fnId}'s role`).toBeTruthy()
+    return Object.values(all)
+        .filter((r) => r.Type === 'AWS::IAM::Policy')
+        .filter((r) => JSON.stringify(r.Properties?.['Roles']).includes(`"Ref":"${roleId}"`))
+        .flatMap((r) => /** @type {any} */ (r.Properties ?? {})['PolicyDocument'].Statement)
+}
+
+describe('the storage port', () => {
+    const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
+    const slug = /** @type {string} */ (
+        /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+    )
+    /** SssbApp's stateful logical ids, as release-snapshots/stateful-logical-ids.json holds them for one shape. */
+    /** @param {string} shape @returns {Record<string, string>} */
+    const snapshotted = (shape) =>
+        JSON.parse(readFileSync(path.join(REPO, 'packages/cdk/release-snapshots/stateful-logical-ids.json'), 'utf8'))[
+            shape
+        ]
+    const STORAGE_BUCKET_ID = 'StorageBucket19DB2FF8'
+    /** @param {Resources} all */
+    const buckets = (all) => Object.keys(all).filter((id) => all[id]?.Type === 'AWS::S3::Bucket')
+    /** The server's statements that name an S3 action. @param {Resources} all */
+    const serverS3 = (all) => statementsOf(all, 'Server').filter((st) => JSON.stringify(st.Action).includes('"s3:'))
+
+    describe.each([false, true])('on a deployment with production %s', (production) => {
+        const shape = production ? 'pg, production' : 'pg'
+
+        it.each([
+            ['left out', undefined],
+            ['s3', { storage: 's3' }],
+        ])(
+            'storage %s builds the bucket under its snapshotted id, names it to the server and grants it',
+            (_label, ports) => {
+                const { all } = synthesize({
+                    appDir,
+                    slug,
+                    transport: 'pg',
+                    bundle: false,
+                    production,
+                    ...(ports && { ports: /** @type {any} */ (ports) }),
+                })
+                expect(snapshotted(shape)).toHaveProperty([STORAGE_BUCKET_ID], 'AWS::S3::Bucket')
+                expect(buckets(all).sort()).toEqual(['AssetsBucket5CB76180', STORAGE_BUCKET_ID])
+                const server = lambdaFunction(all, 'Server')
+                expect(JSON.stringify(server.env['STORAGE_BUCKET'])).toContain(STORAGE_BUCKET_ID)
+                expect(serverS3(all).length).toBeGreaterThan(0)
+            },
+        )
+
+        it('storage none builds no bucket, sets no STORAGE_BUCKET, grants no S3, and keeps every other stateful id', () => {
+            const { all } = synthesize({
+                appDir,
+                slug,
+                transport: 'pg',
+                bundle: false,
+                production,
+                ports: { storage: 'none' },
+            })
+            const server = lambdaFunction(all, 'Server')
+            expect(server.env['STORAGE_PROVIDER']).toBe('none')
+            expect(server.env).not.toHaveProperty(['STORAGE_BUCKET'])
+            expect(buckets(all)).toEqual(['AssetsBucket5CB76180'])
+            expect(serverS3(all)).toEqual([])
+            for (const [id, type] of Object.entries(snapshotted(shape))) {
+                if (id !== STORAGE_BUCKET_ID) expect(all[id]?.Type, id).toBe(type)
+            }
+        })
+    })
+})
+
 describe('the scheduled tick', () => {
     const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
     const slug = /** @type {string} */ (
@@ -683,20 +761,6 @@ describe('the scheduled tick', () => {
                 ...(every && { every }),
             }),
         })
-    }
-
-    /** The IAM statements attached to the role of the function whose logical id starts with `prefix`. */
-    /** @param {Resources} all @param {string} prefix */
-    function statementsOf(all, prefix) {
-        const [fnId, fn] = /** @type {[string, any]} */ (
-            Object.entries(all).find(([id, r]) => r.Type === 'AWS::Lambda::Function' && id.startsWith(prefix))
-        )
-        const roleId = fn.Properties.Role['Fn::GetAtt'][0]
-        expect(roleId, `${fnId}'s role`).toBeTruthy()
-        return Object.values(all)
-            .filter((r) => r.Type === 'AWS::IAM::Policy')
-            .filter((r) => JSON.stringify(r.Properties?.['Roles']).includes(`"Ref":"${roleId}"`))
-            .flatMap((r) => /** @type {any} */ (r.Properties ?? {})['PolicyDocument'].Statement)
     }
 
     it('is not there unless asked for: the default deployment has no schedule and no tick function', () => {
