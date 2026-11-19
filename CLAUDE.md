@@ -207,9 +207,13 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   E2E: showcase on :3000, starter on :3100; in a linked worktree both are derived per checkout by `@sssb/tools/ports`,
   and `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last also isolates
   `pnpm test:contract` between worktrees). Each app declares its slot in its package.json
-  (`"sssb": { "port": "starter" }`); the slot is a port band, not the app's name, so the app `@sssb/create` writes
-  keeps `starter` too. An app may instead declare a slot of its own, `{ "name": "<name>", "default": <port> }` (its
-  override `<NAME>_PORT`, its derived worktree port from 20000-29999 keyed on the name too); `sssb doctor` fails two apps
+  (`"sssb": { "port": "starter" }`); the starter names it nowhere else: its scripts and Playwright config read the
+  declaration (`sssb tick`, `sssb dev-tick`, `originForApp(__dirname)`), while the showcase still names `showcase` in
+  both. The slot is a port band, not the app's name. An app may
+  instead declare a slot of its own, `{ "name": "<name>", "default": <port> }` (its override `<NAME>_PORT`, its derived
+  worktree port from 20000-29999 keyed on the name too), as the app `@sssb/create` writes does (named for its slug,
+  default 3700: `firstAppSlot` in `packages/create/src/generate.js`, so a generated app never says `starter`) and as
+  `sssb add-app` gives every app it adds (the first free default from 3700 up); `sssb doctor` fails two apps
   on one slot or one default.
 - **Scratch directories in this repo's tests**: `tests/support/tmp-dir.ts` re-exports `@sssb/tools/testing/tmp-dir`,
   and the framework's own tests use its copy, `packages/kit/src/testing/tmp-dir.ts`; `sssb/no-direct-mkdtemp` bans the

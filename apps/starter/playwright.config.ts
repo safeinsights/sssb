@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
-import { originFor } from '@sssb/tools/ports'
+import { originForApp } from '@sssb/tools/ports'
 import { assertNoLiveDevTicker } from '@sssb/tools/ticker-marker'
 
 // A dev server started with `DEV_TICK_SECONDS` set would be ADOPTED by `reuseExistingServer` below and tick under the
@@ -15,7 +15,7 @@ assertNoLiveDevTicker()
  * guarantee ACROSS checkouts: a linked worktree gets its own pair, so two agent sessions running e2e
  * at once no longer collide either. `pnpm dev` derives the identical number from the same function.
  */
-const BASE_URL = originFor('starter')
+const BASE_URL = originForApp(__dirname)
 
 export default defineConfig({
     testDir: './tests/e2e',

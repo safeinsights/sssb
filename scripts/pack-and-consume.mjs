@@ -259,7 +259,7 @@ function step(name, body) {
     console.log(`==== ${name}: ok (${seconds}s)`)
 }
 
-/** A port nobody is listening on, for the console's dev server: never the fixed :3100 another checkout may hold. */
+/** A port nobody is listening on, for the console's dev server: never the fixed :3700 another checkout may hold. */
 async function freePort() {
     return new Promise((resolve, reject) => {
         const server = createServer()
@@ -644,16 +644,17 @@ export async function up(db: Kysely<unknown>): Promise<void> {
  * What `sssb add-app ledger` must have written, which the rest of the run then proves works (its install, typecheck,
  * unit and contract runs, migrator bundle, lint and `sssb doctor`, which fails two apps on one port slot): the app as
  * the generator writes one, its own slug, a port slot of its own, with scripts and a Playwright config that name no
- * other slot (an app on a slot of its own may not use `starter`: it would tick and test the console's port), and its
+ * other slot (an app on a slot of its own may not name `starter`: `sssb tick`, `sssb port` and `portFor` refuse it), and its
  * entry in `sssb.apps`, which the generated Vitest configs read.
  */
 function checkAddedLedger() {
     const dir = appDir('ledger')
     const manifest = readJson(path.join(dir, 'package.json'))
     if (manifest.name !== 'ledger') fail(`sssb add-app named the ledger's package ${manifest.name}`)
-    if (JSON.stringify(manifest.sssb?.port) !== JSON.stringify({ name: 'ledger', default: 3700 }))
+    // The console, as the generator writes it, holds 3700, so the ledger takes the next default.
+    if (JSON.stringify(manifest.sssb?.port) !== JSON.stringify({ name: 'ledger', default: 3800 }))
         fail(`sssb add-app gave the ledger the port slot ${JSON.stringify(manifest.sssb?.port)}`)
-    const starter = Object.entries(manifest.scripts ?? {}).filter(([, text]) => /\bstarter\b/.test(String(text)))
+    const starter = Object.entries(manifest.scripts ?? {}).filter(([, text]) => /starter/i.test(String(text)))
     if (starter.length > 0)
         fail(`the ledger's ${starter.map(([name]) => name).join(', ')} script(s) name the starter's slot`)
     if (!readFileSync(path.join(dir, 'playwright.config.ts'), 'utf8').includes('originForApp(__dirname)'))
@@ -1076,7 +1077,8 @@ function e2e(port) {
     // CI=1 locally too: Playwright then never reuses a server some other checkout left on the port.
     run('pnpm', ['run', 'test:e2e'], {
         cwd: appDir('console'),
-        env: consumerEnv({ STARTER_PORT: String(port), CI: process.env.CI ?? '1' }),
+        // The console's slot is its own, named for its slug (the generator's firstAppSlot), so its override is CONSOLE_PORT.
+        env: consumerEnv({ CONSOLE_PORT: String(port), CI: process.env.CI ?? '1' }),
     })
 }
 
@@ -1570,6 +1572,11 @@ function generateWorkspace() {
     ])
     generatedFiles = fileHashes(GEN)
     console.log(`the packed generator wrote ${generatedFiles.size} files`)
+    // Not one of them says `starter`, SSSB's reference app's name and port slot: the app takes a slot of its own.
+    const starter = [...generatedFiles.keys()].filter((file) =>
+        /starter/i.test(readFileSync(path.join(GEN, file), 'utf8')),
+    )
+    if (starter.length > 0) fail(`the packed generator's workspace says "starter" in: ${starter.join(', ')}`)
 }
 
 /**
@@ -1597,7 +1604,8 @@ function installGenerated() {
 /** The environment the generated workspace's checks run with: its own ports, and never a developer's database. */
 const generatedEnv = () =>
     consumerEnv({
-        STARTER_PORT: String(generatedPort),
+        // The generated app's slot is named for its slug: its override is <SLUG>_PORT.
+        [`${GEN_APP.toUpperCase().replaceAll('-', '_')}_PORT`]: String(generatedPort),
         CI: process.env.CI ?? '1',
         CONTRACT_PG_PORT: String(generatedContractPort),
         CONTRACT_DATABASE_URL: '',

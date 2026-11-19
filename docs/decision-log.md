@@ -6432,3 +6432,50 @@ Decisions, each with the alternative rejected:
   a rerun finishes it); a `settings.json` that exists but declares no SSSB marketplace refuses, where an absent one does
   not (a file that is there and says nothing about the plugin is more likely a mistake than a workspace without one); a
   `uses:` line inside a `run: |` block scalar counts as a pin, in doctor's report too.
+
+## No `starter` in a generated app (2026-11-19, `feat/no-starter-in-generated-app`)
+
+The adoption review's follow-up 5 (`docs/adoption-review-2026-11.md`, ranked item 5 and "What surprised" item 7): an app
+called `acme` said `starter` in its port declaration, its `dev` and `tick` scripts and its Playwright config. JP's
+standing rule for these sessions: decide, and record the rejected alternative.
+
+- **A generated app takes a port slot of its own, named for its slug, at 3700**
+  (`"sssb": { "port": { "name": "acme", "default": 3700 } }`): `sssb add-app`'s rule (#65) for the first app too.
+  Rejected: **a neutral built-in service, `app`** (the future task's design: `APP_PORT`, the starter's port and band,
+  `starter` kept as an alias): a new built-in in `@sssb/tools`' ports with alias rules, and every generated app on one
+  shared name, so a second app still needs a slot of its own, which custom slots (built since the task was written)
+  already give. Rejected: **keeping `starter`** (the P12 addendum's reasoning, and CLAUDE.md's "the slot is a port band,
+  not the app's name"): the review found it the newcomer's main "not mine" signal, and the risk `docs/adopting.md` named
+  before this change (its paragraph "The port key keeps its old name, on purpose"), a declaration and a Playwright
+  config that agree only by spelling one literal, is gone (next). This supersedes the 2026-11-18 "`@sssb/create`"
+  entry's "The port service stays `starter`".
+- **The starter names its slot only in its `package.json`.** Its scripts call `sssb dev-tick` and `sssb tick` with no
+  slot, and its Playwright config `originForApp(__dirname)`; all read the declaration. So the generator's rename of the
+  slot is one value in one file, which it finds by checking that the template declares `starter`, and it fails on a
+  template whose scripts or Playwright configs still name the slot. SSSB's starter keeps `starter` itself (port 3100,
+  `STARTER_PORT`, `pnpm tick:starter`), so this repository's runbooks stay true. Rejected: the generator rewriting the
+  scripts and the config as well, as `sssb add-app` did, three rewrites where one declaration does.
+- **Its default is 3700, not 3100.** 3100 is the built-in `starter` slot's, which a slot of the app's own may not take
+  (`@sssb/tools`' ports.js refuses SSSB's ports), and 3700 is the first port `sssb add-app` offers, so a second app takes 3800. The app guide's and `docs/adopting.md`'s examples moved with it. A generated app's local port changes from 3100
+  to 3700, and its override from `STARTER_PORT` to `<SLUG>_PORT`; a workspace generated before keeps 3100.
+- **A slug a slot cannot be named for gives the slot `sssb-app`** (`SSSB_APP_PORT`): one longer than a slot name's 32 characters,
+  with a doubled or trailing `-` (which a slug allows and a slot name does not), or reading a built-in's variable
+  (`showcase`, `starter`, `ladle`, `contract-pg`). Rejected: refusing such a slug, which the generator accepted until
+  now, and a `--slot` flag on the generator, one more option for a corner case. Rejected (round-1 review): **`app`**,
+  whose `APP_PORT` many shells already hold for another project, and which would then move the app's dev server and
+  e2e run onto that port. The same risk stands for any slot named for a slug (`API_PORT`, `WEB_PORT`), as it has for
+  `sssb add-app`'s slots since #65; prefixing every custom slot's variable (`SSSB_<NAME>_PORT`) would change
+  `@sssb/tools`' published `<NAME>_PORT` contract, which adopters' `LEDGER_PORT`-style overrides read, so it is left
+  for a release that takes that change on purpose.
+- **The slot rules are copied into `@sssb/create`** (`firstAppSlot`), which depends on no SSSB package, and
+  `tests/tooling/create-generate.test.ts` holds the copy to `@sssb/tools`' `parsePortDeclaration` by trying every choice
+  on it, as `RESERVED_DATABASE_NAMES`' copy is held. Rejected: importing `@sssb/tools` from the generator (rule 4).
+- **The app guide changed** (its example said `"sssb": { "port": "starter" }`, now false of a generated app, and a
+  second app at 3700, now the first's default), so `@sssb/kit` is in the changeset and an upgrading workspace refreshes
+  its copy (`sssb guide`), as every release asks. Rejected: leaving the guide's example, which a generated workspace's
+  copy would contradict.
+- **Pack and consume's ports follow the slot**: the pages console's e2e and the generated shape's checks pass
+  `CONSOLE_PORT` (`<SLUG>_PORT`) where they passed `STARTER_PORT`, its ledger takes 3800, and the generated shape fails if
+  the packed generator's workspace says `starter`.
+- **`pnpm exec sssb pin` is named** where the generated README, `CLAUDE.md` and CI workflow say to raise the pins
+  (follow-up 7, #66, left them saying it in words).

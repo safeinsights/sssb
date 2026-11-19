@@ -105,6 +105,7 @@ async function main() {
     ]
     console.log(`
 Created ${options.name} in ${result.root}: ${result.files.length} files, the app in apps/${options.slug}/.
+Its port slot is "${result.port.name}": port ${result.port.default} in a main checkout, ${result.port.name.toUpperCase().replaceAll('-', '_')}_PORT overrides it.
 
 Next:
   cd ${shellQuoted(relative)}

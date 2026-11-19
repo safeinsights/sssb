@@ -37,10 +37,10 @@ index 07b6b29..7a7ecf8 100644
      }
  }
 diff --git a/playwright.config.ts b/playwright.config.ts
-index c4b9593..100a04f 100644
+index a4815c5..e5a31e1 100644
 --- a/playwright.config.ts
 +++ b/playwright.config.ts
-@@ -20,15 +20,15 @@ const BASE_URL = originFor('starter')
+@@ -20,15 +20,15 @@ const BASE_URL = originForApp(__dirname)
  export default defineConfig({
      testDir: './tests/e2e',
      fullyParallel: true,
