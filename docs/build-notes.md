@@ -2359,3 +2359,13 @@ works has to run the walkers over what it left. `tests/tooling/release-pre-mode.
 with a red release commit is to rebuild its tree in scratch and run the failing test over it (`rm -rf .changeset`, extract `git archive <sha> .changeset` in its place, and afterwards
 `git restore --staged --worktree .changeset && git clean -fd .changeset`; extracting over the old directory leaves the
 old pending files beside their `pre/` copies, which is not that tree).
+
+## A worktree you were given can be taken over by another session (2026-11-18, `fix/starter-small-fixes`)
+
+A child session started in the manager's worktree switched branches in it, and another session then checked out its own
+branch there while the first still had staged work: the first commit landed on the second session's branch, with two of
+its unstaged files staged in the commit. Recovery that touched nothing of the other session's: `git reset --soft`, unstage
+only the files that were not mine, save the rest with `git diff --cached --binary`, restore exactly those paths, then
+`git worktree add` a private worktree on the branch and `git apply --index` the patch. The lesson is the same as the
+rule about shared checkouts, one level down: read `git branch --show-current` and `git status` before every commit in a
+worktree you did not create, and `git show --stat HEAD` after it.
