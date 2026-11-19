@@ -5948,6 +5948,199 @@ public GitHub release of `safeinsights/sssb`, marked Latest while it is the newe
   job's test, and reads a boolean flag as gh does (`--x`, `--x=true`, `--x=false`), so `--prerelease=false` and
   `--latest` are told apart.
 
+## Real mode requires only the optional ports an app uses, and jobs can run without CodeBuild (2026-11-19, `fix/kit-optional-real-ports`)
+
+Pages, SSSB's first adopter, prepared its first real-mode deployment and found that real mode refused to start
+without LLM, Mailgun and CodeBuild settings it does not use (it filled them with a placeholder), and that SSSB's only
+real job runner was CodeBuild, so its scheduled maintenance could not run through SSSB's scheduler (it ticks its own
+route from a ticker Lambda instead).
+
+- **The declaration is a switch per optional port, set by the deployment from `params.ports`**, exactly as
+  `DATABASE_TRANSPORT` is set from `params.database.transport`: `LLM_PROVIDER` (`anthropic` | `none`),
+  `EMAIL_PROVIDER` (`mailgun` | `none`), `INBOUND_EMAIL_PROVIDER` (`mailgun` | `none`), `JOBS_RUNNER` (`codebuild` |
+  `in-process` | `none`), in `packages/kit/src/adapters/real/optional-ports.ts`; `SssbApp` sets each one `params.ports`
+  names. Rejected: **a new `@sssb/app-config/*` module** declaring the ports, which every adopter's build would have
+  to add before it compiled again (a seam module cannot be optional), for a choice that is a deployment's as much as
+  the code's (the job runner decides what infrastructure exists); and **deriving it from what the app registers**,
+  which cannot be done: the framework's own invitations and notifications send mail whatever the seam says, and an
+  app's route can import `llm` from the registry with nothing registered.
+- **An unset switch is today's behaviour** (every optional port on, CodeBuild the runner), so a deployment that sets
+  none boots exactly as it did; `required-env.json` keeps the defaults per transport and adds, under `ports`, what each
+  choice requires. Rejected: **defaulting to off**, which would boot an existing deployment with ports it uses absent.
+- **Inbound email is its own switch**, not part of `email`: an app may send mail and receive none (the starter does),
+  and the signing key is a separate cutover row (`email-inbound`). Without the key the inbound route refuses every
+  request, as before, so turning it off fails closed.
+- **`WEBHOOK_SECRET` stays required whatever the switches say.** The cron route and the jobs webhook both verify it,
+  and an app with no jobs may still tick its outbound webhook deliveries. Rejected: tying it to `JOBS_RUNNER`.
+- **An absent port is an object whose every call throws `AbsentPortError`**, naming the port, its switch and its
+  cutover rows (`packages/kit/src/adapters/real/absent.ts`). Rejected: **leaving the registry's export undefined or
+  nullable**, which would change the type of `llm`, `email` and `jobs` for every caller to serve the case that should
+  never be called. `stream` throws when called, before anything is streamed.
+- **The optional adapters are dynamic imports in `createRealPorts`**, as the Data API transport already was, so a port
+  switched off never loads its vendor's SDK; the registry test counts the loads.
+- **The CodeBuild-free runner is `JOBS_RUNNER=in-process`**: `start` runs the job's handler in the server, now, and
+  records its terminal status and notifies before it returns. The executor is shared with the simulated adapter
+  (`packages/kit/src/jobs/run-in-process.ts`), which ran the same steps inline. Rejected: **leaving the job queued for
+  the next tick to drain**, which adds a second queue, a time budget per tick and a wait of up to a tick for a job a
+  user just submitted, for the case (long work) that belongs on CodeBuild anyway. The limit, recorded where it is
+  chosen: a job shares its invocation's time limit (30 seconds on `SssbApp`).
+- **The default runner stays `codebuild`; the starter declares `in-process`**, with `llm: 'none'` and
+  `inboundEmail: 'none'`: it has no jobs webhook route for a build to complete through, no model call and no inbound
+  route, so those are what is true of it. A generated app therefore needs no build project to run its jobs.
+- **The scheduled tick is `SssbApp`'s `scheduledTick: { webhookSecret, every? }`, opt-in.** An EventBridge rule
+  (every five minutes by default) runs a function that reads the secret and invokes the server directly with a Function
+  URL event for `/api/webhooks/cron`, which the Lambda Web Adapter serves like any request; the route stays behind
+  `withWebhookSecret`. Rejected: **POSTing through CloudFront**, which today refuses an unsigned POST (the sibling fix
+  `fix/cdk-function-url-post` addresses it) and would make the tick depend on that; **signing a request to the Function
+  URL**, which needs a SigV4 signer the function would have to bundle (the runtime documents none to import); **an EventBridge API destination
+  and connection**, which needs the secret's value at deploy time; and **on by default with a generated secret**: the
+  construct never puts a secret's value in an environment (pages keeps its secrets by ARN), so the server could not know
+  a secret the construct made, and every tick would be a 401.
+- **The tick's function may read that one secret and invoke the server's function and its versions**, nothing else,
+  runs outside any VPC (it calls AWS APIs only), and is not retried: the next tick runs on schedule, and two ticks never
+  double-spawn a schedule.
+- **The kit's changeset files `minor` with Action `optional`.** The snapshot changed, which the gate requires a minor
+  for, but nothing an existing deployment sets becomes required: Action `required` would tell an adopter something
+  breaks when nothing does.
+- **Not verified live** (no AWS calls): that the Lambda Web Adapter answers a direct invocation carrying a Function URL
+  event as it answers the URL, and the in-process runner on a deployed server. Both are in the `scheduled-tick` and
+  `job-runner` rows' proofs.
+- **From the first review round.** `sssb check-real-env` bundles `adapters/real/index` as CommonJS, and the in-process
+  runner's notification imports had pulled in the adapter registry, whose top-level await esbuild refuses there:
+  `dev:real` failed for every app. The registry now hands `createRealPorts` the notifier
+  (`notifyJobTerminal`; replaced in round 2: the registry hands in `inProcessJobs`), so the real ports never import a
+  module that imports the registry, and
+  `tests/tooling/tools-check-real-env.test.ts` bundles the real framework for both apps (it had bundled only a stub).
+  Rejected: bundling the preflight as ESM, which would leave the next such import to break the Next server instead.
+- **A job the in-process runner loses is failed, twice over.** A handler still running after 20 seconds
+  (`IN_PROCESS_DEADLINE_MS`, under `SssbApp`'s 30; removed in round 2, below) fails its job; and a new optional `JobsPort.sweep(now)`, which the
+  scheduled tick calls before it drains the schedules, fails a job still `running` five minutes after its last status
+  change (the invocation was cut off before it recorded anything). Optional on the port, so every other runner,
+  an adopter's own included, is untouched. The tick's answer keeps its shape (the starter's route test, which adopters
+  copy, pins it exactly): the failed jobs' errors say what the sweep did. Rejected: **a per-tick time budget**, which
+  the runner cannot know (nothing hands it the invocation's remaining time).
+- **The tick's function is not retried by Lambda either** (`configureAsyncInvoke({ retryAttempts: 0 })`: EventBridge's
+  retry policy does not reach Lambda's own two retries of an asynchronous invocation), and an Errors alarm watches it,
+  as the server's errors are watched.
+- **A failed deferred side effect is logged in real mode**, beside its analytics event, which without a PostHog key is
+  the simulated one, writing only to the server's local disk: an invitation sent with `EMAIL_PROVIDER=none` now leaves a log line saying the port is absent.
+- **Left as they are, with the reason.** `JOBS_RUNNER=none` still commits a submitted or scheduled job's row before
+  `start` throws, leaving it `queued`: `none` declares that the app runs no jobs, so a job reaching the port is the
+  declaration being wrong, and the throw names the switch. And the framework's `digest-email` handler, which the
+  in-process runner can now run in a deployment, picks recipients from the seam's seed people: a real-mode concern of
+  that handler with any runner (CodeBuild would run the same handler), so it is a follow-up, not this change's.
+- **Machine credentials get headers of their own, because CloudFront replaces `Authorization`.** Found in a review of
+  the sibling `fix/cdk-function-url-post` and checked here against CloudFront's guide ("Restrict access to an AWS
+  Lambda function URL origin"): with signing behavior `always`, which `SssbApp`'s origin access control uses, CloudFront
+  signs every origin request, and the signature is the `Authorization` header; besides, `CACHING_DISABLED` leaves
+  `Authorization` out of the cache key, so the viewer's header is not forwarded at all. Every webhook and service call
+  through the public host would answer 401. `withWebhookSecret` now reads `x-sssb-webhook-secret` and
+  `verifyServiceCaller` reads `x-sssb-service-token` (`packages/kit/src/service-auth/credential.ts`), the header winning
+  when present, and every sender in SSSB sends it (`pnpm tick`, the scheduled tick, the showcase's simulated actors).
+  `Authorization: Bearer` stays accepted when the header is absent: a direct invocation or `pnpm dev` keeps it, a sender
+  written before this keeps working where it worked, and nothing that passed before is refused now. Rejected:
+  **signing behavior `no-override`**, which passes a viewer's `Authorization` through but then needs it to be a SigV4
+  signature for the Lambda URL's host, so a Bearer credential would fail Lambda's IAM check instead; **dropping
+  `Authorization` at once**, which breaks direct callers for no gain; and **fixing the webhook alone**: the service token
+  had the same defect in the same shape, so both moved in one change. The sibling keeps the origin access control (it
+  adds a body hash at the edge), so the defect stands with it; a live POST through the host is in the `job-runner` and
+  `scheduled-tick` rows' proofs.
+- **From the second review round, which revises the first.**
+    - **The 20-second deadline is gone.** A handler abandoned at a soft deadline keeps running in a Lambda environment
+      that is frozen once the invocation returns, holding any transaction it had open (its row locks, its pooled
+      connection) until a later invocation thaws it, and finishing its side effects for a job already marked failed. The
+      server's own time limit ends the process instead, so the job's open transaction rolls back (at once on `pg`; on the Data API when that transaction times out, after three minutes with no call: the BeginTransaction API reference), within the sweep's five minutes), and the sweep fails the job. A per-job deadline also never bounded the invocation, whose total the runner cannot know.
+    - **The sweep fails only jobs this runner claimed.** Its `running` entry carries `IN_PROCESS_CLAIM`, so a job
+      another runner holds `running` (a service caller's, through its status route, or one the jobs webhook is walking
+      to its end) is left to it. A CodeBuild build in flight holds its job `queued`, which the sweep never reads. It is fault-isolated per
+      tenant and per job, and the tick catches a sweep that throws, as `runDueSchedules` isolates each schedule.
+    - **The registry builds the in-process runner** and hands it to `createRealPorts` (`inProcessJobs`). The first
+      round's fix had kept the notification modules out of `adapters/real/index`, but the runner itself runs the app's
+      handlers, so an adopter whose handler reached the registry would have broken `dev:real` again;
+      `packages/kit/src/adapters/real/index.test.ts` now reads esbuild's account of that module's CommonJS bundle and
+      fails if it reaches the registry, `server-lib` or the seam's jobs. The hook is optional, so
+      `createRealPorts()` (a published subpath) still takes no argument; choosing `in-process` without the hook fails at
+      boot, naming it.
+    - **Accepted, recorded:** a tick that spawns several in-process jobs runs them one after another inside one
+      invocation, so a backlog can outrun the time limit (the cut-off job is swept; schedules after it wait for the next
+      tick, and that tick's deliveries do too). Threading an invocation budget through the tick is a design of its own;
+      in-process is for short jobs. A job whose `start` was never reached (an audit write failing between the spawn and
+      the start) stays `queued`: `queued` is also a CodeBuild job's state while it builds, so the sweep cannot tell it
+      lost. The sweep's per-tenant scan of `running` jobs has no index of its own; a partial index is a framework
+      migration, for when a deployment's job history makes it matter.
+- **From the third review round.**
+    - **The registry loads the in-process runner on its first use** (`packages/kit/src/adapters/lazy-jobs.ts`), never
+      during its own top-level await. Loading it loads the app's job handlers, and a handler that imports the registry
+      (for `isSimulated`, as the guide says to) closes a cycle whose root is the registry, which would then wait
+      forever on its own import: the hang was reproduced in plain Node ESM (exit 13, "unsettled top-level await"), and
+      the lazy shape boots there. The test pins the helper (nothing loaded until the first call, one load, a failed
+      load retried), not the hang.
+    - **Recording a job's outcome is outside the handler's `try`.** Only the handler's own failure fails the job; a
+      failure after `completed` has committed (the webhook enqueue that follows it) propagates, instead of an attempt
+      to record `failed` over `completed`, which the state machine refuses. The simulated runner shares the change.
+    - **The Sentry scrubber drops the two credential headers**, as it drops `authorization`. Sentry's own filter
+      already masks names containing `secret` or `token`; the scrubber no longer relies on that.
+    - **Phase 1 stops here, at the cap.** Round 3's one HIGH was in round 2's fix, not in the original work, and its
+      LOWs were either taken above or already recorded (a job that `none` or a cut-off invocation leaves `queued`).
+- **`CLERK_JWT_KEY` stays optional** (asked when `fix/kit-clerk-middleware` merged, which left it out of
+  `assertRealEnv` for this change to decide). Clerk verifies a session without it, by fetching its signing keys when
+  it meets a key id it has not cached; the key saves that request, and the `auth-dev` row and that change's changeset
+  already recommend setting it. Rejected: **requiring it**, which would stop every deployment that boots today from
+  booting, for a request it saves, and would add a required variable (a `minor` in the snapshot's terms) for no
+  correctness gain.
+
+## `SssbApp` takes request bodies, and pins the server's `HOSTNAME` (2026-11-19, `fix/cdk-function-url-post`)
+
+Pages, the first adopter, found before its first deploy that `SssbApp`'s distribution refuses every request with a
+body (its Function URL is behind an origin access control, which needs the body's hash), and that the server's
+`HOSTNAME` must be `0.0.0.0`. ADR-0001's addendum of 2026-11-19 holds the hosting decision and its rejected
+alternatives (no origin access control with a secret header, an ALB, API Gateway, a CloudFront Function, hashing in the
+browser). JP's standing rule for these sessions is to decide and record; each choice below is one he would otherwise
+have been asked.
+
+- **An origin-request Lambda@Edge function, not viewer-request.** It runs just before CloudFront sends the request to
+  the origin, and CloudFront hands it up to 1 MB of body against a viewer-request function's 40 KB. Pages chose the
+  same.
+- **A body over 1 MB answers 413 from the function.** Rejected: **forwarding it with the hash of the part CloudFront
+  handed over**, which Lambda refuses with a 403 that names nothing. Rejected: **not setting the header**, the same 403.
+- **The header is always set, a request with no body getting the empty string's hash.** Rejected: **setting it only on
+  `POST`, `PUT` and `PATCH`**: a viewer's own `x-amz-content-sha256` would then reach the signer on every other method,
+  and whether Lambda accepts a body on a `DELETE` would become this function's question.
+- **A stack whose region is us-east-1 or unresolved keeps the function in the stack; a stack with an explicit region
+  elsewhere gets CDK's `EdgeFunction`.** `EdgeFunction` refuses an environment-agnostic stack, which the starter's is
+  until cutover, and `pnpm synth` must stay offline; and one construct path for both in-stack cases means naming
+  us-east-1 at cutover does not replace the function (a replicated one cannot be deleted for hours). Rejected: **a
+  CloudFormation rule refusing any other region** up front: CloudFormation's guide shows rules reading template
+  parameters, never a pseudo parameter such as `AWS::Region`, this could not be tried without an account, and a rule
+  CloudFormation refused would stop every deploy of the stack.
+  CloudFront's own refusal of the association is the error instead. Its cost: that refusal comes after the database
+  is created, so a production stack (retained database and buckets) deployed that way may leave them behind; the
+  starter's infra README says to give the stack its `env` first.
+- **`EdgeFunction`'s us-east-1 stack is one per `SssbApp` and region (`edge-<region>-<construct address>`), not CDK's
+  one per parent stack.** CDK's default collides on a second `SssbApp` in one stack, and is shared by one stack deployed
+  to two regions of an account. Rejected: **CDK's default name**, for those two reasons.
+- **That stack carries exactly the app's tags.** CDK copies the parent's tags into it when it creates it, before any
+  `Tags.of(...)` aspect has applied, and under `explicitStackTags` (`cdk init`'s default) the parent stack has no stack
+  tags at all. An aspect run after every tag aspect gives each of its resources the server function's final tags, and
+  the stack the parent stack's. Rejected: **asking adopters to tag at the App**, which the starter's `infra/app.ts`
+  does not do and a tag policy would refuse silently until the first deploy.
+- **The function's version is destroyed with the stack, not retained (CDK's default).** Its logical id carries a hash
+  of the code, so a retained one would pile up on every change, and would enter the stateful-logical-ids snapshot, which
+  takes any retained resource, under a name that changes with the code. The cost: a delete can fail while CloudFront
+  holds replicas, recorded in the `deploy-pipeline` row.
+- **The edge role's trust in `edgelambda.amazonaws.com` is CDK's.** `Distribution` adds it for every function it runs at
+  the edge; the test reads it from the template rather than the construct adding a second statement.
+- **`HOSTNAME=0.0.0.0` in the server's environment, not in a `run.sh` SSSB writes.** The deploy pipeline, and so its
+  `run.sh`, is the adopter's (`deploy-pipeline`); the environment is the one place the construct controls. Rejected:
+  **SSSB shipping the `run.sh`**, which would decide the pipeline's packaging for it.
+- **The live proofs extend two existing cutover rows** (`origin-not-publicly-reachable`, `deploy-pipeline`) rather than
+  adding one. A new row is a new id in `@sssb/kit/cutover/rows.json`, which `sssb doctor` reports as missing from every
+  adopter's own checklist.
+- **Out of scope, reported to the manager:** CloudFront sends the origin the Function URL's own host
+  (`ALL_VIEWER_EXCEPT_HOST_HEADER`), so the app builds absolute URLs and redirects on the Function URL's host. Pages sets
+  `x-forwarded-host` from the viewer's `Host` in a CloudFront Function of its own; one in `SssbApp` would also decide
+  what becomes of a viewer's own `X-Forwarded-Host`.
+
 ## One command removes the starter's Items slice (2026-11-19, `feat/remove-starter-items`)
 
 Adoption follow-up 2 (`docs/adoption-review-2026-11.md`, ranked item 2; `.claude/future-tasks/resolved/create-blank-option.md`).

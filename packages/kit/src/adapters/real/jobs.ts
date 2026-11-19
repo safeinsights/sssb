@@ -4,7 +4,8 @@ import type { JobsPort } from '../../ports/jobs'
 /**
  * AUTHORED — CUTOVER (`job-runner`): typechecked against @aws-sdk/client-codebuild, never run
  * against a real project. Starting the build is ALL this seam does — the job stays 'queued' until
- * the build's FINAL step POSTs /api/webhooks/jobs with `Authorization: Bearer $WEBHOOK_SECRET` and
+ * the build's FINAL step POSTs /api/webhooks/jobs with `x-sssb-webhook-secret: $WEBHOOK_SECRET` (never `Authorization`, which
+ * the deployment's CloudFront replaces with its own signature) and
  * `{ jobId, tenantId, status: 'completed' | 'failed', resultKey?, error? }`, which records the
  * terminal transition via packages/kit/src/db/jobs.recordWebhookCompletion (idempotent under redelivery). The
  * build receives its context through environment overrides, mirroring the fake handler's args —

@@ -48,6 +48,10 @@ export async function deferAfterResponse(label: string, work: () => Promise<void
 
 async function captureFailure(label: string, error: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : String(error)
+    // In a deployment the analytics port may be the simulated one (no POSTHOG_KEY), which writes only to the server's
+    // local disk, so the log is the record that stays: console.warn reaches CloudWatch in Lambda. A port the
+    // deployment switched off (`<SWITCH>=none`) shows up here.
+    if (!isSimulated) console.warn(`SSSB deferred work "${label}" failed: ${message}`)
     // Best-effort telemetry — if capture itself fails there is nothing left to do but not crash.
     await analytics.capture('deferred_work_failed', { label, message }).catch(() => {})
 }

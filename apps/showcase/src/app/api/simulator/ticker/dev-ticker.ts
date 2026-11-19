@@ -108,7 +108,7 @@ export function devTickerControl(): DevTickerControl {
     if (!holder[GLOBAL_KEY]) {
         const markerFile = tickerMarkerPath()
         // The port the dev server was started on (`pnpm dev` passes `--port` from the same function), never one taken
-        // from the request: the dev secret goes to this origin as a bearer.
+        // from the request: the dev secret goes to this origin in `x-sssb-webhook-secret`.
         const origin = `http://localhost:${portFor('showcase')}`
         holder[GLOBAL_KEY] = createDevTickerControl({
             ticker: createTicker({ origin, markerFile }),

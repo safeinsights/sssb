@@ -4,12 +4,17 @@ import type { JobsPort, SubmittedJob } from '../ports/jobs'
 
 // The registry is the one thing `runScheduledTick` takes from '../adapters/index' (a real import trips
 // server-only in a test env), so hand it the fake database and a jobs port that records what the tick spawns.
-const state = vi.hoisted(() => ({ calls: [] as SubmittedJob[], simulated: true }))
+const state = vi.hoisted(() => ({ calls: [] as SubmittedJob[], simulated: true, sweeps: [] as string[] }))
 vi.mock('../adapters/index', async () => {
     const { fakeDb } = await import('../adapters/fake/db')
     const jobs: JobsPort = {
         async start(job) {
+            state.sweeps.push('start')
             state.calls.push(job)
+        },
+        async sweep() {
+            state.sweeps.push('sweep')
+            return 0
         },
     }
     return {
@@ -30,6 +35,7 @@ afterAll(() => {
 })
 afterEach(async () => {
     state.calls.length = 0
+    state.sweeps.length = 0
     state.simulated = true
     const { resetClock } = await import('../adapters/fake/clock')
     resetClock()
@@ -121,6 +127,14 @@ describe('runScheduledTick', () => {
         await runScheduledTick()
 
         expect(firedFor(id), 'due only in world time, so a real tick must leave it').toBe(0)
+    })
+
+    test("sweeps the jobs port's lost jobs, when it has a sweep, before it spawns anything", async () => {
+        const { runScheduledTick } = await import('./scheduled-tick')
+        await insertSchedule(new Date(Date.now() - DAY_MS))
+        await runScheduledTick()
+        expect(state.sweeps[0]).toBe('sweep')
+        expect(state.sweeps.filter((call) => call === 'start').length).toBeGreaterThan(0)
     })
 
     test('reports the outbound-delivery drain beside the schedules', async () => {

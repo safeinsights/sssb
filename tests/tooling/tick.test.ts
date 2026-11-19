@@ -200,12 +200,12 @@ describe('tickOnce', () => {
     }
 
     function recorder(answer: (call: number) => Response | Error) {
-        const calls: { url: string; method?: string; authorization?: string }[] = []
+        const calls: { url: string; method?: string; secret?: string }[] = []
         const fetchImpl = (async (url: string, init: RequestInit) => {
             calls.push({
                 url,
                 method: init.method,
-                authorization: (init.headers as Record<string, string>).authorization,
+                secret: (init.headers as Record<string, string>)['x-sssb-webhook-secret'],
             })
             const result = answer(calls.length)
             if (result instanceof Error) throw result
@@ -214,14 +214,14 @@ describe('tickOnce', () => {
         return { calls, fetchImpl }
     }
 
-    it('POSTs the route once with the secret as a bearer and returns its body', async () => {
+    it('POSTs the route once with the secret in x-sssb-webhook-secret and returns its body', async () => {
         const { calls, fetchImpl } = recorder(() => Response.json(GOOD_BODY))
         const body = await tickOnce({ origin: ORIGIN, timeoutMs: 1000, secretFile: secretFile('s3cret'), fetchImpl })
         expect(body).toEqual(GOOD_BODY)
-        expect(calls).toEqual([{ url: ENDPOINT, method: 'POST', authorization: 'Bearer s3cret' }])
+        expect(calls).toEqual([{ url: ENDPOINT, method: 'POST', secret: 's3cret' }])
     })
 
-    it('with no secret yet, first makes the server create it (a throwaway bearer), then ticks with the real one', async () => {
+    it('with no secret yet, first makes the server create it (a throwaway secret), then ticks with the real one', async () => {
         const file = secretFile()
         const { calls, fetchImpl } = recorder((call) => {
             if (call === 1) {
@@ -232,7 +232,7 @@ describe('tickOnce', () => {
             return Response.json(GOOD_BODY)
         })
         await tickOnce({ origin: ORIGIN, timeoutMs: 1000, secretFile: file, fetchImpl })
-        expect(calls.map((call) => call.authorization)).toEqual(['Bearer x', 'Bearer fresh-secret'])
+        expect(calls.map((call) => call.secret)).toEqual(['x', 'fresh-secret'])
     })
 
     it('says so when the server did not create a secret (real mode, or another data dir), and never ticks without one', async () => {
@@ -282,7 +282,7 @@ describe('tickOnce', () => {
 // -------------------------------------------------------------------------------------------------------------
 
 interface Hit {
-    authorization: string | undefined
+    secret: string | string[] | undefined
 }
 
 let server: Server | undefined
@@ -301,7 +301,7 @@ async function listen(dataDir: string, respond: (hit: Hit) => { status: number; 
             mkdirSync(path.dirname(secret), { recursive: true })
             writeFileSync(secret, 'abc123')
         }
-        const hit = { authorization: req.headers.authorization }
+        const hit = { secret: req.headers['x-sssb-webhook-secret'] }
         hits.push(hit)
         const answer = req.method === 'POST' && req.url === TICK_PATH ? respond(hit) : { status: 404, body: 'no' }
         res.writeHead(answer.status, { 'content-type': 'application/json' }).end(answer.body)
@@ -325,14 +325,12 @@ describe('sssb tick', () => {
     it('exits 0 and prints what ran when the route answers, having authenticated with the dev secret', async () => {
         const dataDir = makeTestTmpDir('sssb-tick-cli-')
         const { port, hits } = await listen(dataDir, (hit) =>
-            hit.authorization === 'Bearer abc123'
-                ? { status: 200, body: JSON.stringify(GOOD_BODY) }
-                : { status: 401, body: '{}' },
+            hit.secret === 'abc123' ? { status: 200, body: JSON.stringify(GOOD_BODY) } : { status: 401, body: '{}' },
         )
         const result = await run(TICK, ['showcase', '--url', `http://127.0.0.1:${port}`], { APP_DATA_DIR: dataDir })
         expect(result).toMatchObject({ code: 0, err: '' })
         expect(result.out).toContain('2 job(s) spawned')
-        expect(hits.map((hit) => hit.authorization)).toEqual(['Bearer x', 'Bearer abc123'])
+        expect(hits.map((hit) => hit.secret)).toEqual(['x', 'abc123'])
         expect(readFileSync(path.join(dataDir, 'auth', 'webhook-secret'), 'utf8')).toBe('abc123')
     })
 
@@ -715,7 +713,7 @@ describe('sssb dev-tick', () => {
         expect(result.code).toBe(7)
         expect(result.out).toContain(`DEV_TICK_SECONDS=1`)
         expect(result.out).toContain('2 job(s) spawned')
-        expect(hits.some((hit) => hit.authorization === 'Bearer abc123')).toBe(true)
+        expect(hits.some((hit) => hit.secret === 'abc123')).toBe(true)
         expect(markerSeenByServer.length).toBeGreaterThan(0)
         expect(markerSeenByServer.every(Boolean), 'the marker is live whenever a tick arrives').toBe(true)
         expect(existsSync(markerFile), 'removed on exit').toBe(false)

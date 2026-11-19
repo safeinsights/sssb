@@ -38,6 +38,21 @@ export const params = {
         // the RDS Data API from a Lambda outside any VPC, with no NAT (ADR-0002, addendum 2026-11-16).
         transport: 'pg' as 'pg' | 'data-api',
     },
+    ports: {
+        // Which of SSSB's optional ports this app uses in a deployment; infra/ (SssbApp) sets LLM_PROVIDER,
+        // EMAIL_PROVIDER, INBOUND_EMAIL_PROVIDER and JOBS_RUNNER from it. `none` leaves the port absent: real mode
+        // requires none of its settings (and its cutover row does not apply), and a call through it fails naming the
+        // switch. Never fill an unused port's settings with placeholder values instead.
+        // No model calls: set 'anthropic' when the app adds one (cutover: llm-key)
+        llm: 'none' as 'anthropic' | 'none',
+        // cutover: email-outbound — invitations, notifications, digests
+        email: 'mailgun' as 'mailgun' | 'none',
+        // No inbound email route: set 'mailgun' when the app adds /api/webhooks/email (cutover: email-inbound)
+        inboundEmail: 'none' as 'mailgun' | 'none',
+        // Each job's handler runs in the server, within its time limit, so no CodeBuild project is needed; 'codebuild'
+        // (cutover: job-runner) runs each job as a build instead, completed through a jobs webhook route
+        jobs: 'in-process' as 'codebuild' | 'in-process' | 'none',
+    },
     clerk: {
         // cutover: auth-dev (development instance), auth-prod (production instance)
         publishableKeyName: 'PLACEHOLDER_CLERK_PUBLISHABLE_KEY_NAME',

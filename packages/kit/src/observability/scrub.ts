@@ -18,7 +18,9 @@ interface ScrubbableEvent {
     user?: { email?: string; ip_address?: string }
 }
 
-const SENSITIVE_HEADERS = ['cookie', 'authorization', 'x-api-key']
+// The machine-credential headers carry the webhook secret and service tokens (`@sssb/kit/service-auth/*`), as
+// `authorization` does.
+const SENSITIVE_HEADERS = ['cookie', 'authorization', 'x-api-key', 'x-sssb-webhook-secret', 'x-sssb-service-token']
 
 /** Generic over the SDK's event type so Sentry's beforeSend signatures typecheck unchanged. */
 export function scrubEvent<T extends object>(event: T): T {

@@ -231,4 +231,31 @@ describe('sssb check-real-env', () => {
         expect(result.status).toBe(1)
         expect(result.output).toContain('has no seam at src/app-config')
     })
+
+    // The tests above bundle a stub kit. This one bundles the real framework, on each of SSSB's apps: what is
+    // bundled must build as the preflight's CommonJS, which a module reaching the adapter registry (its top-level
+    // await) would not.
+    it.each(['showcase', 'starter'])(
+        "bundles the real framework for the %s app, and names what's missing",
+        (app) => {
+            const blank = Object.fromEntries(
+                [
+                    'DATABASE_TRANSPORT',
+                    'DATABASE_URL',
+                    'CLERK_SECRET_KEY',
+                    'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY',
+                    'JOBS_RUNNER',
+                ].map((name) => [name, '']),
+            )
+            const result = checkRealEnv(path.resolve(__dirname, '../../apps', app), {
+                ...blank,
+                DATABASE_TRANSPORT: 'pg',
+                APP_MODE: 'real',
+            })
+            expect(result.output).toContain('dev:real is not available yet')
+            expect(result.output).toMatch(/Missing env: .*CLERK_SECRET_KEY/)
+            expect(result.status).toBe(1)
+        },
+        120_000,
+    )
 })

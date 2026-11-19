@@ -7,13 +7,12 @@ import type { JobsPort } from '../../ports/jobs'
 import type { LlmPort } from '../../ports/llm'
 import type { StoragePort } from '../../ports/storage'
 import { fakeAnalytics } from '../fake/analytics'
+import { absentEmail, absentJobs, absentLlm } from './absent'
 import { createRealAnalytics } from './analytics'
 import { realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { createRealDb } from './db'
-import { createRealEmail } from './email'
-import { createRealJobs } from './jobs'
-import { createRealLlm } from './llm'
+import { optionalPortsEnv, portChoice } from './optional-ports'
 import { createRealStorage } from './storage'
 
 interface RealPorts {
@@ -26,25 +25,22 @@ interface RealPorts {
     jobs: JobsPort
 }
 
-/** Env var -> cutover-checklist row. Fails fast with the full list, not one var at a time. */
+/**
+ * Env var -> cutover-checklist row, for what every real deployment needs. Fails fast with the full list, not one var
+ * at a time. The database's variables follow DATABASE_TRANSPORT (./database-transport.ts), and the optional ports'
+ * (LLM, outbound and inbound email, the job runner) follow their switches (./optional-ports.ts).
+ */
 const REQUIRED_ENV: Record<string, string> = {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'auth-dev',
     CLERK_SECRET_KEY: 'auth-dev',
     STORAGE_BUCKET: 'cloud-accounts',
     AWS_REGION: 'cloud-accounts',
-    JOBS_CODEBUILD_PROJECT: 'job-runner',
+    // The shared secret the cron route (the scheduled tick) and the jobs webhook verify (`withWebhookSecret`).
     WEBHOOK_SECRET: 'job-runner',
-    ANTHROPIC_API_KEY: 'llm-key',
-    MAILGUN_DOMAIN: 'email-outbound',
-    MAILGUN_API_KEY: 'email-outbound',
-    EMAIL_FROM: 'email-outbound',
-    // Inbound: the key Mailgun signs inbound-route webhooks with — verified by the
-    // /api/webhooks/email route (packages/kit/src/service-auth/mailgun.ts). Read at request time, not here.
-    MAILGUN_WEBHOOK_SIGNING_KEY: 'email-inbound',
 }
 
 export function assertRealEnv(): void {
-    const required = { ...REQUIRED_ENV, ...DATABASE_ENV[databaseTransport()] }
+    const required = { ...REQUIRED_ENV, ...DATABASE_ENV[databaseTransport()], ...optionalPortsEnv() }
     const missing = Object.keys(required).filter((name) => !process.env[name])
     if (missing.length > 0) {
         const rows = [...new Set(missing.map((name) => required[name]))]
@@ -55,7 +51,22 @@ export function assertRealEnv(): void {
     }
 }
 
-export async function createRealPorts(): Promise<RealPorts> {
+/**
+ * What the adapter registry hands the real ports: how to build the in-process job runner (`JOBS_RUNNER=in-process`).
+ * The runner runs the app's registered job handlers, so it reaches the app's seam, and through it whatever the app's
+ * handlers import, the registry included. This module must reach none of that: the registry loads it while being
+ * evaluated, and `sssb check-real-env` bundles it on its own, as CommonJS, which refuses the registry's top-level
+ * await. So the registry hands in a hook that returns the runner (./jobs-in-process.ts, given its notifier) wrapped
+ * to load on its first use (../lazy-jobs.ts): the hook is called while the registry is still being evaluated, so it
+ * must not load the handlers then.
+ * Optional, so a caller that builds the real ports itself is unchanged; such a caller gets a named error at boot if it
+ * selects the in-process runner without handing one in.
+ */
+interface RealPortsHooks {
+    inProcessJobs?: (ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort }) => Promise<JobsPort>
+}
+
+export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealPorts> {
     assertRealEnv()
     const env = process.env
     // assertRealEnv above already proved every required variable is set; this narrows the type.
@@ -64,7 +75,8 @@ export async function createRealPorts(): Promise<RealPorts> {
         if (value === undefined) throw new Error(`missing env: ${name}`)
         return value
     }
-    // The Data API transport is a dynamic import, so a `pg` deployment never loads the RDS Data SDK.
+    // The Data API transport and every optional adapter below are dynamic imports: a `pg` deployment never loads the
+    // RDS Data SDK, and a port switched off (`none`) never loads its vendor's.
     const db =
         databaseTransport() === 'data-api'
             ? (await import('./db-data-api')).createRealDataApiDb({
@@ -74,16 +86,47 @@ export async function createRealPorts(): Promise<RealPorts> {
                   region: need('AWS_REGION'),
               })
             : createRealDb(need('DATABASE_URL'))
+    const storage = createRealStorage(need('STORAGE_BUCKET'), need('AWS_REGION'))
+    const llm =
+        portChoice('llm') === 'anthropic' ? (await import('./llm')).createRealLlm(need('ANTHROPIC_API_KEY')) : absentLlm
+    const email =
+        portChoice('email') === 'mailgun'
+            ? (await import('./email')).createRealEmail(
+                  need('MAILGUN_DOMAIN'),
+                  need('MAILGUN_API_KEY'),
+                  need('EMAIL_FROM'),
+              )
+            : absentEmail
+    const runner = portChoice('jobs')
+    const jobs =
+        runner === 'codebuild'
+            ? (await import('./jobs')).createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION'))
+            : runner === 'in-process'
+              ? await inProcessJobs(hooks, { db, storage, email, llm })
+              : absentJobs
     return {
         auth: realAuth,
         db,
-        storage: createRealStorage(need('STORAGE_BUCKET'), need('AWS_REGION')),
-        llm: createRealLlm(need('ANTHROPIC_API_KEY')),
-        email: createRealEmail(need('MAILGUN_DOMAIN'), need('MAILGUN_API_KEY'), need('EMAIL_FROM')),
-        jobs: createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION')),
+        storage,
+        llm,
+        email,
+        jobs,
         // PostHog only where a key is configured (staging/prod per ADR-0010); no-op otherwise.
         analytics: env['POSTHOG_KEY']
             ? createRealAnalytics(env['POSTHOG_KEY'], env['POSTHOG_HOST'] ?? '')
             : fakeAnalytics,
     }
+}
+
+function inProcessJobs(
+    hooks: RealPortsHooks,
+    ports: { db: DbPort; storage: StoragePort; email: EmailPort; llm: LlmPort },
+): Promise<JobsPort> {
+    if (!hooks.inProcessJobs) {
+        throw new Error(
+            'JOBS_RUNNER=in-process needs the adapter registry to build the runner: take the ports from ' +
+                '@sssb/kit/adapters/index, or pass createRealPorts an inProcessJobs hook',
+        )
+    }
+    return hooks.inProcessJobs(ports)
 }
