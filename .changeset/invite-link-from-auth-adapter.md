@@ -1,0 +1,24 @@
+---
+'@sssb/kit': minor
+---
+
+### The invitation mail carries a link the real accept page can use
+
+**Kind.** seam
+
+**Action.** required
+
+**What changed.** SSSB mailed every invitee `/<locale>/accept-invite?invite=<id>`, the fake's link, in every mode. In
+real mode the accept page reads Clerk's `__clerk_ticket`, which that link never carries, so a real invitation could
+not be accepted from SSSB's mail. The link is now the auth adapter's to build: `AuthPort.createInvite` takes
+`acceptPageUrl` (the app's accept page, absolute, no query) and returns a `CreatedInvite`, a `Membership` with
+`acceptUrl`, the link to mail. The fake returns its page with `?invite=<id>`, as before; the Clerk adapter passes the
+page to Clerk as `redirectUrl` and returns Clerk's invitation URL. When the adapter returns no link, `sendOrgInvite`
+sends no mail of its own, and it never returns the link to its caller: it is the invitee's credential.
+
+**To adopt.** If your app calls `sendOrgInvite`, nothing changes. If it calls `auth.createInvite` itself, pass
+`acceptPageUrl` and mail the returned `acceptUrl` to the invitee only (never send it back to the inviter), sending
+nothing when it is `null`. An app-side fake or test double of the auth port returns `acceptUrl` too.
+
+**Now deletable.** Code that rebuilds an accept link from an invitation's id, or appends a ticket to one, after calling
+`createInvite`.

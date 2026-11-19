@@ -5,9 +5,10 @@ import { Stack, Text } from '@mantine/core'
 import { useEffect, useState } from 'react'
 
 /**
- * Clerk ticket-strategy sign-up (ADR-0003): at cutover, Clerk organization invitations carry a
- * `__clerk_ticket` query param onto this page's URL instead of the fake email's plain
- * `/accept-invite?invite=<id>` link. sign-in-form.tsx is the reference for the v7 signals API
+ * Clerk ticket-strategy sign-up (ADR-0003): the invitation mail carries Clerk's invitation URL (./auth.ts
+ * `createInvite`), and Clerk sends the invitee on to this page with a `__clerk_ticket` query param, where the fake's
+ * link carries `?invite=<id>`. Only sign-up is handled: an invitee who already has an account arrives with
+ * `__clerk_status=sign_in`, which this form does not read (cutover row `auth-dev`). sign-in-form.tsx is the reference for the v7 signals API
  * (signIn.password() → status → finalize()) — the sign-up equivalent used here is
  * signUp.ticket() → status → finalize(), per @clerk/shared's SignUpFutureResource.
  *

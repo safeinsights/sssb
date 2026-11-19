@@ -6828,3 +6828,22 @@ and record the rejected alternative.
   `lint-typecheck-unit` (5m41s on the probe) is the critical path and runs in full. Recorded as a future task
   (`.claude/future-tasks/docs-only-lint-typecheck-unit.md`): a docs-only mode for that job that runs only what reads
   the docs.
+
+## The invitation mail carries the auth adapter's link (2026-11-19, `fix/realmode-invite-link`)
+
+Found by ADR-0015's addendum review: SSSB mailed `/<locale>/accept-invite?invite=<id>`, the fake's link, in every mode,
+while the real accept page reads Clerk's `__clerk_ticket`, so a real invitation could not be accepted from SSSB's mail.
+JP asked for the fix. Decisions, with the rejected alternative:
+
+- **The adapter builds the link**: `createInvite` takes `acceptPageUrl` and returns `CreatedInvite.acceptUrl`. The fake
+  appends `?invite=<id>`; Clerk gets the page as `redirectUrl` and its invitation's `url` is returned. Rejected: the
+  framework appending a provider-specific query itself, which would put Clerk's ticket format in shared code; and
+  sending no SSSB mail in real mode, which gives up the app's own, translated invitation (ADR-0003's one UI, ADR-0008).
+- **No link, no mail**: Clerk types `url` as nullable, and a mail with no working link is worse than none. Rejected:
+  throwing, which would fail an invitation that Clerk may well have delivered itself.
+- **The link never goes back to the inviter**: `sendOrgInvite` strips it from what it returns, because the route answers
+  the inviter with it and the link is the invitee's credential.
+- **A port change, filed `minor`**: an app that calls `createInvite` itself must pass `acceptPageUrl`.
+- **Not built: an existing user's invitation.** Clerk sends `__clerk_status=sign_in` for one, which needs
+  `signIn.ticket()`; the accept form does sign-up only. Written into the `auth-dev` row and the form's header rather than
+  built blind against an instance nobody has run.
