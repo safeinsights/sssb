@@ -15,6 +15,8 @@ import { fakeEmail } from './fake/email'
 import { fakeJobs } from './fake/jobs'
 import { fakeLlm } from './fake/llm'
 import { fakeStorage } from './fake/storage'
+import { lazyJobs } from './lazy-jobs'
+import { appMode, isSimulated } from './run-mode'
 
 /**
  * The adapter registry: the ONE place run mode selects implementations. Simulated is the default —
@@ -27,12 +29,10 @@ import { fakeStorage } from './fake/storage'
  * is for Postgres and `.data/` is for S3. So `if (isSimulated) -> fakeDb` reads correctly: in a
  * simulated world, the DB port is served by a fake.
  *
- * `APP_MODE` only ever tests for `'real'`, so an older `APP_MODE=fake` still resolves to `simulated`
- * and no deployed config breaks.
+ * The mode itself is read in ./run-mode.ts, which loads nothing else, so the request proxy (./proxy.ts) can ask it
+ * without loading this registry; it is re-exported here, where everything else imports it from.
  */
-export type AppMode = 'simulated' | 'real'
-export const appMode: AppMode = process.env['APP_MODE'] === 'real' ? 'real' : 'simulated'
-export const isSimulated = appMode === 'simulated'
+export { appMode, isSimulated, type AppMode } from './run-mode'
 
 /**
  * Demo build flag. packages/kit/src/adapters is where process.env is read (lint-enforced), so run-mode
@@ -104,7 +104,10 @@ if (isSimulated && process.env.NODE_ENV === 'production') {
     )
 }
 
-const real = appMode === 'real' ? await (await import('./real/index')).createRealPorts() : null
+const real =
+    appMode === 'real'
+        ? await (await import('./real/index')).createRealPorts({ inProcessJobs: buildInProcessJobs })
+        : null
 
 export const auth: AuthPort = real?.auth ?? fakeAuth
 export const db: DbPort = real?.db ?? fakeDb
@@ -113,3 +116,27 @@ export const llm: LlmPort = real?.llm ?? fakeLlm
 export const email: EmailPort = real?.email ?? fakeEmail
 export const analytics: AnalyticsPort = real?.analytics ?? fakeAnalytics
 export const jobs: JobsPort = real?.jobs ?? fakeJobs
+
+/**
+ * The in-process job runner (real mode, `JOBS_RUNNER=in-process`), built here rather than by the real ports
+ * (./real/index.ts says why), and loaded on its first use (./lazy-jobs.ts): never while this module is evaluated, which
+ * would deadlock on a job handler that imports it. Its notification is the jobs webhook route's, with the request
+ * path's deps; the notification modules import this registry, so they too are imported when a job ends.
+ */
+async function buildInProcessJobs(
+    ports: Parameters<typeof import('./real/jobs-in-process').createInProcessJobs>[0],
+): Promise<JobsPort> {
+    return lazyJobs(async () =>
+        (await import('./real/jobs-in-process')).createInProcessJobs(ports, notifyJobTerminalFromRegistry),
+    )
+}
+
+async function notifyJobTerminalFromRegistry(input: {
+    tenantId: string
+    jobId: string
+    status: 'completed' | 'failed'
+}): Promise<void> {
+    const { notifyJobTerminal } = await import('../server-lib/notify')
+    const { makeNotifyDeps } = await import('../server-lib/notify-deps')
+    await notifyJobTerminal(await makeNotifyDeps(), auth, input)
+}

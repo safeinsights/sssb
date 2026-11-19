@@ -1,4 +1,5 @@
 // @ts-check
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -10,6 +11,9 @@ import { Construct } from 'constructs'
 import { failClosedEnvironmentProblems, migratorBundleProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '@sssb/tools/kit'
 import { databaseNameFor, SLUG } from './database-name.js'
+import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
+import { portsEnvironment } from './optional-ports.js'
+import { addScheduledTick } from './scheduled-tick.js'
 
 const { aws_budgets, aws_cloudfront, aws_cloudfront_origins, aws_cloudwatch, aws_ec2, aws_lambda } = cdk
 const { aws_lambda_nodejs, aws_rds, aws_s3 } = cdk
@@ -232,10 +236,39 @@ function stagedBundle(fn) {
 export { databaseNameFor } from './database-name.js'
 
 /**
+ * HSTS's max-age in the policy `hstsIncludeSubdomains` builds: a year, as AWS's managed SecurityHeadersPolicy sends, so
+ * opting into includeSubDomains changes nothing else.
+ */
+export const HSTS_MAX_AGE_SECONDS = 31_536_000
+
+/** AWS's managed SecurityHeadersPolicy (CloudFront's guide, "Use managed response headers policies"). */
+export const MANAGED_SECURITY_HEADERS_POLICY_ID = '67f7725c-6f97-4210-82d7-5512b31e9d03'
+
+/** After every tag aspect: CDK's own run at `AspectPriority.MUTATING` (200) or the default (500). */
+const MIRROR_PRIORITY = 900
+
+/**
+ * Makes `manager` hold exactly `wanted`, over any tag an aspect set or will set: a higher priority wins, and CDK's
+ * `Tags.of(...).add` and `.remove` default to 100 and 200 (a caller who passes more than 10 000 is not followed).
+ * @param {cdk.TagManager} manager
+ * @param {Record<string, string>} wanted
+ */
+function mirrorTags(manager, wanted) {
+    const priority = 10_000
+    for (const key of Object.keys(manager.tagValues())) if (!(key in wanted)) manager.removeTag(key, priority)
+    for (const [key, value] of Object.entries(wanted)) manager.setTag(key, value, priority)
+}
+
+/**
  * An SSSB app's deployment (ADR-0001, ADR-0014 part 8): the Next standalone server in one Lambda behind the
  * AWS Lambda Web Adapter, its Function URL behind CloudFront with static assets from S3, the framework's
  * migrator bundled with the app's own migrations, and Aurora PostgreSQL Serverless v2. A construct, not a
  * stack: the adopter composes it inside a stack of their own, beside their own constructs.
+ *
+ * The Function URL answers only the distribution, through an origin access control, and a Lambda@Edge function on
+ * the origin request adds the body's hash a request with a body needs (ADR-0001, addendum 2026-11-19). Lambda@Edge
+ * lives in us-east-1: an environment-agnostic stack deploys to us-east-1 only, and a stack with an explicit region
+ * elsewhere gets the function in a us-east-1 stack of its own.
  *
  * TWO NETWORK SHAPES, chosen by `params.database.transport` (ADR-0001 and ADR-0002, addenda 2026-11-16).
  * Decide before the first deploy: on an existing stack a switch does not replace anything, it FAILS (the new
@@ -307,6 +340,46 @@ export class SssbApp extends Construct {
             throw new Error(`SssbApp: production must be true or false (got ${JSON.stringify(props.production)})`)
         }
         const isProd = props.production
+        // HSTS's includeSubDomains binds every subdomain of the adopter's domain to HTTPS for the header's year, so it
+        // is theirs to switch on; with a policy of their own, HSTS is that policy's. `null` is taken as left out, as
+        // `??` takes it.
+        const ownResponseHeadersPolicy = props.responseHeadersPolicy ?? undefined
+        // CDK reads `responseHeadersPolicyRef` from it deep inside the distribution; a value without one (a policy id
+        // string, `false`) would fail there with a TypeError naming nothing.
+        if (
+            ownResponseHeadersPolicy !== undefined &&
+            typeof (/** @type {any} */ (ownResponseHeadersPolicy)?.responseHeadersPolicyRef) !== 'object'
+        ) {
+            throw new Error(
+                'SssbApp: responseHeadersPolicy must be a response headers policy (a construct, or ' +
+                    '`ResponseHeadersPolicy.fromResponseHeadersPolicyId`), not ' +
+                    JSON.stringify(ownResponseHeadersPolicy),
+            )
+        }
+        if (props.hstsIncludeSubdomains != null && typeof props.hstsIncludeSubdomains !== 'boolean') {
+            throw new Error(
+                `SssbApp: hstsIncludeSubdomains must be true or false (got ${JSON.stringify(props.hstsIncludeSubdomains)})`,
+            )
+        }
+        if (ownResponseHeadersPolicy !== undefined && props.hstsIncludeSubdomains != null) {
+            throw new Error(
+                "SssbApp: hstsIncludeSubdomains configures SSSB's own response headers policy; with " +
+                    'responseHeadersPolicy, set Strict-Transport-Security in that policy instead',
+            )
+        }
+        // The optional ports' switches (LLM_PROVIDER, …), from `params.ports`: validated here, before anything is built.
+        const portsEnv = portsEnvironment(props.params?.ports)
+        const scheduledTick = props.scheduledTick
+        // Duck-typed: an imported secret (`Secret.fromSecretCompleteArn`) is no `Secret` instance.
+        const tickSecret = /** @type {{ secretArn?: unknown, grantRead?: unknown } | undefined} */ (
+            scheduledTick?.webhookSecret
+        )
+        if (
+            scheduledTick !== undefined &&
+            (typeof tickSecret?.secretArn !== 'string' || typeof tickSecret.grantRead !== 'function')
+        ) {
+            throw new Error("SssbApp: scheduledTick.webhookSecret must be the secret the server's WEBHOOK_SECRET holds")
+        }
         const dataApi = transport === 'data-api'
         const removalPolicy = isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY
         const migratorSource = resolveMigrator(appDir)
@@ -445,10 +518,19 @@ export class SssbApp extends Construct {
             environment: {
                 AWS_LAMBDA_EXEC_WRAPPER: '/opt/bootstrap',
                 PORT: '3000',
+                // Where Next's standalone server listens: its server.js takes HOSTNAME, or 0.0.0.0 when it is unset
+                // (next/dist/build/utils.js). Pinned to that default: the Web Adapter calls the server on 127.0.0.1,
+                // so an inherited HOSTNAME naming another address would leave it nothing to call, and with 127.0.0.1
+                // itself Next names itself `localhost` to the proxy but `127.0.0.1` when it routes, so a rewrite the
+                // proxy makes (Clerk's, on every request) looks external and Next fetches it over the network (pages,
+                // 2026-11-18). No wider than that: on pg the server's security group admits nothing, and on data-api
+                // it is in no VPC. A run.sh that exports HOSTNAME overrides this; the deploy pipeline's must not.
+                HOSTNAME: '0.0.0.0',
                 APP_MODE: 'real',
                 NEXT_TELEMETRY_DISABLED: '1',
                 ...databaseEnv,
                 STORAGE_BUCKET: storageBucket.bucketName,
+                ...portsEnv,
             },
         })
         grantDatabase(server)
@@ -490,9 +572,134 @@ export class SssbApp extends Construct {
         })
         grantDatabase(migrator)
 
+        // ---- the request body's hash (Lambda@Edge) ------------------------------------------
+        // Lambda takes no unsigned payload behind origin access control: a request with a body must carry its
+        // SHA-256 in `x-amz-content-sha256`, which CloudFront does not compute, so without this every POST, PUT and
+        // PATCH would answer 403. An origin-request function hashes the body CloudFront hands it (read-only: what is
+        // hashed is what is forwarded), then CloudFront signs the request, header included. CloudFront hands an
+        // origin request at most 1 MB of body; past that the function answers 413 rather than a hash that would not
+        // match. ADR-0001, addendum 2026-11-19, says why this and not a Function URL open to the internet.
+        // Lambda@Edge lives in us-east-1. A stack whose region is us-east-1, or unknown until deploy (an
+        // environment-agnostic stack, as the starter's is until cutover), keeps the function in the stack; so the
+        // latter deploys to us-east-1 alone: elsewhere CloudFront refuses the association and the deploy rolls back,
+        // after the database is created. A stack with an explicit region elsewhere gets CDK's EdgeFunction, which puts
+        // the function in a us-east-1 stack of its own (that region bootstrapped too).
+        const stack = cdk.Stack.of(this)
+        /** @type {cdk.aws_lambda.FunctionProps} */
+        const bodyHashProps = {
+            runtime: aws_lambda.Runtime.NODEJS_22_X,
+            architecture: aws_lambda.Architecture.X86_64,
+            code: aws_lambda.Code.fromAsset(path.join(HERE, 'assets/body-hash')),
+            handler: 'index.handler',
+            memorySize: 128,
+            timeout: cdk.Duration.seconds(5),
+            description: `${slug}: SHA-256 of each request body, for the server's Function URL (Lambda@Edge)`,
+            // Destroyed, not CDK's default of retained: the version's id carries a hash of the code, so a retained
+            // one would pile up with every change and outlive every teardown. CloudFront's replicas keep a version
+            // from being deleted for up to a few hours after the distribution lets go of it, so the cleanup after
+            // an update that replaces the code can fail to delete the old one (a failed cleanup leaves it behind and
+            // fails nothing), and deleting the stack fails until the replicas are gone (docs/runbooks/deploy.md).
+            currentVersionOptions: { removalPolicy: cdk.RemovalPolicy.DESTROY },
+        }
+        /** @type {cdk.aws_lambda.IVersion} */
+        let bodyHash
+        if (cdk.Token.isUnresolved(stack.region) || stack.region === 'us-east-1') {
+            // In the stack, whether its region is us-east-1 or unknown until deploy: one construct path for both, so
+            // naming the region later does not replace the function. The distribution adds Lambda@Edge to the role's
+            // trust, as it does for every function it runs at the edge.
+            bodyHash = new aws_lambda.Function(this, 'BodyHash', bodyHashProps).currentVersion
+        } else {
+            // A us-east-1 stack per SssbApp and per region it serves. CDK's default is one per parent stack path, in
+            // which a second SssbApp's `BodyHash` would collide with the first's, and which deployments of one stack
+            // to two regions of an account would share.
+            const edgeFunction = new aws_cloudfront.experimental.EdgeFunction(this, 'BodyHash', {
+                ...bodyHashProps,
+                stackId: `edge-${stack.region}-${this.node.addr}`,
+            })
+            // That stack is the app's too, so it carries the app's tags: CDK copies the parent's into it when it is
+            // created, before any `Tags.of(...)` has applied (they are aspects, applied at synth). So, last, each of
+            // its resources is given exactly the tags the server function ended with, and the stack exactly the
+            // parent stack's, whatever scope or filter set them (`explicitStackTags` tags resources only).
+            const edgeStack = cdk.Stack.of(edgeFunction.lambda)
+            const serverTags = /** @type {cdk.CfnResource & cdk.ITaggable} */ (server.node.defaultChild).tags
+            cdk.Aspects.of(edgeStack).add(
+                {
+                    visit: (node) => {
+                        if (node === edgeStack) mirrorTags(edgeStack.tags, stack.tags.tagValues())
+                        else if (node instanceof cdk.CfnResource && cdk.TagManager.isTaggable(node)) {
+                            mirrorTags(node.tags, serverTags.tagValues())
+                        }
+                    },
+                },
+                { priority: MIRROR_PRIORITY },
+            )
+            bodyHash = edgeFunction
+        }
+
+        // ---- the host the viewer asked for (CloudFront Function) ------------------------------
+        // CloudFront sends the Function URL its own Host (it signs for it), so what reads `x-forwarded-host` (Clerk's
+        // URLs, Next's server-action origin check, next-intl's domain redirects) would see the Function URL's host,
+        // or whatever a viewer sent. This viewer-request function sets it, and its port, from the request CloudFront
+        // received (src/forwarded-host.js). A viewer-request CloudFront Function beside an origin-request Lambda@Edge is a
+        // combination CloudFront allows on one behavior.
+        // Its name, like the response headers policy's below, is unique per account across regions, so both are keyed
+        // like the deployment: by region, stack name and construct path. CDK's default leaves the stack name out of the
+        // function's (one stack deployed under two names into one account would collide) and the region out of the
+        // policy's (one stack name deployed to two regions would). The function's stays within CloudFront's 64
+        // characters.
+        const deploymentKey = createHash('sha256')
+            .update(`${stack.stackName}/${this.node.path}`)
+            .digest('hex')
+            .slice(0, 16)
+        /** @param {string[]} suffix */
+        const accountUniqueName = (...suffix) =>
+            cdk.Fn.join('-', [cdk.Aws.REGION, slug.slice(0, 20), deploymentKey, ...suffix])
+        const forwardedHost = new aws_cloudfront.Function(this, 'ForwardedHost', {
+            functionName: accountUniqueName(),
+            runtime: aws_cloudfront.FunctionRuntime.JS_2_0,
+            code: aws_cloudfront.FunctionCode.fromInline(FORWARDED_HOST_SOURCE),
+            comment: `${slug}: x-forwarded-host and x-forwarded-port from the viewer's request`,
+        })
+
+        // ---- the response's security headers (response headers policy) -----------------------
+        // On the three behaviors this construct builds, so on the app's pages and the static files alike. By default
+        // AWS's managed SecurityHeadersPolicy: it takes none of the account's 20 custom response headers policies, a
+        // quota one per deployment (each preview environment, say) would soon exhaust. It sets HSTS for a year
+        // without includeSubDomains or preload, X-Content-Type-Options: nosniff, Referrer-Policy:
+        // strict-origin-when-cross-origin, X-Frame-Options: SAMEORIGIN and the legacy X-XSS-Protection: 1;
+        // mode=block, each yielding to the app's own header but nosniff, which it always sends (CloudFront's guide,
+        // "Use managed response headers policies"). So an app that must be framed by another site sends its own CSP
+        // `frame-ancestors`, which browsers prefer to X-Frame-Options; and the deploy pipeline must upload the static
+        // files with their real Content-Type, or a browser refuses a script stored as something else.
+        // `hstsIncludeSubdomains: true` needs HSTS the managed policy cannot send: then a custom policy, the same but
+        // for includeSubDomains (and without the legacy header), takes one of those 20. An adopter's own policy
+        // (`responseHeadersPolicy`) replaces both, on these three behaviors.
+        const responseHeadersPolicy =
+            ownResponseHeadersPolicy ??
+            (props.hstsIncludeSubdomains === true
+                ? new aws_cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
+                      responseHeadersPolicyName: accountUniqueName('headers'),
+                      comment: `${slug}: SecurityHeadersPolicy's headers, with HSTS includeSubDomains (SssbApp)`,
+                      securityHeadersBehavior: {
+                          strictTransportSecurity: {
+                              accessControlMaxAge: cdk.Duration.seconds(HSTS_MAX_AGE_SECONDS),
+                              includeSubdomains: true,
+                              preload: false,
+                              override: false,
+                          },
+                          contentTypeOptions: { override: true },
+                          referrerPolicy: {
+                              referrerPolicy: aws_cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+                              override: false,
+                          },
+                          frameOptions: { frameOption: aws_cloudfront.HeadersFrameOption.SAMEORIGIN, override: false },
+                      },
+                  })
+                : aws_cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS)
+
         // ---- cloudfront ---------------------------------------------------------------------
         // First deploys ride *.cloudfront.net; custom domains + certs are cutover row
-        // `domains-and-certs`.
+        // `domains-and-certs`. Every behavior redirects plain HTTP to HTTPS.
         const distribution = new aws_cloudfront.Distribution(this, 'Distribution', {
             defaultBehavior: {
                 // withOriginAccessControl, not the plain constructor: it creates the OAC and grants
@@ -502,27 +709,47 @@ export class SssbApp extends Construct {
                 allowedMethods: aws_cloudfront.AllowedMethods.ALLOW_ALL,
                 cachePolicy: aws_cloudfront.CachePolicy.CACHING_DISABLED,
                 originRequestPolicy: aws_cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                responseHeadersPolicy,
+                functionAssociations: [
+                    { function: forwardedHost, eventType: aws_cloudfront.FunctionEventType.VIEWER_REQUEST },
+                ],
+                edgeLambdas: [
+                    {
+                        functionVersion: bodyHash,
+                        eventType: aws_cloudfront.LambdaEdgeEventType.ORIGIN_REQUEST,
+                        includeBody: true,
+                    },
+                ],
             },
             additionalBehaviors: {
                 '/_next/static/*': {
                     origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
+                    viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cachePolicy: aws_cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                    responseHeadersPolicy,
                 },
                 '/assets/*': {
                     origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
+                    viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cachePolicy: aws_cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                    responseHeadersPolicy,
                 },
             },
         })
 
         // ---- scheduled-work tick (cutover `scheduled-tick`) ------------------------------
-        // The scheduled-jobs due-scan is driven by an EventBridge Scheduler schedule
-        // POSTing `/api/webhooks/cron` on a fixed cadence with `Authorization: Bearer $WEBHOOK_SECRET`
-        // (the same shared secret as `job-runner`). It is NOT authored here on purpose: the only
-        // clean primitive for "POST an arbitrary HTTPS URL with an auth header" is an EventBridge API
-        // Destination + Connection, which depends on the WEBHOOK_SECRET Secrets Manager resource that
-        // lands with `job-runner` — authoring it half-wired would break `cdk synth`. It rides that
-        // secret; see the `scheduled-tick` cutover row for the schedule + connection + verification.
+        // Opt-in: given the secret the server's WEBHOOK_SECRET holds, an EventBridge rule runs a function that
+        // POSTs the app's cron route with it, by invoking the server directly (./scheduled-tick.js). Left out, nothing
+        // ticks the app's scheduled work in the deployment, as before this option: the construct never sets a secret
+        // value in the server's environment, so it cannot know the secret unless it is given it.
+        const tick = scheduledTick
+            ? addScheduledTick(this, {
+                  server,
+                  functionUrl,
+                  webhookSecret: scheduledTick.webhookSecret,
+                  every: scheduledTick.every,
+              })
+            : undefined
 
         // ---- basic alarms ---------------------------------------------------------------------
         // Draft thresholds; replaced by the shared monitoring constructs at cutover.
@@ -598,8 +825,11 @@ export class SssbApp extends Construct {
         this.functionUrl = functionUrl
         this.migrator = migrator
         this.distribution = distribution
+        this.forwardedHost = forwardedHost
+        this.responseHeadersPolicy = responseHeadersPolicy
         this.assetsBucket = assetsBucket
         this.storageBucket = storageBucket
         this.databaseTransport = transport
+        this.scheduledTick = tick?.ticker
     }
 }

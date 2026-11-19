@@ -77,6 +77,7 @@ async function runExport(rows: TicketRow[], orgId: string | null = 'org-1'): Pro
             storage,
             email: {} as never,
             llm: {} as never,
+            auth: {} as never,
             tenantId: 'tenant-1',
             orgId,
             jobId: 'job-1',

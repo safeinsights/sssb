@@ -1,20 +1,21 @@
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { appTestProject } from '@sssb/tools/vitest'
+import { workspaceAppProjects } from '@sssb/tools/vitest'
 import react from '@vitejs/plugin-react'
 import { configDefaults, defineConfig, type ViteUserConfig } from 'vitest/config'
 
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 
 /**
- * THE APP LIST — the whole of this file's app knowledge; everything below derives from it. This
- * repository's own two apps; an adopter's workspace gets its own root config from `@sssb/create`.
+ * THE APP LIST is the root package.json's `sssb.apps`, the one `sssb doctor`, `sssb ci` and `sssb launch-json` read:
+ * `workspaceAppProjects` (@sssb/tools/vitest) makes a project for each app it names, as an adopter's generated config
+ * does, so this file keeps no copy of it.
  *
  * There used to be a second constant here, FRAMEWORK_SUITE_APP, naming the app SSSB's own suite ran
  * under. There is no such app any more: the framework's tests run against the framework's OWN seam
  * (packages/kit/test-fixture — see the `kit` project below), so deleting the demo cannot take
  * SSSB's suite down with it.
  */
-const APPS = ['showcase', 'starter'] as const
 
 /**
  * ONE PROJECT PER APP, from the preset every SSSB app uses (@sssb/tools/vitest), the reason this file has projects
@@ -44,16 +45,14 @@ const APPS = ['showcase', 'starter'] as const
 // CI retry). 20s gives generous headroom without masking a genuinely hung test.
 const TEST_TIMEOUT_MS = 20_000
 
-const projectFor = (app: string) =>
-    appTestProject({
-        appDir: at(`./apps/${app}`),
-        alias: { '@sssb/kit': at('./packages/kit/src') },
-        // The fake LLM adapter resolves fixtures from the working directory, which for `next dev` is the app, but
-        // this suite runs from the REPO ROOT, so every project points the adapter at its OWN fixtures (same
-        // override shape as APP_DATA_DIR). An app with no fixtures dir simply never asks for one.
-        env: { APP_FIXTURES_DIR: at(`./apps/${app}/fixtures`) },
-        testTimeout: TEST_TIMEOUT_MS,
-    })
+const appOptions = (appDir: string) => ({
+    alias: { '@sssb/kit': at('./packages/kit/src') },
+    // The fake LLM adapter resolves fixtures from the working directory, which for `next dev` is the app, but
+    // this suite runs from the REPO ROOT, so every project points the adapter at its OWN fixtures (same
+    // override shape as APP_DATA_DIR). An app with no fixtures dir simply never asks for one.
+    env: { APP_FIXTURES_DIR: path.join(appDir, 'fixtures') },
+    testTimeout: TEST_TIMEOUT_MS,
+})
 
 /**
  * THE FRAMEWORK'S OWN PROJECT — SSSB's suite (and any other package's), run against SSSB's own
@@ -94,7 +93,7 @@ const kitProject = {
 export default defineConfig(async (): Promise<ViteUserConfig> => ({
     test: {
         projects: [
-            ...(await Promise.all(APPS.map(projectFor))),
+            ...(await workspaceAppProjects({ root: at('.'), options: appOptions })),
             kitProject,
             {
                 // @sssb/cdk's own suite: plain JavaScript, alias-free (the construct resolves @sssb/kit from

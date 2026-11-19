@@ -437,6 +437,16 @@ describe('toolsShippedFileProblems', () => {
     it('passes JavaScript, declarations and the tsconfig base', () => {
         expect(toolsShippedFileProblems(good)).toEqual([])
     })
+    it('passes the two patches `sssb remove-items` reads, and no other data file', () => {
+        const patches = ['src/remove-items/code.patch', 'src/remove-items/database.patch']
+        expect(toolsShippedFileProblems([...good, ...patches])).toEqual([])
+        expect(toolsShippedFileProblems([...good, 'src/remove-items/other.patch'])).toEqual([
+            'src/remove-items/other.patch: neither JavaScript nor a declaration file',
+        ])
+        expect(toolsShippedFileProblems([...good, 'src/stray.patch'])).toEqual([
+            'src/stray.patch: neither JavaScript nor a declaration file',
+        ])
+    })
     it('fails TypeScript source, a test, a stray file and a missing CLI (ADR-0014 part 2: it ships JavaScript)', () => {
         expect(toolsShippedFileProblems([...good, 'src/vite.ts'])).toEqual([
             'src/vite.ts: neither JavaScript nor a declaration file',
@@ -454,7 +464,7 @@ describe('toolsShippedFileProblems', () => {
 describe('pluginManifestProblems', () => {
     const good = {
         name: '@sssb/eslint-plugin',
-        dependencies: { ignore: '^5.3.2', 'typescript-eslint': '^8.72.0' },
+        dependencies: { ignore: '^5.3.2', 'typescript-eslint': '^8.73.0' },
         peerDependencies: { eslint: '^10.13.0' },
     }
     it('passes the shape @sssb/eslint-plugin must have', () => {

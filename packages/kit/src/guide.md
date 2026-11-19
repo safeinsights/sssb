@@ -32,10 +32,21 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   tests and in the app-root tool configs (Playwright, Vite). Every other module imports the resolved value: deployment
   parameters from `config/params.ts`, the run mode from `isSimulated`.
 - Deployment and service parameters exist only in `config/params.ts`. Secret values never enter the repository.
+- Declare which of SSSB's optional ports the app uses in `config/params.ts`'s `ports` (`llm`, `email`, `inboundEmail`,
+  `jobs`). A port the app does not use is `none`, never configured with placeholder values.
+- A job handler never reads the seed (`@sssb/app-config/seed`), which a deployment does not have: it finds people with
+  `ctx.auth.listMembers(orgSlug)`, and a person's locale with `ctx.resolveLocale`, where the runner provides one.
 - `pnpm dev` stays hermetic: no docker, no credentials, no network. Never add `next/font/google`, telemetry, or
   anything that phones home.
 - Anything that needs real credentials, accounts or money is a row in the workspace's cutover checklist, never a
   blocker: the app boots, and is tested, without it.
+- `src/proxy.ts` default-exports the app's proxy wrapped in `withAuthProxy` from `@sssb/kit/adapters/proxy`, and its
+  `config.matcher` sends it every page and every `/api` route: in real mode SSSB's auth adapter needs its provider's
+  middleware to have seen the request, and `withAuthProxy` runs that middleware around your proxy (loading none of it
+  in simulated mode). Never import the provider's middleware yourself. A page path has no dot in it (the generated
+  matcher leaves those out, as static files), and Next buffers at most `proxyClientMaxBodySize` (10MB by default) of a
+  body the proxy sees, so an upload limit above it raises
+  `experimental.proxyClientMaxBodySize` in `next.config.ts` too.
 
 ## Data
 
@@ -109,10 +120,13 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   route once, and `DEV_TICK_SECONDS=<n> pnpm dev` ticks it every n seconds. The ticker is off by default and stays off
   under e2e. The cron route (`src/app/api/webhooks/cron/route.ts`) stays behind `withWebhookSecret`: never add a
   bypass for the ticker.
+- The Simulator panel on `pnpm dev` is SSSB's: `src/app/api/simulator/[...path]/route.ts` serves it and the locale
+  layout renders it, both in simulated mode only. Each handler in that route file opens with the simulated-mode 404 and
+  imports SSSB's handler after it; that first line is what exempts the route from `authorize(...)`.
 - In a linked git worktree the app's ports are derived per checkout, so parallel sessions never adopt each other's dev
-  server; `pnpm exec sssb port`, run from the app, prints its port. An app declares its port slot in its package.json
-  (`"sssb": { "port": "starter" }`), and every app of a workspace needs a slot of its own: a second app declares
-  `"sssb": { "port": { "name": "ledger", "default": 3700 } }`, which `sssb doctor` checks, and reads its override from
-  `LEDGER_PORT`.
+  server; `pnpm exec sssb port`, run from the app, prints its port. An app declares its port slot in its package.json,
+  `"sssb": { "port": { "name": "ledger", "default": 3800 } }`, and reads its override from `LEDGER_PORT`; its scripts and
+  Playwright config name no slot (`sssb tick`, `sssb dev-tick`, `originForApp(__dirname)`), so they read it. Every app of
+  a workspace needs a slot of its own, which `sssb doctor` checks: `pnpm exec sssb add-app <slug>` gives a new app one.
 - Before finishing a change, run `pnpm verify` from the workspace root. Format with `pnpm lint:fix`, never by hand.
   Commit messages are conventional commits; the commit-msg hook runs commitlint.

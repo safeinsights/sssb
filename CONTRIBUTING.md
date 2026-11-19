@@ -36,7 +36,8 @@ adapter" below are how you implement one that has passed — not a green light o
   `pnpm test:contract` yourself for any migration or database change.
 - **Adopters sending a fix:** your workspace installs SSSB's packages, so a fix to one is a PR here, built and
   tested against both apps in this repository, and it reaches you in a release. Until then `pnpm patch` can carry
-  it in your workspace; drop the patch when you upgrade to the release that has the fix (`docs/adopting.md`).
+  it in your workspace; drop the patch when you upgrade to the release that has the fix (`docs/adopting-reference.md`, "Changing SSSB
+  itself").
 
 ## The ports rule (the one rule that matters most)
 
@@ -83,7 +84,7 @@ port only an app calls is the app's, scaffolded by the plugin's `/sssb:new-port`
   outside routes, screens and the fixture are exempt), and every tenant table carries the RLS policy pattern from
   `apps/showcase/src/app-config/db/migrations/1001_tickets.ts`. A `'use server'` action is an app module like any
   other, wherever you put it. If one module truly needs the raw client, add a named exception for that module,
-  with its reason, in the app's `apps/<app>/lint-exceptions.mjs` (see `docs/adopting.md`); never exempt a
+  with its reason, in the app's `apps/<app>/lint-exceptions.mjs` (see `docs/adopting-reference.md`); never exempt a
   directory, and never edit `eslint.config.mjs` for it.
 - New migrations: app tables go under `apps/showcase/src/app-config/db/migrations/` (numbered ≥ 1001) and extend
   `AppTables`; framework tables go under `packages/kit/src/db/migrations/` (0001–0999). Register

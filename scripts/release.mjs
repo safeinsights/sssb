@@ -39,8 +39,9 @@
 //                                 commit of `main` to pass, and fails on any other conclusion or after an hour;
 //                                 prints `passed <sha>`. Reads GITHUB_REPOSITORY and GH_TOKEN. Needs no installed
 //                                 dependencies.
-//   checks-run <sha>              A candidate's tag. The same gate, then `run <id>`: the run whose artifact holds the
-//                                 tarballs pack-and-consume packed and tested on that commit.
+//   checks-run <sha>              A candidate's tag, and a release's `demo` job. The same gate, then `run <id>`: the
+//                                 run whose artifacts hold the tarballs pack-and-consume packed and tested on that
+//                                 commit, and the showcase's static demo its demo-static job built and tested.
 //   candidate <version> <tarball>…
 //                                 A candidate's tag, before anything is attested or attached. Checks the tarballs are
 //                                 exactly the commit's fixed group at the candidate's version, one each, laid out as
@@ -50,6 +51,13 @@
 //                                 The GitHub prerelease's notes: the release commit's docs/releases/v<version>.md, with the
 //                                 commit's SHA written into its "Upgrading to this release" section, then how to install
 //                                 each tarball by URL, its sha512, and how to verify its attestation.
+//   demo <version> <sssb-showcase.html>
+//                                 A plain release's tag, before its GitHub page is made (adoption follow-up 4). Checks
+//                                 the showcase's static demo that run built is an HTML file within the showcase's size
+//                                 budget, and prints its file, size and sha256 as JSON. Needs no installed dependencies.
+//   release-notes <version> <owner/repo> <sha> <demo.json>
+//                                 A plain release's GitHub page: the release commit's docs/releases/v<version>.md, with
+//                                 the commit's SHA written into its "Upgrading to this release" section, then the demo.
 //
 // Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout carries only the result.
 import { Buffer } from 'node:buffer'
@@ -82,6 +90,8 @@ const USAGE = [
     '       release.mjs checks-run <sha>',
     '       release.mjs candidate <version> <tarball>...',
     '       release.mjs candidate-notes <version> <owner/repo> <sha> <assets.json>',
+    '       release.mjs demo <version> <sssb-showcase.html>',
+    '       release.mjs release-notes <version> <owner/repo> <sha> <demo.json>',
 ].join('\n')
 
 const major = (version) => Number(version.split('.')[0])
@@ -818,6 +828,80 @@ export function candidateNotes(root, version, repo, sha, assets) {
     return unwrap(out.join('\n'))
 }
 
+/** The app whose single-file static demo every release's GitHub page carries. */
+const DEMO_APP = 'apps/showcase'
+/**
+ * The demo's asset name, the same in every release, so `releases/latest/download/<name>` (the README's link) always
+ * names the latest release's copy. The release page says which version it is.
+ */
+export const DEMO_ASSET = 'sssb-showcase.html'
+
+/**
+ * THE SHOWCASE'S STATIC DEMO, checked before it is attached to a release's GitHub page (adoption follow-up 4). The file
+ * is the one `checks`' demo-static job built, held to the showcase's size budget and drove from `file://` on this very
+ * commit, handed over as that run's artifact and never built again here, so what is attached is what CI tested. This
+ * checks only that the hand-over is that file: named as the asset, an HTML document, not empty, and within the budget
+ * the showcase's `check:demo-size` script names on this commit. Returns `{file, size, sha256}`. Needs no installed
+ * dependency.
+ * @param {string} root the release commit's checkout
+ * @param {string} version
+ * @param {string} file
+ */
+export function demo(root, version, file) {
+    if (!PLAIN_VERSION.test(version) || major(version) !== 0) throw new Error(`not a 0.x release: '${version}'`)
+    if (path.basename(file) !== DEMO_ASSET) throw new Error(`${file} is not named ${DEMO_ASSET}`)
+    const manifest = JSON.parse(readFileSync(path.join(root, DEMO_APP, 'package.json'), 'utf8'))
+    const budget = /^sssb check-demo-size (\d+)$/.exec(manifest.scripts?.['check:demo-size'] ?? '')?.[1]
+    if (budget === undefined) throw new Error(`${DEMO_APP}/package.json has no \`sssb check-demo-size <bytes>\` script`)
+    const bytes = readFileSync(file)
+    const problems = []
+    if (bytes.length === 0) problems.push(`${file} is empty`)
+    if (bytes.length > Number(budget)) problems.push(`${file} is ${bytes.length} bytes, over the ${budget} byte budget`)
+    if (!/^<!doctype html>/i.test(bytes.subarray(0, 32).toString('utf8'))) {
+        problems.push(`${file} does not start with <!doctype html>`)
+    }
+    if (problems.length > 0) throw new Error(problems.join('\n'))
+    return { file: DEMO_ASSET, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }
+}
+
+/**
+ * A plain release's GitHub page: the release notes the release commit carries, with the commit's SHA written into
+ * their "Upgrading to this release" section, then the showcase's demo, attached beside them. The packages themselves
+ * are on npm, so, unlike a candidate's notes, these list no tarballs.
+ * @param {string} root the release commit's checkout
+ * @param {string} version
+ * @param {string} repo `owner/name`
+ * @param {string} sha the release commit
+ * @param {{ file: string, size: number, sha256: string }} asset as `demo` returns it
+ */
+export function releaseNotes(root, version, repo, sha, asset) {
+    if (!PLAIN_VERSION.test(version) || major(version) !== 0) throw new Error(`not a 0.x release: '${version}'`)
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`not a repository: '${repo}'`)
+    if (!SHA.test(sha)) throw new Error(`not a commit: '${sha}'`)
+    if (asset?.file !== DEMO_ASSET || !/^[0-9a-f]{64}$/.test(asset.sha256 ?? '')) {
+        throw new Error(`not the demo's asset: ${JSON.stringify(asset)}`)
+    }
+    const committed = readFileSync(path.join(root, notesPath(version)), 'utf8')
+    if (!committed.startsWith(`# Release notes: v${version}\n`)) {
+        throw new Error(`${notesPath(version)} is not the release notes of v${version}`)
+    }
+    // Loaded here, as in `candidateNotes`, not imported at the top: the push and publish jobs run a lone copy of this file.
+    const { upgradeSection, withUpgradeSection } = createRequire(import.meta.url)('./release-notes.mjs')
+    const notes = withUpgradeSection(committed, upgradeSection({ version, sha, repo }))
+    const url = `https://github.com/${repo}/releases/download/v${version}/${DEMO_ASSET}`
+    const out = [
+        notes.trimEnd(),
+        '',
+        '## Try the showcase',
+        '',
+        `[\`${DEMO_ASSET}\`](${url}) is SSSB's showcase app at this release as one HTML file, the Simulator and its tours`,
+        'included. Download it and open it in a browser: it runs from `file://`, with no server and nothing to install.',
+        `CI built it and drove it from \`file://\` on this release's commit. sha256: \`${asset.sha256}\`.`,
+        '',
+    ]
+    return unwrap(out.join('\n'))
+}
+
 /** The fixed group's generator (ADR-0014 P12), which an adopter runs rather than installs. */
 const GENERATOR = '@sssb/create'
 
@@ -1036,7 +1120,7 @@ export async function waitForChecks({
             const run = res.ok ? (await res.json()).workflow_runs?.[0] : undefined
             last = res.ok ? `${run?.status ?? 'no run'} ${run?.conclusion ?? ''}`.trim() : `HTTP ${res.status}`
             if (run?.status === 'completed') {
-                // The run's id is handed back for `checks-run`, which downloads that run's tarballs.
+                // The run's id is handed back for `checks-run`, whose callers download that run's artifacts.
                 if (run.conclusion === 'success') return run.id
                 throw Object.assign(new Error(`checks concluded '${run.conclusion}' on ${sha}; refusing to release`), {
                     final: true,
@@ -1107,6 +1191,15 @@ async function main(argv) {
     if (command === 'candidate-notes' && rest.length === 4) {
         const [version, repo, sha, assets] = rest
         process.stdout.write(candidateNotes(root, version, repo, sha, JSON.parse(readFileSync(assets, 'utf8'))))
+        return
+    }
+    if (command === 'demo' && rest.length === 2) {
+        console.log(JSON.stringify(demo(root, rest[0], rest[1])))
+        return
+    }
+    if (command === 'release-notes' && rest.length === 4) {
+        const [version, repo, sha, asset] = rest
+        process.stdout.write(releaseNotes(root, version, repo, sha, JSON.parse(readFileSync(asset, 'utf8'))))
         return
     }
     throw new Error(USAGE)

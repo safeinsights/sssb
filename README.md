@@ -4,7 +4,12 @@ A production-shaped Next.js foundation you generate a workspace from and build a
 architecture, Postgres row-level-security tenancy, and a local development loop that runs the whole world on your
 laptop with no docker, no credentials, and no network.
 
-To see it working, clone this repository and run:
+To see it with nothing to install, download the showcase as one HTML file from the latest release,
+[`sssb-showcase.html`](https://github.com/safeinsights/sssb/releases/latest/download/sssb-showcase.html), and open it in
+a browser: it runs from `file://`, the Simulator and its tours included. Every release after 0.2.0 carries it;
+`pnpm build:demo-static` in `apps/showcase` builds it from a checkout, as `dist-demo/index.html`.
+
+To run the whole of it, clone this repository and run:
 
 ```sh
 pnpm install
@@ -51,8 +56,9 @@ Here the fakes compose into a world with inhabitants, and a panel called **Simul
 You can hold every job in the world at `queued` and watch the choreography, then let them complete inline
 again. None of this reaches production: real builds ship zero Simulator client code.
 
-In the showcase all of it runs on `pnpm dev`. An app the generator writes has the Simulator in its single-file static
-demo from the start; the panel on its own `pnpm dev` takes route glue that only the showcase carries today
+In the showcase all of it runs on `pnpm dev`. An app the generator writes has the whole Simulator in its single-file
+static demo from the start, and on its own `pnpm dev` the People, Mail and Jobs tabs with the world clock, served by
+SSSB behind one route file; the other tabs, presets and tours follow in stages
 (`.claude/future-tasks/starter-starting-points.md`).
 
 ### 2. The boundaries are enforced by the build, not by documentation

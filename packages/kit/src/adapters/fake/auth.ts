@@ -93,10 +93,11 @@ function findPerson(id: string | undefined): SeedPerson | undefined {
 
 /**
  * Simulated-mode-only locale lookup (NOT part of AuthPort) — the notification fan-out's `resolveLocale`
- * enrichment, so a recipient's email/SMS render in their language (the digest-email locale precedent).
- * Honours a profile-override locale first, then the person's seed locale; undefined for an unknown id
- * (the fan-out then falls back to the app default). Real mode has no analog (Clerk memberships carry no
- * locale), so this stays fake-only and behind the fan-out's optional dependency.
+ * enrichment, and the job context's (`JobContext.resolveLocale`, which the simulated runner fills, so the
+ * digest email follows it too), so a recipient's email/SMS render in their language. Honours a
+ * profile-override locale first, then the person's seed locale; undefined for an unknown id (callers then
+ * fall back to the app default). Real mode has no analog (Clerk memberships carry no locale), so this
+ * stays fake-only and behind those optional dependencies.
  */
 export function personLocale(userId: string): Locale | undefined {
     const person = findPerson(userId)

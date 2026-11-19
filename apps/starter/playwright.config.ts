@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
-import { originFor } from '@sssb/tools/ports'
+import { originForApp } from '@sssb/tools/ports'
 import { assertNoLiveDevTicker } from '@sssb/tools/ticker-marker'
 
 // A dev server started with `DEV_TICK_SECONDS` set would be ADOPTED by `reuseExistingServer` below and tick under the
@@ -15,20 +15,20 @@ assertNoLiveDevTicker()
  * guarantee ACROSS checkouts: a linked worktree gets its own pair, so two agent sessions running e2e
  * at once no longer collide either. `pnpm dev` derives the identical number from the same function.
  */
-const BASE_URL = originFor('starter')
+const BASE_URL = originForApp(__dirname)
 
 export default defineConfig({
     testDir: './tests/e2e',
     fullyParallel: true,
-    // This app's whole suite is ONE spec, so it always starts against a cold dev server and pays a
-    // full Next compile on every route it touches — sign-in, dashboard, the items route. The default
+    // This app's whole suite is two short specs, so the first always starts against a cold dev server and pays a
+    // full Next compile on every route it touches — sign-in, dashboard, the items route, the Simulator's. The default
     // 30s is marginal for that (it timed out on the first run and passed on retry), and there is no
     // warm-up pass to inherit, so the budget is raised rather than left to flake.
     timeout: 60_000,
     expect: { timeout: 15_000 },
     forbidOnly: !!process.env['CI'],
     retries: process.env['CI'] ? 2 : 1,
-    // One worker, on CI too — this app's whole suite is one spec, so parallelism buys nothing here,
+    // One worker, on CI too — this app's whole suite is two short specs, so parallelism buys little here,
     // and more workers against one shared world (one `.data` behind one dev server) cost reliability rather than
     // saving time.
     workers: 1,

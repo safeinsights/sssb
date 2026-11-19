@@ -7,7 +7,13 @@ describe('scrubEvent', () => {
             request: {
                 cookies: { app_session: 'secret' },
                 query_string: 'returnTo=/x',
-                headers: { Cookie: 'app_session=secret', Authorization: 'Bearer t', accept: 'text/html' },
+                headers: {
+                    Cookie: 'app_session=secret',
+                    Authorization: 'Bearer t',
+                    'X-Sssb-Webhook-Secret': 's',
+                    'x-sssb-service-token': 'jwt',
+                    accept: 'text/html',
+                },
             },
             user: { id: 'fixture-lead', email: 'ada@example.test', ip_address: '10.0.0.1' },
         })

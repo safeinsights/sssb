@@ -10,7 +10,8 @@ release and the gates are made. Nothing the guide says is repeated here. An app-
 `packages/kit/src/guide.md`, never here: it ships, so it takes a changeset (`.changeset/README.md`), and the doc gate
 checks its paths against `apps/starter`.
 
-Multi-tenant web app foundation, built to be adopted: `docs/adopting.md` is the adopter guide; keep it truthful.
+Multi-tenant web app foundation, built to be adopted: `docs/adopting.md` is the adopter guide, a newcomer's path in
+the order they act, and `docs/adopting-reference.md` holds the rest; keep both truthful, and keep the guide short.
 Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0012 and 0014) and don't
 relitigate them; 0013 (fork and merge) is Superseded by 0014, so nothing here tells an adopter to fork, merge or
 send a change "upstream" from a fork. 0014 is a plan carried out in steps (its implementation plan), so until a step
@@ -63,7 +64,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   deleting the showcase with a red gate.
-- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 139 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 142 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it). Lint-enforced
   (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
   publish it; add the `exports` line deliberately, and never widen the map to silence the rule.
@@ -92,6 +93,12 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   the tools it configures (Vite's React plugin, next-intl's plugin, jest-dom) from the app, never its own copies. A
   new CLI command is a module in `packages/tools/src/commands/` plus one entry in `bin/sssb.js`'s `COMMANDS`; a new published
   helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
+- **`sssb remove-items` is a pair of diffs of the starter** (`packages/tools/src/remove-items/code.patch` and
+  `database.patch`, applied exactly by `exact-patch.js`): the starter's Items slice taken out of an adopter's app (the
+  Simulator's e2e spec is what keeps the app's e2e directory from emptying). **A change to a starter file the diffs touch, or to the Items slice itself, fails
+  `tests/tooling/remove-items.test.ts`** until the diffs are regenerated (the command's header says how), and pack and
+  consume's `generated` shape runs the command and the workspace's gates over what it leaves. The two files are the only
+  non-JavaScript files `@sssb/tools` ships (`toolsShippedFileProblems` names them).
 - **`@sssb/create` (`packages/create`) is the generator** (ADR-0014 P12): `pnpm create @sssb <dir>` runs its bin,
   `sssb-create`. Plain JavaScript with no dependencies at all, SSSB's packages included (rule 4), because it runs
   before anything is installed. **Its template is the files git tracks in `apps/starter`**, copied from the working
@@ -105,11 +112,15 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   workspace around the app is written by `packages/create/src/files.js`, its `.claude/settings.json` (the plugin's
   marketplace pinned at the workflow's commit) and `CLAUDE.md` included; a root file that names nothing of this
   repository's can be copied instead (`ROOT_FILES` in `packages/create/src/template.js`). Running it by hand:
-  `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting.md`).
+  `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting-reference.md`, "Trying an
+  unreleased commit of SSSB"). **`sssb add-app`**
+  (`@sssb/tools`) writes a further app into an existing workspace with the same code (`writeApp` in `generate.js`),
+  importing `@sssb/create/add-app` from the `@sssb/create` the workspace installs (never a dependency of `@sssb/tools`: no SSSB
+  package depends on another); pack and consume's pages shape adds its ledger with it.
 - **`@sssb/kit` stamps the commit it is packed from** into `dist/release.json` (its `prepack`,
   `packages/kit/scripts/stamp-release.mjs`), refusing shipped sources that differ from it under the same switch.
   `sssb doctor` reports, never fails, a workflow or marketplace pin that is not that commit, or a pinned marketplace no
-  plugin is enabled from; `release.mjs candidate`
+  plugin is enabled from, and `sssb pin` writes both pins from the stamp (it refuses where there is none); `release.mjs candidate`
   refuses a candidate whose kit names another. In-repo there is no stamp: the kit is source.
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.
@@ -188,7 +199,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `.github/licence-policy.json`: a new copyleft, source-available or unknown licence in the installed closure fails
   it unless the policy names it with a reason; `pnpm install` first, then `node scripts/licence-scan.mjs`) — see
   `.github/workflows/checks.yml` and `.github/workflows/app-checks.yml`.
-- Unit tests are colocated (`*.test.ts(x)`), run by Vitest — `vitest.config.ts` has ONE PROJECT PER APP
+- Unit tests are colocated (`*.test.ts(x)`), run by Vitest — `vitest.config.ts` has ONE PROJECT PER APP (one for each
+  app the root's `sssb.apps` names, by `@sssb/tools/vitest`'s `workspaceAppProjects`, as a generated workspace's configs)
   because `@sssb/app-config/*` is a bare specifier and a single alias can only name one app, PLUS a `kit`
   project that runs the packages' suites against the framework's own seam (`packages/kit/test-fixture`). SSSB's
   conformance suite (`@sssb/kit/testing`; its checks and fixed test names are `packages/kit/src/testing/checks.json`)
@@ -197,9 +209,13 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   E2E: showcase on :3000, starter on :3100; in a linked worktree both are derived per checkout by `@sssb/tools/ports`,
   and `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last also isolates
   `pnpm test:contract` between worktrees). Each app declares its slot in its package.json
-  (`"sssb": { "port": "starter" }`); the slot is a port band, not the app's name, so the app `@sssb/create` writes
-  keeps `starter` too. An app may instead declare a slot of its own, `{ "name": "<name>", "default": <port> }` (its
-  override `<NAME>_PORT`, its derived worktree port from 20000-29999 keyed on the name too); `sssb doctor` fails two apps
+  (`"sssb": { "port": "starter" }`); the starter names it nowhere else: its scripts and Playwright config read the
+  declaration (`sssb tick`, `sssb dev-tick`, `originForApp(__dirname)`), while the showcase still names `showcase` in
+  both. The slot is a port band, not the app's name. An app may
+  instead declare a slot of its own, `{ "name": "<name>", "default": <port> }` (its override `<NAME>_PORT`, its derived
+  worktree port from 20000-29999 keyed on the name too), as the app `@sssb/create` writes does (named for its slug,
+  default 3700: `firstAppSlot` in `packages/create/src/generate.js`, so a generated app never says `starter`) and as
+  `sssb add-app` gives every app it adds (the first free default from 3700 up); `sssb doctor` fails two apps
   on one slot or one default.
 - **Scratch directories in this repo's tests**: `tests/support/tmp-dir.ts` re-exports `@sssb/tools/testing/tmp-dir`,
   and the framework's own tests use its copy, `packages/kit/src/testing/tmp-dir.ts`; `sssb/no-direct-mkdtemp` bans the
@@ -290,7 +306,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   "the starter", the framework's source tree (say `@sssb/kit/…`), a relative path out of the app, or SSSB's spikes,
   build notes or decision log fails `tests/tooling/create-generate.test.ts`. Any other path into this repository (a
   doc's, say) passes it, so say it is SSSB's. The app guide is held to the same test: the workspace carries a copy.
-  See `docs/adopting.md`.
+  See `docs/adopting-reference.md`, "`pnpm create @sssb`".
 - At the end of a slice or before a PR, run the `sssb:doc-steward` agent on the branch diff — it
   proposes updates to development-approach, an ADR addendum, decision-log, build-notes, and the
   cutover checklist so the docs keep telling the truth. It also reports the net line delta of each doctrine doc

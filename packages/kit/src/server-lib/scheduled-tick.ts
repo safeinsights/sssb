@@ -10,9 +10,9 @@ import { dispatchWebhook } from './webhook-dispatch'
  * that route is a three-line wrapper (`withWebhookSecret(async () => Response.json({ ok: true, ...(await
  * runScheduledTick()) }))`) and an app that takes SSSB as a package gets the same behaviour as a fork.
  *
- * Real world: an EventBridge rule POSTs that route on a fixed cadence with `Authorization: Bearer $WEBHOOK_SECRET`
- * (cutover row `scheduled-tick`). Nothing else ticks the scheduler: in `pnpm dev` an app with no Simulator has no
- * tick source until something POSTs the route (docs/adopting.md, "The scheduled tick").
+ * Real world: an EventBridge rule POSTs that route on a fixed cadence with the shared secret in `x-sssb-webhook-secret`
+ * (cutover row `scheduled-tick`; @sssb/cdk's `SssbApp` does it with `scheduledTick`). Nothing else ticks the scheduler: in `pnpm dev` an app with no Simulator has no
+ * tick source until something POSTs the route (docs/adopting-reference.md, "The scheduled tick").
  *
  * "Now" is the trigger source's clock: real time in a real build; in a simulated world the Simulator's world clock
  * (real time plus the offset a demo advanced), so a tick honours a clock the demo moved. `worldNow()` is called
@@ -32,6 +32,16 @@ export interface ScheduledTickResult {
 
 export async function runScheduledTick(): Promise<ScheduledTickResult> {
     const now = isSimulated ? worldNow() : new Date()
+    // A runner that can lose a job mid-run (JOBS_RUNNER=in-process) fails the lost ones first; its own count is not
+    // reported here, the failed jobs' errors say it.
+    try {
+        await jobs.sweep?.(now)
+    } catch (error) {
+        // A sweep that fails must not stop the schedules and deliveries behind it.
+        console.warn(
+            `SSSB tick: the jobs port's sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+    }
     const { spawned, failed } = await runDueSchedules(db, jobs, now)
     const deliveries = await runDueDeliveries(db, now, dispatchWebhook)
     return { spawned, failed, deliveries }

@@ -72,8 +72,8 @@ Whichever is chosen, the adoption probe in `.github/workflows/checks.yml` (a wor
 - `route-glue-duplication.md` — the same decision from the other side; read first.
 - `self-service-auth-mfa-and-invitations.md` — widens the accept-invite flow into three; whatever the
   starter wires now is what that work has to keep working, so settle ownership of the accept route first.
-- `create-blank-option.md` — decides what "the minimum an adopter keeps" is, and a starter that carries
-  more wiring has more for `--blank` to sweep.
+- `resolved/create-blank-option.md` — decided it with `sssb remove-items` rather than a `--blank` flag; a starter that carries
+  more wiring has more for that command's two diffs to carry.
 - `resolved/demo-size-budget-headroom-thin.md` — the byte cost of anything added to the static demo, and whose budget it is.
 
 ## Addendum, 2026-11-18: the adoption review
@@ -88,3 +88,16 @@ is the README's first claim, and a generated app's own `pnpm dev` does not have 
 Staging, from the review's Fable reviewer: one catch-all route an app mounts with a single file
 (`api/simulator/[...path]/route.ts` over a handler the kit exports) rather than 33 thin ones, and the tabs a new app
 uses first (people, jobs and the clock, the mail inbox) before the rest.
+
+## Addendum, 2026-11-18: the Simulator, stage 1 built
+
+The Simulator half of this task is now option 3, staged. `@sssb/kit/server-lib/simulator-api` answers
+`/api/simulator/*` behind one catch-all route, and `@sssb/kit/components/simulator/simulator-host` is the panel client
+that calls it; the starter mounts them with `apps/starter/src/app/api/simulator/[...path]/route.ts` and four lines in
+its locale layout, so every generated app has People, Mail and Jobs with the world clock on its own `pnpm dev`. The
+rest is one future task per stage: `simulator-host-stage-2-world-state.md` (Snapshots, presets, tours),
+`simulator-host-stage-3-subsystem-tabs.md` (Events, Messages, inbound mail, Hooks, Errors),
+`simulator-host-stage-4-ticker-and-app-tabs.md` (the dev ticker, app tabs such as Actors) and
+`simulator-host-stage-5-showcase-migration.md` (the showcase off its own glue). The invite and accept wiring, and the
+org screen, are still open here. Decisions: `docs/decision-log.md`, 2026-11-18, "The Simulator on a generated app's
+`pnpm dev`, stage 1".

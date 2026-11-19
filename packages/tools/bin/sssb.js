@@ -63,9 +63,23 @@ const COMMANDS = {
         summary:
             "fail unless the app's SSSB is one copy, on its own seam, in step, and its conformance checks would run",
     },
+    pin: {
+        load: () => import('../src/commands/pin.js'),
+        summary:
+            "raise the workflow's pin and the plugin marketplace's ref to the installed @sssb/kit's release commit",
+    },
     'check-e2e': {
         load: () => import('../src/commands/check-e2e.js'),
         summary: 'fail when a Playwright spec reaches @sssb/kit other than through @sssb/kit/testing/e2e',
+    },
+    'remove-items': {
+        load: () => import('../src/commands/remove-items.js'),
+        summary: "take the starter's example Items slice out of the app (--drop-migrations for one never deployed)",
+    },
+    'add-app': {
+        load: () => import('../src/commands/add-app.js'),
+        summary:
+            "write a new app into this workspace from SSSB's starter, with a port slot of its own, and name it in sssb.apps",
     },
     ci: {
         load: () => import('../src/commands/ci.js'),

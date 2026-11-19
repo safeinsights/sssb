@@ -5652,3 +5652,1011 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
       also reads the root's dependency ranges and engines, `pnpm-workspace.yaml`'s build approvals and release age,
       and the gitleaks version from this repository when it is packed (`TemplateMeta` in
       `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.
+
+## The Simulator on a generated app's `pnpm dev`, stage 1 (2026-11-18, `feat/simulator-on-app-dev`)
+
+Adoption follow-up 6 (`docs/adoption-review-2026-11.md`): the panel's server side ships from `@sssb/kit` behind one
+catch-all route, starting with People, Mail and Jobs with the world clock. JP's standing rule for these sessions: decide,
+record the rejected alternative here, report it.
+
+- **One handler, one route file, and no change to the authorization scan.** `@sssb/kit/server-lib/simulator-api`
+  exports `simulatorApi(request, context)`, which dispatches on the catch-all's segments through a fixed table
+  (`Object.hasOwn`, so `constructor` is a 404, not a prototype key). The app's `src/app/api/simulator/[...path]/route.ts`
+  opens each verb with `if (!isSimulated) return new Response(null, { status: 404 })` and `import()`s the kit's handler
+  only after it. That first line is exactly the gate the existing `simulator/` prefix exemption already checks
+  (`opens-with-simulated-404`, `packages/kit/src/authz/route-policy.ts`), so the scan accepts the file with no new
+  exemption, no new gate kind and no new entry in the framework's policy; the probe that removed the line from POST
+  failed the starter's `authz-mutations` check. **Rejected: `export { simulatorApi as GET, simulatorApi as POST } from
+'@sssb/kit/server-lib/simulator-api'`**, a true one-line mount. It passes the scan as it stands: the scan follows a
+  re-export to the function that defines the handler and checks the gate there (a probe re-exporting an ungated POST
+  under `simulator/` failed `authz-mutations`; re-exporting `simulatorApi`, which opens with the gate, passed). It was
+  rejected for two other reasons: it loads the kit's module in every build, real ones included, and the route's
+  exemption would rest on the scan resolving into the installed package, which was proven here only against the
+  workspace link, never against `@sssb/kit` installed from npm. The gate in the app's own file holds however the
+  package resolves. Two five-line handlers are its price. **Rejected: a handler factory taking
+  options** (`createSimulatorApi({ … })`): stage 1 has nothing an app would configure, and a factory call at module
+  scope is code that runs in a real build before any gate.
+- **The kit's handler gates itself too, and a real build never loads it.** `simulatorApi` repeats the simulated-mode
+  404 as its own first line (a test runs it with `isSimulated` false; a probe that removed it went red), and the route
+  imports it dynamically after the gate, so a real build never loads the module. (The fake adapters it calls are in
+  every build regardless: the adapter registry, `packages/kit/src/adapters/index.ts:11-17`, imports them statically.)
+  The showcase's route files import their handlers' modules statically; that stays as it was.
+- **Every POST must be `application/json`, or 415 before it runs.** The showcase asks this only of the ticker. Here the
+  same handler signs a browser in as anyone (`viewpoint`) and empties the mail catch-store, and a page on another
+  origin can send a no-preflight `text/plain` POST to a developer's localhost or a hosted simulated demo. The host
+  always sends JSON, so the rule costs nothing. **Rejected: matching the showcase's routes exactly**, which would have
+  made the kit's version the weaker of two copies. A known path with the wrong method is 405 with `Allow`; an unknown
+  one 404, so an app's own `api/simulator/<name>/route.ts` beside the catch-all keeps working (Next routes the static
+  segment first).
+- **The client is the kit's too: `@sssb/kit/components/simulator/simulator-host`, rendered by the starter's locale
+  layout** through the same simulated-only dynamic import the showcase uses for its glue. Without it the route has no
+  caller, and a generated app would need the glue this task exists to remove. It is the showcase glue's People, Mail
+  and Jobs half (polling, notices, mail scope, clock), about 330 lines against 867. **Rejected: shipping the route
+  alone in stage 1** and the client in a later stage: nothing would prove the route on an app's own server, and the
+  brief's "first tabs that make the case" need a panel to make it.
+- **The panel shows only the tabs its host wires.** `SimulatorPanel`'s per-tab props (everything but People) are
+  optional, and a tab without its props is not in the strip, as Tours already worked. A persisted tab the host does not
+  show falls back to People. The showcase and the static demo pass every prop, so nothing changes for them.
+  **Rejected: passing empty data for the unserved tabs**, which shows Hooks, Events and Snapshots tabs that never fill
+  and buttons that call paths the host does not serve.
+- **The stage-1 tabs: People, Mail (outbound catch-store only), Jobs with schedules and the world clock.** Ten of the
+  showcase's 33 route files. Left for later stages, one future task each: Snapshots, presets and tours
+  (`.claude/future-tasks/simulator-host-stage-2-world-state.md`); Events, Messages, inbound mail, Hooks and Errors
+  (`…-stage-3-subsystem-tabs.md`); the dev ticker and app-registered tabs such as Actors (`…-stage-4-ticker-and-app-tabs.md`);
+  the showcase onto the kit's host (`…-stage-5-showcase-migration.md`). **The dev ticker is not in stage 1** although it
+  sits on the Jobs tab: its policy module builds on `@sssb/tools`, which `@sssb/kit` does not depend on, and its origin
+  is the app's port slot. That is a package-graph decision of its own (stage 4). The clock's advance, reset and
+  run-due are in.
+- **The showcase keeps its own glue for now.** It uses every tab; migrating it means stages 2 to 4 first, or mounting
+  the catch-all beside 23 of its route files while keeping its glue anyway. **Rejected: migrating the showcase in
+  stage 1.** Until stage 5 the kit's host has one consumer, the starter (and every generated app), plus the kit's own
+  unit test against the fixture seam and the starter's e2e spec, which the adoption probe runs in a generated workspace.
+- **`viewpoint` refuses a person who is not in the world** (400 `unknown person`), where the showcase's route lets
+  `devSignIn` throw its `ForbiddenError` (a 403). The other differences from the showcase's routes came from review
+  (next bullet); otherwise every path answers what the showcase's route answers, field for field.
+- **Hardening from review** (an Opus and a Fable reviewer; simulated worlds only, nothing reachable in a real build):
+  `viewpoint` answers a remembered `lastPath` only when it is a path on this origin, because it is recorded from a
+  page-view beacon's body and the client navigates to it; `mail/seen` accepts only someone in the world, since the key
+  is written to the state file every poll reads; and the clock stops at a century ahead in all (a year per call was
+  already the cap, but repeated calls could leave the range a `Date` holds). On the client, every navigation the host
+  makes (`viewpoint`'s answer, a mail link, a locale switch) goes through one check, `sameOriginPath`
+  (`packages/kit/src/core/same-origin-path.ts`, internal), which parses the target rather than testing a prefix:
+  `/\host`, a tab inside the path and `/.//host` all read as another origin to a browser. Overlapping poll answers are
+  applied in order (a ticket per fetch), and a mail answer for a scope no longer shown is dropped. **Rejected: two
+  copies of the check, one per side**: the first round had them, and the second found the client's mail links still on
+  the old prefix test.
+- **The starter's e2e budget grows by one spec** (`apps/starter/tests/e2e/simulator.spec.ts`): signed out, open the
+  panel, become a person in the other tenant, see Mail and Jobs and not Hooks, run what is due. It is what makes the
+  mount a gate in every generated workspace.
+
+## Small starter fixes: a paged items list, the eslint 10 peers, an empty `AppSubjectFields` (2026-11-18, `fix/starter-small-fixes`)
+
+Adoption follow-up 9 (`docs/adoption-review-2026-11.md`, ranked item 9 and "What surprised" 2 and 9). Decided without
+asking JP, as his standing rule for these sessions says.
+
+- **The starter's items route pages like the showcase's tickets route.** `GET /api/items` parses `?cursor=` with
+  `parseDbKeysetCursor` (400 `invalid-cursor`), clamps `?limit=` with `clampKeysetLimit` (the primitive's default of
+  20, since the starter has no page-size constant of its own), and the query is `listItems` in `src/domain/db/items.ts`,
+  ordered by the primitive's fixed `created_at`, `id`. The response gains `nextCursor`. The card shows "Show older
+  items" and the glue appends. The static demo twin holds every item in memory and stays unpaged: `hasMore` defaults to
+  false, and a twin with a handful of in-memory rows teaches nothing a cursor chain would.
+    - **Rejected: leave the query in the route.** The RLS proofs must drive the production read path, and a route file
+      exports nothing a proof can import. A new `domain/db/` directory costs the adopter one file, and it is where
+      `/sssb:new-slice` already tells them to put a table's queries.
+    - **Rejected: edit `1001_items` to carry the index.** An applied migration is a record, and pages (the first
+      adopter) copied the starter on 0.2.0 and has run it. `1002_items_keyset_index` is the shape of the change an
+      adopter makes later, a list that grew on a table that exists.
+    - **Rejected: a `limit` constant and a visible page-size control.** The default of 20 is enough for an example, the
+      e2e creates 22 rows to cross it, and a constant is one more thing for follow-up 2 (removing the Items slice) to
+      delete.
+    - **Rejected: `useEffect` calling a `useCallback` loader, as the showcase's glue does.** The starter's lint has no
+      suppression and an adopter copies this file, so the first page is fetched inside the effect's own promise chain
+      (`react-hooks/set-state-in-effect` does not fire there) and the loader is a module-level function.
+- **The eslint 10 peer warning is silenced by two `peerDependencyRules.allowedVersions` entries in the generated
+  `pnpm-workspace.yaml`**, `eslint-plugin-react>eslint` and `eslint-plugin-jsx-a11y>eslint`, both `'10'`, under a comment
+  that says why and when to delete them. Checked on 2026-11-18: no release of either plugin lists eslint 10 (the latest,
+  7.37.5 and 6.10.2, stop at 9), so there is no version to bump to, and the preset runs both under eslint 10 in this
+  repository's own CI. Reproduced in a scratch project and gone with the entries.
+    - **Rejected: explain it in the README or the printed next steps.** The warning would stay on every adopter's first
+      install; an adopter reads the explanation after they have already worried.
+    - **Rejected: a blanket `allowedVersions: { eslint: '*' }`.** It would hide a real eslint mismatch from every other
+      plugin, which is the check a peer warning exists to give.
+    - **Rejected: adding the rule to this repository's own `pnpm-workspace.yaml`.** `pnpm install` here printed no
+      warning in this session, though `pnpm peers check` lists the same two plugins; the entry matters to a first
+      install in a generated workspace, and a second copy of the list is one more place to forget to delete.
+- **`AbilitySubject` is an intersection (`@sssb/kit/core/abilities`), and the starter writes
+  `export type AppSubjectFields = Record<never, never>`.** The kit's fixture does the same, so the framework's own tests
+  compile the new form and the showcase (an interface with fields) compiles the old one. ADR-0012 has the addendum.
+    - **Rejected: keep the interface and widen the lint rule's exemption** (`allowInterfaces: 'with-single-extends'` or a
+      per-file override). It would remove the suppression from the starter by hiding the same friction in a preset an
+      adopter cannot see, and the next one to write an empty interface would not be told.
+    - **Rejected: also making `appNotificationCopy` optional in this change.** The framework imports it by name through
+      the `@sssb/app-config/notifications` alias, which has no "absent" form a type checker accepts, so an optional
+      export means a framework contract change (a default the seam falls back to) that deserves its own entry. The
+      future task stays open for that half, and says so.
+
+## Dependabot alert 82 (`minimatch`) closed by taking `typescript-eslint` 8.73 (2026-11-18, `deps/minimatch-alert-82`)
+
+The 2026-11-17 dependency audit accepted GHSA-g3hv-75wg-m249 until the next `typescript-eslint` refresh ("Accepted:
+GHSA-g3hv-75wg-m249" above), because 8.73.0, published 2026-11-16, was inside the two-day release-age window. It is
+outside it now, so this is that refresh.
+
+- **What was affected.** Of the three `minimatch` versions in `pnpm-lock.yaml`, only 10.2.6 is in the advisory's range
+  (`>= 7.0.0, < 11.0.1`): 3.1.5 is below it and 11.0.8 is above the fix. `pnpm why minimatch` shows one parent for 10.2.6,
+  `@typescript-eslint/typescript-estree` 8.72.2, reached through `typescript-eslint`, which the root
+  `package.json` (dev) and `@sssb/eslint-plugin` (a shipped dependency) both take. The code runs only when ESLint
+  parses a project; no request path reaches it, and the globs are the workspace's own configuration. So the alert was
+  dev-scope for SSSB and for an adopter alike, and reachable only by a hostile glob in a lint config.
+- **Fixed by raising both `typescript-eslint` ranges from `^8.72.0` to `^8.73.0`** and refreshing the lockfile
+  (`pnpm update typescript-eslint -r`). 8.73.0's estree takes `minimatch` `^11.0.1`, and the lockfile no longer holds
+  10.2.6 (11.0.8 and 3.1.5 remain, neither affected). No override: the fix is the parent's own range.
+- **The floor in `packages/eslint-plugin` moves too, so a changeset (patch, Kind `scaffold`, Action `optional`).** The floor
+  alone does not fix an adopter: `@sssb/create` also writes `typescript-eslint` into the workspace root's
+  `devDependencies` at this repository's root range (`ROOT_DEV_DEPENDENCIES` in `packages/create/src/template.js`), so a
+  workspace generated at 0.2.0 or earlier holds 8.72 and `minimatch` 10 through its own range, and on upgrading the plugin
+  would gain a second, fixed copy beside it. The changeset therefore tells that adopter to raise its root range in the same
+  change. The floor still earns its place: a workspace that lists no `typescript-eslint` of its own, and every one
+  generated from now on (the generator reads the root's range), takes 8.73 or later. Raising a dependency's floor within
+  the same major breaks no one.
+- **`scripts/pack-and-consume/consumer-lock.yaml` was refreshed** (`pnpm pack-and-consume --update-lockfile`) because the
+  root's range is part of what the generator copies into a workspace. The refresh re-resolved more than that range, all
+  inside existing ranges: `@clerk/*` patch and minor releases, `minimatch` 11.0.8 → 11.0.9, two browser-data packages, and
+  `@sssb/cdk`'s peer `@sssb/tools` 0.2.0-rc.1 → 0.2.0, stale since the release commit.
+- **Checked against 8.73:** `docs/build-notes.md` warns to re-check the `TSImportType` `node.source` shape on a
+  `typescript-eslint` other than 8.72; `tests/lint` and `packages/eslint-plugin`'s suites pass on 8.73.0.
+- **Rejected: a `pnpm.overrides` entry forcing `minimatch` 11 onto 8.72's estree.** It forces a new major onto a
+  parent that declared `^10.2.2`, on the strength of nothing but the advisory, and would have to be removed later; the
+  parent's own release does the same without one. (The 2026-11-17 entry rejected it for the same reason.)
+- **Rejected: leaving the alert open as accepted.** The accepted reason, the release-age window, no longer holds.
+- **For JP.** The alert should close by itself when Dependabot rescans `int-adoption` and then `main` (the fix
+  reaches `main` with the next release merge). If it is still open after that, dismiss nothing: re-read it, because
+  it would then name something else. Nothing here needs a setting change.
+
+## `sssb doctor` reports the adopter's own settings (2026-11-19, `feat/doctor-reports-settings`)
+
+Adoption review follow-up 8 (`docs/adoption-review-2026-11.md`, "What surprised" 11): the settings only the adopter can
+make are named in the README and the generated workspace, and nothing tells them they are still undone. The code is
+`packages/tools/src/commands/doctor-settings.js`; `doctor.js` appends its lines after the cutover rows. Decided
+without asking, as JP's standing rule for these sessions says.
+
+- **Reported, never failed, never written.** Every line is `ok` or `report`, and the exit code does not move: the
+  settings are the adopter's, in GitHub and on a machine, and a doctor that went red on a missing `gh` or a plugin
+  nobody here uses would break `pnpm verify` for people who did nothing wrong. Read-only is enforced where the process
+  starts: the only way out is `ghGet`, `gh api --method GET <path>`, stdin closed, prompts and update notices off,
+  `GH_HOST` pinned to github.com, eight seconds a call, and a test fails if any call is not that. Rejected: failing on
+  "not required" (it would be the first doctor failure that no commit of the workspace can fix).
+- **Skipped when `CI` is set** (anything but empty, `0` or `false`), with one line saying so. In CI the token is the
+  job's `GITHUB_TOKEN`, which cannot be relied on to read these settings (observed with a non-admin account: the
+  organization's and the repository's Actions policies answer 403), so lines would read "not checked"; a CI runner
+  does not normally have Claude Code, so the plugin line would be a false alarm; and the checks
+  would add network calls to the gate that runs doctor on every PR (`sssb ci` and `adoption-probe` both run it).
+  Rejected: running them with `GITHUB_TOKEN` (noise, not information); a flag to force them in CI (nothing needs it:
+  `gh` on a laptop is where the answer is wanted).
+- **The repository is the workspace's `origin` remote** (`git config --get remote.origin.url`, github.com only), not
+  the kit's: the settings are the adopter's. No GitHub origin reads "not checked". Rejected: `gh repo view` (needs a
+  signed-in `gh` and a network call just to learn the name, which git already holds); a field in
+  `package.json` (a second copy of what git knows); a `--repo` flag (one more thing to remember).
+- **"Required" looks in both places GitHub keeps it**: the rules that apply to the default branch
+  (`rules/branches/<branch>`, an organization's rulesets included; read by a non-admin account with push access on
+  SSSB's own repository, where it lists `sssb / all-checks`) and classic branch protection
+  (`protection/required_status_checks`, which answered that account a bare 404 "Not Found"), matching the context
+  `sssb / all-checks` exactly (the reusable workflow is called by a job named `sssb`). "Not required" is said only when
+  the rulesets were read and branch protection was read or answered that it requires nothing (an admin's 404 "Branch not
+  protected"); a protection the account may not read says "not confirmed" and names why, because "not required" would be a claim doctor cannot back.
+  Rejected: rulesets only (misses every repository on classic protection); calling a
+  failure to read "not required" (the most common wrong report a non-admin would see).
+- **Private vulnerability reporting** is `GET repos/<r>/private-vulnerability-reporting`: `enabled: false` is `report`,
+  a failure is "not checked".
+- **The reusable workflow is reported only for a private repository in an organization** (the review's case), read from
+  the Actions policy at both levels, the organization's and the repository's (`allowed_actions`: `all`, `local_only`,
+  or `selected` with `patterns_allowed`). Each level is judged on its own and a level that cannot be read (it needs an
+  admin) is named and never guessed: "no" if any readable level refuses, "yes, as far as the policies that could be
+  read go" if some could not be read, "not checked" if neither could. `selected` is judged by matching the workspace's
+  own `uses:` (`owner/name/.github/workflows/file@ref`) against `patterns_allowed`, with `*` as any run of characters;
+  GitHub's exact wildcard rules are not published precisely enough to prove this, so it is the one approximation here,
+  and the line says "none of its N pattern(s) matches", never "not allowed". Rejected: the organization level only
+  (needs organization admin, which an adopter with repository admin lacks); saying "check by hand" for `selected`
+  (no use to the adopter who has it right).
+- **The plugin line covers every plugin the shared `.claude/settings.json` enables** (`enabledPlugins` true, or a
+  non-empty constraint array), not only SSSB's: the install step is the same for any, and telling them apart would
+  need the kit's repository and a marketplace walk. No enabled plugin, no line. Installed means a record in
+  `<CLAUDE_CONFIG_DIR or ~/.claude>/plugins/installed_plugins.json` (`plugins["<plugin>@<marketplace>"]`) that is
+  user scope, or project or local scope with a `projectPath` that is this workspace. A plugin installed only for
+  another clone says so and names the path. **Assumption not verified**: this machine's record has only a user-scope
+  install, so the `projectPath` field of a project-scope entry is assumed, from memory of Claude Code's format and not
+  from a record or its documentation; if it differs, the line reads "not installed" for a project-scope install, which is a false
+  report, never a failure, and the fix is one field name. Rejected: `claude plugin list` (starts Claude Code, slow,
+  and its output is not a stable format); counting a user-scope install as not enough (it makes the plugin available
+  everywhere, which is what the workspace wants).
+- **A machine with no install record at all reads "not installed … ignore it when nobody here uses Claude Code"**
+  rather than silence: a workspace that enables a plugin should hear that this clone lacks it, and the line names the
+  one command. Rejected: skipping the line when `claude` is not on PATH (a laptop whose Claude Code lives elsewhere
+  would never hear).
+- **From the first review round.** Doctor never throws: each group of reports (GitHub, plugin) runs under a guard that
+  turns an unreadable file or an answer shaped unlike GitHub's documents into one "not checked" line, so a root-owned
+  install record cannot stop a run. The rules are read 100 to a page, because the `required_status_checks` rule can be
+  on page two of the default thirty. A 404 "Required status checks not enabled" counts as "branch protection requires
+  nothing", like "Branch not protected". When branch protection's own endpoint does not answer a non-admin, the branch
+  (`repos/<r>/branches/<branch>`, read by the same non-admin account) is the fallback for `protected` and
+  `protection.required_status_checks`: seen on SSSB's own repository as `protected: true` with
+  `protection: { enabled: false, required_status_checks: { enforcement_level: 'off', contexts: [], checks: [] } }`
+  (the branch is protected by a ruleset), and a shape that differs leaves "not confirmed". The organization's own reusable workflows are never held to the Actions
+  policy (`local_only` and `selected` both allow them), only a call into another owner is; an enterprise-level
+  `local_only` is not told apart from the organization's. The organization's `enabled_repositories: none` is "Actions
+  off". An older install record with one entry per plugin, not a list, reads as a user-level install.
+  **Rejected: deriving the required check's name from the workflow's calling job** (`checks / all-checks` for a job
+  named `checks`): the generator writes the job `sssb`, the guide and README name `sssb / all-checks`, and an adopter who
+  renamed it chose a name SSSB cannot vouch for; the report says what it looked for.
+- **From the second review round** (no finding above LOW). A protected branch's answer counts as read only when it
+  carries `protection.required_status_checks`, and an `enforcement_level` of `off` requires nothing; otherwise the line
+  is "not confirmed", never "it is not". A rulesets answer that is not a list is unread. An organization with Actions
+  enabled for selected repositories, or a `selected` list with a blocking `!` pattern, is not judged: the line says it
+  was not read or evaluated. A `managed`-scope install counts for every workspace. **Accepted, not changed:** a local
+  `pnpm verify` (where `CI` is not set) now makes up to nine `gh` calls against this repository's own `origin`, and a
+  doctor e2e that does not set `CI` reads the developer's Claude config folder: neither can fail a run, and a time
+  budget or an in-repo skip would be a second mechanism for a cost of about a second. `sha_pinning_required` is not
+  modelled. `githubRepositoryOf` (shared with the pin report) keeps its unanchored host match: tightening it changes
+  the pin report too, and a look-alike origin only changes which repository doctor reads, by GET.
+
+## A hosted showcase demo on each release (2026-11-18, `feat/hosted-showcase-demo`)
+
+Adoption follow-up 4 (`docs/adoption-review-2026-11.md`): an evaluator should see the Simulator without cloning SSSB.
+JP's standing rule for these sessions is to decide and record; each choice below is one he would otherwise have been
+asked. **This makes a new outward artifact**: from the first release after 0.2.0, every plain release's tag makes a
+public GitHub release of `safeinsights/sssb`, marked Latest while it is the newest, holding its notes and
+`sssb-showcase.html`. Nothing about what or when anything publishes to npm changes.
+
+- **A GitHub release asset, made by release.yml for every plain release.** Two jobs, `demo` and `github-release`,
+  split as the candidate's `candidate` and `prerelease` are (the one that reads holds no write token and runs no
+  dependency's code; the one that writes holds only `contents: write`, checks out nothing and installs nothing).
+  Rejected: **GitHub Pages**, which needs Pages enabled (a repository setting, JP's) and whose `actions/deploy-pages`
+  needs `id-token: write`, which `tests/tooling/release-reach.test.ts` holds to `publish` and `attest` alone; a second
+  id-token holder in the release workflow is a worse trade than a download. Rejected: **a third-party HTML preview
+  service** pointed at the asset or the repository, which would serve SSSB's page from someone else's domain.
+- **The new jobs need `pack`, and nothing needs them; `publish` is untouched.** They run only for a plain tag on `main`
+  once `checks` passed on it (`pack`'s gates), beside `publish`. Rejected: **steps in `pack`**, which would let a demo
+  problem stop an npm publish, a change to when npm publishes. Rejected: **needing `publish`**, so the page appears only
+  once npm has the version: it would tie the page to npm's outcome, and the task forbade anything downstream of
+  `publish`. The consequence, accepted: if `publish` fails, the tag's GitHub release is still made; re-running
+  `publish` finishes npm, and the page's notes are true of the tag either way.
+- **"A release whose demo does not build fails before it publishes" is the CI gate's job.** `checks`' demo-static job
+  builds the showcase's demo, holds it to its budget and drives it from `file://`; `pack` waits for `checks` to pass on
+  the release commit. The new jobs add no failure mode on the way to npm.
+- **The attached file is the one CI tested**, the `static-demo-showcase` artifact app-checks.yml's demo-static job
+  uploads, fetched from the checks run on the release commit (`release.mjs checks-run`, as a candidate fetches its
+  tarballs) and checked again (`release.mjs demo`: the asset's name, an HTML document, within the showcase's
+  `check:demo-size` budget). Rejected: **building it again in the release run**, which would install dependencies in
+  the tag's run for a file CI never drove. The artifact's 14-day retention bounds a re-run, which is days, not weeks.
+- **The asset is `sssb-showcase.html` in every release, not `sssb-showcase-<version>.html`** as the future task
+  sketched: `releases/latest/download/<name>` needs one name, and the release page says the version. Rejected:
+  **attaching both names**, two copies of one file. The newest release is marked Latest (candidates stay never-Latest),
+  which is what makes that URL the newest release's.
+- **The README links `releases/latest/download/sssb-showcase.html` and says every release after 0.2.0 carries it**,
+  so the link reads true before and after the next release; until it, the link answers 404 and the same sentence names
+  `pnpm build:demo-static`. Rejected: **backfilling a 0.2.0 GitHub release** by hand, an outward artifact this task was
+  not given to make.
+- **No changeset.** It touches nothing an adopter receives (`scripts/`, `.github/`, `tests/`, docs), as the future task
+  said; `changeset-required` sees no shipped path.
+- **Latest only while the tag is the highest plain release tag** (`gh api …/git/matching-refs/tags/v`, compared
+  numerically, candidates ignored), from the round-1 review: a re-run of an older tag's job, or two tags' runs
+  finishing out of order, would otherwise move Latest, and the README's link, back to an older demo. Rejected: always
+  `--latest`, and leaving it to GitHub, whose default for a newly published release is also Latest.
+- **No page for a tag that publishes nothing**: `demo` takes `publish`'s own condition,
+  `needs.pack.outputs.count != '0'`, so the page and npm agree on whether a version exists. Unreachable while the group
+  is public; it costs one line.
+- **The fake `gh` the prerelease job's test used moved to `tests/support/fake-gh-release.ts`**, shared with the new
+  job's test, and reads a boolean flag as gh does (`--x`, `--x=true`, `--x=false`), so `--prerelease=false` and
+  `--latest` are told apart.
+
+## Real mode requires only the optional ports an app uses, and jobs can run without CodeBuild (2026-11-19, `fix/kit-optional-real-ports`)
+
+Pages, SSSB's first adopter, prepared its first real-mode deployment and found that real mode refused to start
+without LLM, Mailgun and CodeBuild settings it does not use (it filled them with a placeholder), and that SSSB's only
+real job runner was CodeBuild, so its scheduled maintenance could not run through SSSB's scheduler (it ticks its own
+route from a ticker Lambda instead).
+
+- **The declaration is a switch per optional port, set by the deployment from `params.ports`**, exactly as
+  `DATABASE_TRANSPORT` is set from `params.database.transport`: `LLM_PROVIDER` (`anthropic` | `none`),
+  `EMAIL_PROVIDER` (`mailgun` | `none`), `INBOUND_EMAIL_PROVIDER` (`mailgun` | `none`), `JOBS_RUNNER` (`codebuild` |
+  `in-process` | `none`), in `packages/kit/src/adapters/real/optional-ports.ts`; `SssbApp` sets each one `params.ports`
+  names. Rejected: **a new `@sssb/app-config/*` module** declaring the ports, which every adopter's build would have
+  to add before it compiled again (a seam module cannot be optional), for a choice that is a deployment's as much as
+  the code's (the job runner decides what infrastructure exists); and **deriving it from what the app registers**,
+  which cannot be done: the framework's own invitations and notifications send mail whatever the seam says, and an
+  app's route can import `llm` from the registry with nothing registered.
+- **An unset switch is today's behaviour** (every optional port on, CodeBuild the runner), so a deployment that sets
+  none boots exactly as it did; `required-env.json` keeps the defaults per transport and adds, under `ports`, what each
+  choice requires. Rejected: **defaulting to off**, which would boot an existing deployment with ports it uses absent.
+- **Inbound email is its own switch**, not part of `email`: an app may send mail and receive none (the starter does),
+  and the signing key is a separate cutover row (`email-inbound`). Without the key the inbound route refuses every
+  request, as before, so turning it off fails closed.
+- **`WEBHOOK_SECRET` stays required whatever the switches say.** The cron route and the jobs webhook both verify it,
+  and an app with no jobs may still tick its outbound webhook deliveries. Rejected: tying it to `JOBS_RUNNER`.
+- **An absent port is an object whose every call throws `AbsentPortError`**, naming the port, its switch and its
+  cutover rows (`packages/kit/src/adapters/real/absent.ts`). Rejected: **leaving the registry's export undefined or
+  nullable**, which would change the type of `llm`, `email` and `jobs` for every caller to serve the case that should
+  never be called. `stream` throws when called, before anything is streamed.
+- **The optional adapters are dynamic imports in `createRealPorts`**, as the Data API transport already was, so a port
+  switched off never loads its vendor's SDK; the registry test counts the loads.
+- **The CodeBuild-free runner is `JOBS_RUNNER=in-process`**: `start` runs the job's handler in the server, now, and
+  records its terminal status and notifies before it returns. The executor is shared with the simulated adapter
+  (`packages/kit/src/jobs/run-in-process.ts`), which ran the same steps inline. Rejected: **leaving the job queued for
+  the next tick to drain**, which adds a second queue, a time budget per tick and a wait of up to a tick for a job a
+  user just submitted, for the case (long work) that belongs on CodeBuild anyway. The limit, recorded where it is
+  chosen: a job shares its invocation's time limit (30 seconds on `SssbApp`).
+- **The default runner stays `codebuild`; the starter declares `in-process`**, with `llm: 'none'` and
+  `inboundEmail: 'none'`: it has no jobs webhook route for a build to complete through, no model call and no inbound
+  route, so those are what is true of it. A generated app therefore needs no build project to run its jobs.
+- **The scheduled tick is `SssbApp`'s `scheduledTick: { webhookSecret, every? }`, opt-in.** An EventBridge rule
+  (every five minutes by default) runs a function that reads the secret and invokes the server directly with a Function
+  URL event for `/api/webhooks/cron`, which the Lambda Web Adapter serves like any request; the route stays behind
+  `withWebhookSecret`. Rejected: **POSTing through CloudFront**, which today refuses an unsigned POST (the sibling fix
+  `fix/cdk-function-url-post` addresses it) and would make the tick depend on that; **signing a request to the Function
+  URL**, which needs a SigV4 signer the function would have to bundle (the runtime documents none to import); **an EventBridge API destination
+  and connection**, which needs the secret's value at deploy time; and **on by default with a generated secret**: the
+  construct never puts a secret's value in an environment (pages keeps its secrets by ARN), so the server could not know
+  a secret the construct made, and every tick would be a 401.
+- **The tick's function may read that one secret and invoke the server's function and its versions**, nothing else,
+  runs outside any VPC (it calls AWS APIs only), and is not retried: the next tick runs on schedule, and two ticks never
+  double-spawn a schedule.
+- **The kit's changeset files `minor` with Action `optional`.** The snapshot changed, which the gate requires a minor
+  for, but nothing an existing deployment sets becomes required: Action `required` would tell an adopter something
+  breaks when nothing does.
+- **Not verified live** (no AWS calls): that the Lambda Web Adapter answers a direct invocation carrying a Function URL
+  event as it answers the URL, and the in-process runner on a deployed server. Both are in the `scheduled-tick` and
+  `job-runner` rows' proofs.
+- **From the first review round.** `sssb check-real-env` bundles `adapters/real/index` as CommonJS, and the in-process
+  runner's notification imports had pulled in the adapter registry, whose top-level await esbuild refuses there:
+  `dev:real` failed for every app. The registry now hands `createRealPorts` the notifier
+  (`notifyJobTerminal`; replaced in round 2: the registry hands in `inProcessJobs`), so the real ports never import a
+  module that imports the registry, and
+  `tests/tooling/tools-check-real-env.test.ts` bundles the real framework for both apps (it had bundled only a stub).
+  Rejected: bundling the preflight as ESM, which would leave the next such import to break the Next server instead.
+- **A job the in-process runner loses is failed, twice over.** A handler still running after 20 seconds
+  (`IN_PROCESS_DEADLINE_MS`, under `SssbApp`'s 30; removed in round 2, below) fails its job; and a new optional `JobsPort.sweep(now)`, which the
+  scheduled tick calls before it drains the schedules, fails a job still `running` five minutes after its last status
+  change (the invocation was cut off before it recorded anything). Optional on the port, so every other runner,
+  an adopter's own included, is untouched. The tick's answer keeps its shape (the starter's route test, which adopters
+  copy, pins it exactly): the failed jobs' errors say what the sweep did. Rejected: **a per-tick time budget**, which
+  the runner cannot know (nothing hands it the invocation's remaining time).
+- **The tick's function is not retried by Lambda either** (`configureAsyncInvoke({ retryAttempts: 0 })`: EventBridge's
+  retry policy does not reach Lambda's own two retries of an asynchronous invocation), and an Errors alarm watches it,
+  as the server's errors are watched.
+- **A failed deferred side effect is logged in real mode**, beside its analytics event, which without a PostHog key is
+  the simulated one, writing only to the server's local disk: an invitation sent with `EMAIL_PROVIDER=none` now leaves a log line saying the port is absent.
+- **Left as they are, with the reason.** `JOBS_RUNNER=none` still commits a submitted or scheduled job's row before
+  `start` throws, leaving it `queued`: `none` declares that the app runs no jobs, so a job reaching the port is the
+  declaration being wrong, and the throw names the switch. And the framework's `digest-email` handler, which the
+  in-process runner can now run in a deployment, picks recipients from the seam's seed people: a real-mode concern of
+  that handler with any runner (CodeBuild would run the same handler), so it is a follow-up, not this change's.
+- **Machine credentials get headers of their own, because CloudFront replaces `Authorization`.** Found in a review of
+  the sibling `fix/cdk-function-url-post` and checked here against CloudFront's guide ("Restrict access to an AWS
+  Lambda function URL origin"): with signing behavior `always`, which `SssbApp`'s origin access control uses, CloudFront
+  signs every origin request, and the signature is the `Authorization` header; besides, `CACHING_DISABLED` leaves
+  `Authorization` out of the cache key, so the viewer's header is not forwarded at all. Every webhook and service call
+  through the public host would answer 401. `withWebhookSecret` now reads `x-sssb-webhook-secret` and
+  `verifyServiceCaller` reads `x-sssb-service-token` (`packages/kit/src/service-auth/credential.ts`), the header winning
+  when present, and every sender in SSSB sends it (`pnpm tick`, the scheduled tick, the showcase's simulated actors).
+  `Authorization: Bearer` stays accepted when the header is absent: a direct invocation or `pnpm dev` keeps it, a sender
+  written before this keeps working where it worked, and nothing that passed before is refused now. Rejected:
+  **signing behavior `no-override`**, which passes a viewer's `Authorization` through but then needs it to be a SigV4
+  signature for the Lambda URL's host, so a Bearer credential would fail Lambda's IAM check instead; **dropping
+  `Authorization` at once**, which breaks direct callers for no gain; and **fixing the webhook alone**: the service token
+  had the same defect in the same shape, so both moved in one change. The sibling keeps the origin access control (it
+  adds a body hash at the edge), so the defect stands with it; a live POST through the host is in the `job-runner` and
+  `scheduled-tick` rows' proofs.
+- **From the second review round, which revises the first.**
+    - **The 20-second deadline is gone.** A handler abandoned at a soft deadline keeps running in a Lambda environment
+      that is frozen once the invocation returns, holding any transaction it had open (its row locks, its pooled
+      connection) until a later invocation thaws it, and finishing its side effects for a job already marked failed. The
+      server's own time limit ends the process instead, so the job's open transaction rolls back (at once on `pg`; on the Data API when that transaction times out, after three minutes with no call: the BeginTransaction API reference), within the sweep's five minutes), and the sweep fails the job. A per-job deadline also never bounded the invocation, whose total the runner cannot know.
+    - **The sweep fails only jobs this runner claimed.** Its `running` entry carries `IN_PROCESS_CLAIM`, so a job
+      another runner holds `running` (a service caller's, through its status route, or one the jobs webhook is walking
+      to its end) is left to it. A CodeBuild build in flight holds its job `queued`, which the sweep never reads. It is fault-isolated per
+      tenant and per job, and the tick catches a sweep that throws, as `runDueSchedules` isolates each schedule.
+    - **The registry builds the in-process runner** and hands it to `createRealPorts` (`inProcessJobs`). The first
+      round's fix had kept the notification modules out of `adapters/real/index`, but the runner itself runs the app's
+      handlers, so an adopter whose handler reached the registry would have broken `dev:real` again;
+      `packages/kit/src/adapters/real/index.test.ts` now reads esbuild's account of that module's CommonJS bundle and
+      fails if it reaches the registry, `server-lib` or the seam's jobs. The hook is optional, so
+      `createRealPorts()` (a published subpath) still takes no argument; choosing `in-process` without the hook fails at
+      boot, naming it.
+    - **Accepted, recorded:** a tick that spawns several in-process jobs runs them one after another inside one
+      invocation, so a backlog can outrun the time limit (the cut-off job is swept; schedules after it wait for the next
+      tick, and that tick's deliveries do too). Threading an invocation budget through the tick is a design of its own;
+      in-process is for short jobs. A job whose `start` was never reached (an audit write failing between the spawn and
+      the start) stays `queued`: `queued` is also a CodeBuild job's state while it builds, so the sweep cannot tell it
+      lost. The sweep's per-tenant scan of `running` jobs has no index of its own; a partial index is a framework
+      migration, for when a deployment's job history makes it matter.
+- **From the third review round.**
+    - **The registry loads the in-process runner on its first use** (`packages/kit/src/adapters/lazy-jobs.ts`), never
+      during its own top-level await. Loading it loads the app's job handlers, and a handler that imports the registry
+      (for `isSimulated`, as the guide says to) closes a cycle whose root is the registry, which would then wait
+      forever on its own import: the hang was reproduced in plain Node ESM (exit 13, "unsettled top-level await"), and
+      the lazy shape boots there. The test pins the helper (nothing loaded until the first call, one load, a failed
+      load retried), not the hang.
+    - **Recording a job's outcome is outside the handler's `try`.** Only the handler's own failure fails the job; a
+      failure after `completed` has committed (the webhook enqueue that follows it) propagates, instead of an attempt
+      to record `failed` over `completed`, which the state machine refuses. The simulated runner shares the change.
+    - **The Sentry scrubber drops the two credential headers**, as it drops `authorization`. Sentry's own filter
+      already masks names containing `secret` or `token`; the scrubber no longer relies on that.
+    - **Phase 1 stops here, at the cap.** Round 3's one HIGH was in round 2's fix, not in the original work, and its
+      LOWs were either taken above or already recorded (a job that `none` or a cut-off invocation leaves `queued`).
+- **`CLERK_JWT_KEY` stays optional** (asked when `fix/kit-clerk-middleware` merged, which left it out of
+  `assertRealEnv` for this change to decide). Clerk verifies a session without it, by fetching its signing keys when
+  it meets a key id it has not cached; the key saves that request, and the `auth-dev` row and that change's changeset
+  already recommend setting it. Rejected: **requiring it**, which would stop every deployment that boots today from
+  booting, for a request it saves, and would add a required variable (a `minor` in the snapshot's terms) for no
+  correctness gain.
+
+## `SssbApp` takes request bodies, and pins the server's `HOSTNAME` (2026-11-19, `fix/cdk-function-url-post`)
+
+Pages, the first adopter, found before its first deploy that `SssbApp`'s distribution refuses every request with a
+body (its Function URL is behind an origin access control, which needs the body's hash), and that the server's
+`HOSTNAME` must be `0.0.0.0`. ADR-0001's addendum of 2026-11-19 holds the hosting decision and its rejected
+alternatives (no origin access control with a secret header, an ALB, API Gateway, a CloudFront Function, hashing in the
+browser). JP's standing rule for these sessions is to decide and record; each choice below is one he would otherwise
+have been asked.
+
+- **An origin-request Lambda@Edge function, not viewer-request.** It runs just before CloudFront sends the request to
+  the origin, and CloudFront hands it up to 1 MB of body against a viewer-request function's 40 KB. Pages chose the
+  same.
+- **A body over 1 MB answers 413 from the function.** Rejected: **forwarding it with the hash of the part CloudFront
+  handed over**, which Lambda refuses with a 403 that names nothing. Rejected: **not setting the header**, the same 403.
+- **The header is always set, a request with no body getting the empty string's hash.** Rejected: **setting it only on
+  `POST`, `PUT` and `PATCH`**: a viewer's own `x-amz-content-sha256` would then reach the signer on every other method,
+  and whether Lambda accepts a body on a `DELETE` would become this function's question.
+- **A stack whose region is us-east-1 or unresolved keeps the function in the stack; a stack with an explicit region
+  elsewhere gets CDK's `EdgeFunction`.** `EdgeFunction` refuses an environment-agnostic stack, which the starter's is
+  until cutover, and `pnpm synth` must stay offline; and one construct path for both in-stack cases means naming
+  us-east-1 at cutover does not replace the function (a replicated one cannot be deleted for hours). Rejected: **a
+  CloudFormation rule refusing any other region** up front: CloudFormation's guide shows rules reading template
+  parameters, never a pseudo parameter such as `AWS::Region`, this could not be tried without an account, and a rule
+  CloudFormation refused would stop every deploy of the stack.
+  CloudFront's own refusal of the association is the error instead. Its cost: that refusal comes after the database
+  is created, so a production stack (retained database and buckets) deployed that way may leave them behind; the
+  starter's infra README says to give the stack its `env` first.
+- **`EdgeFunction`'s us-east-1 stack is one per `SssbApp` and region (`edge-<region>-<construct address>`), not CDK's
+  one per parent stack.** CDK's default collides on a second `SssbApp` in one stack, and is shared by one stack deployed
+  to two regions of an account. Rejected: **CDK's default name**, for those two reasons.
+- **That stack carries exactly the app's tags.** CDK copies the parent's tags into it when it creates it, before any
+  `Tags.of(...)` aspect has applied, and under `explicitStackTags` (`cdk init`'s default) the parent stack has no stack
+  tags at all. An aspect run after every tag aspect gives each of its resources the server function's final tags, and
+  the stack the parent stack's. Rejected: **asking adopters to tag at the App**, which the starter's `infra/app.ts`
+  does not do and a tag policy would refuse silently until the first deploy.
+- **The function's version is destroyed with the stack, not retained (CDK's default).** Its logical id carries a hash
+  of the code, so a retained one would pile up on every change, and would enter the stateful-logical-ids snapshot, which
+  takes any retained resource, under a name that changes with the code. The cost: a delete can fail while CloudFront
+  holds replicas, recorded in the `deploy-pipeline` row.
+- **The edge role's trust in `edgelambda.amazonaws.com` is CDK's.** `Distribution` adds it for every function it runs at
+  the edge; the test reads it from the template rather than the construct adding a second statement.
+- **`HOSTNAME=0.0.0.0` in the server's environment, not in a `run.sh` SSSB writes.** The deploy pipeline, and so its
+  `run.sh`, is the adopter's (`deploy-pipeline`); the environment is the one place the construct controls. Rejected:
+  **SSSB shipping the `run.sh`**, which would decide the pipeline's packaging for it.
+- **The live proofs extend two existing cutover rows** (`origin-not-publicly-reachable`, `deploy-pipeline`) rather than
+  adding one. A new row is a new id in `@sssb/kit/cutover/rows.json`, which `sssb doctor` reports as missing from every
+  adopter's own checklist.
+- **Out of scope, reported to the manager:** CloudFront sends the origin the Function URL's own host
+  (`ALL_VIEWER_EXCEPT_HOST_HEADER`), so the app builds absolute URLs and redirects on the Function URL's host. Pages sets
+  `x-forwarded-host` from the viewer's `Host` in a CloudFront Function of its own; one in `SssbApp` would also decide
+  what becomes of a viewer's own `X-Forwarded-Host`.
+
+## One command removes the starter's Items slice (2026-11-19, `feat/remove-starter-items`)
+
+Adoption follow-up 2 (`docs/adoption-review-2026-11.md`, ranked item 2; `.claude/future-tasks/resolved/create-blank-option.md`).
+Decided without asking, as JP's standing rule for these sessions says.
+
+- **An `sssb` command, `sssb remove-items [--app <dir>] [--drop-migrations] [--dry-run]`, and no plugin command.** CI can run
+  it, which is what makes "tested once against the starter" true: pack and consume's `generated` shape runs it on the
+  generator's output and then the workspace's own gates (`pnpm verify` and the held unit and contract runs, knip, jscpd).
+  Rejected: a plugin command (`/sssb:strip-starter`), an agent recipe no gate can run; a `--blank` generator flag, a second
+  starter shape the gates would have to keep green (the review's own recommendation); both together, two things to keep true.
+- **It applies two diffs of the starter, exactly** (`packages/tools/src/remove-items/{code,database}.patch`,
+  `exact-patch.js`), not scripted edits of TypeScript. A hunk applies only where every line it names is found once, wherever
+  it has moved to; nothing is fuzzed. A file the adopter edited inside a hunk, deleted, or that is not what the starter wrote
+  is refused, by name, with every edit computed first and **nothing written** (a dry run is the same computation).
+  Rejected: regex or AST surgery on the starter's files (the fragile part of the task, and silently wrong on an edited file);
+  whole-file replacement from a checked-in blank variant (the third app in disguise that the future task warned of, and it
+  overwrites an adopter's unrelated edit to `abilities.ts`); `git apply` (needs a repository, tolerates what it should refuse,
+  and cannot say what it would refuse before touching anything). The starter keeps its one shape; the diffs are kept true by
+  `tests/tooling/remove-items.test.ts`, which fails, naming the file, when a starter change makes one stop applying (probed:
+  a hunk dropped from the patch, and a line appended to the starter's card; both red).
+- **The rule for migrations: never delete one unless told.** A database records each migration it runs, and the migrator
+  refuses to start when a recorded one is missing from the code (the first adopter, pages, may have deployed). Without
+  `--drop-migrations` the command takes out the code and leaves `1001_items`, `1002_items_keyset_index`, `ItemsTable` and the
+  `items` RLS proofs registered, which keeps every gate green. With it, they go too: for a workspace just generated, with the
+  local `.data` deleted and the first table numbered `1001`. The two halves are one choice made once: the second half is
+  not available after the first ran alone, because its diff is made against what the first leaves; `--drop-migrations` after
+  a plain run is refused, with nothing written. Rejected: deleting the migrations by default (a deployed adopter's next
+  deploy fails); detecting a deployment from the repository (nothing in a workspace says whether a database ran a migration);
+  a database-only mode for later (a second command to keep true, for the one case where the adopter should be writing a
+  migration of their own).
+- **The result is the empty registration, proved to compile.** `AppSubjectType = never`; `appAbilityRules` keeps its four
+  parameters (the framework calls it with them) and returns false; `AppTables = Record<never, never>` (an empty interface
+  would trip `no-empty-object-type`, as `AppSubjectFields` did); an empty `appMigrations`; an empty proofs body, so
+  `pnpm test:contract` runs only the framework's half, which the command and the guide say. Typecheck, lint, knip, the conformance suite and the
+  contract runner pass on it. `DashboardScreen`'s `children` became optional for the same reason.
+- **It writes no replacement e2e spec.** An app with no spec in its e2e directory fails `sssb check-e2e` and its CI shard,
+  but the starter has had a second one since follow-up 6, `simulator.spec.ts` (sign in through the Simulator, its tabs),
+  which names no item and stays. `tests/tooling/remove-items.test.ts` asserts it is what remains, so a change that
+  removes it fails there and must give the command a spec to write. Rejected: a `dashboard.spec.ts` the command
+  writes (the one file it would add to an adopter's tree, repeating the sign-in the Simulator's spec already walks;
+  an earlier version of this change had it, and dropped it when the starter gained its own spec).
+- **The proof is a leg of the `generated` shape in pack and consume, not a new job.** A new job is a new check name, and the
+  ruleset requires its checks by name (a settings change this work may not make). The leg runs after "every file the
+  generator wrote is unchanged", because removing the slice rewrites those files, and before the partial installs. It deletes the
+  dev database the earlier gates created (`.data` recorded `1001_items`), which is exactly what the command tells an adopter
+  to do. Rejected: a fourth shape (a second install of the same tarballs); running it in the pages shape (its ledger app's own
+  migration `COMMENT`s on `items`, so removing the table would remove its premise).
+- **`@sssb/tools` ships the two `.patch` files.** ADR-0014 part 2 says every package but the kit ships JavaScript; the rule's
+  reason is no build step, which text read at run time does not break. `toolsShippedFileProblems` names exactly these two
+  files and still fails any other. ADR-0014 has the addendum. Rejected: the diffs as JavaScript string constants (the starter's
+  backticks and `${` make that unreadable and unreviewable).
+- **Hunks are not anchored to the ends of a file.** A hunk with fewer than three lines of context sits at a file's start or
+  end, and anchoring it there refused an adopter who had added a comment above the imports. A hunk applies when what it names
+  occurs exactly once, anywhere, and a file deletion needs the file to be exactly what the starter wrote. Rejected: anchoring.
+- **It also removes `.next/dev/types`, Next's dev type validator**, found by review. `next dev` writes a validator naming every
+  route file, the app's tsconfig includes it, and `next typegen` (what `pnpm typecheck` runs) rewrites only `.next/types`, so an
+  adopter who had run `pnpm dev` or the e2e got a TS2307 on the deleted route at their next `pnpm verify`. It is generated and
+  ignored by git. The pack-and-consume leg plants such a validator and checks it is gone, and a unit test pins the same.
+  Rejected: telling the adopter to delete `.next`.
+- **Pack and consume runs both modes**: the default (database half kept) first, typecheck and lint only, then the app is put
+  back as generated and the whole slice goes with the full gates. Rejected: the default mode with only a file-list test.
+- **Known limits, accepted.** The writes are not transactional (a failing disk leaves a half-removed app; the message says
+  `git restore .`). A hunk is matched on its own text, so an adopter helper appended to a file whose imports the patch
+  removes fails typecheck loudly rather than silently. A CRLF checkout of an adopter's files refuses every hunk (the shipped
+  patches are `eol=lf` by `.gitattributes`). Rejected: a rollback journal, and line-ending normalization, for failures that
+  are loud and leave the diff in git.
+- **The starter's `proxy.test.ts` (from the Clerk middleware fix) used `/items` and `/api/items` as sample paths.** They
+  are only strings, but a removal that leaves "items" in `src` is not clean and the pack-and-consume leg checks for it, so
+  the sample paths are now `/projects`. Rejected: teaching the command to patch a test of the proxy, and exempting the file.
+
+## Real-mode sign-in: the kit runs Clerk's middleware around the app's proxy (2026-11-19, `fix/kit-clerk-middleware`)
+
+The first adopter's first real-mode deployment found that SSSB's Clerk adapter (`packages/kit/src/adapters/real/auth.ts`)
+calls `auth()` and `currentUser()`, which refuse a request Clerk's `clerkMiddleware` did not see, and that nothing in
+SSSB ran that middleware: every real sign-in failed. The adopter wrapped its own proxy. Decided without asking, as JP's
+standing rule for these sessions says.
+
+- **A wrapper the app's `src/proxy.ts` calls, `withAuthProxy(proxy)` from `@sssb/kit/adapters/proxy`.** The app's
+  proxy keeps deciding what each path gets. Rejected: **the kit owning the proxy with an app hook**. Apps' proxies
+  differ in what they see (the adopter's answers page hosts on every path, `/_next` included), and Next reads
+  `config.matcher` only as a literal in the app's own file, so the kit could not own the part that matters most.
+- **The Clerk half is `packages/kit/src/adapters/real/clerk-proxy.ts`, internal, reached only by `import()` from
+  `packages/kit/src/adapters/proxy.ts` in real mode, on the first request.** Vendor SDKs stay in the adapters, and
+  simulated mode loads no Clerk code. Rejected: **publishing the Clerk half** for the app to load itself, which hands
+  every app the run-mode branch the guide keeps out of app code. Rejected: **a top-level `await import()`** in the
+  kit's module: lazy loading keeps importing `@sssb/kit/adapters/proxy` free of effects (its tests load it in both modes
+  without Clerk), at the price of loading Clerk on the first real request instead of at start.
+- **The run mode moved to `packages/kit/src/adapters/run-mode.ts`, which the registry re-exports.** The proxy asks it
+  without importing the registry. Rejected: **importing `isSimulated` from `@sssb/kit/adapters/index`** in the proxy,
+  as the adopter did: that loads every port and fake into the proxy, and in real mode builds the real ports there,
+  refusing to start without the LLM, mail and job-runner settings, for a module that needs one boolean. Rejected: **a
+  second reader of `APP_MODE`**, which the run-mode lint rule exists to prevent in apps. The fail-closed production
+  guard stays in the registry, which every route still loads.
+- **No edge-runtime branch.** Next 16 runs a proxy on the Node.js runtime and refuses a `runtime` setting in it (Next's
+  `proxy.md`, "Runtime"; `get-page-static-info.js`: "Proxy always runs on Node.js runtime"), so `import()` of Clerk's
+  Node build is an ordinary one.
+- **Both apps' matchers add `/api/:path*` and keep the page pattern as it was; the proxy passes an API route
+  through with `NextResponse.next()`.** Clerk must see API routes too (its error for a missing middleware names the
+  matcher). Rejected: **`/:path*`**, which would run Clerk and the locale routing on every static file and `/_next`
+  request. The old pattern excluded every path starting with `api` (`/apiary` too); `startsWith('/api')` keeps that.
+- **Both apps' `src/proxy.test.ts` mock `next-intl/middleware`.** next-intl's ESM build imports `next/server` without
+  an extension, which Node's resolver refuses under Vitest; the test checks the proxy's routing, not next-intl's.
+  The matcher is tested with Next's own `unstable_doesMiddlewareMatch`.
+- **`@sssb/kit` minor, Kind `seam`, Action `required`; `@sssb/create` minor, Kind `scaffold`, Action `required`.** A
+  new published subpath is a seam change, and an app that does not adopt it cannot sign in in real mode. Rejected:
+  **Action `optional` and a patch**: the app is broken without it in the one mode that has users.
+- **The wiring is a guide rule kept by hand.** Rejected for now: **a conformance check that reads `src/proxy.ts`**,
+  which would have to parse the matcher literal and recognise the wrapper through aliases; worth it only if an
+  adopter misses the rule.
+- **Not verified live**: a real sign-in through Clerk's middleware, its handshake redirect and `auth()` in a page and
+  an API route. Those are the `auth-dev` row of `docs/cutover-checklist.md`.
+- **`CLERK_JWT_KEY` is passed to Clerk's middleware as `jwtKey` when set, and stays optional** (round-1 review).
+  Clerk 7.10 does not read it from the environment (its `constants.js` reads the publishable, secret, machine-secret and
+  encryption keys, not the JWT key), and without it Clerk's middleware, now on every `/api` route, fetches its signing
+  keys from Clerk's API for any bearer JWT whose key id it has not cached: a service caller's token, or one an
+  unauthenticated client makes up, each costing a Clerk request against the instance's rate limit. With `jwtKey` Clerk
+  verifies locally. Rejected: **making it required** in `assertRealEnv`, which changes the required-environment release
+  snapshot while another task is reworking which settings real mode requires; it is a cutover-checklist step instead.
+  Rejected: **skipping Clerk's middleware on requests with an `Authorization` header**, which would break a Clerk
+  session token sent in that header.
+- **A failed load of the Clerk half is forgotten** (round-1 review), so the next request tries again instead of every
+  request failing until a restart.
+- **The page matcher still leaves out any path with a dot** (round-1 review, kept): in real mode such a page would not
+  pass Clerk's middleware and its `auth()` would fail. Rejected: **Clerk's matcher, which leaves out only listed static
+  extensions**: it would send `/robots.txt` and any other unlisted file to the locale routing, which redirects it. The
+  guide says a page path has no dot.
+- **API request bodies now pass through the proxy** (round-1 review, kept): Next buffers at most
+  `proxyClientMaxBodySize` (10MB by default) of a proxied body, above the 5MB attachment limit. An app that raises an
+  upload limit past it raises that setting too; the guide says so.
+- **A request carrying a token in `Authorization` skips Clerk's middleware** (round-2 review, then a sweep). Clerk
+  accepts any kind of token there (`acceptsToken: 'any'`, set after the app's options, so it cannot be narrowed) and
+  verifies its machine tokens (`ak_`, `mt_`, `oat_`) through its API on every request, which `jwtKey` does not help.
+  Round 1 and round 2 found the same shape (a caller-chosen value that makes Clerk call its API), so instead of a third
+  round the sweep listed where Clerk 7.10's `authenticateRequest` reads caller input: the `Authorization` header
+  (`parseAuthorizationHeader`: the token after `Bearer `, or the whole value when it is one word), the session, refresh,
+  handshake and dev-browser cookies, and the handshake query parameters. The header is closed by skipping Clerk when it
+  would read a token there, by its own rule: SSSB's users sign in by Clerk's session cookie, and SSSB's own bearer
+  tokens (the webhook secret, service callers' JWTs) are checked by their routes and never need Clerk. Another scheme
+  (`Basic …`) gives Clerk no token, so Clerk still runs. The session and handshake tokens are closed by `jwtKey`, which
+  stays optional (above) and is a cutover step. Not followed to the end: whether a forged expired session token with a
+  refresh cookie reaches Clerk's refresh call before its signature is checked; with `jwtKey` set the signature check is
+  local either way. Rejected: **skipping Clerk only for the three machine-token prefixes**, which leaves a one-word
+  value and any prefix Clerk adds later.
+- **`CLERK_JWT_KEY` is read as a secret store often holds it** (`\n` escapes, surrounding space) **and refused at the
+  first real request if it is not a PEM public key** (round-2 review): Clerk would otherwise fail every session check
+  with it and sign everyone out, without saying why.
+- **Superseding the skip above: Clerk runs on every request, shown a copy without `Authorization`** (round-3 review of
+  the sweep). Skipping Clerk left a client's own `x-clerk-auth-*` and `x-clerk-request-data` request headers in place,
+  which Clerk's `auth()` trusts once their signature checks out; under `next dev` Clerk's keyless fallback decrypts the
+  request data with a public constant, so anyone reaching a `dev:real` server could forge a user. A page request with a
+  header token also failed (`auth()` with no middleware). Now Clerk always runs, and its decoration writes its own
+  `x-clerk-auth-*` headers over the client's (`decorateRequest`, `setRequestHeadersOnNextResponse` in @clerk/nextjs
+  7.10). It is shown a body-less copy of the request with no `Authorization` header, so it reads no header token and
+  calls nothing for one; the app's proxy gets the original. When the app's proxy built no override list and Clerk
+  built it from the copy, `Authorization` is added back to it, so the route still gets it. Rejected: **forcing
+  signed-out headers on the skip path**, which recreates Clerk's header handling outside Clerk and has to track every
+  header it adds. Rejected: **refusing a request with both a header token and an `x-clerk-*` header**, which still
+  fails the page case.
+- **`CLERK_JWT_KEY` must be a 2048-bit RSA public key in SPKI PEM** (round-3 review): Clerk's `loadClerkJwkFromPem`
+  strips that key's fixed prefix as text, so a private key, a certificate, another size or another type passes
+  `createPublicKey` and still fails every session check.
+- **`Authorization` is put back only into a list Clerk built** (round-4 review): the handler records whether the app's
+  proxy answered with its own override list, and a list the proxy built stands as it is, `Authorization` left out on
+  purpose included. The handler throws if Clerk hands it a request it was not given, rather than handing the app's
+  proxy the stripped copy. The tests' Clerk follows Clerk's own decoration rules (only a "next" or a same-origin
+  rewrite is decorated, a "next" becoming a rewrite) and check the headers a route receives with Next's own merge.
+- **Clerk's Frontend API proxy is not provided for** (round-4 review): it would forward the stripped copy, with no body
+  and no `Authorization`, but it runs only with `frontendApiProxy` set or a production key on a `.vercel.app` host,
+  and SSSB sets neither. Turning it on first needs `withClerk` to leave the proxy path's request whole.
+
+## One list of apps, and `sssb add-app` (2026-11-19, `feat/one-list-of-apps`)
+
+The adoption review's follow-up 3 (`docs/adoption-review-2026-11.md`, ranked item 3 and "What surprised" item 10):
+a generated workspace named its apps in `sssb.apps` and again in both Vitest configs' `APPS` and in `knip.json`, and
+nothing wrote a second app. JP's standing rule for these sessions: decide, and record the rejected alternative.
+
+- **Where `sssb add-app` gets the starter: the `@sssb/create` installed at the workspace root**
+  (`node_modules/@sssb/create`, `pnpm add -D -w @sssb/create@<version>`; the command prints that line when it is
+  missing), whose packed template is the starter and whose code is the renames. `@sssb/tools` imports its new export,
+  `@sssb/create/add-app`, by path from there, as rule 4 reaches `@sssb/kit` from the app; `--create <dir>` names an
+  unpacked one instead. Rejected: **`@sssb/tools` depending on `@sssb/create`**, which undoes "no SSSB package depends
+  on another" (ADR-0014, the 2026-11-18 addendum making `@sssb/tools` a peer of `@sssb/cdk`) and would meet the same
+  `ERR_PNPM_EXOTIC_SUBDEP` for a release candidate installed by URL. Rejected: **a copy of the template in
+  `@sssb/tools`**, a second packed starter and a second template build. Rejected: **running `pnpm dlx
+@sssb/create@<version>`** from the command, which reaches the network from a command that needs none and finds no
+  release candidate (they are not on npm). Rejected: **copying an app already in the workspace**, which is the
+  adopter's app, not the starter. Rejected: **the generator writing `@sssb/create` into every workspace's root**, so
+  that every workspace installs a generator for a rare command, and both of pack and consume's shapes move their
+  lockfile seed.
+- **The renames are the generator's code, shared, not copied.** `generate.js`' app half is `writeApp`, which
+  `generate` and `addApp` (`packages/create/src/add-app.js`) both call; `addApp` adds a port slot of the app's own and
+  rewrites the starter's `sssb dev-tick starter`, `sssb tick starter` and `originFor('starter')` to read it, failing
+  if any other `starter` slot reference is left. It writes into a stage beside `apps/<slug>` and renames it into
+  place, so a failure or a signal leaves nothing. Rejected: the renames written again in `@sssb/tools`.
+- **The version check is `@sssb/create`'s against `@sssb/tools`' own** (the running CLI's), so the command works before
+  the workspace's install, as pack and consume runs it. Rejected: against the installed `@sssb/kit`, which needs an
+  install; `sssb doctor` already fails a kit and tools out of step.
+- **The new app takes each `@sssb` package as the workspace's first app takes it** (its package.json, and its
+  `infra/`'s when it has one, else the app's), a relative `file:` or `link:` rebased; a package neither names is written
+  at the template's `^<version>` with a note. Rejected: always `^<version>`, which is wrong for a workspace on tarballs,
+  URLs or a release candidate.
+- **The port slot is named for the slug, its default the first of 3700, 3800, … that no app binds and SSSB keeps for
+  nothing** (`--slot`, `--port` override). Rejected: requiring `--port` (one more thing to know), and a hashed default
+  (not memorable, and the docs' example is 3700).
+- **`sssb add-app` changes the workspace in one place, `sssb.apps`, and says the rest.** The root's `dev`, `tick` and
+  `start` scripts and the CI workflow's `synth` name one app on purpose (the review), so it prints them rather than
+  rewriting them; `knip.json` is left to the person too, and `sssb doctor` reports it (below). Rejected: editing
+  `knip.json`, which is the adopter's config (it may be `.jsonc`, or customised), and rewriting the workflow's `synth`
+  to `./apps/*/infra`, a CI cost the adopter chooses.
+- **`workspaceAppProjects({ root, options })`** in `@sssb/tools/vitest`: `appTestProject` for each app `workspaceApps`
+  returns, with `options(appDir)` for what one app's project needs. **This repository's `vitest.config.ts` uses it
+  too**, its per-app `@sssb/kit` alias and fixtures directory through `options`, so `sssb.apps` is this repository's
+  one list as well and the helper runs on every unit run here. Rejected: keeping `APPS` here, a second list in the one
+  repository whose docs tell adopters not to keep one. Its `vitest.contract.config.ts` is unchanged: it discovers its
+  apps (`tests/support/contract-apps.ts`) and aliases the kit's source, and keeps no copy of the list.
+- **knip: `sssb doctor` reports, never fails, an app or an app's seam package that the root's `knip.json` gives no
+  workspace** (`knipGaps`), as the future task preferred. A seam that is not a workspace package (this repository's)
+  is not looked for; a knip config without `workspaces` gives no per-app line, and no knip config gives none at all; one that does not parse is "not
+  checked". Rejected: a `knip.config.ts` building its workspaces from `sssb.apps`, one more file to run, and failing,
+  since knip's own run is the gate.
+- **Pack and consume's pages shape adds its ledger with `sssb add-app`**, run with the packed `@sssb/tools`' bin and
+  `--create` the packed `@sssb/create`, before the workspace's one install; it then checks what the command wrote and
+  that `sssb doctor` reports the ledger's knip gap. Rejected: installing first, running `pnpm exec sssb add-app`, and
+  installing again: the lockfile seed resolves both apps in one install, and a second one is minutes for the same
+  file `pnpm exec` would run.
+- **The app guide (`packages/kit/src/guide.md`) does not mention the command**; `docs/adopting.md` does. Rejected: a
+  guide line, which every adopter would have to refresh (`sssb guide`) for a command few run.
+- **jscpd is said, not silenced** (the hands-on review: after `sssb add-app` a generated workspace's `pnpm jscpd` fails,
+  50% against its 2%, because the new app is the starter and so is much of the first). The command's "left to you"
+  and `docs/adopting.md` say so and how through. Rejected: **adding the new app to `.jscpd.json`'s `ignore`**, which
+  would hide its duplication after the app is the adopter's own, and **a jscpd run per app** in the generated
+  workspace, which changes every workspace's gate and stops seeing a copy across apps, the case a shared package
+  exists for.
+- **A root `@sssb/create` is reported, not written around**: nothing imports it, so `pnpm knip` calls it unused.
+  `sssb doctor`'s knip line reports it when knip's root config does not ignore it, and the command says to remove it
+  or ignore it. Rejected: the generator writing `@sssb/create` into every workspace's knip ignores (an entry for a
+  package most workspaces never install), and the command editing `knip.json` (above).
+- **Also from the round-1 reviews**: each Vitest project is named by `appLabels`, as `sssb ci` names the app, since
+  Vitest refuses two projects of one name (`apps/web` beside `services/web`); a signal that comes while `addApp`
+  writes is dispatched only once it returns, so `addApp` keeps what it made and the caller's `sssb.apps` change (made
+  in its `finish`, under the same hold) until then, and undoes both; a spec no app names is looked for in the
+  workspace's other packages (a root `infra/`) before the template's range; the slug is refused when a workspace
+  manifest depends on a package of the new app's names; knip's `.jsonc` configs are read with their comments.
+
+## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
+
+`sssb pin [--app <dir>]` (`packages/tools/src/commands/pin.js`) reads the release commit from the installed kit's stamp
+(`dist/release.json`, through `kit.js`'s `kitReleaseStampOf`) and writes it into every `uses: <repo>/.github/workflows/…@<ref>`
+line under `.github/workflows/` and every `extraKnownMarketplaces` entry of `.claude/settings.json` that names SSSB's repository.
+Decisions, each with the alternative rejected:
+
+- **A text edit, not a re-print.** The workflow is edited line by line and `settings.json` at the offsets of the `ref`
+  string (a small JSON scanner), so the adopter's formatting, key order and inline arrays survive and the diff is the two
+  pins. Rejected: `JSON.stringify` of the parsed settings, which reflows anything Prettier laid out another way and
+  buries the pin in noise; and a YAML round trip, which drops comments.
+- **Judged before written.** Every pin is planned first (`planPins`, pure), and a refusal anywhere writes nothing, so a
+  bad `settings.json` never leaves the workflow raised and the marketplace behind. Rejected: raising what can be raised
+  and failing on the rest, which leaves the two pins on two commits, the state this command exists to end.
+- **What it refuses.** No release commit to pin to: SSSB's own repository (`isInRepoKit`, even with a `dist/` a pack left
+  behind, as doctor ignores it), a kit with no stamp or a stamp that names no commit. Files that are not the shape it
+  edits: no workflow calls SSSB's reusable workflow, `settings.json` not JSON, no marketplace from SSSB's repository, a
+  `ref` that is not a string. Exit 1 and a message, as every `UsageError`.
+- **A missing `.claude/settings.json` is not a refusal**, as it is not one for doctor (a workspace whose people do not use
+  Claude Code has no plugin): the workflow is raised and the run says there was no second pin. Rejected: refusing, which
+  leaves such a workspace no command for its one pin. A marketplace entry with no `ref` (it follows the default branch) gets
+  one added, in the entry's own layout, since doctor reports exactly that as a pin that differs.
+- **The version comment moves, an adopter's own comment does not.** A trailing `# @sssb/create 0.2.0`, `# @sssb/kit 0.2.0`
+  or `# v0.2.0` is what the generator and the old notes wrote, and a stale one names a release the pin has left; any other
+  comment is left. Rejected: rewriting every trailing comment, which deletes text the adopter wrote, and leaving them all,
+  which the old hand edit had to remember ("and the version in the comment after it").
+- **One definition of a pin.** `doctor-checks.js` now exports the `uses:` regex (`WORKFLOW_USES`), the marketplace's
+  repository test (`sourceRepository`) and `stampedCommit`, which doctor's report and this command both use, so they
+  cannot disagree about what a pin or a stamp is. The command picks its app as `sssb guide` does (`--app`, the working
+  directory, else the workspace's first app, here the first that resolves `@sssb/kit`) instead of importing doctor's chooser, whose
+  messages name doctor.
+- **The release notes' step 3 is the command.** `upgradeSection` no longer writes a yaml and a json block with `<sha>` in
+  them, nor the `git ls-remote` that read the SHA off a tag: the installed kit has the commit. It keeps one sentence of
+  hand edit for when the command refuses (with the `git ls-remote` that reads the tag's commit, because doctor names no commit
+  for a kit with no stamp, one of the two causes of a refusal), a candidate's notes still name the commit (`sha`), and `docs/adopting.md`'s step 4
+  says the same. `docs/releases/v0.2.0.md`, a dated record, still carries the hand edit. Rejected: keeping the hand edit
+  beside the command, which would be two ways to do it in every release's notes.
+- **Not done here:** the generator's own text in a workspace's `README.md` and `CLAUDE.md` (`packages/create/src/files.js`,
+  "Raise the pin when you upgrade") still says to raise the pins without naming the command; it stays true, and changing it
+  changes what `@sssb/create` writes, so it is a separate change.
+- **Round-1 review (Opus), code only: no finding at MEDIUM or above; three LOW fixed.** A repeated key acts on the LAST
+  one, as `JSON.parse` (doctor, Claude Code) reads it; a missing `ref` is added to a CRLF settings file with CRLF; a quoted
+  `uses: "…@<sha>" # v0.2.0` line's version comment moves too. Accepted as they are: the files are written one after the
+  other, so an I/O error (EACCES, a full disk) can leave one raised (every refusal is decided before the first write, and
+  a rerun finishes it); a `settings.json` that exists but declares no SSSB marketplace refuses, where an absent one does
+  not (a file that is there and says nothing about the plugin is more likely a mistake than a workspace without one); a
+  `uses:` line inside a `run: |` block scalar counts as a pin, in doctor's report too.
+
+## Real mode reads people from the identity provider, never the seed, and loads only the SDKs it chose (2026-11-19, `fix/realmode-digest-and-static-loads`)
+
+Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-real-ports`, PR #67).
+
+- **The framework's `digest-email` handler addresses the auth port's members, not the seed's people.** It took its
+  recipient from `@sssb/app-config/seed`'s `people`, so in a deployment, whatever the job runner, a team's digest went
+  to a seed person's address, or to a synthetic `<org>@digest.example` one. It now asks `auth.listMembers(orgSlug)`, the
+  identity provider in a deployment (the same call the jobs' notifications make), and picks the team's first active
+  admin, else its first active member: the rule it had, applied to the real store. People are not in the database
+  (there is no users table), so "the real store" is the auth port; the `withTenant` read is the digest's rows, which the seam's `digestBodies` makes under `withTenant`, as its contract (`DigestBodySource`) requires.
+    - **Handlers get the auth port in their context** (`JobContext.auth`), as they get `llm` and `email`, rather than
+      reaching for the adapter registry, which loads the handlers. Every runner supplies it: the simulated one, the
+      in-process one (the registry's hook), and the artifact producer. Rejected: **importing `auth` from the registry in
+      the handler**, a static cycle with the module that loads it, which the context exists to avoid.
+    - **The locale** is the person's own only in a simulated world: the fake auth adapter's `personLocale`, imported
+      dynamically behind `isSimulated` (`makeNotifyDeps`'s precedent). The auth port carries no locale, so a deployment
+      writes in the app's default, as its notifications do. The handler reads the run mode from `adapters/run-mode`, as
+      the request proxy does, since the registry is what loads it. (Superseded by the two review rounds below: the
+      locale now comes from the runner's `resolveLocale`.)
+    - **Nobody to address:** a deployment's team with no active member with an email address gets no digest (the job completes, having sent
+      nothing); the simulated world keeps the synthetic address so a demo never shows an empty digest. An org that no
+      longer exists gets none either. Rejected: **failing the job**, which would turn a schedule on an empty team into a
+      failure every period.
+    - **Pinned twice.** `packages/kit/src/jobs/digest-email.test.ts` runs the handler in real mode with every read of the
+      seed throwing, and `tests/tooling/jobs-graph.test.ts` (first named `jobs-seed-free.test.ts`) walks each seam's `jobs` module (the fixture and both
+      apps) by static imports alone and fails if one reaches a seed module; a dynamic import behind `isSimulated` is
+      allowed. Every other job kind (the showcase's `export-tickets` and `analyze-bundle`, the fixture's `export-dockets`) was already seed-free.
+- **`adapters/real/index` loads `pg` and `posthog-node` only when chosen.** The `pg` transport (`./db`) and PostHog
+  (`./analytics`) were static imports, so every deployment loaded both, a Data API one included, and one with no
+  PostHog key. Both are dynamic imports now, as the Data API transport and the optional ports already were, and
+  `dbPortFor`, which the Data API transport shares, moved to its own module (`./db-port`), since importing it from
+  `./db` loaded `pg` too. `DATABASE_TRANSPORT` behaves as before. Auth (Clerk) and storage (S3) stay static: every
+  deployment uses both. `packages/kit/src/adapters/real/index.test.ts` pins it from esbuild's account of the static
+  graph: of the SDKs a choice brings, none is reached before the choice, and the Data API transport reaches no `pg`.
+  The migrator (`migrate-handler.ts`) still imports the `pg` transport statically; it is bundled into one file for its
+  own Lambda, so a dynamic import there would only defer evaluating `pg` on the Data API path, not drop it from what the
+  Lambda ships.
+- **Seen, not changed here:** real mode still reads tenants and organizations from the seed for display (the theme's
+  `findTenant`, and the showcase's `findTenant` and `findOrg` in its layouts, sign-in, org page and invitations, and the starter's `findTenant` in its protected layout). Those are tenant
+  configuration, not people, and moving them to the database is a design of its own.
+- **From the first review round, and CI.** The first version read the simulated locale from the fake auth adapter by a
+  dynamic import, and the showcase stopped building: a client component (the dashboard's glue) imports
+  `@sssb/kit/core/jobs`, which imports the seam's `jobs` module for its kinds, which registers the handlers, so a
+  bundler puts everything a handler can import, dynamic imports included, into the client bundle, and the fake auth
+  adapter reads request cookies (`next/headers`). The locale now comes from the seed's people, dynamically imported
+  behind `isSimulated` (reversed in the second round, below): plain data, which the client bundle carried before this change. `tests/tooling/jobs-graph.test.ts`
+  now also fails if anything a handler reaches, by any import, imports `next/headers` or `server-only`. Rejected:
+  **a locale hook in the job context** (the runner passing `personLocale`), a second context field for what only the
+  simulated world has; and **splitting the job kinds out of the handlers' seam module**, a seam change for every app.
+  The cost, recorded: an app's own handler could still import the seed dynamically without `isSimulated`, which no
+  graph test can see; the digest's real-mode test throws on any seed read, and the app guide's rule (`@sssb/kit/guide.md`,
+  "Vendors, environment and parameters": a job handler never reads the seed) covers the rest.
+- **The static demo's digest twin picks from everyone in its world** (the seed and accepted invitees), as the server's
+  simulated digest now does through the fake auth adapter, instead of the seed alone.
+- **From the second review round, which revises the first.**
+    - **The locale comes from the runner after all**, as an optional `resolveLocale` in the job context, which the
+      simulated runner fills with the fake auth adapter's `personLocale` (`makeNotifyDeps`'s pattern) and a deployment's
+      leaves out. The seed's people knew neither an accepted invitee's locale nor a changed profile's, so a simulated
+      digest to either went out in the default language or the seed's, while their notifications followed their own; and the handler now imports
+      no seed at all, so the client-bundle question is gone at its root. This reverses the first round's rejection of a
+      locale hook: the second field earns its place by being right for everyone the world holds.
+    - **Only an address is addressed.** The real auth adapter lists a member's Clerk identifier, "such as their email
+      address or phone number" (`PublicUserData.identifier` in `@clerk/shared`'s `types/session.d.ts`); the digest
+      skips a member whose identifier holds no `@`, where it would have sent to a non-address, and likely failed the
+      job each time the schedule fired.
+    - **The client-bundle guard also refuses every Node builtin (`node:module`'s `builtinModules`, bare or `node:`),
+      `pg`, `@clerk/nextjs/server`, the AWS SDKs and `next/server`**, not only `next/headers` and `server-only`.
+    - **The review's phase 1 stopped here:** the second round (an Opus reviewer, code only) reported two LOW findings,
+      both taken above, and nothing at MEDIUM or above.
+
+## `SssbApp` tells the app the viewer's host, and redirects plain HTTP to HTTPS (2026-11-19, `fix/cdk-forwarded-host-https`)
+
+Two real-mode defects found while fixing POSTs (`fix/cdk-function-url-post`). CloudFront sends the server's Function
+URL its own `Host` (it signs for it) and forwarded a viewer's `X-Forwarded-Host` as sent, so what reads that header
+(Clerk's request URL, Next's server-action origin check, next-intl's domain redirects) saw the Function URL's host, or
+a host the viewer chose. Next's own `request.url` keeps the Function URL's host either way. And the two S3 behaviors
+(`/_next/static/*`, `/assets/*`) answered plain HTTP. Pages worked around the first with a CloudFront Function of its
+own. JP's standing rule for these sessions is to decide and record; each choice below is one he would otherwise have
+been asked.
+
+- **A viewer-request CloudFront Function sets `x-forwarded-host` from the `Host` CloudFront received**
+  (`packages/cdk/src/forwarded-host.js`), on every behavior that reaches the server (today the default one), overwriting
+  what the viewer sent. Next fills `x-forwarded-host` only when it is absent (`next/dist/server/base-server.js`), and
+  Clerk builds its request URL from it. Rejected: **setting it in the origin-request Lambda@Edge** that already hashes
+  the body: by the origin request the `Host` is the Function URL's. Rejected: **forwarding the viewer's `Host`**, which
+  stops a Function URL origin working (CloudFront's guide, `AllViewerExceptHostHeader`). CloudFront allows a viewer-request CloudFront Function beside an origin-request
+  Lambda@Edge on one behavior.
+- **It lowercases the host and drops any port, sets `x-forwarded-port` to 443, and drops a viewer's `Forwarded`.**
+  next-intl's domain redirects read the port, a viewer could set it, and 443 is the only port a viewer reaches the app
+  on once HTTP redirects. Nothing in Next or Clerk reads `Forwarded`; a viewer's is never CloudFront's.
+  `X-Forwarded-Proto` is left alone: functions may not touch it, and CloudFront removes a viewer's.
+- **The function's name is keyed by region, stack name and construct path.** CloudFront Function names are unique per
+  account, and CDK's default leaves the stack name out, so one stack deployed under two names into one account would
+  collide. Rejected: **CDK's default name**.
+- **Every behavior redirects HTTP to HTTPS**, as the default behavior already did. Rejected: **`https-only`**, which
+  answers 403: no safer, since the plain request has already crossed by then, and a typed `http://` link would break.
+- **The function is exposed as `SssbApp.forwardedHost`**, so an adopter who adds a behavior of their own to the
+  server's origin can associate it. Rejected: **keeping it private**, which would leave such a behavior forgeable.
+- **Out of scope, reported to the manager:** an HSTS header (a response-headers policy; pages sets its own), without
+  which a first `http://` visit can be intercepted before its redirect, and `X-Forwarded-For`, to which
+  CloudFront appends the viewer's address after any the viewer sent, so the first entry is the viewer's to choose.
+
+## No `starter` in a generated app (2026-11-19, `feat/no-starter-in-generated-app`)
+
+The adoption review's follow-up 5 (`docs/adoption-review-2026-11.md`, ranked item 5 and "What surprised" item 7): an app
+called `acme` said `starter` in its port declaration, its `dev` and `tick` scripts and its Playwright config. JP's
+standing rule for these sessions: decide, and record the rejected alternative.
+
+- **A generated app takes a port slot of its own, named for its slug, at 3700**
+  (`"sssb": { "port": { "name": "acme", "default": 3700 } }`): `sssb add-app`'s rule (#65) for the first app too.
+  Rejected: **a neutral built-in service, `app`** (the future task's design: `APP_PORT`, the starter's port and band,
+  `starter` kept as an alias): a new built-in in `@sssb/tools`' ports with alias rules, and every generated app on one
+  shared name, so a second app still needs a slot of its own, which custom slots (built since the task was written)
+  already give. Rejected: **keeping `starter`** (the P12 addendum's reasoning, and CLAUDE.md's "the slot is a port band,
+  not the app's name"): the review found it the newcomer's main "not mine" signal, and the risk `docs/adopting.md` named
+  before this change (its paragraph "The port key keeps its old name, on purpose"), a declaration and a Playwright
+  config that agree only by spelling one literal, is gone (next). This supersedes the 2026-11-18 "`@sssb/create`"
+  entry's "The port service stays `starter`".
+- **The starter names its slot only in its `package.json`.** Its scripts call `sssb dev-tick` and `sssb tick` with no
+  slot, and its Playwright config `originForApp(__dirname)`; all read the declaration. So the generator's rename of the
+  slot is one value in one file, which it finds by checking that the template declares `starter`, and it fails on a
+  template whose scripts or Playwright configs still name the slot. SSSB's starter keeps `starter` itself (port 3100,
+  `STARTER_PORT`, `pnpm tick:starter`), so this repository's runbooks stay true. Rejected: the generator rewriting the
+  scripts and the config as well, as `sssb add-app` did, three rewrites where one declaration does.
+- **Its default is 3700, not 3100.** 3100 is the built-in `starter` slot's, which a slot of the app's own may not take
+  (`@sssb/tools`' ports.js refuses SSSB's ports), and 3700 is the first port `sssb add-app` offers, so a second app takes 3800. The app guide's and `docs/adopting.md`'s examples moved with it. A generated app's local port changes from 3100
+  to 3700, and its override from `STARTER_PORT` to `<SLUG>_PORT`; a workspace generated before keeps 3100.
+- **A slug a slot cannot be named for gives the slot `sssb-app`** (`SSSB_APP_PORT`): one longer than a slot name's 32 characters,
+  with a doubled or trailing `-` (which a slug allows and a slot name does not), or reading a built-in's variable
+  (`showcase`, `starter`, `ladle`, `contract-pg`). Rejected: refusing such a slug, which the generator accepted until
+  now, and a `--slot` flag on the generator, one more option for a corner case. Rejected (round-1 review): **`app`**,
+  whose `APP_PORT` many shells already hold for another project, and which would then move the app's dev server and
+  e2e run onto that port. The same risk stands for any slot named for a slug (`API_PORT`, `WEB_PORT`), as it has for
+  `sssb add-app`'s slots since #65; prefixing every custom slot's variable (`SSSB_<NAME>_PORT`) would change
+  `@sssb/tools`' published `<NAME>_PORT` contract, which adopters' `LEDGER_PORT`-style overrides read, so it is left
+  for a release that takes that change on purpose.
+- **The slot rules are copied into `@sssb/create`** (`firstAppSlot`), which depends on no SSSB package, and
+  `tests/tooling/create-generate.test.ts` holds the copy to `@sssb/tools`' `parsePortDeclaration` by trying every choice
+  on it, as `RESERVED_DATABASE_NAMES`' copy is held. Rejected: importing `@sssb/tools` from the generator (rule 4).
+- **The app guide changed** (its example said `"sssb": { "port": "starter" }`, now false of a generated app, and a
+  second app at 3700, now the first's default), so `@sssb/kit` is in the changeset and an upgrading workspace refreshes
+  its copy (`sssb guide`), as every release asks. Rejected: leaving the guide's example, which a generated workspace's
+  copy would contradict.
+- **Pack and consume's ports follow the slot**: the pages console's e2e and the generated shape's checks pass
+  `CONSOLE_PORT` (`<SLUG>_PORT`) where they passed `STARTER_PORT`, its ledger takes 3800, and the generated shape fails if
+  the packed generator's workspace says `starter`.
+- **`pnpm exec sssb pin` is named** where the generated README, `CLAUDE.md` and CI workflow say to raise the pins
+  (follow-up 7, #66, left them saying it in words).
+
+## `SssbApp` sends HSTS and safe security headers (2026-11-19, `fix/cdk-hsts`)
+
+The security review of `fix/cdk-forwarded-host-https` rated a missing `Strict-Transport-Security` MEDIUM. Every
+behavior now redirects HTTP to HTTPS, but without HSTS a visitor's first `http://` request can be intercepted before
+its redirect. Pages, the first adopter, sets its own response headers policy. JP's standing rule for these sessions is
+to decide and record; each choice below is one he would otherwise have been asked.
+
+- **A response headers policy on the three behaviors `SssbApp` builds**: the app's pages and the static files alike.
+  Rejected: **headers set by the app** (Next's `headers()`), which would never reach the S3 behaviors.
+- **AWS's managed SecurityHeadersPolicy by default** (`67f7725c-6f97-4210-82d7-5512b31e9d03`). It sends:
+    - HSTS for a year (`max-age=31536000`), without includeSubDomains or preload;
+    - `X-Content-Type-Options: nosniff`, always sent;
+    - `Referrer-Policy: strict-origin-when-cross-origin`, browsers' own default, stated;
+    - `X-Frame-Options: SAMEORIGIN`, refusing other sites' frames and keeping the app's own;
+    - the legacy `X-XSS-Protection: 1; mode=block`, which current browsers ignore.
+
+    All but nosniff yield to a header the app sends itself (CloudFront's guide, "Use managed response headers
+    policies"). Nothing in the kit, the tools or the starter sets any of them (searched), so there is no duplicate.
+
+    Rejected: **a custom policy per deployment** (written first, then changed after round 1 of review). An account holds
+    20 custom response headers policies, raisable on request; managed ones don't count (CloudFront's guide, "Quotas").
+    One per stack would stop the 21st deployment in an account, previews included. What the custom policy bought was
+    small: two years of HSTS instead of one (renewed on every visit either way), and no legacy XSS header.
+
+- **`includeSubDomains` is off by default, behind `hstsIncludeSubdomains`.** It binds every subdomain of the host the app
+  is served on, which on an adopter's domain may include hosts SSSB knows nothing about. The managed policy cannot send
+  it, so opting in builds a custom policy: the managed policy's headers with HSTS's includeSubDomains (and without the
+  legacy XSS header), taking one of the 20. Its name is keyed like the forwarded-host function's (region, stack name,
+  construct path), since CDK's default name for it carries no region. `preload` is never set: a submission to
+  browsers' lists is the domain owner's act. Rejected: **includeSubDomains on by default**.
+- **Framing.** An app that must be framed by another site sends its own CSP `frame-ancestors`, which browsers prefer
+  to `X-Frame-Options`. Rejected:
+    - **DENY**, which would break an app that frames its own pages;
+    - **a default Content-Security-Policy for the app**, as one that fits every app would allow everything (a
+      sandboxing one for the static files is a future task: `.claude/future-tasks/static-files-sandbox-csp.md`).
+- **An adopter's own policy (`responseHeadersPolicy`) replaces SSSB's whole set on those three behaviors.**
+  `hstsIncludeSubdomains` beside it is refused rather than silently ignored. A behavior the adopter adds gets no policy
+  unless they give it one; the construct exposes its own as `responseHeadersPolicy` for that.
+- **A correction to the entry above (`fix/cdk-forwarded-host-https`):** it says Next's own `request.url` keeps the
+  Function URL's host. Next 16.4.6 builds it from the server's own bind address, `localhost` and its port for a server
+  bound to `0.0.0.0` (`next/dist/server/next-server.js`, `start-server.js`). Either way it is not the visitor's host.
+  The code comment, the changeset and the cutover row now say so, and
+  `.claude/future-tasks/request-url-is-not-the-public-url.md` records the fix.
+- **Recorded as future tasks, not built:**
+    - that public-URL helper;
+    - `X-Forwarded-For`'s viewer-chosen first entry (`x-forwarded-for-first-entry.md`);
+    - the default certificate's minimum TLS (`viewer-tls-minimum.md`);
+    - the live check of a tagged Lambda@Edge function (`edge-function-tags-live-check.md`);
+    - a sandboxing CSP for the static files (`static-files-sandbox-csp.md`).
+
+## The adoption guide is split in two (2026-11-19, `docs/adopting-guide-split`)
+
+The adoption review's follow-up 1 (`docs/adoption-review-2026-11.md`, ranked item 1): `docs/adopting.md` had grown to
+921 lines, of which a newcomer needs about 150. JP's standing rule for these sessions: decide, and record the rejected
+alternative.
+
+- **`docs/adopting.md` is the guide (156 lines), `docs/adopting-reference.md` the reference.** The guide keeps the
+  file name every link already uses, and the heading "Upgrading by release", which every generated README links by
+  anchor. Rejected: a new name for the guide (`docs/start.md`) with `adopting.md` as the reference, which breaks every
+  generated workspace's README link and a test that holds it.
+- **The guide is written for the order a newcomer acts, not moved from the old text**: generate, first boot, take out
+  the starter's content, a first entity, deploy and cut over, upgrade. It defines tenant, organization (team) and the
+  staff team where a first table needs them (ADR-0004's boundary, development-approach's "Teams", `staffOrgSlug`'s
+  comment). The reference takes the old sections whole, reordered under the old headings where they are cited.
+  Rejected: trimming the old file in place, which keeps the reference's order on the newcomer's path.
+- **Stale text is deleted, not moved**: the release-candidate history (tarball URLs, `overrides`, rc notes), the
+  fork-era switch, the story behind the required `appName` prop, the history of SSSB's test fixture, and "the starter
+  has no server-side Simulator" (false since follow-up 6). Rejected: a history section in the reference, which the
+  decision log and ADRs already are.
+- **The guide's commands were run** against a workspace generated from this commit's packed packages, with the
+  checkout's generator (`pnpm create @sssb` reaches npm's last release, which predates `sssb remove-items` and the rest):
+  `pnpm verify` on the fresh workspace, `pnpm dev` on a free port of its own and stopped after its checks, the
+  Simulator's API, `pnpm tick`, the static demo, doctor, synth, `sssb guide`, `sssb pin`, `sssb remove-items`, `pnpm
+verify` after it, `pnpm knip` and `pnpm lint:fix`. Not run: `pnpm create @sssb` and `npm create @sssb` (for that
+  reason), and the three `claude plugin` commands, which change the machine's Claude Code state.
+- **Citations of moved sections are repointed in place** (code comments, `CLAUDE.md`, `CONTRIBUTING.md`, the
+  release-notes script, `sssb remove-items`' refusal, open future tasks), and ADR-0014 gets an addendum naming where
+  its cited sections live; dated records and ADR bodies are left as they were.

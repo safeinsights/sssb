@@ -1,5 +1,14 @@
-import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFile, spawnSync } from 'node:child_process'
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
@@ -11,6 +20,7 @@ import {
     importerSeamProblems,
     isInRepoKit,
     kitImporters,
+    knipGaps,
     missingTests,
     nodeLinkerProblem,
     packageDirFrom,
@@ -1524,6 +1534,74 @@ describe('cutoverReport', () => {
     })
 })
 
+describe('knipGaps: the apps knip.json gives no workspace (reported, never failed)', () => {
+    it("names each app, and each app's seam package, that knip.json's workspaces do not, globs counted", () => {
+        const root = makeTestTmpDir('doctor-knip-')
+        const apps = ['apps/console', 'apps/ledger'].map((app) =>
+            pkg(path.join(root, app), { name: path.basename(app) }),
+        )
+        const seams = apps.map((app) => pkg(path.join(app, 'src/app-config'), { name: `${path.basename(app)}-seam` }))
+        const packages = [...apps, ...seams]
+        expect(knipGaps(root, apps, packages)).toBeNull()
+
+        json(path.join(root, 'knip.json'), {
+            workspaces: { '.': {}, 'apps/console': {}, 'apps/console/src/app-config': {} },
+        })
+        expect(knipGaps(root, apps, packages)).toEqual({
+            file: 'knip.json',
+            missing: ['apps/ledger', 'apps/ledger/src/app-config'],
+            generator: false,
+        })
+        // A seam that is no workspace package (SSSB's own repository, where aliases carry it) is not knip's to name.
+        expect(knipGaps(root, apps, apps)).toEqual({ file: 'knip.json', missing: ['apps/ledger'], generator: false })
+        json(path.join(root, 'knip.json'), { workspaces: { 'apps/*': {}, 'apps/*/src/app-config/': {} } })
+        expect(knipGaps(root, apps, packages)).toEqual({ file: 'knip.json', missing: [], generator: false })
+        // One config for every package, or a config doctor cannot read.
+        json(path.join(root, 'knip.json'), { entry: ['src/index.ts'] })
+        expect(knipGaps(root, apps, packages)).toEqual({ file: 'knip.json', missing: null, generator: false })
+        // A root that installs @sssb/create for `sssb add-app`, which nothing imports: knip calls it unused unless ignored.
+        json(path.join(root, 'package.json'), { name: 'ws', devDependencies: { '@sssb/create': '0.2.0' } })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: true })
+        json(path.join(root, 'knip.json'), { ignoreDependencies: ['@sssb/create'] })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: false })
+        // An entry with a regular expression's characters is one, to knip.
+        json(path.join(root, 'knip.json'), { ignoreDependencies: ['@sssb/.*'] })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: false })
+        json(path.join(root, 'knip.json'), { ignoreDependencies: ['@sssb/kit', '(unclosed'] })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: true })
+        json(path.join(root, 'knip.json'), { workspaces: { '.': { ignoreDependencies: ['esbuild'] }, 'apps/*': {} } })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: true })
+        json(path.join(root, 'knip.json'), {
+            workspaces: { '.': { ignoreDependencies: ['@sssb/create'] }, 'apps/*': {} },
+        })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: false })
+        rmSync(path.join(root, 'package.json'))
+        write(path.join(root, 'knip.json'), '{ "workspaces": {')
+        expect(knipGaps(root, apps, packages)).toMatchObject({ file: 'knip.json', unread: expect.any(String) })
+        // knip reads a knip.json with comments, trailing commas or a byte-order mark too.
+        write(
+            path.join(root, 'knip.json'),
+            '\uFEFF{ // why\n "workspaces": { "apps/*": {}, "apps/*/src/app-config": {}, },\n}',
+        )
+        expect(knipGaps(root, apps, packages)).toEqual({ file: 'knip.json', missing: [], generator: false })
+        // An app that is no workspace package is the root's, for knip.
+        json(path.join(root, 'knip.json'), { workspaces: { '.': {} } })
+        expect(knipGaps(root, apps, [])).toEqual({ file: 'knip.json', missing: [], generator: false })
+        // knip.jsonc takes comments and trailing commas; a `//` inside a string is not one.
+        rmSync(path.join(root, 'knip.json'))
+        write(
+            path.join(root, 'knip.jsonc'),
+            '{\n  // the apps\n  "$schema": "https://unpkg.com/knip@6/schema.json",\n  "workspaces": {\n' +
+                '    "apps/console": {}, /* its seam */ "apps/console/src/app-config": {},\n  },\n}\n',
+        )
+        expect(knipGaps(root, apps, packages)).toEqual({
+            file: 'knip.jsonc',
+            missing: ['apps/ledger', 'apps/ledger/src/app-config'],
+            generator: false,
+        })
+    })
+})
+
 describe('pinReport: the workflow and plugin pins against the kit’s release stamp (never a failure)', () => {
     const SHA = 'a'.repeat(40)
     const OTHER = 'b'.repeat(40)
@@ -1830,6 +1908,54 @@ describe.concurrent('sssb doctor with no --app, from the root of a workspace who
             expect(fromRoot.code, fromRoot.out).toBe(1)
             expect(fromRoot.out).toMatch(/FAIL +workspace walk: it does not reach every app the workspace names/)
             expect(fromRoot.out).toMatch(/apps\/b is named by the workspace/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        "reports the adopter's own GitHub settings and plugin install, read-only, and never fails on them; skips them in CI",
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-settings-', 'in-repo')
+            spawnSync('git', ['init', '-q', ws])
+            spawnSync('git', ['-C', ws, 'remote', 'add', 'origin', 'https://github.com/acme-org/acme.git'])
+            json(path.join(ws, '.claude', 'settings.json'), { enabledPlugins: { 'sssb@sssb': true } })
+            const tools = makeTestTmpDir('sssb-doctor-e2e-settings-bin-')
+            const gh = path.join(tools, 'bin', 'gh')
+            write(
+                gh,
+                `#!/bin/sh
+echo "$@" >> '${path.join(tools, 'gh.log')}'
+case "$4" in
+  repos/acme-org/acme) echo '{"default_branch":"main","private":false,"owner":{"type":"User"}}';;
+  repos/acme-org/acme/rules/branches/main?per_page=100) echo '[]';;
+  repos/acme-org/acme/private-vulnerability-reporting) echo '{"enabled":true}';;
+  *) echo '{"message":"Branch not protected"}'; echo 'gh: Branch not protected (HTTP 404)' >&2; exit 1;;
+esac
+`,
+            )
+            chmodSync(gh, 0o755)
+            const env = {
+                PATH: `${path.join(tools, 'bin')}:${process.env.PATH ?? ''}`,
+                CLAUDE_CONFIG_DIR: path.join(tools, 'no-claude'),
+            }
+            const local = await doctor(ws, 'apps/a', { ...env, CI: '' })
+            expect(local.out).toMatch(
+                /^report +github: sssb \/ all-checks is a required check on main: it is not \(reported, not failed:/m,
+            )
+            expect(local.out).toMatch(/^ok +github: private vulnerability reporting is on$/m)
+            expect(local.out).toMatch(
+                /^report +claude plugin: sssb@sssb is enabled by \.claude\/settings\.json but not installed/m,
+            )
+            expect(local.code, local.out).toBe(0)
+            for (const call of readFileSync(path.join(tools, 'gh.log'), 'utf8').trim().split('\n'))
+                expect(call).toMatch(/^api --method GET /)
+
+            writeFileSync(path.join(tools, 'gh.log'), '')
+            const ci = await doctor(ws, 'apps/a', { ...env, CI: 'true' })
+            expect(ci.out).toMatch(/^report +github settings and plugin install: not checked: CI is set/m)
+            expect(ci.out).not.toMatch(/required check/)
+            expect(readFileSync(path.join(tools, 'gh.log'), 'utf8')).toBe('')
+            expect(ci.code, ci.out).toBe(0)
         },
         E2E_TIMEOUT,
     )

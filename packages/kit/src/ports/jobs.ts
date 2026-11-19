@@ -1,3 +1,5 @@
+import type { Locale } from '../core/locale'
+import type { AuthPort } from './auth'
 import type { DbPort } from './db'
 import type { EmailPort } from './email'
 import type { LlmPort } from './llm'
@@ -27,6 +29,18 @@ interface JobContext {
      * handler contract carries the port rather than making a handler reach for the adapter registry.
      */
     llm: LlmPort
+    /**
+     * For handlers that address people: who an org's members are, from the identity provider in a deployment (the
+     * same `listMembers` the jobs' notifications use). A handler never reads people from the seed, which a real
+     * deployment does not have.
+     */
+    auth: AuthPort
+    /**
+     * A person's own locale, by user id, where the runner knows it: the simulated world's runner does (its people's
+     * profiles); a deployment's does not (the auth port carries none), so it is absent there and copy falls back to
+     * the app's default, as the jobs' notifications do.
+     */
+    resolveLocale?: ((userId: string) => Locale | undefined) | undefined
     tenantId: string
     orgId: string | null
     jobId: string
@@ -38,11 +52,18 @@ export type JobHandler = (payload: unknown, ctx: JobContext) => Promise<{ result
  * Jobs port — the execution SEAM only. The `jobs` row, its status column, and the
  * `job_status_changes` timeline are app-owned in packages/kit/src/db/jobs.ts, where recordJobStatus is the
  * single choke point for every transition (state-machine guarded). This port just kicks the work
- * off: the fake adapter runs a registered in-process handler (instantly by default, or leaves the
- * job 'queued' when the simulated world is held), while the real adapter starts a CodeBuild build
- * and the terminal transition arrives later via the inbound webhook route, which
- * calls back into packages/kit/src/db/jobs.recordJobStatus.
+ * off: the fake adapter runs a registered handler in-process (instantly by default, or leaves the
+ * job 'queued' when the simulated world is held); in real mode `JOBS_RUNNER` picks the runner:
+ * `codebuild` starts a build whose terminal transition arrives later through the jobs webhook route,
+ * `in-process` runs the handler in the server before `start` returns
+ * (packages/kit/src/adapters/real/jobs-in-process.ts), and `none` throws `AbsentPortError`.
  */
 export interface JobsPort {
     start(job: SubmittedJob): Promise<void>
+    /**
+     * Optional: for a runner whose jobs can be lost mid-run (the in-process runner, whose invocation can end before it
+     * records an outcome), fails each job it judges lost and says how many. The scheduled tick calls it, when the port
+     * has it, before it drains the due schedules.
+     */
+    sweep?(now: Date): Promise<number>
 }

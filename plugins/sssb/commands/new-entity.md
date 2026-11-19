@@ -14,7 +14,8 @@ This is the entity core of a slice. Use `/sssb:new-slice` for the full screen-to
 arrives without its own UI (or before it). The app's own `Item` is the worked example throughout, as `pnpm create @sssb`
 generated it: its subject in `src/app-config/abilities.ts`, its table in
 `src/app-config/db/migrations/1001_items.ts`, its proofs in `src/app-config/db/rls-proofs.ts` and its route in
-`src/app/api/items/route.ts`.
+`src/app/api/items/route.ts`. (`pnpm exec sssb remove-items` takes them out; read them then at the pinned commit, under
+`https://github.com/safeinsights/sssb/blob/<ref>/apps/starter/`.)
 
 1. **Subject + rules**: add the type to `AppSubjectType` and its rules to `appAbilityRules` in
    `src/app-config/abilities.ts`. A subject scoped by two orgs puts the second org's field in `AppSubjectFields`
@@ -31,8 +32,8 @@ generated it: its subject in `src/app-config/abilities.ts`, its table in
    is protected; nothing else proves your proofs cross a tenant boundary
    (`https://github.com/safeinsights/sssb/blob/<ref>/docs/adr/0004-tenancy-rls.md`, addendum of 2026-11-16).
 3. **Data access**: create `src/domain/db/<entity>.ts`, and for the pure logic create `src/domain/<entity>.ts` (a
-   generated app has no `src/domain/` yet; the reference app's
-   escalations are the pair:
+   generated app has `src/domain/db/items.ts` only, a paged list, which is the pattern for a list that grows; the reference app's
+   escalations are the pair for the rest:
    `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/domain/db/escalations.ts`
    and `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/domain/escalations.ts`). Tenant-scoped
    queries only inside `db.withTenant()`; `getDb()` is banned (`sssb/no-raw-db-handle`).

@@ -52,7 +52,7 @@ export async function orgIdentityForSlug(db: DbPort, tenantId: string, orgSlug: 
 /**
  * Resolves an org uuid back to its slug + name — the reverse of orgIdForSlug, same RLS-free raw read.
  * Used by the scheduled digest handler, which knows its job's org_id but needs the slug to
- * find recipients (@app/seed people) and the name for the digest copy. Null when the org is gone.
+ * list the org's members (`auth.listMembers`) and the name for the digest copy. Null when the org is gone.
  */
 export async function orgForId(db: DbPort, orgId: string): Promise<{ slug: string; name: string } | null> {
     await db.ready()

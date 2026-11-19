@@ -1272,3 +1272,45 @@ was heading for (a patch or a minor on `0.2.0-rc.2` is `0.2.0`; a major, 1.0.0, 
 - **`docs/adopting.md`'s "Before SSSB is on npm" section, which P15 wrote for a workspace on a candidate's tarballs,
   becomes one paragraph**: from 0.2.0 `pnpm create @sssb` resolves from npm, and a workspace on a candidate moves to it
   by replacing each tarball URL with the version. Generating from a checkout at an unreleased commit stays.
+
+## Addendum — 2026-11-18: a plain release has a GitHub release, with the showcase's demo
+
+Part 10 and P14 left a plain release on npm with no GitHub release (only candidates had one). From the first release
+after 0.2.0, release.yml's `demo` and `github-release` jobs also make the tag's GitHub release, marked Latest while it
+is the newest: its notes, and `sssb-showcase.html`, the showcase's single-file static demo as `checks` built and drove
+it on the release commit, which the README links as `releases/latest/download/sssb-showcase.html` (adoption follow-up
+4). They need `pack` and nothing needs them, so the path onto npm is the one this ADR describes, unchanged;
+`tests/tooling/release-reach.test.ts` now holds that nothing but `pack` is upstream of `publish` and nothing is
+downstream of it. `docs/decision-log.md` (2026-11-18, "A hosted showcase demo on each release") has the choices and what
+was rejected.
+
+## Addendum — 2026-11-19: `@sssb/tools` ships two diffs, and `sssb remove-items` applies them
+
+Part 2 says every package but the kit ships JavaScript, so that no package needs a build step. `@sssb/tools` now also
+ships `src/remove-items/code.patch` and `database.patch`, the two diffs of the starter that `sssb remove-items` applies to
+an adopter's app (adoption follow-up 2). They are data a command reads at run time, not code, so the reason for the rule
+is untouched; `toolsShippedFileProblems` (`scripts/pack-and-consume/checks.mjs`) names exactly these two files, and any
+other non-JavaScript file in the packed package still fails the run. `docs/decision-log.md` (2026-11-19, "One command
+removes the starter's Items slice") has the choices and what was rejected.
+
+## Addendum — 2026-11-19: a generated app's port slot is its own
+
+The P12 addendum's "The generated app keeps the `starter` port service" no longer holds (adoption follow-up 5). The
+app `@sssb/create` writes declares a port slot of its own, named for its slug, at port 3700
+(`"sssb": { "port": { "name": "<slug>", "default": 3700 } }`, or `sssb-app` for a slug a slot cannot be named for), as
+`sssb add-app` names a slot for each app it adds. The starter, SSSB's reference app, keeps the built-in `starter` slot
+but names it only in its `package.json`: its scripts and Playwright config read the declaration (`sssb tick`,
+`sssb dev-tick`, `originForApp(__dirname)`), so the generator's rename of the slot is one value in one file, and the
+half-applied rename that `docs/adopting.md` warned of before this change (its paragraph "The port key keeps its old
+name, on purpose") cannot happen. `starter` keeps working for every workspace generated before.
+`docs/decision-log.md` (2026-11-19, "No `starter` in a generated app") has the choices and what was rejected.
+
+## Addendum — 2026-11-19: `docs/adopting.md` is a guide, and the reference is beside it
+
+Adoption follow-up 1 split the adopter guide in two. `docs/adopting.md` is now a short guide in the order a newcomer
+acts, and keeps "Upgrading by release" (the heading every generated README links). Everything else is in
+`docs/adopting-reference.md`, among it the section part 10 cites (now "When a release changes what your seam must
+say"), the internal-module count ADR-0002 and ADR-0012 cite ("What you may import from SSSB"), and "Cutover", which
+ADR-0004 cites for the Postgres floor. The sections the P15 addendum ("Before SSSB is on npm") and the 2026-11-19
+port-slot addendum ("The port key keeps its old name") cite were deleted before this split. `docs/decision-log.md` (2026-11-19, "The
+adoption guide is split in two") has the choices and what was rejected.

@@ -1,0 +1,798 @@
+diff --git a/messages/en.json b/messages/en.json
+index 43e5945..15cd515 100644
+--- a/messages/en.json
++++ b/messages/en.json
+@@ -8,14 +8,5 @@
+     "dashboard": {
+         "title": "Dashboard",
+         "signedInAs": "Signed in as {name} ({role})."
+-    },
+-    "items": {
+-        "title": "Items",
+-        "hint": "Items belong to the team you're working in — and never leave your tenant.",
+-        "empty": "No items in this team yet.",
+-        "addLabel": "New item",
+-        "addButton": "Add item",
+-        "readOnlyHint": "You have read-only access to items in this team.",
+-        "loadMore": "Show older items"
+     }
+ }
+diff --git a/messages/es.json b/messages/es.json
+index 07b6b29..7a7ecf8 100644
+--- a/messages/es.json
++++ b/messages/es.json
+@@ -8,14 +8,5 @@
+     "dashboard": {
+         "title": "Panel",
+         "signedInAs": "Sesión iniciada como {name} ({role})."
+-    },
+-    "items": {
+-        "title": "Elementos",
+-        "hint": "Los elementos pertenecen al equipo en el que trabajas y nunca salen de tu organización.",
+-        "empty": "Aún no hay elementos en este equipo.",
+-        "addLabel": "Nuevo elemento",
+-        "addButton": "Añadir elemento",
+-        "readOnlyHint": "Tienes acceso de solo lectura a los elementos de este equipo.",
+-        "loadMore": "Ver elementos anteriores"
+     }
+ }
+diff --git a/playwright.config.ts b/playwright.config.ts
+index a4815c5..e5a31e1 100644
+--- a/playwright.config.ts
++++ b/playwright.config.ts
+@@ -20,15 +20,15 @@ const BASE_URL = originForApp(__dirname)
+ export default defineConfig({
+     testDir: './tests/e2e',
+     fullyParallel: true,
+-    // This app's whole suite is two short specs, so the first always starts against a cold dev server and pays a
+-    // full Next compile on every route it touches — sign-in, dashboard, the items route, the Simulator's. The default
++    // This app's whole suite is one short spec, so it always starts against a cold dev server and pays a
++    // full Next compile on every route it touches — sign-in, dashboard, the Simulator's. The default
+     // 30s is marginal for that (it timed out on the first run and passed on retry), and there is no
+     // warm-up pass to inherit, so the budget is raised rather than left to flake.
+     timeout: 60_000,
+     expect: { timeout: 15_000 },
+     forbidOnly: !!process.env['CI'],
+     retries: process.env['CI'] ? 2 : 1,
+-    // One worker, on CI too — this app's whole suite is two short specs, so parallelism buys little here,
++    // One worker, on CI too — this app's whole suite is one short spec, so parallelism buys little here,
+     // and more workers against one shared world (one `.data` behind one dev server) cost reliability rather than
+     // saving time.
+     workers: 1,
+diff --git a/src/app-config/abilities.ts b/src/app-config/abilities.ts
+index c69a9ec..851160c 100644
+--- a/src/app-config/abilities.ts
++++ b/src/app-config/abilities.ts
+@@ -2,12 +2,12 @@ import type { AbilityAction, AbilityActor, AbilitySubject, NonSessionAdministrat
+ 
+ /**
+  * The APP's authorization extension (the seam side of @sssb/kit/core/abilities.ts, ADR-0012). The framework
+- * owns the base subjects and the deny-by-default switch; this app registers ONE subject and its rules.
+- * PURE TypeScript, same as core.
++ * owns the base subjects and the deny-by-default switch; this app registers NO subject of its own yet, which
++ * is the empty registration. PURE TypeScript, same as core.
+  */
+ 
+-/** The subject types this app adds on top of the framework's BaseSubjectType. */
+-export type AppSubjectType = 'Item'
++/** The subject types this app adds on top of the framework's BaseSubjectType. None yet: `'Project' | 'Invoice'`. */
++export type AppSubjectType = never
+ 
+ /**
+  * App-specific fields merged into the framework's AbilitySubject (`AbilitySubject = AppSubjectFields & { … }`).
+@@ -45,27 +45,18 @@ export function anchorSubjectExtras(anchor: string): AppSubjectFields {
+ 
+ /**
+  * The app's per-subject rules, invoked by @sssb/kit/core/abilities.ts's `default:` case (deny by default).
+- * `sameOrg` is injected by core so "the subject is org-scoped AND its org is the acting org" is
+- * defined once.
+- * - Item: read = sameOrg; create|update|delete = !restricted && sameOrg.
++ * This app registers no subject, so there is nothing to allow and every app subject is denied. To add one,
++ * switch on `subject.type` and end in `default: return false`; `sameOrg` is injected by core so "the subject is
++ * org-scoped AND its org is the acting org" is defined once.
+  */
+ export function appAbilityRules(
+     actor: AbilityActor,
+     action: AbilityAction,
+     subject: AbilitySubject,
+-    { sameOrg }: { sameOrg: (subject: AbilitySubject) => boolean },
++    helpers: { sameOrg: (subject: AbilitySubject) => boolean },
+ ): boolean {
+-    switch (subject.type) {
+-        case 'Item':
+-            if (action === 'read') return sameOrg(subject)
+-            if (action === 'create' || action === 'update' || action === 'delete') {
+-                return !actor.restricted && sameOrg(subject)
+-            }
+-            return false
+-        default:
+-            // Deny by default: an app subject added here without a rule is denied.
+-            return false
+-    }
++    void [actor, action, subject, helpers] // no app subject yet: nothing to allow
++    return false
+ }
+ 
+ /**
+diff --git a/src/app-config/db/rls-proofs.ts b/src/app-config/db/rls-proofs.ts
+index 3f6db15..153b345 100644
+--- a/src/app-config/db/rls-proofs.ts
++++ b/src/app-config/db/rls-proofs.ts
+@@ -1,9 +1,6 @@
+ import { sql } from 'kysely'
+-import { encodeKeysetCursor, parseKeysetCursor } from '@sssb/kit/core/keyset'
+-import { parseDbKeysetCursor } from '@sssb/kit/db/keyset'
+ import type { RlsProofSuite } from '@sssb/kit/db/rls-proofs'
+ import { runWithTenant } from '@sssb/kit/db/with-tenant'
+-import { listItems } from '@/domain/db/items'
+ 
+ /**
+  * The APP's tenant-isolation proofs (the seam side of @sssb/kit/db/rls-proofs.ts, ADR-0004 + ADR-0012) —
+@@ -18,7 +15,6 @@ import { listItems } from '@/domain/db/items'
+ export const appRlsProofs: RlsProofSuite = async ({
+     db,
+     appDb,
+-    dbPort,
+     expect,
+     alphaTenantId,
+     demoTenantId,
+@@ -82,105 +78,4 @@ export const appRlsProofs: RlsProofSuite = async ({
+         deleteRejected = /permission denied/.test(String(error))
+     }
+     expect(deleteRejected).toBe(true)
+-
+-    // ---- the PAGED items list: neither boundary moves when a cursor is involved ----
+-    //
+-    // The tenant boundary is RLS's, and the framework half proves a cursor cannot cross it. This half proves
+-    // the one the app adds on top, the team (an app-level WHERE, not a policy), because that is the one a
+-    // hand-rolled pager loses: page one is built from the session, page two from the cursor, and the org
+-    // filter is on the first query only. There is no such second query here, and these assertions say so.
+-    //
+-    // Driven through the PRODUCTION function, `listItems`, the same call GET /api/items makes: a proof of a
+-    // copy of the read path proves nothing about the read path.
+-
+-    const stamp = Date.now()
+-    const [pageOrgP] = await db
+-        .insertInto('organizations')
+-        .values({ tenant_id: alphaTenantId, slug: `page-p-${stamp}`, name: 'Page Org P' })
+-        .returning('id')
+-        .execute()
+-    const [pageOrgQ] = await db
+-        .insertInto('organizations')
+-        .values({ tenant_id: alphaTenantId, slug: `page-q-${stamp}`, name: 'Page Org Q' })
+-        .returning('id')
+-        .execute()
+-
+-    // Six items for team P, three for team Q, three for the OTHER TENANT. Every row in a batch shares ONE
+-    // created_at, written at MICROSECOND precision: the two properties that break a hand-rolled pager (no
+-    // defined position inside a batch; a cursor truncated to a JS millisecond that excludes the batch it
+-    // points into).
+-    const batch = (tenantId: string, orgId: string, label: string, count: number, at: string) =>
+-        Array.from({ length: count }, (_, index) => ({
+-            tenant_id: tenantId,
+-            org_id: orgId,
+-            title: `${label}-${stamp}-${index}`,
+-            created_by_user_id: 'proof-user',
+-            created_at: at,
+-        }))
+-    await db
+-        .insertInto('items')
+-        .values([
+-            ...batch(alphaTenantId, pageOrgP!.id, 'KP', 6, '2020-03-04T05:06:07.123456Z'),
+-            ...batch(alphaTenantId, pageOrgQ!.id, 'KQ', 3, '2020-03-04T05:06:08.654321Z'),
+-            ...batch(demoTenantId, demoOrgId, 'KD', 3, '2020-03-04T05:06:09.987654Z'),
+-        ])
+-        .execute()
+-
+-    /** Walk a team's list to the end through the real read path, and report everything it showed. */
+-    const walk = async (tenantId: string, orgId: string, limit: number) => {
+-        const seen: string[] = []
+-        let cursor: string | null = null
+-        for (let guard = 0; guard < 50; guard++) {
+-            const parsed = parseDbKeysetCursor(cursor)
+-            expect(parsed.kind === 'invalid').toBe(false)
+-            const page = await listItems(dbPort, tenantId, orgId, { after: parsed.position ?? null, limit })
+-            seen.push(...page.items.map((item) => item.title))
+-            if (page.nextCursor === null) return seen
+-            cursor = page.nextCursor
+-        }
+-        throw new Error('keyset proof: the items walk did not terminate')
+-    }
+-
+-    // (a) a full walk at a page size that cuts through the batch shows team P's six, once each, and no
+-    // sight of team Q's or of the other tenant's.
+-    const walkedP = await walk(alphaTenantId, pageOrgP!.id, 2)
+-    expect(walkedP.length).toBe(6)
+-    expect(new Set(walkedP).size).toBe(6)
+-    expect(walkedP.every((title) => title.startsWith(`KP-${stamp}-`))).toBe(true)
+-
+-    // (b) THE ATTACK on the team boundary: a cursor minted while paging team Q's list, handed to team P's.
+-    // The two teams share a tenant, so RLS is not what stops this; the org filter is, and it is re-applied
+-    // because the pager rebuilds the whole query on every page rather than resuming one.
+-    const teamQPage = await listItems(dbPort, alphaTenantId, pageOrgQ!.id, { after: null, limit: 1 })
+-    expect(teamQPage.nextCursor !== null).toBe(true)
+-    const crossTeam = await listItems(dbPort, alphaTenantId, pageOrgP!.id, {
+-        after: parseDbKeysetCursor(teamQPage.nextCursor).position ?? null,
+-        limit: 50,
+-    })
+-    expect(crossTeam.items.length).toBe(6)
+-    expect(crossTeam.items.every((item) => item.title.startsWith(`KP-${stamp}-`))).toBe(true)
+-
+-    // (c) the same across TENANTS: a cursor minted in the other tenant, replayed against alpha's list. The
+-    // tenant comes from withTenant, which the pager opens from the caller's session, never from the cursor.
+-    const demoList = await listItems(dbPort, demoTenantId, demoOrgId, { after: null, limit: 1 })
+-    expect(demoList.nextCursor !== null).toBe(true)
+-    const crossTenant = await listItems(dbPort, alphaTenantId, pageOrgP!.id, {
+-        after: parseDbKeysetCursor(demoList.nextCursor).position ?? null,
+-        limit: 50,
+-    })
+-    expect(crossTenant.items.length).toBe(6)
+-    expect(crossTenant.items.every((item) => item.title.startsWith(`KP-${stamp}-`))).toBe(true)
+-
+-    // (d) a cursor crafted to name a REAL item of the other team, at a timestamp that opens the predicate
+-    // as wide as it goes. Still exactly team P's six rows.
+-    const teamQFirst = teamQPage.items[0]
+-    expect(teamQFirst !== undefined).toBe(true)
+-    const crafted = await listItems(dbPort, alphaTenantId, pageOrgP!.id, {
+-        after:
+-            parseKeysetCursor(encodeKeysetCursor({ at: '2999-01-01T00:00:00.000000Z', id: teamQFirst!.id })).position ??
+-            null,
+-        limit: 50,
+-    })
+-    expect(crafted.items.length).toBe(6)
+-    expect(crafted.items.every((item) => item.title.startsWith(`KP-${stamp}-`))).toBe(true)
+ }
+diff --git a/src/app-config/messages.ts b/src/app-config/messages.ts
+index 117cbdc..6539ae5 100644
+--- a/src/app-config/messages.ts
++++ b/src/app-config/messages.ts
+@@ -7,7 +7,7 @@ import type { MessageTree } from '@sssb/kit/i18n/messages'
+  * (disjoint + exhaustive), enforced by the conformance suite's `i18n-partition` check (@sssb/kit/testing), which
+  * this app runs against these registrations from src/sssb.conformance.test.ts.
+  */
+-export const APP_NAMESPACES = ['welcome', 'dashboard', 'items'] as const
++export const APP_NAMESPACES = ['welcome', 'dashboard'] as const
+ 
+ /**
+  * The app's catalog for one locale. Framework code (the next-intl request config, the parity tests)
+diff --git a/src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx b/src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx
+index 5fdea5a..874f935 100644
+--- a/src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx
++++ b/src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx
+@@ -1,61 +1,7 @@
+ 'use client'
+ 
+-import { useEffect, useState } from 'react'
+ import { DashboardScreen, type DashboardUser } from '@/components/dashboard-screen'
+-import { ItemsCard, type Item } from '@/components/items-card'
+ 
+-/** One page of items; no cursor is the first page. Null when the request failed, so a flaky network is a page that does not grow, not an unhandled rejection. */
+-async function fetchItemsPage(after: string | null): Promise<{ items: Item[]; nextCursor: string | null } | null> {
+-    try {
+-        const response = await fetch(after === null ? '/api/items' : `/api/items?cursor=${encodeURIComponent(after)}`)
+-        return response.ok ? ((await response.json()) as { items: Item[]; nextCursor: string | null }) : null
+-    } catch {
+-        return null
+-    }
+-}
+-
+-export function DashboardGlue({ user, canCreateItem }: { user: DashboardUser; canCreateItem: boolean }) {
+-    const [items, setItems] = useState<Item[]>([])
+-    // The cursor for the NEXT page, or null at the end. The glue owns fetching; the card stays a plain list.
+-    const [cursor, setCursor] = useState<string | null>(null)
+-
+-    useEffect(() => {
+-        // Sets state only once the response lands — the legitimate "sync with an external system"
+-        // case, so the react-hooks set-state-in-effect rule does not fire here.
+-        void fetchItemsPage(null).then((page) => {
+-            if (!page) return
+-            setItems(page.items)
+-            setCursor(page.nextCursor)
+-        })
+-    }, [])
+-
+-    /** "Show older items" APPENDS the next page, so what the reader has scrolled past stays put. */
+-    async function loadMore() {
+-        const page = await fetchItemsPage(cursor)
+-        if (!page) return
+-        setItems((previous) => [...previous, ...page.items])
+-        setCursor(page.nextCursor)
+-    }
+-
+-    return (
+-        <DashboardScreen user={user}>
+-            <ItemsCard
+-                items={items}
+-                canCreate={canCreateItem}
+-                hasMore={cursor !== null}
+-                onLoadMore={loadMore}
+-                onAdd={async (title) => {
+-                    const response = await fetch('/api/items', {
+-                        method: 'POST',
+-                        headers: { 'content-type': 'application/json' },
+-                        body: JSON.stringify({ title }),
+-                    })
+-                    if (response.ok) {
+-                        const { item } = (await response.json()) as { item: Item }
+-                        setItems((prev) => [item, ...prev])
+-                    }
+-                }}
+-            />
+-        </DashboardScreen>
+-    )
++export function DashboardGlue({ user }: { user: DashboardUser }) {
++    return <DashboardScreen user={user} />
+ }
+diff --git a/src/app/[locale]/(protected)/dashboard/page.tsx b/src/app/[locale]/(protected)/dashboard/page.tsx
+index 1794523..9fba9eb 100644
+--- a/src/app/[locale]/(protected)/dashboard/page.tsx
++++ b/src/app/[locale]/(protected)/dashboard/page.tsx
+@@ -1,7 +1,6 @@
+ import { setRequestLocale } from 'next-intl/server'
+ import { redirect } from 'next/navigation'
+ import { auth } from '@sssb/kit/adapters/index'
+-import { canInActiveOrg } from '@sssb/kit/authz/authorize'
+ import { DashboardGlue } from './dashboard-glue'
+ 
+ export default async function DashboardPage({ params }: { params: Promise<{ locale: string }> }) {
+@@ -9,13 +8,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
+     setRequestLocale(locale)
+     const user = await auth.getCurrentUser()
+     if (!user) redirect(`/${locale}${auth.signInPath()}`)
+-
+-    // Reflect the server-side authorization in the UI: restricted members get a read-only card. The
+-    // POST route re-checks with authorize(), so this is presentation, never enforcement.
+-    return (
+-        <DashboardGlue
+-            user={{ name: user.name, role: user.role }}
+-            canCreateItem={canInActiveOrg(user, 'create', 'Item')}
+-        />
+-    )
++    // Presentation, never enforcement: reflect what the user may do with `canInActiveOrg(user, action, subject)`
++    // from @sssb/kit/authz/authorize, and re-check with `authorize()` in every route that writes.
++    return <DashboardGlue user={{ name: user.name, role: user.role }} />
+ }
+diff --git a/src/app/api/items/route.ts b/src/app/api/items/route.ts
+deleted file mode 100644
+index cb2d480..0000000
+--- a/src/app/api/items/route.ts
++++ /dev/null
+@@ -1,59 +0,0 @@
+-import { auth, db } from '@sssb/kit/adapters/index'
+-import { authorize } from '@sssb/kit/authz/authorize'
+-import { clampKeysetLimit } from '@sssb/kit/core/keyset'
+-import { parseDbKeysetCursor } from '@sssb/kit/db/keyset'
+-import { orgIdForSlug } from '@sssb/kit/db/org-lookup'
+-import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
+-import { listItems } from '@/domain/db/items'
+-import { withPortErrors } from '../respond'
+-
+-/**
+- * The app's only product route. Items are tenant-scoped by RLS (the hostile-isolation boundary) AND
+- * filtered to the active org (the team boundary — an app-level WHERE, since org membership is enforced
+- * at the auth port; ADR-0004). Every query runs inside withTenant.
+- *
+- * GET lists ONE PAGE (`?cursor=<opaque>&limit=<n>`); both parameters are untrusted input. An unreadable
+- * cursor is a 400, never a silent first page, and the page size is clamped on the server: the query
+- * string may ask, it does not decide. A cursor carries no scope, since the tenant and the org are
+- * resolved from the session on every page.
+- */
+-export async function GET(request: Request): Promise<Response> {
+-    return withPortErrors(async () => {
+-        const user = await auth.requireUser()
+-        const params = new URL(request.url).searchParams
+-        const cursor = parseDbKeysetCursor(params.get('cursor'))
+-        if (cursor.kind === 'invalid') return Response.json({ error: 'invalid-cursor' }, { status: 400 })
+-        const tenantId = await tenantIdForSlug(db, user.tenantSlug)
+-        if (!tenantId) return Response.json({ error: 'unknown tenant' }, { status: 404 })
+-        const orgId = await orgIdForSlug(db, tenantId, user.orgSlug)
+-        if (!orgId) return Response.json({ error: 'unknown org' }, { status: 404 })
+-        const { items, nextCursor } = await listItems(db, tenantId, orgId, {
+-            after: cursor.position ?? null,
+-            limit: clampKeysetLimit(params.get('limit')),
+-        })
+-        return Response.json({ items, nextCursor })
+-    })
+-}
+-
+-export async function POST(request: Request): Promise<Response> {
+-    return withPortErrors(async () => {
+-        const user = await auth.requireUser()
+-        const { title } = (await request.json()) as { title: string }
+-        if (!title?.trim()) return Response.json({ error: 'empty item' }, { status: 400 })
+-        const tenantId = await tenantIdForSlug(db, user.tenantSlug)
+-        if (!tenantId) return Response.json({ error: 'unknown tenant' }, { status: 404 })
+-        const orgId = await orgIdForSlug(db, tenantId, user.orgSlug)
+-        if (!orgId) return Response.json({ error: 'unknown org' }, { status: 404 })
+-        // The authorization choke point: restricted members may read items but not author them.
+-        // Throws ForbiddenError → 403 via withPortErrors.
+-        authorize(user, orgId, 'create', { type: 'Item', orgId })
+-        const item = await db.withTenant(tenantId, (trx) =>
+-            trx
+-                .insertInto('items')
+-                .values({ tenant_id: tenantId, org_id: orgId, title: title.trim(), created_by_user_id: user.id })
+-                .returning(['id', 'title'])
+-                .executeTakeFirstOrThrow(),
+-        )
+-        return Response.json({ item })
+-    })
+-}
+diff --git a/src/components/dashboard-screen.tsx b/src/components/dashboard-screen.tsx
+index 42b10b7..20ada9e 100644
+--- a/src/components/dashboard-screen.tsx
++++ b/src/components/dashboard-screen.tsx
+@@ -9,8 +9,8 @@ export interface DashboardUser {
+     role: string
+ }
+ 
+-/** Signed-in landing screen. Router-agnostic (ADR-0006); the cards are slotted in as children. */
+-export function DashboardScreen({ user, children }: { user: DashboardUser; children: ReactNode }) {
++/** Signed-in landing screen. Router-agnostic (ADR-0006); an app's cards are slotted in as children. */
++export function DashboardScreen({ user, children }: { user: DashboardUser; children?: ReactNode }) {
+     const t = useTranslations('dashboard')
+     return (
+         <Container component="main" size="sm" py="xl">
+diff --git a/src/components/items-card.tsx b/src/components/items-card.tsx
+deleted file mode 100644
+index 9a501ae..0000000
+--- a/src/components/items-card.tsx
++++ /dev/null
+@@ -1,106 +0,0 @@
+-'use client'
+-
+-import { Button, Card, Group, Stack, Text, TextInput, Title } from '@mantine/core'
+-import { useTranslations } from 'next-intl'
+-import { useState } from 'react'
+-
+-export interface Item {
+-    id: string
+-    title: string
+-}
+-
+-/**
+- * The app's ONE screen component: a list of the active team's items with an add box. Router-agnostic
+- * (ADR-0006) so the Next route and the `file://` static twin render the same component; `canCreate`
+- * comes from the same pure ability model on both sides.
+- */
+-export function ItemsCard({
+-    items,
+-    onAdd,
+-    canCreate = true,
+-    hasMore = false,
+-    onLoadMore,
+-}: {
+-    items: Item[]
+-    onAdd: (title: string) => Promise<void>
+-    /** When false (restricted members), the add affordance is disabled and a read-only hint shows. */
+-    canCreate?: boolean
+-    /** True while the server has older items to show. The list is paged (`@sssb/kit/db/keyset`). */
+-    hasMore?: boolean
+-    /** Appends the next page to `items`; the card shows "load more" only when both this and `hasMore` are set. */
+-    onLoadMore?: () => Promise<void>
+-}) {
+-    const t = useTranslations('items')
+-    const [draft, setDraft] = useState('')
+-    const [busy, setBusy] = useState(false)
+-    const [loadingMore, setLoadingMore] = useState(false)
+-
+-    return (
+-        <Card withBorder padding="lg" radius="md" data-testid="items-card">
+-            <Stack gap="sm">
+-                <Title order={2} size="h3">
+-                    {t('title')}
+-                </Title>
+-                <Text size="sm" c="gray.7">
+-                    {t('hint')}
+-                </Text>
+-                {items.length === 0 ? (
+-                    <Text c="gray.7" data-testid="items-empty">
+-                        {t('empty')}
+-                    </Text>
+-                ) : (
+-                    <Stack gap={4} data-testid="items-list">
+-                        {items.map((item) => (
+-                            <Text key={item.id} data-testid="item-row">
+-                                {item.title}
+-                            </Text>
+-                        ))}
+-                    </Stack>
+-                )}
+-                {hasMore && onLoadMore ? (
+-                    <Button
+-                        size="compact-sm"
+-                        variant="default"
+-                        loading={loadingMore}
+-                        data-testid="items-load-more"
+-                        style={{ alignSelf: 'flex-start' }}
+-                        onClick={() => {
+-                            setLoadingMore(true)
+-                            onLoadMore().finally(() => setLoadingMore(false))
+-                        }}
+-                    >
+-                        {t('loadMore')}
+-                    </Button>
+-                ) : null}
+-                <Group align="end" gap="sm">
+-                    <TextInput
+-                        label={t('addLabel')}
+-                        flex={1}
+-                        value={draft}
+-                        disabled={!canCreate}
+-                        data-testid="item-input"
+-                        onChange={(event) => setDraft(event.currentTarget.value)}
+-                    />
+-                    <Button
+-                        loading={busy}
+-                        disabled={!canCreate || !draft.trim()}
+-                        data-testid="item-add"
+-                        onClick={() => {
+-                            setBusy(true)
+-                            onAdd(draft.trim())
+-                                .then(() => setDraft(''))
+-                                .finally(() => setBusy(false))
+-                        }}
+-                    >
+-                        {t('addButton')}
+-                    </Button>
+-                </Group>
+-                {!canCreate ? (
+-                    <Text size="sm" c="gray.7" data-testid="items-readonly-hint">
+-                        {t('readOnlyHint')}
+-                    </Text>
+-                ) : null}
+-            </Stack>
+-        </Card>
+-    )
+-}
+diff --git a/src/demo-static/app.tsx b/src/demo-static/app.tsx
+index 8d963b9..dca74e9 100644
+--- a/src/demo-static/app.tsx
++++ b/src/demo-static/app.tsx
+@@ -1,14 +1,9 @@
+-import { useState } from 'react'
+ import { useTranslations } from 'next-intl'
+-import { defineAbilitiesFor } from '@sssb/kit/core/abilities'
+-import { isRestricted } from '@sssb/kit/core/roles'
+ import type { Locale } from '@sssb/kit/core/locale'
+ import { DemoShell } from '@sssb/kit/demo-static/shell'
+ import { useDemoWorld } from '@sssb/kit/demo-static/world'
+ import type { SeedPerson } from '@/seed'
+-import { staffOrgSlug } from '@/app-config/abilities'
+ import { DashboardScreen } from '@/components/dashboard-screen'
+-import { ItemsCard, type Item } from '@/components/items-card'
+ import { WelcomeScreen } from '@/components/welcome-screen'
+ 
+ /**
+@@ -16,50 +11,19 @@ import { WelcomeScreen } from '@/components/welcome-screen'
+  * take the framework's simulated world (@sssb/kit/demo-static/world), add THIS app's own rows, hand the
+  * shell its screens, and get out of the way (ADR-0006, ADR-0012).
+  *
+- * This is what the twin costs an app that owns ONE table: a row type, a piece of state, an ability
+- * check and a card. Everything else on screen — routing, sign-in, the people, mail, jobs, schedules,
+- * webhooks, notifications, agreements, audit and the whole Simulator panel — is the package's.
++ * This app has no rows of its own yet, so it adds none: everything on screen — routing, sign-in, the people,
++ * mail, jobs, schedules, webhooks, notifications, agreements, audit and the whole Simulator panel — is the
++ * package's. An app that owns a table adds, for each: a row type, a piece of state (reset through
++ * `useDemoWorld({ onReset })`), an ability check (`defineAbilitiesFor` from @sssb/kit/core/abilities, the
++ * pure model the real server runs) and a card in `renderDashboard`.
+  */
+ 
+-/** In-memory twin of an `items` row — tenant + org scoped, so the static dashboard shows only the
+- *  active team's items and gates create by the same pure ability model the real server runs. */
+-interface DemoItem extends Item {
+-    tenantSlug: string
+-    orgSlug: string
+-}
+-
+ export function StaticDemoApp({ locale, onLocaleChange }: { locale: Locale; onLocaleChange: (l: Locale) => void }) {
+     const t = useTranslations('welcome')
+-    const [items, setItems] = useState<DemoItem[]>([])
+-    const world = useDemoWorld({ onReset: () => setItems([]) })
++    const world = useDemoWorld()
+ 
+     function renderDashboard(person: SeedPerson) {
+-        const { tenant, activeOrgSlug } = world
+-        // Same pure ability the real server runs — a restricted person gets a read-only card here too.
+-        const ability = defineAbilitiesFor({
+-            // The static shell's signed-in person IS a session, and only a stated session wields manage-all.
+-            credential: { kind: 'session', id: null },
+-            userId: person.id,
+-            role: world.roleInOrg(person, activeOrgSlug),
+-            restricted: isRestricted(person.restricted, world.roleInOrg(person, activeOrgSlug)),
+-            activeOrgId: activeOrgSlug,
+-            // Acting AS the operator org activates manage-all, exactly like abilityActorFromUser does
+-            // server-side — genuine parity, no degrade.
+-            manageAll: activeOrgSlug === staffOrgSlug,
+-        })
+-
+-        return (
+-            <DashboardScreen user={{ name: world.name, role: world.roleInOrg(person, activeOrgSlug) }}>
+-                <ItemsCard
+-                    items={items.filter((i) => i.tenantSlug === tenant.slug && i.orgSlug === activeOrgSlug)}
+-                    canCreate={ability.can('create', { type: 'Item', orgId: activeOrgSlug })}
+-                    onAdd={async (title) => {
+-                        const id = crypto.randomUUID()
+-                        setItems((prev) => [{ id, title, tenantSlug: tenant.slug, orgSlug: activeOrgSlug }, ...prev])
+-                    }}
+-                />
+-            </DashboardScreen>
+-        )
++        return <DashboardScreen user={{ name: world.name, role: world.roleInOrg(person, world.activeOrgSlug) }} />
+     }
+ 
+     return (
+diff --git a/src/domain/db/items.ts b/src/domain/db/items.ts
+deleted file mode 100644
+index 813980d..0000000
+--- a/src/domain/db/items.ts
++++ /dev/null
+@@ -1,37 +0,0 @@
+-import type { KeysetPosition } from '@sssb/kit/core/keyset'
+-import { keysetPage } from '@sssb/kit/db/keyset'
+-import type { DbPort } from '@sssb/kit/ports/db'
+-
+-/** An item as its owning team sees it in the list. */
+-interface ItemView {
+-    id: string
+-    title: string
+-}
+-
+-/** One page of a team's items, plus the token that fetches the next one (null at the end). */
+-export interface ItemPage {
+-    items: ItemView[]
+-    nextCursor: string | null
+-}
+-
+-/**
+- * Lists ONE PAGE of a team's items, newest first. Tenant-scoped by RLS AND filtered to the org: the same
+- * two boundaries as every list (ADR-0004).
+- *
+- * A list that can grow pages through the framework primitive (`@sssb/kit/db/keyset`), never a hand-rolled
+- * `LIMIT`/`OFFSET`. The callback is THE query, run once per page with the cursor added as one more
+- * conjunct, so page 7 is scoped by construction: there is no second code path that could forget the org.
+- * The order is fixed here (the primitive's default, `created_at` then `id`, newest first), never taken
+- * from a request, because a cursor does not say which column it was minted under.
+- */
+-export async function listItems(
+-    db: DbPort,
+-    tenantId: string,
+-    orgId: string,
+-    page: { after: KeysetPosition | null; limit: number },
+-): Promise<ItemPage> {
+-    const result = await keysetPage(db, { tenantId, after: page.after, limit: page.limit }, (trx) =>
+-        trx.selectFrom('items').select(['id', 'title']).where('org_id', '=', orgId),
+-    )
+-    return { items: result.rows.map(({ id, title }) => ({ id, title })), nextCursor: result.nextCursor }
+-}
+diff --git a/tests/demo-static/static-shell.spec.ts b/tests/demo-static/static-shell.spec.ts
+index d859cdf..dad4e92 100644
+--- a/tests/demo-static/static-shell.spec.ts
++++ b/tests/demo-static/static-shell.spec.ts
+@@ -4,7 +4,7 @@ import { welcome } from '../catalog'
+ 
+ const indexUrl = `file://${path.resolve(__dirname, '../../dist-demo/index.html')}`
+ 
+-test('the static shell signs in and lists an item, with the framework panel intact', async ({ page }) => {
++test('the static shell signs in, with the framework panel intact', async ({ page }) => {
+     await page.goto(indexUrl)
+     // Asserted against the catalog, not the product name — `pnpm create @sssb` renames the app, and this
+     // spec is the first thing that would have broken if it hard-coded the title.
+@@ -14,10 +14,6 @@ test('the static shell signs in and lists an item, with the framework panel inta
+     await page.getByTestId('person-person-owner').click()
+     await expect(page.getByTestId('signed-in-as')).toContainText('Nadia Owner')
+ 
+-    await page.getByTestId('item-input').fill('write the first item')
+-    await page.getByTestId('item-add').click()
+-    await expect(page.getByTestId('items-list')).toContainText('write the first item')
+-
+     // The whole Simulator panel comes from the package: an app that registers no tabs still gets the
+     // framework's, and switching people still works.
+     await page.getByTestId('simulator-pill').click()
+diff --git a/tests/e2e/items.spec.ts b/tests/e2e/items.spec.ts
+deleted file mode 100644
+index 6c6e8cb..0000000
+--- a/tests/e2e/items.spec.ts
++++ /dev/null
+@@ -1,102 +0,0 @@
+-import { expect, test, type Page } from '@playwright/test'
+-
+-/**
+- * The claim this app exists to prove: an item written in one tenant is invisible from the other, through the
+- * entire stack (UI → route → withTenant → RLS on pglite).
+- *
+- * Crossing tenants is done the way a real user would, not through the Simulator panel: sign out, sign in
+- * as somebody whose home tenant differs.
+- */
+-
+-async function signInAs(page: Page, personId: string) {
+-    await page.goto('/en/signin')
+-    await page.getByTestId(`person-${personId}`).click()
+-    await page.waitForURL('**/dashboard')
+-}
+-
+-async function signOut(page: Page) {
+-    await page.getByTestId('user-menu').click()
+-    await page.getByTestId('menu-signout').click()
+-    await page.waitForURL(/\/en\/?$/)
+-}
+-
+-/** Hydration-safe entry: right after a navigation, filling the controlled input can beat React
+- *  hydration, so the DOM has the text but state does not and the button stays disabled. */
+-async function addItem(page: Page, title: string) {
+-    await expect(async () => {
+-        await page.getByTestId('item-input').fill(title)
+-        await expect(page.getByTestId('item-add')).toBeEnabled({ timeout: 1_000 })
+-    }).toPass()
+-    await page.getByTestId('item-add').click()
+-    await expect(page.getByTestId('items-list')).toContainText(title)
+-}
+-
+-test('an item created in one tenant is invisible from the other', async ({ page }) => {
+-    const secret = `northwind-item-${Date.now()}`
+-
+-    // Nadia's home tenant is northwind.
+-    await signInAs(page, 'person-owner')
+-    await expect(page.getByTestId('active-tenant')).toHaveText('Northwind')
+-    await addItem(page, secret)
+-
+-    // Reload proves the row survived a round trip through Postgres rather than living in React state.
+-    await page.reload()
+-    await expect(page.getByTestId('items-list')).toContainText(secret)
+-
+-    // Cross to the other tenant: Wes must not see it, and his own view starts empty.
+-    await signOut(page)
+-    await signInAs(page, 'person-other-tenant')
+-    await expect(page.getByTestId('active-tenant')).toHaveText('Westgate')
+-    await expect(page.getByTestId('items-card')).toBeVisible()
+-    await expect(page.getByTestId('items-card')).not.toContainText(secret)
+-
+-    // ...and back again: Nadia's item is still there.
+-    await signOut(page)
+-    await signInAs(page, 'person-owner')
+-    await expect(page.getByTestId('items-list')).toContainText(secret)
+-})
+-
+-test('the items list pages, and the endpoint refuses a cursor it cannot read', async ({ page }) => {
+-    await signInAs(page, 'person-owner')
+-    await expect(page.getByTestId('items-card')).toBeVisible()
+-
+-    // The default page is 20, so 22 more items guarantee the list is longer than one page whatever else this
+-    // run has already written. Written through the route, the way the card's own add button does.
+-    const stamp = Date.now()
+-    for (let index = 0; index < 22; index++) {
+-        const response = await page.request.post('/api/items', { data: { title: `paged-${stamp}-${index}` } })
+-        expect(response.ok()).toBe(true)
+-    }
+-    await page.reload()
+-    const rows = page.getByTestId('item-row')
+-    await expect(rows).toHaveCount(20)
+-    await expect(page.getByTestId('items-load-more')).toBeVisible()
+-
+-    // "Show older items" APPENDS: what is on screen stays, in the same order, and the button goes away at the
+-    // end of the list. Walked with a guard rather than one click, because this world keeps its rows between
+-    // runs and the list can be longer than two pages.
+-    let previous = await rows.allTextContents()
+-    for (let click = 0; click < 20; click++) {
+-        if (!(await page.getByTestId('items-load-more').isVisible())) break
+-        await page.getByTestId('items-load-more').click()
+-        await expect(rows).not.toHaveCount(previous.length)
+-        const current = await rows.allTextContents()
+-        expect(current.slice(0, previous.length)).toEqual(previous)
+-        previous = current
+-    }
+-    await expect(page.getByTestId('items-load-more')).toHaveCount(0)
+-    expect(previous.length).toBeGreaterThan(20)
+-    expect(new Set(previous).size).toBe(previous.length)
+-
+-    // A malformed cursor is a 400, never a silent first page; the server also caps the page size itself.
+-    const bad = await page.request.get('/api/items?cursor=not-a-cursor')
+-    expect(bad.status()).toBe(400)
+-    expect(await bad.json()).toEqual({ error: 'invalid-cursor' })
+-    const single = await page.request.get('/api/items?limit=1')
+-    const onePage = (await single.json()) as { items: unknown[]; nextCursor: string | null }
+-    expect(onePage.items.length).toBe(1)
+-    expect(onePage.nextCursor).not.toBeNull()
+-    const greedy = await page.request.get('/api/items?limit=1000000')
+-    expect(greedy.status()).toBe(200)
+-    expect(((await greedy.json()) as { items: unknown[] }).items.length).toBeLessThanOrEqual(100)
+-})

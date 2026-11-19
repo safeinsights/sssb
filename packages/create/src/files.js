@@ -110,6 +110,15 @@ export function pnpmWorkspace(c) {
         "# part 5). Without it a package that takes the framework and links no seam silently shares an app's; after",
         '# changing it, reinstall from a fresh lockfile. `pnpm exec sssb doctor` checks it.',
         'dedupePeerDependents: false',
+        '',
+        "# @sssb/eslint-plugin's preset needs eslint-plugin-react and eslint-plugin-jsx-a11y, whose latest releases still",
+        '# declare eslint 9 as their highest peer. The preset runs them under eslint 10 (it is what SSSB lints with), so',
+        '# the warning on every first install is noise. These two entries, and only these, allow it; delete them once',
+        '# both plugins list eslint 10 (`pnpm peers check` shows what is left).',
+        'peerDependencyRules:',
+        '    allowedVersions:',
+        "        'eslint-plugin-react>eslint': '10'",
+        "        'eslint-plugin-jsx-a11y>eslint': '10'",
     ]
     if (c.meta.minimumReleaseAge !== null) {
         lines.push(
@@ -230,25 +239,26 @@ export const ROOT_TSCONFIG = formatJson({
     include: ['*.ts'],
 })
 
-/** @param {Context} c */
-export function vitestConfig(c) {
-    return `import { fileURLToPath } from 'node:url'
-import { appTestProject } from '@sssb/tools/vitest'
+/**
+ * The workspace's unit run: a Vitest project per app the root's `sssb.apps` names, from SSSB's preset, so a second app
+ * joins it by its entry there (`sssb add-app` writes one).
+ */
+export const VITEST_CONFIG = `import { fileURLToPath } from 'node:url'
+import { workspaceAppProjects } from '@sssb/tools/vitest'
 import { defineConfig, type ViteUserConfig } from 'vitest/config'
 
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 
 /**
- * The workspace's apps. ONE PROJECT PER APP, from SSSB's preset (@sssb/tools/vitest): the framework reads the app's
- * registrations through the bare specifier \`@sssb/app-config/*\`, which one project can resolve for one app only, so
- * each app's project passes its own seam. Each app's conformance suite (src/sssb.conformance.test.ts) runs in its
- * project like any other test; \`pnpm exec sssb doctor\` fails if this config stops running it.
+ * ONE PROJECT PER APP, from SSSB's preset (@sssb/tools/vitest), for every app the root package.json's \`sssb.apps\`
+ * names: the framework reads the app's registrations through the bare specifier \`@sssb/app-config/*\`, which one
+ * project can resolve for one app only, so each app's project passes its own seam. Each app's conformance suite
+ * (src/sssb.conformance.test.ts) runs in its project like any other test; \`pnpm exec sssb doctor\` fails if this
+ * config stops running it.
  */
-const APPS = ['${c.slug}']
-
 export default defineConfig(async (): Promise<ViteUserConfig> => ({
     test: {
-        projects: await Promise.all(APPS.map((app) => appTestProject({ appDir: at(\`./apps/\${app}\`) }))),
+        projects: await workspaceAppProjects({ root: at('.') }),
         coverage: {
             provider: 'v8',
             include: ['apps/*/src/**/*.{ts,tsx}', 'packages/*/src/**/*.{ts,tsx}'],
@@ -259,34 +269,31 @@ export default defineConfig(async (): Promise<ViteUserConfig> => ({
     },
 }))
 `
-}
 
-/** @param {Context} c */
-export function vitestContractConfig(c) {
-    return `import { fileURLToPath } from 'node:url'
-import { appTestProject } from '@sssb/tools/vitest'
+/** The workspace's contract run: the same project per app, narrowed to its tests/contract. */
+export const VITEST_CONTRACT_CONFIG = `import { fileURLToPath } from 'node:url'
+import { workspaceAppProjects } from '@sssb/tools/vitest'
 import { defineConfig, type ViteUserConfig } from 'vitest/config'
 
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 
-const APPS = ['${c.slug}']
-
 /**
  * The contract tests: each app's tests/contract (SSSB's contract runner, @sssb/kit/testing/contract) against real
- * Postgres, a database of the app's own. The preset's project per app, narrowed to tests/contract, in Node, one file at
- * a time, because every app's embedded Postgres takes the one port (CONTRACT_DATABASE_URL names a server instead; CI
- * passes its service container's). The unit config never reaches tests/contract.
+ * Postgres, a database of the app's own. The preset's project for every app the root package.json's \`sssb.apps\`
+ * names, narrowed to tests/contract, in Node, one file at a time, because every app's embedded Postgres takes the one
+ * port (CONTRACT_DATABASE_URL names a server instead; CI passes its service container's). The unit config never
+ * reaches tests/contract.
  */
-const contract = async (app: string) => {
-    const project = await appTestProject({ appDir: at(\`./apps/\${app}\`) })
-    return { ...project, test: { ...project.test, environment: 'node', include: ['tests/contract/**/*.test.ts'] } }
-}
-
 export default defineConfig(async (): Promise<ViteUserConfig> => ({
-    test: { fileParallelism: false, projects: await Promise.all(APPS.map(contract)) },
+    test: {
+        fileParallelism: false,
+        projects: (await workspaceAppProjects({ root: at('.') })).map((project) => ({
+            ...project,
+            test: { ...project.test, environment: 'node', include: ['tests/contract/**/*.test.ts'] },
+        })),
+    },
 }))
 `
-}
 
 /** @param {Context} c */
 export function knipJson(c) {
@@ -426,7 +433,8 @@ export function workflow(c) {
     return `# This workspace's checks. SSSB's checks for the app are SSSB's REUSABLE WORKFLOW, called here pinned to a commit
 # of SSSB's repository (a tag can be moved; a commit cannot). Require the check \`sssb / all-checks\` in your branch
 # protection or ruleset: it fails unless every one of SSSB's jobs ran and passed, so a skipped or renamed job cannot
-# slip out of the requirement. Raise the pin when you upgrade the @sssb packages (the release notes name the commit).
+# slip out of the requirement. Raise the pin when you upgrade the @sssb packages: \`pnpm exec sssb pin\` raises it, and
+# the plugin marketplace's in .claude/settings.json, to the installed @sssb/kit's release commit.
 #
 # The reusable workflow takes no secrets: never pass it \`secrets: inherit\`. If this repository is private and in an
 # organization, the organization must allow public reusable workflows in its Actions settings.
@@ -512,7 +520,8 @@ export function claudeSettings(c) {
 export const CLAUDE_MD = `# Agent guide
 
 SSSB's app guide, the rules every app on SSSB follows, from the copy \`pnpm exec sssb guide\` keeps (after an upgrade,
-\`pnpm exec sssb doctor\` fails until it is refreshed):
+\`pnpm exec sssb doctor\` fails until it is refreshed, and \`pnpm exec sssb pin\` raises the CI workflow's and the plugin
+marketplace's pins to the release's commit):
 
 @.claude/sssb-guide.md
 
@@ -592,12 +601,17 @@ the e2e suites, the static demo and the offline CDK synth. Only the secret scan 
 
 ## Building on SSSB
 
-SSSB's guide for an app built on it, at the commit this workspace pins, says what is yours and what is SSSB's, how
-the app registers through its seam, which generated content to replace first, how to cut over to real accounts, and
-how to upgrade:
+SSSB's guide for an app built on it, at the commit this workspace pins, walks you from here: which generated content
+to replace first, a first entity through the app's seam, cutting over to real accounts, and upgrading:
 [\`docs/adopting.md\`](${sssbDoc(c, 'blob', 'docs/adopting.md')}).
+Its reference says the rest, what is yours and what is SSSB's among it:
+[\`docs/adopting-reference.md\`](${sssbDoc(c, 'blob', 'docs/adopting-reference.md')}).
 The worked example of every capability is SSSB's own reference app:
 [\`apps/showcase\`](${sssbDoc(c, 'tree', 'apps/showcase')}).
+
+The app starts with one worked example, an Items list (a tenant-scoped table with row-level security, a paged route, a
+card and its tests). When you have read it, \`pnpm exec sssb remove-items --app ${app(c)} --drop-migrations\` takes it out in one step
+(\`--dry-run\` says what it will do; SSSB's reference, under "To remove the Items slice", says when to leave the flag off).
 
 ## Layout
 
@@ -627,7 +641,8 @@ the commands an app author runs, namespaced as \`/${c.meta.plugin.name}:<command
   (\`claude --version\`; \`claude update\`).
 - **Install the plugin once per clone**, after trusting the folder (enabling it does not install it):
   \`claude plugin install ${c.meta.plugin.name}@${c.meta.plugin.marketplace} --scope project\`.
-- **Raise the marketplace's \`ref\` with the workflow's pin** when you upgrade (below).
+- **Raise the marketplace's \`ref\` with the workflow's pin** when you upgrade: \`pnpm exec sssb pin\` raises both
+  (below).
 
 ## CI, and the settings only you can make
 
@@ -650,10 +665,12 @@ ${
 ## Upgrading SSSB
 
 The \`@sssb/*\` packages are released together at one version. Each release's notes open with "Upgrading to this
-release", the commands that move them together, refresh \`.claude/sssb-guide.md\` and raise the workflow's pin and
-the plugin marketplace's \`ref\` in \`.claude/settings.json\` to the release's commit. SSSB's guide says why each step is
-there:
+release", the commands that move them together, refresh \`.claude/sssb-guide.md\` (\`pnpm exec sssb guide\`) and raise
+the workflow's pin and the plugin marketplace's \`ref\` in \`.claude/settings.json\` to the release's commit
+(\`pnpm exec sssb pin\`, which reads it from the installed \`@sssb/kit\`). SSSB's guide lists the steps:
 [\`docs/adopting.md\`, "Upgrading by release"](${sssbDoc(c, 'blob', 'docs/adopting.md')}#upgrading-by-release).
+Its reference says why each is there:
+[\`docs/adopting-reference.md\`, "Upgrading, step by step"](${sssbDoc(c, 'blob', 'docs/adopting-reference.md')}#upgrading-step-by-step).
 \`pnpm exec sssb doctor\` fails when the installed packages are out of step, and reports a pin that is not the release
 commit the installed \`@sssb/kit\` names.
 `

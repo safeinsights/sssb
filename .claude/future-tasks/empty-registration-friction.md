@@ -1,7 +1,11 @@
-# "Empty registration is the off switch" is true 11 times out of 12
+# "Empty registration is the off switch" is true 11 times out of 12 (now: all but `appNotificationCopy`)
 
-**Priority:** P2 · **Status:** open
+**Priority:** P2 · **Status:** half done (2026-11-18: `AppSubjectFields` is fixed; `appNotificationCopy` is still open)
 **Found by:** `apps/starter`, 2026-07-31. Recorded in ADR-0012, "Unused capability = empty registration".
+
+**Done 2026-11-18 (adoption follow-up 9):** `AbilitySubject` is now `AppSubjectFields & { … }`, an intersection, so an app with no
+fields writes `export type AppSubjectFields = Record<never, never>` with no suppression (`apps/starter`, the kit's fixture). Only
+`appNotificationCopy` below remains.
 
 Two seam modules make an app that wants NOTHING still write something:
 
@@ -13,7 +17,7 @@ Two seam modules make an app that wants NOTHING still write something:
   app registering zero kinds still writes the function. With both parameters `never` the honest body is
   to return one, which reads as a puzzle rather than an off switch.
 
-**Why it matters:** `docs/adopting.md` sells "an unused framework capability needs nothing: an empty
+**Why it matters:** `docs/adopting-reference.md` sells "an unused framework capability needs nothing: an empty
 registration is the off switch." The starter proves that for 11 of 12 modules. The two exceptions are
 small, but they are the ones an adopter meets while still deciding whether to trust the claim.
 

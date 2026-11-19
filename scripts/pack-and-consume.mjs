@@ -14,7 +14,8 @@
 //              embedded Postgres) held to the conformance suite, the reusable workflow's `sssb ci lint-typecheck-unit`
 //              and `sssb ci synth`, `pnpm knip` and `pnpm jscpd` (the workspace's own CI job), then that the workflow's
 //              pin, the plugin marketplace's in `.claude/settings.json` and the packed kit's release stamp are one
-//              commit, which holds the plugin, and that `sssb doctor` says they match. CI's `adoption-probe`
+//              commit, which holds the plugin, and that `sssb doctor` says they match. Then it runs `sssb remove-items --drop-migrations` on the app (after the untouched
+//              check, which it would trip, and before the partial installs) and the gates again over what is left. CI's `adoption-probe`
 //              job, a required check. A failure here is the generator's to fix, never this script's.
 //   (neither)  both, the pages shape first.
 //
@@ -24,10 +25,10 @@
 // link of the app's own `@sssb/app-config` into its own copy of the framework.
 //
 // The pages shape, laid out like the first adopter's (safeinsights/pages). The generator writes the workspace with
-// its first app (`--slug console`); the second app is the generator's app for `--slug ledger`, generated beside it and
-// moved in, with the root's app lists (`sssb.apps`, the two Vitest configs' APPS) extended as an adopter adding an app
-// extends them. Everything else below is the shape's own code and this script's instruments, never a fix to the
-// generator's output:
+// its first app (`--slug console`); the second app is written by `sssb add-app ledger`, as an adopter adds one: the
+// packed @sssb/create's starter, renamed, on a port slot of its own, named in the root's `sssb.apps`, the one list of
+// apps the generated Vitest configs read. Everything else below is the shape's own code and this script's
+// instruments, never a fix to the generator's or the command's output:
 //   apps/console   the full verify: typecheck at the ES2022 floor and with the strict-flag set on, unit
 //                  tests with the conformance suite (@sssb/kit/testing) run from the tarball, its contract
 //                  suite (@sssb/kit/testing/contract) on embedded Postgres, the migrator bundle, `next build`,
@@ -63,7 +64,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-    cpSync,
     existsSync,
     mkdirSync,
     readdirSync,
@@ -167,8 +167,8 @@ const GEN = path.join(BASE, 'generated')
 const TARBALLS = path.join(BASE, 'tarballs')
 /** The packed @sssb/create, extracted: the generator both shapes run. */
 const CREATE = path.join(BASE, 'create')
-/** Where the pages shape's second app is generated before it is moved in. */
-const LEDGER_SOURCE = path.join(BASE, 'ledger-source')
+/** The packed @sssb/tools, extracted: the `sssb add-app` the pages shape runs before its install. */
+const TOOLS = path.join(BASE, 'tools')
 const REPORTS = path.join(BASE, 'reports')
 const LOCK_SEED = path.join(REPO, 'scripts/pack-and-consume/consumer-lock.yaml')
 /**
@@ -259,7 +259,7 @@ function step(name, body) {
     console.log(`==== ${name}: ok (${seconds}s)`)
 }
 
-/** A port nobody is listening on, for the console's dev server: never the fixed :3100 another checkout may hold. */
+/** A port nobody is listening on, for the console's dev server: never the fixed :3700 another checkout may hold. */
 async function freePort() {
     return new Promise((resolve, reject) => {
         const server = createServer()
@@ -426,9 +426,12 @@ test("the framework this app installed reads this app's seam", () => {
 }
 
 /** The app migrations each app's seam registers, and those it must never see. */
-const OWN_MIGRATIONS = { console: ['1001_items'], ledger: ['1001_items', '1002_ledger_marker'] }
+const OWN_MIGRATIONS = {
+    console: ['1001_items', '1002_items_keyset_index'],
+    ledger: ['1001_items', '1002_items_keyset_index', '1003_ledger_marker'],
+}
 const FOREIGN_MIGRATIONS = {
-    console: ['1002_ledger_marker', '1001_dockets'],
+    console: ['1003_ledger_marker', '1001_dockets'],
     ledger: ['1001_dockets'],
 }
 
@@ -615,7 +618,7 @@ const CONSOLE_E2E_SPEC = 'tests/e2e/kit-entry.spec.ts'
 /** The ledger: a different seam, whose extra migration comes in through the app's `@/` alias. */
 function shapeLedger(/** @type {string} */ dir) {
     write(
-        path.join(dir, 'src/db/1002_ledger_marker.ts'),
+        path.join(dir, 'src/db/1003_ledger_marker.ts'),
         `import { type Kysely, sql } from 'kysely'
 
 /** The ledger's own migration: nothing but a marker the migrator bundle must carry and the console's must not. */
@@ -628,37 +631,46 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     replaceOnce(
         index,
         "import * as m1001 from './1001_items'\n",
-        "import * as m1002 from '@/db/1002_ledger_marker'\nimport * as m1001 from './1001_items'\n",
+        "import * as m1003 from '@/db/1003_ledger_marker'\nimport * as m1001 from './1001_items'\n",
     )
-    replaceOnce(index, "    '1001_items': m1001,\n", "    '1001_items': m1001,\n    '1002_ledger_marker': m1002,\n")
-
-    // A slot of its own, as docs/adopting.md tells a second app to take: both apps are made from the starter, so both
-    // declare `starter` and `sssb doctor` fails the workspace until the ledger leaves it. Its Playwright config reads
-    // the declaration, and its scripts name no slot (the starter's say `starter`, which an app on a slot of its own
-    // may not use: it would tick and test the console's port).
-    const manifestFile = path.join(dir, 'package.json')
-    const manifest = readJson(manifestFile)
-    if (manifest.sssb?.port !== 'starter')
-        fail(`the generated ledger declares port ${JSON.stringify(manifest.sssb?.port)}`)
-    manifest.sssb.port = { name: 'ledger', default: 3700 }
-    for (const [script, from, to] of [
-        ['dev', 'sssb dev-tick starter -- ', 'sssb dev-tick -- '],
-        ['tick', 'sssb tick starter', 'sssb tick'],
-    ]) {
-        if (!manifest.scripts?.[script]?.includes(from))
-            fail(`the generated ledger's ${script} script has no "${from}"`)
-        manifest.scripts[script] = manifest.scripts[script].replace(from, to)
-    }
-    writeJson(manifestFile, manifest)
-    // `originForApp(__dirname)` names the app wherever the config is loaded from: `pnpm knip` loads every workspace's
-    // config from the root, where a bare `originFor()` finds no app. Playwright compiles the config to CommonJS.
-    const config = path.join(dir, 'playwright.config.ts')
     replaceOnce(
-        config,
-        "import { originFor } from '@sssb/tools/ports'",
-        "import { originForApp } from '@sssb/tools/ports'",
+        index,
+        "    '1002_items_keyset_index': m1002,\n",
+        "    '1002_items_keyset_index': m1002,\n    '1003_ledger_marker': m1003,\n",
     )
-    replaceOnce(config, "originFor('starter')", 'originForApp(__dirname)')
+}
+
+/**
+ * What `sssb add-app ledger` must have written, which the rest of the run then proves works (its install, typecheck,
+ * unit and contract runs, migrator bundle, lint and `sssb doctor`, which fails two apps on one port slot): the app as
+ * the generator writes one, its own slug, a port slot of its own, with scripts and a Playwright config that name no
+ * other slot (an app on a slot of its own may not name `starter`: `sssb tick`, `sssb port` and `portFor` refuse it), and its
+ * entry in `sssb.apps`, which the generated Vitest configs read.
+ */
+function checkAddedLedger() {
+    const dir = appDir('ledger')
+    const manifest = readJson(path.join(dir, 'package.json'))
+    if (manifest.name !== 'ledger') fail(`sssb add-app named the ledger's package ${manifest.name}`)
+    // The console, as the generator writes it, holds 3700, so the ledger takes the next default.
+    if (JSON.stringify(manifest.sssb?.port) !== JSON.stringify({ name: 'ledger', default: 3800 }))
+        fail(`sssb add-app gave the ledger the port slot ${JSON.stringify(manifest.sssb?.port)}`)
+    const starter = Object.entries(manifest.scripts ?? {}).filter(([, text]) => /starter/i.test(String(text)))
+    if (starter.length > 0)
+        fail(`the ledger's ${starter.map(([name]) => name).join(', ')} script(s) name the starter's slot`)
+    if (!readFileSync(path.join(dir, 'playwright.config.ts'), 'utf8').includes('originForApp(__dirname)'))
+        fail("the ledger's playwright.config.ts does not read its own slot (originForApp(__dirname))")
+    if (!readFileSync(path.join(dir, 'config/app.ts'), 'utf8').includes("export const APP_SLUG = 'ledger'"))
+        fail("the ledger's config/app.ts does not declare APP_SLUG 'ledger'")
+    if (readJson(path.join(dir, 'src/app-config/package.json')).name !== 'ledger-app-config')
+        fail("the ledger's seam package is not ledger-app-config")
+    const root = readJson(path.join(WS, 'package.json'))
+    if (JSON.stringify(root.sssb?.apps) !== JSON.stringify(['apps/console', 'apps/ledger']))
+        fail(`after sssb add-app, the root's sssb.apps is ${JSON.stringify(root.sssb?.apps)}`)
+    for (const config of ['vitest.config.ts', 'vitest.contract.config.ts']) {
+        const text = readFileSync(path.join(WS, config), 'utf8')
+        if (!text.includes('workspaceAppProjects(') || /\bAPPS\b/.test(text))
+            fail(`the generated ${config} keeps a list of apps of its own instead of reading sssb.apps`)
+    }
 }
 
 /**
@@ -668,26 +680,34 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 function scaffold() {
     generate(WS, ['--slug', 'console', '--name', 'Console'])
 
-    // The second app: the generator makes a workspace with one app, so the ledger is the app it generates for
-    // `--slug ledger`, moved in beside the console. The root lists its apps in three places (`sssb.apps`, which
-    // `sssb ci` and `sssb doctor` read, and each Vitest config's APPS), extended as an adopter adding an app extends
-    // them; everything else the generator wrote at the root already covers every apps/* and packages/*.
-    generate(LEDGER_SOURCE, ['--slug', 'ledger', '--name', 'Ledger'])
-    cpSync(path.join(LEDGER_SOURCE, 'apps/ledger'), appDir('ledger'), { recursive: true })
-    rmSync(LEDGER_SOURCE, { recursive: true, force: true })
+    // The second app, as an adopter adds one: `sssb add-app ledger`, the starter of the packed @sssb/create (named by
+    // `--create`: the workspace does not install it) written beside the console and named in the root's `sssb.apps`,
+    // which `sssb ci`, `sssb doctor` and the generated Vitest configs read. Run with the packed @sssb/tools' bin before
+    // the workspace's one install (the seed resolves both apps at once): the file `pnpm exec sssb` runs after it.
+    // Everything else the generator wrote at the root already covers every apps/* and packages/*.
     const root = readJson(path.join(WS, 'package.json'))
     if (JSON.stringify(root.sssb?.apps) !== JSON.stringify(['apps/console']))
         fail(`the generated root's sssb.apps is ${JSON.stringify(root.sssb?.apps)}, not ["apps/console"]`)
-    root.sssb.apps = ['apps/console', 'apps/ledger']
-    writeJson(path.join(WS, 'package.json'), root)
-    for (const config of ['vitest.config.ts', 'vitest.contract.config.ts'])
-        replaceOnce(path.join(WS, config), "const APPS = ['console']", "const APPS = ['console', 'ledger']")
+    run(
+        'node',
+        [
+            path.join(TOOLS, 'package/bin/sssb.js'),
+            'add-app',
+            'ledger',
+            '--name',
+            'Ledger',
+            '--create',
+            path.join(CREATE, 'package'),
+        ],
+        { cwd: WS },
+    )
+    checkAddedLedger()
     // ...and the sibling package's tests join the root's Vitest run, as Pages' packages/gate does.
     replaceOnce(
         path.join(WS, 'vitest.config.ts'),
-        'projects: await Promise.all(APPS.map((app) => appTestProject({ appDir: at(`./apps/${app}`) }))),',
+        "projects: await workspaceAppProjects({ root: at('.') }),",
         `projects: [
-            ...(await Promise.all(APPS.map((app) => appTestProject({ appDir: at(\`./apps/\${app}\`) })))),
+            ...(await workspaceAppProjects({ root: at('.') })),
             { test: { name: 'gate', root: at('./packages/gate'), environment: 'node' } },
         ],`,
     )
@@ -1057,7 +1077,8 @@ function e2e(port) {
     // CI=1 locally too: Playwright then never reuses a server some other checkout left on the port.
     run('pnpm', ['run', 'test:e2e'], {
         cwd: appDir('console'),
-        env: consumerEnv({ STARTER_PORT: String(port), CI: process.env.CI ?? '1' }),
+        // The console's slot is its own, named for its slug (the generator's firstAppSlot), so its override is CONSOLE_PORT.
+        env: consumerEnv({ CONSOLE_PORT: String(port), CI: process.env.CI ?? '1' }),
     })
 }
 
@@ -1087,6 +1108,12 @@ function doctorAndCheckE2e() {
         console.log(doctor.stdout)
         if (doctor.stdout.includes('in-repo mode'))
             fail(`${app}: sssb doctor took the tarball's kit for this repo's own`)
+        // `sssb add-app` leaves knip.json to the person, and doctor names what it lacks (a report, never a failure).
+        if (
+            !/^report +knip: knip\.json gives 2 of the apps' packages no workspace/m.test(doctor.stdout) ||
+            !doctor.stdout.includes('apps/ledger/src/app-config')
+        )
+            fail(`${app}: sssb doctor does not report the ledger's packages that knip.json gives no workspace`)
         const checked = run('pnpm', ['run', 'check:e2e'], { cwd: appDir(app), capture: true })
         console.log(checked.stdout)
         if (app !== 'console') continue
@@ -1545,6 +1572,11 @@ function generateWorkspace() {
     ])
     generatedFiles = fileHashes(GEN)
     console.log(`the packed generator wrote ${generatedFiles.size} files`)
+    // Not one of them says `starter`, SSSB's reference app's name and port slot: the app takes a slot of its own.
+    const starter = [...generatedFiles.keys()].filter((file) =>
+        /starter/i.test(readFileSync(path.join(GEN, file), 'utf8')),
+    )
+    if (starter.length > 0) fail(`the packed generator's workspace says "starter" in: ${starter.join(', ')}`)
 }
 
 /**
@@ -1572,7 +1604,8 @@ function installGenerated() {
 /** The environment the generated workspace's checks run with: its own ports, and never a developer's database. */
 const generatedEnv = () =>
     consumerEnv({
-        STARTER_PORT: String(generatedPort),
+        // The generated app's slot is named for its slug: its override is <SLUG>_PORT.
+        [`${GEN_APP.toUpperCase().replaceAll('-', '_')}_PORT`]: String(generatedPort),
         CI: process.env.CI ?? '1',
         CONTRACT_PG_PORT: String(generatedContractPort),
         CONTRACT_DATABASE_URL: '',
@@ -1748,6 +1781,77 @@ function generatedUntouched() {
 }
 
 /**
+ * THE ITEMS SLICE COMES OUT (adoption follow-up 2). `sssb remove-items` on the generated app, as an adopter runs it
+ * first: a dry run that changes nothing, then the whole slice (`--drop-migrations`: this workspace's database has never
+ * run its migrations), then the gates an adopter runs next on what is left. The patch it applies is a diff of the
+ * starter, so what this proves is the generator's output and the packed @sssb/tools together: the app still typechecks,
+ * lints, passes its conformance suite and the contract runner on zero app tables, knip and jscpd, and (in a full run, with
+ * the e2e and the build verify adds) builds and signs in.
+ */
+function removeItemsGenerated() {
+    const app = path.join('apps', GEN_APP)
+    const command = ['exec', 'sssb', 'remove-items', '--app', app]
+    const root = path.join(GEN, app)
+    const dirs = ['src', 'messages', 'tests', 'config'].map((dir) => path.join(root, dir))
+    /** What the command may change and the restore puts back: those directories, and the files at the app's root (playwright.config.ts). */
+    const touched = () => [
+        ...dirs.flatMap((dir) => filesUnder(dir)),
+        ...readdirSync(root, { withFileTypes: true })
+            .filter((entry) => entry.isFile())
+            .map((entry) => path.join(root, entry.name)),
+    ]
+    /** What a dev server leaves behind: a type validator naming the route the command is about to delete. */
+    const staleValidator = path.join(root, '.next/dev/types/validator.ts')
+    const plantStaleValidator = () => {
+        mkdirSync(path.dirname(staleValidator), { recursive: true })
+        writeFileSync(staleValidator, "export type Stale = typeof import('../../../src/app/api/items/route.js')\n")
+    }
+    const itemsLeft = () =>
+        dirs
+            .flatMap((dir) => filesUnder(dir))
+            .filter((file) => /\bitems?\b/i.test(readFileSync(file, 'utf8')))
+            .map((file) => path.relative(root, file))
+
+    const dry = run('pnpm', [...command, '--dry-run', '--drop-migrations'], { cwd: GEN, capture: true })
+    if (!dry.stdout.includes('delete src/components/items-card.tsx'))
+        fail(`sssb remove-items --dry-run does not say it would delete the Items card:\n${dry.stdout}${dry.stderr}`)
+    generatedUntouched()
+
+    // The default mode first, which keeps the database half: no other gate runs what it leaves. Typecheck and lint over
+    // it, then the app goes back to what the generator wrote, for the whole slice.
+    const written = new Map(touched().map((file) => [file, readFileSync(file)]))
+    plantStaleValidator()
+    run('pnpm', command, { cwd: GEN })
+    if (existsSync(staleValidator))
+        fail("sssb remove-items left Next's dev type validator, which names the deleted route")
+    run('pnpm', ['run', 'typecheck'], { cwd: GEN, env: generatedEnv() })
+    run('pnpm', ['run', 'lint'], { cwd: GEN, env: generatedEnv() })
+    for (const file of touched()) if (!written.has(file)) rmSync(file)
+    for (const [file, content] of written) {
+        mkdirSync(path.dirname(file), { recursive: true })
+        writeFileSync(file, content)
+    }
+    generatedUntouched()
+    console.log('the default mode (the database half kept) typechecks and lints; the app is back as generated')
+
+    plantStaleValidator()
+    run('pnpm', [...command, '--drop-migrations'], { cwd: GEN })
+    if (existsSync(staleValidator))
+        fail("sssb remove-items left Next's dev type validator, which names the deleted route")
+    const left = itemsLeft()
+    if (left.length > 0) fail(`sssb remove-items left the Items slice in ${left.join(', ')}`)
+    // What the command tells an adopter to do after --drop-migrations: the dev database the earlier gates ran
+    // recorded 1001_items, and the migrator refuses a recorded migration that is gone from the code.
+    rmSync(path.join(root, '.data'), { recursive: true, force: true })
+    console.log('the Items slice is out; the same gates run over what is left')
+    verifyGenerated()
+    unitGenerated()
+    contractGenerated()
+    run('pnpm', ['knip'], { cwd: GEN })
+    run('pnpm', ['jscpd'], { cwd: GEN })
+}
+
+/**
  * THE SEAM SURVIVES pnpm's partial installs: `pnpm add`, `remove` and `update` for the app (from the root, `--filter
  * <app>`), as an author runs them,
  * each followed by `sssb doctor` and the lockfile's seam link. A `link:` seam passed a fresh install and was unlinked by
@@ -1903,6 +2007,10 @@ step('pack every @sssb package, and extract @sssb/create', () => {
     rmSync(CREATE, { recursive: true, force: true })
     mkdirSync(CREATE, { recursive: true })
     run('tar', ['-xzf', create, '-C', CREATE], { cwd: BASE })
+    // The packed @sssb/tools, extracted too: the pages shape runs its `sssb add-app` before the workspace is installed.
+    rmSync(TOOLS, { recursive: true, force: true })
+    mkdirSync(TOOLS, { recursive: true })
+    run('tar', ['-xzf', tarballs['@sssb/tools'], '-C', TOOLS], { cwd: BASE })
     console.log(
         `${path.basename(create)}: ${createFiles.length} files, ${Math.round(statSync(create).size / 1024)} KB, its template among them; no dependencies; extracted to ${path.relative(BASE, CREATE)}/`,
     )
@@ -1989,6 +2097,10 @@ if (RUN_GENERATED) {
     step('generated: pnpm jscpd (the workspace’s own job)', () => run('pnpm', ['jscpd'], { cwd: GEN }))
     step('generated: the workflow and plugin pins are the kit’s release commit, and the plugin is there', pinsGenerated)
     step('generated: every file the generator wrote is unchanged', generatedUntouched)
+    step(
+        'generated: sssb remove-items takes the Items slice out, and the gates pass over what is left',
+        removeItemsGenerated,
+    )
     step('generated: pnpm add, remove and update keep the seam linked (sssb doctor)', partialInstallsKeepSeam)
 }
 

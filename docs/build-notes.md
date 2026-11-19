@@ -2359,3 +2359,24 @@ works has to run the walkers over what it left. `tests/tooling/release-pre-mode.
 with a red release commit is to rebuild its tree in scratch and run the failing test over it (`rm -rf .changeset`, extract `git archive <sha> .changeset` in its place, and afterwards
 `git restore --staged --worktree .changeset && git clean -fd .changeset`; extracting over the old directory leaves the
 old pending files beside their `pre/` copies, which is not that tree).
+
+## A worktree you were given can be taken over by another session (2026-11-18, `fix/starter-small-fixes`)
+
+A child session started in the manager's worktree switched branches in it, and another session then checked out its own
+branch there while the first still had staged work: the first commit landed on the second session's branch, with two of
+its files in the commit. Recovery that touched nothing of the other session's: `git reset --soft`, unstage
+only the files that were not mine, save the rest with `git diff --cached --binary`, restore exactly those paths, then
+`git worktree add` a private worktree on the branch and `git apply --index` the patch. The lesson is the same as the
+rule about shared checkouts, one level down: read `git branch --show-current` and `git status` before every commit in a
+worktree you did not create, and `git show --stat HEAD` after it.
+
+## A diff you apply to files an adopter owns needs one rule: found exactly once, or refuse (2026-11-19, `feat/remove-starter-items`)
+
+`sssb remove-items` applies diffs of the starter to an adopter's app. Two things were learned writing the applier. First,
+the context lines of a hunk are what make it safe, and fewer than three of them at the start or end of a file is not a
+reason to pin the hunk there: pinning it refused a file whose only difference was a comment added above the imports.
+"The text it names occurs once" is the whole rule, and it refuses both an edited hunk and an ambiguous one. Second, a
+deleted file has to be checked as a whole, not as a hunk: a patch that deletes `items-card.tsx` and finds its lines in a file
+that also has a line the adopter appended would otherwise remove the matched lines, keep the adopter's, and then delete the
+file with it, so the applier requires nothing to remain after the removal. The test that holds this (`tests/tooling/remove-items.test.ts`) runs the real CLI over an app
+the generator wrote, which is also what catches a starter change that makes a hunk stop applying.

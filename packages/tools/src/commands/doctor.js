@@ -38,9 +38,15 @@
 // package.json scripts pass to vitest (doctor proves what each configuration would run, never what a CI step's own
 // command line adds); which script runs each app's contract config (doctor lists the contract checks, it never runs
 // them); `dedupePeerDependents: false` missing from pnpm-workspace.yaml (advice); framework cutover rows the
-// workspace's checklist never mentions; and the commits the workspace pins SSSB's reusable workflow and the plugin's
+// workspace's checklist never mentions; an app, or an app's seam package, that the root's knip JSON config (`knip.json`, `knip.jsonc`, `.knip.json` or
+// `.knip.jsonc`) gives no workspace, and a root `@sssb/create` that knip would call unused; and the commits the workspace pins SSSB's reusable workflow and the plugin's
 // marketplace at (`.github/workflows/*.yml`, `.claude/settings.json`), against the release commit the installed
-// @sssb/kit stamps into its package (`dist/release.json`), naming both commits where they differ.
+// @sssb/kit stamps into its package (`dist/release.json`), naming both commits where they differ; and the adopter's own
+// settings (doctor-settings.js): on the workspace's GitHub repository, read-only through `gh`, whether `sssb /
+// all-checks` is a required check on the default branch, private vulnerability reporting is on, and, for a private
+// repository in an organization, its Actions policy lets it call SSSB's reusable workflow, and whether the plugin
+// `.claude/settings.json` enables is installed on this machine. A `gh` that is missing, signed out, offline or refused
+// reads "not checked", with the reason; none of it runs when `CI` is set.
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -54,6 +60,7 @@ import {
     githubRepositoryOf,
     importerSeamProblems,
     kitPeers,
+    knipGaps,
     missingTests,
     nodeLinkerProblem,
     ownTests,
@@ -68,6 +75,7 @@ import {
     versionProblems,
     vitestInvocations,
 } from './doctor-checks.js'
+import { settingsReports } from './doctor-settings.js'
 import {
     projectsRunning,
     runKey,
@@ -201,6 +209,8 @@ export async function run(args) {
         pins(root, kitDir, version, inRepo),
         dedupeAdvice(root, inRepo),
         cutover(root, appDir),
+        ...knip(root, apps, workspace.packages),
+        ...settings(root, kitDir),
     ]
     return print(results)
 }
@@ -883,25 +893,51 @@ async function guides(root, apps, inRepo) {
  * @returns {Result}
  */
 function pins(root, kitDir, version, inRepo) {
-    const read = (/** @type {string} */ file) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
-    const workflowsDir = path.join(root, '.github', 'workflows')
-    const workflows = existsSync(workflowsDir)
-        ? readdirSync(workflowsDir)
+    const settingsText = readIfThere(path.join(root, '.claude', 'settings.json'))
+    return pinReport({
+        inRepo,
+        version,
+        stamp: readIfThere(path.join(kitDir, 'dist', 'release.json')),
+        repository: githubRepositoryOf(readJson(path.join(kitDir, 'package.json')).repository),
+        workflows: workflowFiles(root),
+        settings: settingsText === null ? null : { file: '.claude/settings.json', text: settingsText },
+    })
+}
+
+/** @param {string} file */
+const readIfThere = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
+
+/**
+ * The workspace root's `.github/workflows/*.{yml,yaml}`, sorted, with their text.
+ * @param {string} root
+ */
+function workflowFiles(root) {
+    const dir = path.join(root, '.github', 'workflows')
+    return existsSync(dir)
+        ? readdirSync(dir)
               .filter((name) => /\.ya?ml$/.test(name))
               .sort()
               .map((name) => ({
                   file: `.github/workflows/${name}`,
-                  text: /** @type {string} */ (read(path.join(workflowsDir, name))),
+                  text: /** @type {string} */ (readIfThere(path.join(dir, name))),
               }))
         : []
-    const settingsText = read(path.join(root, '.claude', 'settings.json'))
-    return pinReport({
-        inRepo,
-        version,
-        stamp: read(path.join(kitDir, 'dist', 'release.json')),
-        repository: githubRepositoryOf(readJson(path.join(kitDir, 'package.json')).repository),
-        workflows,
-        settings: settingsText === null ? null : { file: '.claude/settings.json', text: settingsText },
+}
+
+/**
+ * THE ADOPTER'S OWN SETTINGS, REPORTED, never failed and never written (doctor-settings.js): the workspace's GitHub
+ * repository (`sssb / all-checks` required, private vulnerability reporting, the Actions policy a private organization
+ * repository needs for SSSB's reusable workflow) read through `gh`, and the plugin `.claude/settings.json` enables
+ * against what this machine has installed. Skipped in CI, with a line saying so.
+ * @param {string} root
+ * @param {string} kitDir
+ * @returns {Result[]}
+ */
+function settings(root, kitDir) {
+    return settingsReports({
+        root,
+        workflows: workflowFiles(root),
+        kitRepository: githubRepositoryOf(readJson(path.join(kitDir, 'package.json')).repository),
     })
 }
 
@@ -922,6 +958,49 @@ function dedupeAdvice(root, inRepo) {
             'from a fresh lockfile, since a lockfile resolved before it keeps the merged layout' +
             (inRepo ? ' (in-repo mode: the seam goes through aliases here, so this is advice for an adopter)' : ''),
     }
+}
+
+/**
+ * KNIP: each app, and each app's seam package, has a workspace of its own in the root's knip.json (knipGaps).
+ * Reported, never failed; nothing per app when the root's knip config has no `workspaces`, and nothing at all when
+ * the root has no knip JSON config.
+ * @param {string} root
+ * @param {readonly string[]} apps
+ * @param {readonly string[]} packages
+ * @returns {Result[]}
+ */
+function knip(root, apps, packages) {
+    const gaps = knipGaps(root, apps, packages)
+    if (gaps === null) return []
+    if ('unread' in gaps)
+        return [{ status: 'report', title: `knip: not checked: ${gaps.file} does not parse as JSON (${gaps.unread})` }]
+    /** @type {Result[]} */
+    const results = []
+    if (gaps.missing === null) {
+        // One config for every package: nothing per app to look for.
+    } else if (gaps.missing.length === 0)
+        results.push({
+            status: 'ok',
+            title: `knip: ${gaps.file} gives every app, and every app's seam package, a workspace`,
+        })
+    else
+        results.push({
+            status: 'report',
+            title:
+                `knip: ${gaps.file} gives ${gaps.missing.length} of the apps' packages no workspace, so knip reads them ` +
+                "with its defaults and calls the seam's modules and the presets' dependencies unused: add an entry for " +
+                "each, like the first app's",
+            lines: gaps.missing,
+        })
+    if (gaps.generator)
+        results.push({
+            status: 'report',
+            title:
+                `knip: the root installs @sssb/create, which nothing imports (\`sssb add-app\` loads it from ` +
+                `node_modules), so knip calls it unused: \`pnpm remove -w @sssb/create\` once your apps are written, or ` +
+                `add it to the root's ignoreDependencies in ${gaps.file}`,
+        })
+    return results
 }
 
 /**
