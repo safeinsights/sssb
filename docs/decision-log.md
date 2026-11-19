@@ -5901,11 +5901,12 @@ Decisions, each with the alternative rejected:
 - **One definition of a pin.** `doctor-checks.js` now exports the `uses:` regex (`WORKFLOW_USES`), the marketplace's
   repository test (`sourceRepository`) and `stampedCommit`, which doctor's report and this command both use, so they
   cannot disagree about what a pin or a stamp is. The command picks its app as `sssb guide` does (`--app`, the working
-  directory, else the workspace's first app that resolves `@sssb/kit`) instead of importing doctor's chooser, whose
+  directory, else the workspace's first app, here the first that resolves `@sssb/kit`) instead of importing doctor's chooser, whose
   messages name doctor.
 - **The release notes' step 3 is the command.** `upgradeSection` no longer writes a yaml and a json block with `<sha>` in
   them, nor the `git ls-remote` that read the SHA off a tag: the installed kit has the commit. It keeps one sentence of
-  hand edit for when the command refuses, a candidate's notes still name the commit (`sha`), and `docs/adopting.md`'s step 4
+  hand edit for when the command refuses (with the `git ls-remote` that reads the tag's commit, because doctor names no commit
+  for a kit with no stamp, one of the two causes of a refusal), a candidate's notes still name the commit (`sha`), and `docs/adopting.md`'s step 4
   says the same. `docs/releases/v0.2.0.md`, a dated record, still carries the hand edit. Rejected: keeping the hand edit
   beside the command, which would be two ways to do it in every release's notes.
 - **Not done here:** the generator's own text in a workspace's `README.md` and `CLAUDE.md` (`packages/create/src/files.js`,

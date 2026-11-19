@@ -33,8 +33,8 @@ const SETTINGS = '.claude/settings.json'
  */
 
 /**
- * The version in a trailing comment the generator and the release notes write after a workflow pin (`# @sssb/create
- * 0.2.0`, `# @sssb/kit 0.2.0`, `# v0.2.0`), moved to `version`; any other comment, which is the adopter's, as it was.
+ * The version in a trailing comment after a workflow pin, in the forms the generator (`# @sssb/create 0.2.0`) and the
+ * earlier release notes (`# v0.2.0`) wrote, and `# @sssb/kit 0.2.0`, moved to `version`; any other comment, which is the adopter's, as it was.
  * @param {string} rest what follows the ref on the `uses:` line
  * @param {string} version
  */
@@ -261,9 +261,9 @@ export function planPins({ commit, version, repository, workflows, settings }) {
 }
 
 /**
- * The app whose kit's stamp is read, as `sssb guide` and `sssb doctor` choose it: `--app <dir>`; else the working
- * directory when it resolves `@sssb/kit`; else, at a workspace root that takes no framework (a generated workspace's), the
- * workspace's first app that does.
+ * The app whose kit's stamp is read, as `sssb guide` chooses it: `--app <dir>`; else the working directory when it
+ * resolves `@sssb/kit`; else, at a workspace root that takes no framework (a generated workspace's), the first of the
+ * workspace's apps that resolves one (`guide` and `doctor` take its first app, resolving or not).
  * @param {string[]} args
  * @param {string} [cwd]
  * @returns {string}

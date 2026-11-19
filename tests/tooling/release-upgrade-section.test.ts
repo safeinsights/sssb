@@ -88,10 +88,11 @@ describe('the standing upgrade section, in a plain release', () => {
     it('raises both pins with `sssb pin`, not by hand, and says what to do when it refuses', () => {
         expect(section).toContain("**3. Raise both pins to this release's commit.**")
         expect(blocks(section, 'sh')).toContain('pnpm exec sssb pin')
-        // the hand edits it replaced: no yaml or json block to copy a `<sha>` into, no tag to resolve
+        // the hand edits it replaced: no yaml block to copy a `<sha>` into (the json one is the package versions)
         expect(blocks(section, 'yaml')).toEqual([])
         expect(section).not.toContain('<sha>')
-        expect(section).not.toContain('git ls-remote')
+        // doctor names no commit for a kit with no stamp, which is a refusal too: the tag is the way to it
+        expect(section).toContain("git ls-remote https://github.com/safeinsights/sssb 'refs/tags/v0.2.0'")
         expect(section).toContain('It refuses, changing nothing, when the kit carries no release\nstamp')
         expect(section).toContain('If it refuses, make the two edits by hand')
         expect(section).toContain('never the tag `v0.2.0`')
@@ -166,6 +167,7 @@ describe('the standing upgrade section, with the release commit in hand', () => 
         expect(section).toContain(`**3. Raise both pins to this release's commit (\`${SHA}\`).**`)
         expect(blocks(section, 'sh')).toContain('pnpm exec sssb pin')
         expect(section).not.toContain('<sha>')
+        expect(section).toContain(`The commit is \`${SHA}\`.`)
         expect(section).not.toContain('git ls-remote')
     })
 

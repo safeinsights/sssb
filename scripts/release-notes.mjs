@@ -109,6 +109,12 @@ export function upgradeSection({ version, sha, repo = RELEASE_REPOSITORY }) {
               '```',
           ]
     const commit = sha === undefined ? '' : ` (\`${sha}\`)`
+    // `sssb doctor` names the commit only beside a pin that differs, and not at all for a kit with no stamp, which is
+    // one of the two things that make `sssb pin` refuse: the tag names it too.
+    const where =
+        sha === undefined
+            ? `The commit is the one \`sssb doctor\` names beside a pin that differs or, for a kit with no stamp, the one this prints: \`git ls-remote https://github.com/${repo} 'refs/tags/${tag}' 'refs/tags/${tag}^{}' | tail -n 1 | cut -f 1\`.`
+            : `The commit is \`${sha}\`.`
     return [
         `## ${UPGRADE_HEADING}`,
         '',
@@ -134,8 +140,8 @@ export function upgradeSection({ version, sha, repo = RELEASE_REPOSITORY }) {
         'pnpm exec sssb pin',
         '```',
         '',
-        `If it refuses, make the two edits by hand, to the commit \`sssb doctor\` names beside a pin that differs: the \`uses: ${repo}/.github/workflows/app-checks.yml@<commit>\``,
-        `line and the marketplace's \`ref\`. A pin takes the commit's SHA, never the tag \`${tag}\`, which can be moved.`,
+        `If it refuses, make the two edits by hand: the \`uses: ${repo}/.github/workflows/app-checks.yml@<commit>\` line and the`,
+        `marketplace's \`ref\`. ${where} A pin takes the commit's SHA, never the tag \`${tag}\`, which can be moved.`,
         '',
         'Then each person updates their installed plugin and restarts Claude Code:',
         '',

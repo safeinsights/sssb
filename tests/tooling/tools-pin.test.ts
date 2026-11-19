@@ -243,7 +243,7 @@ describe('sssb pin: raising both pins', () => {
         expect(read(ws, WORKFLOW_FILE)).toContain(`@${NEW}`)
     })
 
-    it('finds the app from the workspace root, from the app’s directory, and from --app', () => {
+    it('finds the app from the app’s directory and from --app at the workspace root (the plain root is the other tests’ cwd)', () => {
         const { ws } = workspace('where')
         expect(sssb(path.join(ws, 'apps', 'web'), ['pin']).status).toBe(0)
         write(path.join(ws, WORKFLOW_FILE), WORKFLOW)

@@ -758,12 +758,12 @@ in them (a candidate's prerelease notes also name its commit). The steps say why
    (`.claude/settings.json`, the `sssb` marketplace's `ref`), so a pin left behind runs the old release's checks and commands
    against the new packages. The installed kit records the commit as `commit` in its `dist/release.json`, and the command
    writes it to both, printing each pin it changed with the commit it replaced; run again, it changes nothing. It edits the
-   two files' text and nothing else in them. It refuses, and writes nothing, when there is no commit to read (SSSB's own
+   two files' text and nothing else in them but the version in a workflow comment (`# @sssb/create 0.2.0`, `# v0.2.0`) after the pin. It refuses, and writes nothing, when there is no commit to read (SSSB's own
    repository, where the kit is source, or a kit packed by hand without a stamp) or when a file is not the shape it
    edits: no workflow calls SSSB's reusable workflow, or `.claude/settings.json` is not JSON or declares no marketplace
-   from SSSB's repository. When it refuses, make the two edits by hand, to the commit `sssb doctor` names beside a pin that differs
-   (a release's tag `v<version>` is that commit too, and a release candidate's notes also name it, "cut from"; the pin
-   takes the SHA, never the tag). A workspace with no `.claude/settings.json` has no second pin, and the command raises
+   from SSSB's repository. When it refuses, make the two edits by hand, to the release's commit: the one `sssb doctor` names beside a pin that differs, or, for a kit with no stamp,
+   which doctor cannot compare, the one the release's tag `v<version>` names (a release candidate's notes also name it,
+   "cut from"); the pin takes the SHA, never the tag. A workspace with no `.claude/settings.json` has no second pin, and the command raises
    the first alone. Then each person updates their installed plugin: `claude plugin marketplace update sssb`, then
    `claude plugin update sssb@sssb --scope project`, and restarts Claude Code (the update applies on restart).
 5. **Apply each entry's "To adopt"**, section by section:
