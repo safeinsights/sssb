@@ -4,19 +4,19 @@ Read `docs/adr/` first — fourteen decisions are Accepted and not relitigated i
 the same rulebook in agent-sized form.
 
 SSSB is maintained by SafeInsights, and it is not SafeInsights-specific. The guard is the universality test in
-`docs/development-approach.md` ("What the template ships"): vendor code ships only if essentially every product built on SSSB will use it or it demonstrates a class of
-integration the template does not yet teach, a component only if it encodes a framework invariant, and
+`docs/development-approach.md` ("What SSSB ships"): vendor code ships only if essentially every product built on SSSB will use it or it demonstrates a class of
+integration SSSB does not yet teach, a component only if it encodes a framework invariant, and
 everything else is a recipe.
 
 ## Before you build a capability: it may be a recipe, not a feature
 
-**This template deliberately ships less than it could, and the most expensive contribution here is the
-one that was never going to be accepted.** Read **"What the template ships"** in
+**SSSB deliberately ships less than it could, and the most expensive contribution here is the
+one that was never going to be accepted.** Read **"What SSSB ships"** in
 `docs/development-approach.md` before you write code. It defines the tests, and they are decidable
 before you start:
 
 - **Universality** — will every instance built on this use it?
-- **New class** — does it demonstrate integration mechanics the template does not already teach?
+- **New class** — does it demonstrate integration mechanics SSSB does not already teach?
 - **Framework invariant (UI)** — does the component encode a rule, or is it generic presentation?
 
 Vendor code must pass at least one of the first two; a UI component is judged by the third. Something

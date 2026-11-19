@@ -7,12 +7,12 @@ recipe doctrine (`docs/development-approach.md`), the plan is the deliverable an
 
 ## 1. Why this is a recipe, not shipped code
 
-Run it against the two tests that govern vendor code (`docs/development-approach.md`, "What the
-template ships"):
+Run it against the two tests that govern vendor code (`docs/development-approach.md`, "What
+SSSB ships"):
 
 - **Universality** — will every instance provision per-person cloud workspaces? No. Almost none will;
   it is infrastructure for a product that is itself a development environment.
-- **New-class** — does it teach an integration mechanic the template lacks? No. It is an outbound
+- **New-class** — does it teach an integration mechanic SSSB lacks? No. It is an outbound
   authenticated REST call to a vendor, with a polled long-running operation behind it — the class the
   LLM, email and webhook-dispatch adapters already demonstrate.
 

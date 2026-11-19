@@ -6,7 +6,7 @@ import type { SeedAgreement, SeedJobSchedule, SeedOrg, SeedPerson, SeedTenant } 
  * WHY IT LIVES INSIDE THE APP (and not in a `packages/*-seed` workspace like SSSB's reference
  * app's `@app/seed`): the seed IS app content. The framework never imports it directly — it reads
  * `@sssb/app-config/seed`, which re-exports this file — so its location is entirely the app's choice, and
- * an app-local module is one fewer workspace for an adopter to find, rename and repoint. It also
+ * an app-local module is one fewer workspace package to keep. It also
  * proves `@sssb/kit/seed/contracts` is a real published surface rather than a private arrangement with one
  * package: this world fills the same contracts with no `@app/seed` anywhere in sight.
  *
@@ -15,9 +15,9 @@ import type { SeedAgreement, SeedJobSchedule, SeedOrg, SeedPerson, SeedTenant } 
  * an admin who can invite, a plain member, and a restricted member whose authoring surface is
  * reduced. `preAcceptedByAllInTenant` is unused because this app seeds no agreements.
  *
- * ADOPTING? This content is the template's, and every sign-in picker lists all of it. Replace it with
- * your own world rather than adding yours beside it (SSSB's adoption guide says what else still shows
- * the template's content).
+ * This content came with the generated app, and every sign-in picker lists all of it. Replace it with
+ * your own world rather than adding yours beside it (SSSB's adoption guide says what else the generated
+ * app still shows).
  */
 
 export type {

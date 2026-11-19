@@ -90,3 +90,10 @@ The first is the one a CI leg can prove. Start there unless point 1 turns up a r
 
 A value-scanning "starter residue" check, and a seed-contract flag for people who exist but are not
 offered at sign-in. Both are recorded in `docs/decision-log.md` under 2026-10-02.
+
+## Addendum, 2026-11-18: the adoption review
+
+The review (`docs/adoption-review-2026-11.md`, follow-up 2) ranks this second, and suggests the inverse of a flag: a
+command (`sssb` or the plugin's) that removes the Items slice from an app, tested once against the starter. One
+starter shape stays, the command's test is the gate, and an adopter can run it after generating, when they have read
+what Items teaches.

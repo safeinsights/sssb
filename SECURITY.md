@@ -14,10 +14,10 @@ about it.
 
 ## What is in scope
 
-This template's whole point is that a security-relevant shape is built in rather than bolted on, so
+SSSB's whole point is that a security-relevant shape is built in rather than bolted on, so
 the interesting reports are about that shape being wrong:
 
-- **Tenant isolation.** The template's own tenant-scoped content tables carry `tenant_id` — a
+- **Tenant isolation.** SSSB's own tenant-scoped content tables carry `tenant_id` — a
   convention, not the guarantee; the guarantee is the reachability check described below. Postgres
   row-level
   security enforces it with `ENABLE` + `FORCE ROW LEVEL SECURITY` and both a `USING` and a `WITH CHECK`
@@ -44,13 +44,13 @@ the interesting reports are about that shape being wrong:
     It exists because it was needed: a tenant-scoped table created without its six-line RLS block
     previously passed every gate while permitting cross-tenant reads and writes.
 
-    **A precondition this template cannot check for you.** RLS — including `FORCE` — is bypassed
+    **A precondition SSSB cannot check for you.** RLS — including `FORCE` — is bypassed
     outright by a role holding `SUPERUSER` or `BYPASSRLS`. The `SssbApp` construct (`packages/cdk/src/sssb-app.js`) wires `DATABASE_URL` to the
     database's master credentials, so on that path the application connects as the table owner and
     `FORCE` is what stands between it and every tenant's rows. Confirm the role you deploy with has
     neither attribute — `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user` —
     and see the `db-role-not-superuser` row in `docs/cutover-checklist.md`. A report that RLS is
-    bypassable by a superuser connection is a known non-finding; a report that the template encourages
+    bypassable by a superuser connection is a known non-finding; a report that SSSB encourages
     deploying as one is very much in scope.
 
     **Three framework tables are deliberately exempt**, and a report that they lack RLS is a known
@@ -84,7 +84,7 @@ the interesting reports are about that shape being wrong:
 
 ## The simulated world, and why `/api/simulator/*` is unauthenticated
 
-In simulated mode this template ships a **deliberately unauthenticated** developer surface: you can
+In simulated mode SSSB ships a **deliberately unauthenticated** developer surface: you can
 read any caught email, become any person without a password, jump the world clock, and reset
 everything. That is not an oversight — it is what makes the local development loop work with no
 credentials and no network, and it is documented behaviour.
@@ -117,6 +117,6 @@ that exposure decision to be recorded before any public demo URL ships.
 
 ## For adopters
 
-If you have built on this template, a vulnerability in **your** deployment is yours to handle; this
-policy covers the template. But if the root cause is a shape the template gave you, please report it
+If you have built on SSSB, a vulnerability in **your** deployment is yours to handle; this
+policy covers SSSB. But if the root cause is a shape SSSB gave you, please report it
 here too, because every other adopter has the same shape.

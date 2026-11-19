@@ -6,7 +6,7 @@ argument-hint: <port name, and the vendor>
 Create a new framework port named $ARGUMENTS following the established pattern.
 
 **First decide whose port it is, and ask me if it is not obvious.** It is SSSB's when SSSB's own code calls it, or
-when the vendor passes the universality or new-class test (`docs/development-approach.md`, "What the template
+when the vendor passes the universality or new-class test (`docs/development-approach.md`, "What SSSB
 ships"). It is the APP's when only the app calls it and the vendor fails both tests, as with a CDN key-value store,
 an e-sign provider, or a domain-specific API: that is the plugin's `/sssb:new-port`, which scaffolds it in the app
 (`docs/recipes/app-owned-adapter.md`), not this command.
