@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// SSSB's release logic (ADR-0014 part 10). `.github/workflows/release.yml` and CI's `release-plan` job call
-// it; nothing else should. Every command reads Changesets' own config and planner, so the plan judged here is
+// SSSB's release logic (ADR-0014 part 10). `.github/workflows/release.yml` and CI's `release-plan` and
+// `release-dry-run` jobs call it; nothing else should. Every command reads Changesets' own config and planner, so the plan judged here is
 // the plan `changeset version` applies.
 //
 //   check                         Every PR. Fails on a `major` changeset for a package on 0.x, and on any plan
@@ -214,7 +214,7 @@ async function loadWorkspace(root) {
 
 /**
  * The PR check. Returns the problems (empty when the changesets are acceptable) and the plan it judged: the
- * one Changesets will apply once `private` comes off, which is the only plan that can ever reach npm.
+ * one Changesets will apply as if every package were public, which is the only plan that can ever reach npm.
  */
 export async function check(root) {
     const ws = await loadWorkspace(root)
@@ -902,7 +902,8 @@ export function verifyRelease(root, version) {
             else bumps.push(r.type)
         }
     }
-    if (released.size === 0) problems.push('no fixed-group package is public, so there is nothing to release')
+    if (released.size === 0)
+        problems.push('no fixed-group package is released (none is public, or in pre mode none exists)')
     else {
         try {
             const expected = impliedVersion([...released.values()], bumps, pre !== null)

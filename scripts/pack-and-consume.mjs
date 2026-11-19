@@ -1277,9 +1277,9 @@ function serveTarballs(port, script = SERVE_DIRECTORY, directory = TARBALLS) {
     return stop
 }
 
-// ---- registry recipe: pure helpers ----------------------------------------------------------------
-// Pure, and tested by tests/tooling/pack-and-consume.test.ts, which loads exactly the text between these two markers
-// (this script runs a whole job when imported, so it cannot be imported).
+// ---- registry recipe ------------------------------------------------------------------------------
+// Its pure helpers (registryPackument, generatedSssbSpecs, registryLockProblems) are in ./pack-and-consume/checks.mjs,
+// where tests/tooling/pack-and-consume.test.ts imports them.
 
 /**
  * A minimal npm registry (argv: routes file, port, ready file), run as a child. The routes file is JSON,

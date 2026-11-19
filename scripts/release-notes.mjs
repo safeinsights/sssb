@@ -6,7 +6,7 @@
 //
 //   node scripts/release-notes.mjs [--version <v>] [--since <ref>] [--at <rev>] [--out <file>] [--check]
 //
-//   (no flags)    every changeset in the working tree's `.changeset/`, to stdout
+//   (no flags)    every pending changeset in the working tree's `.changeset/` (out of pre mode, `pre/` too), to stdout
 //   --since <ref> only the changesets ADDED after <ref> (a tag or a commit) that are still there, and, as "Corrections
 //                 to earlier notes", those EDITED since: a release candidate's notes are what is new since the previous
 //                 candidate. Read from git (`--at`, default HEAD), not the working tree

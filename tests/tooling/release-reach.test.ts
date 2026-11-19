@@ -169,7 +169,7 @@ describe('the one way onto npm', () => {
         expect(elsewhere).toEqual([])
     })
 
-    it('rehearses the release on every PR with the same commands, holding nothing that writes', () => {
+    it("rehearses the release on every PR with release.yml's commands, holding nothing that writes", () => {
         const checks = read('checks.yml')
         expect(Object.keys(checks.on).sort()).toEqual(['pull_request', 'push'])
         const job = checks.jobs['release-dry-run']

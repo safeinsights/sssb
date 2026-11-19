@@ -60,7 +60,7 @@ jobs:
 
     # ADR-0014 part 10: on 0.x a breaking change is a `minor`, because Changesets turns a `major` into 1.0.0 and
     # npm versions cannot be withdrawn. Fails on a `major` changeset and on any release plan reaching 1.0.0,
-    # judged as the plan will be once the packages are public, and on changesets or packages that would stall a
+    # judged as the plan Changesets will apply, and on changesets or packages that would stall a
     # release later (scripts/release.mjs, `check`). release.yml runs the same check again before it versions
     # anything.
     release-plan:
@@ -77,18 +77,19 @@ jobs:
             - run: pnpm install --frozen-lockfile --ignore-scripts
             - run: pnpm release:check
 
-    # THE RELEASE, REHEARSED (ADR-0014 P14): what a merge of this commit to `main` would publish, run through the same
-    # commands release.yml runs, in this job's own checkout and with nothing that can write anywhere. `plan`'s
-    # `release.mjs prepare` versions the pending changesets; `push`'s `verify-release`, from a copy of the checker,
-    # judges the staged release, which is then committed and tagged HERE only (the checkout keeps no credentials, so
-    # nothing can be pushed); `pack`'s `publishable` and `pnpm pack` pack each package; `publish`'s `preflight` re-reads
-    # each tarball and asks npm what it already holds; and the pinned npm runs `publish --provenance --dry-run`, which
-    # refuses a prerelease version without a tag and prints what it would publish. The job holds no id-token, no
-    # environment and no npm token, so even a publish without `--dry-run` would be refused by npm: npm's trusted
-    # publisher accepts only release.yml's `publish` job, in the `npm-publish` environment (tests/tooling/
-    # release-reach.test.ts). Packing sets SSSB_CREATE_UNPUSHED_PIN, because the rehearsed release commit exists only in
-    # this job; on a real tag `pack` packs a commit on `main` with the check on. With nothing pending (or only empty
-    # changesets) there is nothing to rehearse, and the job says so.
+    # THE RELEASE, REHEARSED (ADR-0014 P14): what a merge of this commit to `main` would publish, through release.yml's
+    # own commands, in this job's own checkout and with nothing that can write anywhere. `plan`'s `release.mjs prepare`
+    # versions the pending changesets; `push`'s `verify-release`, from a copy of the checker, judges the staged release,
+    # which is then committed and tagged HERE only (the checkout keeps no credentials, so nothing can be pushed);
+    # `pack`'s frozen install, `publishable` and `pnpm pack` pack each package; `publish`'s `preflight` re-reads each
+    # tarball and asks npm what it already holds; and the pinned npm runs `publish --provenance --dry-run`, which prints
+    # what it would publish (and, measured on npm 11.21.2, refuses a prerelease version without `--tag`). Left out: the
+    # CI gate (`wait-for-checks`, which this job is part of) and `pack`'s check that the tag is the commit that set the
+    # version (true by construction here). The job holds no id-token, no environment and no npm token: npm warns that
+    # publishing needs a login even on the dry run, and its trusted publishers name release.yml's `npm-publish`
+    # environment, which no job here is in (tests/tooling/release-reach.test.ts). Packing sets SSSB_CREATE_UNPUSHED_PIN,
+    # because the rehearsed release commit exists only in this job; on a real tag `pack` packs a commit on `main` with
+    # the check on. With nothing pending (or only empty changesets) there is nothing to rehearse, and the job says so.
     release-dry-run:
         runs-on: ubuntu-latest
         timeout-minutes: 30

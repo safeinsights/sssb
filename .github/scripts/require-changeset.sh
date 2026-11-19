@@ -3,8 +3,8 @@
 #
 # A PR that changes what SSSB hands an adopter must add a changeset: a markdown file in .changeset/. A file holding
 # only `---` and `---` is the explicit "no adopter-visible effect" answer. Changesets' own `changeset status` cannot
-# be this gate: every package is `private` until ADR-0014's P14, and status ignores private packages, so it would
-# pass for any change. The gate is path-based.
+# be this gate: until ADR-0014's P14 every package was `private`, which status ignores, and what ships also includes
+# the starter and the plugin, which no package's status sees. The gate is path-based.
 #
 # WHAT SHIPS (adopters take it as a package, or copy it as a scaffold):
 #   - every `@sssb/*` workspace package under packages/ (read from its package.json, so P4's tools, P6's ESLint

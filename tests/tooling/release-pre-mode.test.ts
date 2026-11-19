@@ -292,9 +292,10 @@ describe('leaving pre mode: the first plain release (ADR-0014 P14)', () => {
  * THIS REPOSITORY'S OWN TREE, released on a copy: its manifests and `.changeset/` as committed, through `prepare` (the
  * plan job, with the real Changesets CLI) and `verify-release` (the push job). The version it releases is the one the
  * group's version leads to, which at a candidate (`0.2.0-rc.2`, where P14 found it) is that candidate's own release,
- * `0.2.0`: patch and minor both take a prerelease to its version, and a major (1.0.0) is refused before this. Read with
- * the workflow, which publishes only from a tag the release run on `main` cut, this is why the merge of int-p14 into
- * main can publish 0.2.0 and nothing else.
+ * `0.2.0`: patch and minor both take a prerelease to its version, and a major (1.0.0) is refused before this. Until
+ * 0.2.0's notes file is in the tree, the test also pins the group to `0.2.0-rc.2` and the release to `0.2.0`, so a
+ * hand-edited manifest version fails here. Read with the workflow, which publishes only from a tag the release run on
+ * `main` cut, this is why the merge of int-p14 into main can publish 0.2.0 and nothing else.
  */
 describe("this repository's own tree", () => {
     it('releases the version its group is heading for, and the push job accepts it', async () => {
