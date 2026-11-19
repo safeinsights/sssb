@@ -35,11 +35,12 @@ const INVITE = {
     email: 'invitee@example.test',
     role: 'member' as const,
     orgSlug: 'depot',
-    acceptPageUrl: 'https://app.example.test/en/accept-invite',
+    // As the framework builds it behind SssbApp: on the server's own host, which Clerk must never be given.
+    acceptPageUrl: 'https://localhost:3000/en/accept-invite',
 }
 
 describe('the Clerk adapter, inviting', () => {
-    it("sends the invitee to the app's accept page and returns Clerk's invitation URL as the link", async () => {
+    it("sends the invitee to the app's accept page, as a path, and returns Clerk's invitation URL as the link", async () => {
         const { realAuth } = await import('./auth')
         const invite = await realAuth.createInvite(INVITE)
         expect(h.created).toEqual([
@@ -47,7 +48,7 @@ describe('the Clerk adapter, inviting', () => {
                 organizationId: 'org_depot',
                 emailAddress: 'invitee@example.test',
                 inviterUserId: 'user_inviter',
-                redirectUrl: 'https://app.example.test/en/accept-invite',
+                redirectUrl: '/en/accept-invite',
                 publicMetadata: { role: 'member' },
             }),
         ])

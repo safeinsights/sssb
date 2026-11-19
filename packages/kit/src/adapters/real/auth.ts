@@ -39,6 +39,12 @@ function roleFrom(metadata: unknown, fallback: Role): Role {
     return role && isRole(role) ? role : fallback
 }
 
+/** The accept page as a path (with any query), for Clerk to resolve against the instance's own domain. */
+function acceptPagePath(acceptPageUrl: string): string {
+    const url = new URL(acceptPageUrl)
+    return `${url.pathname}${url.search}`
+}
+
 async function organizationIdForSlug(slug: string): Promise<string> {
     const client = await clerkClient()
     const org = await client.organizations.getOrganization({ slug })
@@ -181,10 +187,14 @@ export const realAuth: AuthPort = {
 
     /**
      * Clerk's organization invitation. `redirectUrl` sends the invitee to the app's accept page, which reads the
-     * `__clerk_ticket` Clerk adds to the URL (./accept-invite-form.tsx); the invitation's own `url` is the link to
-     * mail, which Clerk documents as "The URL that the user can use to accept the invitation" and types as nullable.
-     * Clerk can also deliver the invitation email itself; which of the two an invitee gets is the `auth-dev` cutover
-     * row's to settle.
+     * `__clerk_ticket` and `__clerk_status` Clerk adds to the URL (./accept-invite-form.tsx); the invitation's own
+     * `url` is the link to mail, which Clerk documents as "The URL that the user can use to accept the invitation" and
+     * types as nullable. Clerk can also deliver the invitation email itself; which of the two an invitee gets is the
+     * `auth-dev` cutover row's to settle.
+     *
+     * The page goes to Clerk as a PATH, which Clerk's `redirectUrl` accepts ("The full URL or path"), never as the
+     * absolute URL it arrives as: that is built from the request's URL, whose host behind `SssbApp` is the server's own
+     * (`localhost`), not the app's (.claude/future-tasks/request-url-is-not-the-public-url.md in SSSB's repository).
      */
     async createInvite(invite: InviteInput): Promise<CreatedInvite> {
         const { userId } = await auth()
@@ -197,7 +207,7 @@ export const realAuth: AuthPort = {
             inviterUserId: userId,
             role: 'org:member',
             publicMetadata: { role: invite.role },
-            redirectUrl: invite.acceptPageUrl,
+            redirectUrl: acceptPagePath(invite.acceptPageUrl),
         })
         return {
             id: created.id,

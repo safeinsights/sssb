@@ -6844,6 +6844,14 @@ JP asked for the fix. Decisions, with the rejected alternative:
 - **The link never goes back to the inviter**: `sendOrgInvite` strips it from what it returns, because the route answers
   the inviter with it and the link is the invitee's credential.
 - **A port change, filed `minor`**: an app that calls `createInvite` itself must pass `acceptPageUrl`.
-- **Not built: an existing user's invitation.** Clerk sends `__clerk_status=sign_in` for one, which needs
-  `signIn.ticket()`; the accept form does sign-up only. Written into the `auth-dev` row and the form's header rather than
-  built blind against an instance nobody has run.
+- **Clerk gets the accept page as a path**, which its `redirectUrl` accepts ("The full URL or path"): the absolute URL
+  is built from the request's URL, which names the server's own `localhost` behind `SssbApp`
+  (`.claude/future-tasks/request-url-is-not-the-public-url.md`). Rejected: the absolute URL, which review showed would
+  send every invitee, Clerk's own mail included, to `localhost`; and building a public origin from the forwarded
+  headers here, which is that future task's whole job.
+- **An existing user's invitation is handled**: setting `redirectUrl` sends every invitee to the accept form, and Clerk
+  marks one who already has an account `__clerk_status=sign_in`, which takes `signIn.ticket()` (Clerk's guide to
+  accepting organization invitations). The form takes the status as an optional prop. Rejected: leaving it for later,
+  which this change would have made a regression, since without `redirectUrl` Clerk's own flow handled it.
+- **Two invitation mails stay possible**: Clerk can deliver its own, and no API call turns that off per invitation, so
+  the `auth-dev` row asks for the instance to be set so an invitee gets one.
