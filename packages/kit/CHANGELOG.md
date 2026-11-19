@@ -1,5 +1,238 @@
 # @sssb/kit
 
+## 0.3.0
+
+### Minor Changes
+
+- 69ffb93: ### Job handlers get the auth port, and the digest addresses real members
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** A job handler's context (`JobHandler`'s second argument, `@sssb/kit/ports/jobs`) now carries `auth`,
+    the auth port, for handlers that address people, and an optional `resolveLocale`, a person's own locale where the runner knows it (in a simulated world). The framework's `digest-email` handler uses it: it sends a team's
+    digest to the team's first active admin (else its first active member) as `auth.listMembers` lists them, which in a
+    deployment is the identity provider, instead of a person from the seed. In a deployment, a team with no active
+    member gets no digest; in a simulated world the digest now also reaches accepted invitees and writes in the recipient's current profile locale, and a team with no one to address still gets the synthetic `<org>@digest.example` address. No job handler reads the seed any more, and none may.
+
+    **To adopt.** Where your own code calls a job handler directly (a unit test, say), pass `auth` in its context beside
+    `llm`: an auth port, or a stand-in typed as one. A handler of yours that addresses people asks
+    `ctx.auth.listMembers(orgSlug)`, never `@sssb/app-config/seed`, which a deployment does not have.
+
+    **Now deletable.** A recipient list or address map a handler kept so that it would not read seed people in a
+    deployment.
+
+- 474eec5: ### Real-mode sign-in: `withAuthProxy` runs Clerk's middleware around your proxy
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** SSSB's Clerk auth adapter calls Clerk's `auth()`, which refuses any request Clerk's middleware did
+    not see, and SSSB never ran that middleware, so in real mode every sign-in failed. The new published subpath
+    `@sssb/kit/adapters/proxy` exports `withAuthProxy(proxy)`: in real mode it runs your proxy inside Clerk's
+    `clerkMiddleware`, loading it with `import()` on the first request; in simulated mode it runs your proxy as it is and
+    loads no Clerk code, so `pnpm dev` stays hermetic. It protects no route: each route's `authorize()` still does.
+
+    **To adopt.** In `src/proxy.ts`, wrap your proxy and send it every API route as well as your pages. Your proxy still
+    decides what each path gets; let an API route through untouched:
+
+    ```ts
+    import createMiddleware from 'next-intl/middleware'
+    import { NextResponse } from 'next/server'
+    import { withAuthProxy } from '@sssb/kit/adapters/proxy'
+    import { routing } from '@sssb/kit/i18n/routing'
+
+    const locales = createMiddleware(routing)
+
+    export default withAuthProxy((request) =>
+        request.nextUrl.pathname.startsWith('/api') ? NextResponse.next() : locales(request),
+    )
+
+    export const config = {
+        matcher: ['/((?!api|_next|_vercel|.*\\..*).*)', '/api/:path*'],
+    }
+    ```
+
+    A proxy that already runs on every path (`matcher: '/:path*'`) keeps its matcher. Clerk's middleware reads the keys the
+    auth adapter needs (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`). In a deployment, also set `CLERK_JWT_KEY`
+    to your Clerk instance's JWT public key (PEM, `\n` escapes accepted): Clerk does not read it itself, so the kit passes
+    it on, and Clerk then checks each session without a call to Clerk's API. A value that is not a 2048-bit RSA public key
+    stops the proxy at its first request. Clerk is never shown a request's `Authorization` header (users sign in by Clerk's
+    session cookie), and your proxy and routes still receive it.
+
+    **Now deletable.** A wrapper of your own that runs your proxy inside `clerkMiddleware` in real mode: an adapter that
+    imports `@clerk/nextjs/server` for the proxy, the run-mode check and `import()` in `src/proxy.ts` that load it, and a
+    test that mocks the run mode to reach it.
+
+- e214c18: ### Machine callers send their credential in its own header, which CloudFront passes through
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** `withWebhookSecret` (`@sssb/kit/service-auth/webhook`) reads the shared secret from
+    `x-sssb-webhook-secret`, and `verifyServiceCaller` (`@sssb/kit/service-auth/verify`) reads a service token from
+    `x-sssb-service-token`, each exported as a constant (`WEBHOOK_SECRET_HEADER`, `SERVICE_TOKEN_HEADER`). The header wins
+    when present; `Authorization: Bearer …` is still accepted when it is absent. The reason: `SssbApp`'s CloudFront signs
+    every request it passes to the server's Function URL, and its signature replaces the `Authorization` header, so a
+    credential sent there through the public host never reached the route and every such call answered 401. `pnpm tick`
+    and `SssbApp`'s scheduled tick send the new header.
+
+    **To adopt.** Every caller of your webhook and service routes that goes through your deployment's public host (a
+    scheduler, a build's completion callback, a service) sends `x-sssb-webhook-secret: <secret>` or
+    `x-sssb-service-token: <jwt>` instead of `Authorization: Bearer …`. A caller that reaches the server another way may
+    keep `Authorization`, but the header works everywhere.
+
+    **Now deletable.** A workaround that delivered a webhook secret or service token around CloudFront because
+    `Authorization` never arrived.
+
+- fca2628: ### Real mode requires only the optional ports your app uses
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** Each of SSSB's optional ports has a switch the server reads at boot: `LLM_PROVIDER` (`anthropic`
+    or `none`), `EMAIL_PROVIDER` (`mailgun` or `none`), `INBOUND_EMAIL_PROVIDER` (`mailgun` or `none`) and `JOBS_RUNNER`
+    (`codebuild`, `in-process` or `none`). A port switched to `none` is absent: real mode no longer requires its settings
+    (`ANTHROPIC_API_KEY`; `MAILGUN_DOMAIN`, `MAILGUN_API_KEY`, `EMAIL_FROM`; `MAILGUN_WEBHOOK_SIGNING_KEY`;
+    `JOBS_CODEBUILD_PROJECT`), never loads its SDK, and a call through it throws an error naming the switch. An unset
+    switch is its first value, so a deployment that sets none requires exactly what it did. `SssbApp` sets the switches
+    from a new, optional `params.ports` (`llm`, `email`, `inboundEmail`, `jobs`), and refuses a port or a value it does not
+    know. `required-env.json` now also lists what each choice requires.
+
+    **To adopt.** Add `ports` to `apps/<app>/config/params.ts`, beside `database`, with `none` for each port your app
+    does not use, e.g. `ports: { llm: 'none', email: 'none', inboundEmail: 'none', jobs: 'in-process' }`; `SssbApp`
+    already receives `params`. A deployment that does not use `SssbApp` sets the variables itself. Then delete the
+    placeholder values you set for the ports you switched off.
+
+    **Now deletable.** Placeholder values (`unused`, `unused-by-<app>`) set for `ANTHROPIC_API_KEY`, the Mailgun
+    variables, `EMAIL_FROM` or `JOBS_CODEBUILD_PROJECT` only so that real mode would start.
+
+- fca2628: ### Jobs and scheduled work without CodeBuild: the in-process runner and `SssbApp`'s scheduled tick
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** `JOBS_RUNNER=in-process` (`params.ports.jobs: 'in-process'`) runs each job's registered handler in
+    the server, from the request or the scheduled tick that started it, records its terminal status and, for one of the app's own job kinds,
+    notifies its org's admins before that call returns: no CodeBuild project and no jobs webhook route. A job shares that invocation's time limit (30
+    seconds on `SssbApp`); longer work stays on `codebuild`. `SssbApp` takes a new option, `scheduledTick: { webhookSecret,
+every? }`: an EventBridge rule (every five minutes unless `every` says otherwise) runs a function that reads that
+    secret and invokes the server directly with a POST of `/api/webhooks/cron`, the route behind `withWebhookSecret` that
+    `pnpm tick` calls in development. It goes through neither CloudFront nor the Function URL. Without the option nothing
+    changes in your stack.
+
+    **To adopt.** To run jobs without CodeBuild, set `jobs: 'in-process'` in `params.ports`. To run your scheduled work,
+    pass the secret your server's `WEBHOOK_SECRET` holds (a plain string secret):
+
+    ```ts
+    new SssbApp(stack, 'Default', { ...props, scheduledTick: { webhookSecret } })
+    ```
+
+    The construct grants its function read on that secret and invoke on the server; getting the value into the server's
+    `WEBHOOK_SECRET` stays yours. Close the `scheduled-tick` cutover row with its proof after the first deploy.
+
+    **Now deletable.** A ticker of your own (an EventBridge rule and a Lambda that POSTs a route of yours with the webhook
+    secret) whose route only does what a registered job kind and a `job_schedules` row would; and a route of your own that
+    runs scheduled work in the server because SSSB's real jobs port started every job as a CodeBuild build.
+
+- c650c05: ### The Simulator's People, Mail and Jobs tabs on an app's own `pnpm dev`
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** Two new published subpaths serve the Simulator panel from an app's own server. `@sssb/kit/server-lib/simulator-api` exports `simulatorApi(request, context)`, one handler for every `/api/simulator/*` call, simulated mode only (404 in a real build), with People (`summary`, `viewpoint`), Mail (`mail`, `mail/clear`, `mail/seen`) and Jobs with the world clock (`jobs`, `jobs/run-pending`, `schedules`, `clock`, `schedules/run-due`); any other path is a 404, every POST must send `content-type: application/json` (415 otherwise), a known path with the wrong method is 405, `viewpoint` answers only a path on this origin, and `mail/seen` only someone in the world. `@sssb/kit/components/simulator/simulator-host` exports `SimulatorHost`, the panel client that calls it. `SimulatorPanel` now shows a tab only when its host passes that tab's props (People always), so a host that wires every tab sees no change.
+
+    **To adopt.** Mount the handler with one route file, `src/app/api/simulator/[...path]/route.ts`, whose `GET` and `POST` each open with the simulated-mode 404 and import the handler only after it, so the authorization scan's `simulator/` exemption holds:
+
+    ```ts
+    import { isSimulated } from '@sssb/kit/adapters/index'
+    import type { SimulatorRouteContext } from '@sssb/kit/server-lib/simulator-api'
+
+    export async function GET(request: Request, context: SimulatorRouteContext): Promise<Response> {
+        if (!isSimulated) return new Response(null, { status: 404 })
+        const { simulatorApi } = await import('@sssb/kit/server-lib/simulator-api')
+        return simulatorApi(request, context)
+    }
+    // POST: the same body.
+    ```
+
+    Then render the panel around the page from `src/app/[locale]/layout.tsx`, in simulated mode only and through a dynamic import, as SSSB's starter does: `const { SimulatorHost } = await import('@sssb/kit/components/simulator/simulator-host')`, then `<SimulatorHost locale={locale}>{children}</SimulatorHost>`. An app with Simulator glue of its own (route files under `src/app/api/simulator/` and a client glue) can keep it: a route file of its own still wins for its path. Snapshots, presets, tours, the other subsystem tabs, the dev ticker and app-registered tabs are not served yet; keep your glue while you use them.
+
+    **Now deletable.** Hand-written `src/app/api/simulator/{summary,viewpoint,mail,mail/clear,mail/seen,jobs,jobs/run-pending,schedules,clock,schedules/run-due}/route.ts` wrappers over the fake adapters, once a client glue no longer calls anything else under `/api/simulator/`.
+
+### Patch Changes
+
+- b28bc3b: ### SSSB's adoption guide is short, with a reference beside it
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** SSSB's `docs/adopting.md` is now a short guide in the order you act: generate, first boot, take out
+    the starter's content, a first entity, deploy and cut over, upgrade by release. Everything else it held is in
+    `docs/adopting-reference.md`. `sssb remove-items`, when it refuses, now points at the reference's "To remove the Items
+    slice" for the steps by hand. A new workspace's `README.md` links both, the guide's "Upgrading by release" for
+    the steps and the reference's "Upgrading, step by step" for why each is there.
+
+- 667eae6: ### An app with no extra subject fields no longer silences a lint rule
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** `AbilitySubject` in `@sssb/kit/core/abilities` is now an intersection, `AppSubjectFields & { type; orgId?; ownerId? }`, instead of an interface that extends `AppSubjectFields`. The seam's `AppSubjectFields` may therefore be an interface, a type alias or a mapped type. An app with no fields used to declare an empty interface and suppress `@typescript-eslint/no-empty-object-type`, the one place the "empty registration is the off switch" rule was not true; `apps/starter` now writes `export type AppSubjectFields = Record<never, never>`. An app that declares an interface keeps working unchanged, and so does every caller of `AbilitySubject`.
+
+    **To adopt.** Nothing breaks if you do nothing. If your `src/app-config/abilities.ts` carries an empty `interface AppSubjectFields {}` under an `eslint-disable-next-line @typescript-eslint/no-empty-object-type`, replace both with `export type AppSubjectFields = Record<never, never>`. Only code that wrote `interface X extends AbilitySubject` is affected, and it needs `type X = AbilitySubject & { … }` instead.
+
+    **Now deletable.** An `eslint-disable-next-line @typescript-eslint/no-empty-object-type` above an empty `AppSubjectFields` interface.
+
+- 3dc7b50: ### A generated app's port slot is its own, so it never says `starter`
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** `pnpm create @sssb` now gives the app a port slot named for its slug, at port 3700:
+    `"sssb": { "port": { "name": "<slug>", "default": 3700 } }`, or `sssb-app` for a slug a slot cannot be named for. Its
+    override is `<SLUG>_PORT`. The app's `dev` and `tick` scripts (`sssb dev-tick`, `sssb tick`) and its
+    `playwright.config.ts` (`originForApp(__dirname)`) name no slot and read the declaration. Before, the app declared
+    SSSB's built-in `starter` slot (port 3100, `STARTER_PORT`) and named it in all three. The app guide's example now shows
+    a slot of the app's own. The generated README, `CLAUDE.md` and CI workflow name `pnpm exec sssb pin` where they say to
+    raise SSSB's pins. In `@sssb/tools`, `sssb tick`'s usage and `sssb port`'s refusal of an app with no declaration
+    lead with the app's own slot rather than SSSB's built-in ones.
+
+    **To adopt.** Nothing is required: `"sssb": { "port": "starter" }` keeps working, on the same port. To give your app a
+    slot of its own, as a new workspace's has:
+
+    ```json
+    "sssb": { "port": { "name": "<your app>", "default": 3700 } }
+    ```
+
+    in the app's `package.json` (any port from 1024 to 49151 outside SSSB's own: 3000, 3100, 3200-3599, 5439-5639,
+    20000-29999, 61000-61199). Then, in its scripts, `sssb dev-tick starter -- …` becomes `sssb dev-tick -- …` and
+    `sssb tick starter` becomes `sssb tick`; in `playwright.config.ts`, `originFor('starter')` becomes
+    `originForApp(__dirname)`, imported from `@sssb/tools/ports`. The app's local port then moves to the default you chose,
+    and its override from `STARTER_PORT` to `<YOUR_APP>_PORT`. A second app in the workspace must not take the same port.
+    Refresh the app guide's copy as after any upgrade (`pnpm exec sssb guide`).
+
+    **Now deletable.** A `starter` in an app's scripts and Playwright config, once the app declares a slot of its own.
+
+- 69ffb93: ### A deployment loads `pg` and PostHog only when it uses them
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** The real ports load the `pg` driver only for the `pg` transport (`DATABASE_TRANSPORT=pg`, the default) and PostHog only when
+    `POSTHOG_KEY` is set, as the Data API transport and the optional ports already did; a Data API deployment no longer
+    loads `pg`. Nothing to set or change.
+
 ## 0.2.0
 
 ### Minor Changes

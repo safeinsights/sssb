@@ -1,5 +1,189 @@
 # @sssb/tools
 
+## 0.3.0
+
+### Minor Changes
+
+- e214c18: ### Machine callers send their credential in its own header, which CloudFront passes through
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** `withWebhookSecret` (`@sssb/kit/service-auth/webhook`) reads the shared secret from
+    `x-sssb-webhook-secret`, and `verifyServiceCaller` (`@sssb/kit/service-auth/verify`) reads a service token from
+    `x-sssb-service-token`, each exported as a constant (`WEBHOOK_SECRET_HEADER`, `SERVICE_TOKEN_HEADER`). The header wins
+    when present; `Authorization: Bearer …` is still accepted when it is absent. The reason: `SssbApp`'s CloudFront signs
+    every request it passes to the server's Function URL, and its signature replaces the `Authorization` header, so a
+    credential sent there through the public host never reached the route and every such call answered 401. `pnpm tick`
+    and `SssbApp`'s scheduled tick send the new header.
+
+    **To adopt.** Every caller of your webhook and service routes that goes through your deployment's public host (a
+    scheduler, a build's completion callback, a service) sends `x-sssb-webhook-secret: <secret>` or
+    `x-sssb-service-token: <jwt>` instead of `Authorization: Bearer …`. A caller that reaches the server another way may
+    keep `Authorization`, but the header works everywhere.
+
+    **Now deletable.** A workaround that delivered a webhook secret or service token around CloudFront because
+    `Authorization` never arrived.
+
+### Patch Changes
+
+- b28bc3b: ### SSSB's adoption guide is short, with a reference beside it
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** SSSB's `docs/adopting.md` is now a short guide in the order you act: generate, first boot, take out
+    the starter's content, a first entity, deploy and cut over, upgrade by release. Everything else it held is in
+    `docs/adopting-reference.md`. `sssb remove-items`, when it refuses, now points at the reference's "To remove the Items
+    slice" for the steps by hand. A new workspace's `README.md` links both, the guide's "Upgrading by release" for
+    the steps and the reference's "Upgrading, step by step" for why each is there.
+
+- 641ddba: ### `sssb doctor` reports your own GitHub settings and plugin install
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `sssb doctor` now also reports, without ever failing or changing anything, the settings only you can
+    make. When `gh` is signed in: whether `sssb / all-checks` is a required check on your repository's default branch (a
+    ruleset or branch protection), whether private vulnerability reporting is on, and, for a private repository in an
+    organization, whether its Actions policy lets it call SSSB's reusable workflow. Locally: whether the Claude Code plugin
+    your `.claude/settings.json` enables is installed (`claude plugin install <plugin> --scope project`). It makes
+    read-only GitHub requests through `gh`; a `gh` that is missing, signed out or offline, or a setting your account may not
+    read, gives "not checked" and the reason. None of it runs when `CI` is set.
+
+    **To adopt.** Nothing to do. After you upgrade, a local `pnpm exec sssb doctor` prints up to four more lines (`github:`
+    and `claude plugin:`), each `ok`, or `report` with what to change: the report never changes the exit code. Run
+    `gh auth login` first if you want the GitHub lines; in CI doctor prints one line saying it skipped them.
+
+- 3dc7b50: ### A generated app's port slot is its own, so it never says `starter`
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** `pnpm create @sssb` now gives the app a port slot named for its slug, at port 3700:
+    `"sssb": { "port": { "name": "<slug>", "default": 3700 } }`, or `sssb-app` for a slug a slot cannot be named for. Its
+    override is `<SLUG>_PORT`. The app's `dev` and `tick` scripts (`sssb dev-tick`, `sssb tick`) and its
+    `playwright.config.ts` (`originForApp(__dirname)`) name no slot and read the declaration. Before, the app declared
+    SSSB's built-in `starter` slot (port 3100, `STARTER_PORT`) and named it in all three. The app guide's example now shows
+    a slot of the app's own. The generated README, `CLAUDE.md` and CI workflow name `pnpm exec sssb pin` where they say to
+    raise SSSB's pins. In `@sssb/tools`, `sssb tick`'s usage and `sssb port`'s refusal of an app with no declaration
+    lead with the app's own slot rather than SSSB's built-in ones.
+
+    **To adopt.** Nothing is required: `"sssb": { "port": "starter" }` keeps working, on the same port. To give your app a
+    slot of its own, as a new workspace's has:
+
+    ```json
+    "sssb": { "port": { "name": "<your app>", "default": 3700 } }
+    ```
+
+    in the app's `package.json` (any port from 1024 to 49151 outside SSSB's own: 3000, 3100, 3200-3599, 5439-5639,
+    20000-29999, 61000-61199). Then, in its scripts, `sssb dev-tick starter -- …` becomes `sssb dev-tick -- …` and
+    `sssb tick starter` becomes `sssb tick`; in `playwright.config.ts`, `originFor('starter')` becomes
+    `originForApp(__dirname)`, imported from `@sssb/tools/ports`. The app's local port then moves to the default you chose,
+    and its override from `STARTER_PORT` to `<YOUR_APP>_PORT`. A second app in the workspace must not take the same port.
+    Refresh the app guide's copy as after any upgrade (`pnpm exec sssb guide`).
+
+    **Now deletable.** A `starter` in an app's scripts and Playwright config, once the app declares a slot of its own.
+
+- b6a652f: ### The root's Vitest configs read `sssb.apps`, and `sssb doctor` reports a knip config gap
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** `@sssb/tools/vitest` exports `workspaceAppProjects({ root, options? })`: an `appTestProject` for each
+    app the root package.json's `sssb.apps` names (else every `apps/<name>`), in that order, with `options(appDir)` passed
+    to each. The two Vitest configs `@sssb/create` writes call it instead of keeping an `APPS` list, so `sssb.apps` is the
+    one list of a workspace's apps. `sssb doctor` reports (never fails) an app, or an app's seam package, that the root's
+    knip config (`knip.json`, `knip.jsonc`, `.knip.json` or `.knip.jsonc`) gives no workspace of its own, and a root
+    `@sssb/create` that knip would call unused.
+
+    **To adopt.** Optional: a workspace that keeps its `APPS` lists keeps working, and `sssb doctor` still fails a config
+    that stops running an app's conformance suite. To read `sssb.apps` instead, in `vitest.config.ts`:
+
+    ```ts
+    import { workspaceAppProjects } from '@sssb/tools/vitest'
+
+    // in place of: projects: await Promise.all(APPS.map((app) => appTestProject({ appDir: at(`./apps/${app}`) })))
+    projects: await workspaceAppProjects({ root: at('.') }),
+    ```
+
+    and in `vitest.contract.config.ts`, the same projects narrowed to the contract tests:
+
+    ```ts
+    projects: (await workspaceAppProjects({ root: at('.') })).map((project) => ({
+        ...project,
+        test: { ...project.test, environment: 'node', include: ['tests/contract/**/*.test.ts'] },
+    })),
+    ```
+
+    then delete the `APPS` constant from both. Options an app's project took (`env`, `alias`, `testTimeout`) go in
+    `options: (appDir) => ({ … })`.
+
+    **Now deletable.** An `APPS` list in a root Vitest config that repeats the apps `sssb.apps` already names.
+
+- b6a652f: ### `sssb add-app <slug>` writes a second app into your workspace
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `pnpm exec sssb add-app <slug>` writes a new app under `apps/<slug>/` from SSSB's starter, renamed as
+    `pnpm create @sssb` renames your first app (its slug, session cookie, package names, seam package and display name,
+    `--name "<Name>"`), taking each `@sssb` package as your first app takes it, on a port slot of its own (named for the
+    slug, its default the first free one from 3700 up; `--slot <name>` and `--port <port>` choose them), with scripts and a
+    Playwright config that read that slot, and names it in the root's `sssb.apps`. It prints what is left to you: the
+    root's `dev`, `tick` and `start` scripts and the CI workflow's `synth`, which name one app on purpose. The starter comes
+    from the `@sssb/create` installed at the workspace root, which exports the code as `@sssb/create/add-app`; no SSSB
+    package depends on another, so the command says how to install it when it is missing.
+
+    **To adopt.** Nothing to do. For a second app: `pnpm add -D -w @sssb/create@<your @sssb version>`, then
+    `pnpm exec sssb add-app <slug>`, `pnpm install` and `pnpm exec sssb doctor`, which names anything the workspace still
+    needs (a Vitest config that keeps its own list of apps, the new app's `knip.json` entries, a root `@sssb/create` knip
+    would call unused: remove it once your apps are written). `pnpm jscpd` fails while the new app is still the starter;
+    make the apps your own, or ignore `apps/<slug>/src/**` in `.jscpd.json` until you have.
+
+- 1780691: ### `sssb pin` raises both of your pins to the release commit
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** A new command, `pnpm exec sssb pin`, reads the release commit the installed `@sssb/kit` records
+    (`dist/release.json`) and writes it into your two pins on SSSB's repository: the reusable workflow's `uses:` line in
+    `.github/workflows/*.yml` and the `ref` of the plugin marketplace in `.claude/settings.json`. It prints each pin it
+    changed and the commit it replaced, changes nothing in a pin that is already current, and edits only that text, so the
+    formatting of both files is kept; a version in the `uses:` line's comment (`# @sssb/create 0.2.0`, `# v0.2.0`) moves
+    with it, and a comment of your own stays. It refuses, writing nothing, when there is no commit to read (SSSB's own
+    repository, or a kit packed by hand) or a file is not the shape it edits: no workflow calls SSSB's reusable workflow,
+    or `.claude/settings.json` is not JSON or declares no marketplace from SSSB's repository. A workspace with no
+    `.claude/settings.json` has the workflow pin raised alone. "Upgrading to this release" in the notes and `sssb doctor`'s
+    report of a pin that differs now name it.
+
+    **To adopt.** Nothing is required. At your next upgrade, after you install the new packages, run `pnpm exec sssb pin` in place of
+    editing the `uses:` line and the marketplace's `ref` by hand, read the diff of the two files, and commit it with the
+    package versions. Each person then runs `claude plugin marketplace update sssb` and
+    `claude plugin update sssb@sssb --scope project`, as before.
+
+    **Now deletable.** Nothing in your code. The two hand edits the release notes asked of you on every upgrade, and any
+    script of your own that copies the release commit into those two files.
+
+- 9940da2: ### `sssb remove-items` takes the starter's Items slice out in one step
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** The first thing every adopter does is take out the starter's example Items slice by hand, over about fifteen files. `pnpm exec sssb remove-items` does it: the card, the route, the query, the ability, the `items` catalog namespace, the dashboard's glue and the static demo's card, the specs that name it, and the paging proofs; the Simulator's e2e spec stays, so the app still has one for `sssb check-e2e`. The migrations are the one thing it will not guess at. A database records each migration it runs, and the migrator refuses to start when a recorded one is gone from the code, so without `--drop-migrations` the command leaves `1001_items`, `1002_items_keyset_index`, `ItemsTable` and the `items` RLS proofs registered; with it, they go too, and the app is left with `AppSubjectType = never`, an empty `appMigrations`, an empty proofs body and `AppTables = Record<never, never>`. `--dry-run` lists what it would do. It computes every edit first and refuses, naming each file and changing nothing, when one is not what the starter wrote. The starter's proxy test now uses `/projects` for its sample paths, so nothing is left to name Items. The generated README now points at it, and `@sssb/tools` ships the two diffs it applies (`src/remove-items/*.patch`).
+
+    **To adopt.** Nothing, if your app already removed Items. In a workspace you have just generated, run `pnpm exec sssb remove-items --dry-run --drop-migrations`, then without `--dry-run`, delete `apps/<app>/.data`, and number your first table `1001_<name>`. Where a database has already run the migrations, run it without `--drop-migrations`. An app that edited the Items files or has its own migrations after `1002` is refused by design: finish by hand from SSSB's `docs/adopting-reference.md`, "To remove the Items slice".
+
+    **Now deletable.** A hand sweep over the Items slice's files.
+
 ## 0.2.0
 
 ### Minor Changes
