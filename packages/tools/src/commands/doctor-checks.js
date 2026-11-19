@@ -1097,11 +1097,14 @@ const KNIP_JSON = ['knip.json', 'knip.jsonc', '.knip.json', '.knip.jsonc']
  * entry of its own (their entry files, and the dependencies SSSB's tools load from the app), so an app it does not name
  * is read with knip's defaults, which flag the seam's modules (the framework reads them from node_modules, which knip
  * does not follow) and the presets' dependencies as unused. Reported, never failed: knip's own run is the gate.
- * Returns null when the root has no knip JSON config, or one with no `workspaces` (one config for every package).
+ * It also says when the root installs `@sssb/create` (as `sssb add-app` asks) and knip's root config does not ignore it:
+ * nothing imports it (the command loads it from node_modules), so knip calls it an unused dependency.
+ * Returns null when the root has no knip JSON config; `missing` is null when it has no `workspaces` (one config for
+ * every package).
  * @param {string} root
  * @param {readonly string[]} apps absolute
  * @param {readonly string[]} packages the workspace's packages, absolute (workspacePackages)
- * @returns {{ file: string, missing: string[] } | { file: string, unread: string } | null}
+ * @returns {{ file: string, missing: string[] | null, generator: boolean } | { file: string, unread: string } | null}
  */
 export function knipGaps(root, apps, packages) {
     const file = KNIP_JSON.find((name) => existsSync(path.join(root, name)))
@@ -1114,7 +1117,18 @@ export function knipGaps(root, apps, packages) {
         return { file, unread: error instanceof Error ? error.message : String(error) }
     }
     const workspaces = config?.workspaces
-    if (workspaces === null || typeof workspaces !== 'object') return null
+    const hasWorkspaces = workspaces !== null && typeof workspaces === 'object'
+    const rootConfig = hasWorkspaces ? workspaces['.'] : config
+    const ignored = /** @type {unknown[]} */ (
+        [config?.ignoreDependencies, rootConfig?.ignoreDependencies].flatMap((list) =>
+            Array.isArray(list) ? list : [],
+        )
+    )
+    const manifestFile = path.join(root, 'package.json')
+    const rootManifest = existsSync(manifestFile) ? readJson(manifestFile) : {}
+    const installs = ['dependencies', 'devDependencies'].some((field) => rootManifest?.[field]?.['@sssb/create'])
+    const generator = Boolean(installs) && !ignored.includes('@sssb/create')
+    if (!hasWorkspaces) return { file, missing: null, generator }
     const keys = Object.keys(workspaces)
     const named = (/** @type {string} */ rel) =>
         keys.some((key) => key === rel || path.posix.matchesGlob(rel, key.replace(/\/+$/, '')))
@@ -1129,7 +1143,7 @@ export function knipGaps(root, apps, packages) {
         const seamRel = path.relative(root, seam).split(path.sep).join('/')
         if (packages.includes(seam) && !named(seamRel)) missing.push(seamRel)
     }
-    return { file, missing }
+    return { file, missing, generator }
 }
 
 /** A full commit SHA, the only pin that cannot move. */

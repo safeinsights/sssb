@@ -20,4 +20,6 @@ package depends on another, so the command says how to install it when it is mis
 
 **To adopt.** Nothing to do. For a second app: `pnpm add -D -w @sssb/create@<your @sssb version>`, then
 `pnpm exec sssb add-app <slug>`, `pnpm install` and `pnpm exec sssb doctor`, which names anything the workspace still
-needs (a Vitest config that keeps its own list of apps, the new app's `knip.json` entries).
+needs (a Vitest config that keeps its own list of apps, the new app's `knip.json` entries, a root `@sssb/create` knip
+would call unused: remove it once your apps are written). `pnpm jscpd` fails while the new app is still the starter;
+make the apps your own, or ignore `apps/<slug>/src/**` in `.jscpd.json` until you have.

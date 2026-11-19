@@ -972,20 +972,33 @@ function knip(root, apps, packages) {
     if (gaps === null) return []
     if ('unread' in gaps)
         return [{ status: 'report', title: `knip: not checked: ${gaps.file} does not parse as JSON (${gaps.unread})` }]
-    if (gaps.missing.length === 0)
-        return [
-            { status: 'ok', title: `knip: ${gaps.file} gives every app, and every app's seam package, a workspace` },
-        ]
-    return [
-        {
+    /** @type {Result[]} */
+    const results = []
+    if (gaps.missing === null) {
+        // One config for every package: nothing per app to look for.
+    } else if (gaps.missing.length === 0)
+        results.push({
+            status: 'ok',
+            title: `knip: ${gaps.file} gives every app, and every app's seam package, a workspace`,
+        })
+    else
+        results.push({
             status: 'report',
             title:
                 `knip: ${gaps.file} gives ${gaps.missing.length} of the apps' packages no workspace, so knip reads them ` +
                 "with its defaults and calls the seam's modules and the presets' dependencies unused: add an entry for " +
                 "each, like the first app's",
             lines: gaps.missing,
-        },
-    ]
+        })
+    if (gaps.generator)
+        results.push({
+            status: 'report',
+            title:
+                `knip: the root installs @sssb/create, which nothing imports (\`sssb add-app\` loads it from ` +
+                `node_modules), so knip calls it unused: \`pnpm remove -w @sssb/create\` once your apps are written, or ` +
+                `add it to the root's ignoreDependencies in ${gaps.file}`,
+        })
+    return results
 }
 
 /**

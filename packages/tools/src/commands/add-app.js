@@ -125,6 +125,7 @@ export function newPortSlot({ root, apps, slug, slot, port }) {
         }
     }
     if (port !== undefined) {
+        if (!/^\d+$/.test(port)) throw new UsageError(`sssb add-app: --port ${port} is not a port number`)
         const value = Number(port)
         const result = check(value)
         if (result instanceof UsageError) throw result
@@ -202,6 +203,24 @@ export function leftToDo(root, { slug, appDir, like }) {
             }
         }
     }
+    // jscpd measures duplication across every app's src/ together, and the new app is the starter: as long as another
+    // app still holds the starter's code, the copy fails its threshold. That is jscpd being right, so it is said, not
+    // silenced.
+    const jscpd = path.join(root, '.jscpd.json')
+    if (existsSync(jscpd) && /apps\/\*/.test(readFileSync(jscpd, 'utf8'))) {
+        left.push(
+            `\`pnpm jscpd\` fails while ${rel(appDir)} is the starter and ${rel(like) || 'your first app'} still holds ` +
+                `starter code: make the two apps your own, or, while you do, add "${rel(appDir)}/src/**" to .jscpd.json's ` +
+                '`ignore` and take it out again once the app is its own',
+        )
+    }
+    const manifest = readJson(path.join(root, 'package.json'))
+    if (manifest.devDependencies?.['@sssb/create'] ?? manifest.dependencies?.['@sssb/create']) {
+        left.push(
+            '`pnpm knip` calls @sssb/create unused (nothing imports it): `pnpm remove -w @sssb/create` once your apps ' +
+                "are written, or add it to knip.json's root ignoreDependencies to keep it",
+        )
+    }
     return left
 }
 
@@ -246,16 +265,30 @@ export async function run(args) {
     }
     asUsage(() => generator.checkSlug(slug))
     const appDir = path.join(root, 'apps', slug)
+    // The new app's package names may be neither a package of the workspace nor a dependency one of them takes: pnpm
+    // mistakes a workspace package for the dependency of the same name (the generator refuses its own template's
+    // dependencies; these are the workspace's own, the adopter's additions among them).
     const packages = workspacePackages(root)
-    const names = new Set(
-        [root, ...packages].flatMap((dir) => {
-            const file = path.join(dir, 'package.json')
-            return existsSync(file) ? [readJson(file).name] : []
-        }),
+    const manifests = [root, ...packages]
+        .map((dir) => path.join(dir, 'package.json'))
+        .filter((file) => existsSync(file))
+        .map((file) => readJson(file))
+    const names = new Set(manifests.map((manifest) => manifest.name))
+    const dependencies = new Set(
+        manifests.flatMap((manifest) =>
+            ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'].flatMap((field) =>
+                Object.keys(manifest[field] ?? {}),
+            ),
+        ),
     )
     for (const taken of [slug, `${slug}-infra`, `${slug}-app-config`]) {
         if (names.has(taken))
             throw new UsageError(`sssb add-app: the workspace already has a package named ${taken}: pick another slug`)
+        if (dependencies.has(taken))
+            throw new UsageError(
+                `sssb add-app: a package of the workspace depends on ${taken}, which the new app's package would be ` +
+                    'named: pnpm mistakes one for the other. Pick another slug',
+            )
     }
     const portSlot = newPortSlot({ root, apps, slug, slot, port })
     // The one list of apps: named in `sssb.apps` when the root keeps one (else apps/* is the list, and holds it). Written

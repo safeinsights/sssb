@@ -5929,3 +5929,19 @@ nothing wrote a second app. JP's standing rule for these sessions: decide, and r
   file `pnpm exec` would run.
 - **The app guide (`packages/kit/src/guide.md`) does not mention the command**; `docs/adopting.md` does. Rejected: a
   guide line, which every adopter would have to refresh (`sssb guide`) for a command few run.
+- **jscpd is said, not silenced** (the hands-on review: after `sssb add-app` a generated workspace's `pnpm jscpd` fails,
+  50% against its 2%, because the new app is the starter and so is much of the first). The command's "left to you"
+  and `docs/adopting.md` say so and how through. Rejected: **adding the new app to `.jscpd.json`'s `ignore`**, which
+  would hide its duplication after the app is the adopter's own, and **a jscpd run per app** in the generated
+  workspace, which changes every workspace's gate and stops seeing a copy across apps, the case a shared package
+  exists for.
+- **A root `@sssb/create` is reported, not written around**: nothing imports it, so `pnpm knip` calls it unused.
+  `sssb doctor`'s knip line reports it when knip's root config does not ignore it, and the command says to remove it
+  or ignore it. Rejected: the generator writing `@sssb/create` into every workspace's knip ignores (an entry for a
+  package most workspaces never install), and the command editing `knip.json` (above).
+- **Also from the round-1 reviews**: each Vitest project is named by `appLabels`, as `sssb ci` names the app, since
+  Vitest refuses two projects of one name (`apps/web` beside `services/web`); a signal that comes while `addApp`
+  writes is dispatched only once it returns, so `addApp` keeps what it made and the caller's `sssb.apps` change (made
+  in its `finish`, under the same hold) until then, and undoes both; a spec no app names is looked for in the
+  workspace's other packages (a root `infra/`) before the template's range; the slug is refused when a workspace
+  manifest depends on a package of the new app's names; knip's `.jsonc` configs are read with their comments.

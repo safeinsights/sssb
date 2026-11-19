@@ -118,6 +118,13 @@ describe('sssb add-app', () => {
             expect(result.stdout).toMatch(/the root's dev, tick, start script\(s\) run console alone/)
             expect(result.stdout).toContain('.github/workflows/checks.yml synthesizes ./apps/console/infra alone')
             expect(result.stdout).toContain('pnpm exec sssb doctor')
+            // jscpd holds every app's src/ together, and the new app is the starter: said, not silenced.
+            expect(result.stdout).toContain(
+                '`pnpm jscpd` fails while apps/ledger is the starter and apps/console still',
+            )
+            expect(read(ws, '.jscpd.json')).not.toContain('ledger')
+            // The root does not install @sssb/create here (it is only in node_modules), so knip has nothing to say.
+            expect(result.stdout).not.toContain('`pnpm knip` calls @sssb/create unused')
         },
         SLOW,
     )
@@ -160,11 +167,20 @@ describe('sssb add-app', () => {
             refused(['ledger', '--slot', 'starter'], /apps\/console already declares the port slot "starter"/)
             refused(['ledger', '--port', '3100'], /default 3100 is the default of the built-in "starter"/)
             refused(['ledger', '--port', '3000'], /default 3000 is the default of the built-in "showcase"/)
+            refused(['ledger', '--port', '0x1000'], /--port 0x1000 is not a port number/)
             refused(['showcase'], /SHOWCASE_PORT, the variable of the built-in service "showcase".*--slot/)
             refused(['Ledger'], /"Ledger" is not a valid slug/)
             refused(['select'], /a word Aurora PostgreSQL reserves/)
             refused([], /name the app/)
             refused(['ledger', 'extra'], /unexpected extra/)
+            // A dependency of the workspace's (an adopter's own addition) may not share the new app's package name.
+            const consoleManifest = read(ws, 'apps/console/package.json')
+            writeFileSync(
+                path.join(ws, 'apps/console/package.json'),
+                consoleManifest.replace('"dependencies": {', '"dependencies": {\n        "ledger-infra": "^1.0.0",'),
+            )
+            refused(['ledger'], /depends on ledger-infra, which the new app's package would be named/)
+            writeFileSync(path.join(ws, 'apps/console/package.json'), consoleManifest)
             mkdirSync(path.join(ws, 'apps/ledger'))
             const taken = sssb(ws, ['add-app', 'ledger'])
             expect(taken.stderr).toMatch(/apps\/ledger already exists/)
@@ -196,6 +212,12 @@ describe('sssb add-app', () => {
             )
             // Named by --create, it need not be installed.
             expect(sssb(ws, ['add-app', 'ledger', '--create', packedCreate]).status).toBe(0)
+            // Installed at the root as the command says, knip would call it unused: the command says what to do.
+            cpSync(packedCreate, path.join(ws, 'node_modules/@sssb/create'), { recursive: true })
+            const rootManifest = readJson(ws, 'package.json')
+            rootManifest.devDependencies['@sssb/create'] = VERSION
+            writeFileSync(path.join(ws, 'package.json'), `${JSON.stringify(rootManifest, null, 4)}\n`)
+            expect(sssb(ws, ['add-app', 'audit']).stdout).toContain('`pnpm knip` calls @sssb/create unused')
             expect(existsSync(path.join(ws, 'apps/ledger/package.json'))).toBe(true)
         },
         SLOW,

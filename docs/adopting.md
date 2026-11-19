@@ -285,8 +285,11 @@ a slot of its own (named for the slug, its default the first free one from 3700 
 names it in the root's `sssb.apps`. Then `pnpm install` and `pnpm exec sssb doctor`, which names what the workspace
 still needs: a root Vitest config that keeps a list of apps of its own (one written before `@sssb/tools/vitest`'s
 `workspaceAppProjects`), and, as a report, a `knip.json` with no workspace for the new app and its seam (copy the first
-app's two entries). The root's `dev`, `tick` and `start` scripts and the CI workflow's `synth` name one app on purpose;
-the command says what to add for the second.
+app's two entries), and a root `@sssb/create` that knip would call unused (remove it once your apps are written, or
+ignore it in `knip.json`). The root's `dev`, `tick` and `start` scripts and the CI workflow's `synth` name one app on
+purpose; the command says what to add for the second. **`pnpm jscpd` fails while the new app is still the starter**:
+`.jscpd.json` measures duplication across every app's `src/`, and two copies of the starter are one; make the apps your
+own, or, while you do, add `"apps/<slug>/src/**"` to its `ignore` and take it out again once the app is its own.
 
 Nothing the generator renames is a literal an adopter has to hunt for, and no test hard-codes the product's
 name: `apps/*/tests/catalog.ts` reads the app's own catalog and the specs assert against that. A rename
