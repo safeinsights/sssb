@@ -35,7 +35,9 @@ export interface SssbAppProps {
 /**
  * An SSSB app's deployment: the Next standalone server on Lambda behind the Web Adapter and CloudFront, the
  * framework's migrator bundled with the app's own migrations, and Aurora PostgreSQL Serverless v2, in one of
- * two network shapes. Composed inside the adopter's own stack. `cdk synth` fails unless, among other checks
+ * two network shapes. Composed inside the adopter's own stack. Its Lambda@Edge function (the request body's hash)
+ * lives in us-east-1: an environment-agnostic stack deploys there only; give the stack an explicit region to deploy
+ * elsewhere, and the function gets a us-east-1 stack of its own. `cdk synth` fails unless, among other checks
  * (`sssb-app.js` lists them all), the app's `@sssb/kit` is this construct's version, the server's final
  * environment is fail-closed, and the migrator deploys the bundle this synth staged, carrying the app's
  * migrations.

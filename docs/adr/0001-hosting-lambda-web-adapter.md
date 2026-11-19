@@ -119,3 +119,52 @@ sets `DATABASE_TRANSPORT=pg` explicitly on both Lambdas, and its cluster is unch
 
 The Decision's "`infra/` imports exactly one thing from the app" no longer holds: it imports two,
 `config/app` and, for `params.database.transport`, `config/params` (`infra/app.ts`).
+
+## Addendum (2026-11-19): request bodies reach the Function URL through a Lambda@Edge hash
+
+The Decision's "exposed by a Function URL and fronted by CloudFront" holds, with the Function URL on `AWS_IAM` and
+CloudFront's origin access control as its only signer. That pairing refused every request with a body. Lambda takes
+no unsigned payload on a Function URL behind an origin access control: a `POST`, `PUT` or `PATCH` must carry the
+body's SHA-256 in `x-amz-content-sha256`, and CloudFront does not compute it (CloudFront's guide, "Restrict access to
+an AWS Lambda function URL origin"). So every form post, server action and webhook of a deployed app would have been a 403. Pages, SSSB's first adopter, found it before its first deploy and worked around it with its own Lambda@Edge.
+
+**Decision.** `SssbApp` keeps the origin access control and adds an origin-request Lambda@Edge function to the
+default behavior, given the body (`includeBody`). It sets `x-amz-content-sha256` to the hash of the body CloudFront
+hands it, replacing any value the viewer sent, and CloudFront then signs the request, that header included. The body
+is read-only to the function, so what is hashed is what Lambda receives, and Lambda checks the two against each other.
+CloudFront hands an origin-request function at most 1 MB of body; past that the function answers 413, because a hash
+of part of the body would be refused anyway, with a less useful 403.
+
+**Rejected:**
+
+- **A CloudFront Function.** It is cheaper and has no cold start, but it cannot read the request body.
+- **No origin access control: a Function URL open to the internet** (`AuthType` `NONE`), protected by a secret header
+  CloudFront adds and the app checks. The URL would answer anyone who has it, and every invocation is billed before
+  the app can refuse it. A WAF, rate limit or geo restriction on the distribution would be bypassable by calling the
+  origin, which the `origin-not-publicly-reachable` cutover row exists to prevent. The check would also
+  live in each app's request path, where a route that skips the proxy skips it, and the secret would sit in the
+  distribution's configuration and the template.
+- **A load balancer (an ALB behind a CloudFront VPC origin).** It is private by construction, but it costs an hourly
+  charge per deployment (against the dormant previews this ADR's Decision makes cost nothing), needs an internet
+  gateway in the VPC, which the `data-api` shape's has none of, and limits a Lambda target's request and response
+  bodies to 1 MB each, so a large SSR page would fail too.
+- **API Gateway in front of the function.** It cannot be made reachable only from CloudFront without the same secret
+  header, and it adds a charge per request of its own.
+- **Hashing in the browser**, as CloudFront's guide puts it ("your users must compute the SHA256"). A Next form post
+  or server action is sent by the framework, not by code the app writes.
+
+**Costs, accepted.** Lambda@Edge runs on every request to the server (not on `/_next/static/*` or `/assets/*`, which
+S3 serves): a request charge and a few milliseconds at 128 MB, and a cold start of its own when a regional edge cache
+has no warm instance. A request body is capped at 1 MB. Lambda@Edge exists only in us-east-1: a stack with an explicit
+region gets CDK's `EdgeFunction`, which outside us-east-1 puts the function in a us-east-1 stack of its own (that region
+must be bootstrapped); an environment-agnostic stack, as the starter's is until cutover, deploys to us-east-1 only, and
+CloudFront refuses the association elsewhere. A replicated function cannot be deleted until CloudFront drops its
+replicas, up to a few hours after the distribution goes, so a teardown can fail and must be retried
+(`deploy-pipeline`). The live proof is the `origin-not-publicly-reachable` row.
+
+**`HOSTNAME`, in the same change.** The server's environment sets `HOSTNAME=0.0.0.0`, which Next's standalone server
+reads as the address to listen on. With `127.0.0.1`, Next names itself `localhost` to the proxy but `127.0.0.1` when
+it routes, so a rewrite Clerk's proxy makes on every request looked external and Next fetched it over the network
+(pages, locally); any other inherited value leaves the Web Adapter, which calls `127.0.0.1`, nothing to call. Every
+interface is no wider: a Lambda function takes no inbound connection. A packaged `run.sh` that sets `HOSTNAME`
+overrides it.

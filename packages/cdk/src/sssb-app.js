@@ -237,6 +237,11 @@ export { databaseNameFor } from './database-name.js'
  * migrator bundled with the app's own migrations, and Aurora PostgreSQL Serverless v2. A construct, not a
  * stack: the adopter composes it inside a stack of their own, beside their own constructs.
  *
+ * The Function URL answers only the distribution, through an origin access control, and a Lambda@Edge function on
+ * the origin request adds the body's hash a request with a body needs (ADR-0001, addendum 2026-11-19). Lambda@Edge
+ * lives in us-east-1: an environment-agnostic stack deploys to us-east-1 only, and a stack with an explicit region
+ * elsewhere gets the function in a us-east-1 stack of its own.
+ *
  * TWO NETWORK SHAPES, chosen by `params.database.transport` (ADR-0001 and ADR-0002, addenda 2026-11-16).
  * Decide before the first deploy: on an existing stack a switch does not replace anything, it FAILS (the new
  * subnets' CIDRs overlap the old ones) and rolls back, so changing shape means a new stack and a restore from a
