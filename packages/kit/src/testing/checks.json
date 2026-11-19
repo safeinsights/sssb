@@ -11,6 +11,15 @@
             ]
         },
         {
+            "id": "real-auth-provider",
+            "runner": "unit",
+            "title": "real-mode auth forms sit under their provider",
+            "tests": [
+                "the app's src/app is really walked",
+                "every route module that loads a real auth form sits under a layout that loads RealAuthProviders"
+            ]
+        },
+        {
             "id": "i18n-partition",
             "runner": "unit",
             "title": "i18n namespace partition",

@@ -12,6 +12,14 @@ import { routing } from '@sssb/kit/i18n/routing'
 import { getTenantTheme } from '@sssb/kit/theme'
 import { tenants } from '@/seed'
 
+// The auth provider's client runtime, in real mode only: SSSB's real sign-in and invite forms
+// (`@sssb/kit/adapters/real/*`) call its hooks, which throw outside it. Simulated mode loads none of it.
+async function AuthProviders({ children }: { children: ReactNode }) {
+    if (isSimulated) return children
+    const { RealAuthProviders } = await import('@sssb/kit/adapters/real/providers')
+    return <RealAuthProviders>{children}</RealAuthProviders>
+}
+
 // The Simulator panel, in simulated mode only: a real build never renders it, so no page there loads its client code.
 // Its server side is `src/app/api/simulator/[...path]/route.ts`.
 async function SimulatorChrome({ locale, children }: { locale: string; children: ReactNode }) {
@@ -53,7 +61,9 @@ export default async function LocaleLayout({
             <body>
                 <NextIntlClientProvider>
                     <MantineProvider theme={theme}>
-                        <SimulatorChrome locale={locale}>{children}</SimulatorChrome>
+                        <SimulatorChrome locale={locale}>
+                            <AuthProviders>{children}</AuthProviders>
+                        </SimulatorChrome>
                         {isDemoMode ? <DemoBadge /> : null}
                     </MantineProvider>
                 </NextIntlClientProvider>
