@@ -37,10 +37,11 @@ from disk with no server.
 Then create the repository on GitHub (the `--repo` you named), add it as `origin` and push. Make the settings only you
 can make: require the check `sssb / all-checks` (and `workspace-checks` and `secret-scan`) on your default branch, turn
 on private vulnerability reporting, and, for a private repository in an organization, allow public reusable workflows.
-`pnpm sssb:doctor` checks the install, and reports which of those settings are still missing once `origin` is on GitHub
-and `gh` is signed in. SSSB's commands for Claude Code (`/sssb:new-entity` and the rest) need Claude Code 2.1.324 or
-later: after trusting the folder, each person runs `claude plugin install sssb@sssb --scope project` once per clone.
-Without Claude Code, each command is a file of plain instructions in SSSB's `plugins/sssb/commands/`.
+`pnpm sssb:doctor` checks the install, and reports whether `sssb / all-checks` is required, vulnerability reporting is
+on and the reusable workflow is allowed, once `origin` is on GitHub and `gh` is signed in. SSSB's commands for Claude
+Code (`/sssb:new-entity` and the rest) need Claude Code 2.1.324 or later: after trusting the folder, each person runs
+`claude plugin install sssb@sssb --scope project` once per clone. Without Claude Code, each command is a file of plain
+instructions in SSSB's `plugins/sssb/commands/`.
 
 ## 3. Take out the starter's content
 
@@ -50,11 +51,13 @@ Without Claude Code, each command is a file of plain instructions in SSSB's `plu
   isolates hard. Each table of yours that holds a tenant's data carries `tenant_id`, Postgres row-level security keeps
   each tenant's rows invisible to every other tenant, and your queries run inside `db.withTenant()`, which sets the
   tenant for them.
-- An **organization**, which the product calls a **team**, is a group of people inside one tenant who work together. A
-  team's slug is unique across the whole app. Data that belongs to a team carries an `org_id`, and your queries filter
-  on it inside `withTenant`. It is not a security boundary: row-level security stays per tenant.
+- An **organization**, which the product calls a **team**, is a group of people inside one tenant who work together.
+  Keep each team's slug unique across the whole app: the database allows one slug in two tenants, but `staffOrgSlug` and
+  an inbound email address name a team by its slug alone. Data that belongs to a team carries an `org_id`, and your
+  queries filter on it inside `withTenant`. It is not a security boundary: row-level security stays per tenant.
 - A **person** belongs to one tenant and has a role in each of their teams: `admin`, `staff`, `member`, `guest` or
-  `restricted`. A person marked `restricted` sees a reduced set of features.
+  `restricted`. A person marked `restricted` sees a reduced set of features. (The `staff` role is a rank that manages
+  its own team, not membership of the staff team.)
 - The **staff team** (`staffOrgSlug`) is one team, your operators': a member acting as it may manage everything in its
   tenant, and never in another. Your routes decide what that reaches: one that filters by the active team, as Items'
   does, shows staff their own team's rows.
@@ -77,8 +80,9 @@ the `uses:` line in `.github/workflows/checks.yml`), under `apps/starter/`.
 Then replace the seed world in `apps/<app>/src/seed/index.ts` with your own, rather than adding yours beside it: every
 sign-in picker lists all of it. `staffOrgSlug` in `apps/<app>/src/app-config/abilities.ts` must name one of your teams,
 and the specs that sign in by a person's id, `apps/<app>/tests/e2e/simulator.spec.ts` and
-`apps/<app>/tests/demo-static/static-shell.spec.ts`, must name yours. The welcome copy is `welcome.subtitle` in
-`apps/<app>/messages/en.json` and `apps/<app>/messages/es.json`.
+`apps/<app>/tests/demo-static/static-shell.spec.ts`, must sign in as your people and assert your names: their ids, the
+people's names and the tenant's. The welcome copy is `welcome.subtitle` in `apps/<app>/messages/en.json` and
+`apps/<app>/messages/es.json`.
 
 ## 4. Your first entity
 
@@ -89,12 +93,13 @@ An entity touches these files, in this order (`/sssb:new-entity` walks them, and
    directory's `index.ts`; its row type in `AppTables`, `apps/<app>/src/app-config/db/schema.ts`.
 2. **Its proofs**: a section in `apps/<app>/src/app-config/db/rls-proofs.ts` showing each of two tenants cannot read or
    write the other's rows. The runner hands you both tenants.
-3. **Who may do what**: the subject and its rules in `apps/<app>/src/app-config/abilities.ts`, with a test beside it
-   (`abilities.test.ts`). Everything is denied unless a rule allows it.
+3. **Who may do what**: the subject and its rules in `apps/<app>/src/app-config/abilities.ts`, with a new test beside
+   it, `abilities.test.ts` (`apps/showcase/src/app-config/abilities.test.ts` is the pattern). Everything is denied
+   unless a rule allows it.
 4. **Its queries**: `apps/<app>/src/domain/db/<name>.ts` (create the directory), inside `db.withTenant()`. A list that
    can grow pages with `@sssb/kit/db/keyset`.
-5. **Its routes**: `apps/<app>/src/app/api/<name>/route.ts`, and `[id]/route.ts` beside it for one row. Every handler
-   that changes data calls `authorize(...)`.
+5. **Its routes**: `apps/<app>/src/app/api/<name>/route.ts`, and `apps/<app>/src/app/api/<name>/[id]/route.ts` for one
+   row. Every handler that changes data calls `authorize(...)`.
 6. **Its screen**: a card in `apps/<app>/src/components/`, added to the dashboard by
    `apps/<app>/src/app/[locale]/(protected)/dashboard/page.tsx` (which works out what the person may do) and
    `dashboard-glue.tsx` beside it.
@@ -113,13 +118,15 @@ the rest.
 Postgres, the migrator, alarms and a budget. `pnpm synth` checks it offline. Before a first deploy:
 
 - **Fill in `apps/<app>/config/params.ts`.** Each `PLACEHOLDER_` there names the cutover row that fills it.
+- **Replace the `UPDATE-ME` tags** in `apps/<app>/infra/lib/tags.ts` with your organisation's.
 - **Choose your optional ports** in its `ports`: `llm`, `email`, `inboundEmail` and `jobs`. `none` leaves a port out, so
   real mode needs none of its settings. Never fill an unused port's settings with placeholders.
 - **Turn on the scheduled tick.** Recurring work (digests, reminders) and webhook retries only run when something calls
   your app's cron route. Pass `scheduledTick: { webhookSecret }` to `SssbApp`, where `webhookSecret` is the Secrets
   Manager secret (an `ISecret`) holding the same plain-string value as your server's `WEBHOOK_SECRET`, and the route is
   called every five minutes. The construct never puts a secret's value on the server: setting `WEBHOOK_SECRET` there is
-  yours, as for your other secrets (the cutover row `scheduled-tick`). In development, `pnpm tick` calls it once.
+  yours (the cutover rows `job-runner`, for the shared webhook secret, and `scheduled-tick`). In development, `pnpm
+tick` calls it once.
 - **Work through `docs/cutover-checklist.md`.** Each row is something that needs a real account, and the proof that
   closes it. `pnpm sssb:doctor` reports a framework row the file stops mentioning.
 
@@ -133,7 +140,9 @@ open with "Upgrading to this release", which gives steps 2 to 6 below as command
 
 1. **Read the notes of every release after yours.** Each entry says what changed, whether you must act, and what to do.
 2. **Move every `@sssb/*` package to the new version together** (the root's `package.json`, `apps/<app>/package.json`
-   and `apps/<app>/infra/package.json`), then `pnpm install`. `sssb doctor` fails on packages out of step.
+   and `apps/<app>/infra/package.json`), then `pnpm install`, and commit the lockfile. First make any "Scaffold changes
+   to apply by hand" entry that touches how packages install, or the install keeps the old release. `sssb doctor` fails
+   on packages out of step.
 3. **`pnpm exec sssb guide`** refreshes `.claude/sssb-guide.md`, the rules your agents follow, so their change reaches
    your diff.
 4. **`pnpm exec sssb pin`** raises your CI workflow's pin and your plugin's to the release's commit. Then each person
