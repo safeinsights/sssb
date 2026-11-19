@@ -2366,6 +2366,7 @@ old pending files beside their `pre/` copies, which is not that tree).
 Lambda handler that `SssbApp` deploys by its directory (`Code.fromAsset`), so nothing imports its `handler` export and
 knip reported it unused. The tick's own test imports the module's other exports; the entry covers the one the Lambda
 runtime calls.
+
 ## A worktree you were given can be taken over by another session (2026-11-18, `fix/starter-small-fixes`)
 
 A child session started in the manager's worktree switched branches in it, and another session then checked out its own

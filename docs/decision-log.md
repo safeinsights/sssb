@@ -6005,6 +6005,7 @@ route from a ticker Lambda instead).
 - **Not verified live** (no AWS calls): that the Lambda Web Adapter answers a direct invocation carrying a Function URL
   event as it answers the URL, and the in-process runner on a deployed server. Both are in the `scheduled-tick` and
   `job-runner` rows' proofs.
+
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 
 `sssb pin [--app <dir>]` (`packages/tools/src/commands/pin.js`) reads the release commit from the installed kit's stamp
