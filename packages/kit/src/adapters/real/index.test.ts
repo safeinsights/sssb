@@ -1,4 +1,8 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DATABASE_TRANSPORTS } from './database-transport'
 
 /**
  * The RDS Data API transport is OPT-IN (ADR-0002, addendum 2026-11-16): a `pg` deployment must never load
@@ -103,5 +107,52 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
 
         stubEnv({ DATABASE_TRANSPORT: 'pg' })
         expect(() => assertRealEnv()).toThrow(/cloud-accounts.*DATABASE_URL/s)
+    })
+})
+
+/**
+ * The environment a real deployment must set, held to a committed snapshot (ADR-0014 part 10): a new required
+ * variable is breaking, filed as a `minor` changeset, and `.github/scripts/require-changeset.sh` fails a PR that
+ * changes the snapshot without one. Read from what `assertRealEnv` refuses on an empty environment, per transport, so
+ * the snapshot is what a deployment meets at boot (`REQUIRED_ENV` and `DATABASE_ENV` both) and nothing is exported to
+ * be tested. A plain JSON file compared with `toEqual`, never a Vitest snapshot, which `vitest -u` would rewrite.
+ */
+describe('the required environment', () => {
+    const SNAPSHOT = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../../../release-snapshots/required-env.json',
+    )
+    const COMMENT =
+        'The environment variables a real deployment must set (assertRealEnv), per DATABASE_TRANSPORT, from ' +
+        "packages/kit/src/adapters/real/index.test.ts. A new one breaks every deployment that lacks it: change this file only with a 'minor' " +
+        'changeset (ADR-0014 part 10; .github/scripts/require-changeset.sh).'
+
+    /** The variables `assertRealEnv` names as missing when nothing at all is set but the transport. */
+    async function requiredOn(transport: string): Promise<string[]> {
+        const { assertRealEnv } = await import('./index')
+        for (const name of Object.keys(process.env)) vi.stubEnv(name, undefined)
+        vi.stubEnv('DATABASE_TRANSPORT', transport)
+        let message = ''
+        try {
+            assertRealEnv()
+        } catch (error) {
+            message = (error as Error).message
+        }
+        vi.unstubAllEnvs()
+        const missing = /Missing env: ([A-Z0-9_, ]+)\. /.exec(message)?.[1]
+        if (missing === undefined) throw new Error(`assertRealEnv on an empty environment said: "${message}"`)
+        return missing.split(', ').sort()
+    }
+
+    it('is the committed snapshot: a change is a minor changeset', async () => {
+        const actual: Record<string, unknown> = { $comment: COMMENT }
+        for (const transport of DATABASE_TRANSPORTS) actual[transport] = await requiredOn(transport)
+        const committed: unknown = JSON.parse(readFileSync(SNAPSHOT, 'utf8'))
+        expect(
+            actual,
+            `${path.basename(SNAPSHOT)} differs from what assertRealEnv requires. If the change is meant, every ` +
+                "deployment without it stops booting: write this into the file and add a 'minor' changeset that says " +
+                `so (Kind operator, Action required):\n${JSON.stringify(actual, null, 4)}\n`,
+        ).toEqual(committed)
     })
 })
