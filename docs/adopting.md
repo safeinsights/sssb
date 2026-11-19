@@ -256,7 +256,7 @@ generator gives the app a slot named for its slug, at port 3700:
 
 Its override is `ACME_PORT` (`<NAME>_PORT`, with `-` as `_`), and a linked worktree derives its port from 20000-29999,
 keyed on the name as well as the checkout. A slug a slot cannot be named for (longer than 32 characters, with a doubled
-or trailing `-`, or reading a variable of SSSB's own, as `showcase` would) gives the slot `app` (`APP_PORT`). Nothing
+or trailing `-`, or reading a variable of SSSB's own, as `showcase` would) gives the slot `sssb-app` (`SSSB_APP_PORT`). Nothing
 else in the app names the slot: its scripts call `sssb dev-tick` and `sssb tick` with no slot, its `playwright.config.ts`
 calls `originForApp(__dirname)` (from `@sssb/tools/ports`; Playwright compiles the config to CommonJS, and the
 directory finds the app wherever the config is loaded from, the workspace root included when `pnpm knip` loads it),

@@ -1288,7 +1288,7 @@ was rejected.
 
 The P12 addendum's "The generated app keeps the `starter` port service" no longer holds (adoption follow-up 5). The
 app `@sssb/create` writes declares a port slot of its own, named for its slug, at port 3700
-(`"sssb": { "port": { "name": "<slug>", "default": 3700 } }`, or `app` for a slug a slot cannot be named for), as
+(`"sssb": { "port": { "name": "<slug>", "default": 3700 } }`, or `sssb-app` for a slug a slot cannot be named for), as
 `sssb add-app` names a slot for each app it adds. The starter, SSSB's reference app, keeps the built-in `starter` slot
 but names it only in its `package.json`: its scripts and Playwright config read the declaration (`sssb tick`,
 `sssb dev-tick`, `originForApp(__dirname)`), so the generator's rename of the slot is one value in one file, and the

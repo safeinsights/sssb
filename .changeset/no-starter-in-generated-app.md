@@ -10,7 +10,7 @@
 **Action.** optional
 
 **What changed.** `pnpm create @sssb` now gives the app a port slot named for its slug, at port 3700:
-`"sssb": { "port": { "name": "<slug>", "default": 3700 } }`, or `app` for a slug a slot cannot be named for. Its
+`"sssb": { "port": { "name": "<slug>", "default": 3700 } }`, or `sssb-app` for a slug a slot cannot be named for. Its
 override is `<SLUG>_PORT`. The app's `dev` and `tick` scripts (`sssb dev-tick`, `sssb tick`) and its
 `playwright.config.ts` (`originForApp(__dirname)`) name no slot and read the declaration. Before, the app declared
 SSSB's built-in `starter` slot (port 3100, `STARTER_PORT`) and named it in all three. The app guide's example now shows

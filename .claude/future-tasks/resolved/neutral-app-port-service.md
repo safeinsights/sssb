@@ -42,7 +42,7 @@ in `docs/decision-log.md` ("No `starter` in a generated app").
   `sssb tick` with no slot, and its `playwright.config.ts` calls `originForApp(__dirname)`; each reads the declaration.
   In SSSB's repository the starter keeps `"sssb": { "port": "starter" }` (port 3100, `STARTER_PORT`).
 - **The generator gives the app a slot of its own**: named for the slug, at 3700 (`firstAppSlot` in
-  `packages/create/src/generate.js`), or `app` for a slug a slot cannot be named for. It is the one rename of the slot,
+  `packages/create/src/generate.js`), or `sssb-app` for a slug a slot cannot be named for. It is the one rename of the slot,
   in one place, and it fails on a template that declares anything but `starter` or names the slot anywhere else.
   `sssb add-app` keeps choosing the first free default, so a second app takes 3800.
 - **`starter` keeps working** for a workspace generated before: `@sssb/tools`' ports are unchanged.

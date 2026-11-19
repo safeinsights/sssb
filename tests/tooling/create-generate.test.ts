@@ -250,10 +250,27 @@ describe('@sssb/create: the generated workspace', () => {
         expect(readJson(ws, 'knip.json').workspaces).toHaveProperty(['apps/acme'])
     })
 
-    it("names the app's port slot for its slug where @sssb/tools takes the name, and `app` where it does not", async () => {
+    it("names the app's port slot for its slug where @sssb/tools takes the name, and `sssb-app` where it does not", async () => {
         const { parsePortDeclaration } = await import('../../packages/tools/src/ports.js')
-        const slugs = ['acme', 'acme-research', 'a1', 'x'.repeat(32), 'x'.repeat(33), 'a--b', 'ledger-', 'showcase']
-        for (const slug of [...slugs, 'starter', 'ladle', 'contract-pg', 'contractpg', 'app']) {
+        const { SERVICE_NAMES } = await import('../../packages/tools/src/ports.js')
+        const slugs = [
+            'acme',
+            'acme-research',
+            'a1',
+            'x'.repeat(32),
+            'x'.repeat(33),
+            'a--b',
+            'ledger-',
+            'app',
+            'sssb-app',
+        ]
+        // Every built-in service of @sssb/tools, as the slug that would read its variable (`contractPg` reads
+        // CONTRACT_PG_PORT, as `contract-pg` would), so a service added there fails here until the copy has it.
+        const builtIns = SERVICE_NAMES.flatMap((service) => [
+            service.toLowerCase(),
+            service.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`),
+        ])
+        for (const slug of [...slugs, ...builtIns]) {
             const slot = firstAppSlot(slug)
             // Whatever it chooses, @sssb/tools takes it (the copy of its rules agrees with the original)...
             expect(parsePortDeclaration(slot)).toEqual(slot)
@@ -264,7 +281,7 @@ describe('@sssb/create: the generated workspace', () => {
             } catch {
                 takesSlug = false
             }
-            expect(slot).toEqual({ name: takesSlug ? slug : 'app', default: FIRST_APP_PORT })
+            expect(slot).toEqual({ name: takesSlug ? slug : 'sssb-app', default: FIRST_APP_PORT })
         }
         expect(FIRST_APP_PORT).toBe(3700)
     })

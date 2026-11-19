@@ -6093,10 +6093,15 @@ standing rule for these sessions: decide, and record the rejected alternative.
 - **Its default is 3700, not 3100.** 3100 is the built-in `starter` slot's, which a slot of the app's own may not take
   (`@sssb/tools`' ports.js refuses SSSB's ports), and 3700 is the first port `sssb add-app` offers, so a second app takes 3800. The app guide's and `docs/adopting.md`'s examples moved with it. A generated app's local port changes from 3100
   to 3700, and its override from `STARTER_PORT` to `<SLUG>_PORT`; a workspace generated before keeps 3100.
-- **A slug a slot cannot be named for gives the slot `app`** (`APP_PORT`): one longer than a slot name's 32 characters,
+- **A slug a slot cannot be named for gives the slot `sssb-app`** (`SSSB_APP_PORT`): one longer than a slot name's 32 characters,
   with a doubled or trailing `-` (which a slug allows and a slot name does not), or reading a built-in's variable
   (`showcase`, `starter`, `ladle`, `contract-pg`). Rejected: refusing such a slug, which the generator accepted until
-  now, and a `--slot` flag on the generator, one more option for a corner case.
+  now, and a `--slot` flag on the generator, one more option for a corner case. Rejected (round-1 review): **`app`**,
+  whose `APP_PORT` many shells already hold for another project, and which would then move the app's dev server and
+  e2e run onto that port. The same risk stands for any slot named for a slug (`API_PORT`, `WEB_PORT`), as it has for
+  `sssb add-app`'s slots since #65; prefixing every custom slot's variable (`SSSB_<NAME>_PORT`) would change
+  `@sssb/tools`' published `<NAME>_PORT` contract, which adopters' `LEDGER_PORT`-style overrides read, so it is left
+  for a release that takes that change on purpose.
 - **The slot rules are copied into `@sssb/create`** (`firstAppSlot`), which depends on no SSSB package, and
   `tests/tooling/create-generate.test.ts` holds the copy to `@sssb/tools`' `parsePortDeclaration` by trying every choice
   on it, as `RESERVED_DATABASE_NAMES`' copy is held. Rejected: importing `@sssb/tools` from the generator (rule 4).

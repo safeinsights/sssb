@@ -468,14 +468,14 @@ export const FIRST_APP_PORT = 3700
  * The port slot a new workspace's app declares: a slot of its own, named for its slug as `sssb add-app` names one, so
  * nothing in the app says `starter` (SSSB's reference app's slot). A slug a slot cannot be named for (one longer than a
  * slot name may be, with a doubled or trailing dash, or reading a built-in's variable, as `showcase` would) gives the
- * neutral `app`.
+ * `sssb-app` (`SSSB_APP_PORT`: a bare `APP_PORT` is a variable many shells already hold for something else).
  * @param {string} slug
  * @returns {{ name: string, default: number }}
  */
 export function firstAppSlot(slug) {
     const variable = `${slug.toUpperCase().replaceAll('-', '_')}_PORT`
     const fits = SLOT_NAME.test(slug) && slug.length <= MAX_SLOT_NAME && !BUILT_IN_PORT_VARIABLES.has(variable)
-    return { name: fits ? slug : 'app', default: FIRST_APP_PORT }
+    return { name: fits ? slug : 'sssb-app', default: FIRST_APP_PORT }
 }
 
 /**
