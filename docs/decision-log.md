@@ -6435,7 +6435,7 @@ Decisions, each with the alternative rejected:
 
 ## Real mode reads people from the identity provider, never the seed, and loads only the SDKs it chose (2026-11-19, `fix/realmode-digest-and-static-loads`)
 
-Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-real-ports`).
+Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-real-ports`, PR #67).
 
 - **The framework's `digest-email` handler addresses the auth port's members, not the seed's people.** It took its
   recipient from `@sssb/app-config/seed`'s `people`, so in a deployment, whatever the job runner, a team's digest went
@@ -6450,15 +6450,16 @@ Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-r
     - **The locale** is the person's own only in a simulated world: the fake auth adapter's `personLocale`, imported
       dynamically behind `isSimulated` (`makeNotifyDeps`'s precedent). The auth port carries no locale, so a deployment
       writes in the app's default, as its notifications do. The handler reads the run mode from `adapters/run-mode`, as
-      the request proxy does, since the registry is what loads it.
-    - **Nobody to address:** a deployment's team with no active member gets no digest (the job completes, having sent
+      the request proxy does, since the registry is what loads it. (Superseded by the two review rounds below: the
+      locale now comes from the runner's `resolveLocale`.)
+    - **Nobody to address:** a deployment's team with no active member with an email address gets no digest (the job completes, having sent
       nothing); the simulated world keeps the synthetic address so a demo never shows an empty digest. An org that no
       longer exists gets none either. Rejected: **failing the job**, which would turn a schedule on an empty team into a
       failure every period.
     - **Pinned twice.** `packages/kit/src/jobs/digest-email.test.ts` runs the handler in real mode with every read of the
-      seed throwing, and `tests/tooling/jobs-seed-free.test.ts` walks each seam's `jobs` module (the fixture and both
+      seed throwing, and `tests/tooling/jobs-graph.test.ts` (first named `jobs-seed-free.test.ts`) walks each seam's `jobs` module (the fixture and both
       apps) by static imports alone and fails if one reaches a seed module; a dynamic import behind `isSimulated` is
-      allowed. Every other job kind (the showcase's `export-tickets`, the fixture's `export-dockets`) was already seed-free.
+      allowed. Every other job kind (the showcase's `export-tickets` and `analyze-bundle`, the fixture's `export-dockets`) was already seed-free.
 - **`adapters/real/index` loads `pg` and `posthog-node` only when chosen.** The `pg` transport (`./db`) and PostHog
   (`./analytics`) were static imports, so every deployment loaded both, a Data API one included, and one with no
   PostHog key. Both are dynamic imports now, as the Data API transport and the optional ports already were, and
@@ -6466,37 +6467,41 @@ Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-r
   `./db` loaded `pg` too. `DATABASE_TRANSPORT` behaves as before. Auth (Clerk) and storage (S3) stay static: every
   deployment uses both. `packages/kit/src/adapters/real/index.test.ts` pins it from esbuild's account of the static
   graph: of the SDKs a choice brings, none is reached before the choice, and the Data API transport reaches no `pg`.
-  The migrator (`migrate-handler.ts`) still imports the `pg` transport statically; it is bundled whole into its own
-  Lambda either way, so a dynamic import there would change nothing it loads.
+  The migrator (`migrate-handler.ts`) still imports the `pg` transport statically; it is bundled into one file for its
+  own Lambda, so a dynamic import there would only defer evaluating `pg` on the Data API path, not drop it from what the
+  Lambda ships.
 - **Seen, not changed here:** real mode still reads tenants and organizations from the seed for display (the theme's
-  `findTenant`, and the showcase's `findTenant` and `findOrg` in its layouts, sign-in, org page and invitations). Those are tenant
+  `findTenant`, and the showcase's `findTenant` and `findOrg` in its layouts, sign-in, org page and invitations, and the starter's `findTenant` in its protected layout). Those are tenant
   configuration, not people, and moving them to the database is a design of its own.
 - **From the first review round, and CI.** The first version read the simulated locale from the fake auth adapter by a
   dynamic import, and the showcase stopped building: a client component (the dashboard's glue) imports
   `@sssb/kit/core/jobs`, which imports the seam's `jobs` module for its kinds, which registers the handlers, so a
   bundler puts everything a handler can import, dynamic imports included, into the client bundle, and the fake auth
   adapter reads request cookies (`next/headers`). The locale now comes from the seed's people, dynamically imported
-  behind `isSimulated`: plain data, which the client bundle carried before this change. `tests/tooling/jobs-graph.test.ts`
+  behind `isSimulated` (reversed in the second round, below): plain data, which the client bundle carried before this change. `tests/tooling/jobs-graph.test.ts`
   now also fails if anything a handler reaches, by any import, imports `next/headers` or `server-only`. Rejected:
   **a locale hook in the job context** (the runner passing `personLocale`), a second context field for what only the
   simulated world has; and **splitting the job kinds out of the handlers' seam module**, a seam change for every app.
   The cost, recorded: an app's own handler could still import the seed dynamically without `isSimulated`, which no
-  graph test can see; the digest's real-mode test throws on any seed read, and the guide's rule covers the rest.
+  graph test can see; the digest's real-mode test throws on any seed read, and the app guide's rule (`@sssb/kit/guide.md`,
+  "Vendors, environment and parameters": a job handler never reads the seed) covers the rest.
 - **The static demo's digest twin picks from everyone in its world** (the seed and accepted invitees), as the server's
   simulated digest now does through the fake auth adapter, instead of the seed alone.
 - **From the second review round, which revises the first.**
     - **The locale comes from the runner after all**, as an optional `resolveLocale` in the job context, which the
       simulated runner fills with the fake auth adapter's `personLocale` (`makeNotifyDeps`'s pattern) and a deployment's
       leaves out. The seed's people knew neither an accepted invitee's locale nor a changed profile's, so a simulated
-      digest to either went out in the default language while their notifications did not; and the handler now imports
+      digest to either went out in the default language or the seed's, while their notifications followed their own; and the handler now imports
       no seed at all, so the client-bundle question is gone at its root. This reverses the first round's rejection of a
       locale hook: the second field earns its place by being right for everyone the world holds.
-    - **Only an address is addressed.** Clerk lists a member's primary identifier, which may be a username or a phone
-      number; the digest skips a member whose identifier holds no `@`, where it would have sent to a non-address and
-      failed the job on every tick.
-    - **The client-bundle guard also refuses Node's builtins, `pg`, Clerk's server module, the AWS SDKs and
-      `next/server`**, not only `next/headers` and `server-only`.
-    - **Phase 1 stops here:** the second round found nothing at MEDIUM or above.
+    - **Only an address is addressed.** The real auth adapter lists a member's Clerk identifier, "such as their email
+      address or phone number" (`PublicUserData.identifier` in `@clerk/shared`'s `types/session.d.ts`); the digest
+      skips a member whose identifier holds no `@`, where it would have sent to a non-address, and likely failed the
+      job each time the schedule fired.
+    - **The client-bundle guard also refuses every Node builtin (`node:module`'s `builtinModules`, bare or `node:`),
+      `pg`, `@clerk/nextjs/server`, the AWS SDKs and `next/server`**, not only `next/headers` and `server-only`.
+    - **The review's phase 1 stopped here:** the second round (an Opus reviewer, code only) reported two LOW findings,
+      both taken above, and nothing at MEDIUM or above.
 
 ## `SssbApp` tells the app the viewer's host, and redirects plain HTTP to HTTPS (2026-11-19, `fix/cdk-forwarded-host-https`)
 

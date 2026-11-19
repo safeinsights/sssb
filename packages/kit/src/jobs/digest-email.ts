@@ -48,9 +48,9 @@ function snippet(body: string): string {
  *
  * The locale is the person's own where the runner can say it (`resolveLocale`, which the simulated world's runner
  * supplies); the auth port carries none, so a deployment writes in the app's default. Only an address is addressed:
- * the identity provider lists a member's primary identifier, which may be a username or a phone number.
+ * the real auth adapter lists a member's Clerk identifier, which may be a phone number rather than an email address.
  *
- * A team with no active member: in a simulated world, a synthetic per-org address, still visible under Simulator
+ * A team with no active member with an email address: in a simulated world, a synthetic per-org address, still visible under Simulator
  * Mail's "all" scope, so the demo never shows an empty digest; in a deployment, nobody (null), and nothing is sent.
  */
 async function digestRecipient(
@@ -82,7 +82,7 @@ export const digestEmailHandler: JobHandler = async (_payload, ctx) => {
     if (!org) return {} // the org is gone: nobody to address, and no team to digest
     const orgName = org.name
     const recipient = await digestRecipient(auth, resolveLocale, org.slug)
-    if (!recipient) return {} // a deployment's team with no active member: nobody to send it to
+    if (!recipient) return {} // a deployment's team with no active member with an email address: nobody to send it to
     const { to, locale } = recipient
 
     // The app supplies its own rows, newest first; counting and snipping stay here, so every app's

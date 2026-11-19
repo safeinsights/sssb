@@ -332,8 +332,9 @@ describe('the real ports, as the dev:real preflight bundles them', () => {
 
 /**
  * What a deployment loads as the real ports load, before it has chosen anything: the vendor SDKs `adapters/real/index`
- * reaches by static imports alone. Only the two ports every deployment uses may be among them, auth (Clerk) and
- * storage (S3); the database transports, PostHog and the optional ports' SDKs load only when chosen (dynamic imports).
+ * reaches by static imports alone. None of the SDKs a choice brings (a database transport's, PostHog's, an optional
+ * port's, named in `CHOSEN`) may be among them; Clerk's must be, which shows the walk saw the auth adapter. Those
+ * load only when chosen (dynamic imports); auth (Clerk) and storage (S3) serve every deployment.
  * And the Data API transport, once chosen, loads no `pg`. Read from esbuild's account of the bundle, following static
  * edges only.
  */
@@ -376,7 +377,7 @@ describe('the vendor SDKs the real ports load before anything is chosen', () => 
     const CHOSEN =
         /^(pg|posthog-node|@aws-sdk\/client-rds-data|@anthropic-ai\/sdk|mailgun\.js|@aws-sdk\/client-codebuild)(\/|$)/
 
-    it('are only those of the ports every deployment uses', async () => {
+    it('include none that a choice brings', async () => {
         const packages = await staticPackages('index.ts')
         expect(packages.some((name) => name.startsWith('@clerk/'))).toBe(true) // the walk saw the auth adapter
         expect(packages.filter((name) => CHOSEN.test(name))).toEqual([])

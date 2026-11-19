@@ -1,15 +1,17 @@
+import { builtinModules } from 'node:module'
 import path from 'node:path'
 import { build, type Metafile, type Plugin } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 
 /**
- * Two things every job handler's import graph must hold, read from esbuild's own account of each seam's `jobs` module
- * (what `jobHandlers` registers, and everything those handlers import), for the fixture and both apps.
+ * Two things every job handler's import graph must hold.
  *
  * A real deployment has no seed: its people are the identity provider's and its rows the database's. So no job
  * handler, framework or app, may reach a seed module by a static import, which would load the seed in every
- * deployment and let a handler read from it. A dynamic `import()` is allowed: that is how simulated-only code (the fake
- * auth adapter's locales, say) is reached behind `isSimulated`, and a real deployment never takes it.
+ * deployment and let a handler read from it. A dynamic `import()` of a seed module is not refused here: a real
+ * deployment never takes one behind `isSimulated`. But a client bundle carries dynamic imports too, so the second
+ * check below refuses anything such an import reaches that needs the server; simulated-only data reaches a handler
+ * through its context (`resolveLocale`), as the digest's locale does.
  *
  * Read from esbuild's own account of each seam's `jobs` module (what `jobHandlers` registers, and everything those
  * handlers import), for the fixture and both apps: every static edge is followed from the module, through the kit
@@ -96,9 +98,18 @@ describe('job handlers reach no seed module by a static import', () => {
  * (`next/headers`, `server-only`, Node's builtins, a server SDK): the showcase's build failed on `next/headers` once. So nothing a handler reaches, by
  * any import, may be one.
  */
-/** What a client bundle refuses or cannot run: the server's request APIs, Node's builtins, server-side SDKs. */
-const SERVER_ONLY =
-    /^(next\/headers|next\/server|server-only|node:.*|fs|fs\/promises|path|crypto|child_process|pg|@clerk\/nextjs\/server|@aws-sdk\/.*)$/
+/**
+ * What a client bundle refuses or cannot run: the server's request APIs (`next/headers`, `next/server`,
+ * `server-only`), every Node builtin, bare or `node:`, and the server-side SDKs named here (`pg`,
+ * `@clerk/nextjs/server`, the AWS SDKs).
+ */
+const NODE_BUILTINS = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]))
+const SERVER_ONLY = {
+    test: (specifier: string) =>
+        NODE_BUILTINS.has(specifier) ||
+        specifier.startsWith('node:') ||
+        /^(next\/headers|next\/server|server-only|pg|@clerk\/nextjs\/server|@aws-sdk\/.*)$/.test(specifier),
+}
 
 describe('job handlers reach nothing a client bundle refuses, by any import', () => {
     it.each(SEAMS)(

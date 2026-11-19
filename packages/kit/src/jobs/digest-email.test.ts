@@ -43,7 +43,7 @@ vi.mock('next-intl/server', () => ({
  * Every test here therefore runs against this replacement, never the fixture's own registration.
  *
  * Not covered: the recipient's locale choosing the copy. The translation stand-in above ignores `locale` and always
- * reads the English catalog, and every recipient these tests reach is English.
+ * reads the English catalog; the one test that resolves a Spanish locale checks only that the handler asks for it.
  */
 const digest = vi.hoisted(() => ({ bodies: [] as string[] }))
 vi.mock('@sssb/app-config/digest', () => ({ digestBodies: async () => digest.bodies }))
@@ -205,7 +205,7 @@ describe('digestEmailHandler', () => {
         expect(sent?.subject).toBe('Your Unstaffed Berth digest')
     })
 
-    it("in a deployment, addresses the provider's first active admin, in the default locale, and never reads the seed", async () => {
+    it("in a deployment, addresses the provider's first active admin, and never reads the seed", async () => {
         const { tenantId, orgId } = await depotIds()
         const { auth, asked } = providerWith([
             { id: 'u-invited', name: null, email: 'pending@org.test', role: 'admin', status: 'invited' },
