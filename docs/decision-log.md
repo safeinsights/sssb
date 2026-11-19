@@ -6021,6 +6021,7 @@ nothing wrote a second app. JP's standing rule for these sessions: decide, and r
   in its `finish`, under the same hold) until then, and undoes both; a spec no app names is looked for in the
   workspace's other packages (a root `infra/`) before the template's range; the slug is refused when a workspace
   manifest depends on a package of the new app's names; knip's `.jsonc` configs are read with their comments.
+
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 
 `sssb pin [--app <dir>]` (`packages/tools/src/commands/pin.js`) reads the release commit from the installed kit's stamp
