@@ -1053,6 +1053,42 @@ export function portSlotProblems(root, apps) {
     return { problems, slots }
 }
 
+/**
+ * JSONC as JSON: its comments and trailing commas taken out, strings (a `$schema` URL's `//` among them) left whole.
+ * @param {string} text
+ */
+export function withoutJsonComments(text) {
+    let out = ''
+    // A comma is held until the next token: dropped before a `}` or `]` (a trailing comma), written before anything else.
+    let comma = ''
+    const token = (/** @type {string} */ value) => {
+        out += /^[}\]]/.test(value) ? comma.slice(1) : comma
+        comma = ''
+        out += value
+    }
+    for (let i = 0; i < text.length; i++) {
+        const char = /** @type {string} */ (text[i])
+        if (char === '"') {
+            let end = i + 1
+            while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1
+            token(text.slice(i, end + 1))
+            i = end
+        } else if (char === '/' && text[i + 1] === '/') {
+            while (i + 1 < text.length && text[i + 1] !== '\n') i++
+        } else if (char === '/' && text[i + 1] === '*') {
+            const end = text.indexOf('*/', i + 2)
+            i = end < 0 ? text.length : end + 1
+        } else if (char === ',') {
+            token('')
+            comma = ','
+        } else if (/\s/.test(char)) {
+            if (comma) comma += char
+            else out += char
+        } else token(char)
+    }
+    return out + comma
+}
+
 /** Where knip looks for its JSON config at a workspace root, in its own order. */
 const KNIP_JSON = ['knip.json', 'knip.jsonc', '.knip.json', '.knip.jsonc']
 
@@ -1072,7 +1108,8 @@ export function knipGaps(root, apps, packages) {
     if (file === undefined) return null
     let config
     try {
-        config = JSON.parse(readFileSync(path.join(root, file), 'utf8'))
+        const text = readFileSync(path.join(root, file), 'utf8')
+        config = JSON.parse(file.endsWith('.jsonc') ? withoutJsonComments(text) : text)
     } catch (error) {
         return { file, unread: error instanceof Error ? error.message : String(error) }
     }
@@ -1085,8 +1122,9 @@ export function knipGaps(root, apps, packages) {
     const missing = []
     for (const app of apps) {
         const rel = path.relative(root, app).split(path.sep).join('/')
-        // An app at the root is knip's `.` workspace, which a config with workspaces always has a say over.
-        if (rel !== '' && !named(rel)) missing.push(rel)
+        // An app at the root is knip's `.` workspace, which a config with workspaces always has a say over; an app that
+        // is no workspace package is part of the root's for knip, and needs no key of its own.
+        if (rel !== '' && packages.includes(app) && !named(rel)) missing.push(rel)
         const seam = path.join(app, 'src', 'app-config')
         const seamRel = path.relative(root, seam).split(path.sep).join('/')
         if (packages.includes(seam) && !named(seamRel)) missing.push(seamRel)

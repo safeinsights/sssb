@@ -1560,6 +1560,20 @@ describe('knipGaps: the apps knip.json gives no workspace (reported, never faile
         expect(knipGaps(root, apps, packages)).toBeNull()
         write(path.join(root, 'knip.json'), '{ // a comment\n}')
         expect(knipGaps(root, apps, packages)).toMatchObject({ file: 'knip.json', unread: expect.any(String) })
+        // An app that is no workspace package is the root's, for knip.
+        json(path.join(root, 'knip.json'), { workspaces: { '.': {} } })
+        expect(knipGaps(root, apps, [])).toEqual({ file: 'knip.json', missing: [] })
+        // knip.jsonc takes comments and trailing commas; a `//` inside a string is not one.
+        rmSync(path.join(root, 'knip.json'))
+        write(
+            path.join(root, 'knip.jsonc'),
+            '{\n  // the apps\n  "$schema": "https://unpkg.com/knip@6/schema.json",\n  "workspaces": {\n' +
+                '    "apps/console": {}, /* its seam */ "apps/console/src/app-config": {},\n  },\n}\n',
+        )
+        expect(knipGaps(root, apps, packages)).toEqual({
+            file: 'knip.jsonc',
+            missing: ['apps/ledger', 'apps/ledger/src/app-config'],
+        })
     })
 })
 

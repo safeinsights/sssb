@@ -17,7 +17,7 @@
 // plugin and jest-dom are the app's own copies, loaded from the app's directory.
 // A guard plugin (framework-guard.js) fails a test file that loads framework source from any instance but the app's.
 import path from 'node:path'
-import { workspaceApps } from './app.js'
+import { appLabels, workspaceApps } from './app.js'
 import { frameworkGuard } from './framework-guard.js'
 import { importFromApp, resolveFromApp } from './kit.js'
 
@@ -70,10 +70,13 @@ export async function workspaceAppProjects({ root, options = () => ({}) }) {
             `@sssb/tools/vitest: ${workspace} names no app (\`sssb.apps\` in its package.json, or apps/<name>): nothing to test`,
         )
     }
+    // Each project named as `sssb ci` and `launch-json` name the app (its directory's name, or its path when two apps
+    // share one): Vitest refuses two projects of one name, and `apps/web` beside `services/web` is a valid list.
+    const labels = appLabels(workspace, apps)
     return Promise.all(
         apps.map((app) => {
             const appDir = path.join(workspace, app)
-            return appTestProject({ ...options(appDir), appDir })
+            return appTestProject({ name: labels.get(app), ...options(appDir), appDir })
         }),
     )
 }

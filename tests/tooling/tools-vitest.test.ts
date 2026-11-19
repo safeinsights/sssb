@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { workspaceAppProjects } from '../../packages/tools/src/vitest.js'
@@ -29,6 +29,28 @@ describe('workspaceAppProjects', () => {
         expect(projects[1]?.resolve?.alias).toMatchObject({
             '@sssb/app-config': path.join(REPO, 'apps/starter/src/app-config'),
         })
+    })
+
+    it('names two apps whose directories share a name by their paths, as `sssb ci` labels them', async () => {
+        const root = makeTestTmpDir('tools-vitest-labels-')
+        writeFileSync(
+            path.join(root, 'package.json'),
+            JSON.stringify({ name: 'ws', sssb: { apps: ['apps/web', 'services/web', 'apps/admin'] } }),
+        )
+        for (const app of ['apps/web', 'services/web', 'apps/admin']) {
+            mkdirSync(path.join(root, app), { recursive: true })
+            writeFileSync(path.join(root, app, 'package.json'), JSON.stringify({ name: app.replace('/', '-') }))
+            // The preset loads the app's own React plugin and jest-dom: the repository's, for these stand-ins.
+            symlinkSync(path.join(REPO, 'node_modules'), path.join(root, app, 'node_modules'), 'dir')
+        }
+        const projects = await workspaceAppProjects({ root })
+        expect(projects.map((project) => project.test?.name)).toEqual(['apps-web', 'services-web', 'admin'])
+        // A name `options` gives wins.
+        const named = await workspaceAppProjects({
+            root,
+            options: (appDir) => ({ name: `x-${path.basename(appDir)}` }),
+        })
+        expect(named.map((project) => project.test?.name)).toEqual(['x-web', 'x-web', 'x-admin'])
     })
 
     it('fails a workspace that names no app, and an sssb.apps entry that is not a package', async () => {

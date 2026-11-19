@@ -28,6 +28,8 @@ const USAGE = 'usage: sssb add-app <slug> [--name "<Name>"] [--port <port>] [--s
  *   name: string | null,
  *   port: { name: string, default: number },
  *   like: string,
+ *   others: string[],
+ *   finish: (appDir: string) => () => void,
  * }) => { appDir: string, name: string, files: string[], notes: string[] }} AddApp
  */
 
@@ -176,7 +178,8 @@ export function leftToDo(root, { slug, appDir, like }) {
             ([, text]) =>
                 new RegExp(`--filter[= ](['"]?)${likeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\1(\\s|$)`).test(
                     text,
-                ) || text.includes(`./${rel(like)}`),
+                ) ||
+                (rel(like) !== '' && text.includes(`./${rel(like)}`)),
         )
         .map(([script]) => script)
     if (naming.length > 0) {
@@ -191,7 +194,7 @@ export function leftToDo(root, { slug, appDir, like }) {
         for (const file of readdirSync(workflows).filter((name) => /\.ya?ml$/.test(name))) {
             const text = readFileSync(path.join(workflows, file), 'utf8')
             const synth = /^\s*synth:\s*['"]?(\S+?)['"]?\s*(?:#.*)?$/m.exec(text)?.[1]
-            if (synth && synth.includes(rel(like)) && !synth.includes('*')) {
+            if (synth && rel(like) !== '' && synth.includes(rel(like)) && !synth.includes('*')) {
                 left.push(
                     `.github/workflows/${file} synthesizes ${synth} alone: make its \`synth\` a selector that takes ` +
                         `${rel(appDir)}/infra too (./apps/*/infra takes every app's)`,
@@ -227,9 +230,10 @@ export async function run(args) {
         )
     }
     const { templateDir, module } = createPackage(root, create)
-    const generator = /** @type {{ addApp: AddApp, checkSlug: (slug: string) => void }} */ (
-        await import(pathToFileURL(module).href)
-    )
+    const generator =
+        /** @type {{ addApp: AddApp, checkSlug: (slug: string) => void, signalsSettled: () => Promise<void> }} */ (
+            await import(pathToFileURL(module).href)
+        )
     /** @type {<T>(work: () => T) => T} the generator's refusals, as this command's */
     const asUsage = (work) => {
         try {
@@ -242,8 +246,9 @@ export async function run(args) {
     }
     asUsage(() => generator.checkSlug(slug))
     const appDir = path.join(root, 'apps', slug)
+    const packages = workspacePackages(root)
     const names = new Set(
-        [root, ...workspacePackages(root)].flatMap((dir) => {
+        [root, ...packages].flatMap((dir) => {
             const file = path.join(dir, 'package.json')
             return existsSync(file) ? [readJson(file).name] : []
         }),
@@ -253,25 +258,35 @@ export async function run(args) {
             throw new UsageError(`sssb add-app: the workspace already has a package named ${taken}: pick another slug`)
     }
     const portSlot = newPortSlot({ root, apps, slug, slot, port })
-    const added = asUsage(() => generator.addApp({ templateDir, root, slug, name: name ?? null, port: portSlot, like }))
-
-    // The one list of apps: named in `sssb.apps` when the root keeps one (else apps/* is the list, and holds it).
+    // The one list of apps: named in `sssb.apps` when the root keeps one (else apps/* is the list, and holds it). Written
+    // by the generator's `finish`, under its signal hold, so an interrupted run takes the entry back with the app.
     const manifestFile = path.join(root, 'package.json')
-    const text = readFileSync(manifestFile, 'utf8')
-    const manifest = JSON.parse(text)
     const entry = path.relative(root, appDir).split(path.sep).join('/')
-    const listed = manifest.sssb?.apps
-    if (Array.isArray(listed) && !listed.includes(entry)) {
-        manifest.sssb.apps = [...listed, entry]
+    let listed = false
+    const finish = () => {
+        const text = readFileSync(manifestFile, 'utf8')
+        const manifest = JSON.parse(text)
+        const apps = manifest.sssb?.apps
+        if (!Array.isArray(apps) || apps.includes(entry)) return () => {}
+        manifest.sssb.apps = [...apps, entry]
         writeFileSync(manifestFile, `${JSON.stringify(manifest, null, indentOf(text))}\n`)
+        listed = true
+        return () => writeFileSync(manifestFile, text)
     }
+    const others = [root, ...packages].filter((dir) => dir !== like)
+    const added = asUsage(() =>
+        generator.addApp({ templateDir, root, slug, name: name ?? null, port: portSlot, like, others, finish }),
+    )
+    // A Ctrl-C that came while the app was written is dispatched now, undoes it and ends the process, before anything
+    // says it was added.
+    await generator.signalsSettled()
 
     const left = [...added.notes, ...leftToDo(root, { slug, appDir, like })]
     console.log(`
 Added ${added.name} in ${entry}/: ${added.files.length} files, from the starter of @sssb/create ${TOOLS_VERSION}.
 Its port slot is "${portSlot.name}": port ${portSlot.default} in a main checkout, ${portSlot.name
         .toUpperCase()
-        .replaceAll('-', '_')}_PORT overrides it.${Array.isArray(listed) ? ` The root's sssb.apps names it.` : ''}
+        .replaceAll('-', '_')}_PORT overrides it.${listed ? ` The root's sssb.apps names it.` : ''}
 
 Next:
   pnpm install

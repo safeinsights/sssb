@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { rebaseSpec } from '../../packages/create/src/add-app.js'
@@ -214,6 +214,90 @@ describe('sssb add-app', () => {
             expect(result.stderr).toMatch(/layout\.tsx: expected .* once, found 0/)
             expect(readdirSync(path.join(ws, 'apps'))).toEqual(['console'])
             expect(readJson(ws, 'package.json').sssb.apps).toEqual(['apps/console'])
+        },
+        SLOW,
+    )
+
+    it(
+        'takes back the app and its sssb.apps entry when a signal comes while it writes them',
+        () => {
+            const ws = workspace('add-app-signal-')
+            const before = read(ws, 'package.json')
+            // The signal is raised before addApp starts and, the work being synchronous, dispatched once it returns: the
+            // case a Ctrl-C during the write meets.
+            const script = [
+                `import { addApp } from ${JSON.stringify(path.join(REPO, 'packages/create/src/add-app.js'))}`,
+                "import { readFileSync, writeFileSync } from 'node:fs'",
+                `const root = ${JSON.stringify(ws)}`,
+                "const file = root + '/package.json'",
+                "process.kill(process.pid, 'SIGINT')",
+                'addApp({',
+                `    templateDir: ${JSON.stringify(template)}, root, slug: 'ledger',`,
+                "    port: { name: 'ledger', default: 3700 }, like: root + '/apps/console',",
+                '    finish: () => {',
+                "        const text = readFileSync(file, 'utf8')",
+                '        writeFileSync(file, text.replace(\'"apps/console"\', \'"apps/console", "apps/ledger"\'))',
+                '        return () => writeFileSync(file, text)',
+                '    },',
+                '})',
+                "setTimeout(() => console.log('survived'), 2000)",
+            ].join('\n')
+            const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' })
+            expect(result.signal).toBe('SIGINT')
+            expect(result.stdout).not.toContain('survived')
+            expect(readdirSync(path.join(ws, 'apps'))).toEqual(['console'])
+            expect(read(ws, 'package.json')).toBe(before)
+        },
+        SLOW,
+    )
+
+    it(
+        "copies an @sssb package's spec from another workspace package when the app has none, and says so when none does",
+        () => {
+            const ws = workspace('add-app-others-')
+            // The console's deployment moves out of the app, as a workspace with a root infra/ has it.
+            const infra = readJson(ws, 'apps/console/infra/package.json')
+            rmSync(path.join(ws, 'apps/console/infra'), { recursive: true })
+            mkdirSync(path.join(ws, 'infra'))
+            writeFileSync(path.join(ws, 'infra/package.json'), JSON.stringify({ ...infra, name: 'deploy' }))
+            writeFileSync(
+                path.join(ws, 'pnpm-workspace.yaml'),
+                read(ws, 'pnpm-workspace.yaml').replace('    - packages/*\n', '    - packages/*\n    - infra\n'),
+            )
+            expect(sssb(ws, ['add-app', 'ledger']).status).toBe(0)
+            expect(readJson(ws, 'apps/ledger/infra/package.json').dependencies['@sssb/cdk']).toBe(
+                infra.dependencies['@sssb/cdk'],
+            )
+
+            // With no @sssb/cdk anywhere, the template's range, and a note.
+            const bare = workspace('add-app-nocdk-')
+            const consoleInfra = readJson(bare, 'apps/console/infra/package.json')
+            delete consoleInfra.dependencies['@sssb/cdk']
+            writeFileSync(path.join(bare, 'apps/console/infra/package.json'), JSON.stringify(consoleInfra))
+            const result = sssb(bare, ['add-app', 'audit'])
+            expect(result.status).toBe(0)
+            expect(readJson(bare, 'apps/audit/infra/package.json').dependencies['@sssb/cdk']).toBe(`^${VERSION}`)
+            expect(result.stdout).toContain(`apps/audit/infra/package.json takes @sssb/cdk at ^${VERSION}`)
+        },
+        SLOW,
+    )
+
+    it(
+        "says when pnpm-workspace.yaml's packages do not cover the new app",
+        () => {
+            const ws = workspace('add-app-uncovered-')
+            writeFileSync(
+                path.join(ws, 'pnpm-workspace.yaml'),
+                read(ws, 'pnpm-workspace.yaml')
+                    .replace('    - apps/*\n', '    - apps/console\n')
+                    .replace('    - apps/*/infra\n', '    - apps/console/infra\n')
+                    .replace('    - apps/*/src/app-config\n', '    - apps/console/src/app-config\n'),
+            )
+            const result = sssb(ws, ['add-app', 'ledger'])
+            expect(result.status).toBe(0)
+            expect(result.stdout).toContain(
+                "pnpm-workspace.yaml's packages do not cover apps/ledger, apps/ledger/infra, apps/ledger/src/app-config",
+            )
         },
         SLOW,
     )

@@ -9,10 +9,10 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmdirSync, 
 import path from 'node:path'
 import { checkSlug, CreateError, displayName, titleCase } from './args.js'
 import { checkPackageNames, SSSB_PACKAGES, writeApp } from './generate.js'
-import { holdSignals, releaseSignals } from './signals.js'
+import { holdSignals, releaseSignals, signalsSettled } from './signals.js'
 import { filesUnder, readTemplate } from './template.js'
 
-export { checkSlug, CreateError }
+export { checkSlug, CreateError, signalsSettled }
 
 /**
  * @typedef {{
@@ -22,9 +22,13 @@ export { checkSlug, CreateError }
  *   name?: string | null,
  *   port: { name: string, default: number },
  *   like: string,
+ *   others?: string[],
+ *   finish?: (appDir: string) => (() => void),
  * }} AddAppOptions `root`: the workspace's root; `like`: an app of the workspace (absolute), whose manifests (its
- *   package.json, and its infra/'s when it has one) say how the new app's take each @sssb package; `port`: the new
- *   app's own slot, which the caller has checked against the workspace's other apps
+ *   package.json, and its infra/'s when it has one) say how the new app's take each @sssb package, and `others`, more
+ *   package directories to look in after it (a deployment outside the app); `port`: the new app's own slot, which the
+ *   caller has checked against the workspace's other apps; `finish`: the caller's own change to the workspace, made
+ *   under the same signal hold once the app is in place, returning how to undo it
  */
 
 /** @param {string} file */
@@ -45,7 +49,8 @@ export function rebaseSpec(spec, fromDir, toDir) {
 }
 
 /**
- * Each @sssb package a manifest takes (the seam's alias aside), by its full name.
+ * Each @sssb package a manifest takes, by its full name (the seam's alias, `@sssb/app-config`, among them: no package
+ * of SSSB's is named so, so nothing looks it up).
  * @param {string} file
  * @returns {{ dir: string, specs: Record<string, string>, eslint: string | undefined }}
  */
@@ -64,13 +69,15 @@ function takes(file) {
 
 /**
  * Writes the template's app into the workspace at `root`, as apps/<slug>/. All or nothing: the app is written into a
- * stage beside it (`apps/.sssb-add-app-<hex>/`) and renamed into place, and a failure or a SIGINT, SIGTERM or SIGHUP
- * part-way leaves nothing behind. Refuses a slug the generator refuses, and an apps/<slug> that exists.
+ * stage beside it (`apps/.sssb-add-app-<hex>/`) and renamed into place, then `finish` makes the caller's change; a
+ * failure, or a SIGINT, SIGTERM or SIGHUP that comes while it runs (dispatched once it returns: the work is
+ * synchronous), removes the app and undoes `finish`'s change. A caller that reports success awaits `signalsSettled()`
+ * first. Refuses a slug the generator refuses, and an apps/<slug> that exists.
  * @param {AddAppOptions} options
  * @returns {{ appDir: string, name: string, files: string[], notes: string[] }} `files` relative to `root`; `notes`,
  *   what the caller should tell the person (a package no app of the workspace takes, written at the template's range)
  */
-export function addApp({ templateDir, root, slug, name = null, port, like }) {
+export function addApp({ templateDir, root, slug, name = null, port, like, others = [], finish }) {
     checkSlug(slug)
     const display = displayName(name ?? titleCase(slug))
     const meta = readTemplate(templateDir)
@@ -82,6 +89,10 @@ export function addApp({ templateDir, root, slug, name = null, port, like }) {
     const appTakes = takes(path.join(like, 'package.json'))
     const likeInfra = path.join(like, 'infra', 'package.json')
     const infraTakes = existsSync(likeInfra) ? takes(likeInfra) : appTakes
+    const otherTakes = others
+        .map((dir) => path.join(dir, 'package.json'))
+        .filter((file) => existsSync(file))
+        .map(takes)
     /** @type {string[]} */
     const notes = []
     /** @type {import('./generate.js').AppContext['spec']} */
@@ -89,24 +100,38 @@ export function addApp({ templateDir, root, slug, name = null, port, like }) {
         if (!SSSB_PACKAGES.includes(pkg))
             throw new CreateError(`the template depends on @sssb/${pkg}, an unknown package`)
         const toDir = manifest === 'infra' ? path.join(appDir, 'infra') : appDir
-        // The manifest's own counterpart first, then the other one: a workspace whose deployment is not inside its app
-        // (Pages' infra/ at the root) still names @sssb/cdk somewhere.
-        for (const source of manifest === 'infra' ? [infraTakes, appTakes] : [appTakes, infraTakes]) {
+        // The manifest's own counterpart first, then the other one, then the caller's other packages: a workspace
+        // whose deployment is not inside its app (an infra/ at the root) names @sssb/cdk there.
+        const sources = manifest === 'infra' ? [infraTakes, appTakes] : [appTakes, infraTakes]
+        for (const source of [...sources, ...otherTakes]) {
             const found = source.specs[`@sssb/${pkg}`]
             if (found) return rebaseSpec(found, source.dir, toDir)
         }
         const range = `^${meta.version}`
         notes.push(
             `${path.relative(root, path.join(toDir, 'package.json'))} takes @sssb/${pkg} at ${range}: ` +
-                `${path.relative(root, like)} names no @sssb/${pkg} to copy. Write it as your workspace takes SSSB's packages`,
+                `no package of the workspace names @sssb/${pkg} to copy. Write it as your workspace takes SSSB's packages`,
         )
         return range
     }
     const eslint = appTakes.eslint ?? /** @type {string} */ (meta.ranges['eslint'])
 
-    const made = { apps: /** @type {string | undefined} */ (undefined), stage: '' }
+    // What this run made, kept after it returns: a signal that came while it ran is dispatched only then, and must still
+    // find the app, the caller's change and the apps/ directory it may have created (as `generate` keeps `moved`).
+    const made = {
+        apps: /** @type {string | undefined} */ (undefined),
+        stage: '',
+        app: '',
+        finished: /** @type {(() => void) | undefined} */ (undefined),
+    }
     const undo = () => {
+        if (made.finished) {
+            const finished = made.finished
+            made.finished = undefined
+            finished()
+        }
         if (made.stage) rmSync(made.stage, { recursive: true, force: true })
+        if (made.app) rmSync(made.app, { recursive: true, force: true })
         if (made.apps) {
             try {
                 rmdirSync(made.apps)
@@ -124,7 +149,8 @@ export function addApp({ templateDir, root, slug, name = null, port, like }) {
             throw new CreateError(`${appDir} appeared while the app was written`)
         renameSync(made.stage, appDir)
         made.stage = ''
-        made.apps = undefined
+        made.app = appDir
+        if (finish) made.finished = finish(appDir)
         const files = filesUnder(appDir).map((file) => path.relative(root, path.join(appDir, file)))
         return { appDir, name: display, files, notes }
     } catch (error) {
