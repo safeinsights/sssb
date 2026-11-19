@@ -76,6 +76,11 @@ const COMMANDS = {
         load: () => import('../src/commands/remove-items.js'),
         summary: "take the starter's example Items slice out of the app (--drop-migrations for one never deployed)",
     },
+    'add-app': {
+        load: () => import('../src/commands/add-app.js'),
+        summary:
+            "write a new app into this workspace from SSSB's starter, with a port slot of its own, and name it in sssb.apps",
+    },
     ci: {
         load: () => import('../src/commands/ci.js'),
         summary: "a CI job's logic: lint-typecheck-unit, contract, matrix, e2e-shards, e2e, demo-static, synth",
