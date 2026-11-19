@@ -1,10 +1,8 @@
-import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { parse } from 'yaml'
+import { existingRelease, installFakeGh, runStep, type State, workflowStep } from '../support/fake-gh-release'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
@@ -13,86 +11,10 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  * never do is report success without a published prerelease holding exactly the tarballs `candidate` checked, or change
  * a candidate already published. The script is read from the workflow, so an edit there is what is tested.
  */
-const WORKFLOW = fileURLToPath(new URL('../../.github/workflows/release.yml', import.meta.url))
 const VERSION = '0.2.0-rc.0'
 const TAG = `v${VERSION}`
 
-type Release = {
-    draft: boolean
-    prerelease: boolean
-    latest: boolean | null
-    assets: Record<string, string>
-    title?: string
-    notes?: string
-}
-/** `viewError`: what `gh release view` fails with instead of answering, as an API or network failure would. */
-type State = { tags: string[]; release: Release | null; calls: string[]; viewError?: string }
-
-function script(): string {
-    const workflow = parse(readFileSync(WORKFLOW, 'utf8')) as {
-        jobs: Record<string, { steps: { name?: string; run?: string }[] }>
-    }
-    const step = workflow.jobs['prerelease']?.steps.find((s) => s.name === 'publish the prerelease')
-    if (!step?.run) throw new Error('release.yml has no `publish the prerelease` step in its prerelease job')
-    return step.run
-}
-
-/**
- * A `gh` that answers only the calls the job makes, from a state file, and fails on anything else. `--jq` is handed to
- * the real jq with `-r`, as gh prints strings raw.
- */
-const FAKE_GH = `#!/usr/bin/env node
-const { execFileSync } = require('node:child_process')
-const fs = require('node:fs')
-const path = require('node:path')
-const file = process.env.FAKE_GH_STATE
-const state = JSON.parse(fs.readFileSync(file, 'utf8'))
-const args = process.argv.slice(2)
-state.calls.push(args.join(' '))
-const save = () => fs.writeFileSync(file, JSON.stringify(state))
-const opt = (name) => { const i = args.indexOf(name); return i < 0 ? undefined : args[i + 1] }
-const die = (msg) => { save(); process.stderr.write(msg + '\\n'); process.exit(1) }
-if (args[0] !== 'release') die('unexpected gh ' + args.join(' '))
-const [, cmd, tag] = args
-if (opt('--repo') !== 'safeinsights/sssb') die('wrong repo')
-const r = state.release
-const dir = process.env.FAKE_GH_ASSETS
-if (cmd === 'view') {
-  if (state.viewError) die(state.viewError)
-  if (!r) die('release not found')
-  const all = { isDraft: r.draft, isPrerelease: r.prerelease, tagName: tag, assets: Object.keys(r.assets).map((name) => ({ name })) }
-  const fields = opt('--json').split(',')
-  const out = JSON.stringify(Object.fromEntries(fields.map((f) => [f, all[f]])))
-  const jq = opt('--jq')
-  process.stdout.write(jq ? execFileSync('jq', ['-r', jq], { input: out, encoding: 'utf8' }) : out + '\\n')
-} else if (cmd === 'create') {
-  if (r) die('a release for ' + tag + ' exists')
-  if (!state.tags.includes(tag)) die('tag ' + tag + ' does not exist')
-  state.release = { draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), latest: null, assets: {}, title: opt('--title'), notes: fs.readFileSync(opt('--notes-file'), 'utf8') }
-} else if (cmd === 'upload') {
-  if (!r) die('release not found')
-  for (const f of args.slice(3).filter((a) => !a.startsWith('--') && a !== opt('--repo'))) {
-    const name = path.basename(f)
-    if (r.assets[name] && !args.includes('--clobber')) die('asset ' + name + ' exists')
-    fs.mkdirSync(dir, { recursive: true })
-    fs.copyFileSync(f, path.join(dir, name))
-    r.assets[name] = path.join(dir, name)
-  }
-} else if (cmd === 'download') {
-  if (!r) die('release not found')
-  const to = opt('--dir')
-  fs.mkdirSync(to, { recursive: true })
-  for (const [name, from] of Object.entries(r.assets)) fs.copyFileSync(from, path.join(to, name))
-} else if (cmd === 'edit') {
-  if (!r) die('release not found')
-  if (opt('--title') !== undefined) r.title = opt('--title')
-  if (opt('--notes-file') !== undefined) r.notes = fs.readFileSync(opt('--notes-file'), 'utf8')
-  if (args.includes('--draft=false')) r.draft = false
-  if (args.includes('--prerelease')) r.prerelease = true
-  if (args.includes('--latest=false')) r.latest = false
-} else die('unexpected gh release ' + cmd)
-save()
-`
+const script = () => workflowStep('prerelease', 'publish the prerelease')
 
 /** A runner's temp directory holding what `candidate` uploads: the tarballs, their assets.json and the notes. */
 function runner(
@@ -107,45 +29,15 @@ function runner(
     })
     writeFileSync(path.join(temp, 'candidate', 'assets.json'), JSON.stringify(assets))
     writeFileSync(path.join(temp, 'candidate', 'notes.md'), `# Release notes: ${TAG}\n`)
-    const bin = path.join(temp, 'bin')
-    mkdirSync(bin)
-    writeFileSync(path.join(bin, 'gh'), FAKE_GH)
-    chmodSync(path.join(bin, 'gh'), 0o755)
+    installFakeGh(temp)
     return { temp, tarballs }
 }
 
-function run(temp: string, state: State, version = VERSION) {
-    const stateFile = path.join(temp, 'gh-state.json')
-    writeFileSync(stateFile, JSON.stringify(state))
-    const result = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script()], {
-        encoding: 'utf8',
-        env: {
-            NODE_ENV: 'test',
-            PATH: `${path.join(temp, 'bin')}:${process.env.PATH}`,
-            RUNNER_TEMP: temp,
-            GITHUB_REPOSITORY: 'safeinsights/sssb',
-            GITHUB_STEP_SUMMARY: path.join(temp, 'summary.md'),
-            GH_TOKEN: 'fake',
-            VERSION: version,
-            FAKE_GH_STATE: stateFile,
-            FAKE_GH_ASSETS: path.join(temp, 'release-assets'),
-        },
-    })
-    return { ...result, state: JSON.parse(readFileSync(stateFile, 'utf8')) as State }
-}
+const run = (temp: string, state: State, version = VERSION) => runStep(temp, script(), state, version)
 
-/** A release already holding these files (name → contents), as a draft or published. */
-function existing(temp: string, files: Record<string, string>, draft: boolean): Release {
-    const dir = path.join(temp, 'release-assets')
-    mkdirSync(dir, { recursive: true })
-    for (const [name, body] of Object.entries(files)) writeFileSync(path.join(dir, name), body)
-    return {
-        draft,
-        prerelease: true,
-        latest: draft ? null : false,
-        assets: Object.fromEntries(Object.keys(files).map((n) => [n, path.join(dir, n)])),
-    }
-}
+/** A candidate's release already holding these files (name → contents), as a draft or published. */
+const existing = (temp: string, files: Record<string, string>, draft: boolean) =>
+    existingRelease(temp, files, { draft, prerelease: true })
 
 const fresh = (): State => ({ tags: [TAG], release: null, calls: [] })
 
