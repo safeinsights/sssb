@@ -64,7 +64,7 @@ export const RESERVED_DATABASE_NAMES = new Set(
  * most 63 characters, not a word the engine reserves), as @sssb/cdk's `databaseNameFor` would at synth.
  * @param {string} slug
  */
-function checkSlug(slug) {
+export function checkSlug(slug) {
     if (!SLUG.test(slug))
         throw new CreateError(`"${slug}" is not a valid slug: lowercase letters, digits and dashes, from a letter`)
     const database = slug.replaceAll('-', '_')
@@ -77,7 +77,7 @@ function checkSlug(slug) {
  * The slug's title case, the default display name (`acme-research` is "Acme Research").
  * @param {string} slug
  */
-function titleCase(slug) {
+export function titleCase(slug) {
     return slug
         .split('-')
         .filter(Boolean)

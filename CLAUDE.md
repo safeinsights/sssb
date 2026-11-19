@@ -105,7 +105,10 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   workspace around the app is written by `packages/create/src/files.js`, its `.claude/settings.json` (the plugin's
   marketplace pinned at the workflow's commit) and `CLAUDE.md` included; a root file that names nothing of this
   repository's can be copied instead (`ROOT_FILES` in `packages/create/src/template.js`). Running it by hand:
-  `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting.md`).
+  `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting.md`). **`sssb add-app`**
+  (`@sssb/tools`) writes a further app into an existing workspace with the same code (`writeApp` in `generate.js`),
+  importing `@sssb/create/add-app` from the `@sssb/create` the workspace installs (never a dependency of `@sssb/tools`: no SSSB
+  package depends on another); pack and consume's pages shape adds its ledger with it.
 - **`@sssb/kit` stamps the commit it is packed from** into `dist/release.json` (its `prepack`,
   `packages/kit/scripts/stamp-release.mjs`), refusing shipped sources that differ from it under the same switch.
   `sssb doctor` reports, never fails, a workflow or marketplace pin that is not that commit, or a pinned marketplace no
@@ -188,7 +191,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   `.github/licence-policy.json`: a new copyleft, source-available or unknown licence in the installed closure fails
   it unless the policy names it with a reason; `pnpm install` first, then `node scripts/licence-scan.mjs`) — see
   `.github/workflows/checks.yml` and `.github/workflows/app-checks.yml`.
-- Unit tests are colocated (`*.test.ts(x)`), run by Vitest — `vitest.config.ts` has ONE PROJECT PER APP
+- Unit tests are colocated (`*.test.ts(x)`), run by Vitest — `vitest.config.ts` has ONE PROJECT PER APP (one for each
+  app the root's `sssb.apps` names, by `@sssb/tools/vitest`'s `workspaceAppProjects`, as a generated workspace's configs)
   because `@sssb/app-config/*` is a bare specifier and a single alias can only name one app, PLUS a `kit`
   project that runs the packages' suites against the framework's own seam (`packages/kit/test-fixture`). SSSB's
   conformance suite (`@sssb/kit/testing`; its checks and fixed test names are `packages/kit/src/testing/checks.json`)

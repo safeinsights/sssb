@@ -6047,6 +6047,79 @@ standing rule for these sessions says.
 - **Clerk's Frontend API proxy is not provided for** (round-4 review): it would forward the stripped copy, with no body
   and no `Authorization`, but it runs only with `frontendApiProxy` set or a production key on a `.vercel.app` host,
   and SSSB sets neither. Turning it on first needs `withClerk` to leave the proxy path's request whole.
+## One list of apps, and `sssb add-app` (2026-11-19, `feat/one-list-of-apps`)
+
+The adoption review's follow-up 3 (`docs/adoption-review-2026-11.md`, ranked item 3 and "What surprised" item 10):
+a generated workspace named its apps in `sssb.apps` and again in both Vitest configs' `APPS` and in `knip.json`, and
+nothing wrote a second app. JP's standing rule for these sessions: decide, and record the rejected alternative.
+
+- **Where `sssb add-app` gets the starter: the `@sssb/create` installed at the workspace root**
+  (`node_modules/@sssb/create`, `pnpm add -D -w @sssb/create@<version>`; the command prints that line when it is
+  missing), whose packed template is the starter and whose code is the renames. `@sssb/tools` imports its new export,
+  `@sssb/create/add-app`, by path from there, as rule 4 reaches `@sssb/kit` from the app; `--create <dir>` names an
+  unpacked one instead. Rejected: **`@sssb/tools` depending on `@sssb/create`**, which undoes "no SSSB package depends
+  on another" (ADR-0014, the 2026-11-18 addendum making `@sssb/tools` a peer of `@sssb/cdk`) and would meet the same
+  `ERR_PNPM_EXOTIC_SUBDEP` for a release candidate installed by URL. Rejected: **a copy of the template in
+  `@sssb/tools`**, a second packed starter and a second template build. Rejected: **running `pnpm dlx
+@sssb/create@<version>`** from the command, which reaches the network from a command that needs none and finds no
+  release candidate (they are not on npm). Rejected: **copying an app already in the workspace**, which is the
+  adopter's app, not the starter. Rejected: **the generator writing `@sssb/create` into every workspace's root**, so
+  that every workspace installs a generator for a rare command, and both of pack and consume's shapes move their
+  lockfile seed.
+- **The renames are the generator's code, shared, not copied.** `generate.js`' app half is `writeApp`, which
+  `generate` and `addApp` (`packages/create/src/add-app.js`) both call; `addApp` adds a port slot of the app's own and
+  rewrites the starter's `sssb dev-tick starter`, `sssb tick starter` and `originFor('starter')` to read it, failing
+  if any other `starter` slot reference is left. It writes into a stage beside `apps/<slug>` and renames it into
+  place, so a failure or a signal leaves nothing. Rejected: the renames written again in `@sssb/tools`.
+- **The version check is `@sssb/create`'s against `@sssb/tools`' own** (the running CLI's), so the command works before
+  the workspace's install, as pack and consume runs it. Rejected: against the installed `@sssb/kit`, which needs an
+  install; `sssb doctor` already fails a kit and tools out of step.
+- **The new app takes each `@sssb` package as the workspace's first app takes it** (its package.json, and its
+  `infra/`'s when it has one, else the app's), a relative `file:` or `link:` rebased; a package neither names is written
+  at the template's `^<version>` with a note. Rejected: always `^<version>`, which is wrong for a workspace on tarballs,
+  URLs or a release candidate.
+- **The port slot is named for the slug, its default the first of 3700, 3800, … that no app binds and SSSB keeps for
+  nothing** (`--slot`, `--port` override). Rejected: requiring `--port` (one more thing to know), and a hashed default
+  (not memorable, and the docs' example is 3700).
+- **`sssb add-app` changes the workspace in one place, `sssb.apps`, and says the rest.** The root's `dev`, `tick` and
+  `start` scripts and the CI workflow's `synth` name one app on purpose (the review), so it prints them rather than
+  rewriting them; `knip.json` is left to the person too, and `sssb doctor` reports it (below). Rejected: editing
+  `knip.json`, which is the adopter's config (it may be `.jsonc`, or customised), and rewriting the workflow's `synth`
+  to `./apps/*/infra`, a CI cost the adopter chooses.
+- **`workspaceAppProjects({ root, options })`** in `@sssb/tools/vitest`: `appTestProject` for each app `workspaceApps`
+  returns, with `options(appDir)` for what one app's project needs. **This repository's `vitest.config.ts` uses it
+  too**, its per-app `@sssb/kit` alias and fixtures directory through `options`, so `sssb.apps` is this repository's
+  one list as well and the helper runs on every unit run here. Rejected: keeping `APPS` here, a second list in the one
+  repository whose docs tell adopters not to keep one. Its `vitest.contract.config.ts` is unchanged: it discovers its
+  apps (`tests/support/contract-apps.ts`) and aliases the kit's source, and keeps no copy of the list.
+- **knip: `sssb doctor` reports, never fails, an app or an app's seam package that the root's `knip.json` gives no
+  workspace** (`knipGaps`), as the future task preferred. A seam that is not a workspace package (this repository's)
+  is not looked for; a knip config without `workspaces` gives no per-app line, and no knip config gives none at all; one that does not parse is "not
+  checked". Rejected: a `knip.config.ts` building its workspaces from `sssb.apps`, one more file to run, and failing,
+  since knip's own run is the gate.
+- **Pack and consume's pages shape adds its ledger with `sssb add-app`**, run with the packed `@sssb/tools`' bin and
+  `--create` the packed `@sssb/create`, before the workspace's one install; it then checks what the command wrote and
+  that `sssb doctor` reports the ledger's knip gap. Rejected: installing first, running `pnpm exec sssb add-app`, and
+  installing again: the lockfile seed resolves both apps in one install, and a second one is minutes for the same
+  file `pnpm exec` would run.
+- **The app guide (`packages/kit/src/guide.md`) does not mention the command**; `docs/adopting.md` does. Rejected: a
+  guide line, which every adopter would have to refresh (`sssb guide`) for a command few run.
+- **jscpd is said, not silenced** (the hands-on review: after `sssb add-app` a generated workspace's `pnpm jscpd` fails,
+  50% against its 2%, because the new app is the starter and so is much of the first). The command's "left to you"
+  and `docs/adopting.md` say so and how through. Rejected: **adding the new app to `.jscpd.json`'s `ignore`**, which
+  would hide its duplication after the app is the adopter's own, and **a jscpd run per app** in the generated
+  workspace, which changes every workspace's gate and stops seeing a copy across apps, the case a shared package
+  exists for.
+- **A root `@sssb/create` is reported, not written around**: nothing imports it, so `pnpm knip` calls it unused.
+  `sssb doctor`'s knip line reports it when knip's root config does not ignore it, and the command says to remove it
+  or ignore it. Rejected: the generator writing `@sssb/create` into every workspace's knip ignores (an entry for a
+  package most workspaces never install), and the command editing `knip.json` (above).
+- **Also from the round-1 reviews**: each Vitest project is named by `appLabels`, as `sssb ci` names the app, since
+  Vitest refuses two projects of one name (`apps/web` beside `services/web`); a signal that comes while `addApp`
+  writes is dispatched only once it returns, so `addApp` keeps what it made and the caller's `sssb.apps` change (made
+  in its `finish`, under the same hold) until then, and undoes both; a spec no app names is looked for in the
+  workspace's other packages (a root `infra/`) before the template's range; the slug is refused when a workspace
+  manifest depends on a package of the new app's names; knip's `.jsonc` configs are read with their comments.
 
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 
