@@ -71,6 +71,7 @@ describe('acceptInvite — Simulator dynamic people (Bob lifecycle)', () => {
             email: 'blank-name@example.test',
             role: 'member',
             orgSlug: 'depot',
+            acceptPageUrl: 'http://localhost:3000/en/accept-invite',
         })
 
         await expect(acceptInvite(membership.id, { name: '   ' })).rejects.toThrow(/name is required/)
@@ -82,6 +83,7 @@ describe('acceptInvite — Simulator dynamic people (Bob lifecycle)', () => {
             email: 'bob@example.test',
             role: 'member',
             orgSlug: 'depot',
+            acceptPageUrl: 'http://localhost:3000/en/accept-invite',
         })
 
         await acceptInvite(membership.id, { name: '  Bob Newperson  ' })

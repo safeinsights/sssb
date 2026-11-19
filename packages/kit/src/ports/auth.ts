@@ -52,6 +52,22 @@ export interface InviteInput {
     email: string
     role: Role
     orgSlug: string
+    /**
+     * The absolute URL of the app's accept page, with no query (`https://host/en/accept-invite`): where the invitee
+     * lands. The adapter builds the link it returns from it, with whatever that page reads to find the invitation.
+     */
+    acceptPageUrl: string
+}
+
+/** A recorded invitation, and the link that lets its invitee accept it. */
+export interface CreatedInvite extends Membership {
+    /**
+     * The link the invitation mail carries, or null when the provider gives none (it delivers the invitation itself).
+     * Only the adapter can build it, since only the adapter knows what its accept page reads: the fake's
+     * `?invite=<id>`, the provider's own ticket. It is the invitee's credential: mail it to them, and never return it
+     * to the inviter.
+     */
+    acceptUrl: string | null
 }
 
 /**
@@ -78,8 +94,11 @@ export interface AuthPort {
      * once.
      */
     getMember(orgSlug: string, userId: string): Promise<MemberStanding | null>
-    /** Records the invitation (per-org); sending the notification email is the caller's job (email port). */
-    createInvite(invite: InviteInput): Promise<Membership>
+    /**
+     * Records the invitation (per-org) and returns the link to accept it; sending the invitation email is the caller's
+     * job (email port), with that link.
+     */
+    createInvite(invite: InviteInput): Promise<CreatedInvite>
     /** Orgs the current user belongs to (drives the OrgSwitcher). */
     listMyOrgs(): Promise<OrgRef[]>
     /** @throws ForbiddenError when the user has no membership in that org */

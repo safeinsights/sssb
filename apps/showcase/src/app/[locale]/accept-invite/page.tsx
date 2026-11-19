@@ -14,7 +14,7 @@ export default async function AcceptInvitePage({
     searchParams,
 }: {
     params: Promise<{ locale: string }>
-    searchParams: Promise<{ invite?: string; __clerk_ticket?: string }>
+    searchParams: Promise<{ invite?: string; __clerk_ticket?: string; __clerk_status?: string }>
 }) {
     const { locale } = await params
     setRequestLocale(locale)
@@ -31,6 +31,7 @@ export default async function AcceptInvitePage({
                 body={
                     <RealAcceptInviteForm
                         ticket={search.__clerk_ticket ?? null}
+                        status={search.__clerk_status ?? null}
                         redirectTo={`/${locale}/dashboard`}
                         labels={{
                             missingTicket: t('ticketMissing'),
