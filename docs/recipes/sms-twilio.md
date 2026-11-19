@@ -72,19 +72,19 @@ instance work, not part of this seam — `sendSms` just needs a valid number by 
 ## 5. Why this is a recipe, not shipped code
 
 Run it against the two tests `docs/development-approach.md` and `docs/app-coverage-gaps.md` apply to every
-candidate for template vendor code:
+candidate for SSSB's vendor code:
 
 - **Universality** — will every instance send SMS? No. Most instances of a generic multi-tenant scaffold
   never touch a phone number; shipping Twilio by default is a maintenance bill nobody but SMS-using
   instances pays for.
-- **New-class** — does it teach integration mechanics the template doesn't already demonstrate? No. Twilio
+- **New-class** — does it teach integration mechanics SSSB doesn't already demonstrate? No. Twilio
   is an outbound authenticated vendor API call — the exact class the LLM (Anthropic), email (Mailgun), and
-  webhook-dispatch (`fetch` + HMAC) adapters already teach end to end. Building it in the template would be
+  webhook-dispatch (`fetch` + HMAC) adapters already teach end to end. Building it into SSSB would be
   demonstrating that class a fourth time with a different logo, not covering new ground.
 
-Fails both → recipe, per `docs/app-coverage-gaps.md`'s "template/instance doctrine." The fake stays the
+Fails both → recipe, per `docs/app-coverage-gaps.md`'s "What SSSB ships, and what an instance builds." The fake stays the
 only shipped consumer, which is what keeps the channel abstraction honest without dragging in vendor code
-nobody in the template exercises.
+nothing in SSSB exercises.
 
 ## 6. Hermetic / static-demo note
 

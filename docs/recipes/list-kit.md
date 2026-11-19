@@ -32,7 +32,7 @@ with it forever.
 
 So the test for a component is not universality (the test that governs vendor code): it is **does this
 component encode a framework invariant, or is it generic presentation?** That test is recorded as
-doctrine in `docs/development-approach.md`, "What the template ships".
+doctrine in `docs/development-approach.md`, "What SSSB ships".
 
 By that test, one part of a list genuinely does encode an invariant: **a paginated read of a
 tenant-scoped table**. A cursor is client input; the read must stay inside the tenant and the team on
@@ -150,7 +150,7 @@ like any other:
 
 ## 4. What this recipe deliberately does not do
 
-- **No `<DataTable>` in SSSB** — §1. If a second app on this template builds one and the two converge on the
+- **No `<DataTable>` in SSSB** — §1. If a second app on SSSB builds one and the two converge on the
   same component, that is evidence to revisit; one app's grid is not.
 - **No column-config persistence, no saved views, no CSV import UI.** Each is its own capability with
   its own storage; the CSV import/export UI is separately on the deferred-UI list.

@@ -17,7 +17,7 @@
   directory, from which it resolves the framework's migrator.
 - Pipeline: yours (cutover `deploy-pipeline`). `.github/workflows/checks.yml` runs checks and **never
   deploys**, deliberately — the deploy pipeline is the piece most tied to an organisation's accounts and
-  approval gates, so the template declines to guess it.
+  approval gates, so SSSB declines to guess it.
 
 ## Deploy sequence
 

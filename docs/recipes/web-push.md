@@ -69,7 +69,7 @@ for `notification_prefs` — same `tenant_id`/`org_id`/opaque-`user_id` shape):
 
 Real-mode `sendWebPush` reads every `push_subscriptions` row for `recipientUserId`, calls the vendor once
 per row, and prunes rows the vendor reports as gone (410/404 — an expired or revoked subscription).
-Plaintext `endpoint`/`p256dh`/`auth` at rest is a template-level simplicity, same posture as
+Plaintext `endpoint`/`p256dh`/`auth` at rest is an SSSB-level simplicity, same posture as
 `webhook_endpoints.secret` (0010_webhooks.ts) — a real instance may vault it.
 
 VAPID is a keypair the instance generates once, not per-user — cutover rows, not code:
@@ -117,17 +117,17 @@ every other channel's shape.
 
 ## 5. Why this is a recipe, not shipped code
 
-Same two tests as every other candidate for template vendor code (`docs/app-coverage-gaps.md`):
+Same two tests as every other candidate for SSSB's vendor code (`docs/app-coverage-gaps.md`):
 
 - **Universality** — will every instance turn on browser push? No; it is even more opt-in than SMS
   (`SMS/push channels` sits at 4/19 in the capability × demand matrix).
-- **New-class** — new mechanics beyond what the template already teaches? Push aside, no: it is the same
+- **New-class** — new mechanics beyond what SSSB already teaches? Push aside, no: it is the same
   "app-owned seam, fake selected behind `isSimulated`, vendor fenced into
   `packages/kit/src/adapters/`" shape the SMS
   fake and `webhook-dispatch.ts` already demonstrate end to end. The one genuinely new piece — the
   subscription lifecycle (Service Worker + `PushSubscription` + a stored table) — is real complexity, but
-  it is complexity in service of a channel most instances won't ship, not a new integration class the
-  template is missing.
+  it is complexity in service of a channel most instances won't ship, not a new integration class
+  SSSB is missing.
 
-Fails both → recipe. Building it into the template would mean maintaining a Service Worker, a subscription
+Fails both → recipe. Building it into SSSB would mean maintaining a Service Worker, a subscription
 table, and a static-demo physics-degrade note for a capability most instances will never turn on.

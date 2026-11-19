@@ -1,15 +1,15 @@
 # App coverage gaps — round 2: from one reference app to the app-type space
 
-**How the template decided what to ship.** Round 1 measured the scaffold against a single
+**How SSSB decided what to ship.** Round 1 measured the scaffold against a single
 real application — a regulated-data research product — and closed the eleven gaps that one comparison
 surfaced. Measuring against one app tells you what that app needs, and nothing about what the next one
-will. This document is round 2: instead of one reference app, it tests the template against the _space_ of
+will. This document is round 2: instead of one reference app, it tests SSSB against the _space_ of
 app types it might host, asks what each would need, and triages what the sweep found. Five build slices
 came out of it, and are built.
 
 Its lasting value is therefore not the roadmap. It is the method, the triage decisions, and the doctrine
 that emerged from making them — written down so the next sweep does not re-derive them, and so an adopter
-can see exactly where the line between "the template ships this" and "your instance builds this" was
+can see exactly where the line between "SSSB ships this" and "your instance builds this" was
 drawn, and why.
 
 As with round 1, everything here is slice-level intent under the one-way/two-way door rule: each build
@@ -35,11 +35,11 @@ contribution was ~zero, so the list stops there. Each type was decomposed into t
 it needs as _core_ (not nice-to-have), and each capability checked against the repo as it stands
 after round 1.
 
-## The template/instance doctrine
+## What SSSB ships, and what an instance builds
 
-Triage forced the question round 1 never had to answer: where is the line between what the
-template ships and what an instance builds? Round 1's implicit answer, made explicit here —
-the template ships exactly three kinds of things:
+Triage forced the question round 1 never had to answer: where is the line between what
+SSSB ships and what an instance builds? Round 1's implicit answer, made explicit here —
+SSSB ships exactly three kinds of things:
 
 1. **Universal capabilities, fully worked.** Things essentially every instance turns on: auth,
    db, storage, email, analytics, jobs. These get a port, a real adapter for a default vendor,
@@ -58,7 +58,7 @@ more job kinds, more webhook events, more email handlers, more vendor adapters w
 following the worked example.
 
 **The two tests for shipping vendor code:** _universality_ (will every instance use it?) and
-_new-class_ (does it demonstrate integration mechanics the template doesn't already teach?).
+_new-class_ (does it demonstrate integration mechanics SSSB doesn't already teach?).
 Fail both → recipe. A vendor adapter most instances would delete is not coverage; it is dead
 code with a maintenance bill, and it fights the repo's own dead-code discipline and the
 "buy non-differentiating things when you need them" principle.
@@ -67,10 +67,10 @@ Note the port test is _not_ the capability test: authz, audit, and escalations a
 port-less in round 1 because they pass universality (or, for gates below, new-class). The port
 test governs vendor code specifically.
 
-**Key consequence.** Once signed egress lands, the template's integration classes are
+**Key consequence.** Once signed egress lands, SSSB's integration classes are
 complete for callback-driven vendors: outbound API call, inbound verified webhook, state
 machine, artifacts. From then on, a Zoho-Sign- or Twilio-class integration is instance work by
-recipe — building one in the template would be demonstrating an existing class twice with a
+recipe — building one into SSSB would be demonstrating an existing class twice with a
 different logo.
 
 ## Capability × demand matrix
@@ -119,9 +119,9 @@ webhooks, LLM + tool loops, email send, analytics + flags, i18n, per-tenant them
 ## Triage
 
 Priority for building = demand breadth × retrofit pain × house leverage (where a
-port+fake+Simulator+static-twin treatment is the template's unique value versus app code
+port+fake+Simulator+static-twin treatment is SSSB's unique value versus app code
 anyone writes later), filtered through the doctrine above. Round-2 focus, decided during
-triage: the template concentrates on capabilities involving external-service seams and missing
+triage: SSSB concentrates on capabilities involving external-service seams and missing
 classes; UI kits are tracked on their own list rather than built speculatively.
 
 ### Build — the five slices
@@ -234,7 +234,7 @@ No new vendor SDK — the HMAC is hand-implemented.
 
 **Access gates + agreements**. A missing _class_: a condition an actor must satisfy
 before proceeding, with scope (everything vs specific actions), a resolution flow, and a behavior (block vs
-advisory). `authorize()` does per-action deny; nothing in the template teaches block-with-resolution.
+advisory). `authorize()` does per-action deny; nothing in SSSB teaches block-with-resolution.
 `packages/kit/src/core/gates.ts` evaluates actor + registered gates
 
 - facts → pending gates; one hook in the protected layout glue renders a generic interstitial
@@ -329,7 +329,7 @@ parity twin, e2e proof, cutover row for any real adapter, `pnpm verify` (+ `pnpm
 for migrations), doc-steward pass.
 
 With all five landed, the honest claim becomes: _of the nineteen app types surveyed, every
-capability that is universal or class-defining is either worked in the template or written down
+capability that is universal or class-defining is either worked in SSSB or written down
 as a recipe — what remains missing is, by recorded decision, either an instance's job or a
 deliberate deferral with its trigger named._ That is the bar this document exists to reach.
 

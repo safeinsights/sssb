@@ -1,12 +1,12 @@
 # Cutover checklist
 
-**Your instance's live punch list.** Everything the scaffold defers because it needs real credentials,
-accounts, or money. The scaffold boots and is fully testable without any of it — nothing here is a blocker,
-each is a row.
+**SSSB's own punch list, and the worked reference for yours.** Everything SSSB defers because it needs real
+credentials, accounts, or money. SSSB boots and is fully testable without any of it — nothing here is a blocker,
+each is a row. A workspace `@sssb/create` writes gets a `docs/cutover-checklist.md` of its own, one line per
+framework row below (all but those scoped to SSSB's own repository); this file shows the detail a row deserves.
 
-The rows below are the ones essentially every instance needs, pre-filled with the _deferred verification_
-each one owes. Fill in `What unlocks it` with your own owner, work them in roughly the order given, and add
-rows as your product acquires dependencies.
+The rows below are pre-filled with the _deferred verification_ each one owes. Fill in `What unlocks it` with an
+owner, work them in roughly the order given, and add rows as dependencies arrive.
 
 ## The pattern
 

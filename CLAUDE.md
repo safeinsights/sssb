@@ -17,8 +17,8 @@ send a change "upstream" from a fork. 0014 is a plan carried out in steps (its i
 lands, the tree and the docs describe what is built, not what 0014 will build.
 The philosophy behind these rules — thin slices, ports/adapters, hermetic dev, demo mode, one-app default —
 is `docs/development-approach.md`; read it to understand the why, not just the what.
-Before adding a new vendor adapter, check the template/instance doctrine
-(`docs/development-approach.md`, "What the template ships"): vendor code must pass the universality
+Before adding a new vendor adapter, check what SSSB ships
+(`docs/development-approach.md`, "What SSSB ships"): vendor code must pass the universality
 or new-class test — otherwise it's a recipe in `docs/recipes/`. A new framework COMPONENT has its own
 test in that section: does it encode a framework invariant, or is it generic presentation? A sign-in
 screen does; a sortable table does not (`docs/recipes/list-kit.md`).

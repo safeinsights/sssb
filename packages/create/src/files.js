@@ -560,6 +560,15 @@ None yet.
 `
 }
 
+/**
+ * A link to a file (\`blob\`) or directory (\`tree\`) of SSSB's repository at the commit the workspace pins. Every path a
+ * workspace's README links this way is checked to exist in SSSB's repository (tests/tooling/create-generate.test.ts).
+ * @param {Context} c
+ * @param {'blob' | 'tree'} kind
+ * @param {string} file
+ */
+const sssbDoc = (c, kind, file) => `https://github.com/${c.meta.workflow.repository}/${kind}/${c.workflowRef}/${file}`
+
 /** @param {Context} c */
 export function readme(c) {
     return `# ${c.name}
@@ -581,12 +590,22 @@ pnpm verify                                                 # what CI runs, but 
 with coverage, knip, jscpd, the lint fences, doctor, the contract tests on real Postgres (an embedded server locally),
 the e2e suites, the static demo and the offline CDK synth. Only the secret scan (gitleaks) is CI's alone.
 
+## Building on SSSB
+
+SSSB's guide for an app built on it, at the commit this workspace pins, says what is yours and what is SSSB's, how
+the app registers through its seam, which generated content to replace first, how to cut over to real accounts, and
+how to upgrade:
+[\`docs/adopting.md\`](${sssbDoc(c, 'blob', 'docs/adopting.md')}).
+The worked example of every capability is SSSB's own reference app:
+[\`apps/showcase\`](${sssbDoc(c, 'tree', 'apps/showcase')}).
+
 ## Layout
 
 - \`${app(c)}/\`: the app. Its \`src/app-config/\` is the seam SSSB's framework (\`@sssb/kit\`) reads the app's
   registrations through, a workspace package of its own (\`${c.slug}-app-config\`) that the app takes as
   \`@sssb/app-config\`; \`config/app.ts\` holds its slug and
-  \`config/params.ts\` its deployment parameters.
+  \`config/params.ts\` its deployment parameters. It sits under \`apps/\` so that a second app, or a package of your own
+  under \`packages/\`, is a sibling rather than a special case; one app is the usual shape.
 - \`${app(c)}/infra/\`: the app's deployment, a CDK app composing SSSB's \`SssbApp\` construct (\`@sssb/cdk\`).
 - \`docs/cutover-checklist.md\`: what the app defers until it has real accounts.
 - \`.claude/sssb-guide.md\`: SSSB's app guide (the rules an app on SSSB follows), a stamped copy of the one
@@ -629,9 +648,10 @@ ${
 
 ## Upgrading SSSB
 
-The \`@sssb/*\` packages are released together at one version: move them together, read the release notes'
-"Seam changes", "Framework migrations", "Operator actions" and "Scaffold changes to apply by hand", and raise the
-workflow's pin and the plugin marketplace's \`ref\` in \`.claude/settings.json\` to the commit the notes name.
+The \`@sssb/*\` packages are released together at one version: move them together, apply each release's notes, refresh
+\`.claude/sssb-guide.md\` (\`pnpm exec sssb guide\`), and raise the workflow's pin and
+the plugin marketplace's \`ref\` in \`.claude/settings.json\` to the release's commit. SSSB's guide has the steps:
+[\`docs/adopting.md\`, "Upgrading by release"](${sssbDoc(c, 'blob', 'docs/adopting.md')}#upgrading-by-release).
 \`pnpm exec sssb doctor\` fails when the installed packages are out of step, and reports a pin that is not the release
 commit the installed \`@sssb/kit\` names.
 `

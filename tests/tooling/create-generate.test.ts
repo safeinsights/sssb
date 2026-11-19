@@ -160,6 +160,9 @@ describe('@sssb/create: the generated workspace', () => {
             ],
             starter: [/originFor\('starter'\)/, /"port": "starter"/, /sssb (?:dev-)?tick starter\b/],
         }
+        // The README's links to SSSB's guide and its reference app, each a line of its own, at the pinned commit.
+        const sssbLink =
+            /^\[[^\]]+\]\(https:\/\/github\.com\/safeinsights\/sssb\/(?:blob|tree)\/[0-9a-f]{40}\/(?:docs\/adopting\.md(?:#upgrading-by-release)?|apps\/showcase)\)\.$/
         const banned = [
             'starter',
             'showcase',
@@ -178,6 +181,12 @@ describe('@sssb/create: the generated workspace', () => {
             lines.forEach((line, index) => {
                 for (const token of banned) {
                     if (!line.toLowerCase().includes(token)) continue
+                    if (
+                        file === 'README.md' &&
+                        ['safeinsights/sssb', 'showcase'].includes(token) &&
+                        sssbLink.test(line)
+                    )
+                        continue
                     // `uses:` is allowed only in the workflow file, the marketplace's `repo` only in the settings.
                     const ok = (allowed[token] ?? []).some(
                         (pattern) =>
@@ -278,6 +287,21 @@ describe('@sssb/create: the generated workspace', () => {
         // Playwright is the app's dependency, not the root's: the root form works only where pnpm hoists its bin.
         expect(readme).toContain(`\n${PLAYWRIGHT_INSTALL}   # once`)
         expect(readme).not.toMatch(/^pnpm exec playwright/m)
+        // Its links into SSSB's repository (the adoption guide, the showcase) are at the pinned commit, and name a path
+        // SSSB's repository has: a moved doc fails here, not in an adopter's README.
+        const links = [
+            ...readme.matchAll(/https:\/\/github\.com\/safeinsights\/sssb\/(?:blob|tree)\/(\w+)\/([^)#\s]+)/g),
+        ]
+        expect(links.map(([, , file]) => file).sort()).toEqual([
+            'apps/showcase',
+            'docs/adopting.md',
+            'docs/adopting.md',
+        ])
+        for (const [, ref, file] of links) {
+            expect(ref).toBe(HEAD)
+            expect(existsSync(path.join(REPO, file)), file).toBe(true)
+        }
+        expect(read(REPO, 'docs/adopting.md')).toMatch(/^## Upgrading by release$/m)
         expect(read(REPO, 'plugins/sssb/commands/verify.md')).toContain(`\`${PLAYWRIGHT_INSTALL}\``)
     })
 
@@ -831,6 +855,7 @@ describe('@sssb/create: the command', () => {
         expect(result.stdout).toContain('Still to fill in: the code owner in CODEOWNERS (--owner)')
         expect(result.stdout).toContain(`\n  ${PLAYWRIGHT_INSTALL}\n`)
         expect(result.stdout).not.toMatch(/^ {2}pnpm exec playwright/m)
+        expect(result.stdout).toContain('`pnpm dev` then runs the app')
         expect(readJson(target, 'apps/research-hub/package.json').name).toBe('research-hub')
     })
 

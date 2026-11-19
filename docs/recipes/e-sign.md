@@ -12,9 +12,9 @@ this page is the deliverable (the round-2 doctrine: known patterns get written d
 see `docs/development-approach.md` and the sms-twilio / web-push recipes this one copies).
 
 Crucially, **this needs no new integration class.** After signed outbound webhooks and the
-inbound-webhook seam, the template already teaches every mechanic a signing vendor needs:
+inbound-webhook seam, SSSB already teaches every mechanic a signing vendor needs:
 outbound API call → inbound verified webhook → state machine → signed artifact. E-sign is those exact
-pieces wired to a new logo. Building it into the template would demonstrate an existing class twice.
+pieces wired to a new logo. Building it into SSSB would demonstrate an existing class twice.
 
 ## The shape: an externally-resolved gate
 
