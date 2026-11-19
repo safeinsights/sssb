@@ -4,7 +4,12 @@ A production-shaped Next.js foundation you generate a workspace from and build a
 architecture, Postgres row-level-security tenancy, and a local development loop that runs the whole world on your
 laptop with no docker, no credentials, and no network.
 
-To see it working, clone this repository and run:
+To see it with nothing to install, download the showcase as one HTML file from the latest release,
+[`sssb-showcase.html`](https://github.com/safeinsights/sssb/releases/latest/download/sssb-showcase.html), and open
+it in a browser: it runs from `file://`, the Simulator and its tours included. Every release after 0.2.0 carries it;
+`pnpm build:demo-static` in `apps/showcase` builds the same file from a checkout.
+
+To run the whole of it, clone this repository and run:
 
 ```sh
 pnpm install

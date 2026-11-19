@@ -5652,3 +5652,46 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
       also reads the root's dependency ranges and engines, `pnpm-workspace.yaml`'s build approvals and release age,
       and the gitleaks version from this repository when it is packed (`TemplateMeta` in
       `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.
+
+## A hosted showcase demo on each release (2026-11-18, `feat/hosted-showcase-demo`)
+
+Adoption follow-up 4 (`docs/adoption-review-2026-11.md`): an evaluator should see the Simulator without cloning SSSB.
+JP's standing rule for these sessions is to decide and record; each choice below is one he would otherwise have been
+asked. **This makes a new outward artifact**: from the first release after 0.2.0, every plain release's tag makes a
+public GitHub release of `safeinsights/sssb`, marked Latest, holding its notes and `sssb-showcase.html`. Nothing about
+what or when anything publishes to npm changes.
+
+- **A GitHub release asset, made by release.yml for every plain release.** Two jobs, `demo` and `github-release`,
+  split as the candidate's `candidate` and `prerelease` are (the one that reads holds no write token and runs no
+  dependency's code; the one that writes holds only `contents: write`, checks out nothing and installs nothing).
+  Rejected: **GitHub Pages**, which needs Pages enabled (a repository setting, JP's) and whose `actions/deploy-pages`
+  needs `id-token: write`, which `tests/tooling/release-reach.test.ts` holds to `publish` and `attest` alone; a second
+  id-token holder in the release workflow is a worse trade than a download. Rejected: **a third-party HTML preview
+  service** pointed at the asset or the repository, which would serve SSSB's page from someone else's domain.
+- **The new jobs need `pack`, and nothing needs them; `publish` is untouched.** They run only for a plain tag on `main`
+  once `checks` passed on it (`pack`'s gates), beside `publish`. Rejected: **steps in `pack`**, which would let a demo
+  problem stop an npm publish, a change to when npm publishes. Rejected: **needing `publish`**, so the page appears only
+  once npm has the version: it would tie the page to npm's outcome, and the task forbade anything downstream of
+  `publish`. The consequence, accepted: if `publish` fails, the tag's GitHub release is still made; re-running
+  `publish` finishes npm, and the page's notes are true of the tag either way.
+- **"A release whose demo does not build fails before it publishes" is the CI gate's job.** `checks`' demo-static job
+  builds the showcase's demo, holds it to its budget and drives it from `file://`; `pack` waits for `checks` to pass on
+  the release commit. The new jobs add no failure mode on the way to npm.
+- **The attached file is the one CI tested**, the `static-demo-showcase` artifact app-checks.yml's demo-static job
+  uploads, fetched from the checks run on the release commit (`release.mjs checks-run`, as a candidate fetches its
+  tarballs) and checked again (`release.mjs demo`: the asset's name, an HTML document, within the showcase's
+  `check:demo-size` budget). Rejected: **building it again in the release run**, which would install dependencies in
+  the tag's run for a file CI never drove. The artifact's 14-day retention bounds a re-run, which is days, not weeks.
+- **The asset is `sssb-showcase.html` in every release, not `sssb-showcase-<version>.html`** as the future task
+  sketched: `releases/latest/download/<name>` needs one name, and the release page says the version. Rejected:
+  **attaching both names**, two copies of one file. The release is marked Latest (candidates stay never-Latest), which
+  is what makes that URL the newest release's.
+- **The README links `releases/latest/download/sssb-showcase.html` and says every release after 0.2.0 carries it**,
+  so the link reads true before and after the next release; until it, the link answers 404 and the same sentence names
+  `pnpm build:demo-static`. Rejected: **backfilling a 0.2.0 GitHub release** by hand, an outward artifact this task was
+  not given to make.
+- **No changeset.** It touches nothing an adopter receives (`scripts/`, `.github/`, `tests/`, docs), as the future task
+  said; `changeset-required` sees no shipped path.
+- **The fake `gh` the prerelease job's test used moved to `tests/support/fake-gh-release.ts`**, shared with the new
+  job's test, and reads a boolean flag as gh does (`--x`, `--x=true`, `--x=false`), so `--prerelease=false` and
+  `--latest` are told apart.
