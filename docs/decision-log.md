@@ -6067,6 +6067,20 @@ route from a ticker Lambda instead).
       the start) stays `queued`: `queued` is also a CodeBuild job's state while it builds, so the sweep cannot tell it
       lost. The sweep's per-tenant scan of `running` jobs has no index of its own; a partial index is a framework
       migration, for when a deployment's job history makes it matter.
+- **From the third review round.**
+    - **The registry loads the in-process runner on its first use** (`packages/kit/src/adapters/lazy-jobs.ts`), never
+      during its own top-level await. Loading it loads the app's job handlers, and a handler that imports the registry
+      (for `isSimulated`, as the guide says to) closes a cycle whose root is the registry, which would then wait
+      forever on its own import: the reviewer reproduced the hang in plain Node ESM and a webpack bundle, and the lazy
+      shape boots there. Vitest's module runner does not reproduce an ESM top-level-await cycle, so the test pins the
+      helper (nothing loaded until the first call, one load, a failed load retried), not the hang.
+    - **Recording a job's outcome is outside the handler's `try`.** Only the handler's own failure fails the job; a
+      failure after `completed` has committed (the webhook enqueue that follows it) propagates, instead of an attempt
+      to record `failed` over `completed`, which the state machine refuses. The simulated runner shares the change.
+    - **The Sentry scrubber drops the two credential headers**, as it drops `authorization`. Sentry's own filter
+      already masks names containing `secret` or `token`; the scrubber no longer relies on that.
+    - **Phase 1 stops here, at the cap.** Round 3's one HIGH was in round 2's fix, not in the original work, and its
+      LOWs were either taken above or already recorded (a job that `none` or a cut-off invocation leaves `queued`).
 
 ## One list of apps, and `sssb add-app` (2026-11-19, `feat/one-list-of-apps`)
 
