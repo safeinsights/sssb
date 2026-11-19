@@ -50,6 +50,12 @@ export declare class SssbApp extends Construct {
     readonly functionUrl: cdk.aws_lambda.FunctionUrl
     readonly migrator: cdk.aws_lambda_nodejs.NodejsFunction
     readonly distribution: cdk.aws_cloudfront.Distribution
+    /**
+     * The viewer-request CloudFront Function that gives the server the host the viewer asked for
+     * (`x-forwarded-host`, `x-forwarded-port`), overwriting what the viewer sent. Associate it with any behavior of
+     * your own that reaches the server.
+     */
+    readonly forwardedHost: cdk.aws_cloudfront.Function
     readonly assetsBucket: cdk.aws_s3.Bucket
     readonly storageBucket: cdk.aws_s3.Bucket
     readonly databaseTransport: DatabaseTransport

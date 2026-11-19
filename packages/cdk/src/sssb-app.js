@@ -10,6 +10,7 @@ import { Construct } from 'constructs'
 import { failClosedEnvironmentProblems, migratorBundleProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '@sssb/tools/kit'
 import { databaseNameFor, SLUG } from './database-name.js'
+import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
 
 const { aws_budgets, aws_cloudfront, aws_cloudfront_origins, aws_cloudwatch, aws_ec2, aws_lambda } = cdk
 const { aws_lambda_nodejs, aws_rds, aws_s3 } = cdk
@@ -582,9 +583,21 @@ export class SssbApp extends Construct {
             bodyHash = edgeFunction
         }
 
+        // ---- the host the viewer asked for (CloudFront Function) ------------------------------
+        // CloudFront sends the Function URL its own Host (it signs for it), so the app would build its redirects,
+        // absolute links and Clerk's URLs on the Function URL's host, or on whatever `X-Forwarded-Host` a viewer
+        // sent. This viewer-request function sets it, and its port, from the request CloudFront received
+        // (src/forwarded-host.js). A viewer-request CloudFront Function beside an origin-request Lambda@Edge is a
+        // combination CloudFront allows on one behavior.
+        const forwardedHost = new aws_cloudfront.Function(this, 'ForwardedHost', {
+            runtime: aws_cloudfront.FunctionRuntime.JS_2_0,
+            code: aws_cloudfront.FunctionCode.fromInline(FORWARDED_HOST_SOURCE),
+            comment: `${slug}: x-forwarded-host and x-forwarded-port from the viewer's request`,
+        })
+
         // ---- cloudfront ---------------------------------------------------------------------
         // First deploys ride *.cloudfront.net; custom domains + certs are cutover row
-        // `domains-and-certs`.
+        // `domains-and-certs`. Every behavior redirects plain HTTP to HTTPS.
         const distribution = new aws_cloudfront.Distribution(this, 'Distribution', {
             defaultBehavior: {
                 // withOriginAccessControl, not the plain constructor: it creates the OAC and grants
@@ -594,6 +607,9 @@ export class SssbApp extends Construct {
                 allowedMethods: aws_cloudfront.AllowedMethods.ALLOW_ALL,
                 cachePolicy: aws_cloudfront.CachePolicy.CACHING_DISABLED,
                 originRequestPolicy: aws_cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                functionAssociations: [
+                    { function: forwardedHost, eventType: aws_cloudfront.FunctionEventType.VIEWER_REQUEST },
+                ],
                 edgeLambdas: [
                     {
                         functionVersion: bodyHash,
@@ -605,10 +621,12 @@ export class SssbApp extends Construct {
             additionalBehaviors: {
                 '/_next/static/*': {
                     origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
+                    viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cachePolicy: aws_cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 },
                 '/assets/*': {
                     origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
+                    viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cachePolicy: aws_cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 },
             },
@@ -697,6 +715,7 @@ export class SssbApp extends Construct {
         this.functionUrl = functionUrl
         this.migrator = migrator
         this.distribution = distribution
+        this.forwardedHost = forwardedHost
         this.assetsBucket = assetsBucket
         this.storageBucket = storageBucket
         this.databaseTransport = transport
