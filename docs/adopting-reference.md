@@ -683,23 +683,30 @@ rather than restated. Read it once for the level of detail each row deserves bef
 
 Real mode requires the settings of SSSB's optional ports only for the ones your app uses. Declare them in
 `apps/<app>/config/params.ts`, under `ports`: `llm` (`anthropic` or `none`), `email` (`mailgun` or `none`),
-`inboundEmail` (`mailgun` or `none`) and `jobs` (`codebuild`, `in-process` or `none`). `SssbApp` sets each as the
-server's switch (`LLM_PROVIDER`, `EMAIL_PROVIDER`, `INBOUND_EMAIL_PROVIDER`, `JOBS_RUNNER`); a deployment of your own,
-or `pnpm dev:real`, sets the variables itself. An unset switch takes its first value, which is what real mode required
-before the switches existed.
+`inboundEmail` (`mailgun` or `none`), `jobs` (`codebuild`, `in-process` or `none`) and `storage` (`s3` or `none`).
+`SssbApp` sets each as the server's switch (`LLM_PROVIDER`, `EMAIL_PROVIDER`, `INBOUND_EMAIL_PROVIDER`, `JOBS_RUNNER`,
+`STORAGE_PROVIDER`); a deployment of your own, or `pnpm dev:real`, sets the variables itself. An unset switch takes its
+first value, which is what real mode required before the switches existed.
 
 - **`none` makes the port absent.** Its settings are not required, its SDK is never loaded, its cutover rows do not
   apply, and a call through it throws an error that names the switch. Never fill an unused port's settings with
   placeholder values instead: the placeholder reaches the vendor and fails there, far from the cause. `email: 'none'`
   turns off SSSB's own mail too: an invitation or a notification is still created, and its email, sent after the
   response, fails there (recorded as a `deferred_work_failed` analytics event and a `SSSB deferred work … failed` log line) instead of sending.
+- **`storage: 'none'` needs no S3 bucket.** Real mode then requires neither `STORAGE_BUCKET` nor, unless the Data API
+  transport or the CodeBuild runner needs it, `AWS_REGION`, and `SssbApp` builds no storage bucket and grants the server
+  no S3 access. SSSB itself stores nothing; your app's uploads, attachments and job artifacts do, and each call
+  through the absent port throws, as does a job handler's (the job is recorded `failed` with that message). Switching
+  a deployed stack from `s3` to `none` takes the bucket out of the stack: a `production: true` deployment retains it,
+  with its objects, outside the stack; any other deletes it and everything in it, as deleting the stack would. Copy
+  out what you need first. Switching back builds a new, empty bucket under the same logical id, never the old one.
 - **`jobs: 'in-process'` needs no CodeBuild project.** Each job's handler runs in the server, from the request or the
   scheduled tick that started it, and its status is recorded before that call returns. It shares that invocation's
   time limit (30 seconds on `SssbApp`), so work that may outrun it belongs on `codebuild`, which runs each job as a
   build and records its end through a jobs webhook route. Scheduled jobs then need only the scheduled tick (above).
 
-The starter declares `llm: 'none'`, `inboundEmail: 'none'` and `jobs: 'in-process'`: it makes no model call, has no
-inbound email route and no jobs webhook route.
+The starter declares `llm: 'none'`, `inboundEmail: 'none'`, `jobs: 'in-process'` and `storage: 'none'`: it makes no
+model call, has no inbound email route, no jobs webhook route and stores no files.
 
 **SSSB needs Postgres 16 or later.** Framework migration
 `packages/kit/src/db/migrations/0015_app_user_grant.ts` lets the migrating role switch to `app_user`

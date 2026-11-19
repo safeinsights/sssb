@@ -33,7 +33,7 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   parameters from `config/params.ts`, the run mode from `isSimulated`.
 - Deployment and service parameters exist only in `config/params.ts`. Secret values never enter the repository.
 - Declare which of SSSB's optional ports the app uses in `config/params.ts`'s `ports` (`llm`, `email`, `inboundEmail`,
-  `jobs`). A port the app does not use is `none`, never configured with placeholder values.
+  `jobs`, `storage`). A port the app does not use is `none`, never configured with placeholder values.
 - A job handler never reads the seed (`@sssb/app-config/seed`), which a deployment does not have: it finds people with
   `ctx.auth.listMembers(orgSlug)`, and a person's locale with `ctx.resolveLocale`, where the runner provides one.
 - `pnpm dev` stays hermetic: no docker, no credentials, no network. Never add `next/font/google`, telemetry, or
