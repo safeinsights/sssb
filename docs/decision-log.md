@@ -5653,6 +5653,128 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
       and the gitleaks version from this repository when it is packed (`TemplateMeta` in
       `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.
 
+## The Simulator on a generated app's `pnpm dev`, stage 1 (2026-11-18, `feat/simulator-on-app-dev`)
+
+Adoption follow-up 6 (`docs/adoption-review-2026-11.md`): the panel's server side ships from `@sssb/kit` behind one
+catch-all route, starting with People, Mail and Jobs with the world clock. JP's standing rule for these sessions: decide,
+record the rejected alternative here, report it.
+
+- **One handler, one route file, and no change to the authorization scan.** `@sssb/kit/server-lib/simulator-api`
+  exports `simulatorApi(request, context)`, which dispatches on the catch-all's segments through a fixed table
+  (`Object.hasOwn`, so `constructor` is a 404, not a prototype key). The app's `src/app/api/simulator/[...path]/route.ts`
+  opens each verb with `if (!isSimulated) return new Response(null, { status: 404 })` and `import()`s the kit's handler
+  only after it. That first line is exactly the gate the existing `simulator/` prefix exemption already checks
+  (`opens-with-simulated-404`, `packages/kit/src/authz/route-policy.ts`), so the scan accepts the file with no new
+  exemption, no new gate kind and no new entry in the framework's policy; the probe that removed the line from POST
+  failed the starter's `authz-mutations` check. **Rejected: `export { simulatorApi as GET, simulatorApi as POST } from
+'@sssb/kit/server-lib/simulator-api'`**, a true one-line mount. It passes the scan as it stands: the scan follows a
+  re-export to the function that defines the handler and checks the gate there (a probe re-exporting an ungated POST
+  under `simulator/` failed `authz-mutations`; re-exporting `simulatorApi`, which opens with the gate, passed). It was
+  rejected for two other reasons: it loads the kit's module in every build, real ones included, and the route's
+  exemption would rest on the scan resolving into the installed package, which was proven here only against the
+  workspace link, never against `@sssb/kit` installed from npm. The gate in the app's own file holds however the
+  package resolves. Two five-line handlers are its price. **Rejected: a handler factory taking
+  options** (`createSimulatorApi({ … })`): stage 1 has nothing an app would configure, and a factory call at module
+  scope is code that runs in a real build before any gate.
+- **The kit's handler gates itself too, and a real build never loads it.** `simulatorApi` repeats the simulated-mode
+  404 as its own first line (a test runs it with `isSimulated` false; a probe that removed it went red), and the route
+  imports it dynamically after the gate, so a real build never loads the module. (The fake adapters it calls are in
+  every build regardless: the adapter registry, `packages/kit/src/adapters/index.ts:11-17`, imports them statically.)
+  The showcase's route files import their handlers' modules statically; that stays as it was.
+- **Every POST must be `application/json`, or 415 before it runs.** The showcase asks this only of the ticker. Here the
+  same handler signs a browser in as anyone (`viewpoint`) and empties the mail catch-store, and a page on another
+  origin can send a no-preflight `text/plain` POST to a developer's localhost or a hosted simulated demo. The host
+  always sends JSON, so the rule costs nothing. **Rejected: matching the showcase's routes exactly**, which would have
+  made the kit's version the weaker of two copies. A known path with the wrong method is 405 with `Allow`; an unknown
+  one 404, so an app's own `api/simulator/<name>/route.ts` beside the catch-all keeps working (Next routes the static
+  segment first).
+- **The client is the kit's too: `@sssb/kit/components/simulator/simulator-host`, rendered by the starter's locale
+  layout** through the same simulated-only dynamic import the showcase uses for its glue. Without it the route has no
+  caller, and a generated app would need the glue this task exists to remove. It is the showcase glue's People, Mail
+  and Jobs half (polling, notices, mail scope, clock), about 330 lines against 867. **Rejected: shipping the route
+  alone in stage 1** and the client in a later stage: nothing would prove the route on an app's own server, and the
+  brief's "first tabs that make the case" need a panel to make it.
+- **The panel shows only the tabs its host wires.** `SimulatorPanel`'s per-tab props (everything but People) are
+  optional, and a tab without its props is not in the strip, as Tours already worked. A persisted tab the host does not
+  show falls back to People. The showcase and the static demo pass every prop, so nothing changes for them.
+  **Rejected: passing empty data for the unserved tabs**, which shows Hooks, Events and Snapshots tabs that never fill
+  and buttons that call paths the host does not serve.
+- **The stage-1 tabs: People, Mail (outbound catch-store only), Jobs with schedules and the world clock.** Ten of the
+  showcase's 33 route files. Left for later stages, one future task each: Snapshots, presets and tours
+  (`.claude/future-tasks/simulator-host-stage-2-world-state.md`); Events, Messages, inbound mail, Hooks and Errors
+  (`…-stage-3-subsystem-tabs.md`); the dev ticker and app-registered tabs such as Actors (`…-stage-4-ticker-and-app-tabs.md`);
+  the showcase onto the kit's host (`…-stage-5-showcase-migration.md`). **The dev ticker is not in stage 1** although it
+  sits on the Jobs tab: its policy module builds on `@sssb/tools`, which `@sssb/kit` does not depend on, and its origin
+  is the app's port slot. That is a package-graph decision of its own (stage 4). The clock's advance, reset and
+  run-due are in.
+- **The showcase keeps its own glue for now.** It uses every tab; migrating it means stages 2 to 4 first, or mounting
+  the catch-all beside 23 of its route files while keeping its glue anyway. **Rejected: migrating the showcase in
+  stage 1.** Until stage 5 the kit's host has one consumer, the starter (and every generated app), plus the kit's own
+  unit test against the fixture seam and the starter's e2e spec, which the adoption probe runs in a generated workspace.
+- **`viewpoint` refuses a person who is not in the world** (400 `unknown person`), where the showcase's route lets
+  `devSignIn` throw its `ForbiddenError` (a 403). The other differences from the showcase's routes came from review
+  (next bullet); otherwise every path answers what the showcase's route answers, field for field.
+- **Hardening from review** (an Opus and a Fable reviewer; simulated worlds only, nothing reachable in a real build):
+  `viewpoint` answers a remembered `lastPath` only when it is a path on this origin, because it is recorded from a
+  page-view beacon's body and the client navigates to it; `mail/seen` accepts only someone in the world, since the key
+  is written to the state file every poll reads; and the clock stops at a century ahead in all (a year per call was
+  already the cap, but repeated calls could leave the range a `Date` holds). On the client, every navigation the host
+  makes (`viewpoint`'s answer, a mail link, a locale switch) goes through one check, `sameOriginPath`
+  (`packages/kit/src/core/same-origin-path.ts`, internal), which parses the target rather than testing a prefix:
+  `/\host`, a tab inside the path and `/.//host` all read as another origin to a browser. Overlapping poll answers are
+  applied in order (a ticket per fetch), and a mail answer for a scope no longer shown is dropped. **Rejected: two
+  copies of the check, one per side**: the first round had them, and the second found the client's mail links still on
+  the old prefix test.
+- **The starter's e2e budget grows by one spec** (`apps/starter/tests/e2e/simulator.spec.ts`): signed out, open the
+  panel, become a person in the other tenant, see Mail and Jobs and not Hooks, run what is due. It is what makes the
+  mount a gate in every generated workspace.
+
+## Small starter fixes: a paged items list, the eslint 10 peers, an empty `AppSubjectFields` (2026-11-18, `fix/starter-small-fixes`)
+
+Adoption follow-up 9 (`docs/adoption-review-2026-11.md`, ranked item 9 and "What surprised" 2 and 9). Decided without
+asking JP, as his standing rule for these sessions says.
+
+- **The starter's items route pages like the showcase's tickets route.** `GET /api/items` parses `?cursor=` with
+  `parseDbKeysetCursor` (400 `invalid-cursor`), clamps `?limit=` with `clampKeysetLimit` (the primitive's default of
+  20, since the starter has no page-size constant of its own), and the query is `listItems` in `src/domain/db/items.ts`,
+  ordered by the primitive's fixed `created_at`, `id`. The response gains `nextCursor`. The card shows "Show older
+  items" and the glue appends. The static demo twin holds every item in memory and stays unpaged: `hasMore` defaults to
+  false, and a twin with a handful of in-memory rows teaches nothing a cursor chain would.
+    - **Rejected: leave the query in the route.** The RLS proofs must drive the production read path, and a route file
+      exports nothing a proof can import. A new `domain/db/` directory costs the adopter one file, and it is where
+      `/sssb:new-slice` already tells them to put a table's queries.
+    - **Rejected: edit `1001_items` to carry the index.** An applied migration is a record, and pages (the first
+      adopter) copied the starter on 0.2.0 and has run it. `1002_items_keyset_index` is the shape of the change an
+      adopter makes later, a list that grew on a table that exists.
+    - **Rejected: a `limit` constant and a visible page-size control.** The default of 20 is enough for an example, the
+      e2e creates 22 rows to cross it, and a constant is one more thing for follow-up 2 (removing the Items slice) to
+      delete.
+    - **Rejected: `useEffect` calling a `useCallback` loader, as the showcase's glue does.** The starter's lint has no
+      suppression and an adopter copies this file, so the first page is fetched inside the effect's own promise chain
+      (`react-hooks/set-state-in-effect` does not fire there) and the loader is a module-level function.
+- **The eslint 10 peer warning is silenced by two `peerDependencyRules.allowedVersions` entries in the generated
+  `pnpm-workspace.yaml`**, `eslint-plugin-react>eslint` and `eslint-plugin-jsx-a11y>eslint`, both `'10'`, under a comment
+  that says why and when to delete them. Checked on 2026-11-18: no release of either plugin lists eslint 10 (the latest,
+  7.37.5 and 6.10.2, stop at 9), so there is no version to bump to, and the preset runs both under eslint 10 in this
+  repository's own CI. Reproduced in a scratch project and gone with the entries.
+    - **Rejected: explain it in the README or the printed next steps.** The warning would stay on every adopter's first
+      install; an adopter reads the explanation after they have already worried.
+    - **Rejected: a blanket `allowedVersions: { eslint: '*' }`.** It would hide a real eslint mismatch from every other
+      plugin, which is the check a peer warning exists to give.
+    - **Rejected: adding the rule to this repository's own `pnpm-workspace.yaml`.** `pnpm install` here printed no
+      warning in this session, though `pnpm peers check` lists the same two plugins; the entry matters to a first
+      install in a generated workspace, and a second copy of the list is one more place to forget to delete.
+- **`AbilitySubject` is an intersection (`@sssb/kit/core/abilities`), and the starter writes
+  `export type AppSubjectFields = Record<never, never>`.** The kit's fixture does the same, so the framework's own tests
+  compile the new form and the showcase (an interface with fields) compiles the old one. ADR-0012 has the addendum.
+    - **Rejected: keep the interface and widen the lint rule's exemption** (`allowInterfaces: 'with-single-extends'` or a
+      per-file override). It would remove the suppression from the starter by hiding the same friction in a preset an
+      adopter cannot see, and the next one to write an empty interface would not be told.
+    - **Rejected: also making `appNotificationCopy` optional in this change.** The framework imports it by name through
+      the `@sssb/app-config/notifications` alias, which has no "absent" form a type checker accepts, so an optional
+      export means a framework contract change (a default the seam falls back to) that deserves its own entry. The
+      future task stays open for that half, and says so.
+
 ## Dependabot alert 82 (`minimatch`) closed by taking `typescript-eslint` 8.73 (2026-11-18, `deps/minimatch-alert-82`)
 
 The 2026-11-17 dependency audit accepted GHSA-g3hv-75wg-m249 until the next `typescript-eslint` refresh ("Accepted:
@@ -5883,3 +6005,50 @@ route from a ticker Lambda instead).
 - **Not verified live** (no AWS calls): that the Lambda Web Adapter answers a direct invocation carrying a Function URL
   event as it answers the URL, and the in-process runner on a deployed server. Both are in the `scheduled-tick` and
   `job-runner` rows' proofs.
+## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
+
+`sssb pin [--app <dir>]` (`packages/tools/src/commands/pin.js`) reads the release commit from the installed kit's stamp
+(`dist/release.json`, through `kit.js`'s `kitReleaseStampOf`) and writes it into every `uses: <repo>/.github/workflows/…@<ref>`
+line under `.github/workflows/` and every `extraKnownMarketplaces` entry of `.claude/settings.json` that names SSSB's repository.
+Decisions, each with the alternative rejected:
+
+- **A text edit, not a re-print.** The workflow is edited line by line and `settings.json` at the offsets of the `ref`
+  string (a small JSON scanner), so the adopter's formatting, key order and inline arrays survive and the diff is the two
+  pins. Rejected: `JSON.stringify` of the parsed settings, which reflows anything Prettier laid out another way and
+  buries the pin in noise; and a YAML round trip, which drops comments.
+- **Judged before written.** Every pin is planned first (`planPins`, pure), and a refusal anywhere writes nothing, so a
+  bad `settings.json` never leaves the workflow raised and the marketplace behind. Rejected: raising what can be raised
+  and failing on the rest, which leaves the two pins on two commits, the state this command exists to end.
+- **What it refuses.** No release commit to pin to: SSSB's own repository (`isInRepoKit`, even with a `dist/` a pack left
+  behind, as doctor ignores it), a kit with no stamp or a stamp that names no commit. Files that are not the shape it
+  edits: no workflow calls SSSB's reusable workflow, `settings.json` not JSON, no marketplace from SSSB's repository, a
+  `ref` that is not a string. Exit 1 and a message, as every `UsageError`.
+- **A missing `.claude/settings.json` is not a refusal**, as it is not one for doctor (a workspace whose people do not use
+  Claude Code has no plugin): the workflow is raised and the run says there was no second pin. Rejected: refusing, which
+  leaves such a workspace no command for its one pin. A marketplace entry with no `ref` (it follows the default branch) gets
+  one added, in the entry's own layout, since doctor reports exactly that as a pin that differs.
+- **The version comment moves, an adopter's own comment does not.** A trailing `# @sssb/create 0.2.0`, `# @sssb/kit 0.2.0`
+  or `# v0.2.0` is what the generator and the old notes wrote, and a stale one names a release the pin has left; any other
+  comment is left. Rejected: rewriting every trailing comment, which deletes text the adopter wrote, and leaving them all,
+  which the old hand edit had to remember ("and the version in the comment after it").
+- **One definition of a pin.** `doctor-checks.js` now exports the `uses:` regex (`WORKFLOW_USES`), the marketplace's
+  repository test (`sourceRepository`) and `stampedCommit`, which doctor's report and this command both use, so they
+  cannot disagree about what a pin or a stamp is. The command picks its app as `sssb guide` does (`--app`, the working
+  directory, else the workspace's first app, here the first that resolves `@sssb/kit`) instead of importing doctor's chooser, whose
+  messages name doctor.
+- **The release notes' step 3 is the command.** `upgradeSection` no longer writes a yaml and a json block with `<sha>` in
+  them, nor the `git ls-remote` that read the SHA off a tag: the installed kit has the commit. It keeps one sentence of
+  hand edit for when the command refuses (with the `git ls-remote` that reads the tag's commit, because doctor names no commit
+  for a kit with no stamp, one of the two causes of a refusal), a candidate's notes still name the commit (`sha`), and `docs/adopting.md`'s step 4
+  says the same. `docs/releases/v0.2.0.md`, a dated record, still carries the hand edit. Rejected: keeping the hand edit
+  beside the command, which would be two ways to do it in every release's notes.
+- **Not done here:** the generator's own text in a workspace's `README.md` and `CLAUDE.md` (`packages/create/src/files.js`,
+  "Raise the pin when you upgrade") still says to raise the pins without naming the command; it stays true, and changing it
+  changes what `@sssb/create` writes, so it is a separate change.
+- **Round-1 review (Opus), code only: no finding at MEDIUM or above; three LOW fixed.** A repeated key acts on the LAST
+  one, as `JSON.parse` (doctor, Claude Code) reads it; a missing `ref` is added to a CRLF settings file with CRLF; a quoted
+  `uses: "…@<sha>" # v0.2.0` line's version comment moves too. Accepted as they are: the files are written one after the
+  other, so an I/O error (EACCES, a full disk) can leave one raised (every refusal is decided before the first write, and
+  a rerun finishes it); a `settings.json` that exists but declares no SSSB marketplace refuses, where an absent one does
+  not (a file that is there and says nothing about the plugin is more likely a mistake than a workspace without one); a
+  `uses:` line inside a `run: |` block scalar counts as a pin, in doctor's report too.

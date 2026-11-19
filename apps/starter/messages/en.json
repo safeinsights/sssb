@@ -15,6 +15,7 @@
         "empty": "No items in this team yet.",
         "addLabel": "New item",
         "addButton": "Add item",
-        "readOnlyHint": "You have read-only access to items in this team."
+        "readOnlyHint": "You have read-only access to items in this team.",
+        "loadMore": "Show older items"
     }
 }

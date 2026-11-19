@@ -111,6 +111,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   route once, and `DEV_TICK_SECONDS=<n> pnpm dev` ticks it every n seconds. The ticker is off by default and stays off
   under e2e. The cron route (`src/app/api/webhooks/cron/route.ts`) stays behind `withWebhookSecret`: never add a
   bypass for the ticker.
+- The Simulator panel on `pnpm dev` is SSSB's: `src/app/api/simulator/[...path]/route.ts` serves it and the locale
+  layout renders it, both in simulated mode only. Each handler in that route file opens with the simulated-mode 404 and
+  imports SSSB's handler after it; that first line is what exempts the route from `authorize(...)`.
 - In a linked git worktree the app's ports are derived per checkout, so parallel sessions never adopt each other's dev
   server; `pnpm exec sssb port`, run from the app, prints its port. An app declares its port slot in its package.json
   (`"sssb": { "port": "starter" }`), and every app of a workspace needs a slot of its own: a second app declares
