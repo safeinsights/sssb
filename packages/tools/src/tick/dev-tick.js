@@ -23,7 +23,7 @@
 // `process.env`, and nothing in the server changes. The ticking itself is ticker.js, which owns start, stop,
 // the interval and its status and knows nothing of the environment: this file is the policy for `pnpm dev`.
 import { spawn } from 'node:child_process'
-import { portFor } from '../ports.js'
+import { foreignAppSlotProblem, portFor } from '../ports.js'
 import { tickAppNames, tickSlot } from './tick.js'
 import { createTicker, intervalProblem } from './ticker.js'
 import { tickerMarkerPath } from './ticker-marker.js'
@@ -68,7 +68,11 @@ export function parseDevArgs(argv, declared) {
     const dash = argv.indexOf('--')
     const app = argv[0]
     if (dash !== 1 || argv.length < 3 || tickSlot(app, declared) === undefined) {
-        return { error: `usage: sssb dev-tick <${tickAppNames(declared).join('|')}> -- <the dev server's command...>` }
+        return {
+            error:
+                (dash === 1 && foreignAppSlotProblem(app, declared)) ||
+                `usage: sssb dev-tick <${tickAppNames(declared).join('|')}> -- <the dev server's command...>`,
+        }
     }
     return { app, command: argv.slice(dash + 1) }
 }

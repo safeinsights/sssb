@@ -152,12 +152,32 @@ describe('sssb port', () => {
 
         it('accepts the app’s own slot by name, and no other app’s', () => {
             expect(sssb(ledger, ['port', 'ledger'], PORTS).stdout).toBe('3700\n')
-            expect(sssb(ledger, ['port', 'starter'], PORTS).stdout).toBe('3123\n')
+            expect(sssb(ledger, ['port', 'ladle'], PORTS).stdout).toBe('61234\n')
             const other = sssb(ledger, ['port', 'portal'], PORTS)
             expect(other.status).toBe(1)
-            expect(other.stderr).toContain(
-                'unknown service "portal" (known: showcase, starter, ladle, contractPg, ledger)',
-            )
+            expect(other.stderr).toContain('unknown service "portal" (known: ladle, contractPg, ledger)')
+        })
+
+        it('refuses another app’s slot, the one an app copied from the starter would silently use', () => {
+            // `sssb port starter` here would print the starter's port while this app's dev server binds its own.
+            for (const args of [
+                ['port', 'starter'],
+                ['port', 'showcase'],
+                ['serve-standalone', 'starter'],
+            ]) {
+                const result = sssb(ledger, args, PORTS)
+                expect(result.status, args.join(' ')).toBe(1)
+                expect(result.stderr).toContain("another app's port slot")
+                expect(result.stdout).toBe('')
+            }
+            for (const args of [
+                ['tick', 'starter'],
+                ['dev-tick', 'starter', '--', process.execPath, '-e', '0'],
+            ]) {
+                const result = sssb(ledger, args, PORTS)
+                expect(result.status, args.join(' ')).not.toBe(0)
+                expect(result.stderr).toContain("another app's port slot")
+            }
         })
 
         it('exits 1 with the file named for a slot that is not valid', () => {
@@ -753,7 +773,7 @@ describe('sssb tick and dev-tick with --app', () => {
         // Another app's slot is not known to this one, and the message lists what is.
         const other = sssb(dir, ['tick', 'portal', '--timeout', '2'], env)
         expect(other.status).toBe(2)
-        expect(other.stderr).toContain('unknown app "portal" (known: showcase, starter, ledger)')
+        expect(other.stderr).toContain('unknown app "portal" (known: ledger)')
 
         const dev = sssb(dir, ['dev-tick', '--', process.execPath, '-e', 'process.exit(4)'], env)
         expect(dev.status).toBe(4)

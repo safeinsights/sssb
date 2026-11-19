@@ -5161,6 +5161,17 @@ beside the string form); the judgement calls it left open, each with what it bea
   declaring app's alone, so `sssb tick portal` run from the ledger app is an unknown app, listing the known ones, rather
   than a guess at another app's default. Rejected: reading every app's declaration in the workspace, which the commands
   (which run in one app's directory, and from a package script) do not otherwise do.
+- **An app on a slot of its own may not name `showcase` or `starter`.** Review found the hole in the design as written: a
+  second app made from the starter keeps `originFor('starter')`, `sssb tick starter` and `sssb dev-tick starter --` in
+  files the generator copies, so its dev server would bind its own slot while its ticker and e2e run used the first
+  app's port, the wrong-app adoption this exists to stop, with `sssb doctor` green because the declarations differ.
+  `portFor`, `sssb port`, `serve-standalone`, `tick` and `dev-tick` now refuse another app's built-in slot when the
+  app in the working directory declares a custom one (`foreignAppSlotProblem`, `packages/tools/src/ports.js`), naming
+  what to do. `ladle` and `contractPg` stay free to name. Rejected: a doctor check that reads each app's scripts and
+  Playwright config for a stale slot name, which has to parse shell command lines and TypeScript to find what a
+  one-line refusal at the point of use catches with certainty. The pack-and-consume pages shape, which has two apps
+  made from the starter, now gives its ledger a slot of its own the way `docs/adopting.md` tells an adopter to; with
+  both on `starter` it failed `sssb doctor` by design.
 - **The string form is untouched**: `portForRoot(…, 'starter')` takes the same code path to the same numbers (the
   existing tests pass unchanged), and a built-in's derived port is still keyed on the checkout alone. One message
   changed: a declaration naming an unknown service now says `unknown service "x"` with the known ones and the slot form,

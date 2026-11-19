@@ -55,3 +55,10 @@ export declare function portFor(service?: PortDeclaration): number
  * argument, the app's declared one, as `portFor`.
  */
 export declare function originFor(service?: PortDeclaration): string
+
+/**
+ * Why `service` may not be used by an app that makes `declared`: a message when `service` is another app's built-in
+ * slot (`showcase`, `starter`) and the app declares a slot of its own, null otherwise. Using it would leave the app's
+ * dev server on its own slot and its ticker or e2e run on the other app's port.
+ */
+export declare function foreignAppSlotProblem(service: string, declared: PortDeclaration | undefined): string | null

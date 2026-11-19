@@ -267,7 +267,7 @@ second app declares a slot of its own in its `package.json`, in place of the str
 and its `playwright.config.ts` calls `originFor()` with no argument, which reads that declaration from the app's
 directory (Playwright runs from there). `sssb port`, `sssb tick` and `sssb dev-tick` read it the same way when given no
 app argument: in the second app's scripts drop the `starter` from `sssb dev-tick starter -- next dev …` and
-`sssb tick starter` (left in, they bind and tick the first app's port), or name the slot, `sssb tick ledger`. The
+`sssb tick starter` (left in, `sssb tick`, `sssb port` and `portFor('starter')` refuse: it is the first app's slot, and using it would tick and test the first app's port), or name the slot, `sssb tick ledger`. The
 override is `LEDGER_PORT` (`<NAME>_PORT`, with `-` as `_`), and a linked worktree derives the port from 20000-29999,
 keyed on the name as well as the checkout. The name is lowercase words joined by `-`; the default is an integer from 1024 to 49151
 outside the ports SSSB's own services use (3000, 3100, 3200-3599, 5439-5639, 20000-29999, 61000-61199).

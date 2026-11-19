@@ -14,14 +14,14 @@
 // where the server keeps `.data` (`APP_DATA_DIR` overrides it, for both).
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { portFor } from '../ports.js'
+import { foreignAppSlotProblem, portFor } from '../ports.js'
 
 /**
  * The built-in apps that have a tick route. The key is the PORT key (a slot, not the app's name, so it survives a
  * rename of the app). An app that declares a slot of its own (`"sssb": { "port": { "name": … } }`) ticks under that
  * name, which `tickSlot` resolves from the declaration the command read.
  */
-export const TICK_APPS = ['showcase', 'starter']
+const TICK_APPS = ['showcase', 'starter']
 
 /**
  * What an app name on a tick command line means: a built-in app, or the slot the app in the working directory
@@ -31,7 +31,12 @@ export const TICK_APPS = ['showcase', 'starter']
  * @returns {import('../ports.d.ts').PortDeclaration | undefined}
  */
 export function tickSlot(app, declared) {
-    if (TICK_APPS.includes(app)) return /** @type {import('../ports.d.ts').PortService} */ (app)
+    // Another app's built-in slot is no app of this one's when it declares a slot of its own (foreignAppSlotProblem).
+    if (TICK_APPS.includes(app)) {
+        return foreignAppSlotProblem(app, declared) === null
+            ? /** @type {import('../ports.d.ts').PortService} */ (app)
+            : undefined
+    }
     return declared !== undefined && typeof declared === 'object' && declared.name === app ? declared : undefined
 }
 
@@ -40,7 +45,7 @@ export function tickSlot(app, declared) {
  * @param {import('../ports.d.ts').PortDeclaration | undefined} [declared]
  */
 export function tickAppNames(declared) {
-    return typeof declared === 'object' ? [...TICK_APPS, declared.name] : [...TICK_APPS]
+    return typeof declared === 'object' ? [declared.name] : [...TICK_APPS]
 }
 
 export const TICK_PATH = '/api/webhooks/cron'
@@ -138,7 +143,11 @@ export function parseTickArgs(argv, declared) {
     if (app === undefined) throw new TickError('which app? the first argument is the app', { usage: true })
     const slot = tickSlot(app, declared)
     if (slot === undefined) {
-        throw new TickError(`unknown app "${app}" (known: ${tickAppNames(declared).join(', ')})`, { usage: true })
+        throw new TickError(
+            foreignAppSlotProblem(app, declared) ??
+                `unknown app "${app}" (known: ${tickAppNames(declared).join(', ')})`,
+            { usage: true },
+        )
     }
 
     let origin

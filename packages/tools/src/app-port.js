@@ -6,7 +6,7 @@
 // standalone server, the browser pane and the ticker cannot disagree.
 import path from 'node:path'
 import { UsageError } from './app.js'
-import { readPortDeclaration, SERVICE_NAMES } from './ports.js'
+import { foreignAppSlotProblem, readPortDeclaration, SERVICE_NAMES } from './ports.js'
 
 /**
  * The name a declaration goes by on a command line: a built-in service's name, or a custom slot's.
@@ -54,10 +54,13 @@ export function appPortService(appDir) {
  * @returns {import('./ports.d.ts').PortDeclaration | undefined}
  */
 export function serviceNamed(appDir, name) {
+    const declared = declaredPortService(appDir)
     if (SERVICE_NAMES.includes(/** @type {import('./ports.d.ts').PortService} */ (name))) {
+        // Another app's slot, to an app that declares one of its own: refused, never quietly that app's port.
+        const problem = foreignAppSlotProblem(name, declared)
+        if (problem !== null) throw new UsageError(`sssb: ${problem}`)
         return /** @type {import('./ports.d.ts').PortService} */ (name)
     }
-    const declared = declaredPortService(appDir)
     return declared !== undefined && portNameOf(declared) === name ? declared : undefined
 }
 
@@ -70,5 +73,5 @@ export function servicesKnownTo(appDir) {
     const declared = declaredPortService(appDir)
     return declared === undefined || typeof declared === 'string'
         ? [...SERVICE_NAMES]
-        : [...SERVICE_NAMES, declared.name]
+        : [...SERVICE_NAMES.filter((name) => foreignAppSlotProblem(name, declared) === null), declared.name]
 }

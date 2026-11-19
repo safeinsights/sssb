@@ -23,7 +23,8 @@ declaration, two apps on one slot, and two slots with one default.
 **To adopt.** A workspace with one app needs nothing. A workspace with a second app declares its slot in that app's
 `package.json` (above) in place of `"port": "starter"`, and in the app: its `playwright.config.ts` calls `originFor()`
 with no argument instead of `originFor('starter')`, its `dev` script is `sssb dev-tick -- next dev …` (no `starter`
-before the `--`) and a `tick` script is `sssb tick` (no `starter`), and a contract test's `portFor('contractPg')` stays.
+before the `--`) and a `tick` script is `sssb tick` (no `starter`; the commands refuse `starter` and `showcase` in an
+app that declares a slot of its own, rather than quietly use the other app's port), and a contract test's `portFor('contractPg')` stays.
 Run `pnpm exec sssb doctor`: it fails while two apps share a slot.
 
 **Now deletable.** A hand-set `STARTER_PORT` or a `--port` literal in the second app's scripts that kept its dev server

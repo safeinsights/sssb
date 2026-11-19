@@ -283,6 +283,36 @@ describe('the declaration an app makes in its package.json', () => {
         expect(printed(path.join(main, 'apps', 'plain')).stdout.trim()).toBe('3100 http://localhost:3100')
     })
 
+    it('refuses another app’s built-in slot in an app that declares its own, which a starter-derived script would use by mistake', () => {
+        // `originFor('starter')` left in a second app's Playwright config would point its e2e run at the first app's
+        // port while its dev server binds the slot it declares. Tools' own services stay free to name.
+        const PORTS_JS = path.resolve(__dirname, '../../packages/tools/src/ports.js')
+        const printed = (cwd: string, call: string) =>
+            spawnSync(
+                process.execPath,
+                [
+                    '--input-type=module',
+                    '-e',
+                    `import {portFor} from ${JSON.stringify(PORTS_JS)}; console.log(${call})`,
+                ],
+                {
+                    cwd,
+                    encoding: 'utf8',
+                    env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.endsWith('_PORT'))),
+                },
+            )
+        const own = appWith({ port: { name: 'ledger', default: 3700 } })
+        const refused = printed(own, "portFor('starter')")
+        expect(refused.status).not.toBe(0)
+        expect(refused.stderr).toMatch(/"starter" is another app's port slot, and this app declares its own, "ledger"/)
+        expect(printed(own, "portFor('showcase')").status).not.toBe(0)
+        expect(printed(own, "portFor('ladle')").stdout.trim()).toBe('61000')
+        expect(printed(own, "portFor('contractPg')").stdout.trim()).toBe('5439')
+        // An app on a built-in slot may still name the other one (the showcase's tests do), and so may a non-app directory.
+        expect(printed(appWith({ port: 'showcase' }), "portFor('starter')").stdout.trim()).toBe('3100')
+        expect(printed(appWith({}), "portFor('starter')").stdout.trim()).toBe('3100')
+    })
+
     it('says what to do when the working directory declares nothing', () => {
         const PORTS_JS = path.resolve(__dirname, '../../packages/tools/src/ports.js')
         const script = `import {originFor} from ${JSON.stringify(PORTS_JS)}; originFor()`

@@ -239,8 +239,32 @@ function declaredHere() {
     return declared
 }
 
+/** The built-in services that are an APP's slot, as against the tools' (`ladle`, `contractPg`). */
+const APP_SERVICES = ['showcase', 'starter']
+
+/** @type {import('./ports.d.ts').foreignAppSlotProblem} */
+export function foreignAppSlotProblem(service, declared) {
+    if (typeof service !== 'string' || !APP_SERVICES.includes(service)) return null
+    if (declared === undefined || typeof declared === 'string') return null
+    return (
+        `"${service}" is another app's port slot, and this app declares its own, "${declared.name}": ask for it by ` +
+        `leaving the service out (originFor(), sssb port, sssb tick) or by name, and drop "${service}" from this app's ` +
+        'scripts and Playwright config, or its dev server and its ticker and e2e run would use different ports'
+    )
+}
+
 /** @type {import('./ports.d.ts').portFor} */
 export function portFor(service) {
+    // A service an app copied from the starter, `originFor('starter')`, would silently name the starter's port in an
+    // app that declares a slot of its own: its dev server on its slot, its e2e run on another app's. Refused.
+    if (
+        typeof service === 'string' &&
+        APP_SERVICES.includes(service) &&
+        existsSync(path.join(process.cwd(), 'package.json'))
+    ) {
+        const problem = foreignAppSlotProblem(service, readPortDeclaration(process.cwd()))
+        if (problem !== null) throw new Error(`ports: ${problem}`)
+    }
     return portForRoot(findCheckoutRoot(process.cwd()), service ?? declaredHere())
 }
 

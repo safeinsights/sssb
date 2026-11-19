@@ -74,12 +74,16 @@ describe('parseTickArgs', () => {
             else process.env.LEDGER_PORT = before
         }
         expect(() => parseTickArgs(['ledger'])).toThrow(/unknown app "ledger" \(known: showcase, starter\)/)
-        expect(() => parseTickArgs(['portal'], ledger)).toThrow(
-            /unknown app "portal" \(known: showcase, starter, ledger\)/,
-        )
+        expect(() => parseTickArgs(['portal'], ledger)).toThrow(/unknown app "portal" \(known: ledger\)/)
         // A built-in declaration adds no name; the built-ins are known either way.
         expect(() => parseTickArgs(['ledger'], 'starter')).toThrow(/known: showcase, starter\)/)
-        expect(parseTickArgs(['showcase'], ledger).app).toBe('showcase')
+        // Another app's slot, left in the scripts an app copied from the starter, is refused rather than ticking the
+        // starter's port while the app's dev server binds its own.
+        expect(() => parseTickArgs(['starter'], ledger)).toThrow(/"starter" is another app's port slot.*"ledger"/)
+        expect(() => parseTickArgs(['showcase', '--url', 'http://127.0.0.1:4000'], ledger)).toThrow(
+            /"showcase" is another app's port slot/,
+        )
+        expect(parseTickArgs(['showcase'], 'starter').app).toBe('showcase')
     })
 
     it('marks a bad command line as usage, which is not the same failure as a tick that failed', () => {
@@ -670,7 +674,7 @@ describe('sssb dev-tick', () => {
         expect(parseDevArgs(['ledger', '--', 'next', 'dev'])).toHaveProperty('error')
         expect(parseDevArgs(['portal', '--', 'next', 'dev'], ledger)).toHaveProperty('error')
         expect(parseDevArgs(['nope', '--', 'next'], ledger)).toEqual({
-            error: "usage: sssb dev-tick <showcase|starter|ledger> -- <the dev server's command...>",
+            error: "usage: sssb dev-tick <ledger> -- <the dev server's command...>",
         })
     })
 
