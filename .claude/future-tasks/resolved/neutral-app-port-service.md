@@ -1,6 +1,6 @@
 # A generated app still says `starter`: give `@sssb/tools` a neutral port service
 
-**Priority:** P3 · **Status:** open
+**Priority:** P3 · **Status:** resolved 2026-11-19, by the overlap the design names, not by a neutral service
 **Found by:** ADR-0014 P12 (`feat/sssb-create`), 2026-11-18, building `@sssb/create`.
 
 ## What happens
@@ -32,3 +32,21 @@ Overlapped `resolved/port-slots-for-adopter-apps.md`, now built: an app can decl
 (`{ "name": …, "default": … }`), read by every command, so the generator could write one in place of `starter`. Pin: the survivor check in
 `tests/tooling/create-generate.test.ts` allows no `starter` in the generated app; the starter's dev server, e2e and
 tick still bind its old port in a main checkout and its derived one in a worktree.
+
+## Resolution (2026-11-19, `feat/no-starter-in-generated-app`)
+
+Built on the custom slots the overlap above names, not as a new built-in service. Decisions and what was rejected are
+in `docs/decision-log.md` ("No `starter` in a generated app").
+
+- **The starter names its slot only in its `package.json`.** Its `dev` and `tick` scripts call `sssb dev-tick` and
+  `sssb tick` with no slot, and its `playwright.config.ts` calls `originForApp(__dirname)`; each reads the declaration.
+  In SSSB's repository the starter keeps `"sssb": { "port": "starter" }` (port 3100, `STARTER_PORT`).
+- **The generator gives the app a slot of its own**: named for the slug, at 3700 (`firstAppSlot` in
+  `packages/create/src/generate.js`), or `app` for a slug a slot cannot be named for. It is the one rename of the slot,
+  in one place, and it fails on a template that declares anything but `starter` or names the slot anywhere else.
+  `sssb add-app` keeps choosing the first free default, so a second app takes 3800.
+- **`starter` keeps working** for a workspace generated before: `@sssb/tools`' ports are unchanged.
+- **Pinned**: `tests/tooling/create-generate.test.ts` allows no `starter` anywhere in a generated workspace (the app
+  guide's copy included), asserts the slot, and holds `firstAppSlot`'s copy of the slot rules to `@sssb/tools`'
+  `parsePortDeclaration`; pack and consume's generated shape fails if the packed generator's workspace says `starter`.
+- Also: the generated README, `CLAUDE.md` and CI workflow name `pnpm exec sssb pin` for raising the pins.

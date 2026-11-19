@@ -58,8 +58,8 @@ function findCheckoutRoot(start) {
 const SLOTS = 200
 
 /**
- * The port services. They are SSSB's two reference apps' slots plus two tools, and an app keeps the slot it was
- * generated with when it is renamed (the starter's `starter` slot is the adopter's app's). Derived showcase and
+ * The port services. They are SSSB's two reference apps' slots plus two tools. An app `@sssb/create` writes declares a
+ * slot of its own instead (named for its slug), and one generated before it did keeps `starter`. Derived showcase and
  * starter ports share a slot and sit adjacent (3200/3201, 3202/3203, …) so one session's pair never straddles
  * another's. No derived band overlaps the defaults.
  * @type {Record<string, { env: string, fallback: number, derive: (slot: number) => number }>}

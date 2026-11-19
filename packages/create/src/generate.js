@@ -248,7 +248,7 @@ const occupants = (dir, also) => readdirSync(dir).filter((entry) => !LEFT_ALONE.
  * failure part-way, or a SIGINT, SIGTERM or SIGHUP (signals.js), leaves nothing behind: the stage and whatever was
  * moved up are removed, and the target and its parents too when this run created them (and they are empty).
  * @param {GenerateOptions} options
- * @returns {{ root: string, appDir: string, files: string[], workflowRef: string, tarballs: Record<string, string> | null }}
+ * @returns {{ root: string, appDir: string, files: string[], workflowRef: string, tarballs: Record<string, string> | null, port: { name: string, default: number } }}
  */
 export function generate({
     templateDir,
@@ -318,7 +318,14 @@ export function generate({
         }
         rmdirSync(made.stage)
         made.stage = ''
-        return { root, appDir: path.join(root, 'apps', slug), files, workflowRef: ref, tarballs }
+        return {
+            root,
+            appDir: path.join(root, 'apps', slug),
+            files,
+            workflowRef: ref,
+            tarballs,
+            port: firstAppSlot(slug),
+        }
     } catch (error) {
         undo()
         throw asCreateError(error)
@@ -341,7 +348,7 @@ function writeWorkspace(root, c, templateDir) {
     copyTemplate(path.join(templateDir, 'root'), root)
     writeApp(
         path.join(root, 'apps', slug),
-        { slug, name, meta, spec, eslint: /** @type {string} */ (meta.ranges['eslint']) },
+        { slug, name, meta, spec, eslint: /** @type {string} */ (meta.ranges['eslint']), port: firstAppSlot(slug) },
         templateDir,
     )
 
@@ -444,38 +451,55 @@ function copyTemplate(from, to) {
 }
 
 /**
- * A port slot of the app's own, for an app that joins a workspace beside another (`sssb add-app`): the template's app
- * declares the starter's built-in slot, which two apps may not share (`sssb doctor` fails them, since their dev servers,
- * tickers and e2e runs would bind one port). Its scripts and its Playwright config then name no slot, so each reads the
- * app's own declaration, as an app on a slot of its own must (`sssb tick starter` would tick another app's port).
+ * The port slot names `@sssb/tools` keeps for itself, by the `<NAME>_PORT` variable each reads: a slot of the app's own
+ * may not read one of them. A copy of `@sssb/tools`' ports.js (SERVICES), because the generator depends on no SSSB
+ * package; tests/tooling/create-generate.test.ts holds the copy to the original by trying every choice on it.
+ */
+const BUILT_IN_PORT_VARIABLES = new Set(['SHOWCASE_PORT', 'STARTER_PORT', 'LADLE_PORT', 'CONTRACT_PG_PORT'])
+
+/** What a slot's name may be (`@sssb/tools`' ports.js, CUSTOM_NAME and MAX_CUSTOM_NAME_LENGTH): it names a variable. */
+const SLOT_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
+const MAX_SLOT_NAME = 32
+
+/** The main-checkout port a generated app's slot takes: the first `sssb add-app` offers, so a second app takes 3800. */
+export const FIRST_APP_PORT = 3700
+
+/**
+ * The port slot a new workspace's app declares: a slot of its own, named for its slug as `sssb add-app` names one, so
+ * nothing in the app says `starter` (SSSB's reference app's slot). A slug a slot cannot be named for (one longer than a
+ * slot name may be, with a doubled or trailing dash, or reading a built-in's variable, as `showcase` would) gives the
+ * neutral `app`.
+ * @param {string} slug
+ * @returns {{ name: string, default: number }}
+ */
+export function firstAppSlot(slug) {
+    const variable = `${slug.toUpperCase().replaceAll('-', '_')}_PORT`
+    const fits = SLOT_NAME.test(slug) && slug.length <= MAX_SLOT_NAME && !BUILT_IN_PORT_VARIABLES.has(variable)
+    return { name: fits ? slug : 'app', default: FIRST_APP_PORT }
+}
+
+/**
+ * The app's port slot, renamed where it lives: the starter declares SSSB's built-in `starter` slot in its package.json
+ * and nowhere else (its scripts and Playwright config read the declaration: `sssb dev-tick`, `sssb tick`,
+ * `originForApp(__dirname)`), so the app takes a slot of its own in that one place. Fails on a template that names the
+ * slot anywhere else in its scripts or Playwright configs, which would then bind another app's port.
  * @param {string} appDir
  * @param {Record<string, any>} manifest the app's package.json, changed in place
  * @param {{ name: string, default: number }} port
  */
 function ownPortSlot(appDir, manifest, port) {
-    manifest.sssb = { ...manifest.sssb, port }
-    const scripts = /** @type {Record<string, string>} */ (manifest.scripts ?? {})
-    for (const [script, text] of Object.entries(scripts)) {
-        scripts[script] = text.replace(/\bsssb (dev-tick|tick) starter\b/g, 'sssb $1')
-        if (/\bstarter\b/.test(/** @type {string} */ (scripts[script])))
-            throw new CreateError(
-                `the template's ${script} script names the starter's port slot in a form this cannot rewrite`,
-            )
-    }
-    // `originForApp(__dirname)` names the app wherever the config is loaded from (`pnpm knip` loads every workspace's
-    // config from the root, where a bare `originFor()` finds no app); Playwright compiles the config to CommonJS.
-    const config = path.join(appDir, 'playwright.config.ts')
-    if (existsSync(config) && readFileSync(config, 'utf8').includes("originFor('starter')")) {
-        replaceOnce(
-            config,
-            "import { originFor } from '@sssb/tools/ports'",
-            "import { originForApp } from '@sssb/tools/ports'",
+    if (manifest.sssb?.port !== 'starter')
+        throw new CreateError(
+            `the template's package.json declares the port ${JSON.stringify(manifest.sssb?.port)}, not "starter"`,
         )
-        replaceOnce(config, "originFor('starter')", 'originForApp(__dirname)')
+    manifest.sssb = { ...manifest.sssb, port }
+    for (const [script, text] of Object.entries(manifest.scripts ?? {})) {
+        if (/\bstarter\b/.test(String(text)))
+            throw new CreateError(`the template's ${script} script names the starter's port slot`)
     }
     for (const file of readdirSync(appDir).filter((entry) => /^playwright.*\.config\.[cm]?[jt]s$/.test(entry))) {
         if (readFileSync(path.join(appDir, file), 'utf8').includes("'starter'"))
-            throw new CreateError(`the template's ${file} names the starter's port slot in a form this cannot rewrite`)
+            throw new CreateError(`the template's ${file} names the starter's port slot`)
     }
 }
 
@@ -486,10 +510,10 @@ function ownPortSlot(appDir, manifest, port) {
  *   meta: import('./template.js').TemplateMeta,
  *   spec: (pkg: string, manifest: 'app' | 'infra') => string,
  *   eslint: string,
- *   port?: { name: string, default: number },
+ *   port: { name: string, default: number },
  * }} AppContext what an app is written with: its identity, the template's meta, what each of its manifests (the
- *   app's, its infra's) takes each @sssb package as, the range of ESLint beside the lint fences' plugin, and, for an app
- *   that joins a workspace beside another (`sssb add-app`), a port slot of its own
+ *   app's, its infra's) takes each @sssb package as, the range of ESLint beside the lint fences' plugin, and its port
+ *   slot of its own (a new workspace's first app's, `firstAppSlot`; one `sssb add-app` chose for an app it adds)
  */
 
 /**
@@ -546,7 +570,7 @@ export function writeApp(appDir, a, templateDir) {
         '@sssb/eslint-plugin': a.spec('eslint-plugin', 'app'),
         eslint: a.eslint,
     })
-    if (a.port) ownPortSlot(appDir, manifest, a.port)
+    ownPortSlot(appDir, manifest, a.port)
     writeFileSync(inApp('package.json'), packageJson(manifest))
     const budget = /sssb check-demo-size (\d+)/.exec(manifest.scripts?.['check:demo-size'] ?? '')?.[1]
     if (!budget) throw new CreateError("the template's package.json has no `sssb check-demo-size <bytes>` script")

@@ -433,7 +433,8 @@ export function workflow(c) {
     return `# This workspace's checks. SSSB's checks for the app are SSSB's REUSABLE WORKFLOW, called here pinned to a commit
 # of SSSB's repository (a tag can be moved; a commit cannot). Require the check \`sssb / all-checks\` in your branch
 # protection or ruleset: it fails unless every one of SSSB's jobs ran and passed, so a skipped or renamed job cannot
-# slip out of the requirement. Raise the pin when you upgrade the @sssb packages (the release notes name the commit).
+# slip out of the requirement. Raise the pin when you upgrade the @sssb packages: \`pnpm exec sssb pin\` raises it, and
+# the plugin marketplace's in .claude/settings.json, to the installed @sssb/kit's release commit.
 #
 # The reusable workflow takes no secrets: never pass it \`secrets: inherit\`. If this repository is private and in an
 # organization, the organization must allow public reusable workflows in its Actions settings.
@@ -519,7 +520,8 @@ export function claudeSettings(c) {
 export const CLAUDE_MD = `# Agent guide
 
 SSSB's app guide, the rules every app on SSSB follows, from the copy \`pnpm exec sssb guide\` keeps (after an upgrade,
-\`pnpm exec sssb doctor\` fails until it is refreshed):
+\`pnpm exec sssb doctor\` fails until it is refreshed, and \`pnpm exec sssb pin\` raises the CI workflow's and the plugin
+marketplace's pins to the release's commit):
 
 @.claude/sssb-guide.md
 
@@ -634,7 +636,8 @@ the commands an app author runs, namespaced as \`/${c.meta.plugin.name}:<command
   (\`claude --version\`; \`claude update\`).
 - **Install the plugin once per clone**, after trusting the folder (enabling it does not install it):
   \`claude plugin install ${c.meta.plugin.name}@${c.meta.plugin.marketplace} --scope project\`.
-- **Raise the marketplace's \`ref\` with the workflow's pin** when you upgrade (below).
+- **Raise the marketplace's \`ref\` with the workflow's pin** when you upgrade: \`pnpm exec sssb pin\` raises both
+  (below).
 
 ## CI, and the settings only you can make
 
@@ -657,9 +660,9 @@ ${
 ## Upgrading SSSB
 
 The \`@sssb/*\` packages are released together at one version. Each release's notes open with "Upgrading to this
-release", the commands that move them together, refresh \`.claude/sssb-guide.md\` and raise the workflow's pin and
-the plugin marketplace's \`ref\` in \`.claude/settings.json\` to the release's commit. SSSB's guide says why each step is
-there:
+release", the commands that move them together, refresh \`.claude/sssb-guide.md\` (\`pnpm exec sssb guide\`) and raise
+the workflow's pin and the plugin marketplace's \`ref\` in \`.claude/settings.json\` to the release's commit
+(\`pnpm exec sssb pin\`, which reads it from the installed \`@sssb/kit\`). SSSB's guide says why each step is there:
 [\`docs/adopting.md\`, "Upgrading by release"](${sssbDoc(c, 'blob', 'docs/adopting.md')}#upgrading-by-release).
 \`pnpm exec sssb doctor\` fails when the installed packages are out of step, and reports a pin that is not the release
 commit the installed \`@sssb/kit\` names.

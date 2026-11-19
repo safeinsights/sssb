@@ -5,8 +5,8 @@
     "license": "MIT",
     "description": "The starter app: the minimum an adopter keeps — one entity, one card, and an otherwise empty seam (ADR-0007, ADR-0012).",
     "scripts": {
-        "dev": "NEXT_TELEMETRY_DISABLED=1 APP_MODE=simulated sssb dev-tick starter -- next dev --port \"$(sssb port)\"",
-        "tick": "sssb tick starter",
+        "dev": "NEXT_TELEMETRY_DISABLED=1 APP_MODE=simulated sssb dev-tick -- next dev --port \"$(sssb port)\"",
+        "tick": "sssb tick",
         "build": "NEXT_TELEMETRY_DISABLED=1 next build",
         "start": "next start --port \"$(sssb port)\"",
         "typecheck": "next typegen && tsc --noEmit && tsc --noEmit -p infra",
