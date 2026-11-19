@@ -6014,6 +6014,105 @@ Decided without asking, as JP's standing rule for these sessions says.
   removes fails typecheck loudly rather than silently. A CRLF checkout of an adopter's files refuses every hunk (the shipped
   patches are `eol=lf` by `.gitattributes`). Rejected: a rollback journal, and line-ending normalization, for failures that
   are loud and leave the diff in git.
+## Real-mode sign-in: the kit runs Clerk's middleware around the app's proxy (2026-11-19, `fix/kit-clerk-middleware`)
+
+The first adopter's first real-mode deployment found that SSSB's Clerk adapter (`packages/kit/src/adapters/real/auth.ts`)
+calls `auth()` and `currentUser()`, which refuse a request Clerk's `clerkMiddleware` did not see, and that nothing in
+SSSB ran that middleware: every real sign-in failed. The adopter wrapped its own proxy. Decided without asking, as JP's
+standing rule for these sessions says.
+
+- **A wrapper the app's `src/proxy.ts` calls, `withAuthProxy(proxy)` from `@sssb/kit/adapters/proxy`.** The app's
+  proxy keeps deciding what each path gets. Rejected: **the kit owning the proxy with an app hook**. Apps' proxies
+  differ in what they see (the adopter's answers page hosts on every path, `/_next` included), and Next reads
+  `config.matcher` only as a literal in the app's own file, so the kit could not own the part that matters most.
+- **The Clerk half is `packages/kit/src/adapters/real/clerk-proxy.ts`, internal, reached only by `import()` from
+  `packages/kit/src/adapters/proxy.ts` in real mode, on the first request.** Vendor SDKs stay in the adapters, and
+  simulated mode loads no Clerk code. Rejected: **publishing the Clerk half** for the app to load itself, which hands
+  every app the run-mode branch the guide keeps out of app code. Rejected: **a top-level `await import()`** in the
+  kit's module: lazy loading keeps importing `@sssb/kit/adapters/proxy` free of effects (its tests load it in both modes
+  without Clerk), at the price of loading Clerk on the first real request instead of at start.
+- **The run mode moved to `packages/kit/src/adapters/run-mode.ts`, which the registry re-exports.** The proxy asks it
+  without importing the registry. Rejected: **importing `isSimulated` from `@sssb/kit/adapters/index`** in the proxy,
+  as the adopter did: that loads every port and fake into the proxy, and in real mode builds the real ports there,
+  refusing to start without the LLM, mail and job-runner settings, for a module that needs one boolean. Rejected: **a
+  second reader of `APP_MODE`**, which the run-mode lint rule exists to prevent in apps. The fail-closed production
+  guard stays in the registry, which every route still loads.
+- **No edge-runtime branch.** Next 16 runs a proxy on the Node.js runtime and refuses a `runtime` setting in it (Next's
+  `proxy.md`, "Runtime"; `get-page-static-info.js`: "Proxy always runs on Node.js runtime"), so `import()` of Clerk's
+  Node build is an ordinary one.
+- **Both apps' matchers add `/api/:path*` and keep the page pattern as it was; the proxy passes an API route
+  through with `NextResponse.next()`.** Clerk must see API routes too (its error for a missing middleware names the
+  matcher). Rejected: **`/:path*`**, which would run Clerk and the locale routing on every static file and `/_next`
+  request. The old pattern excluded every path starting with `api` (`/apiary` too); `startsWith('/api')` keeps that.
+- **Both apps' `src/proxy.test.ts` mock `next-intl/middleware`.** next-intl's ESM build imports `next/server` without
+  an extension, which Node's resolver refuses under Vitest; the test checks the proxy's routing, not next-intl's.
+  The matcher is tested with Next's own `unstable_doesMiddlewareMatch`.
+- **`@sssb/kit` minor, Kind `seam`, Action `required`; `@sssb/create` minor, Kind `scaffold`, Action `required`.** A
+  new published subpath is a seam change, and an app that does not adopt it cannot sign in in real mode. Rejected:
+  **Action `optional` and a patch**: the app is broken without it in the one mode that has users.
+- **The wiring is a guide rule kept by hand.** Rejected for now: **a conformance check that reads `src/proxy.ts`**,
+  which would have to parse the matcher literal and recognise the wrapper through aliases; worth it only if an
+  adopter misses the rule.
+- **Not verified live**: a real sign-in through Clerk's middleware, its handshake redirect and `auth()` in a page and
+  an API route. Those are the `auth-dev` row of `docs/cutover-checklist.md`.
+- **`CLERK_JWT_KEY` is passed to Clerk's middleware as `jwtKey` when set, and stays optional** (round-1 review).
+  Clerk 7.10 does not read it from the environment (its `constants.js` reads the publishable, secret, machine-secret and
+  encryption keys, not the JWT key), and without it Clerk's middleware, now on every `/api` route, fetches its signing
+  keys from Clerk's API for any bearer JWT whose key id it has not cached: a service caller's token, or one an
+  unauthenticated client makes up, each costing a Clerk request against the instance's rate limit. With `jwtKey` Clerk
+  verifies locally. Rejected: **making it required** in `assertRealEnv`, which changes the required-environment release
+  snapshot while another task is reworking which settings real mode requires; it is a cutover-checklist step instead.
+  Rejected: **skipping Clerk's middleware on requests with an `Authorization` header**, which would break a Clerk
+  session token sent in that header.
+- **A failed load of the Clerk half is forgotten** (round-1 review), so the next request tries again instead of every
+  request failing until a restart.
+- **The page matcher still leaves out any path with a dot** (round-1 review, kept): in real mode such a page would not
+  pass Clerk's middleware and its `auth()` would fail. Rejected: **Clerk's matcher, which leaves out only listed static
+  extensions**: it would send `/robots.txt` and any other unlisted file to the locale routing, which redirects it. The
+  guide says a page path has no dot.
+- **API request bodies now pass through the proxy** (round-1 review, kept): Next buffers at most
+  `proxyClientMaxBodySize` (10MB by default) of a proxied body, above the 5MB attachment limit. An app that raises an
+  upload limit past it raises that setting too; the guide says so.
+- **A request carrying a token in `Authorization` skips Clerk's middleware** (round-2 review, then a sweep). Clerk
+  accepts any kind of token there (`acceptsToken: 'any'`, set after the app's options, so it cannot be narrowed) and
+  verifies its machine tokens (`ak_`, `mt_`, `oat_`) through its API on every request, which `jwtKey` does not help.
+  Round 1 and round 2 found the same shape (a caller-chosen value that makes Clerk call its API), so instead of a third
+  round the sweep listed where Clerk 7.10's `authenticateRequest` reads caller input: the `Authorization` header
+  (`parseAuthorizationHeader`: the token after `Bearer `, or the whole value when it is one word), the session, refresh,
+  handshake and dev-browser cookies, and the handshake query parameters. The header is closed by skipping Clerk when it
+  would read a token there, by its own rule: SSSB's users sign in by Clerk's session cookie, and SSSB's own bearer
+  tokens (the webhook secret, service callers' JWTs) are checked by their routes and never need Clerk. Another scheme
+  (`Basic …`) gives Clerk no token, so Clerk still runs. The session and handshake tokens are closed by `jwtKey`, which
+  stays optional (above) and is a cutover step. Not followed to the end: whether a forged expired session token with a
+  refresh cookie reaches Clerk's refresh call before its signature is checked; with `jwtKey` set the signature check is
+  local either way. Rejected: **skipping Clerk only for the three machine-token prefixes**, which leaves a one-word
+  value and any prefix Clerk adds later.
+- **`CLERK_JWT_KEY` is read as a secret store often holds it** (`\n` escapes, surrounding space) **and refused at the
+  first real request if it is not a PEM public key** (round-2 review): Clerk would otherwise fail every session check
+  with it and sign everyone out, without saying why.
+- **Superseding the skip above: Clerk runs on every request, shown a copy without `Authorization`** (round-3 review of
+  the sweep). Skipping Clerk left a client's own `x-clerk-auth-*` and `x-clerk-request-data` request headers in place,
+  which Clerk's `auth()` trusts once their signature checks out; under `next dev` Clerk's keyless fallback decrypts the
+  request data with a public constant, so anyone reaching a `dev:real` server could forge a user. A page request with a
+  header token also failed (`auth()` with no middleware). Now Clerk always runs, and its decoration writes its own
+  `x-clerk-auth-*` headers over the client's (`decorateRequest`, `setRequestHeadersOnNextResponse` in @clerk/nextjs
+  7.10). It is shown a body-less copy of the request with no `Authorization` header, so it reads no header token and
+  calls nothing for one; the app's proxy gets the original. When the app's proxy built no override list and Clerk
+  built it from the copy, `Authorization` is added back to it, so the route still gets it. Rejected: **forcing
+  signed-out headers on the skip path**, which recreates Clerk's header handling outside Clerk and has to track every
+  header it adds. Rejected: **refusing a request with both a header token and an `x-clerk-*` header**, which still
+  fails the page case.
+- **`CLERK_JWT_KEY` must be a 2048-bit RSA public key in SPKI PEM** (round-3 review): Clerk's `loadClerkJwkFromPem`
+  strips that key's fixed prefix as text, so a private key, a certificate, another size or another type passes
+  `createPublicKey` and still fails every session check.
+- **`Authorization` is put back only into a list Clerk built** (round-4 review): the handler records whether the app's
+  proxy answered with its own override list, and a list the proxy built stands as it is, `Authorization` left out on
+  purpose included. The handler throws if Clerk hands it a request it was not given, rather than handing the app's
+  proxy the stripped copy. The tests' Clerk follows Clerk's own decoration rules (only a "next" or a same-origin
+  rewrite is decorated, a "next" becoming a rewrite) and check the headers a route receives with Next's own merge.
+- **Clerk's Frontend API proxy is not provided for** (round-4 review): it would forward the stripped copy, with no body
+  and no `Authorization`, but it runs only with `frontendApiProxy` set or a production key on a `.vercel.app` host,
+  and SSSB sets neither. Turning it on first needs `withClerk` to leave the proxy path's request whole.
 
 ## One list of apps, and `sssb add-app` (2026-11-19, `feat/one-list-of-apps`)
 
