@@ -5129,8 +5129,8 @@ _Accepted gap_ and adds to the rule.
 The 2026-11-17 entry on the scan left a known hole to lint. A handler that calls an `async` same-file helper without
 awaiting it "reaches" `authorize`, yet the helper's `ForbiddenError` becomes an unhandled rejection and the handler goes
 on to mutate. The lint rule that entry named was never added. The session that fixed the hole made these decisions
-under JP's standing rule. Two Opus review rounds and a sweep widened the fix from the floating helper to every place
-the walk lost a denial.
+under JP's standing rule. Two Opus review rounds, a sweep of the walk's trust points, and an Opus review of the
+second round's fixes widened the fix from the floating helper to every place the walk lost a denial.
 
 - **A scan change, not type-aware lint.** `route-scan.ts` now walks each function under an outcome: whether a throw
   at that point, and a promise the function returns, reach what Next awaits. `authorize` throws synchronously, so it
@@ -5177,7 +5177,7 @@ the walk lost a denial.
 
 - **A `try` whose `catch` can do anything but rethrow swallows the denial.** That covers a catch that falls through,
   returns, or leaves by `break` or `continue`. A `finally` that can leave in the throw's place also swallows it. A
-  promise the `try` returns is not caught.
+  promise the `try` returns (`return p`) is not caught; `return await p` throws inside it.
     - Rejected: leaving `try` alone, the first draft. `try { authorize(…) } catch (e) { log(e) }` passed.
     - Rejected: crediting a catch that returns. A handler's `catch { return new Response(…) }` might answer 403 or 200,
       and the scan cannot read which. An async helper's `catch { return }` resolves, and the handler goes on.

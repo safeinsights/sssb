@@ -39,7 +39,8 @@ import ts from 'typescript'
  *     one in place, so its throw goes up through the call; but a `map`, `filter` or `flatMap` on a receiver that is
  *     visibly an iterator (`xs.values()`, `Iterator.from(…)`) runs nothing until consumed;
  *   - a `try` whose `catch` can do anything but rethrow (fall through, `return`, `break` or `continue` out of
- *     itself), or whose `finally` can leave in the throw's place. A promise the `try` returns is not caught.
+ *     itself), or whose `finally` can leave in the throw's place. A promise the `try` returns (`return p`) is not
+ *     caught; `return await p` throws inside it.
  *   (The rule is syntactic: a sync function counts as throwing in place, and an `authorize` named by
  *   `ScanOptions.authorizeModules` must throw synchronously too, as SSSB's does.)
  *
@@ -766,9 +767,10 @@ class Reach {
             if (condition !== true && s.elseStatement) this.statement(s.elseStatement, outcome)
         } else if (ts.isBlock(s)) this.statements(s.statements, outcome)
         else if (ts.isTryStatement(s)) {
-            // A throw in the `try` goes on only if the `catch` neither falls through nor jumps out of itself (`break`,
-            // `continue`), so leaves the function; a throw in either, or a promise either returns, only if the
-            // `finally` has no way to leave in its place. A promise the `try` returns is not caught by the `catch`.
+            // A throw in the `try` goes on only if the `catch` rethrows on every path: it neither falls through, nor
+            // returns, nor jumps out of itself (`break`, `continue`). A throw in either, or a promise either returns,
+            // goes on only if the `finally` has no way to leave in its place. A promise the `try` returns (`return p`,
+            // not `return await p`, which throws inside it) is not caught by the `catch`.
             const finallyMayLeave = s.finallyBlock !== undefined && leavesBlock(s.finallyBlock, true)
             const catchSwallows =
                 s.catchClause !== undefined &&
@@ -814,7 +816,7 @@ function isAsync(fn: ts.FunctionLikeDeclaration): boolean {
     return hasModifier(fn, ts.SyntaxKind.AsyncKeyword)
 }
 
-/** Iteration methods that call their function argument before they return, on an array and on an iterator alike. */
+/** Iteration methods that call their function argument before they return, on an array, and on an iterator that has them. */
 const EAGER_ITERATION: ReadonlySet<string> = new Set([
     'every',
     'find',

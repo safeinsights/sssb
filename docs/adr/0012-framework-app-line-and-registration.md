@@ -962,8 +962,9 @@ synchronous frame. It is lost in three places:
   wrapper, `.then`, a timer), carries the denial only when that call's result is `await`ed or returned on the spot.
   Unawaited, behind `void`, chained, stored in a variable or passed on, the promise floats, and nothing inside it
   counts.
-- **An array iteration method.** It drops an `async` callback's promise. The eager ones (`forEach`, `some`, `every`,
-  `find…`, `reduce…`) run a sync callback in place.
+- **An array iteration method.** It drops an `async` callback's promise. It runs a sync callback in place, except a
+  `map`, `filter` or `flatMap` on a receiver that is visibly an iterator (`ids.values()`), which runs nothing until
+  consumed.
 - **A `try` whose `catch` can do anything but rethrow, or whose `finally` can leave in the throw's place.**
 
 A function handed to a call is still assumed to be invoked. It is now also assumed to carry its failure in the call's
