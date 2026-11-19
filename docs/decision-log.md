@@ -5236,6 +5236,7 @@ either requires a `minor` changeset; its P14 row lands them. Built as two commit
 - **Noticed, not changed:** the cluster's secret (`DbSecret…`) synthesizes with `DeletionPolicy: Delete` even when
   `production` is true, while the cluster, its instance, its subnet group and both buckets are retained. The snapshot
   records it by type, so it is covered either way; whether the secret should be retained is a question for `@sssb/cdk`.
+
 ## Licence scan: a pnpm-native CI job, not a required check (2026-11-18, `ci/licence-scan`)
 
 The Canopy survey deferred a licence scan ("Trivy or equivalent"), and P14 is about to put SSSB's packages on public
