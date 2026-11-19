@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { check as prettierCheck, resolveConfig } from 'prettier'
 import { describe, expect, it } from 'vitest'
-import { pinReport } from '../../packages/tools/src/commands/doctor-checks.js'
+import { WORKFLOW_USES } from '../../packages/tools/src/commands/doctor-checks.js'
 import { candidateNotes } from '../../scripts/release.mjs'
 import {
     assembleNotes,
@@ -20,12 +20,11 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  * the notes `release.mjs prepare` commits and, with the commit's SHA, into a candidate's prerelease by
  * `release.mjs candidate-notes`): the steps every upgrade takes whatever its entries say, as commands with the
  * release's version filled in. A step an adopter hit and the notes did not list is a test here: the guide copy that
- * `sssb doctor` fails on, the two pins that must be the release commit, a vendor SDK knip flags once the code that
- * used it is deleted.
+ * `sssb doctor` fails on, the two pins that must be the release commit (`sssb pin` writes them: tools-pin.test.ts), a
+ * vendor SDK knip flags once the code that used it is deleted.
  */
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const SHA = 'c'.repeat(40)
-const OTHER = 'd'.repeat(40)
 const HEADING = `## ${UPGRADE_HEADING}`
 
 /** The `lang` fenced blocks of a markdown text, in order. */
@@ -86,23 +85,26 @@ describe('the standing upgrade section, in a plain release', () => {
         expect(section).toContain('.claude/sssb-guide.md')
     })
 
-    it('names both pins, the workflow’s and the plugin marketplace’s, and how to read the commit off the tag', () => {
-        expect(blocks(section, 'yaml')[0]).toBe(
-            'uses: safeinsights/sssb/.github/workflows/app-checks.yml@<sha> # v0.2.0',
-        )
-        const settings = JSON.parse(blocks(section, 'json')[1])
-        expect(settings.extraKnownMarketplaces.sssb.source).toEqual({
-            source: 'github',
-            repo: 'safeinsights/sssb',
-            ref: '<sha>',
-        })
-        expect(blocks(section, 'sh')).toContain(
-            "git ls-remote https://github.com/safeinsights/sssb 'refs/tags/v0.2.0' 'refs/tags/v0.2.0^{}' | tail -n 1 | cut -f 1",
-        )
-        expect(section).toContain('never the tag')
+    it('raises both pins with `sssb pin`, not by hand, and says what to do when it refuses', () => {
+        expect(section).toContain("**3. Raise both pins to this release's commit.**")
+        expect(blocks(section, 'sh')).toContain('pnpm exec sssb pin')
+        // the hand edits it replaced: no yaml block to copy a `<sha>` into (the json one is the package versions)
+        expect(blocks(section, 'yaml')).toEqual([])
+        expect(section).not.toContain('<sha>')
+        // doctor names no commit for a kit with no stamp, which is a refusal too: the tag is the way to it
+        expect(section).toContain("git ls-remote https://github.com/safeinsights/sssb 'refs/tags/v0.2.0'")
+        expect(section).toContain('It refuses, changing nothing, when the kit carries no release\nstamp')
+        expect(section).toContain('If it refuses, make the two edits by hand')
+        expect(section).toContain('never the tag `v0.2.0`')
         expect(blocks(section, 'sh')).toContain(
             'claude plugin marketplace update sssb\nclaude plugin update sssb@sssb --scope project',
         )
+    })
+
+    it('puts the command after the install that brings it, and before the entries and the check', () => {
+        expect(section.indexOf('pnpm exec sssb pin')).toBeGreaterThan(section.indexOf('pnpm install'))
+        expect(section.indexOf('**3.')).toBeGreaterThan(section.indexOf('**2.'))
+        expect(section.indexOf('**4.')).toBeGreaterThan(section.indexOf('pnpm exec sssb pin'))
     })
 
     it('says to drop the vendor SDKs knip now flags, after the entries are applied and before the check', () => {
@@ -149,9 +151,10 @@ describe('the standing upgrade section, in a release candidate', () => {
     it('installs by tarball URL, not from npm, and keeps every other step', () => {
         expect(section).toContain('**1. Move every `@sssb/*` package to this candidate, together.**')
         expect(section).toContain('nothing\nis on npm')
-        expect(blocks(section, 'json')).toHaveLength(1) // the settings.json pin alone: no `^0.2.0-rc.3` range
+        expect(blocks(section, 'json')).toEqual([]) // no `^0.2.0-rc.3` range to write, and no marketplace pin to copy
         expect(section).not.toContain('^0.2.0-rc.3')
-        expect(section).toContain('app-checks.yml@<sha> # v0.2.0-rc.3')
+        expect(blocks(section, 'sh')).toContain('pnpm exec sssb pin')
+        expect(section).toContain('never the tag `v0.2.0-rc.3`')
         expect(blocks(section, 'sh')).toContain('pnpm exec sssb guide')
         expect(blocks(section, 'sh')).toContain('pnpm knip')
     })
@@ -160,13 +163,11 @@ describe('the standing upgrade section, in a release candidate', () => {
 describe('the standing upgrade section, with the release commit in hand', () => {
     const section = upgradeSection({ version: '0.2.0', sha: SHA })
 
-    it('writes the SHA into both pins, with no command left to resolve the tag', () => {
-        expect(blocks(section, 'yaml')[0]).toBe(
-            `uses: safeinsights/sssb/.github/workflows/app-checks.yml@${SHA} # v0.2.0`,
-        )
-        expect(JSON.parse(blocks(section, 'json')[1]).extraKnownMarketplaces.sssb.source.ref).toBe(SHA)
-        expect(section).toContain(`\`${SHA}\``)
+    it('names the commit in the step, and still tells the adopter to run the command that writes it', () => {
+        expect(section).toContain(`**3. Raise both pins to this release's commit (\`${SHA}\`).**`)
+        expect(blocks(section, 'sh')).toContain('pnpm exec sssb pin')
         expect(section).not.toContain('<sha>')
+        expect(section).toContain(`The commit is \`${SHA}\`.`)
         expect(section).not.toContain('git ls-remote')
     })
 
@@ -183,50 +184,28 @@ describe('the standing upgrade section, with the release commit in hand', () => 
     })
 })
 
-describe('the pins the section writes are the pins `sssb doctor` accepts', () => {
-    // The section's own yaml and json blocks, dropped into a workspace's files and judged by doctor's pin check.
-    const workspace = (section: string, ref: string) => ({
-        inRepo: false,
-        version: '0.2.0',
-        stamp: `${JSON.stringify({ commit: SHA })}\n`,
-        repository: 'safeinsights/sssb',
-        workflows: [
-            {
-                file: '.github/workflows/checks.yml',
-                text: `jobs:\n    sssb:\n        ${blocks(section, 'yaml')[0].replaceAll('<sha>', ref)}\n`,
-            },
-        ],
-        settings: {
-            file: '.claude/settings.json',
-            text: JSON.stringify({
-                ...JSON.parse((blocks(section, 'json').at(-1) as string).replaceAll('<sha>', ref)),
-                enabledPlugins: { 'sssb@sssb': true },
-            }),
-        },
-    })
+describe('the hand edit the section keeps is the pin `sssb pin` and `sssb doctor` read', () => {
+    const line = (section: string) => {
+        const found = /`uses: (\S+@<commit>)`/.exec(section)
+        expect(found, 'the section names no `uses:` line').not.toBeNull()
+        return `uses: ${(found as RegExpExecArray)[1].replace('<commit>', SHA)}`
+    }
 
-    it('accepts both pins once the release commit is written where `<sha>` stands', () => {
-        const report = pinReport(workspace(upgradeSection({ version: '0.2.0' }), SHA))
-        expect(report.status).toBe('ok')
-        expect(report.title).toContain(`release commit ${SHA}`)
-    })
-
-    it('accepts them when the SHA was filled in, as a candidate’s notes do', () => {
-        expect(pinReport(workspace(upgradeSection({ version: '0.2.0', sha: SHA }), SHA)).status).toBe('ok')
-    })
-
-    it('reports the tag as differing, so the section never says to pin the tag', () => {
-        const tag = pinReport(workspace(upgradeSection({ version: '0.2.0' }), 'v0.2.0'))
-        expect(tag.status).toBe('report')
-        expect(tag.lines.join('\n')).toContain('pins v0.2.0 (a branch or tag, not a commit)')
-        expect(pinReport(workspace(upgradeSection({ version: '0.2.0' }), OTHER)).status).toBe('report')
+    it('is a `uses:` line of the repository the notes are for, at a commit', () => {
+        const match = WORKFLOW_USES.exec(line(upgradeSection({ version: '0.2.0' })))
+        expect(match?.[2]).toBe('safeinsights/sssb')
+        expect(match?.[3]).toBe('.github/workflows/app-checks.yml')
+        expect(match?.[4]).toBe(SHA)
+        expect(WORKFLOW_USES.exec(line(upgradeSection({ version: '0.2.0', repo: 'someone/else' })))?.[2]).toBe(
+            'someone/else',
+        )
     })
 })
 
 describe('what the section tells an adopter to run exists', () => {
-    it('`sssb guide` and `sssb doctor` are commands of the CLI', () => {
+    it('`sssb guide`, `sssb pin` and `sssb doctor` are commands of the CLI', () => {
         const cli = readFileSync(path.join(ROOT, 'packages/tools/bin/sssb.js'), 'utf8')
-        for (const command of ['guide', 'doctor']) expect(cli).toMatch(new RegExp(`^    ${command}: \\{`, 'm'))
+        for (const command of ['guide', 'pin', 'doctor']) expect(cli).toMatch(new RegExp(`^    ${command}: \\{`, 'm'))
     })
 
     it('`pnpm knip` and `pnpm verify` are scripts of the workspace the generator writes', () => {
@@ -243,7 +222,7 @@ describe('withUpgradeSection', () => {
     it('replaces the section in place, once, and leaves every other line as it was', () => {
         const filled = withUpgradeSection(notes, upgradeSection({ version: '0.2.0', sha: SHA }))
         expect(filled.match(/^## Upgrading to this release$/gm)).toHaveLength(1)
-        expect(filled).toContain(`@${SHA} # v0.2.0`)
+        expect(filled).toContain(`**3. Raise both pins to this release's commit (\`${SHA}\`).**`)
         expect(filled).not.toContain('<sha>')
         expect(filled.replace(sectionOf(filled), '')).toBe(notes.replace(sectionOf(notes), ''))
         expect(filled.endsWith('\n')).toBe(true)
@@ -308,10 +287,10 @@ describe('candidateNotes, on the release commit’s own notes file', () => {
         const committed = assembleNotes(changesets, { version: '0.2.0-rc.3' }).markdown
         mkdirSync(path.join(root, 'docs/releases'), { recursive: true })
         writeFileSync(path.join(root, 'docs/releases/v0.2.0-rc.3.md'), committed)
-        expect(committed).toContain('<sha>')
+        expect(committed).not.toContain(SHA) // the notes are a file in the release commit, which cannot name itself
         const notes = candidateNotes(root, '0.2.0-rc.3', 'safeinsights/sssb', SHA, [])
         expect(notes).not.toContain('<sha>')
-        expect(notes).toContain(`app-checks.yml@${SHA} # v0.2.0-rc.3`)
+        expect(notes).toContain(`**3. Raise both pins to this release's commit (\`${SHA}\`).**`)
         expect(notes.match(/^## Upgrading to this release$/gm)).toHaveLength(1)
         // the candidate's own install section still follows the entries
         expect(notes).toContain('## Installing this release candidate')
