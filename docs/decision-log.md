@@ -6855,3 +6855,26 @@ JP asked for the fix. Decisions, with the rejected alternative:
   which this change would have made a regression, since without `redirectUrl` Clerk's own flow handled it.
 - **Two invitation mails stay possible**: Clerk can deliver its own, and no API call turns that off per invitation, so
   the `auth-dev` row asks for the instance to be set so an invitee gets one.
+## ADR-0015 addendum: auth as a provider bundle, datastores in tiers (2026-11-19, `docs/adr-0015-addendum`)
+
+JP asked, after reading ADR-0015, why real auth is tied to Clerk when the fake works as an adapter, and whether an app
+could forgo the tenancy promise or keep its data in another store (DynamoDB, say). He framed SSSB as separating an app's
+logic, its simulated world and its tours from the vendors underneath, while staying honest about what each arrangement
+can guarantee, and asked for this addendum. Decisions taken in writing it, several changed by its Opus review:
+
+- **The unit of an auth swap is a bundle, and it owns the invitation link**; kit entry points that dispatch on
+  `AUTH_PROVIDER` choose it. Rejected: `auth: 'app'` as a port alone, which leaves every other piece naming Clerk; and,
+  as first drafted, a bundle with no way of being chosen, the app's route files still loading Clerk's modules by path.
+- **Datastores in three tiers, each stating its guarantee.** Rejected: the body's "the engine stays fixed", which
+  answered "can it be done" where the honest answer is "here is what each choice promises"; and other stores offered
+  without a stated guarantee.
+- **DynamoDB's `LeadingKeys` isolation is comparable to row-level security, not stronger**: whatever mints the
+  per-tenant session holds the boundary, as `set_config` does, and the proof runs against AWS only. Rejected, as first
+  drafted: "enforced by the database's access control" without those limits.
+- **A single-tenant declaration means the deployment is the boundary, checked by boot refusing a second tenant**; on
+  another store it replaces the per-table policies and two-tenant proofs. Rejected, as first drafted: tying it to the
+  query-layer filter, which is several tenants in one store.
+- **Auth as a bundle comes after the `app` mechanism, when an adopter needs another provider.** Rejected, as first
+  drafted: ahead of the mechanism, which would build it on the hardest port or deliver a refactor no provider can use.
+- **The invitation link is a separate fix, now**: the framework mails `/accept-invite?invite=<id>` in every mode, which
+  Clerk's accept form, reading `__clerk_ticket`, cannot use.
