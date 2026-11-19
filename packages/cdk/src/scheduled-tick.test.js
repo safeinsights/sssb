@@ -31,13 +31,13 @@ function run({ secret = 's3cret', answer = { statusCode: 200, body: '{"ok":true,
 }
 
 describe('the scheduled tick', () => {
-    it('POSTs the cron route, as a Function URL would, with the secret as the bearer', () => {
+    it('POSTs the cron route, as a Function URL would, with the secret in its own header', () => {
         const event = cronEvent({ secret: 's3cret', host: HOST, requestId: 'req-1', now: NOW })
         expect(event).toMatchObject({
             version: '2.0',
             rawPath: '/api/webhooks/cron',
             rawQueryString: '',
-            headers: { authorization: 'Bearer s3cret', host: HOST },
+            headers: { 'x-sssb-webhook-secret': 's3cret', host: HOST },
             requestContext: {
                 domainName: HOST,
                 http: { method: 'POST', path: CRON_PATH },
@@ -119,7 +119,7 @@ describe('the scheduled tick', () => {
         expect(sent[0]?.input).toEqual({ SecretId: 'arn:secret' })
         expect(sent[1]?.input.FunctionName).toBe('app-Server')
         const event = JSON.parse(sent[1]?.input.Payload)
-        expect(event.headers).toMatchObject({ authorization: 'Bearer s3cret', host: HOST })
+        expect(event.headers).toMatchObject({ 'x-sssb-webhook-secret': 's3cret', host: HOST })
         expect(event.requestContext.requestId).toBe('req-9')
     })
 })

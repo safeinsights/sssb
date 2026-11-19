@@ -518,7 +518,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 141 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 68 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 69 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -649,8 +649,12 @@ that calls it lives in the app you keep: `apps/<app>/src/app/api/webhooks/cron/r
 `export const POST = withWebhookSecret(…)`. The generator writes it with the rest of the app and nothing deletes it;
 the showcase carries the same route over the same function.
 
-- **Who may call it** is a machine, not a person. The route is guarded by the shared webhook secret
-  (`Authorization: Bearer …`, compared in constant time; anything else is an opaque 401 before the tick runs). The
+- **Who may call it** is a machine, not a person. The route is guarded by the shared webhook secret, sent in
+  `x-sssb-webhook-secret` (compared in constant time; anything else is an opaque 401 before the tick runs).
+  `Authorization: Bearer …` is accepted too when that header is absent, but never send it through your deployment's
+  public host: CloudFront signs every request it passes to the server's Function URL, and its signature replaces the
+  `Authorization` header, so the route would answer 401. The same holds for a service token (`verifyServiceCaller`),
+  which goes in `x-sssb-service-token`. The
   authorization scan (the conformance suite's `authz-mutations` check) exempts a `webhooks/` route only if its handler
   is the `withWebhookSecret(…)` call, so if you edit the route keep that wrapper, and keep the logic in SSSB's function.
 - **In a deployment** `SssbApp` (`@sssb/cdk`) ticks it when you pass `scheduledTick: { webhookSecret }`, the secret
@@ -667,7 +671,7 @@ the showcase carries the same route over the same function.
       beside the showcase in SSSB's repository; in a workspace the generator writes, `pnpm tick` is your app). It exits 1 if the server is
       down, rejects the secret or answers an error, and 2 for a bad command line. It authenticates as any caller must: it
       reads the per-checkout dev secret from `apps/<app>/.data/auth/webhook-secret` (the first request to a server creates
-      the file, so a missing one is made that way) and sends it as the bearer. It adds nothing to the route and cannot
+      the file, so a missing one is made that way) and sends it in `x-sssb-webhook-secret`. It adds nothing to the route and cannot
       reach a server that is not on this machine (`--url` takes only `localhost`, `127.0.0.1` or `[::1]`). A server in
       real mode checks `WEBHOOK_SECRET` and never reads that file, so `pnpm dev:real` is not something it ticks.
     - **`DEV_TICK_SECONDS=30 pnpm dev`** also runs that call every 30 seconds while the server is up (any whole number

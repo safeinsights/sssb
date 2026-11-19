@@ -61,7 +61,8 @@ export function createServiceDriver({ log, t }: DriverDeps): ServiceDriver {
 
     async function authed(input: string, init: RequestInit, retried = false): Promise<Response> {
         if (!token) await mint(false)
-        const res = await fetch(input, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } })
+        // The token's own header (`@sssb/kit/service-auth/verify`'s SERVICE_TOKEN_HEADER), as a deployed caller sends it.
+        const res = await fetch(input, { ...init, headers: { ...init.headers, 'x-sssb-service-token': token ?? '' } })
         if (res.status === 401 && !retried) {
             token = null
             await mint(true)
@@ -140,7 +141,8 @@ export function createBuilderDriver({ log, t }: DriverDeps): BuilderDriver {
         if (!secret) await fetchSecret(false)
         const res = await fetch('/api/webhooks/jobs', {
             method: 'POST',
-            headers: { ...json, Authorization: `Bearer ${secret}` },
+            // The secret's own header (`@sssb/kit/service-auth/webhook`'s WEBHOOK_SECRET_HEADER), as a deployed caller sends it.
+            headers: { ...json, 'x-sssb-webhook-secret': secret ?? '' },
             body: JSON.stringify(body),
         })
         if (res.status === 401 && !retried) {

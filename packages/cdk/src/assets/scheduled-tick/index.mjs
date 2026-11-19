@@ -39,7 +39,9 @@ export function cronEvent({ secret, host, requestId, now }) {
         rawPath: CRON_PATH,
         rawQueryString: '',
         headers: {
-            authorization: `Bearer ${secret}`,
+            // The secret's own header (`@sssb/kit/service-auth/webhook`'s WEBHOOK_SECRET_HEADER): the one a caller sends
+            // through the public host too, where CloudFront replaces `Authorization` with its own signature.
+            'x-sssb-webhook-secret': secret,
             'content-type': 'application/json',
             host,
             'user-agent': USER_AGENT,

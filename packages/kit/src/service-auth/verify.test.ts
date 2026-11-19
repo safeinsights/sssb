@@ -251,6 +251,22 @@ describe('verifyServiceCaller', () => {
     test('an unknown org is rejected', () => expectReject(fx.unknownOrgToken))
     test('a revoked key is rejected', () => expectReject(fx.revokedKeyToken))
 
+    // Behind a deployment's CloudFront, `Authorization` reaches the server as CloudFront's own SigV4 signature: the token
+    // must arrive in its own header, which wins over whatever `Authorization` holds.
+    test('the token in x-sssb-service-token verifies, beside a SigV4 Authorization header', async () => {
+        const { SERVICE_TOKEN_HEADER } = await import('./verify')
+        const signed = 'AWS4-HMAC-SHA256 Credential=AKIA/20261119/us-east-1/lambda/aws4_request, Signature=abc'
+        const viaHost = new Request('http://localhost/api/service/jobs', {
+            headers: { [SERVICE_TOKEN_HEADER]: fx.validToken, authorization: signed },
+        })
+        expect((await verifyServiceCaller(fakeDb, viaHost)).orgSlug).toBe('svc-valid')
+        // The header wins: a valid Bearer beside a bad header is still refused.
+        const both = new Request('http://localhost/api/service/jobs', {
+            headers: { [SERVICE_TOKEN_HEADER]: 'not-a-jwt', authorization: `Bearer ${fx.validToken}` },
+        })
+        await expect(verifyServiceCaller(fakeDb, both)).rejects.toBeInstanceOf(AuthRequiredError)
+    })
+
     test('malformed / missing headers throw AuthRequiredError, never a crash', async () => {
         await expectReject('not-a-jwt')
         await expectReject('a.b.c')

@@ -6028,6 +6028,22 @@ route from a ticker Lambda instead).
   declaration being wrong, and the throw names the switch. And the framework's `digest-email` handler, which the
   in-process runner can now run in a deployment, picks recipients from the seam's seed people: a real-mode concern of
   that handler with any runner (CodeBuild would run the same handler), so it is a follow-up, not this change's.
+- **Machine credentials get headers of their own, because CloudFront replaces `Authorization`.** Found in a review of
+  the sibling `fix/cdk-function-url-post` and checked here against CloudFront's guide ("Restrict access to an AWS
+  Lambda function URL origin"): with signing behavior `always`, which `SssbApp`'s origin access control uses, CloudFront
+  signs every origin request, and the signature is the `Authorization` header; besides, `CACHING_DISABLED` leaves
+  `Authorization` out of the cache key, so the viewer's header is not forwarded at all. Every webhook and service call
+  through the public host would answer 401. `withWebhookSecret` now reads `x-sssb-webhook-secret` and
+  `verifyServiceCaller` reads `x-sssb-service-token` (`packages/kit/src/service-auth/credential.ts`), the header winning
+  when present, and every sender in SSSB sends it (`pnpm tick`, the scheduled tick, the showcase's simulated actors).
+  `Authorization: Bearer` stays accepted when the header is absent: a direct invocation or `pnpm dev` keeps it, a sender
+  written before this keeps working where it worked, and nothing that passed before is refused now. Rejected:
+  **signing behavior `no-override`**, which passes a viewer's `Authorization` through but then needs it to be a SigV4
+  signature for the Lambda URL's host, so a Bearer credential would fail Lambda's IAM check instead; **dropping
+  `Authorization` at once**, which breaks direct callers for no gain; and **fixing the webhook alone**: the service token
+  had the same defect in the same shape, so both moved in one change. The sibling keeps the origin access control (it
+  adds a body hash at the edge), so the defect stands with it; a live POST through the host is in the `job-runner` and
+  `scheduled-tick` rows' proofs.
 
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 

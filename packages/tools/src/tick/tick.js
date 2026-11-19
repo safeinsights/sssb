@@ -6,7 +6,7 @@
 // the by-hand, as one command; `sssb dev-tick` (dev-tick.js) is the same call on a timer, opt-in.
 //
 // What this is NOT: a way around the route's guard. The route is `withWebhookSecret(...)`, and this sends it the
-// per-checkout dev secret (`<app>/.data/auth/webhook-secret`, the file the simulated server generates) as a bearer,
+// per-checkout dev secret (`<app>/.data/auth/webhook-secret`, the file the simulated server generates) in its header,
 // exactly as an external caller would. It adds nothing to the server: no flag, no header the server honours, no
 // route. A server in real mode checks `WEBHOOK_SECRET` instead, never reads that file, and answers this 401.
 //
@@ -76,7 +76,7 @@ export class TickError extends Error {
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 /**
- * Loopback only. The bearer is the dev secret and it is sent in the clear, so a URL that is not this machine is
+ * Loopback only. The secret is the dev secret and it is sent in the clear, so a URL that is not this machine is
  * refused rather than trusted: there is no flag to point this at a real deployment, whose scheduler is not this.
  *
  * @param {string} value
@@ -91,7 +91,7 @@ export function parseLoopbackOrigin(value) {
     }
     if (url.protocol !== 'http:' || !LOOPBACK_HOSTS.has(url.hostname)) {
         throw new TickError(
-            `--url must be http on localhost, 127.0.0.1 or [::1] (the dev secret is sent as a bearer), got "${value}"`,
+            `--url must be http on localhost, 127.0.0.1 or [::1] (the dev secret is sent in the clear), got "${value}"`,
             { usage: true },
         )
     }
@@ -194,7 +194,7 @@ function unreachable(error, endpoint) {
  * One tick. Resolves to the route's JSON body; rejects with a `TickError` for anything that is not a 2xx.
  *
  * The first request to a checkout's server is what creates its secret file, so with none on disk yet one request
- * goes out with a throwaway bearer (a 401, by design) to make the server write it, then the real one follows.
+ * goes out with a throwaway secret (a 401, by design) to make the server write it, then the real one follows.
  *
  * `signal` ends a tick early (the dev ticker passes the one that stops it, so a tick in flight does not outlive the
  * server it was for).
@@ -204,12 +204,14 @@ function unreachable(error, endpoint) {
  */
 export async function tickOnce({ origin, timeoutMs, secretFile = secretFilePath(), fetchImpl = fetch, signal }) {
     const endpoint = `${origin}${TICK_PATH}`
-    /** @param {string} bearer */
-    const post = async (bearer) => {
+    /** @param {string} secret */
+    const post = async (secret) => {
         try {
             return await fetchImpl(endpoint, {
                 method: 'POST',
-                headers: { authorization: `Bearer ${bearer}` },
+                // The webhook secret's own header (`@sssb/kit/service-auth/webhook`'s WEBHOOK_SECRET_HEADER), which a
+                // deployment's CloudFront passes through; it would replace `Authorization` with its own signature.
+                headers: { 'x-sssb-webhook-secret': secret },
                 signal: signal
                     ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
                     : AbortSignal.timeout(timeoutMs),
