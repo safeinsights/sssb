@@ -16,6 +16,7 @@ import type { WorldJobLike, ScheduleRowLike } from '../components/simulator/jobs
 import type { MailItem } from '../components/simulator/mail-app'
 import type { Person } from '../components/simulator/people-app'
 import { LOCALES } from '../core/locale'
+import { sameOriginPath } from '../core/same-origin-path'
 import { listSchedulesForWorld, runDueSchedules } from '../db/schedules'
 import { runDueDeliveries } from '../db/webhooks'
 import { AuthRequiredError, ForbiddenError, NotFoundError } from '../ports/errors'
@@ -78,15 +79,6 @@ export interface SimulatorSchedules {
 const MAX_ADVANCE_MS = 366 * 86_400_000
 /** And the world at a century ahead in all, so repeated moves never leave the range a `Date` can hold. */
 const MAX_OFFSET_MS = 100 * 366 * 86_400_000
-
-/**
- * A path on this origin, or null: `lastPath` is recorded from a page-view beacon's body, so it is caller data, and
- * the client navigates to what `viewpoint` answers. A protocol-relative `//host` or `/\host` is another origin, and a
- * browser drops a tab or newline (`/\t/host` is `//host`), so no backslash, whitespace or control character anywhere.
- */
-function sameOriginPath(value: unknown): string | null {
-    return typeof value === 'string' && /^\/(?![/\\])[^\s\\\p{Cc}]*$/u.test(value) ? value : null
-}
 
 type Handler = (request: Request) => Promise<Response>
 
@@ -209,6 +201,7 @@ async function viewpoint(request: Request): Promise<Response> {
     if (!listAllPeople().some((candidate) => candidate.id === personId)) return badRequest('unknown person')
     // devSignIn restores the person's remembered tenant and writes the viewpoint cookie.
     await devSignIn(personId)
+    // `lastPath` is recorded from a page-view beacon's body, so it is caller data, and the client navigates to it.
     const lastPath = sameOriginPath(readSimulatorState().people[person as PersonKey]?.lastPath)
     return Response.json({ redirectTo: lastPath ?? `/${locale}/dashboard` })
 }

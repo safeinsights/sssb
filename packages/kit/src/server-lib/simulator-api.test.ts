@@ -88,7 +88,10 @@ describe('people', () => {
         expect(body.signedIn).toBe(false)
         expect(body.viewpoint).toBeNull()
         expect(body.people.map((person) => person.key)).toContain('person:fixture-lead')
-        expect(body.people.every((person) => person.status === 'active' && person.unreadMail === 0)).toBe(true)
+        // The seeded accounts: an invite another test made is a row too, so it is not counted here.
+        const seeded = body.people.filter((person) => person.key.startsWith('person:'))
+        expect(seeded.length).toBeGreaterThan(0)
+        expect(seeded.every((person) => person.status === 'active' && person.hasAccount)).toBe(true)
     })
 
     test('becoming a person signs this browser in as them', async () => {

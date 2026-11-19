@@ -2,8 +2,9 @@
 
 import { useTranslations } from 'next-intl'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SimulatorJobs, SimulatorMail, SimulatorSchedules, SimulatorSummary } from '../../server-lib/simulator-api'
+import { sameOriginPath } from '../../core/same-origin-path'
 import { SimulatorPanel, type SimulatorNotice } from './simulator-panel'
 
 const EMPTY_SUMMARY: SimulatorSummary = { viewpoint: null, signedIn: false, people: [] }
@@ -30,11 +31,24 @@ async function getJson<T>(path: string): Promise<T | null> {
     return response.ok ? ((await response.json()) as T) : null
 }
 
-/** A path on this origin, or null; `//host` and `/\host` are other origins, and a browser drops a tab or newline
- *  (`/\t/host` is `//host`), so neither a backslash, whitespace nor a control character is allowed anywhere. The server answers only such a path; this
- *  is the client's own check before it navigates (it cannot import the server module's). */
-function sameOriginPath(value: unknown): string | null {
-    return typeof value === 'string' && /^\/(?![/\\])[^\s\\\p{Cc}]*$/u.test(value) ? value : null
+/**
+ * Polls overlap, and their answers can arrive out of order: each fetch takes a ticket, and its answer is applied only
+ * when no later ticket's answer has been. A slow answer is never shown over a newer one, and, unlike "only the latest
+ * request's answer", answers slower than the poll still land.
+ */
+function useTickets() {
+    const counts = useRef({ issued: 0, applied: 0 })
+    return useMemo(
+        () => ({
+            take: () => (counts.current.issued += 1),
+            fresh: (ticket: number) => {
+                if (ticket <= counts.current.applied) return false
+                counts.current.applied = ticket
+                return true
+            },
+        }),
+        [],
+    )
 }
 
 function readStoredScope(): 'person' | 'all' | null {
@@ -73,9 +87,12 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     const [notices, setNotices] = useState<SimulatorNotice[]>([])
     const noticeSeq = useRef(0)
     const prevUnread = useRef<Map<string, number> | null>(null)
-    // Mail fetches can overlap when the scope changes (the summary's first answer turns "all" into one person's
-    // inbox); only the latest one's answer is shown.
-    const mailRequest = useRef(0)
+    const summaryTickets = useTickets()
+    const mailTickets = useTickets()
+    const jobsTickets = useTickets()
+    // The mail scope last asked for: an answer for another scope (the summary's first answer turns "all" into one
+    // person's inbox) is dropped even when it is the newest to arrive.
+    const mailQuery = useRef('')
 
     const personEmail = summary.people.find((person) => person.key === summary.viewpoint)?.email ?? null
     // Signed out, or no viewpoint yet: there is no one's own inbox to show, so the scope is every inbox.
@@ -88,8 +105,9 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     }, [])
 
     const refresh = useCallback(async () => {
+        const ticket = summaryTickets.take()
         const next = await getJson<SimulatorSummary>('summary')
-        if (!next) return
+        if (!next || !summaryTickets.fresh(ticket)) return
         setSummary(next)
         // New mail since the last poll gets a notice; the first load has nothing "new".
         if (prevUnread.current) {
@@ -99,23 +117,26 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
             }
         }
         prevUnread.current = new Map(next.people.map((person) => [person.key, person.unreadMail]))
-    }, [pushNotice, t])
+    }, [pushNotice, t, summaryTickets])
 
     const refreshMail = useCallback(async () => {
         const query = effectiveMailScope === 'all' ? 'all=1' : `person=${encodeURIComponent(summary.viewpoint ?? '')}`
-        const request = (mailRequest.current += 1)
+        mailQuery.current = query
+        const ticket = mailTickets.take()
         const next = await getJson<SimulatorMail>(`mail?${query}`)
-        if (next && request === mailRequest.current) setMail(next)
-    }, [effectiveMailScope, summary.viewpoint])
+        if (next && query === mailQuery.current && mailTickets.fresh(ticket)) setMail(next)
+    }, [effectiveMailScope, summary.viewpoint, mailTickets])
 
     const refreshJobs = useCallback(async () => {
+        const ticket = jobsTickets.take()
         const [nextJobs, nextSchedules] = await Promise.all([
             getJson<SimulatorJobs>('jobs'),
             getJson<SimulatorSchedules>('schedules'),
         ])
-        if (nextJobs) setJobsData(nextJobs)
-        if (nextSchedules) setSchedulesData(nextSchedules)
-    }, [])
+        if (!nextJobs || !nextSchedules || !jobsTickets.fresh(ticket)) return
+        setJobsData(nextJobs)
+        setSchedulesData(nextSchedules)
+    }, [jobsTickets])
 
     /** The open tab's own data, when the panel is expanded. */
     const refreshOpenTab = useCallback(() => {
@@ -157,7 +178,8 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         void post('viewpoint', { person, locale }).then(async (response) => {
             if (!response.ok) return
             const { redirectTo } = (await response.json()) as { redirectTo: unknown }
-            // A full reload: the theme and the header are per-user server output. Only ever to a path on this origin.
+            // A full reload: the theme and the header are per-user server output. Only ever to a path on this origin:
+            // the server answers no other, and this is the client's own check.
             const path = sameOriginPath(redirectTo)
             if (path) window.location.assign(path)
         })
@@ -180,19 +202,24 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     }
 
     function handleOpenLink(href: string) {
-        // Same origin only, and never silently. A relative path is followed; so is an absolute URL on this origin,
-        // since a real email carries one. `//host/path` is protocol-relative, so it goes to the URL check below.
-        if (href.startsWith('/') && !href.startsWith('//')) {
-            window.location.assign(href)
+        // Same origin only, and never silently. A path is followed; so is an absolute URL on this origin, since a real
+        // email carries one. Both go through `sameOriginPath`, which refuses what a browser would read as another
+        // origin (`//host`, `/\host`, a tab inside); a `//host` link is then judged as a URL below.
+        const path = sameOriginPath(href)
+        if (path) {
+            window.location.assign(path)
             return
         }
         try {
             const url = new URL(href)
-            if (url.origin === window.location.origin) {
-                window.location.assign(href)
+            const local =
+                url.origin === window.location.origin ? sameOriginPath(url.pathname + url.search + url.hash) : null
+            if (local) {
+                window.location.assign(local)
                 return
             }
-            pushNotice(t('noticeLinkOrigin', { origin: url.origin }))
+            if (url.origin === window.location.origin) pushNotice(t('noticeLinkUnusable', { href }))
+            else pushNotice(t('noticeLinkOrigin', { origin: url.origin }))
         } catch {
             pushNotice(t('noticeLinkUnusable', { href }))
         }
@@ -250,7 +277,8 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         // Swap the leading /<locale> segment and reload the same page: the theme and the header are per-request
         // server output, so a client navigation would not re-render them.
         const { pathname, search, hash } = window.location
-        window.location.assign(pathname.replace(new RegExp(`^/${locale}(?=/|$)`), `/${next}`) + search + hash)
+        const swapped = pathname.replace(new RegExp(`^/${locale}(?=/|$)`), `/${next}`) + search + hash
+        window.location.assign(sameOriginPath(swapped) ?? `/${next}`)
     }
 
     return (
