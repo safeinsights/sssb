@@ -7,8 +7,9 @@
 #      pending changesets with Changesets, and then `push`, which checks that result and pushes it as a release
 #      commit and its `vX.Y.Z` tag;
 #   2. that tag's push runs `pack`, which waits for `checks` to pass on the release commit and packs, and then
-#      `publish`, which publishes the packed tarballs with provenance. A release candidate's tag
-#      (`vX.Y.Z-rc.N`) runs `candidate`, `attest` and `prerelease` instead (below).
+#      `publish`, which publishes the packed tarballs with provenance. Beside `publish`, never gating it, `demo` and
+#      `github-release` make the tag's GitHub release, with the showcase's single-file demo attached (below). A
+#      release candidate's tag (`vX.Y.Z-rc.N`) runs `candidate`, `attest` and `prerelease` instead (below).
 # Each pair splits the same way: the first job installs the workspace's dependencies and holds no secret; the
 # second holds the secret (the release app's key in `push`, npm's id-token in `publish`), installs nothing, and
 # re-checks what the first handed it. No job holds both a token that writes to the repository and the id-token. A
@@ -508,3 +509,135 @@ jobs:
                   shown=$(gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
                   [ "$shown" = "false true" ] || { echo "::error::$tag is not a published prerelease ($shown)"; exit 1; }
                   echo "Released $tag as a GitHub prerelease: https://github.com/$repo/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
+
+    # A PLAIN RELEASE'S GITHUB PAGE (adoption follow-up 4): the release notes, and the showcase's single-file static
+    # demo, `sssb-showcase.html`, which the README links as the latest release's asset so an evaluator can open the
+    # Simulator with no clone and no install. Two jobs, split as the candidate's are: `demo` holds no token that writes
+    # anything and runs no dependency's code; `github-release` holds only `contents: write`, to attach. Neither holds an
+    # id-token or is in an environment, and `publish` needs neither: they need `pack`, so they run only for a plain tag
+    # on `main` after `checks` passed on it, beside `publish`, never gating it or gated by it. What and when npm
+    # publishes is the same with them as without them (tests/tooling/release-reach.test.ts). A demo that does not
+    # build fails `checks`, whose pass `pack` waits for, so it stops the release before anything is published.
+    demo:
+        name: demo
+        needs: pack
+        # As `publish`: a tag that publishes nothing gets no page either.
+        if: needs.pack.outputs.count != '0'
+        runs-on: ubuntu-latest
+        timeout-minutes: 90
+        permissions:
+            contents: read
+            # The CI gate lists this commit's `checks` runs, and the demo is that run's artifact.
+            actions: read
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+
+            # THE CI GATE on the release commit, as `pack` ran it, then the demo that run's demo-static job built, held
+            # to its size budget and drove from file:// (app-checks.yml uploads it as `static-demo-showcase`). Nothing
+            # is installed: the commands below need no dependency.
+            - name: wait for checks to pass on the release commit, and fetch the demo it tested
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  set -euo pipefail
+                  out=$(node scripts/release.mjs checks-run "$GITHUB_SHA")
+                  [[ "$out" =~ ^run\ ([1-9][0-9]*)$ ]] || { echo "::error::the CI gate did not report a run"; exit 1; }
+                  gh run download "${BASH_REMATCH[1]}" --repo "$GITHUB_REPOSITORY" --name static-demo-showcase --dir "$RUNNER_TEMP/built"
+
+            - name: check the demo and write the release notes
+              env:
+                  VERSION: ${{ needs.pack.outputs.version }}
+              run: |
+                  set -euo pipefail
+                  dir="$RUNNER_TEMP/release-page"
+                  mkdir -p "$dir"
+                  cp "$RUNNER_TEMP/built/index.html" "$dir/sssb-showcase.html"
+                  node scripts/release.mjs demo "$VERSION" "$dir/sssb-showcase.html" > "$dir/demo.json"
+                  node scripts/release.mjs release-notes "$VERSION" "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$dir/demo.json" > "$dir/notes.md"
+                  cat "$dir/notes.md" >> "$GITHUB_STEP_SUMMARY"
+
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: release-page
+                  path: ${{ runner.temp }}/release-page
+                  if-no-files-found: error
+                  retention-days: 7
+                  # "Re-run all jobs" uploads it again in the same run.
+                  overwrite: true
+
+    # The GitHub release, the only job that writes to the repository on a plain tag, with the run's own token (no app:
+    # a release is not a push, and starts no workflow). It checks out nothing, installs nothing and runs only gh, jq
+    # and shell tools. As `prerelease` does, it creates a DRAFT holding the demo, checks it byte for byte against what
+    # `demo` checked, and only then makes it visible, as a plain release marked Latest while its tag is the highest
+    # plain release tag, so the README's `releases/latest/download/sssb-showcase.html` names the newest release's
+    # demo. A re-run finishes a draft a failed run left, and confirms a published release rather than changing it; a
+    # published release whose demo differs fails here.
+    github-release:
+        name: github-release
+        needs: [pack, demo]
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+              with:
+                  name: release-page
+                  path: ${{ runner.temp }}/release-page
+            - name: publish the release page
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  VERSION: ${{ needs.pack.outputs.version }}
+              run: |
+                  set -euo pipefail
+                  [[ "$VERSION" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::not a 0.x release: '$VERSION'"; exit 1; }
+                  dir="$RUNNER_TEMP/release-page"
+                  tag="v$VERSION"
+                  repo="$GITHUB_REPOSITORY"
+                  # What `demo` checked: the asset's sha256 and name, which must be the README's.
+                  [ "$(jq -r .file "$dir/demo.json")" = sssb-showcase.html ] || { echo "::error::demo.json does not name sssb-showcase.html"; exit 1; }
+                  jq -r '"\(.sha256)  \(.file)"' "$dir/demo.json" > "$RUNNER_TEMP/expected"
+                  (cd "$dir" && sha256sum -- sssb-showcase.html) | diff "$RUNNER_TEMP/expected" - || { echo "::error::the demo is not the one demo checked"; exit 1; }
+
+                  # Only "not found" means no release yet; any other error (the API, the network) stops here, rather
+                  # than create a second draft beside one a lookup failed to see.
+                  if state=$(gh release view "$tag" --repo "$repo" --json isDraft --jq 'if .isDraft then "draft" else "published" end' 2>"$RUNNER_TEMP/view.err"); then
+                      :
+                  elif grep -q 'release not found' "$RUNNER_TEMP/view.err"; then
+                      state=none
+                  else
+                      cat "$RUNNER_TEMP/view.err" >&2
+                      echo "::error::could not read $tag's release"
+                      exit 1
+                  fi
+                  if [ "$state" = none ]; then
+                      gh release create "$tag" --repo "$repo" --verify-tag --draft --title "$tag" --notes-file "$dir/notes.md"
+                      state=draft
+                  fi
+                  # A draft is not visible, so the demo is (re)uploaded into it, replacing one a failed run left
+                  # part-written; its title and notes are set again when it is published, below.
+                  if [ "$state" = draft ]; then
+                      gh release upload "$tag" --repo "$repo" --clobber "$dir/sssb-showcase.html"
+                  fi
+
+                  # Byte for byte, what the release holds: exactly the demo and nothing else.
+                  got="$RUNNER_TEMP/got"
+                  rm -rf "$got"
+                  gh release download "$tag" --repo "$repo" --dir "$got" --pattern '*'
+                  (cd "$got" && sha256sum -- * | sort) | diff "$RUNNER_TEMP/expected" - || { echo "::error::$tag holds other files than the demo"; exit 1; }
+
+                  # Latest only while no higher plain release tag exists, so a re-run of an older tag's job, or two tags'
+                  # runs finishing out of order, never moves Latest (and the README's link) back to an older demo.
+                  newest=$(gh api "repos/$repo/git/matching-refs/tags/v" --paginate --jq '.[].ref' \
+                      | sed -n 's|^refs/tags/v\(0\.[0-9]*\.[0-9]*\)$|\1|p' | sort -t . -k 1,1n -k 2,2n -k 3,3n | tail -n 1)
+                  if [ "$newest" = "$VERSION" ]; then latest=true; else latest=false; fi
+                  if [ "$state" = draft ]; then
+                      gh release edit "$tag" --repo "$repo" --title "$tag" --notes-file "$dir/notes.md" --draft=false --prerelease=false --latest="$latest"
+                  fi
+                  shown=$(gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
+                  [ "$shown" = "false false" ] || { echo "::error::$tag is not a published release ($shown)"; exit 1; }
+                  echo "Released $tag on GitHub with the showcase's demo: https://github.com/$repo/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
