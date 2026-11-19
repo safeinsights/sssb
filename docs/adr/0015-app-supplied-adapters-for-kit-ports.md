@@ -56,9 +56,9 @@ stay required but become swappable.
   `docs/recipes/app-owned-adapter.md`): its port, registry, fake and real adapter, under its `src/`.
 - **Switch an optional kit port off**: `params.ports` in `config/params.ts` (safeinsights/sssb#67) sets
   `LLM_PROVIDER`, `EMAIL_PROVIDER`, `INBOUND_EMAIL_PROVIDER` and `JOBS_RUNNER`, and `none` makes the port absent
-  (`packages/kit/src/adapters/real/optional-ports.ts`, `packages/kit/src/adapters/real/absent.ts`). A sibling change,
-  `feat/storage-optional`, gives storage the same switch (`STORAGE_PROVIDER`, `s3` or `none`); this ADR assumes it
-  lands and does not repeat it.
+  (`packages/kit/src/adapters/real/optional-ports.ts`, `packages/kit/src/adapters/real/absent.ts`).
+  safeinsights/sssb#77 gave storage the same switch (`STORAGE_PROVIDER`, `s3` by default or `none`), and made
+  `AWS_REGION` required only by the choices that call AWS. This ADR builds on both and does not repeat them.
 - **Not replace a kit port's real adapter.** `createRealPorts` (`packages/kit/src/adapters/real/index.ts`) builds
   exactly one adapter per port: Clerk, Postgres over `pg` or the RDS Data API, S3, Anthropic, Mailgun, CodeBuild or
   in-process, PostHog. The registry (`packages/kit/src/adapters/index.ts`) is what every framework module imports, and
@@ -101,7 +101,7 @@ That costs one adapter SSSB already proves, and it keeps third parties out of th
   The `s3` choice would read settings of its own, all optional: `STORAGE_ENDPOINT`, `STORAGE_REGION`,
   `STORAGE_FORCE_PATH_STYLE`, `STORAGE_ACCESS_KEY_ID` and `STORAGE_SECRET_ACCESS_KEY`, handed to `createS3Storage`
   explicitly. Not `AWS_REGION` and the AWS key pair, which a Lambda reserves for its own role and region; today the
-  region comes from `AWS_REGION`. The app's `params.ports.storage` would say so as well, so that `SssbApp` builds no S3
+  `s3` choice takes its region from `AWS_REGION`. The app's `params.ports.storage` would say so as well, so that `SssbApp` builds no S3
   bucket nobody uses. What a given store does not implement of the S3 API is that store's gap against the port, as R2's
   upload target is (section 6).
 - **Email: an `smtp` choice.** Postmark, Amazon SES, Resend, Mailgun itself and nearly every other transactional
@@ -127,16 +127,16 @@ storage upload target (R2) and auth's sign-in and sign-out (Auth0).
 
 **The switch.** The ports with no protocol choice gain the value `app`:
 
-| Port           | Switch (server variable)  | Choices if accepted                                  |
-| -------------- | ------------------------- | ---------------------------------------------------- |
-| `llm`          | `LLM_PROVIDER`            | `anthropic` (default), `none`, `app`                 |
-| `analytics`    | `ANALYTICS_PROVIDER`, new | `posthog` (default), `none`, `app`                   |
-| `jobs`         | `JOBS_RUNNER`             | `codebuild` (default), `in-process`, `none`, `app`   |
-| `auth`         | `AUTH_PROVIDER`, new      | `clerk` (default), `app`; never `none`               |
-| `email`        | `EMAIL_PROVIDER`          | `mailgun` (default), `smtp`, `none`                  |
-| `storage`      | `STORAGE_PROVIDER`        | `s3`, `none` (the sibling's); `s3` gains an endpoint |
-| `inboundEmail` | `INBOUND_EMAIL_PROVIDER`  | unchanged: `mailgun`, `none` (section 5 says why)    |
-| `db` transport | `DATABASE_TRANSPORT`      | unchanged: `pg`, `data-api`; no `app` (section 6)    |
+| Port           | Switch (server variable)  | Choices if accepted                                |
+| -------------- | ------------------------- | -------------------------------------------------- |
+| `llm`          | `LLM_PROVIDER`            | `anthropic` (default), `none`, `app`               |
+| `analytics`    | `ANALYTICS_PROVIDER`, new | `posthog` (default), `none`, `app`                 |
+| `jobs`         | `JOBS_RUNNER`             | `codebuild` (default), `in-process`, `none`, `app` |
+| `auth`         | `AUTH_PROVIDER`, new      | `clerk` (default), `app`; never `none`             |
+| `email`        | `EMAIL_PROVIDER`          | `mailgun` (default), `smtp`, `none`                |
+| `storage`      | `STORAGE_PROVIDER`        | `s3` (default), `none`; `s3` gains an endpoint     |
+| `inboundEmail` | `INBOUND_EMAIL_PROVIDER`  | unchanged: `mailgun`, `none` (section 5 says why)  |
+| `db` transport | `DATABASE_TRANSPORT`      | unchanged: `pg`, `data-api`; no `app` (section 6)  |
 
 - **Analytics needs a fix now and a switch later.** Today real mode picks PostHog when `POSTHOG_KEY` is set and
   otherwise serves the _fake_ (`packages/kit/src/adapters/real/index.ts`). The fake's `capture` and `isFlagEnabled`
@@ -265,7 +265,7 @@ instrumentation, its SDK named in its `sssb.vendors`. Nothing to build.
 
 **Storage.** The framework relies on: the upload target being an S3 presigned POST (`UploadTarget`: the fields, then
 the file, as multipart) with the browser code written to it, and the fake serving the same shape locally; `list`,
-`copy`, `head` and the `etag` having S3's semantics, all written into the port's comments; `SssbApp` building the bucket
+`copy`, `head` and the `etag` having S3's semantics, all written into the port's comments; `SssbApp` building the bucket unless storage is `none`
 and granting it. The suite asserts every behaviour those comments state: literal prefix listing sorted ascending,
 idempotent batch delete, a copy that keeps the type and overwrites, `ifMatch` and `PreconditionFailedError`,
 `NotFoundError` on a missing source, `head` null on a missing key, an upload target that refuses a wrong type or an
@@ -433,8 +433,9 @@ The honest answer is that this is not an adapter, and the reason is the tenancy 
     - the only migration entry point SSSB ships is a Lambda handler that reads its credentials from AWS Secrets
       Manager (`packages/kit/src/adapters/real/migrate-handler.ts`), so a host off AWS needs a migrate command SSSB
       does not have yet;
-    - real mode requires `AWS_REGION` today (storage's region and the CodeBuild runner read it), and `STORAGE_BUCKET`
-      until the sibling's storage switch lands;
+    - real mode still requires `AWS_REGION` for the choices that call AWS (storage `s3`, the `codebuild` runner, the
+      Data API), so an app off AWS sets storage to `none` (or, under this ADR, `s3` with an endpoint and its own
+      region) and runs its jobs in-process;
     - `SssbApp` always builds Aurora, so a non-AWS Postgres is deployed by the adopter's own infrastructure, which
       `databaseNameFor` already allows for;
     - the `pg` adapter itself is `AUTHORED — CUTOVER`, never run against a deployed database, so none of this is proven

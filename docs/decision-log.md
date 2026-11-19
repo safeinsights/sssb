@@ -6695,6 +6695,7 @@ rule for these sessions, several of them changed by its review (an Opus and a Fa
 - **Build on first real demand.** Rejected: building every port's swap now, ahead of any adopter asking.
 - **`docs/adr/README.md` lists 0015 as Proposed** and its count sentence says fifteen. `CLAUDE.md`'s list of Accepted
   ADRs is unchanged until JP decides.
+
 ## Storage is an optional port: a deployment needs no S3 bucket (2026-11-19, `feat/storage-optional`)
 
 JP, 2026-11-19: an SSSB deployment must not require an S3 bucket. Storage gets the treatment the 2026-11-19 entry
