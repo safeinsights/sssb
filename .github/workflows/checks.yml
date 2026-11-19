@@ -133,7 +133,8 @@ jobs:
                       echo "v$version is a release candidate: its tag attaches tarballs to a GitHub prerelease and publishes nothing." >> "$GITHUB_STEP_SUMMARY"
                       exit 0
                   fi
-                  # pack
+                  # pack, which installs on the release commit before it packs, frozen to the lockfile
+                  pnpm install --frozen-lockfile --ignore-scripts
                   list=$(node scripts/release.mjs publishable "$version")
                   [ "$(jq length <<<"$list")" -gt 0 ] || { echo "::error::v$version would publish nothing"; exit 1; }
                   mkdir -p "$RUNNER_TEMP/tarballs"

@@ -5164,6 +5164,7 @@ npm@11.21.2 publish --provenance --dry-run`. Measured: npm 11.21.2 accepts `--pr
 - **Not changed: `pack` still packs again on the tag** rather than publishing the tarballs `checks`' pack-and-consume
   job tested on the release commit, as a candidate's tag does. Out of this task's scope; the rehearsal packs as `pack`
   does.
+
 ## Pack and consume proves the by-version install against a local registry (2026-11-18, `release/p14-first-npm-release`)
 
 `registryRecipe` (pages shape) installs the packed `@sssb/*` by version, as `@sssb/create` writes them without
@@ -5182,3 +5183,7 @@ only the scope is local). It runs for every packed version: a caret range on a p
   text as a module.** The usual home, `scripts/pack-and-consume/checks.mjs`, was outside the files this change was
   allowed to touch (another session edits the release scripts in parallel), and the script cannot be imported (it runs
   the job). Move them into `checks.mjs` when that is open: the test's loader then becomes an import.
+- **Correction, same branch: the registry recipe's pure helpers moved to `scripts/pack-and-consume/checks.mjs`**, where
+  the script's other pure checks live, and the test imports them; the marker-delimited block loaded as a data-URL
+  module (the entry above) is gone. The rehearsal job also re-installs, frozen, on its local release commit before
+  packing, as `pack` installs on the tag.
