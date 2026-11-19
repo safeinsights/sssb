@@ -48,7 +48,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `orderBy` column per route, never from the client.
 - App migrations live in `src/app-config/db/migrations/`, numbered 1001 and up (0001–0999 are the framework's), and
   are listed in `src/app-config/db/migrations/index.ts`. A new tenant table copies the RLS pattern of
-  `src/app-config/db/migrations/1001_items.ts`, and its isolation proofs go in `src/app-config/db/rls-proofs.ts`.
+  `src/app-config/db/migrations/1001_items.ts`, the generated app's first migration (once you have removed it, read it
+  in SSSB's repository at your release), and its isolation proofs go in `src/app-config/db/rls-proofs.ts`.
 - A role is cluster-wide, so a migration that creates one of the app's own creates it only where it does not exist
   yet: a `DO` block that runs `CREATE ROLE reviewer NOLOGIN` only when
   `NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'reviewer')`. Keep it an ordinary role, before and after every
@@ -71,7 +72,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 
 - Every exported mutating route handler (POST, PUT, PATCH, DELETE) in a `route.ts` anywhere under `src/app`, not only
   under `src/app/api`, calls `authorize(...)` from `@sssb/kit/authz/authorize` on its own path, as
-  `src/app/api/items/route.ts` does. The conformance suite's `authz-mutations` check reads each handler: a string, a
+  `src/app/api/items/route.ts` does (the generated app's; once you have removed it, read it in SSSB's repository at your
+  release). The conformance suite's `authz-mutations` check reads each handler: a string, a
   comment, a dead branch or a helper in another module does not count. Neither does a call whose denial cannot stop
   the handler: in an `async` helper or a callback whose promise the handler neither awaits nor returns, in a callback
   handed to a function the route file defines, or in a `try` whose `catch` does not rethrow. `await` the helper that

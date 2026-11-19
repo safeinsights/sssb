@@ -15,9 +15,9 @@ import type { SeedAgreement, SeedJobSchedule, SeedOrg, SeedPerson, SeedTenant } 
  * an admin who can invite, a plain member, and a restricted member whose authoring surface is
  * reduced. `preAcceptedByAllInTenant` is unused because this app seeds no agreements.
  *
- * ADOPTING? This content is the template's, and every sign-in picker lists all of it. Replace it with
- * your own world rather than adding yours beside it (SSSB's adoption guide says what else still shows
- * the template's content).
+ * This content came with the generated app, and every sign-in picker lists all of it. Replace it with
+ * your own world rather than adding yours beside it (SSSB's adoption guide says what else the generated
+ * app still shows).
  */
 
 export type {

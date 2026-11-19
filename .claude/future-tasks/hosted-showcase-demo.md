@@ -1,7 +1,7 @@
 # A single-file showcase demo on each release, linked from the README
 
 **Priority:** P3 · **Status:** open
-**Found by:** the adoption review, 2026-11-18 (`docs/adoption-review-2026-11.md`, follow-up 6).
+**Found by:** the adoption review, 2026-11-18 (`docs/adoption-review-2026-11.md`, follow-up 4).
 
 ## What is true
 

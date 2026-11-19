@@ -2,7 +2,7 @@
     "welcome": {
         "appName": "Starter",
         "title": "Starter",
-        "subtitle": "The smallest app this template can grow: one entity, one card, and everything else switched off.",
+        "subtitle": "A minimal app to grow from: one entity, one card, and everything else switched off.",
         "dashboardLink": "Go to the dashboard"
     },
     "dashboard": {

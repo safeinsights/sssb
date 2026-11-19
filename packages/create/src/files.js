@@ -606,7 +606,8 @@ The worked example of every capability is SSSB's own reference app:
   \`@sssb/app-config\`; \`config/app.ts\` holds its slug and
   \`config/params.ts\` its deployment parameters. It sits under \`apps/\` so that a second app, or a package of your own
   under \`packages/\`, is a sibling rather than a special case; one app is the usual shape.
-- \`${app(c)}/infra/\`: the app's deployment, a CDK app composing SSSB's \`SssbApp\` construct (\`@sssb/cdk\`).
+- \`${app(c)}/infra/\`: the app's deployment, a CDK app composing SSSB's \`SssbApp\` construct (\`@sssb/cdk\`). Before
+  you deploy, replace the \`UPDATE-ME\` tags in its \`lib/tags.ts\` with your organisation's.
 - \`docs/cutover-checklist.md\`: what the app defers until it has real accounts.
 - \`.claude/sssb-guide.md\`: SSSB's app guide (the rules an app on SSSB follows), a stamped copy of the one
   \`@sssb/kit\` ships, which \`CLAUDE.md\` imports (\`@.claude/sssb-guide.md\`; keep that line when you make the file

@@ -69,7 +69,7 @@ By task. The list under Doctrine is by document.
 - [decision-log.md](decision-log.md) — running log of unplanned decisions, appended as they happen
 - [build-notes.md](build-notes.md) — running log of hard-won lessons ("wish someone had told me"). The
   most useful file in the repo when something behaves strangely
-- docs/releases (a directory that appears with the first release) — one file per release, `v<version>.md`, written by `release.yml`'s `plan` job from the release's
+- [releases/](releases/) — one file per release, `v<version>.md`, written by `release.yml`'s `plan` job from the release's
   changesets (`.changeset/README.md`, "Release notes")
 
 The records name branches, dates and slices from SSSB's own construction. That is what makes them

@@ -2,7 +2,7 @@
     "welcome": {
         "appName": "Starter",
         "title": "Starter",
-        "subtitle": "La aplicación más pequeña que esta plantilla puede hacer crecer: una entidad, una tarjeta y todo lo demás apagado.",
+        "subtitle": "Una aplicación mínima desde la que crecer: una entidad, una tarjeta y todo lo demás apagado.",
         "dashboardLink": "Ir al panel"
     },
     "dashboard": {

@@ -84,3 +84,7 @@ points the same way: the starter is copied once, so wiring in it never improves 
 and its routes as handler factories in the kit, and route files in the starter thin enough never to need a fix. The
 adoption review (`docs/adoption-review-2026-11.md`) ranks this first, because the Simulator is the README's first
 claim and a generated app's own `pnpm dev` does not have it.
+
+Staging, from the review's Fable reviewer: one catch-all route an app mounts with a single file
+(`api/simulator/[...path]/route.ts` over a handler the kit exports) rather than 33 thin ones, and the tabs a new app
+uses first (people, jobs and the clock, the mail inbox) before the rest.

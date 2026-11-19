@@ -1,7 +1,7 @@
-# One list of apps in a generated workspace
+# One list of apps in a generated workspace, and `sssb add-app`
 
 **Priority:** P2 · **Status:** open
-**Found by:** the adoption review, 2026-11-18 (`docs/adoption-review-2026-11.md`, follow-up 4).
+**Found by:** the adoption review, 2026-11-18 (`docs/adoption-review-2026-11.md`, follow-up 3).
 
 ## What is true
 
@@ -27,3 +27,12 @@ them; pages plans one.
 
 A second app in a generated workspace is added by creating it and naming it in `sssb.apps`, plus its port slot, and
 `sssb doctor` names anything else left to do.
+
+## And a command that adds the app
+
+Even with one list, nothing writes the second app: `@sssb/create` writes a whole workspace into an empty directory. A
+command (`sssb add-app <slug>`, or `pnpm create @sssb --app <slug>` inside a workspace) would write `apps/<slug>` from
+the generator's template, name it in `sssb.apps`, give it a port slot of its own and print the root scripts to point
+at it. It is what proves the `apps/` layout's one benefit, a cheap sibling, and pages needs it for its second app. The
+generator's rename code is the starting point; pack and consume's `pages` shape, which already adds a second generated
+app by hand, is the gate.

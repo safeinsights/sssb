@@ -1,11 +1,9 @@
 # Adopting SSSB
 
 Adoption is one command, which writes a new repository for your app, and an upgrade is a new release of SSSB's
-packages. There is no fork and no merge: your repository holds your app and its config, and SSSB arrives as versioned
-dependencies (`@sssb/kit`, `@sssb/tools`, `@sssb/eslint-plugin`, `@sssb/cdk`), a reusable CI workflow and a Claude Code
-plugin, the last two pinned to the release's commit of SSSB's repository
-([ADR-0014](adr/0014-distribution-as-versioned-packages.md); fork and merge,
-[ADR-0013](adr/0013-upstream-updates-fork-and-merge.md), is superseded).
+packages. Your repository holds your app and its config, and SSSB arrives as versioned dependencies (`@sssb/kit`,
+`@sssb/tools`, `@sssb/eslint-plugin`, `@sssb/cdk`), a reusable CI workflow and a Claude Code plugin, the last two
+pinned to the release's commit of SSSB's repository ([ADR-0014](adr/0014-distribution-as-versioned-packages.md)).
 
 ```sh
 pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research --owner @acme-org/devs
@@ -366,7 +364,8 @@ is protected, not that your proofs exercise two tenants — so it is yours to ke
 **The Items slice is a worked example, so take what it teaches before you delete it.**
 `apps/<app>/src/app-config/db/migrations/1001_items.ts` is a worked RLS migration — in a generated workspace, the only one there — and its
 section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it. Build your first real slice
-from them (`/sssb:new-slice`), then remove Items the way "To remove a demo slice" below describes. There is
+from them (`/sssb:new-slice`), then remove Items the way "To remove a slice" below describes. Give your first table
+the next number, `1002_<name>`: renaming `1001_items` instead means wiping `apps/<app>/.data` first (the app guide). There is
 no flag that does this for you yet; `.claude/future-tasks/create-blank-option.md` carries the design.
 
 **Wire the static demo last, and look at it.** A shell or a home screen you build in
@@ -601,12 +600,13 @@ therefore declares an empty one and suppresses `@typescript-eslint/no-empty-obje
 `/sssb:new-preset`, `/sssb:new-preset-operation`: SSSB's Claude Code plugin). Each walks the house way:
 screen in your app's `apps/<app>/src/components`, thin route, seam registrations, an RLS migration copied from the
 reference (`apps/<app>/src/app-config/db/migrations/1001_items.ts`, the starter's), colocated tests, e2e, then
-`pnpm verify` + `pnpm test:contract`. A screen generic enough for every app on SSSB belongs in the framework, which is
+`pnpm verify` + `pnpm test:contract`. Each command is a markdown file in SSSB's `plugins/sssb/commands/`
+(`new-slice.md`, say), which reads as step-by-step instructions without Claude Code. A screen generic enough for every app on SSSB belongs in the framework, which is
 an SSSB change ("Changing SSSB itself" below).
 
 **To remove a slice** (the starter's Items, once you have built your own from it): delete its card + routes +
-`apps/<app>/src/domain/` module, if it has one + seam entries (ability case, table, migration, message namespace,
-vocabulary entries) and its e2e specs, then update the static twin (`apps/<app>/src/demo-static/app.tsx`) and run the
+`apps/<app>/src/domain/` module, if it has one + seam entries (ability case, table, migration, message namespace and its
+`APP_NAMESPACES` entry in `apps/<app>/src/app-config/messages.ts`, vocabulary entries) and its e2e specs, then update the static twin (`apps/<app>/src/demo-static/app.tsx`) and run the
 full gate. A slice that other seam entries reference (a job, an inbound handler or an assistant tool, as the
 showcase's tickets are) has those entries replaced in the same change. An unused framework capability needs nothing:
 an empty registration is the off switch.
@@ -769,7 +769,7 @@ An upgrade is one change in your repository, made on a branch like any other:
    checklist does not mention: read its `report` lines, not just its last one. Then `pnpm verify`. CI then runs
    SSSB's checks at the new pin.
 
-Until SSSB's first npm release, every release is a candidate, installed by URL as in step 2. A release that turns your
+A release that turns your
 app red with no entry saying why is a bug in its notes: report it in SSSB's repository.
 
 A repository that adopted SSSB by forking it, before the packages existed, switches to them once and then upgrades

@@ -1,7 +1,7 @@
 # Split `docs/adopting.md` into a short guide and a reference
 
 **Priority:** P2 · **Status:** open
-**Found by:** the adoption review, 2026-11-18 (`docs/adoption-review-2026-11.md`, follow-up 2).
+**Found by:** the adoption review, 2026-11-18 (`docs/adoption-review-2026-11.md`, follow-up 1).
 
 ## What is true
 

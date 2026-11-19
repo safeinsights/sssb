@@ -5551,3 +5551,16 @@ judge whether adoption is as simple as it can be (`docs/adoption-review-2026-11.
   and the workspace with its app at `app/`. Both make every tool carry a second layout for good, since pages (a
   workspace with an app and packages of its own) stays on `apps/`, for a one-segment gain the root scripts already
   hide. The review doc has the table.
+- **Review round (Opus code, Opus newcomer, Fable on the review doc).** The code reviewer found no defect and three
+  test gaps, all closed: the README's links are held to a `--workflow-ref` override, to paths that exist at the
+  pinned commit rather than in the working tree, and, past the survivor check, to the exact link text the generator
+  writes. The newcomer found the app guide's two worked examples (`1001_items.ts`, the items route) were the files
+  the adoption guide says to delete: the guide now says where to read them once removed. Rejected: describing the
+  patterns in the guide itself, which makes the guide a second copy of code it should point at. Also fixed from that
+  walk: the generated app's "template" copy and `TEMPLATE-UPDATE-ME` tags (now `UPDATE-ME`, named in the generated
+  README), the `scheduled-tick` row's "both example apps", a misnamed section, the stale "until SSSB's first npm
+  release", and the migration number for a first table. Fable found the review overstated the alternatives' tool
+  costs (the CLI already treats a non-`apps/` layout as first-class) and leaned on pages as decisive; the layout
+  section now answers ADR-0007's own "for a product, root is right" with the three-package argument, weighs a fixed
+  `apps/web/`, a layout flag and a symlink, and pairs the recommendation with `sssb add-app`. The guide's stamped copy
+  stays, on ADR-0014 part 9's trust decision; deriving both pins from the kit on upgrade is a follow-up.
