@@ -3,3 +3,7 @@
 # ("Union merge for the two append-only records"): read the file again after any merge that touched one entry.
 docs/decision-log.md merge=union
 docs/build-notes.md merge=union
+
+# `sssb remove-items` reads these two diffs line by line: a CRLF checkout would put a carriage return into every path
+# and every line it compares, and refuse every file.
+packages/tools/src/remove-items/*.patch text eol=lf

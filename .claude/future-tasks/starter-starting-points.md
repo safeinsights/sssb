@@ -72,8 +72,8 @@ Whichever is chosen, the adoption probe in `.github/workflows/checks.yml` (a wor
 - `route-glue-duplication.md` — the same decision from the other side; read first.
 - `self-service-auth-mfa-and-invitations.md` — widens the accept-invite flow into three; whatever the
   starter wires now is what that work has to keep working, so settle ownership of the accept route first.
-- `create-blank-option.md` — decides what "the minimum an adopter keeps" is, and a starter that carries
-  more wiring has more for `--blank` to sweep.
+- `resolved/create-blank-option.md` — decided it with `sssb remove-items` rather than a `--blank` flag; a starter that carries
+  more wiring has more for that command's two diffs to carry.
 - `resolved/demo-size-budget-headroom-thin.md` — the byte cost of anything added to the static demo, and whose budget it is.
 
 ## Addendum, 2026-11-18: the adoption review
