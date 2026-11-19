@@ -45,7 +45,7 @@ export declare function portForRoot(
 
 /**
  * The port THIS checkout (found from the working directory) should use for a service. With no argument, the service
- * the package.json in the working directory declares: the app's own, from a Playwright config or a test run from the
+ * the app around the working directory declares (the nearest package.json that declares a port, up to the checkout root): the app's own, from a Playwright config or a test run from the
  * app's directory.
  */
 export declare function portFor(service?: PortDeclaration): number

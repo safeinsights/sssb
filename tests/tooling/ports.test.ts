@@ -327,6 +327,12 @@ describe('the declaration an app makes in its package.json', () => {
         expect(refused.status).not.toBe(0)
         expect(refused.stderr).toMatch(/"starter" is another app's port slot, and this app declares its own, "ledger"/)
         expect(printed(own, "portFor('showcase')").status).not.toBe(0)
+        // A package nested in the app (its infra/) does not hide the app's slot, from a directory with none of its own.
+        mkdirSync(path.join(own, 'infra'), { recursive: true })
+        writeFileSync(path.join(own, 'pnpm-workspace.yaml'), 'packages:\n  - infra\n') // the checkout's root
+        writeFileSync(path.join(own, 'infra', 'package.json'), JSON.stringify({ name: 'infra' }))
+        expect(printed(path.join(own, 'infra'), "portFor('starter')").status).not.toBe(0)
+        expect(printed(path.join(own, 'infra'), "portFor('ladle')").stdout.trim()).toBe('61000')
         expect(printed(own, "portFor('ladle')").stdout.trim()).toBe('61000')
         expect(printed(own, "portFor('contractPg')").stdout.trim()).toBe('5439')
         // An app on a built-in slot may still name the other one (the showcase's tests do), and so may a non-app directory.

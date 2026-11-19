@@ -5154,15 +5154,16 @@ beside the string form); the judgement calls it left open, each with what it bea
   worktree's derived ports differ by name, so only the default needs checking. An app with no declaration is not
   checked (launch-json already skips it), and an invalid declaration is a failure naming its package.json, where it was
   a failure of `sssb port` alone before.
-- **`originFor()` and `portFor()` with no argument read the app the working directory is in (the nearest package.json at
-  or above it, no higher than the checkout root); a Playwright config names its own app with `originForApp(__dirname)`.**
-  The first design read the working directory's package.json alone and told adopters to call `originFor()` in the
-  config. Review found `pnpm knip` (in `pnpm verify` and the generated workflow) loads every workspace's Playwright
-  config from the workspace root, where the call threw and knip exited 2, as `playwright test -c apps/x/…` from the
-  root does; and a test run from `apps/x/tests` read no declaration at all. The config's own directory is the one
-  place that names the app wherever it is loaded, and Playwright and knip both compile the config to CommonJS, so
-  `__dirname` holds. Rejected: a walk up to the nearest package.json that DECLARES a slot, which from the workspace root
-  could pick the root's own, and `originFor(readPortDeclaration(__dirname))`, which hands an undefined declaration to the
+- **`originFor()` and `portFor()` with no argument read the app the working directory is in, the nearest package.json at or
+  above it that declares a port (no higher than the checkout root); a Playwright config names its own app with
+  `originForApp(__dirname)`.** The first design read the working directory's package.json alone and told adopters to
+  call `originFor()` in the config. Review found `pnpm knip` (in `pnpm verify` and the generated workflow) loads every
+  workspace's Playwright config from the workspace root, where the call threw and knip exited 2, as `playwright test -c
+apps/x/…` from the root does; and a test run from `apps/x/tests` read no declaration at all. The config's own
+  directory is the one place that names the app wherever it is loaded, and Playwright and knip both compile the config
+  to CommonJS, so `__dirname` holds; `originForApp` resolves symlinks, as `sssb port` (which runs in a real working
+  directory) does. Rejected: the nearest package.json of any kind, which lets a package nested in the app (its `infra/`)
+  hide the app's slot, and `originFor(readPortDeclaration(__dirname))`, which hands an undefined declaration to the
   no-argument form when the app declares none, a worse error than the one `originForApp` gives. With no app around it
   throws, and says to name a service, run from the app, or use `originForApp`.
 - **`tick` and `dev-tick` know a custom slot only for the app in the working directory (or `--app`).** A slot is the

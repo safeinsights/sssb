@@ -32,7 +32,7 @@
 // repository this package is a workspace link, so its real path is outside node_modules and Playwright compiles
 // it. Walking up from the working directory is the portable option.
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -225,15 +225,20 @@ export function portForRoot(root, service, env = process.env) {
 }
 
 /**
- * The app the working directory is in: the nearest directory at or above it that holds a package.json, no higher than
- * the checkout's root. Undefined when there is none.
+ * The app the working directory is in: the nearest directory at or above it whose package.json declares a port
+ * (`"sssb": { "port": … }`), no higher than the checkout's root, so a package nested in the app (its `infra/`, say)
+ * does not hide the app's slot. Undefined when there is none.
  * @param {string} start
  * @returns {string | undefined}
  */
 function appDirOf(start) {
     const top = findCheckoutRoot(start)
     for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
-        if (existsSync(path.join(dir, 'package.json'))) return dir
+        try {
+            if (JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'))?.sssb?.port !== undefined) return dir
+        } catch {
+            // No package.json here, or not one that parses: not the app's, so keep looking.
+        }
         if (dir === top || path.dirname(dir) === dir) return undefined
     }
 }
@@ -292,7 +297,9 @@ export function originForApp(appDir) {
     if (declared === undefined) {
         throw new Error(`ports: ${path.join(appDir, 'package.json')} declares no port service ("sssb": { "port": … })`)
     }
-    return `http://localhost:${portForRoot(findCheckoutRoot(appDir), declared)}`
+    // The real path, as `sssb port` sees it (a process's working directory is never a symlink): a worktree reached
+    // through a link must derive the same port as the dev server it points the suite at.
+    return `http://localhost:${portForRoot(findCheckoutRoot(realpathSync(appDir)), declared)}`
 }
 
 /** @type {import('./ports.d.ts').SERVICE_NAMES} */
