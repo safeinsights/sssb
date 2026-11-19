@@ -1,5 +1,5 @@
 // @ts-check
-// `sssb guide [--out <file>] [--check]`: copies the app guide that @sssb/kit ships (the rules an app author follows:
+// `sssb guide [--app <dir>] [--out <file>] [--check]`: copies the app guide that @sssb/kit ships (the rules an app author follows:
 // the seam, vendor SDKs, getDb, i18n, router-agnostic screens, hermetic dev) into the repository, with a hash of its
 // content stamped in a header line. The adopter's own CLAUDE.md imports that copy with Claude Code's `@path` import.
 //
@@ -37,13 +37,16 @@ function guideApp(args, cwd = process.cwd()) {
     const isRoot = existsSync(path.join(here, 'pnpm-workspace.yaml')) && existsSync(path.join(here, 'package.json'))
     if (isRoot && !resolvesKit(here)) {
         const apps = workspaceApps(here)
-        if (apps.length > 0) {
-            const dir = path.resolve(here, /** @type {string} */ (apps[0]))
-            console.log(`sssb guide: no --app, and ${here} takes no @sssb/kit: using ${apps[0]}'s`)
-            return dir
+        if (apps.length === 0) {
+            throw new UsageError(
+                `sssb guide: ${here} is a workspace root that takes no @sssb/kit and has no apps (\`sssb.apps\` in its ` +
+                    'package.json, or apps/<name>): pass --app <dir>',
+            )
         }
+        console.log(`sssb guide: no --app, and ${here} takes no @sssb/kit: using the guide of ${apps[0]}'s kit`)
+        return path.resolve(here, /** @type {string} */ (apps[0]))
     }
-    // Anything else: the app is the working directory, and kitDirOf's refusal says to pass --app.
+    // Anything else: the app is the working directory, and kitDirOf's refusal says to name one with --app.
     return takeAppDir(args, cwd)
 }
 

@@ -269,7 +269,7 @@ describe('sssb guide', () => {
         const { root } = withKit('guide-root', '# Rules\n')
         const written = sssb(root, ['guide'])
         expect(written.status).toBe(0)
-        expect(written.stdout).toContain('using apps/a')
+        expect(written.stdout).toContain("using the guide of apps/a's kit")
         expect(readFileSync(path.join(root, '.claude', 'sssb-guide.md'), 'utf8')).toMatch(STAMP)
         expect(sssb(root, ['guide', '--check']).status).toBe(0)
     })
@@ -278,7 +278,30 @@ describe('sssb guide', () => {
         const root = workspace('guide-noapp')
         const result = sssb(root, ['guide'])
         expect(result.status).toBe(1)
-        expect(result.stderr).toContain('--app')
+        expect(result.stderr).toContain('has no apps')
+        expect(result.stderr).toContain('pass --app')
+    })
+
+    // SSSB's own root takes @sssb/kit (the framework is a workspace package there), so it is the app, as before.
+    it('from a workspace root that takes a kit of its own, uses the root’s kit, not the first app’s', () => {
+        const { root, appDir } = withKit('guide-root-kit', '# The app’s kit\n')
+        const rootKit = path.join(root, 'node_modules', '@sssb', 'kit')
+        write(
+            path.join(rootKit, 'package.json'),
+            JSON.stringify({
+                name: '@sssb/kit',
+                version: '9.9.9',
+                type: 'module',
+                exports: { './package.json': './package.json', './guide.md': './guide.md' },
+            }),
+        )
+        write(path.join(rootKit, 'guide.md'), '# The root’s kit\n')
+        const written = sssb(root, ['guide'])
+        expect(written.status).toBe(0)
+        expect(written.stdout).not.toContain('using the guide of')
+        expect(readFileSync(path.join(root, '.claude', 'sssb-guide.md'), 'utf8')).toContain('# The root’s kit')
+        // The app's own kit differs, so a check from the app sees the copy as stale: the root's kit was used.
+        expect(sssb(appDir, ['guide', '--check']).status).toBe(1)
     })
 
     it('exits 1, pointing at P7, when the installed kit ships no guide', () => {
