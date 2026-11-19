@@ -6087,6 +6087,7 @@ route from a ticker Lambda instead).
   already recommend setting it. Rejected: **requiring it**, which would stop every deployment that boots today from
   booting, for a request it saves, and would add a required variable (a `minor` in the snapshot's terms) for no
   correctness gain.
+
 ## One command removes the starter's Items slice (2026-11-19, `feat/remove-starter-items`)
 
 Adoption follow-up 2 (`docs/adoption-review-2026-11.md`, ranked item 2; `.claude/future-tasks/resolved/create-blank-option.md`).
