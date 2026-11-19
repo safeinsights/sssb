@@ -5123,3 +5123,52 @@ _Accepted gap_ and adds to the rule.
   `packages/kit/tsconfig.strict.json`, is what compiles the kit against a seam without `appRoles` (the strict config
   resolves the seam to the fixture, which exports it): reading `.appRoles` directly fails `apps/starter` and
   `apps/showcase` with TS2339 and passes the strict config.
+
+## Release snapshots: stateful logical ids and the required environment, each a `minor` to change (2026-11-18, `release/p14-first-npm-release`)
+
+ADR-0014 part 10 says CI snapshots the logical ids of stateful resources and the `REQUIRED_ENV` list, and a change to
+either requires a `minor` changeset; its P14 row lands them. Built as two committed JSON files and one rule in the
+`changeset-required` gate.
+
+- **Plain JSON compared with `toEqual`, not a Vitest snapshot.** `toMatchFileSnapshot` (or `toMatchSnapshot`) is
+  rewritten by `vitest -u`, and a run outside CI writes a missing one, so deleting or regenerating the file would make
+  the test pass and leave the gate nothing to see. The tests read the file and fail with the full new content in the
+  message, to be copied in by hand beside the changeset. Rejected: a Vitest file snapshot, relying on CI never passing
+  `-u` (true today, but a local `-u` is the habit that would rewrite it silently).
+- **Where they live: `packages/<package>/release-snapshots/`**, outside each package's `files` allowlist, so neither
+  ships (`packages/kit/release-snapshots/required-env.json`, `packages/cdk/release-snapshots/stateful-logical-ids.json`).
+  The gate matches the directory pattern, not two named files, so a package that adds a snapshot is covered the day it
+  lands; `tests/tooling/changesets.test.ts` checks this repository's two exist. Rejected: a repo-level directory (the
+  kit's test would read a path out of the package) and a JSON under `src` (it would ship).
+- **The required environment is read from `assertRealEnv`, not exported.** The kit test empties the environment, sets
+  only `DATABASE_TRANSPORT`, and records the variables `assertRealEnv` names as missing, per transport: that is
+  `REQUIRED_ENV` and `DATABASE_ENV` together, as a deployment meets them at boot. Rejected: exporting `REQUIRED_ENV`
+  from `adapters/real/index.ts` (a published subpath, so a new name on the public surface, for a test), and moving it
+  into an unpublished module of its own (a shipped source change made only to be testable). The cost is that the test
+  parses the error's `Missing env:` list; a change to that message fails the test loudly rather than passing.
+- **What counts as stateful** is `STATEFUL_TYPES` in `packages/cdk/src/stateful-logical-ids.test.js`, with a reason per
+  type: the cluster, its writer instance, its subnet group (a new one has a new name, and CloudFormation's reference
+  lists the cluster's `DBSubnetGroupName` as requiring replacement, so it would take the cluster with it; not
+  re-checked against the reference offline when this was written), the cluster's secret, and the buckets;
+  plus KMS keys, DynamoDB tables, EFS file systems, Cognito user pools and log groups, which `SssbApp` does not create
+  today, so one added later is snapshotted from its first commit; plus any resource whose DeletionPolicy or
+  UpdateReplacePolicy is `Retain`, `RetainExceptOnCreate` or `Snapshot`. Rejected: snapshotting every logical id (a
+  Lambda's or an alarm's replacement loses nothing, and a `minor` for each would teach people to ignore the rule), and
+  the network (VPC, subnets, security groups), whose replacement loses no data.
+- **Synthesized from `apps/starter` under the id `Default`, in four shapes** (each transport, staging and production),
+  the ids an adopter's stack holds. Today all four are the same six resources; they are kept apart so a resource only
+  one shape creates is still caught.
+- **The gate:** a PR that changes, deletes or moves a file under `packages/*/release-snapshots/` must add a changeset
+  with a line filing `minor` for an `@sssb/*` package, read as `scripts/release.mjs`'s `changesetReleases` reads the
+  frontmatter (inlined: the gate's tests run it in scratch repositories without the repo's scripts). Any `@sssb/*`
+  package counts, since the group is fixed and one minor bumps all of them. Rejected: requiring the package that owns
+  the snapshot (the same release either way). Exempt: the release merge, a file merged in from `main` (its PR carried
+  the changeset), and a snapshot's first commit (it records the current state and changes nothing; this PR is one).
+  Not exempt: Dependabot, since a person committing an updated snapshot to a Dependabot branch is how a CDK bump that
+  moves a logical id would arrive, so the check runs before the Dependabot exemption.
+- **`runGate` in `tests/tooling/changesets.test.ts` now removes its scratch repository as soon as the gate has run.**
+  With about twenty more scratch repositories, removing them all in the file's `afterAll` overran the 10-second hook timeout on a loaded machine
+  (load average 18).
+- **Noticed, not changed:** the cluster's secret (`DbSecret…`) synthesizes with `DeletionPolicy: Delete` even when
+  `production` is true, while the cluster, its instance, its subnet group and both buckets are retained. The snapshot
+  records it by type, so it is covered either way; whether the secret should be retained is a question for `@sssb/cdk`.

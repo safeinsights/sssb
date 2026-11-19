@@ -81,7 +81,8 @@ jobs:
     # release-note entry, which ADR-0014 P7's notes are assembled from. Path-based, because every package is private
     # until P14 and `changeset status` ignores private packages. The script, its exemptions and its tests:
     # .github/scripts/require-changeset.sh, tests/tooling/changesets.test.ts. A newer push to the PR re-runs it, so
-    # adding the file turns it green.
+    # adding the file turns it green. A PR that changes a release snapshot (packages/*/release-snapshots/, ADR-0014
+    # part 10) needs a changeset that files `minor`.
     changeset-required:
         if: github.event_name == 'pull_request'
         runs-on: ubuntu-latest

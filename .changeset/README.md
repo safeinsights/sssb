@@ -33,6 +33,15 @@ changes the kit's `peerDependencies` (a raised peer floor is breaking); a PR ope
 branch; and a file a PR carries only because it merged `main` in. The rule and its cases are
 `.github/scripts/require-changeset.sh` and `tests/tooling/changesets.test.ts`.
 
+- **A release snapshot takes a `minor`.** `packages/cdk/release-snapshots/stateful-logical-ids.json` (the logical ids
+  of `SssbApp`'s stateful resources: a changed one replaces the resource, the Aurora cluster included, on the next
+  `cdk deploy`) and `packages/kit/release-snapshots/required-env.json` (the variables a real deployment must set) are
+  held to the code by `packages/cdk/src/stateful-logical-ids.test.js` and `packages/kit/src/adapters/real/index.test.ts`.
+  A PR that changes a file under `packages/*/release-snapshots/` must add a changeset filing `minor` for an `@sssb/*`
+  package (ADR-0014 part 10's "breaking"; Kind `operator`, Action `required`); an empty or `patch` one fails. Dependabot
+  is not exempt; the release merge, a file merged in from `main` and a snapshot's first commit are. The snapshots are
+  plain JSON, which `vitest -u` never rewrites: copy the new content from the failing test's message.
+
 If adopters would see no difference (a refactor, an internal fix), add an **empty changeset**: a file holding only
 `---` and `---`. `pnpm changeset add --empty` writes one once the packages are public; until then write it by hand.
 

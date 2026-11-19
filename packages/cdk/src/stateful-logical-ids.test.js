@@ -29,8 +29,9 @@ const APP_DIR = path.join(REPO, 'apps/starter')
  * - `AWS::RDS::DBCluster`: the database. Its storage is the cluster's, so a new cluster is an empty database.
  * - `AWS::RDS::DBInstance`: Aurora's writer. It holds no data of its own (the cluster volume does), but a new one is
  *   an outage while it is created, and it carries the endpoint the server connects to.
- * - `AWS::RDS::DBSubnetGroup`: a new one has a new name, and a cluster's `DBSubnetGroupName` cannot change in place,
- *   so replacing the subnet group replaces the cluster.
+ * - `AWS::RDS::DBSubnetGroup`: a new one has a new name, and the cluster names it in `DBSubnetGroupName`, a property
+ *   CloudFormation's `AWS::RDS::DBCluster` reference lists as "Update requires: Replacement". Replacing the subnet
+ *   group would replace the cluster.
  * - `AWS::SecretsManager::Secret`: the cluster's master credentials. A new secret is a new password and a new ARN,
  *   which the deployment's environment and any grant an operator wrote name.
  * - `AWS::S3::Bucket`: the app's object storage (`StorageBucket`) and the CDN's assets (`AssetsBucket`). A new bucket

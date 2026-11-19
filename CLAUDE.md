@@ -210,7 +210,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   The playwright configs blank the variable and refuse to load while a ticking dev server's marker is live.
 - **A PR that changes what ships to adopters adds a changeset** (`.changeset/README.md` has the template and what
   counts): every `@sssb/*` package's shipped files and `apps/starter`, the generator's template. It is the release-note entry, with a "Now deletable" part,
-  and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset.
+  and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset. A
+  change to a release snapshot (`packages/cdk/release-snapshots/`, the stateful logical ids;
+  `packages/kit/release-snapshots/`, the required environment) needs one that files `minor`.
 - Conventional commits: lowercase subject, ≤100 chars (commitlint hook enforces).
 - Before opening a PR, run `/sssb:pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.
