@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../tmp-dir'
@@ -79,8 +79,60 @@ describe('real-auth-provider', () => {
         expect(realAuthProviderGaps(appDir).gaps).toEqual(['src/app/invite/page.tsx'])
     })
 
+    it("follows the app's own imports: a wrapper module, a re-exporting layout, a shared glue module", () => {
+        const appDir = app({
+            'layout.tsx': PLAIN_LAYOUT,
+            '[locale]/layout.tsx': `export { default } from '@/components/locale-layout'\n`,
+            '[locale]/signin/page.tsx': `import Glue from '../../_shared/sign-in-glue'\nexport default Glue\n`,
+            '_shared/sign-in-glue.tsx': SIGN_IN_PAGE,
+        })
+        const components = path.join(appDir, 'src/components')
+        mkdirSync(components, { recursive: true })
+        writeFileSync(
+            path.join(components, 'locale-layout.tsx'),
+            `import { AuthProviders } from '@/adapters/real/auth-providers'\nexport default AuthProviders\n`,
+        )
+        mkdirSync(path.join(appDir, 'src/adapters/real'), { recursive: true })
+        writeFileSync(path.join(appDir, 'src/adapters/real/auth-providers.tsx'), PROVIDER_LAYOUT)
+        expect(realAuthProviderGaps(appDir)).toMatchObject({
+            withForms: ['src/app/[locale]/signin/page.tsx'],
+            gaps: [],
+        })
+    })
+
+    it('does not count a type-only import, either way', () => {
+        const appDir = app({
+            'layout.tsx': `import type { RealAuthProviders } from '@sssb/kit/adapters/real/providers'\n${PLAIN_LAYOUT}`,
+            'signin/page.tsx': SIGN_IN_PAGE,
+            'about/page.tsx': `import type { RealSignInForm } from '@sssb/kit/adapters/real/sign-in-form'\nexport default () => null\n`,
+        })
+        expect(realAuthProviderGaps(appDir)).toMatchObject({
+            withForms: ['src/app/signin/page.tsx'],
+            gaps: ['src/app/signin/page.tsx'],
+        })
+    })
+
+    // Root reads a file whatever its mode, so the case cannot be built there.
+    it.skipIf(process.getuid?.() === 0)('reports a file it cannot read by its path, rather than throwing', () => {
+        const appDir = app({
+            'layout.tsx': PLAIN_LAYOUT,
+            'page.tsx': `import Locked from './locked'\nexport default Locked\n`,
+            'locked.tsx': 'export default () => null\n',
+        })
+        const locked = path.join(appDir, 'src/app/locked.tsx')
+        chmodSync(locked, 0o000)
+        try {
+            expect(realAuthProviderGaps(appDir).unreadable).toEqual([
+                expect.stringMatching(/^src\/app\/locked\.tsx: .*EACCES/),
+            ])
+            expect(() => walked({ appDir })).toThrow(/could not be read/)
+        } finally {
+            chmodSync(locked, 0o644)
+        }
+    })
+
     it('passes an app that loads no real auth form, and fails one with no src/app to walk', () => {
         expect(() => check({ appDir: app({ 'layout.tsx': PLAIN_LAYOUT, 'page.tsx': PLAIN_LAYOUT }) })).not.toThrow()
-        expect(() => walked({ appDir: makeTestTmpDir('auth-provider-empty-') })).toThrow(/no source module/)
+        expect(() => walked({ appDir: makeTestTmpDir('auth-provider-empty-') })).toThrow(/no page or layout found/)
     })
 })
