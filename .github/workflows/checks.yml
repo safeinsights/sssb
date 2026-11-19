@@ -19,8 +19,8 @@ permissions: {}
 # every job still runs and reports a conclusion, under its own name, so no required check goes missing, and the
 # expensive ones (the reusable workflow's contract, e2e, static demos and synth, through its `docs-only` input; and
 # below, knip and jscpd, the release rehearsal, both pack and consume shapes and the licence scan) run only a step
-# that says they skipped. Lint, typecheck and the unit tests, which read the docs, and the cheap gates always run in
-# full, and so does every push to main.
+# that says they skipped. The lint, typecheck and unit-test job (its lint and tests read the docs) and the cheap gates
+# always run in full, and so does every push to main.
 
 concurrency:
     # A PR's newer push cancels its older run. A push to main never does: release.yml waits for this workflow to

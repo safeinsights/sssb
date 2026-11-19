@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Is this run a pull request that changes only documentation? checks.yml's `changes` job runs it, and every job with a
-# fast path (`docs-only` below) reads its answer: true lets that job skip its expensive steps, which none of these
-# paths can affect. The job still RUNS and reports a conclusion, so no required check goes missing (docs/decision-log.md,
+# Is this run a pull request that changes only documentation? checks.yml runs it in its `changes` job (for the reusable
+# workflow's `docs-only` input) and in each of its own jobs with a fast path: true lets a job skip its expensive steps,
+# which none of these paths can affect. The job still RUNS and reports a conclusion, so no required check goes missing (docs/decision-log.md,
 # "A fast path for docs-only pull requests").
 #
 # DOCS-ONLY means every path the pull request changes is under one of:
@@ -9,8 +9,8 @@
 #   - .claude/future-tasks/.
 # Nothing else, however inert it looks: everything that ships (packages/, apps/, plugins/, the guide) is code here,
 # and a path joins this list only with evidence that no job with a fast path reads it (root markdown has none yet).
-# The jobs that read docs (lint-typecheck-unit: Prettier, the doc-path gate, the plugin, generator and release-notes
-# tests) and the cheap gates have no fast path at all.
+# The job that reads docs (lint-typecheck-unit: Prettier, the doc-path gate, the plugin, generator and release-notes
+# tests) and the cheap gates (release-plan, changeset-required, secret-scan, repo-checks' bidi scan) have no fast path.
 #
 # The answer is false, and every job does its whole work, unless all of this holds:
 #   - the event is `pull_request` (a push to main, the release path, always runs everything);
@@ -22,8 +22,9 @@
 #     character) matches nothing, so it is not docs-only either.
 #
 # Inputs, all environment: EVENT_NAME (github.event_name). The checkout needs depth 2 (the merge commit's parents).
-# Writes `docs-only=true|false` to $GITHUB_OUTPUT when it is set, and prints the answer and why either way. Exits 0
-# unless git itself fails, so an answer is always written before anything that could stop the job.
+# Writes `docs-only=true|false` to $GITHUB_OUTPUT when it is set, prints the answer and why either way, and exits 0. If
+# git itself fails it exits non-zero having written nothing: the `changes` job (whose step may fail) then gives the
+# reusable workflow false, and any other job fails, red rather than fast.
 set -euo pipefail
 
 answer() {

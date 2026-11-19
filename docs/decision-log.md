@@ -6723,8 +6723,9 @@ and record the rejected alternative.
   secret) and `repo-checks`' bidi scan (a doc can carry bidi characters). Every push to `main` runs everything.
 - **Each job still runs and reports; only its steps are gated**, behind a visible "Skipped (docs-only change)" step.
   Rejected: a `paths:` filter on the trigger, which leaves a required check that never reports pending forever
-  (CanopyCMS's `dual-build` comment); and job-level `if:` skips, which report a skipped matrix job under its
-  unexpanded name and would make `all-checks` accept skips, weakening the one check an adopter requires.
+  (CanopyCMS's `dual-build` comment); and job-level `if:` skips, under which a matrix never expands, so no shard
+  reports under its own name, and which would make `all-checks` accept skips, weakening the one check an adopter
+  requires.
 - **The reusable workflow takes the answer as an input, `docs-only`, false by default**, so an adopter who sets
   nothing runs exactly what it did, and `all-checks` is unchanged: a job that ran its fast path concluded success.
   The contract job's Postgres service gets an empty image on the fast path, which starts none. Rejected: a pathspec
