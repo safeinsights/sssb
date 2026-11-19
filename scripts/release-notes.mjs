@@ -2,7 +2,9 @@
 // SSSB's release notes, assembled from the pending changesets (ADR-0014 part 10 and P7; `.changeset/README.md` is the
 // writer's side). A changeset is a release-note entry with a fixed body, and this turns the set of them into the notes
 // an adopter reads: "Seam changes", "Framework migrations", "Operator actions" and "Scaffold changes to apply by hand"
-// (the Kind of each entry), then "Other changes", each entry with its What changed, To adopt and Now deletable.
+// (the Kind of each entry), then "Other changes", each entry with its What changed, To adopt and Now deletable. With a
+// version, "Upgrading to this release" comes first (`upgradeSection`): the steps every upgrade takes, whatever the
+// entries say.
 //
 //   node scripts/release-notes.mjs [--version <v>] [--since <ref>] [--at <rev>] [--out <file>] [--check]
 //

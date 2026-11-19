@@ -5530,7 +5530,7 @@ that section too.
   adopter does it first), with the version filled in: move the `@sssb/*` packages (from npm for a plain release, by
   tarball URL for a candidate), `pnpm exec sssb guide`, both pins, apply the entries and `pnpm knip`, then `sssb doctor`
   and `pnpm verify`. `assembleNotes` adds it whenever it is given a version, so `prepare`'s notes, `--since` notes and
-  `--at` regenerations all carry it, and `pnpm release:notes` with no version (a preview) does not. Rejected: a
+  `--at --version` regenerations all carry it, and `pnpm release:notes` with no version (a preview) does not. Rejected: a
   changeset for it, which only the release that carried it would show, and an entry in each release's `docs/adopting.md`
   alone, which an adopter reading the notes would not see. `docs/adopting.md`'s "Upgrading by release" now points at the
   section and keeps the reasons.

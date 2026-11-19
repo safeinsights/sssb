@@ -47,8 +47,9 @@
 //                                 `pnpm pack` lays them out, and prints each one's name, file, size, sha256 and sha512
 //                                 as JSON. Needs no installed dependencies.
 //   candidate-notes <version> <owner/repo> <sha> <assets.json>
-//                                 The GitHub prerelease's notes: the release commit's docs/releases/v<version>.md, then
-//                                 how to install each tarball by URL, its sha512, and how to verify its attestation.
+//                                 The GitHub prerelease's notes: the release commit's docs/releases/v<version>.md, with the
+//                                 commit's SHA written into its "Upgrading to this release" section, then how to install
+//                                 each tarball by URL, its sha512, and how to verify its attestation.
 //
 // Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout carries only the result.
 import { Buffer } from 'node:buffer'
@@ -744,8 +745,9 @@ export function unwrap(markdown) {
 
 /**
  * The GitHub prerelease's notes: the release notes the release commit carries (`docs/releases/v<version>.md`, written
- * by `prepare` and checked by `verify-release`), then how to install each tarball by URL, its sha512, and how to
- * verify the attestation. An adopter commits the lockfile and installs with `--frozen-lockfile`: a release asset can be
+ * by `prepare` and checked by `verify-release`), with the commit's SHA written into their "Upgrading to this release"
+ * section (the file cannot name the commit it is part of), then how to install each tarball by URL, its sha512, and
+ * how to verify the attestation. An adopter commits the lockfile and installs with `--frozen-lockfile`: a release asset can be
  * replaced under the same URL, and the lockfile's integrity is what pins the bytes (ADR-0014 part 10).
  * @param {string} root the release commit's checkout
  * @param {string} version
