@@ -20,6 +20,7 @@ import { kitDirOf } from '@sssb/tools/kit'
 import { handler as bodyHashHandler } from './assets/body-hash/index.mjs'
 import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
 import { databaseNameFor, SssbApp } from './index.js'
+import { PORT_SWITCHES } from './optional-ports.js'
 import { toolsVersionProblem } from './sssb-app.js'
 
 /** @typedef {import('@sssb/tools/assembly-checks').Resources} Resources */
@@ -37,9 +38,24 @@ const APPS = readdirSync(path.join(REPO, 'apps')).filter((app) =>
  * One SssbApp in a stack of its own, in an assembly directory this test owns. `configure` runs after the
  * construct and before synth, as an adopter's own code would. `region` gives the stack an explicit one; left out,
  * the stack is environment-agnostic, as the starter's is until cutover.
- * @param {{ appDir: string, slug: string, transport: Transport, bundle?: boolean, production?: boolean, region?: string, configure?: (app: SssbApp) => void }} options
+ * @param {{
+ *   appDir: string, slug: string, transport: Transport, bundle?: boolean, production?: boolean, region?: string,
+ *   configure?: (app: SssbApp) => void,
+ *   ports?: import('./index.d.ts').OptionalPorts,
+ *   scheduledTick?: (stack: cdk.Stack) => import('./index.d.ts').ScheduledTickProps,
+ * }} options
  */
-function synthesize({ appDir, slug, transport, bundle = true, production = false, region, configure }) {
+function synthesize({
+    appDir,
+    slug,
+    transport,
+    bundle = true,
+    production = false,
+    region,
+    configure,
+    ports,
+    scheduledTick,
+}) {
     const outdir = makeTestTmpDir('sssb-cdk-')
     const context = bundle ? {} : { 'aws:cdk:bundling-stacks': [] }
     const app = new cdk.App({ outdir, context })
@@ -47,9 +63,10 @@ function synthesize({ appDir, slug, transport, bundle = true, production = false
     const construct = new SssbApp(stack, 'Default', {
         appDir,
         slug,
-        params: { database: { transport } },
+        params: { database: { transport }, ...(ports && { ports }) },
         environment: production ? 'Production' : 'Staging',
         production,
+        ...(scheduledTick && { scheduledTick: scheduledTick(stack) }),
     })
     configure?.(construct)
     const assembly = app.synth()
@@ -192,8 +209,40 @@ async function databaseEnvOf(appDir) {
     return (await import(pathToFileURL(file).href)).DATABASE_ENV
 }
 
+/**
+ * The optional ports' switches, from the framework the app itself resolves (its boot check's list).
+ * @param {string} appDir
+ * @returns {Promise<Record<string, { variable: string, default: string, env: Record<string, Record<string, string>> }>>}
+ */
+async function optionalPortsOf(appDir) {
+    const file = path.join(kitDirOf(appDir), 'src/adapters/real/optional-ports.ts')
+    return (await import(pathToFileURL(file).href)).OPTIONAL_PORTS
+}
+
 describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
     const appDir = path.join(REPO, 'apps', name)
+
+    it("sets the switch of each optional port its params declare, with the framework's names and choices", async () => {
+        const { APP_SLUG } = await import(pathToFileURL(path.join(appDir, 'config/app.ts')).href)
+        const { params } = await import(pathToFileURL(path.join(appDir, 'config/params.ts')).href)
+        const OPTIONAL_PORTS = await optionalPortsOf(appDir)
+        // The construct's table is the framework's: the same ports, switches and choices, its default listed first.
+        expect(
+            Object.fromEntries(
+                Object.entries(OPTIONAL_PORTS).map(([port, { variable, default: fallback, env }]) => [
+                    port,
+                    { variable, choices: [fallback, ...Object.keys(env).filter((choice) => choice !== fallback)] },
+                ]),
+            ),
+        ).toEqual(PORT_SWITCHES)
+        expect(Object.keys(params.ports).sort()).toEqual(Object.keys(OPTIONAL_PORTS).sort())
+        const { all } = synthesize({ appDir, slug: APP_SLUG, transport: 'pg', bundle: false, ports: params.ports })
+        const server = lambdaFunction(all, 'Server')
+        for (const [port, choice] of Object.entries(params.ports)) {
+            const { variable } = /** @type {{ variable: string }} */ (OPTIONAL_PORTS[port])
+            expect(server.env[variable], `params.ports.${port} reaches the server as ${variable}`).toBe(choice)
+        }
+    })
 
     describe.each(/** @type {Transport[]} */ (['pg', 'data-api']))('on the %s shape', (transport) => {
         it('matches the runtime contract, grants nothing wider than the cluster, and fails closed', async () => {
@@ -465,6 +514,137 @@ describe('the synth assertions fail', () => {
         expect(construct({ params: { database: { transport: /** @type {any} */ ('mysql') } } })).toThrow(
             /params\.database\.transport must be pg or data-api/,
         )
+    })
+
+    it('when the params name an optional port, or a choice, the framework does not know', () => {
+        /** @param {unknown} ports */
+        const withPorts = (ports) =>
+            construct({ params: { database: { transport: 'pg' }, ports: /** @type {any} */ (ports) } })
+        expect(withPorts({ llms: 'none' })).toThrow(/params\.ports\.llms is not an optional port/)
+        expect(withPorts({ jobs: 'lambda' })).toThrow(
+            /params\.ports\.jobs must be codebuild, in-process, none \(got "lambda"\)/,
+        )
+        expect(withPorts('none')).toThrow(/params\.ports must be an object/)
+        expect(withPorts({ llm: 'none', jobs: 'in-process' })).not.toThrow()
+    })
+
+    it('when the scheduled tick is given no secret, or a rate EventBridge cannot run', () => {
+        expect(construct({ scheduledTick: /** @type {any} */ ({}) })).toThrow(/scheduledTick\.webhookSecret must be/)
+        expect(
+            construct({
+                scheduledTick: {
+                    webhookSecret: /** @type {any} */ ({ secretArn: 'arn:aws:secretsmanager:::secret:s-abcdef' }),
+                },
+            }),
+        ).toThrow(/scheduledTick\.webhookSecret must be/)
+        /** @param {cdk.Duration} every */
+        const every = (every) => () =>
+            synthesize({
+                appDir,
+                slug,
+                transport: 'pg',
+                bundle: false,
+                scheduledTick: (stack) => ({ webhookSecret: new cdk.aws_secretsmanager.Secret(stack, 'Tick'), every }),
+            })
+        expect(every(cdk.Duration.seconds(90))).toThrow(/scheduledTick\.every must be a whole number of minutes/)
+        expect(every(cdk.Duration.seconds(30))).toThrow(/scheduledTick\.every must be a whole number of minutes/)
+    })
+})
+
+describe('the scheduled tick', () => {
+    const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
+    const slug = /** @type {string} */ (
+        /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+    )
+    const SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:111111111111:secret:app-webhook-AbCdEf'
+
+    /** @param {Transport} transport @param {cdk.Duration} [every] */
+    function withTick(transport, every) {
+        return synthesize({
+            appDir,
+            slug,
+            transport,
+            bundle: false,
+            scheduledTick: (stack) => ({
+                webhookSecret: cdk.aws_secretsmanager.Secret.fromSecretCompleteArn(stack, 'WebhookSecret', SECRET_ARN),
+                ...(every && { every }),
+            }),
+        })
+    }
+
+    /** The IAM statements attached to the role of the function whose logical id starts with `prefix`. */
+    /** @param {Resources} all @param {string} prefix */
+    function statementsOf(all, prefix) {
+        const [fnId, fn] = /** @type {[string, any]} */ (
+            Object.entries(all).find(([id, r]) => r.Type === 'AWS::Lambda::Function' && id.startsWith(prefix))
+        )
+        const roleId = fn.Properties.Role['Fn::GetAtt'][0]
+        expect(roleId, `${fnId}'s role`).toBeTruthy()
+        return Object.values(all)
+            .filter((r) => r.Type === 'AWS::IAM::Policy')
+            .filter((r) => JSON.stringify(r.Properties?.['Roles']).includes(`"Ref":"${roleId}"`))
+            .flatMap((r) => /** @type {any} */ (r.Properties ?? {})['PolicyDocument'].Statement)
+    }
+
+    it('is not there unless asked for: the default deployment has no schedule and no tick function', () => {
+        const { all } = synthesize({ appDir, slug, transport: 'pg', bundle: false })
+        expect(count(all, 'AWS::Events::Rule')).toBe(0)
+        expect(Object.keys(all).some((id) => id.startsWith('ScheduledTick'))).toBe(false)
+    })
+
+    it.each(/** @type {Transport[]} */ (['pg', 'data-api']))(
+        'on %s: a rate rule runs a function outside the VPC that may read the one secret and invoke the server alone',
+        (transport) => {
+            const { all } = withTick(transport)
+            const rules = Object.values(all).filter((r) => r.Type === 'AWS::Events::Rule')
+            expect(rules).toHaveLength(1)
+            expect(rules[0]?.Properties?.['ScheduleExpression']).toBe('rate(5 minutes)')
+            const target = /** @type {any} */ (rules[0]?.Properties ?? {})['Targets'][0]
+            expect(target.RetryPolicy).toEqual({ MaximumRetryAttempts: 0 })
+            // And Lambda's own retries of an asynchronous invocation, which EventBridge's policy does not reach.
+            const invokeConfigs = Object.values(all).filter((r) => r.Type === 'AWS::Lambda::EventInvokeConfig')
+            expect(invokeConfigs).toHaveLength(1)
+            expect(invokeConfigs[0]?.Properties?.['MaximumRetryAttempts']).toBe(0)
+
+            const tick = lambdaFunction(all, 'ScheduledTick')
+            const server = lambdaFunction(all, 'Server')
+            expect(JSON.stringify(target.Arn)).toContain(tick.id)
+            expect(JSON.stringify(invokeConfigs[0]?.Properties?.['FunctionName'])).toContain(tick.id)
+            const alarm = Object.entries(all).find(([id]) => id.startsWith('ScheduledTickErrorsAlarm'))?.[1]
+            expect(alarm?.Properties?.['MetricName']).toBe('Errors')
+            expect(JSON.stringify(alarm?.Properties?.['Dimensions'])).toContain(tick.id)
+            expect(tick.inVpc).toBe(false)
+            expect(tick.env['SERVER_FUNCTION_NAME']).toEqual({ Ref: server.id })
+            expect(tick.env['WEBHOOK_SECRET_ARN']).toBe(SECRET_ARN)
+            expect(JSON.stringify(tick.env['SERVER_HOST'])).toContain('FunctionUrl')
+
+            const statements = statementsOf(all, 'ScheduledTick')
+            const actions = statements.flatMap((st) => [st.Action].flat())
+            expect(actions.sort()).toEqual(
+                ['lambda:InvokeFunction', 'secretsmanager:DescribeSecret', 'secretsmanager:GetSecretValue'].sort(),
+            )
+            for (const st of statements) {
+                const resources = JSON.stringify(st.Resource)
+                if ([st.Action].flat().some((a) => a.startsWith('secretsmanager:'))) {
+                    expect(resources).toBe(JSON.stringify(SECRET_ARN))
+                } else {
+                    // The server's ARN, and its versions and aliases (`<arn>:*`, what `grantInvoke` grants): no other.
+                    expect(st.Resource).toEqual([
+                        { 'Fn::GetAtt': [server.id, 'Arn'] },
+                        { 'Fn::Join': ['', [{ 'Fn::GetAtt': [server.id, 'Arn'] }, ':*']] },
+                    ])
+                }
+            }
+            // The construct never puts the secret's value in an environment: the function reads it when it runs.
+            expect(server.env).not.toHaveProperty(['WEBHOOK_SECRET'])
+            expect(JSON.stringify(all)).not.toContain('resolve:secretsmanager:' + SECRET_ARN)
+        },
+    )
+
+    it('runs at the rate it is given', () => {
+        const { all } = withTick('pg', cdk.Duration.minutes(1))
+        const rule = Object.values(all).find((r) => r.Type === 'AWS::Events::Rule')
+        expect(rule?.Properties?.['ScheduleExpression']).toBe('rate(1 minute)')
     })
 })
 

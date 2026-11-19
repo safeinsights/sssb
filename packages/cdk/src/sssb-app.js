@@ -12,6 +12,8 @@ import { failClosedEnvironmentProblems, migratorBundleProblems } from '@sssb/too
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '@sssb/tools/kit'
 import { databaseNameFor, SLUG } from './database-name.js'
 import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
+import { portsEnvironment } from './optional-ports.js'
+import { addScheduledTick } from './scheduled-tick.js'
 
 const { aws_budgets, aws_cloudfront, aws_cloudfront_origins, aws_cloudwatch, aws_ec2, aws_lambda } = cdk
 const { aws_lambda_nodejs, aws_rds, aws_s3 } = cdk
@@ -329,6 +331,19 @@ export class SssbApp extends Construct {
             throw new Error(`SssbApp: production must be true or false (got ${JSON.stringify(props.production)})`)
         }
         const isProd = props.production
+        // The optional ports' switches (LLM_PROVIDER, …), from `params.ports`: validated here, before anything is built.
+        const portsEnv = portsEnvironment(props.params?.ports)
+        const scheduledTick = props.scheduledTick
+        // Duck-typed: an imported secret (`Secret.fromSecretCompleteArn`) is no `Secret` instance.
+        const tickSecret = /** @type {{ secretArn?: unknown, grantRead?: unknown } | undefined} */ (
+            scheduledTick?.webhookSecret
+        )
+        if (
+            scheduledTick !== undefined &&
+            (typeof tickSecret?.secretArn !== 'string' || typeof tickSecret.grantRead !== 'function')
+        ) {
+            throw new Error("SssbApp: scheduledTick.webhookSecret must be the secret the server's WEBHOOK_SECRET holds")
+        }
         const dataApi = transport === 'data-api'
         const removalPolicy = isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY
         const migratorSource = resolveMigrator(appDir)
@@ -479,6 +494,7 @@ export class SssbApp extends Construct {
                 NEXT_TELEMETRY_DISABLED: '1',
                 ...databaseEnv,
                 STORAGE_BUCKET: storageBucket.bucketName,
+                ...portsEnv,
             },
         })
         grantDatabase(server)
@@ -639,13 +655,18 @@ export class SssbApp extends Construct {
         })
 
         // ---- scheduled-work tick (cutover `scheduled-tick`) ------------------------------
-        // The scheduled-jobs due-scan is driven by an EventBridge Scheduler schedule
-        // POSTing `/api/webhooks/cron` on a fixed cadence with `Authorization: Bearer $WEBHOOK_SECRET`
-        // (the same shared secret as `job-runner`). It is NOT authored here on purpose: the only
-        // clean primitive for "POST an arbitrary HTTPS URL with an auth header" is an EventBridge API
-        // Destination + Connection, which depends on the WEBHOOK_SECRET Secrets Manager resource that
-        // lands with `job-runner` — authoring it half-wired would break `cdk synth`. It rides that
-        // secret; see the `scheduled-tick` cutover row for the schedule + connection + verification.
+        // Opt-in: given the secret the server's WEBHOOK_SECRET holds, an EventBridge rule runs a function that
+        // POSTs the app's cron route with it, by invoking the server directly (./scheduled-tick.js). Left out, nothing
+        // ticks the app's scheduled work in the deployment, as before this option: the construct never sets a secret
+        // value in the server's environment, so it cannot know the secret unless it is given it.
+        const tick = scheduledTick
+            ? addScheduledTick(this, {
+                  server,
+                  functionUrl,
+                  webhookSecret: scheduledTick.webhookSecret,
+                  every: scheduledTick.every,
+              })
+            : undefined
 
         // ---- basic alarms ---------------------------------------------------------------------
         // Draft thresholds; replaced by the shared monitoring constructs at cutover.
@@ -725,5 +746,6 @@ export class SssbApp extends Construct {
         this.assetsBucket = assetsBucket
         this.storageBucket = storageBucket
         this.databaseTransport = transport
+        this.scheduledTick = tick?.ticker
     }
 }

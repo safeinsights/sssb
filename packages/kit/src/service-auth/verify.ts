@@ -3,6 +3,14 @@ import { activeKeysForOrgSlug } from '../db/service-keys'
 import type { DbPort } from '../ports/db'
 import { AuthRequiredError } from '../ports/errors'
 import { APP_SLUG } from '@sssb/app-config/identity'
+import { presentedCredential } from './credential'
+
+/**
+ * The header a service caller sends its token in: `x-sssb-service-token: <jwt>`. Send this one, not `Authorization`,
+ * through a deployment's public host: CloudFront replaces `Authorization` with its own signature on the way to the
+ * server (./credential.ts). `Authorization: Bearer <jwt>` is still accepted when this is absent.
+ */
+export const SERVICE_TOKEN_HEADER = 'x-sssb-service-token'
 
 /** Audience every service JWT must carry — a token minted for one purpose can't be replayed at another. */
 export const SERVICE_JWT_AUDIENCE = `${APP_SLUG}-service`
@@ -31,9 +39,8 @@ export interface ServiceIdentity {
  * AuthRequiredError, so a caller learns only "not authorized", never which check tripped.
  */
 export async function verifyServiceCaller(db: DbPort, request: Request): Promise<ServiceIdentity> {
-    const header = request.headers.get('authorization')
-    if (!header || !header.startsWith('Bearer ')) throw new AuthRequiredError()
-    const token = header.slice('Bearer '.length)
+    const token = presentedCredential(request, SERVICE_TOKEN_HEADER)
+    if (!token) throw new AuthRequiredError()
 
     // Unverified decode for routing ONLY — read `iss` to pick candidate keys. Never trusted.
     let iss: string

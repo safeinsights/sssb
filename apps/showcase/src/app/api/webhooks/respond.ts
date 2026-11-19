@@ -4,7 +4,7 @@ import { verifyWebhookCaller } from '@sssb/kit/service-auth/webhook'
 import { withPortErrors } from '../respond'
 
 /**
- * Wraps an inbound-webhook route handler. Checks the shared bearer secret on the FIRST line — a
+ * Wraps an inbound-webhook route handler. Checks the shared webhook secret on the FIRST line — a
  * missing/wrong secret is an opaque 401 `{ error: 'unauthorized' }` — then runs the handler inside
  * withPortErrors, whose InvalidTransitionError → 409 mapping means a webhook redelivery racing a
  * state change surfaces as a 409, not a 500.
@@ -32,10 +32,10 @@ export function withWebhookSecret<P = Record<string, string>>(
  * Wraps the Mailgun INBOUND webhook route. Mailgun POSTs `multipart/form-data` and signs the
  * request as HMAC-SHA256(signingKey, `${timestamp}${token}`); this reads the form ONCE, verifies the
  * signature + freshness + single-use token (verifyMailgunWebhook), then hands the parsed FormData to the
- * handler. A missing/invalid signature is the same opaque 401 as the bearer path; an unparseable body is
+ * handler. A missing/invalid signature is the same opaque 401 as the shared-secret path; an unparseable body is
  * a 400. Sits under the `webhooks/` authorize()-exemption (a machine caller, not a user session — the
  * exemption's mustMatch accepts this wrapper as well as withWebhookSecret). Ships in REAL builds; keep
- * the node runtime upstream for consistency with the bearer wrapper (the Mailgun compare itself is the
+ * the node runtime upstream for consistency with the shared-secret wrapper (the Mailgun compare itself is the
  * pure-TS timingSafeHexEqual from core, not node:crypto).
  */
 export function withMailgunSignature(

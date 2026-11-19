@@ -2,6 +2,14 @@ import { timingSafeEqual } from 'node:crypto'
 import { isSimulated } from '../adapters/index'
 import { devWebhookSecret } from '../adapters/fake/service-auth'
 import { AuthRequiredError } from '../ports/errors'
+import { presentedCredential } from './credential'
+
+/**
+ * The header a webhook caller sends the shared secret in: `x-sssb-webhook-secret: <secret>`. Send this one, not
+ * `Authorization`, through a deployment's public host: CloudFront replaces `Authorization` with its own signature on
+ * the way to the server (./credential.ts). `Authorization: Bearer <secret>` is still accepted when this is absent.
+ */
+export const WEBHOOK_SECRET_HEADER = 'x-sssb-webhook-secret'
 
 /**
  * The shared secret an inbound job webhook must present. Simulated mode uses the lazily-generated
@@ -14,15 +22,16 @@ function expectedSecret(): string | null {
 }
 
 /**
- * Verifies an inbound webhook's bearer secret in constant time. A missing/malformed header, an
- * unset expected secret, or any mismatch throws the same opaque AuthRequiredError. timingSafeEqual
+ * Verifies an inbound webhook's shared secret, read from `x-sssb-webhook-secret` or else `Authorization: Bearer`
+ * (./credential.ts), in constant time. A missing credential, an unset expected secret, or any mismatch throws the
+ * same opaque AuthRequiredError. timingSafeEqual
  * requires equal-length buffers, so a length mismatch is short-circuited to a non-match rather than
  * allowed to throw — the comparison itself never leaks length via timing.
  */
 export function verifyWebhookCaller(request: Request): void {
-    const header = request.headers.get('authorization')
-    if (!header || !header.startsWith('Bearer ')) throw new AuthRequiredError()
-    const presented = Buffer.from(header.slice('Bearer '.length))
+    const credential = presentedCredential(request, WEBHOOK_SECRET_HEADER)
+    if (!credential) throw new AuthRequiredError()
+    const presented = Buffer.from(credential)
 
     const expected = expectedSecret()
     if (!expected) throw new AuthRequiredError()
