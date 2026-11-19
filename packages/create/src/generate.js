@@ -25,7 +25,7 @@ import { holdSignals, releaseSignals } from './signals.js'
 import { filesUnder, fromStored, GUIDE_FILE, readTemplate } from './template.js'
 
 /** The @sssb packages the workspace installs (the seam, @sssb/app-config, is the app's own and never installed). */
-const SSSB_PACKAGES = ['kit', 'tools', 'eslint-plugin', 'cdk']
+export const SSSB_PACKAGES = ['kit', 'tools', 'eslint-plugin', 'cdk']
 
 const SEAM = '@sssb/app-config'
 
@@ -214,13 +214,13 @@ function asCreateError(error) {
  * @param {string} slug
  * @param {import('./template.js').TemplateMeta} meta
  */
-function checkPackageNames(slug, meta) {
+export function checkPackageNames(slug, meta) {
     const names = new Set(meta.dependencyNames)
     for (const pkg of [slug, `${slug}-infra`, `${slug}-workspace`]) {
         if (names.has(pkg)) {
             throw new CreateError(
                 `the slug "${slug}" would name a package "${pkg}", which is also a dependency the workspace installs ` +
-                    `(npm's ${pkg}): pnpm mistakes one for the other. Pass another --slug`,
+                    `(npm's ${pkg}): pnpm mistakes one for the other. Pick another slug`,
             )
         }
     }
@@ -336,100 +336,14 @@ export function generate({
  */
 function writeWorkspace(root, c, templateDir) {
     const { slug, name, meta, sssbSpec: spec } = c
-    const appDir = path.join(root, 'apps', slug)
-    const inApp = (/** @type {string} */ relative) => path.join(appDir, relative)
 
-    // The template, copied: the app, and the generic workspace files.
-    for (const [from, to] of /** @type {const} */ ([
-        ['app', appDir],
-        ['root', root],
-    ])) {
-        for (const stored of filesUnder(path.join(templateDir, from))) {
-            const file = path.join(to, fromStored(stored))
-            mkdirSync(path.dirname(file), { recursive: true })
-            cpSync(path.join(templateDir, from, stored), file)
-        }
-    }
-
-    // THE APP'S IDENTITY: its slug (config/app.ts, which everything mechanical derives from), its package names, and
-    // its display name in its catalogs and titles. Each edit must find what it replaces exactly once, so a template
-    // that moved its identity elsewhere fails here instead of shipping half-renamed.
-    const slugLine = /export const APP_SLUG = '([^']+)'/.exec(readFileSync(inApp('config/app.ts'), 'utf8'))
-    if (!slugLine?.[1]) throw new CreateError("the template's config/app.ts declares no APP_SLUG")
-    const oldSlug = slugLine[1]
-    const oldName = readJson(inApp('messages/en.json'))?.welcome?.appName
-    if (typeof oldName !== 'string') throw new CreateError("the template's messages/en.json has no welcome.appName")
-    replaceOnce(inApp('config/app.ts'), `export const APP_SLUG = '${oldSlug}'`, `export const APP_SLUG = '${slug}'`)
-    replaceOnce(inApp('config/app.ts'), `\`${oldSlug}_session\``, `\`${slug}_session\``)
-    for (const locale of ['en', 'es']) {
-        for (const key of ['appName', 'title'])
-            replaceOnce(
-                inApp(`messages/${locale}.json`),
-                `"${key}": ${JSON.stringify(oldName)}`,
-                `"${key}": ${JSON.stringify(name)}`,
-            )
-    }
-    replaceOnce(inApp('src/app/[locale]/layout.tsx'), `title: ${tsString(oldName)}`, `title: ${tsString(name)}`)
-    replaceOnce(inApp('src/demo-static/index.html'), `<title>${oldName} `, `<title>${htmlText(name)} `)
-    // Prettier wraps an HTML line past the print width, so the title line must fit (displayName caps the name; `&`
-    // grows as it is escaped).
-    const titleLine = readFileSync(inApp('src/demo-static/index.html'), 'utf8')
-        .split('\n')
-        .find((line) => line.includes('<title>'))
-    if (titleLine && columns(titleLine) > 120)
-        throw new CreateError(`--name "${name}" is too long for the static demo's <title> line: shorten it`)
-
-    // The app's manifest: its name, the @sssb packages it installs, the seam linked as a package of the app's own
-    // (ADR-0014 part 1), and the lint fences' plugin and ESLint beside it. No `license`: the packages are private, and
-    // which licence the workspace takes (a LICENSE at its root) is the adopter's to choose, not the starter's to claim.
-    const manifest = readJson(inApp('package.json'))
-    manifest.name = slug
-    delete manifest.license
-    manifest.description = `${name}: the app.`
-    pinSssb(manifest, spec)
-    manifest.dependencies = sorted({ ...manifest.dependencies, [SEAM]: `workspace:${seamPackage(slug)}@*` })
-    manifest.devDependencies = sorted({
-        ...manifest.devDependencies,
-        '@sssb/eslint-plugin': spec('eslint-plugin'),
-        eslint: /** @type {string} */ (meta.ranges['eslint']),
-    })
-    writeFileSync(inApp('package.json'), packageJson(manifest))
-    const budget = /sssb check-demo-size (\d+)/.exec(manifest.scripts?.['check:demo-size'] ?? '')?.[1]
-    if (!budget) throw new CreateError("the template's package.json has no `sssb check-demo-size <bytes>` script")
-
-    const infra = readJson(inApp('infra/package.json'))
-    infra.name = `${slug}-infra`
-    delete infra.license
-    pinSssb(infra, spec)
-    writeFileSync(inApp('infra/package.json'), packageJson(infra))
-
-    // The seam package (ADR-0014 part 1, option C): the app's src/app-config, a workspace package of the app's own name
-    // that the app takes under the name the framework imports (`@sssb/app-config`: `workspace:<slug>-app-config@*`),
-    // with an export for every module the framework imports. A workspace package, not a `link:`, because pnpm's
-    // partial installs for the app (`add <pkg>`, `remove`, `update <pkg>`) drop a `link:` dependency as the provider of
-    // @sssb/kit's peer (the 2026-11-18 addendum to ADR-0014). It takes the app's module `type`, because a nested package.json resets it for everything
-    // below it.
-    const seamDir = inApp('src/app-config')
-    /** @type {Record<string, unknown>} */
-    const seam = { name: seamPackage(slug), private: true }
-    if (manifest.type) seam['type'] = manifest.type
-    seam['exports'] = seamExports(seamDir, meta.seamSpecifiers)
-    writeFileSync(path.join(seamDir, 'package.json'), packageJson(seam))
-
-    // The app's tsconfig, on @sssb/tools' base: in SSSB's repository the starter's also sends @sssb/kit and the seam to
-    // source and compiles the framework's own tree (it is the framework's falsifier there). Here resolution goes
-    // through the installed packages and the seam link, so only the app's own `@/` alias stays.
-    const tsconfig = readJson(inApp('tsconfig.json'))
-    if (tsconfig.extends !== '@sssb/tools/tsconfig.base.json')
-        throw new CreateError(`the template's tsconfig.json extends ${tsconfig.extends}, not @sssb/tools' base`)
-    const own = (/** @type {string} */ entry) => !entry.startsWith('../')
-    tsconfig.compilerOptions.paths = { '@/*': tsconfig.compilerOptions.paths['@/*'] }
-    tsconfig.include = tsconfig.include.filter(own)
-    tsconfig.exclude = tsconfig.exclude.filter(own)
-    writeFileSync(inApp('tsconfig.json'), formatJson(tsconfig))
-
-    writeFileSync(inApp('eslint.config.mjs'), files.APP_ESLINT)
-    writeFileSync(inApp('DEMO-SIZE.md'), files.demoSizeMd(Number(budget)))
+    // The template, copied: the generic workspace files, and the app.
+    copyTemplate(path.join(templateDir, 'root'), root)
+    writeApp(
+        path.join(root, 'apps', slug),
+        { slug, name, meta, spec, eslint: /** @type {string} */ (meta.ranges['eslint']) },
+        templateDir,
+    )
 
     // The workspace around it.
     /** @type {Record<string, string>} */
@@ -441,8 +355,8 @@ function writeWorkspace(root, c, templateDir) {
         'lint-staged.config.mjs': files.LINT_STAGED,
         'eslint.config.mjs': files.ROOT_ESLINT,
         'tsconfig.json': files.ROOT_TSCONFIG,
-        'vitest.config.ts': files.vitestConfig(c),
-        'vitest.contract.config.ts': files.vitestContractConfig(c),
+        'vitest.config.ts': files.VITEST_CONFIG,
+        'vitest.contract.config.ts': files.VITEST_CONTRACT_CONFIG,
         'knip.json': files.knipJson(c),
         '.jscpd.json': files.JSCPD,
         '.gitleaks.toml': files.GITLEAKS,
@@ -514,4 +428,160 @@ function writeWorkspace(root, c, templateDir) {
         }
     }
     return all
+}
+
+/**
+ * Every file of a template directory (`app/` or `root/`), copied under `to` with its stored name restored.
+ * @param {string} from
+ * @param {string} to
+ */
+function copyTemplate(from, to) {
+    for (const stored of filesUnder(from)) {
+        const file = path.join(to, fromStored(stored))
+        mkdirSync(path.dirname(file), { recursive: true })
+        cpSync(path.join(from, stored), file)
+    }
+}
+
+/**
+ * A port slot of the app's own, for an app that joins a workspace beside another (`sssb add-app`): the template's app
+ * declares the starter's built-in slot, which two apps may not share (`sssb doctor` fails them, since their dev servers,
+ * tickers and e2e runs would bind one port). Its scripts and its Playwright config then name no slot, so each reads the
+ * app's own declaration, as an app on a slot of its own must (`sssb tick starter` would tick another app's port).
+ * @param {string} appDir
+ * @param {Record<string, any>} manifest the app's package.json, changed in place
+ * @param {{ name: string, default: number }} port
+ */
+function ownPortSlot(appDir, manifest, port) {
+    manifest.sssb = { ...manifest.sssb, port }
+    const scripts = /** @type {Record<string, string>} */ (manifest.scripts ?? {})
+    for (const [script, text] of Object.entries(scripts)) {
+        scripts[script] = text.replace(/\bsssb (dev-tick|tick) starter\b/g, 'sssb $1')
+        if (/\bstarter\b/.test(/** @type {string} */ (scripts[script])))
+            throw new CreateError(
+                `the template's ${script} script names the starter's port slot in a form this cannot rewrite`,
+            )
+    }
+    // `originForApp(__dirname)` names the app wherever the config is loaded from (`pnpm knip` loads every workspace's
+    // config from the root, where a bare `originFor()` finds no app); Playwright compiles the config to CommonJS.
+    const config = path.join(appDir, 'playwright.config.ts')
+    if (existsSync(config) && readFileSync(config, 'utf8').includes("originFor('starter')")) {
+        replaceOnce(
+            config,
+            "import { originFor } from '@sssb/tools/ports'",
+            "import { originForApp } from '@sssb/tools/ports'",
+        )
+        replaceOnce(config, "originFor('starter')", 'originForApp(__dirname)')
+    }
+    for (const file of readdirSync(appDir).filter((entry) => /^playwright.*\.config\.[cm]?[jt]s$/.test(entry))) {
+        if (readFileSync(path.join(appDir, file), 'utf8').includes("'starter'"))
+            throw new CreateError(`the template's ${file} names the starter's port slot in a form this cannot rewrite`)
+    }
+}
+
+/**
+ * @typedef {{
+ *   slug: string,
+ *   name: string,
+ *   meta: import('./template.js').TemplateMeta,
+ *   spec: (pkg: string, manifest: 'app' | 'infra') => string,
+ *   eslint: string,
+ *   port?: { name: string, default: number },
+ * }} AppContext what an app is written with: its identity, the template's meta, what each of its manifests (the
+ *   app's, its infra's) takes each @sssb package as, the range of ESLint beside the lint fences' plugin, and, for an app
+ *   that joins a workspace beside another (`sssb add-app`), a port slot of its own
+ */
+
+/**
+ * THE APP: the template's app copied into `appDir` (which must not exist) and renamed where its identity lives. What
+ * `generate` writes as a new workspace's first app, and what `addApp` (add-app.js) writes into an existing one.
+ * @param {string} appDir
+ * @param {AppContext} a
+ * @param {string} templateDir
+ */
+export function writeApp(appDir, a, templateDir) {
+    const { slug, name, meta } = a
+    const inApp = (/** @type {string} */ relative) => path.join(appDir, relative)
+    copyTemplate(path.join(templateDir, 'app'), appDir)
+
+    // THE APP'S IDENTITY: its slug (config/app.ts, which everything mechanical derives from), its package names, and
+    // its display name in its catalogs and titles. Each edit must find what it replaces exactly once, so a template
+    // that moved its identity elsewhere fails here instead of shipping half-renamed.
+    const slugLine = /export const APP_SLUG = '([^']+)'/.exec(readFileSync(inApp('config/app.ts'), 'utf8'))
+    if (!slugLine?.[1]) throw new CreateError("the template's config/app.ts declares no APP_SLUG")
+    const oldSlug = slugLine[1]
+    const oldName = readJson(inApp('messages/en.json'))?.welcome?.appName
+    if (typeof oldName !== 'string') throw new CreateError("the template's messages/en.json has no welcome.appName")
+    replaceOnce(inApp('config/app.ts'), `export const APP_SLUG = '${oldSlug}'`, `export const APP_SLUG = '${slug}'`)
+    replaceOnce(inApp('config/app.ts'), `\`${oldSlug}_session\``, `\`${slug}_session\``)
+    for (const locale of ['en', 'es']) {
+        for (const key of ['appName', 'title'])
+            replaceOnce(
+                inApp(`messages/${locale}.json`),
+                `"${key}": ${JSON.stringify(oldName)}`,
+                `"${key}": ${JSON.stringify(name)}`,
+            )
+    }
+    replaceOnce(inApp('src/app/[locale]/layout.tsx'), `title: ${tsString(oldName)}`, `title: ${tsString(name)}`)
+    replaceOnce(inApp('src/demo-static/index.html'), `<title>${oldName} `, `<title>${htmlText(name)} `)
+    // Prettier wraps an HTML line past the print width, so the title line must fit (displayName caps the name; `&`
+    // grows as it is escaped).
+    const titleLine = readFileSync(inApp('src/demo-static/index.html'), 'utf8')
+        .split('\n')
+        .find((line) => line.includes('<title>'))
+    if (titleLine && columns(titleLine) > 120)
+        throw new CreateError(`--name "${name}" is too long for the static demo's <title> line: shorten it`)
+
+    // The app's manifest: its name, the @sssb packages it installs, the seam linked as a package of the app's own
+    // (ADR-0014 part 1), and the lint fences' plugin and ESLint beside it. No `license`: the packages are private, and
+    // which licence the workspace takes (a LICENSE at its root) is the adopter's to choose, not the starter's to claim.
+    const manifest = readJson(inApp('package.json'))
+    manifest.name = slug
+    delete manifest.license
+    manifest.description = `${name}: the app.`
+    pinSssb(manifest, (pkg) => a.spec(pkg, 'app'))
+    manifest.dependencies = sorted({ ...manifest.dependencies, [SEAM]: `workspace:${seamPackage(slug)}@*` })
+    manifest.devDependencies = sorted({
+        ...manifest.devDependencies,
+        '@sssb/eslint-plugin': a.spec('eslint-plugin', 'app'),
+        eslint: a.eslint,
+    })
+    if (a.port) ownPortSlot(appDir, manifest, a.port)
+    writeFileSync(inApp('package.json'), packageJson(manifest))
+    const budget = /sssb check-demo-size (\d+)/.exec(manifest.scripts?.['check:demo-size'] ?? '')?.[1]
+    if (!budget) throw new CreateError("the template's package.json has no `sssb check-demo-size <bytes>` script")
+
+    const infra = readJson(inApp('infra/package.json'))
+    infra.name = `${slug}-infra`
+    delete infra.license
+    pinSssb(infra, (pkg) => a.spec(pkg, 'infra'))
+    writeFileSync(inApp('infra/package.json'), packageJson(infra))
+
+    // The seam package (ADR-0014 part 1, option C): the app's src/app-config, a workspace package of the app's own name
+    // that the app takes under the name the framework imports (`@sssb/app-config`: `workspace:<slug>-app-config@*`),
+    // with an export for every module the framework imports. A workspace package, not a `link:`, because pnpm's
+    // partial installs for the app (`add <pkg>`, `remove`, `update <pkg>`) drop a `link:` dependency as the provider of
+    // @sssb/kit's peer (the 2026-11-18 addendum to ADR-0014). It takes the app's module `type`, because a nested package.json resets it for everything
+    // below it.
+    const seamDir = inApp('src/app-config')
+    /** @type {Record<string, unknown>} */
+    const seam = { name: seamPackage(slug), private: true }
+    if (manifest.type) seam['type'] = manifest.type
+    seam['exports'] = seamExports(seamDir, meta.seamSpecifiers)
+    writeFileSync(path.join(seamDir, 'package.json'), packageJson(seam))
+
+    // The app's tsconfig, on @sssb/tools' base: in SSSB's repository the starter's also sends @sssb/kit and the seam to
+    // source and compiles the framework's own tree (it is the framework's falsifier there). Here resolution goes
+    // through the installed packages and the seam link, so only the app's own `@/` alias stays.
+    const tsconfig = readJson(inApp('tsconfig.json'))
+    if (tsconfig.extends !== '@sssb/tools/tsconfig.base.json')
+        throw new CreateError(`the template's tsconfig.json extends ${tsconfig.extends}, not @sssb/tools' base`)
+    const own = (/** @type {string} */ entry) => !entry.startsWith('../')
+    tsconfig.compilerOptions.paths = { '@/*': tsconfig.compilerOptions.paths['@/*'] }
+    tsconfig.include = tsconfig.include.filter(own)
+    tsconfig.exclude = tsconfig.exclude.filter(own)
+    writeFileSync(inApp('tsconfig.json'), formatJson(tsconfig))
+
+    writeFileSync(inApp('eslint.config.mjs'), files.APP_ESLINT)
+    writeFileSync(inApp('DEMO-SIZE.md'), files.demoSizeMd(Number(budget)))
 }

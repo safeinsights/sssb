@@ -20,6 +20,7 @@ import {
     importerSeamProblems,
     isInRepoKit,
     kitImporters,
+    knipGaps,
     missingTests,
     nodeLinkerProblem,
     packageDirFrom,
@@ -1530,6 +1531,74 @@ describe('cutoverReport', () => {
             sssbOnly: ['release-app'],
         })
         expect(cutoverReport(rows, null).unmentioned).toEqual(['auth-dev', 'errors', 'look-alike'])
+    })
+})
+
+describe('knipGaps: the apps knip.json gives no workspace (reported, never failed)', () => {
+    it("names each app, and each app's seam package, that knip.json's workspaces do not, globs counted", () => {
+        const root = makeTestTmpDir('doctor-knip-')
+        const apps = ['apps/console', 'apps/ledger'].map((app) =>
+            pkg(path.join(root, app), { name: path.basename(app) }),
+        )
+        const seams = apps.map((app) => pkg(path.join(app, 'src/app-config'), { name: `${path.basename(app)}-seam` }))
+        const packages = [...apps, ...seams]
+        expect(knipGaps(root, apps, packages)).toBeNull()
+
+        json(path.join(root, 'knip.json'), {
+            workspaces: { '.': {}, 'apps/console': {}, 'apps/console/src/app-config': {} },
+        })
+        expect(knipGaps(root, apps, packages)).toEqual({
+            file: 'knip.json',
+            missing: ['apps/ledger', 'apps/ledger/src/app-config'],
+            generator: false,
+        })
+        // A seam that is no workspace package (SSSB's own repository, where aliases carry it) is not knip's to name.
+        expect(knipGaps(root, apps, apps)).toEqual({ file: 'knip.json', missing: ['apps/ledger'], generator: false })
+        json(path.join(root, 'knip.json'), { workspaces: { 'apps/*': {}, 'apps/*/src/app-config/': {} } })
+        expect(knipGaps(root, apps, packages)).toEqual({ file: 'knip.json', missing: [], generator: false })
+        // One config for every package, or a config doctor cannot read.
+        json(path.join(root, 'knip.json'), { entry: ['src/index.ts'] })
+        expect(knipGaps(root, apps, packages)).toEqual({ file: 'knip.json', missing: null, generator: false })
+        // A root that installs @sssb/create for `sssb add-app`, which nothing imports: knip calls it unused unless ignored.
+        json(path.join(root, 'package.json'), { name: 'ws', devDependencies: { '@sssb/create': '0.2.0' } })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: true })
+        json(path.join(root, 'knip.json'), { ignoreDependencies: ['@sssb/create'] })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: false })
+        // An entry with a regular expression's characters is one, to knip.
+        json(path.join(root, 'knip.json'), { ignoreDependencies: ['@sssb/.*'] })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: false })
+        json(path.join(root, 'knip.json'), { ignoreDependencies: ['@sssb/kit', '(unclosed'] })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: true })
+        json(path.join(root, 'knip.json'), { workspaces: { '.': { ignoreDependencies: ['esbuild'] }, 'apps/*': {} } })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: true })
+        json(path.join(root, 'knip.json'), {
+            workspaces: { '.': { ignoreDependencies: ['@sssb/create'] }, 'apps/*': {} },
+        })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: false })
+        rmSync(path.join(root, 'package.json'))
+        write(path.join(root, 'knip.json'), '{ "workspaces": {')
+        expect(knipGaps(root, apps, packages)).toMatchObject({ file: 'knip.json', unread: expect.any(String) })
+        // knip reads a knip.json with comments, trailing commas or a byte-order mark too.
+        write(
+            path.join(root, 'knip.json'),
+            '\uFEFF{ // why\n "workspaces": { "apps/*": {}, "apps/*/src/app-config": {}, },\n}',
+        )
+        expect(knipGaps(root, apps, packages)).toEqual({ file: 'knip.json', missing: [], generator: false })
+        // An app that is no workspace package is the root's, for knip.
+        json(path.join(root, 'knip.json'), { workspaces: { '.': {} } })
+        expect(knipGaps(root, apps, [])).toEqual({ file: 'knip.json', missing: [], generator: false })
+        // knip.jsonc takes comments and trailing commas; a `//` inside a string is not one.
+        rmSync(path.join(root, 'knip.json'))
+        write(
+            path.join(root, 'knip.jsonc'),
+            '{\n  // the apps\n  "$schema": "https://unpkg.com/knip@6/schema.json",\n  "workspaces": {\n' +
+                '    "apps/console": {}, /* its seam */ "apps/console/src/app-config": {},\n  },\n}\n',
+        )
+        expect(knipGaps(root, apps, packages)).toEqual({
+            file: 'knip.jsonc',
+            missing: ['apps/ledger', 'apps/ledger/src/app-config'],
+            generator: false,
+        })
     })
 })
 

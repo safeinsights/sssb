@@ -38,7 +38,8 @@
 // package.json scripts pass to vitest (doctor proves what each configuration would run, never what a CI step's own
 // command line adds); which script runs each app's contract config (doctor lists the contract checks, it never runs
 // them); `dedupePeerDependents: false` missing from pnpm-workspace.yaml (advice); framework cutover rows the
-// workspace's checklist never mentions; and the commits the workspace pins SSSB's reusable workflow and the plugin's
+// workspace's checklist never mentions; an app, or an app's seam package, that the root's knip JSON config (`knip.json`, `knip.jsonc`, `.knip.json` or
+// `.knip.jsonc`) gives no workspace, and a root `@sssb/create` that knip would call unused; and the commits the workspace pins SSSB's reusable workflow and the plugin's
 // marketplace at (`.github/workflows/*.yml`, `.claude/settings.json`), against the release commit the installed
 // @sssb/kit stamps into its package (`dist/release.json`), naming both commits where they differ; and the adopter's own
 // settings (doctor-settings.js): on the workspace's GitHub repository, read-only through `gh`, whether `sssb /
@@ -59,6 +60,7 @@ import {
     githubRepositoryOf,
     importerSeamProblems,
     kitPeers,
+    knipGaps,
     missingTests,
     nodeLinkerProblem,
     ownTests,
@@ -207,6 +209,7 @@ export async function run(args) {
         pins(root, kitDir, version, inRepo),
         dedupeAdvice(root, inRepo),
         cutover(root, appDir),
+        ...knip(root, apps, workspace.packages),
         ...settings(root, kitDir),
     ]
     return print(results)
@@ -955,6 +958,49 @@ function dedupeAdvice(root, inRepo) {
             'from a fresh lockfile, since a lockfile resolved before it keeps the merged layout' +
             (inRepo ? ' (in-repo mode: the seam goes through aliases here, so this is advice for an adopter)' : ''),
     }
+}
+
+/**
+ * KNIP: each app, and each app's seam package, has a workspace of its own in the root's knip.json (knipGaps).
+ * Reported, never failed; nothing per app when the root's knip config has no `workspaces`, and nothing at all when
+ * the root has no knip JSON config.
+ * @param {string} root
+ * @param {readonly string[]} apps
+ * @param {readonly string[]} packages
+ * @returns {Result[]}
+ */
+function knip(root, apps, packages) {
+    const gaps = knipGaps(root, apps, packages)
+    if (gaps === null) return []
+    if ('unread' in gaps)
+        return [{ status: 'report', title: `knip: not checked: ${gaps.file} does not parse as JSON (${gaps.unread})` }]
+    /** @type {Result[]} */
+    const results = []
+    if (gaps.missing === null) {
+        // One config for every package: nothing per app to look for.
+    } else if (gaps.missing.length === 0)
+        results.push({
+            status: 'ok',
+            title: `knip: ${gaps.file} gives every app, and every app's seam package, a workspace`,
+        })
+    else
+        results.push({
+            status: 'report',
+            title:
+                `knip: ${gaps.file} gives ${gaps.missing.length} of the apps' packages no workspace, so knip reads them ` +
+                "with its defaults and calls the seam's modules and the presets' dependencies unused: add an entry for " +
+                "each, like the first app's",
+            lines: gaps.missing,
+        })
+    if (gaps.generator)
+        results.push({
+            status: 'report',
+            title:
+                `knip: the root installs @sssb/create, which nothing imports (\`sssb add-app\` loads it from ` +
+                `node_modules), so knip calls it unused: \`pnpm remove -w @sssb/create\` once your apps are written, or ` +
+                `add it to the root's ignoreDependencies in ${gaps.file}`,
+        })
+    return results
 }
 
 /**

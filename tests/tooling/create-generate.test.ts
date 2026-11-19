@@ -234,7 +234,11 @@ describe('@sssb/create: the generated workspace', () => {
             "<title>Acme's Research — static demo</title>",
         )
         expect(readJson(ws, 'package.json').sssb).toEqual({ apps: ['apps/acme'] })
-        expect(read(ws, 'vitest.config.ts')).toContain("const APPS = ['acme']")
+        // The Vitest configs read the one list of apps, sssb.apps, rather than keeping a copy (`sssb add-app` adds to it).
+        for (const config of ['vitest.config.ts', 'vitest.contract.config.ts']) {
+            expect(read(ws, config)).toContain("workspaceAppProjects({ root: at('.') })")
+            expect(read(ws, config)).not.toContain('acme')
+        }
         expect(readJson(ws, 'knip.json').workspaces).toHaveProperty(['apps/acme'])
     })
 

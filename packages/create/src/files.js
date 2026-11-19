@@ -239,25 +239,26 @@ export const ROOT_TSCONFIG = formatJson({
     include: ['*.ts'],
 })
 
-/** @param {Context} c */
-export function vitestConfig(c) {
-    return `import { fileURLToPath } from 'node:url'
-import { appTestProject } from '@sssb/tools/vitest'
+/**
+ * The workspace's unit run: a Vitest project per app the root's `sssb.apps` names, from SSSB's preset, so a second app
+ * joins it by its entry there (`sssb add-app` writes one).
+ */
+export const VITEST_CONFIG = `import { fileURLToPath } from 'node:url'
+import { workspaceAppProjects } from '@sssb/tools/vitest'
 import { defineConfig, type ViteUserConfig } from 'vitest/config'
 
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 
 /**
- * The workspace's apps. ONE PROJECT PER APP, from SSSB's preset (@sssb/tools/vitest): the framework reads the app's
- * registrations through the bare specifier \`@sssb/app-config/*\`, which one project can resolve for one app only, so
- * each app's project passes its own seam. Each app's conformance suite (src/sssb.conformance.test.ts) runs in its
- * project like any other test; \`pnpm exec sssb doctor\` fails if this config stops running it.
+ * ONE PROJECT PER APP, from SSSB's preset (@sssb/tools/vitest), for every app the root package.json's \`sssb.apps\`
+ * names: the framework reads the app's registrations through the bare specifier \`@sssb/app-config/*\`, which one
+ * project can resolve for one app only, so each app's project passes its own seam. Each app's conformance suite
+ * (src/sssb.conformance.test.ts) runs in its project like any other test; \`pnpm exec sssb doctor\` fails if this
+ * config stops running it.
  */
-const APPS = ['${c.slug}']
-
 export default defineConfig(async (): Promise<ViteUserConfig> => ({
     test: {
-        projects: await Promise.all(APPS.map((app) => appTestProject({ appDir: at(\`./apps/\${app}\`) }))),
+        projects: await workspaceAppProjects({ root: at('.') }),
         coverage: {
             provider: 'v8',
             include: ['apps/*/src/**/*.{ts,tsx}', 'packages/*/src/**/*.{ts,tsx}'],
@@ -268,34 +269,31 @@ export default defineConfig(async (): Promise<ViteUserConfig> => ({
     },
 }))
 `
-}
 
-/** @param {Context} c */
-export function vitestContractConfig(c) {
-    return `import { fileURLToPath } from 'node:url'
-import { appTestProject } from '@sssb/tools/vitest'
+/** The workspace's contract run: the same project per app, narrowed to its tests/contract. */
+export const VITEST_CONTRACT_CONFIG = `import { fileURLToPath } from 'node:url'
+import { workspaceAppProjects } from '@sssb/tools/vitest'
 import { defineConfig, type ViteUserConfig } from 'vitest/config'
 
 const at = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 
-const APPS = ['${c.slug}']
-
 /**
  * The contract tests: each app's tests/contract (SSSB's contract runner, @sssb/kit/testing/contract) against real
- * Postgres, a database of the app's own. The preset's project per app, narrowed to tests/contract, in Node, one file at
- * a time, because every app's embedded Postgres takes the one port (CONTRACT_DATABASE_URL names a server instead; CI
- * passes its service container's). The unit config never reaches tests/contract.
+ * Postgres, a database of the app's own. The preset's project for every app the root package.json's \`sssb.apps\`
+ * names, narrowed to tests/contract, in Node, one file at a time, because every app's embedded Postgres takes the one
+ * port (CONTRACT_DATABASE_URL names a server instead; CI passes its service container's). The unit config never
+ * reaches tests/contract.
  */
-const contract = async (app: string) => {
-    const project = await appTestProject({ appDir: at(\`./apps/\${app}\`) })
-    return { ...project, test: { ...project.test, environment: 'node', include: ['tests/contract/**/*.test.ts'] } }
-}
-
 export default defineConfig(async (): Promise<ViteUserConfig> => ({
-    test: { fileParallelism: false, projects: await Promise.all(APPS.map(contract)) },
+    test: {
+        fileParallelism: false,
+        projects: (await workspaceAppProjects({ root: at('.') })).map((project) => ({
+            ...project,
+            test: { ...project.test, environment: 'node', include: ['tests/contract/**/*.test.ts'] },
+        })),
+    },
 }))
 `
-}
 
 /** @param {Context} c */
 export function knipJson(c) {
