@@ -6024,6 +6024,21 @@ standing rule for these sessions says.
 - **`CLERK_JWT_KEY` is read as a secret store often holds it** (`\n` escapes, surrounding space) **and refused at the
   first real request if it is not a PEM public key** (round-2 review): Clerk would otherwise fail every session check
   with it and sign everyone out, without saying why.
+- **Superseding the skip above: Clerk runs on every request, shown a copy without `Authorization`** (round-3 review of
+  the sweep). Skipping Clerk left a client's own `x-clerk-auth-*` and `x-clerk-request-data` request headers in place,
+  which Clerk's `auth()` trusts once their signature checks out; under `next dev` Clerk's keyless fallback decrypts the
+  request data with a public constant, so anyone reaching a `dev:real` server could forge a user. A page request with a
+  header token also failed (`auth()` with no middleware). Now Clerk always runs, and its decoration writes its own
+  `x-clerk-auth-*` headers over the client's (`decorateRequest`, `setRequestHeadersOnNextResponse` in @clerk/nextjs
+  7.10). It is shown a body-less copy of the request with no `Authorization` header, so it reads no header token and
+  calls nothing for one; the app's proxy gets the original. When the app's proxy built no override list and Clerk
+  built it from the copy, `Authorization` is added back to it, so the route still gets it. Rejected: **forcing
+  signed-out headers on the skip path**, which recreates Clerk's header handling outside Clerk and has to track every
+  header it adds. Rejected: **refusing a request with both a header token and an `x-clerk-*` header**, which still
+  fails the page case.
+- **`CLERK_JWT_KEY` must be a 2048-bit RSA public key in SPKI PEM** (round-3 review): Clerk's `loadClerkJwkFromPem`
+  strips that key's fixed prefix as text, so a private key, a certificate, another size or another type passes
+  `createPublicKey` and still fails every session check.
 
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 
