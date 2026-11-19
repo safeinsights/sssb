@@ -6518,7 +6518,7 @@ The adoption review's follow-up 1 (`docs/adoption-review-2026-11.md`, ranked ite
 921 lines, of which a newcomer needs about 150. JP's standing rule for these sessions: decide, and record the rejected
 alternative.
 
-- **`docs/adopting.md` is the guide (130 lines), `docs/adopting-reference.md` the reference.** The guide keeps the
+- **`docs/adopting.md` is the guide (155 lines), `docs/adopting-reference.md` the reference.** The guide keeps the
   file name every link already uses, and the heading "Upgrading by release", which every generated README links by
   anchor. Rejected: a new name for the guide (`docs/start.md`) with `adopting.md` as the reference, which breaks every
   generated workspace's README link and a test that holds it.

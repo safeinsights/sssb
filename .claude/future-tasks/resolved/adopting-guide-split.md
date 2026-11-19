@@ -31,7 +31,7 @@ in one of the two, and the doc-path gate and the create tests are green.
 
 ## Resolution (2026-11-19, `docs/adopting-guide-split`)
 
-- **`docs/adopting.md` is the guide**, 921 lines down to 130, in the order a newcomer acts: generate, first boot (with
+- **`docs/adopting.md` is the guide**, 921 lines down to 155, in the order a newcomer acts: generate, first boot (with
   the Simulator a generated app's `pnpm dev` now has), take out the starter's content (`sssb remove-items`), a first
   entity file by file with tenant, organization (team) and the staff team defined where the reader first needs them,
   deploy and cut over (`SssbApp`, `params.ports`, the scheduled tick, the checklist), and "Upgrading by release" (kept
