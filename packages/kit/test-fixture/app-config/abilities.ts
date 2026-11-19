@@ -16,15 +16,10 @@ import type {
 export type AppSubjectType = 'Docket'
 
 /**
- * App-specific fields merged into the framework's AbilitySubject (`AbilitySubject extends
- * AppSubjectFields`). The fixture has NONE: its one subject is scoped by the framework's own `orgId`.
- *
- * The empty interface is deliberate: because the framework EXTENDS this type it must be an interface (a
- * mapped type such as `Record<never, never>` cannot be extended), and an empty interface is exactly what
- * `@typescript-eslint/no-empty-object-type` exists to flag. The suppression is narrow and local.
+ * App-specific fields merged into the framework's AbilitySubject (`AbilitySubject = AppSubjectFields & { … }`).
+ * The fixture has NONE: its one subject is scoped by the framework's own `orgId`.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface AppSubjectFields {}
+export type AppSubjectFields = Record<never, never>
 
 /**
  * The fixture's credential kinds beyond SSSB's own, one of each so SSSB's tests can build both kinds of

@@ -94,8 +94,8 @@ root script.
 2. Run the demo tour ([runbooks/demo.md](runbooks/demo.md)) once, in a checkout of SSSB: it drives the showcase. (To
    look before cloning, open the showcase's single-file demo that SSSB's README links from its latest release.)
    Fifteen minutes here saves days later: every capability you inherit is shown working. Your app has the same
-   Simulator in its static demo (`pnpm build:demo-static`); on its own `pnpm dev` the panel needs route glue that only
-   the showcase carries today.
+   Simulator in its static demo (`pnpm build:demo-static`); on its own `pnpm dev` the panel has People, Mail and Jobs
+   with the world clock so far, served by SSSB through `apps/<app>/src/app/api/simulator/[...path]/route.ts`.
 3. Push, then make the repository settings only you can make: require the check `sssb / all-checks` on your
    default branch (and `workspace-checks` and `secret-scan`, your workflow's own jobs), the setting under "Identity
    and the owner files" below, and, if the repository is private and in an organization, allow public reusable
@@ -184,7 +184,8 @@ ends as the signal asked.
   the app's `typecheck` covers with `apps/<app>/infra/tsconfig.json`.
 - **The root**: `package.json` (named `<slug>-workspace`; its scripts, `verify` included, and `sssb.apps`),
   `pnpm-workspace.yaml` (each app's seam, `apps/*/src/app-config`, among its packages; SSSB's `allowBuilds`
-  approvals, `dedupePeerDependents: false`, and SSSB's
+  approvals, `dedupePeerDependents: false`, a `peerDependencyRules` entry that silences the eslint 10 warning
+  from `eslint-plugin-react` and `eslint-plugin-jsx-a11y` (delete it when both declare eslint 10), and SSSB's
   `minimumReleaseAge` with `@sssb/*` exempt), the Vitest configs on `@sssb/tools/vitest` (`vitest.config.ts` and
   `vitest.contract.config.ts`), `tsconfig.json`, `eslint.config.mjs` (for the root's own files), knip, jscpd,
   gitleaks, git-ignore and Prettier-ignore configs, and lint-staged's. `.editorconfig`, `.nvmrc`,
@@ -326,12 +327,12 @@ These are the parts that take judgement:
 A rename changes what the app is called, not what it shows. In the app the generator writes, four pieces
 of the starter are still reachable by anyone who opens your app or your static demo:
 
-| What survives                                    | Where it lives                                                                                                                                                                                                                                                                                                                                            | Where it shows                                                                                 |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| The seed world: two tenants, two teams, 3 people | `apps/<app>/src/seed/index.ts`                                                                                                                                                                                                                                                                                                                            | every sign-in picker (the app's, the static demo's, the Simulator's People tab); tenant themes |
-| The welcome subtitle                             | `welcome.subtitle` in `apps/<app>/messages/en.json` + `es.json`                                                                                                                                                                                                                                                                                           | the app's root page AND the static demo's first screen — they share one component              |
-| The Items slice                                  | `apps/<app>/src/components/items-card.tsx`, `apps/<app>/src/app/api/items/route.ts`, the dashboard route's `page.tsx` and `dashboard-glue.tsx` under `apps/<app>/src/app/`, the `Item` case in `apps/<app>/src/app-config/abilities.ts`, the table, migration and RLS proof under `apps/<app>/src/app-config/db/`, the `items` namespace in both catalogs | every signed-in person's dashboard                                                             |
-| The static demo's composition root               | `apps/<app>/src/demo-static/app.tsx`                                                                                                                                                                                                                                                                                                                      | the whole `file://` demo: it passes `nav={null}`, the starter's welcome screen and Items card  |
+| What survives                                    | Where it lives                                                                                                                                                                                                                                                                                                                                                                                   | Where it shows                                                                                 |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| The seed world: two tenants, two teams, 3 people | `apps/<app>/src/seed/index.ts`                                                                                                                                                                                                                                                                                                                                                                   | every sign-in picker (the app's, the static demo's, the Simulator's People tab); tenant themes |
+| The welcome subtitle                             | `welcome.subtitle` in `apps/<app>/messages/en.json` + `es.json`                                                                                                                                                                                                                                                                                                                                  | the app's root page AND the static demo's first screen — they share one component              |
+| The Items slice                                  | `apps/<app>/src/components/items-card.tsx`, `apps/<app>/src/app/api/items/route.ts`, `apps/<app>/src/domain/db/items.ts`, the dashboard route's `page.tsx` and `dashboard-glue.tsx` under `apps/<app>/src/app/`, the `Item` case in `apps/<app>/src/app-config/abilities.ts`, the table, migrations and RLS proofs under `apps/<app>/src/app-config/db/`, the `items` namespace in both catalogs | every signed-in person's dashboard                                                             |
+| The static demo's composition root               | `apps/<app>/src/demo-static/app.tsx`                                                                                                                                                                                                                                                                                                                                                             | the whole `file://` demo: it passes `nav={null}`, the starter's welcome screen and Items card  |
 
 None of it fails a gate, which is why it is listed here: a real adopter shipped a product demo that
 opened on the starter's tenants and its Items card, four days after adopting. The team had been
@@ -364,9 +365,9 @@ is protected, not that your proofs exercise two tenants — so it is yours to ke
 
 **The Items slice is a worked example, so take what it teaches before you delete it.**
 `apps/<app>/src/app-config/db/migrations/1001_items.ts` is a worked RLS migration — in a generated workspace, the only one there — and its
-section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it. Build your first real slice
+section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it; `1002_items_keyset_index.ts`, `apps/<app>/src/domain/db/items.ts` and the route show how a list pages. Build your first real slice
 from them (`/sssb:new-slice`), then remove Items the way "To remove a slice" below describes. Give your first table
-the next number, `1002_<name>`: renaming `1001_items` instead means wiping `apps/<app>/.data` first (the app guide). There is
+the next number, `1003_<name>` (`1002_items_keyset_index` is the paging index for Items): renaming `1001_items` instead means wiping `apps/<app>/.data` first (the app guide). There is
 no flag that does this for you yet; `.claude/future-tasks/create-blank-option.md` carries the design.
 
 **Wire the static demo last, and look at it.** A shell or a home screen you build in
@@ -411,8 +412,8 @@ rest of this repository's are SSSB's own: the second app's (`dev:starter`, `tick
 
 One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 139 published subpaths from its source (39
-counting its tests), so the same setting would start demanding you delete the other 104 — capabilities you merely have not
+nearly all of it. A one-entity app does not: `apps/starter` imports 40 of SSSB's 141 published subpaths from its source (44
+counting its tests), so the same setting would start demanding you delete the other 101 — capabilities you merely have not
 reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration. The generated `knip.json` carries a few narrow entries beside the app's entry files: at the root,
@@ -515,9 +516,9 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 139 subpaths your app may
+lists the 141 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 63 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 64 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -598,10 +599,8 @@ a lint fence enforces the direction. Each module there is the app-side half of o
 | `identity.ts`                                 | `APP_SLUG`, re-exported from the app's app config                                                       | (every app registers it)                   |
 | `seed.ts`                                     | your seed data re-export                                                                                | (every app registers it)                   |
 
-The one place an empty registration is not free: `AppSubjectFields` in `abilities.ts` must be an
-`interface` (the framework's `AbilitySubject` extends it), and an app with no extra subject fields
-therefore declares an empty one and suppresses `@typescript-eslint/no-empty-object-type` on that line.
-`apps/starter` shows the suppression and why.
+An app with no extra subject fields writes `export type AppSubjectFields = Record<never, never>` in `abilities.ts`, as
+`apps/starter` does: the framework's `AbilitySubject` intersects it, so it may be an interface, a type alias or a mapped type.
 
 **To add a feature slice**: run `/sssb:new-slice` (and the per-capability scaffolds `/sssb:new-entity`,
 `/sssb:new-job`, `/sssb:new-actor`, `/sssb:new-notification-kind`, `/sssb:new-webhook-event`, `/sssb:new-tour`,
