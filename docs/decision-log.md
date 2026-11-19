@@ -6660,3 +6660,26 @@ verify` after it, `pnpm knip` and `pnpm lint:fix`. Not run: `pnpm create @sssb` 
 - **Citations of moved sections are repointed in place** (code comments, `CLAUDE.md`, `CONTRIBUTING.md`, the
   release-notes script, `sssb remove-items`' refusal, open future tasks), and ADR-0014 gets an addendum naming where
   its cited sections live; dated records and ADR bodies are left as they were.
+
+## ADR-0015 is Proposed: app-supplied adapters for kit ports (2026-11-19, `docs/swappable-ports`)
+
+JP asked whether an adopter could use libsql or Turso, Cloudflare R2, Auth0 or other optional providers, and whether
+the spine could stay required but swappable. The answer is a Proposed ADR
+(`docs/adr/0015-app-supplied-adapters-for-kit-ports.md`), no code. Decisions taken in writing it, under the standing
+rule for these sessions:
+
+- **The study ends in a recommendation, not a menu**: most ports swappable through an `app` switch value, a seam
+  module and a published port contract suite; auth last; the database engine fixed. Rejected: presenting each port's
+  options unranked, which hands the approver the analysis instead of a decision.
+- **The app supplies only the real adapter; the fake stays SSSB's.** Rejected: app-supplied fakes, because the
+  Simulator reads the fakes' state and the hermetic promise would become each app's.
+- **libsql and Turso are answered "not an adapter"**, with both tenancy strategies written out (a database per tenant,
+  query-layer enforcement) and what each does to ADR-0004. Rejected: a libsql `DbPort` as a later step, which would
+  satisfy the type and none of the behaviour.
+- **R2 is an app adapter over the published `createS3Storage`**, not a new kit choice, and the study names the one
+  gap found (R2 has no presigned POST, so the upload target needs a PUT form). Rejected: an `s3` choice that reads an
+  endpoint and credentials, which is a kit change for one vendor.
+- **Build on first real demand**, with outbound email as the smallest proof of the mechanism. Rejected: building every
+  port's swap now, ahead of any adopter asking.
+- **`docs/adr/README.md` lists 0015 as Proposed** and its count sentence says fifteen. `CLAUDE.md`'s list of Accepted
+  ADRs is unchanged until JP decides.

@@ -1,11 +1,12 @@
 # Architecture Decision Records
 
-Thirteen of the fourteen decisions below are **Accepted** (approver: JP Slavinsky). They are the one-way doors — the
+Thirteen of the fifteen decisions below are **Accepted** (approver: JP Slavinsky). They are the one-way doors — the
 choices that shaped everything after them and are expensive to reverse — and they are not open for
 relitigation in routine work. If new information genuinely challenges one, raise it with the approver.
 0013 is **Superseded** by [0014](0014-distribution-as-versioned-packages.md): adopters no longer fork and merge, they
 generate a workspace and upgrade by release ([../adopting.md](../adopting.md)). 0013 stays as the record of why fork
-and merge was chosen and what replaced it.
+and merge was chosen and what replaced it. [0015](0015-app-supplied-adapters-for-kit-ports.md) is **Proposed**: a design
+study awaiting the approver, which binds nothing until it is accepted.
 
 The operating philosophy these decisions serve (thin slices, ports and adapters, hermetic dev, demo mode,
 the one-app default) is in [../development-approach.md](../development-approach.md); the ADRs are the
@@ -46,3 +47,4 @@ authoritative.
 | [0012](0012-framework-app-line-and-registration.md) | The framework/app line: registration through the app-config seam |
 | [0013](0013-upstream-updates-fork-and-merge.md)     | Superseded: publishable-shaped, distributed by fork/merge        |
 | [0014](0014-distribution-as-versioned-packages.md)  | Distribution: versioned packages, renamed SSSB                   |
+| [0015](0015-app-supplied-adapters-for-kit-ports.md) | Proposed: an app may supply the real adapter for a kit port      |
