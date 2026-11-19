@@ -12,7 +12,7 @@ import { dispatchWebhook } from './webhook-dispatch'
  *
  * Real world: an EventBridge rule POSTs that route on a fixed cadence with the shared secret in `x-sssb-webhook-secret`
  * (cutover row `scheduled-tick`; @sssb/cdk's `SssbApp` does it with `scheduledTick`). Nothing else ticks the scheduler: in `pnpm dev` an app with no Simulator has no
- * tick source until something POSTs the route (docs/adopting.md, "The scheduled tick").
+ * tick source until something POSTs the route (docs/adopting-reference.md, "The scheduled tick").
  *
  * "Now" is the trigger source's clock: real time in a real build; in a simulated world the Simulator's world clock
  * (real time plus the offset a demo advanced), so a tick honours a clock the demo moved. `worldNow()` is called

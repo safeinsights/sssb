@@ -165,6 +165,8 @@ describe('@sssb/create: the generated workspace', () => {
             [
                 /^\[`docs\/adopting\.md`\]\(https:\/\/github\.com\/safeinsights\/sssb\/blob\/[0-9a-f]{40}\/docs\/adopting\.md\)\.$/,
                 /^\[`docs\/adopting\.md`, "Upgrading by release"\]\(https:\/\/github\.com\/safeinsights\/sssb\/blob\/[0-9a-f]{40}\/docs\/adopting\.md#upgrading-by-release\)\.$/,
+                /^\[`docs\/adopting-reference\.md`\]\(https:\/\/github\.com\/safeinsights\/sssb\/blob\/[0-9a-f]{40}\/docs\/adopting-reference\.md\)\.$/,
+                /^\[`docs\/adopting-reference\.md`, "Upgrading, step by step"\]\(https:\/\/github\.com\/safeinsights\/sssb\/blob\/[0-9a-f]{40}\/docs\/adopting-reference\.md#upgrading-step-by-step\)\.$/,
                 /^\[`apps\/showcase`\]\(https:\/\/github\.com\/safeinsights\/sssb\/tree\/[0-9a-f]{40}\/apps\/showcase\)\.$/,
             ]
                 .map((pattern) => pattern.source)
@@ -362,7 +364,7 @@ describe('@sssb/create: the generated workspace', () => {
         const overridden = [
             ...read(other, 'README.md').matchAll(/github\.com\/safeinsights\/sssb\/(?:blob|tree)\/(\w+)\//g),
         ]
-        expect(overridden.map(([, ref]) => ref)).toEqual(['a'.repeat(40), 'a'.repeat(40), 'a'.repeat(40)])
+        expect(overridden.map(([, ref]) => ref)).toEqual(Array(5).fill('a'.repeat(40)))
 
         // The workspace's own CLAUDE.md imports the app guide's copy, on a line of its own (an import, not a mention).
         expect(read(ws, 'CLAUDE.md').split('\n')).toContain('@.claude/sssb-guide.md')
@@ -388,6 +390,8 @@ describe('@sssb/create: the generated workspace', () => {
         ]
         expect(links.map(([, , file]) => file).sort()).toEqual([
             'apps/showcase',
+            'docs/adopting-reference.md',
+            'docs/adopting-reference.md',
             'docs/adopting.md',
             'docs/adopting.md',
         ])
@@ -398,6 +402,9 @@ describe('@sssb/create: the generated workspace', () => {
         expect(execFileSync('git', ['show', `${HEAD}:docs/adopting.md`], { cwd: REPO, encoding: 'utf8' })).toMatch(
             /^## Upgrading by release$/m,
         )
+        expect(
+            execFileSync('git', ['show', `${HEAD}:docs/adopting-reference.md`], { cwd: REPO, encoding: 'utf8' }),
+        ).toMatch(/^## Upgrading, step by step$/m)
         expect(read(REPO, 'plugins/sssb/commands/verify.md')).toContain(`\`${PLAYWRIGHT_INSTALL}\``)
     })
 

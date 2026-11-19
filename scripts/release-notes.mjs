@@ -58,7 +58,7 @@ const RC_VERSION = /-rc\.\d+$/
 const COMMIT = /^[0-9a-f]{40}$/
 
 /**
- * The standing "Upgrading to this release" section (`docs/adopting.md`, "Upgrading by release", says why each step is
+ * The standing "Upgrading to this release" section (`docs/adopting-reference.md`, "Upgrading, step by step", says why each step is
  * there): what every release asks of a workspace, whatever its entries say, with the commands and this release's version
  * filled in. The release commit's SHA is filled in only when the caller has it. The notes are a file IN the release
  * commit, so `prepare` cannot know it, and the pins do not need it: `sssb pin` reads it from the installed kit's release
@@ -88,8 +88,7 @@ export function upgradeSection({ version, sha, repo = RELEASE_REPOSITORY }) {
               `**1. Move every \`@sssb/*\` package to ${version}, together.** In the root \`package.json\`, each`,
               `\`apps/<app>/package.json\` and \`apps/<app>/infra/package.json\`, and any package of your own that depends on one,`,
               `change each \`@sssb/*\` version, then install and commit the lockfile. First make any "Scaffold changes to apply by`,
-              `hand" entry below that touches how packages install (a workspace that installed a candidate by tarball URL drops`,
-              `its \`overrides\` for them), or the install keeps the old release.`,
+              `hand" entry below that touches how packages install, or the install keeps the old release.`,
               '',
               '```json',
               JSON.stringify(

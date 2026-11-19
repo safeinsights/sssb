@@ -1,7 +1,8 @@
 // @ts-check
 // `sssb remove-items [--app <dir>] [--drop-migrations] [--dry-run]`: takes the starter's example Items slice out of an app
 // in one step, and leaves the app green. The first thing every adopter does is this sweep by hand over about fifteen
-// files (docs/adopting.md, "To remove a slice"); this is that sweep as a patch the starter's own test keeps true.
+// files (SSSB's docs/adopting-reference.md, "To remove the Items slice"); this is that sweep as a patch the starter's own
+// test keeps true.
 //
 // WHAT IT DOES. Two patches, `remove-items/code.patch` and `remove-items/database.patch` (a unified diff of the starter
 // against the starter without Items, applied EXACTLY by ./exact-patch.js). The code half removes everything an app's
@@ -108,7 +109,7 @@ export async function run(args) {
                 `sssb remove-items: nothing was changed. ${problems.length === 1 ? 'One file is' : `${problems.length} files are`} not what the starter wrote, so removing the Items slice would mean guessing:`,
                 ...problems.map((problem) => `  ${problem}`),
                 '',
-                'Restore each file and run this again, or take the slice out by hand: docs/adopting.md, "To remove a slice".',
+                'Restore each file and run this again, or take the slice out by hand: SSSB\'s docs/adopting-reference.md, "To remove the Items slice".',
                 'If the slice is already gone, there is nothing to do.',
             ].join('\n'),
         )
