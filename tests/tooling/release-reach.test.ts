@@ -91,7 +91,13 @@ describe('the one way onto npm', () => {
                 // `upload-artifact` steps are the one kind gated on an earlier output, and they publish nothing
                 if (s.if !== undefined)
                     expect(s.uses, `${name}: ${s.name ?? s.run}`).toMatch(/^actions\/upload-artifact@/)
-                expect(s.run ?? '', `${name}: ${s.name}`).not.toMatch(/\|\|\s*(true|:)\s*$/m)
+                // a failure swallowed (`|| true`, `|| :`, `|| exit 0`, `|| echo …`), or errors turned off (`set +e`).
+                // One line is exempt by its exact text: `pack` reads a package's version before the tag's commit, and a
+                // package new at that commit has none, which must read as empty rather than fail the release.
+                const exempt = `before=$(git show "HEAD^:$dir/package.json" 2>/dev/null | jq -r .version || true)`
+                const script = (s.run ?? '').replace(exempt, '')
+                expect(script, `${name}: ${s.name}`).not.toMatch(/\|\|\s*(true|:|exit\s+0|echo)\b|\bset\s+\+e\b/)
+                expect((s as Step & { shell?: unknown }).shell, `${name}: ${s.name}`).toBeUndefined()
             }
         }
         const gate =

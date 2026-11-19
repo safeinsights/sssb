@@ -324,7 +324,8 @@ describe("this repository's own tree", () => {
         // UNTIL 0.2.0 IS OUT, THE NEXT RELEASE IS 0.2.0 AND NOTHING ELSE. A hand-edited manifest version (0.3.0-rc.0,
         // or a plain 0.2.0) would plan another version that `check` accepts, so it is pinned here, by the release
         // commit's own notes file: once `docs/releases/v0.2.0.md` exists the pin has done its work and steps aside.
-        const firstRelease = !existsSync(path.join(REPO, 'docs/releases/v0.2.0.md'))
+        // tracked, not merely present: a local `prepare` leaves an untracked one behind
+        const firstRelease = !tracked.includes('docs/releases/v0.2.0.md')
         if (firstRelease) expect(current).toBe('0.2.0-rc.2')
 
         const result = await prepare(root, { fetchImpl: NO_REGISTRY })
