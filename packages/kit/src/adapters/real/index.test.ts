@@ -160,7 +160,7 @@ describe('the required environment', () => {
     // and not required by `assertRealEnv` would stop a deployment from booting while the snapshot above stayed green.
     it('covers every variable the real ports need', async () => {
         const source = readFileSync(path.join(import.meta.dirname, 'index.ts'), 'utf8')
-        const needed = [...source.matchAll(/\bneed\(\s*'([A-Z0-9_]+)'\s*\)/g)].map((m) => m[1])
+        const needed = [...source.matchAll(/\bneed\(\s*'([A-Z0-9_]+)'\s*\)/g)].flatMap((m) => m[1] ?? [])
         expect(needed.length).toBeGreaterThan(0)
         expect(source).not.toMatch(/\bneed\(\s*[^'\s)]/) // a name not written as a literal could not be checked here
         const required = new Set<string>()
