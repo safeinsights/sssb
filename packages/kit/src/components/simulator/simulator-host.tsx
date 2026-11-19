@@ -30,6 +30,13 @@ async function getJson<T>(path: string): Promise<T | null> {
     return response.ok ? ((await response.json()) as T) : null
 }
 
+/** A path on this origin, or null; `//host` and `/\host` are other origins, and a browser drops a tab or newline
+ *  (`/\t/host` is `//host`), so neither a backslash, whitespace nor a control character is allowed anywhere. The server answers only such a path; this
+ *  is the client's own check before it navigates (it cannot import the server module's). */
+function sameOriginPath(value: unknown): string | null {
+    return typeof value === 'string' && /^\/(?![/\\])[^\s\\\p{Cc}]*$/u.test(value) ? value : null
+}
+
 function readStoredScope(): 'person' | 'all' | null {
     try {
         const stored = window.localStorage.getItem(MAIL_SCOPE_KEY)
@@ -145,9 +152,10 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     function handleSelect(person: string) {
         void post('viewpoint', { person, locale }).then(async (response) => {
             if (!response.ok) return
-            const { redirectTo } = (await response.json()) as { redirectTo: string }
-            // A full reload: the theme and the header are per-user server output.
-            window.location.assign(redirectTo)
+            const { redirectTo } = (await response.json()) as { redirectTo: unknown }
+            // A full reload: the theme and the header are per-user server output. Only ever to a path on this origin.
+            const path = sameOriginPath(redirectTo)
+            if (path) window.location.assign(path)
         })
     }
 

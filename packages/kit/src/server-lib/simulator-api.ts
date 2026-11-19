@@ -76,6 +76,17 @@ export interface SimulatorSchedules {
 
 /** A clock move is capped at a year per call: a demo control, not a time machine. */
 const MAX_ADVANCE_MS = 366 * 86_400_000
+/** And the world at a century ahead in all, so repeated moves never leave the range a `Date` can hold. */
+const MAX_OFFSET_MS = 100 * 366 * 86_400_000
+
+/**
+ * A path on this origin, or null: `lastPath` is recorded from a page-view beacon's body, so it is caller data, and
+ * the client navigates to what `viewpoint` answers. A protocol-relative `//host` or `/\host` is another origin, and a
+ * browser drops a tab or newline (`/\t/host` is `//host`), so no backslash, whitespace or control character anywhere.
+ */
+function sameOriginPath(value: unknown): string | null {
+    return typeof value === 'string' && /^\/(?![/\\])[^\s\\\p{Cc}]*$/u.test(value) ? value : null
+}
 
 type Handler = (request: Request) => Promise<Response>
 
@@ -198,7 +209,7 @@ async function viewpoint(request: Request): Promise<Response> {
     if (!listAllPeople().some((candidate) => candidate.id === personId)) return badRequest('unknown person')
     // devSignIn restores the person's remembered tenant and writes the viewpoint cookie.
     await devSignIn(personId)
-    const lastPath = readSimulatorState().people[person as PersonKey]?.lastPath
+    const lastPath = sameOriginPath(readSimulatorState().people[person as PersonKey]?.lastPath)
     return Response.json({ redirectTo: lastPath ?? `/${locale}/dashboard` })
 }
 
@@ -245,6 +256,8 @@ async function mailSeen(request: Request): Promise<Response> {
     if (typeof person !== 'string' || !(person.startsWith('person:') || person.startsWith('invited:'))) {
         return badRequest('unsupported person key')
     }
+    // Only someone in the world: the key is written to the state file every poll reads.
+    if (!personEmail(person)) return badRequest('unknown person')
     updatePersonState(person as PersonKey, { mailSeenAt: new Date().toISOString() })
     return Response.json({ ok: true })
 }
@@ -290,6 +303,7 @@ async function clock(request: Request): Promise<Response> {
         if (typeof deltaMs !== 'number' || !Number.isFinite(deltaMs) || deltaMs <= 0 || deltaMs > MAX_ADVANCE_MS) {
             return badRequest('invalid-delta')
         }
+        if (readClockOffsetMs() + deltaMs > MAX_OFFSET_MS) return badRequest('invalid-delta')
         advanceClockMs(deltaMs)
     } else {
         return badRequest('invalid-action')

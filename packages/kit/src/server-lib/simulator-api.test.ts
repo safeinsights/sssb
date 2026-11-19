@@ -100,6 +100,20 @@ describe('people', () => {
     })
 
     test.each([
+        ['/es/dockets?open=1', '/es/dockets?open=1'],
+        ['https://elsewhere.example/', '/en/dashboard'],
+        ['//elsewhere.example/', '/en/dashboard'],
+        ['/\\elsewhere.example/', '/en/dashboard'],
+        ['/\t/elsewhere.example/', '/en/dashboard'],
+        ['javascript:alert(1)', '/en/dashboard'],
+    ])('a remembered path %j lands on %j: only a path on this origin is answered', async (lastPath, redirectTo) => {
+        const { updatePersonState } = await import('../adapters/fake/simulator')
+        updatePersonState('person:fixture-crew', { lastPath })
+        const response = await call('viewpoint', { json: { person: 'person:fixture-crew', locale: 'en' } })
+        expect(await response.json()).toEqual({ redirectTo })
+    })
+
+    test.each([
         [{ person: 'person:fixture-lead', locale: 'xx' }, 'unknown locale'],
         [{ person: 'person:nobody', locale: 'en' }, 'unknown person'],
         [{ person: 'invited:nobody', locale: 'en' }, 'unknown invite'],
@@ -115,8 +129,8 @@ describe('people', () => {
 describe('mail', () => {
     test('scopes to one inbox, counts every inbox, and clears', async () => {
         const { fakeEmail } = await import('../adapters/fake/email')
-        await fakeEmail.send({ to: 'ada.keeper@example.test', subject: 'For Ada', html: '<p>a</p>' })
-        await fakeEmail.send({ to: 'bo.deckhand@example.test', subject: 'For Bo', html: '<p>b</p>' })
+        await fakeEmail.send({ to: 'ada.keeper@example.test', subject: 'For Ada', html: '<p>a</p>', text: 'a' })
+        await fakeEmail.send({ to: 'bo.deckhand@example.test', subject: 'For Bo', html: '<p>b</p>', text: 'b' })
 
         const ada = (await (await call('mail?person=person:fixture-lead')).json()) as SimulatorMail
         expect(ada.emails.map((email) => email.subject)).toEqual(['For Ada'])
@@ -135,8 +149,12 @@ describe('mail', () => {
         expect(((await (await call('mail?all=1')).json()) as SimulatorMail).emails).toEqual([])
     })
 
-    test('mail/seen refuses a key that names no kind of person', async () => {
+    test('mail/seen refuses a key that names no one in the world, and writes nothing for it', async () => {
         expect((await call('mail/seen', { json: { person: 'everyone' } })).status).toBe(400)
+        expect((await call('mail/seen', { json: { person: 'person:nobody' } })).status).toBe(400)
+        expect((await call('mail/seen', { json: { person: 'invited:nobody' } })).status).toBe(400)
+        const { readSimulatorState } = await import('../adapters/fake/simulator')
+        expect(Object.keys(readSimulatorState().people)).not.toContain('person:nobody')
     })
 })
 
@@ -163,6 +181,14 @@ describe('jobs and the clock', () => {
         const schedules = (await (await call('schedules')).json()) as SimulatorSchedules
         expect(schedules.clockOffsetMs).toBe(3_600_000)
 
+        expect(await (await call('clock', { json: { action: 'reset' } })).json()).toMatchObject({ clockOffsetMs: 0 })
+
+        // A year at a time, but never past a century ahead in all.
+        const YEAR = 366 * 86_400_000
+        for (let year = 0; year < 100; year++) {
+            expect((await call('clock', { json: { action: 'advance', deltaMs: YEAR } })).status).toBe(200)
+        }
+        expect((await call('clock', { json: { action: 'advance', deltaMs: 1 } })).status).toBe(400)
         expect(await (await call('clock', { json: { action: 'reset' } })).json()).toMatchObject({ clockOffsetMs: 0 })
         expect(await (await call('schedules/run-due', { json: {} })).json()).toMatchObject({ ok: true, spawned: 0 })
     })
