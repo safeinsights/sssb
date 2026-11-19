@@ -306,6 +306,27 @@ jobs:
                       ${{ runner.temp }}/pack-and-consume/workspace/apps/*/playwright-report/
                   retention-days: 7
 
+    # The licences of what an adopter inherits (docs/decision-log.md, "Licence scan"): the installed dependency closure of
+    # every published package, the starter and the workspace root, judged against .github/licence-policy.json by
+    # scripts/licence-scan.mjs: a licence the policy does not allow, an unknown one, or a stale exception fails. A
+    # job of its own rather than a step of repo-checks, so a new copyleft dependency is a red check that says so. Not in
+    # the rulesets' required list (that is a settings change, JP's); `release.yml` still waits for this whole workflow
+    # to pass on `main`, so a licence the policy fails holds a release back until it is decided. The scan reads
+    # node_modules, so the install comes first; --ignore-scripts, because licences need no install script.
+    licence-scan:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile --ignore-scripts
+            - run: node scripts/licence-scan.mjs --summary
+
     secret-scan:
         runs-on: ubuntu-latest
         permissions:

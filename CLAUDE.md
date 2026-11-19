@@ -134,7 +134,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   **`sssb check-e2e`** (`pnpm check:e2e`, per app) asks
   Playwright which files each config loads, and fails a spec that reaches the kit other than through
   `@sssb/kit/testing/e2e`, directly or through an app module or a workspace package.
-- `pnpm verify` does NOT run `test:contract`, jscpd, coverage, gitleaks or pack and consume — CI runs those
+- `pnpm verify` does NOT run `test:contract`, jscpd, coverage, gitleaks, the licence scan or pack and consume — CI runs those
   (`.github/workflows/checks.yml`). **CI's app checks are the reusable workflow an adopter calls**
   (`.github/workflows/app-checks.yml`, ADR-0014 P10): `checks.yml`'s `sssb` job calls it (by its local path), so
   its checks are named `sssb / <job>` (`sssb / all-checks` fails unless every one ran and passed), and each job's
@@ -183,8 +183,10 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   authorization entirely. It proves the route is the KIND the reason describes, never the reason's whole claim;
   ADR-0012 states the limit.
 - A `knip.json` entry is justified in `docs/build-notes.md`. CI additionally runs coverage reporting, jscpd
-  duplication, and gitleaks secret scanning — see `.github/workflows/checks.yml` and
-  `.github/workflows/app-checks.yml`.
+  duplication, gitleaks secret scanning and the licence scan (`scripts/licence-scan.mjs` against
+  `.github/licence-policy.json`: a new copyleft, source-available or unknown licence in the installed closure fails
+  it unless the policy names it with a reason; `pnpm install` first, then `node scripts/licence-scan.mjs`) — see
+  `.github/workflows/checks.yml` and `.github/workflows/app-checks.yml`.
 - Unit tests are colocated (`*.test.ts(x)`), run by Vitest — `vitest.config.ts` has ONE PROJECT PER APP
   because `@sssb/app-config/*` is a bare specifier and a single alias can only name one app, PLUS a `kit`
   project that runs the packages' suites against the framework's own seam (`packages/kit/test-fixture`). SSSB's
