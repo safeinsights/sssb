@@ -5999,6 +5999,7 @@ have been asked.
   (`ALL_VIEWER_EXCEPT_HOST_HEADER`), so the app builds absolute URLs and redirects on the Function URL's host. Pages sets
   `x-forwarded-host` from the viewer's `Host` in a CloudFront Function of its own; one in `SssbApp` would also decide
   what becomes of a viewer's own `X-Forwarded-Host`.
+
 ## One list of apps, and `sssb add-app` (2026-11-19, `feat/one-list-of-apps`)
 
 The adoption review's follow-up 3 (`docs/adoption-review-2026-11.md`, ranked item 3 and "What surprised" item 10):
