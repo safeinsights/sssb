@@ -353,6 +353,37 @@ describe('sssb pin: refusing, and writing nothing', () => {
     })
 })
 
+describe('sssb pin: files as they are found', () => {
+    const source = (extra: string) =>
+        `{"extraKnownMarketplaces":{"sssb":{"source":{"source":"github","repo":"safeinsights/sssb"${extra}}}},"enabledPlugins":{"sssb@sssb":true}}`
+
+    it('raises the `ref` JSON.parse reads when a key repeats, as doctor and Claude Code read it', () => {
+        const { ws } = workspace('dup-keys', { settings: source(`,"ref":"${OLD}","ref":"${'b'.repeat(40)}"`) })
+        expect(sssb(ws, ['pin']).status).toBe(0)
+        expect(JSON.parse(read(ws, SETTINGS_FILE)).extraKnownMarketplaces.sssb.source.ref).toBe(NEW)
+        expect(doctorsReport(ws).status).toBe('ok')
+    })
+
+    it('adds a missing `ref` to a CRLF settings file with CRLF, so its endings stay one kind', () => {
+        const crlf = settings(null).replaceAll('\n', '\r\n')
+        const { ws } = workspace('crlf', { settings: crlf })
+        expect(sssb(ws, ['pin']).status).toBe(0)
+        const after = read(ws, SETTINGS_FILE)
+        expect(after).toBe(settings(NEW).replaceAll('\n', '\r\n'))
+        expect(after.replaceAll('\r\n', '')).not.toContain('\n')
+    })
+
+    it('moves the version comment of a quoted `uses:` line too', () => {
+        const quoted = WORKFLOW.replace(
+            `app-checks.yml@${OLD} # @sssb/create 0.2.0`,
+            `app-checks.yml@${OLD}" # @sssb/create 0.2.0`,
+        ).replace('uses: safeinsights', 'uses: "safeinsights')
+        const { ws } = workspace('quoted', { workflow: quoted })
+        expect(sssb(ws, ['pin']).status).toBe(0)
+        expect(read(ws, WORKFLOW_FILE)).toContain(`@${NEW}" # @sssb/create 0.3.0\n`)
+    })
+})
+
 describe('planPins', () => {
     const input = {
         commit: NEW,
@@ -388,8 +419,9 @@ describe('planPins', () => {
         expect(plan.files[0]!.text).toBe(crlf.replace(OLD, NEW).replace('0.2.0', '0.3.0'))
     })
 
-    it('judges every pin before reporting any: a refusal comes with the other file’s plan, for the caller to drop', () => {
+    it('returns a refusal for the settings beside the workflow’s plan, which the caller (the CLI) drops unwritten', () => {
         const plan = planPins({ ...input, settings: { file: SETTINGS_FILE, text: '{}' } })
         expect(plan.refusals).toHaveLength(1)
+        expect(plan.files.map((f) => f.file)).toEqual([WORKFLOW_FILE])
     })
 })

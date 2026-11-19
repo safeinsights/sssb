@@ -5865,3 +5865,10 @@ Decisions, each with the alternative rejected:
 - **Not done here:** the generator's own text in a workspace's `README.md` and `CLAUDE.md` (`packages/create/src/files.js`,
   "Raise the pin when you upgrade") still says to raise the pins without naming the command; it stays true, and changing it
   changes what `@sssb/create` writes, so it is a separate change.
+- **Round-1 review (Opus), code only: no finding at MEDIUM or above; three LOW fixed.** A repeated key acts on the LAST
+  one, as `JSON.parse` (doctor, Claude Code) reads it; a missing `ref` is added to a CRLF settings file with CRLF; a quoted
+  `uses: "…@<sha>" # v0.2.0` line's version comment moves too. Accepted as they are: the files are written one after the
+  other, so an I/O error (EACCES, a full disk) can leave one raised (every refusal is decided before the first write, and
+  a rerun finishes it); a `settings.json` that exists but declares no SSSB marketplace refuses, where an absent one does
+  not (a file that is there and says nothing about the plugin is more likely a mistake than a workspace without one); a
+  `uses:` line inside a `run: |` block scalar counts as a pin, in doctor's report too.

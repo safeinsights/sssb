@@ -39,7 +39,7 @@ const SETTINGS = '.claude/settings.json'
  * @param {string} version
  */
 function withVersionComment(rest, version) {
-    return rest.replace(/^(\s+#\s*(?:@sssb\/(?:create|kit)\s+|v))\d[\w.+-]*(\s*)$/, `$1${version}$2`)
+    return rest.replace(/^(['"]?\s+#\s*(?:@sssb\/(?:create|kit)\s+|v))\d[\w.+-]*(\s*)$/, `$1${version}$2`)
 }
 
 /**
@@ -144,6 +144,14 @@ function locate(text) {
 }
 
 /**
+ * The property of an object node named `key`; of several, the last, which is the one `JSON.parse` keeps, and so the one
+ * Claude Code and `sssb doctor` read.
+ * @param {(Node & { kind: 'object' })['props']} props
+ * @param {string} key
+ */
+const lastProp = (props, key) => props.findLast((prop) => prop.key === key)
+
+/**
  * The marketplaces `.claude/settings.json` declares from `repository`, their `ref` moved to `commit`: replaced where
  * there is one, added to the `source` where there is none (a marketplace that follows the default branch).
  * @param {SourceFile} settings
@@ -161,18 +169,17 @@ function raiseMarketplacePins({ file, text }, repository, commit) {
         }
     }
     const root = locate(text)
-    const marketplaces =
-        root.kind === 'object' ? root.props.find((prop) => prop.key === 'extraKnownMarketplaces') : null
+    const marketplaces = root.kind === 'object' ? lastProp(root.props, 'extraKnownMarketplaces') : null
     /** @type {{ start: number, end: number, insert: string }[]} */
     const edits = []
     /** @type {Change[]} */
     const changes = []
     if (marketplaces?.node.kind === 'object') {
         for (const { key: name, node: entry } of marketplaces.node.props) {
-            const source = entry.kind === 'object' ? entry.props.find((prop) => prop.key === 'source')?.node : null
+            const source = entry.kind === 'object' ? lastProp(entry.props, 'source')?.node : null
             if (source?.kind !== 'object') continue
             const valueOf = (/** @type {string} */ key) => {
-                const node = source.props.find((prop) => prop.key === key)?.node
+                const node = lastProp(source.props, key)?.node
                 return node?.kind === 'string' ? node.value : undefined
             }
             if (
@@ -181,7 +188,7 @@ function raiseMarketplacePins({ file, text }, repository, commit) {
             )
                 continue
             const what = `marketplace ${name}`
-            const ref = source.props.find((prop) => prop.key === 'ref')
+            const ref = lastProp(source.props, 'ref')
             if (ref === undefined) {
                 const last = source.props.at(-1)
                 const first = source.props[0]
@@ -193,7 +200,7 @@ function raiseMarketplacePins({ file, text }, repository, commit) {
                     start: last.node.end,
                     end: last.node.end,
                     insert: multiline
-                        ? `,\n${indent}"ref": ${JSON.stringify(commit)}`
+                        ? `,${text.includes('\r\n') ? '\r\n' : '\n'}${indent}"ref": ${JSON.stringify(commit)}`
                         : `, "ref": ${JSON.stringify(commit)}`,
                 })
                 changes.push({ file, what, from: null, to: commit })
