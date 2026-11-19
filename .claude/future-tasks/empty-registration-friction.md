@@ -17,7 +17,7 @@ Two seam modules make an app that wants NOTHING still write something:
   app registering zero kinds still writes the function. With both parameters `never` the honest body is
   to return one, which reads as a puzzle rather than an off switch.
 
-**Why it matters:** `docs/adopting.md` sells "an unused framework capability needs nothing: an empty
+**Why it matters:** `docs/adopting-reference.md` sells "an unused framework capability needs nothing: an empty
 registration is the off switch." The starter proves that for 11 of 12 modules. The two exceptions are
 small, but they are the ones an adopter meets while still deciding whether to trust the claim.
 

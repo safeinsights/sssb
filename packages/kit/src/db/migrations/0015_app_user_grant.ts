@@ -11,7 +11,7 @@ import { Kysely, sql } from 'kysely'
  * could not switch to the role it had created, and every tenant-scoped query failed closed with
  * `permission denied to set role "app_user"`.
  *
- * NEEDS POSTGRES 16 OR LATER, which is SSSB's stated minimum (docs/adopting.md, "Cutover"):
+ * NEEDS POSTGRES 16 OR LATER, which is SSSB's stated minimum (docs/adopting-reference.md, "Cutover"):
  * `pg_has_role(..., 'SET')` and `GRANT ... WITH SET` both arrived in 16. Every server SSSB targets is 16
  * or later (Aurora 16.10 in @sssb/cdk's SssbApp, CI's postgres:16, pglite's 18.6), so this does not branch on
  * `server_version_num`.

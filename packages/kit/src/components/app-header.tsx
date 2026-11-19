@@ -23,7 +23,7 @@ export function AppHeader({
      * products, so any fallback key here would hold whichever app was written first and render it
      * for every other app — silently, because a default that resolves is indistinguishable from a
      * default that is right. Requiring the prop moves that from a sentence in a docstring to
-     * something the compiler checks (ADR-0012, docs/adopting.md).
+     * something the compiler checks (ADR-0012, docs/adopting-reference.md).
      */
     appName: ReactNode
 }) {

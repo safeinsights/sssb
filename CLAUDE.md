@@ -10,7 +10,8 @@ release and the gates are made. Nothing the guide says is repeated here. An app-
 `packages/kit/src/guide.md`, never here: it ships, so it takes a changeset (`.changeset/README.md`), and the doc gate
 checks its paths against `apps/starter`.
 
-Multi-tenant web app foundation, built to be adopted: `docs/adopting.md` is the adopter guide; keep it truthful.
+Multi-tenant web app foundation, built to be adopted: `docs/adopting.md` is the adopter guide, a newcomer's path in
+the order they act, and `docs/adopting-reference.md` holds the rest; keep both truthful, and keep the guide short.
 Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0012 and 0014) and don't
 relitigate them; 0013 (fork and merge) is Superseded by 0014, so nothing here tells an adopter to fork, merge or
 send a change "upstream" from a fork. 0014 is a plan carried out in steps (its implementation plan), so until a step
@@ -111,7 +112,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   workspace around the app is written by `packages/create/src/files.js`, its `.claude/settings.json` (the plugin's
   marketplace pinned at the workflow's commit) and `CLAUDE.md` included; a root file that names nothing of this
   repository's can be copied instead (`ROOT_FILES` in `packages/create/src/template.js`). Running it by hand:
-  `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting.md`). **`sssb add-app`**
+  `node packages/create/bin/create.js <dir> --sssb <dir of packed tarballs>` (`docs/adopting-reference.md`, "Trying an
+  unreleased commit of SSSB"). **`sssb add-app`**
   (`@sssb/tools`) writes a further app into an existing workspace with the same code (`writeApp` in `generate.js`),
   importing `@sssb/create/add-app` from the `@sssb/create` the workspace installs (never a dependency of `@sssb/tools`: no SSSB
   package depends on another); pack and consume's pages shape adds its ledger with it.
@@ -304,7 +306,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   "the starter", the framework's source tree (say `@sssb/kit/…`), a relative path out of the app, or SSSB's spikes,
   build notes or decision log fails `tests/tooling/create-generate.test.ts`. Any other path into this repository (a
   doc's, say) passes it, so say it is SSSB's. The app guide is held to the same test: the workspace carries a copy.
-  See `docs/adopting.md`.
+  See `docs/adopting-reference.md`, "`pnpm create @sssb`".
 - At the end of a slice or before a PR, run the `sssb:doc-steward` agent on the branch diff — it
   proposes updates to development-approach, an ADR addendum, decision-log, build-notes, and the
   cutover checklist so the docs keep telling the truth. It also reports the net line delta of each doctrine doc

@@ -6581,3 +6581,32 @@ standing rule for these sessions: decide, and record the rejected alternative.
   the packed generator's workspace says `starter`.
 - **`pnpm exec sssb pin` is named** where the generated README, `CLAUDE.md` and CI workflow say to raise the pins
   (follow-up 7, #66, left them saying it in words).
+
+## The adoption guide is split in two (2026-11-19, `docs/adopting-guide-split`)
+
+The adoption review's follow-up 1 (`docs/adoption-review-2026-11.md`, ranked item 1): `docs/adopting.md` had grown to
+921 lines, of which a newcomer needs about 150. JP's standing rule for these sessions: decide, and record the rejected
+alternative.
+
+- **`docs/adopting.md` is the guide (156 lines), `docs/adopting-reference.md` the reference.** The guide keeps the
+  file name every link already uses, and the heading "Upgrading by release", which every generated README links by
+  anchor. Rejected: a new name for the guide (`docs/start.md`) with `adopting.md` as the reference, which breaks every
+  generated workspace's README link and a test that holds it.
+- **The guide is written for the order a newcomer acts, not moved from the old text**: generate, first boot, take out
+  the starter's content, a first entity, deploy and cut over, upgrade. It defines tenant, organization (team) and the
+  staff team where a first table needs them (ADR-0004's boundary, development-approach's "Teams", `staffOrgSlug`'s
+  comment). The reference takes the old sections whole, reordered under the old headings where they are cited.
+  Rejected: trimming the old file in place, which keeps the reference's order on the newcomer's path.
+- **Stale text is deleted, not moved**: the release-candidate history (tarball URLs, `overrides`, rc notes), the
+  fork-era switch, the story behind the required `appName` prop, the history of SSSB's test fixture, and "the starter
+  has no server-side Simulator" (false since follow-up 6). Rejected: a history section in the reference, which the
+  decision log and ADRs already are.
+- **The guide's commands were run** against a workspace generated from this commit's packed packages, with the
+  checkout's generator (`pnpm create @sssb` reaches npm's last release, which predates `sssb remove-items` and the rest):
+  `pnpm verify` on the fresh workspace, `pnpm dev` on a free port of its own and stopped after its checks, the
+  Simulator's API, `pnpm tick`, the static demo, doctor, synth, `sssb guide`, `sssb pin`, `sssb remove-items`, `pnpm
+verify` after it, `pnpm knip` and `pnpm lint:fix`. Not run: `pnpm create @sssb` and `npm create @sssb` (for that
+  reason), and the three `claude plugin` commands, which change the machine's Claude Code state.
+- **Citations of moved sections are repointed in place** (code comments, `CLAUDE.md`, `CONTRIBUTING.md`, the
+  release-notes script, `sssb remove-items`' refusal, open future tasks), and ADR-0014 gets an addendum naming where
+  its cited sections live; dated records and ADR bodies are left as they were.

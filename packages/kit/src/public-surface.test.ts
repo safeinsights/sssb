@@ -74,11 +74,11 @@ describe('SSSB public surface', () => {
     /**
      * The complement: every module under `src/` the map does NOT publish. It was quoted by hand and
      * ungated, and it drifted twice (build-notes: 33 stated, 34 real; then 34 stated while two new
-     * Simulator internals made it 36). `docs/adopting.md` is where an adopter reads it, so that sentence
+     * Simulator internals made it 36). `docs/adopting-reference.md` is where an adopter reads it, so that sentence
      * is the one held. A module is a non-test, non-story, non-declaration `.ts`/`.tsx` file; a published
      * target counts once however many keys point at it.
      */
-    it('leaves exactly as many modules internal as docs/adopting.md says', () => {
+    it('leaves exactly as many modules internal as docs/adopting-reference.md says', () => {
         const published = new Set(
             Object.values(exportsMap)
                 .flatMap(targetsFor)
@@ -96,9 +96,9 @@ describe('SSSB public surface', () => {
         }
         walk(path.join(packageDir, 'src'))
         const internal = modules.filter((file) => !published.has(file)).length
-        const adopting = readFileSync(path.resolve(process.cwd(), 'docs/adopting.md'), 'utf8')
+        const adopting = readFileSync(path.resolve(process.cwd(), 'docs/adopting-reference.md'), 'utf8')
         const stated = /other\s+(\d+)\s+modules of the package are internals/.exec(adopting)
-        expect(stated, 'docs/adopting.md no longer states an internal-module count').not.toBeNull()
+        expect(stated, 'docs/adopting-reference.md no longer states an internal-module count').not.toBeNull()
         expect(Number(stated?.[1])).toBe(internal)
     })
 })

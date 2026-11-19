@@ -601,16 +601,17 @@ the e2e suites, the static demo and the offline CDK synth. Only the secret scan 
 
 ## Building on SSSB
 
-SSSB's guide for an app built on it, at the commit this workspace pins, says what is yours and what is SSSB's, how
-the app registers through its seam, which generated content to replace first, how to cut over to real accounts, and
-how to upgrade:
+SSSB's guide for an app built on it, at the commit this workspace pins, walks you from here: which generated content
+to replace first, a first entity through the app's seam, cutting over to real accounts, and upgrading:
 [\`docs/adopting.md\`](${sssbDoc(c, 'blob', 'docs/adopting.md')}).
+Its reference says the rest, what is yours and what is SSSB's among it:
+[\`docs/adopting-reference.md\`](${sssbDoc(c, 'blob', 'docs/adopting-reference.md')}).
 The worked example of every capability is SSSB's own reference app:
 [\`apps/showcase\`](${sssbDoc(c, 'tree', 'apps/showcase')}).
 
 The app starts with one worked example, an Items list (a tenant-scoped table with row-level security, a paged route, a
 card and its tests). When you have read it, \`pnpm exec sssb remove-items --app ${app(c)} --drop-migrations\` takes it out in one step
-(\`--dry-run\` says what it will do; the guide, under "To remove the Items slice", says when to leave the flag off).
+(\`--dry-run\` says what it will do; SSSB's reference, under "To remove the Items slice", says when to leave the flag off).
 
 ## Layout
 
@@ -666,8 +667,10 @@ ${
 The \`@sssb/*\` packages are released together at one version. Each release's notes open with "Upgrading to this
 release", the commands that move them together, refresh \`.claude/sssb-guide.md\` (\`pnpm exec sssb guide\`) and raise
 the workflow's pin and the plugin marketplace's \`ref\` in \`.claude/settings.json\` to the release's commit
-(\`pnpm exec sssb pin\`, which reads it from the installed \`@sssb/kit\`). SSSB's guide says why each step is there:
+(\`pnpm exec sssb pin\`, which reads it from the installed \`@sssb/kit\`). SSSB's guide lists the steps:
 [\`docs/adopting.md\`, "Upgrading by release"](${sssbDoc(c, 'blob', 'docs/adopting.md')}#upgrading-by-release).
+Its reference says why each is there:
+[\`docs/adopting-reference.md\`, "Upgrading, step by step"](${sssbDoc(c, 'blob', 'docs/adopting-reference.md')}#upgrading-step-by-step).
 \`pnpm exec sssb doctor\` fails when the installed packages are out of step, and reports a pin that is not the release
 commit the installed \`@sssb/kit\` names.
 `

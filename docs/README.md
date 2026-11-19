@@ -28,7 +28,7 @@ By task. The list under Doctrine is by document.
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Adding a vendor adapter                      | `docs/development-approach.md`, "What SSSB ships", then [recipes/app-owned-adapter.md](recipes/app-owned-adapter.md) |
 | Adding a generic UI component                | the same section's component test, then [recipes/list-kit.md](recipes/list-kit.md) as the worked case                |
-| Adopting SSSB, or upgrading to a new release | [adopting.md](adopting.md)                                                                                           |
+| Adopting SSSB, or upgrading to a new release | [adopting.md](adopting.md), then [adopting-reference.md](adopting-reference.md) for the detail                       |
 | Weighing how adoption could be simpler       | [adoption-review-2026-11.md](adoption-review-2026-11.md), a dated assessment with ranked follow-ups                  |
 | Working out why a design is the way it is    | [adr/](adr/), then [development-approach.md](development-approach.md)                                                |
 | Adding an auth capability                    | [auth-ui-playbook.md](auth-ui-playbook.md)                                                                           |
@@ -44,8 +44,11 @@ By task. The list under Doctrine is by document.
 
 - [provenance.md](provenance.md) — where SSSB came from, why the framework was extracted rather than
   designed, and what deliberately is not in this repository
-- [adopting.md](adopting.md) — starting a product on SSSB and upgrading it: the generator, what is yours and
-  what is SSSB's, the seam, the starter's content to replace, cutover, releases
+- [adopting.md](adopting.md) — the adoption guide: starting a product on SSSB, from generating the workspace to a first
+  entity, cutover and upgrading by release, in the order you act
+- [adopting-reference.md](adopting-reference.md) — the adoption reference: the generator's options and what it writes,
+  what is yours and what is SSSB's, port slots and `sssb add-app`, the seam, doctor and the gates, the scheduled tick,
+  cutover, each upgrade step
 - [development-approach.md](development-approach.md) — the engineering philosophy: thin slices,
   ports/adapters, hermetic dev, demo mode, what SSSB ships
 - [adr/](adr/) — the architecture decisions: 0001–0014 Accepted. Each body states the decision as it holds
