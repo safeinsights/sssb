@@ -14,8 +14,8 @@ import { parse } from 'yaml'
  * and nothing that runs on a pull request or on another branch holds an id-token, an environment or a secret.
  *
  * What this cannot read are the settings that carry the same path on GitHub and npm (release.yml's header lists
- * them): `release` admits `main` only, `npm-publish` admits `v*` tags only, a tag ruleset lets only the release app
- * create `v*`, and each package's trusted publisher names this repository, `release.yml` and `npm-publish`.
+ * what they must be): `release` admits `main` only, `npm-publish` admits `v*` tags only, a tag ruleset lets only the
+ * release app create `v*`, and each package's trusted publisher names this repository, `release.yml` and `npm-publish`.
  */
 const WORKFLOWS = fileURLToPath(new URL('../../.github/workflows/', import.meta.url))
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // SSSB's release logic (ADR-0014 part 10). `.github/workflows/release.yml` and CI's `release-plan` and
-// `release-dry-run` jobs call it; nothing else should. Every command reads Changesets' own config and planner, so the plan judged here is
+// `release-dry-run` jobs run it; pack and consume imports `candidateNotes`, and the tests import it. Every command reads Changesets' own config and planner, so the plan judged here is
 // the plan `changeset version` applies.
 //
 //   check                         Every PR. Fails on a `major` changeset for a package on 0.x, and on any plan

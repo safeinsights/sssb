@@ -28,7 +28,7 @@ const APP_DIR = path.join(REPO, 'apps/starter')
  * What SssbApp creates today:
  * - `AWS::RDS::DBCluster`: the database. Its storage is the cluster's, so a new cluster is an empty database.
  * - `AWS::RDS::DBInstance`: Aurora's writer. It holds no data of its own (the cluster volume does), but a new one is
- *   an outage while it is created, and it carries the endpoint the server connects to.
+ *   an outage while it is created (the server connects through the cluster's endpoint, which stays).
  * - `AWS::RDS::DBSubnetGroup`: a new one has a new name, and the cluster names it in `DBSubnetGroupName`, a property
  *   CloudFormation's `AWS::RDS::DBCluster` reference lists as "Update requires: Replacement". Replacing the subnet
  *   group would replace the cluster.
@@ -44,8 +44,8 @@ const APP_DIR = path.join(REPO, 'apps/starter')
  * - `AWS::Logs::LogGroup`: a new one starts empty, and its retention says the history mattered.
  *
  * The database's network: `AWS::EC2::VPC`, `AWS::EC2::Subnet` and `AWS::EC2::SecurityGroup`. They hold no data, but
- * the cluster lives in them: a new VPC or subnet means moving the subnet group in use, which RDS refuses, so the
- * next `cdk deploy` fails and rolls back for every deployed app.
+ * the cluster lives in them: a new VPC or subnet means a new subnet group for the cluster, and its
+ * `DBSubnetGroupName` requires replacement (above), so a changed network id replaces the database too.
  *
  * Left out: the rest of the network (route tables, NAT, endpoints), the Lambdas and their roles, CloudFront, the
  * alarms and the budget. Replacing them loses nothing and moves nothing stateful: the next deploy creates them again.

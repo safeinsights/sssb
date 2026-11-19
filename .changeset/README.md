@@ -39,7 +39,8 @@ branch; and a file a PR carries only because it merged `main` in. The rule and i
   held to the code by `packages/cdk/src/stateful-logical-ids.test.js` and `packages/kit/src/adapters/real/index.test.ts`.
   A PR that changes a file under `packages/*/release-snapshots/` must add a changeset filing `minor` for an `@sssb/*`
   package (ADR-0014 part 10's "breaking"; Kind `operator`, Action `required`); an empty or `patch` one fails. Dependabot
-  is not exempt; the release merge, a file merged in from `main` and a snapshot's first commit are. The snapshots are
+  is not exempt; the release merge, a PR opened before the gate's cutover, a file merged in from `main` and a
+  snapshot's first commit are. The snapshots are
   plain JSON, which `vitest -u` never rewrites: copy the new content from the failing test's message.
 
 If adopters would see no difference (a refactor, an internal fix), add an **empty changeset**: a file holding only

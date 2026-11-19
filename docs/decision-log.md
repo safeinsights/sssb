@@ -5421,6 +5421,9 @@ licenses` reads, so it needs the same install; what it would add is Google's lic
   lockfile were restored; with the `sentry` exception removed from a copy of the policy it failed naming `sentry@0.49.0`;
   with an exception for a package that is not installed added, it failed naming the stale entry.
   `tests/tooling/licence-scan.test.ts` holds the same cases against fixed reports, with the expression grammar.
+
+## P14 review: what the rounds changed, and corrections to the entries above (2026-11-18, `release/p14-first-npm-release`)
+
 - **Review round 1 (Opus code, Fable "can anything reach npm early").** Fable found no way through, and three LOWs
   that are now closed: the own-tree test pins the next release to exactly 0.2.0 until `docs/releases/v0.2.0.md`
   exists (a hand-edited manifest version would otherwise plan another); `release-reach.test.ts` holds every step of
@@ -5433,3 +5436,19 @@ licenses` reads, so it needs the same install; what it would add is Google's lic
   (`AWS::EC2::VPC`, `Subnet`, `SecurityGroup`) joins the logical-id snapshot, since a new one means moving a subnet
   group RDS refuses to move; and a test holds every `need('X')` in `createRealPorts` to the required environment,
   which the snapshot alone did not see. Each new assertion was seen red.
+- **Corrections, from the claim check** (the entries above stay as written):
+    - "P14": `prepare` would not refuse a planned 0.1.0 "as going backwards". Its floors are the latest plain `v*` tag
+      (none yet) and npm's `latest` (0.0.0). What stops a hand-edited version is the own-tree pin in
+      `tests/tooling/release-pre-mode.test.ts`.
+    - "P14": the rehearsal does not fail a release that would publish a candidate. A candidate plan ends the step,
+      green, with a summary line, before anything is packed. npm 11.21.2 does refuse a prerelease without `--tag`,
+      measured again, but the rehearsal never asks it. Out of pre mode `check` refuses a public group in pre mode,
+      so no candidate is planned.
+    - "Release snapshots": the four shapes no longer hold "the same six resources". With the network counted, each
+      pg shape holds 14 and each data-api shape 10, and the sets differ: pg has the migrator's and the server's
+      security groups and the public and private subnets, data-api the database subnets. The rejected "including
+      the network" is reversed by the review bullet above. The subnet-group reason is confirmed: `DBSubnetGroupName`
+      on `AWS::RDS::DBCluster` is "Update requires: Replacement"
+      (docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbcluster.html).
+    - "Release snapshots": the snapshot gate's exemptions also include a PR opened before the gate's cutover, since
+      that early exit runs first (`.github/scripts/require-changeset.sh`).

@@ -46,7 +46,8 @@ Built in the PR that took `private` off the fixed group, so the merge of `int-p1
    `@changesets/assemble-release-plan` 7.0.0: with no pre state `getRelevantChangesets` returns every changeset, `pre/`
    ones included, and `incrementVersion` applies semver's `inc` alone, so `0.2.0-rc.2` takes a patch or a minor to
    `0.2.0`; `apply-release-plan` then deletes every one. Exit mode would differ only in forcing a patch with no
-   changeset at all, which the group never lacks here.
+   changeset at all, which the group never lacks here, and in deleting `pre.json` in the release commit, which
+   `verify-release` would then have to accept.
 2. **Out of pre mode `loadWorkspace` counts `pre/` changesets as pending** (so `check` judges them and `prepare`
    versions and cross-checks from them), and `verifyRelease` requires each `.changeset/pre/*.md` deleted, computing the
    version from all of them with the existing `impliedVersion`. `check`'s reused-name rule now holds in both modes.

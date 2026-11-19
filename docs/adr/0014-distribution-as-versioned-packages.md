@@ -1253,14 +1253,16 @@ was heading for (a patch or a minor on `0.2.0-rc.2` is `0.2.0`; a major, 1.0.0, 
 
 - **`private` comes off all five `@sssb/*` packages, and pre mode is left by deleting `.changeset/pre.json`** in the
   same change, as the P7 addendum required. Not `changeset pre exit`: its `"mode": "exit"` would be one more state
-  for `release.mjs` and the notes tool to read, and it differs from no pre state only when nothing is pending.
+  for `release.mjs` and the notes tool to read, and it differs from no pre state only in forcing a patch when
+  nothing is pending and in deleting `pre.json` in the release commit, which `verify-release` would then have to
+  accept. This reverses the P7 addendum's "P14 leaves pre mode (`changeset pre exit`)".
 - **The candidates' changesets are released by the first plain release.** Out of pre mode Changesets counts the files
   in `.changeset/pre/` as pending, so 0.2.0 versions from them and the new ones and deletes them all; `release.mjs`
   (`check`, `prepare`, `verify-release`) and `scripts/release-notes.mjs` read the same set, so **0.2.0's notes are
   every change since the first candidate**, and `--since v0.2.0-rc.2` gives what is new since the last.
 - **The release is rehearsed on every PR**: CI's `release-dry-run` job (`checks.yml`) runs `plan`'s, `push`'s, `pack`'s
   and `publish`'s commands in its own checkout, ending in the pinned npm's `publish --provenance --dry-run`, with no
-  id-token, environment or token of any kind. This is the dry-run part 10 left out.
+  id-token, environment or token of any kind.
 - **Nothing reaches npm before `int-p14` merges into `main`**, and the reason is held by a test,
   `tests/tooling/release-reach.test.ts`: release.yml starts only on a push to `main` or a `v*` tag; `publish`, the one
   job with npm's id-token in `npm-publish`, needs `pack`, which runs only for a plain tag on `main`, after `checks`
