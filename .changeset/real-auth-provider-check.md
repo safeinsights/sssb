@@ -12,8 +12,8 @@
 `@sssb/kit/adapters/real/accept-invite-form`) call the auth provider's client hooks, which throw outside its
 provider, `RealAuthProviders` (`@sssb/kit/adapters/real/providers`). Only real mode loads either, so a missing
 provider showed nowhere but in a real sign-in page that failed to render. A new conformance check,
-`real-auth-provider`, reads every module under the app's `src/app` and fails one that loads either form with no
-`layout` in its directory or above it that loads the provider.
+`real-auth-provider`, follows the app's own imports from each page, layout and other rendering file under `src/app`,
+and fails one that reaches either form unless a layout or template wrapping it reaches the provider.
 
 **To adopt.** If your conformance suite fails `real-auth-provider`, mount the provider in your locale layout,
 `src/app/[locale]/layout.tsx`, in real mode only:

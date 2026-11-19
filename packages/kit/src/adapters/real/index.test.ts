@@ -346,8 +346,9 @@ describe('the required environment', () => {
 
 /**
  * Analytics in a real deployment without `POSTHOG_KEY`. It used to be the simulated world's fake, which writes every
- * capture and reads every flag under `.data/` in the working directory: on Lambda that is the deployment package,
- * read-only, so sending an invite (which awaits a capture) failed in any deployment without a key. It is now a no-op
+ * capture and reads every flag under `.data/` in the working directory: on Lambda that is inside the deployment
+ * package (Next's standalone server changes to its own directory), which is read-only, so sending an invite (which
+ * awaits a capture) would most likely fail in any deployment without a key. It is now a no-op
  * that touches no file. The data directory here cannot be created (its parent is a file), as `.data` cannot be in a
  * read-only directory, so a single filesystem write fails the test.
  */

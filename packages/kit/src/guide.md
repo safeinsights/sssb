@@ -50,8 +50,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - The locale layout (`src/app/[locale]/layout.tsx`) mounts `RealAuthProviders` from
   `@sssb/kit/adapters/real/providers` in real mode, loaded with `import()` when `!isSimulated`: SSSB's real
   sign-in and invite forms call the auth provider's client hooks, which throw outside it. The conformance suite's
-  `real-auth-provider` check fails a route that loads one of those forms with no layout above it loading the
-  provider.
+  `real-auth-provider` check fails a page that reaches one of those forms through its imports unless a layout or
+  template wrapping it reaches the provider.
 
 ## Data
 

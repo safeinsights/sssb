@@ -6755,12 +6755,15 @@ rejected alternative.
 - **The starter's locale layout mounts `RealAuthProviders` in real mode**, as the showcase's does: `@clerk/react`
   6.18.8's `useSignIn` calls `useAssertWrappedByClerkProvider`, which throws outside `ClerkProvider`, and the starter's
   real-mode sign-in page renders SSSB's form that calls it.
-- **A conformance check, `real-auth-provider`, holds every app to it**: a route module under `src/app` that loads
-  SSSB's real sign-in or invite form needs a layout in its directory or above it that loads the provider, read with
-  TypeScript's parser (a comment or string does not count). Rejected: a test of the starter alone, which would not
-  have caught pages, the first adopter, which has the same gap; and a render test of the layout in real mode, which
-  needs the real registry to boot. Its limits are in its header: it reads imports, not whether they run, and not a form
-  loaded outside `src/app`. SSSB's fixture opts out (no `src/app`); scratch apps test the check itself.
+- **A conformance check, `real-auth-provider`, holds every app to it**: from each of Next's rendering files under
+  `src/app` it follows the app's own imports (relative, `@/`, `@sssb/app-config/`; type-only ones skipped) with
+  TypeScript's parser, and a file that reaches SSSB's real sign-in or invite form needs a layout or template wrapping
+  it that reaches the provider. Rejected: a test of the starter alone, which would not have caught pages, the first
+  adopter, which has the same gap; a render test of the layout in real mode, which needs the real registry to boot;
+  and, as first written, judging only a layout's own imports and a module's own directory, which review showed failing
+  correct apps (a provider behind a wrapper module, a form in a shared folder) that could only opt out. Its limits are
+  in its header: it reads imports, not whether they run, and no alias but those two. SSSB's fixture opts out (no
+  `src/app`); scratch apps test the check itself.
 - **The check ships as `@sssb/kit` minor**, though the brief said patch: an adopter whose layout lacks the provider sees
   its suite go red on upgrade, and the release notes call an action-required change a minor. The analytics fix is a
   patch, and the starter's change a patch of `@sssb/create`.
