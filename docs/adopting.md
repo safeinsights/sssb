@@ -288,7 +288,7 @@ still needs: a root Vitest config that keeps a list of apps of its own (one writ
 app's two entries), and a root `@sssb/create` that knip would call unused (remove it once your apps are written, or
 ignore it in `knip.json`). The root's `dev`, `tick` and `start` scripts and the CI workflow's `synth` name one app on
 purpose; the command says what to add for the second. **`pnpm jscpd` fails while the new app is still the starter**:
-`.jscpd.json` measures duplication across every app's `src/`, and two copies of the starter are one; make the apps your
+`.jscpd.json` measures duplication across every app's source, and two copies of the starter are one; make the apps your
 own, or, while you do, add `"apps/<slug>/src/**"` to its `ignore` and take it out again once the app is its own.
 
 Nothing the generator renames is a literal an adopter has to hunt for, and no test hard-codes the product's
