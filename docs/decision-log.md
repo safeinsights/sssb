@@ -5692,6 +5692,13 @@ what or when anything publishes to npm changes.
   not given to make.
 - **No changeset.** It touches nothing an adopter receives (`scripts/`, `.github/`, `tests/`, docs), as the future task
   said; `changeset-required` sees no shipped path.
+- **Latest only while the tag is the highest plain release tag** (`gh api …/git/matching-refs/tags/v`, compared
+  numerically, candidates ignored), from the round-1 review: a re-run of an older tag's job, or two tags' runs
+  finishing out of order, would otherwise move Latest, and the README's link, back to an older demo. Rejected: always
+  `--latest`, and leaving it to GitHub, whose default for a newly published release is also Latest.
+- **No page for a tag that publishes nothing**: `demo` takes `publish`'s own condition,
+  `needs.pack.outputs.count != '0'`, so the page and npm agree on whether a version exists. Unreachable while the group
+  is public; it costs one line.
 - **The fake `gh` the prerelease job's test used moved to `tests/support/fake-gh-release.ts`**, shared with the new
   job's test, and reads a boolean flag as gh does (`--x`, `--x=true`, `--x=false`), so `--prerelease=false` and
   `--latest` are told apart.

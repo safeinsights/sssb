@@ -1120,7 +1120,7 @@ export async function waitForChecks({
             const run = res.ok ? (await res.json()).workflow_runs?.[0] : undefined
             last = res.ok ? `${run?.status ?? 'no run'} ${run?.conclusion ?? ''}`.trim() : `HTTP ${res.status}`
             if (run?.status === 'completed') {
-                // The run's id is handed back for `checks-run`, which downloads that run's tarballs.
+                // The run's id is handed back for `checks-run`, whose callers download that run's artifacts.
                 if (run.conclusion === 'success') return run.id
                 throw Object.assign(new Error(`checks concluded '${run.conclusion}' on ${sha}; refusing to release`), {
                     final: true,
