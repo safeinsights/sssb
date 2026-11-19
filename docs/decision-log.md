@@ -5173,6 +5173,7 @@ parts; its body is unchanged. ADR-0014 gains a matching addendum.
   step 5 applied after step 2's install. Step 2 now says to make an install-affecting scaffold change first, and to
   check what the lockfile resolves. **Rejected:** having `sssb doctor` fail an `overrides` block for `@sssb/*`, a
   `@sssb/tools` change worth considering separately, since an override is the adopter's own setting.
+
 ## Licence scan: a pnpm-native CI job, not a required check (2026-11-18, `ci/licence-scan`)
 
 The Canopy survey deferred a licence scan ("Trivy or equivalent"), and P14 is about to put SSSB's packages on public
