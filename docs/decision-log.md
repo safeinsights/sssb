@@ -6014,6 +6014,10 @@ Decided without asking, as JP's standing rule for these sessions says.
   removes fails typecheck loudly rather than silently. A CRLF checkout of an adopter's files refuses every hunk (the shipped
   patches are `eol=lf` by `.gitattributes`). Rejected: a rollback journal, and line-ending normalization, for failures that
   are loud and leave the diff in git.
+- **The starter's `proxy.test.ts` (from the Clerk middleware fix) used `/items` and `/api/items` as sample paths.** They
+  are only strings, but a removal that leaves "items" in `src` is not clean and the pack-and-consume leg checks for it, so
+  the sample paths are now `/projects`. Rejected: teaching the command to patch a test of the proxy, and exempting the file.
+
 ## Real-mode sign-in: the kit runs Clerk's middleware around the app's proxy (2026-11-19, `fix/kit-clerk-middleware`)
 
 The first adopter's first real-mode deployment found that SSSB's Clerk adapter (`packages/kit/src/adapters/real/auth.ts`)
