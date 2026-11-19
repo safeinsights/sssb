@@ -1,4 +1,5 @@
 // @ts-check
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -10,6 +11,7 @@ import { Construct } from 'constructs'
 import { failClosedEnvironmentProblems, migratorBundleProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '@sssb/tools/kit'
 import { databaseNameFor, SLUG } from './database-name.js'
+import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
 import { portsEnvironment } from './optional-ports.js'
 import { addScheduledTick } from './scheduled-tick.js'
 
@@ -598,9 +600,26 @@ export class SssbApp extends Construct {
             bodyHash = edgeFunction
         }
 
+        // ---- the host the viewer asked for (CloudFront Function) ------------------------------
+        // CloudFront sends the Function URL its own Host (it signs for it), so what reads `x-forwarded-host` (Clerk's
+        // URLs, Next's server-action origin check, next-intl's domain redirects) would see the Function URL's host,
+        // or whatever a viewer sent. This viewer-request function sets it, and its port, from the request CloudFront
+        // received (src/forwarded-host.js). A viewer-request CloudFront Function beside an origin-request Lambda@Edge is a
+        // combination CloudFront allows on one behavior.
+        // Its name is unique per account across regions, so it is keyed like the deployment: by region, stack name and
+        // construct path (CDK's default leaves the stack name out, and one stack deployed under two names into one
+        // account would collide), and kept within CloudFront's 64 characters.
+        const forwardedHostKey = createHash('sha256').update(`${stack.stackName}/${this.node.path}`).digest('hex')
+        const forwardedHost = new aws_cloudfront.Function(this, 'ForwardedHost', {
+            functionName: cdk.Fn.join('-', [cdk.Aws.REGION, slug.slice(0, 20), forwardedHostKey.slice(0, 16)]),
+            runtime: aws_cloudfront.FunctionRuntime.JS_2_0,
+            code: aws_cloudfront.FunctionCode.fromInline(FORWARDED_HOST_SOURCE),
+            comment: `${slug}: x-forwarded-host and x-forwarded-port from the viewer's request`,
+        })
+
         // ---- cloudfront ---------------------------------------------------------------------
         // First deploys ride *.cloudfront.net; custom domains + certs are cutover row
-        // `domains-and-certs`.
+        // `domains-and-certs`. Every behavior redirects plain HTTP to HTTPS.
         const distribution = new aws_cloudfront.Distribution(this, 'Distribution', {
             defaultBehavior: {
                 // withOriginAccessControl, not the plain constructor: it creates the OAC and grants
@@ -610,6 +629,9 @@ export class SssbApp extends Construct {
                 allowedMethods: aws_cloudfront.AllowedMethods.ALLOW_ALL,
                 cachePolicy: aws_cloudfront.CachePolicy.CACHING_DISABLED,
                 originRequestPolicy: aws_cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                functionAssociations: [
+                    { function: forwardedHost, eventType: aws_cloudfront.FunctionEventType.VIEWER_REQUEST },
+                ],
                 edgeLambdas: [
                     {
                         functionVersion: bodyHash,
@@ -621,10 +643,12 @@ export class SssbApp extends Construct {
             additionalBehaviors: {
                 '/_next/static/*': {
                     origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
+                    viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cachePolicy: aws_cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 },
                 '/assets/*': {
                     origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
+                    viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cachePolicy: aws_cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 },
             },
@@ -718,6 +742,7 @@ export class SssbApp extends Construct {
         this.functionUrl = functionUrl
         this.migrator = migrator
         this.distribution = distribution
+        this.forwardedHost = forwardedHost
         this.assetsBucket = assetsBucket
         this.storageBucket = storageBucket
         this.databaseTransport = transport
