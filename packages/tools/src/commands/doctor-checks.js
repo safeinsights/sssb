@@ -1057,7 +1057,7 @@ export function portSlotProblems(root, apps) {
  * JSONC as JSON: its comments and trailing commas taken out, strings (a `$schema` URL's `//` among them) left whole.
  * @param {string} text
  */
-export function withoutJsonComments(text) {
+function withoutJsonComments(text) {
     let out = ''
     // A comma is held until the next token: dropped before a `}` or `]` (a trailing comma), written before anything else.
     let comma = ''
