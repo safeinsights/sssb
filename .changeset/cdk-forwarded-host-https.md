@@ -13,7 +13,7 @@
 check, next-intl's domain redirects) saw the Function URL's host, or one the viewer chose. `SssbApp` now runs a
 viewer-request CloudFront Function on the default behavior that sets `x-forwarded-host` from the `Host` CloudFront
 received (lowercased, any port dropped) and `x-forwarded-port` to 443, overwriting what the viewer sent, and drops a
-viewer's `Forwarded`. Next's own `request.url` still names the Function URL's host. It is exposed as `forwardedHost`: associate it with any behavior of your own
+viewer's `Forwarded`. Next's own `request.url` names the server's own address (`localhost` and its port), not the viewer's host. It is exposed as `forwardedHost`: associate it with any behavior of your own
 that reaches the server. The `/_next/static/*` and `/assets/*` behaviors now redirect HTTP to HTTPS, as the default
 behavior already did.
 

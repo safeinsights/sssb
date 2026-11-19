@@ -708,6 +708,45 @@ older server that migration cannot run. Everything SSSB targets already meets it
 `packages/cdk/src/sssb-app.js` (16.10), CI's contract job (`postgres:16` in `.github/workflows/app-checks.yml`), pglite
 (18.6) and the embedded Postgres that a local `pnpm test:contract` starts (18.4).
 
+### What `SssbApp`'s distribution decides for you
+
+The CloudFront distribution in front of your server makes four choices you deploy with. The reasons, and what was
+rejected, are in SSSB's decision log (its 2026-11-19 entries on `SssbApp`), and for the body hash in ADR-0001's
+addendum of that date.
+
+- **Region.** A Lambda@Edge function on each request to the server adds the body hash a `POST` needs to reach the
+  Function URL, and Lambda@Edge lives in us-east-1 only.
+    - An environment-agnostic stack, as the starter's is, therefore deploys to us-east-1 only.
+    - For any other region, give the stack an explicit `env`. The construct then puts that function in a us-east-1
+      stack of its own, `edge-<region>-…`, carrying your stack's tags, so bootstrap us-east-1 too.
+    - Deploy by naming your stack, which deploys that one first, or with `--all`.
+    - A request body is capped at 1 MB; a larger one answers 413.
+- **The visitor's host.** CloudFront sends the server the Function URL's own `Host`. A CloudFront Function therefore
+  sets `x-forwarded-host` (and `x-forwarded-port`) from the request the visitor made, overwriting anything the visitor
+  sent. Clerk, Next's server-action origin check and next-intl read it. Next's own `request.url` does not: it names the
+  server's own address (`localhost` and its port). So build an absolute URL for a visitor from the forwarded headers,
+  never from `request.url`.
+- **HTTPS and security headers.** Every behavior redirects HTTP to HTTPS and carries AWS's managed
+  SecurityHeadersPolicy:
+    - HSTS for a year;
+    - `nosniff`, always sent;
+    - `Referrer-Policy: strict-origin-when-cross-origin`;
+    - `X-Frame-Options: SAMEORIGIN`.
+
+    Each yields to a header your app sends, but nosniff. Before your first deploy, check three things:
+    - **Framing.** If another site frames your app, send a CSP `frame-ancestors` naming it from the app.
+    - **Content types.** Your pipeline must upload the static files with their real `Content-Type`, or a browser refuses
+      a script stored as something else.
+    - **Subdomains.** `hstsIncludeSubdomains: true` adds `includeSubDomains` once every subdomain of your domain serves
+      HTTPS.
+
+    A policy of your own, as `responseHeadersPolicy`, replaces the whole set.
+
+- **A behavior you add.** A behavior you add to `sssbApp.distribution` gets none of this unless you give it all three:
+    - `viewerProtocolPolicy: REDIRECT_TO_HTTPS`;
+    - `responseHeadersPolicy: sssbApp.responseHeadersPolicy`;
+    - for one that reaches the server, `sssbApp.forwardedHost` on `viewer-request`.
+
 ## Upgrading, step by step
 
 SSSB's packages are released together, at one version, from `main` in SSSB's repository, and nothing is backported: a

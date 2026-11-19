@@ -128,6 +128,8 @@ Postgres, the migrator, alarms and a budget. `pnpm synth` checks it offline. Bef
   called every five minutes. The construct never puts a secret's value on the server: setting `WEBHOOK_SECRET` there is
   yours (the cutover rows `job-runner`, for the shared webhook secret, and `scheduled-tick`). In development, `pnpm
 tick` calls it once.
+- **Read what the distribution decides for you** (the reference, "What `SssbApp`'s distribution decides for you"): the
+  region it can deploy to, the visitor's host, and the security headers, with what to check before a first deploy.
 - **Work through `docs/cutover-checklist.md`.** Each row is something that needs a real account, and the proof that
   closes it. `pnpm sssb:doctor` reports a framework row the file stops mentioning.
 
