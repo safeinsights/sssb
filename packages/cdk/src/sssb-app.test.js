@@ -188,6 +188,32 @@ function securityHeadersProblems(all, { ownPolicyId, includeSubdomains = false }
     return problems
 }
 
+/**
+ * The principals an IAM role's trust policy lets assume it, sorted: from each `Allow` statement whose `Action` is or
+ * lists `sts:AssumeRole`, every `Principal.Service` (a string or a list) as the service's name, and any other kind of
+ * principal as `<kind>:<value>`, so a test that expects services alone fails on it.
+ * @param {any} role a role's `Properties`
+ * @returns {string[]}
+ */
+function rolePrincipals(role) {
+    /** @param {unknown} value @returns {unknown[]} */
+    const asList = (value) => (value === undefined ? [] : Array.isArray(value) ? value : [value])
+    /** @type {string[]} */
+    const principals = []
+    for (const statement of asList(role?.AssumeRolePolicyDocument?.Statement)) {
+        const s = /** @type {any} */ (statement)
+        if (s?.Effect !== 'Allow' || !asList(s.Action).some((action) => action === 'sts:AssumeRole')) continue
+        for (const [kind, value] of Object.entries(s.Principal ?? {})) {
+            for (const v of asList(value))
+                principals.push(kind === 'Service' ? String(v) : `${kind}:${JSON.stringify(v)}`)
+        }
+    }
+    return principals.sort()
+}
+
+/** Who may assume a Lambda@Edge function's role: Lambda and Lambda@Edge, both (CloudFront's guide), and nobody else. */
+const EDGE_ROLE_PRINCIPALS = ['edgelambda.amazonaws.com', 'lambda.amazonaws.com']
+
 /** The body-hash function's source, as the construct deploys it. */
 const BODY_HASH_SOURCE = readFileSync(path.join(REPO, 'packages/cdk/src/assets/body-hash/index.mjs'), 'utf8')
 
@@ -256,8 +282,11 @@ function functionUrlOriginProblems(all, assembly) {
         problems.push('the body-hash function is x86_64 on nodejs22.x')
     }
     const role = /** @type {any} */ (all[fn?.Role?.['Fn::GetAtt']?.[0]])?.Properties
-    const trusted = JSON.stringify(role?.AssumeRolePolicyDocument ?? null)
-    if (!trusted.includes('edgelambda.amazonaws.com')) problems.push("Lambda@Edge may assume the function's role")
+    if (JSON.stringify(rolePrincipals(role)) !== JSON.stringify(EDGE_ROLE_PRINCIPALS)) {
+        problems.push(
+            `Lambda and Lambda@Edge, and nobody else, may assume the function's role (${rolePrincipals(role)})`,
+        )
+    }
     if ((fn?.Environment ?? fn?.VpcConfig ?? fn?.Layers) !== undefined) {
         problems.push('the body-hash function has no environment, VPC or layers (Lambda@Edge allows none)')
     }
@@ -972,9 +1001,9 @@ describe("the server's Function URL behind CloudFront", () => {
         ])
         const versions = Object.values(edgeResources).filter((r) => r.Type === 'AWS::Lambda::Version')
         expect(versions.map((r) => /** @type {any} */ (r).DeletionPolicy)).toEqual(['Delete'])
-        expect(JSON.stringify(Object.values(edgeResources).find((r) => r.Type === 'AWS::IAM::Role'))).toContain(
-            'edgelambda.amazonaws.com',
-        )
+        const edgeRoles = Object.values(edgeResources).filter((r) => r.Type === 'AWS::IAM::Role')
+        expect(edgeRoles).toHaveLength(1)
+        expect(rolePrincipals(edgeRoles[0]?.Properties)).toEqual(EDGE_ROLE_PRINCIPALS)
         const distribution = /** @type {any} */ (
             Object.values(west.all).find((r) => r.Type === 'AWS::CloudFront::Distribution')
         )
