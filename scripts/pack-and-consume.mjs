@@ -1767,6 +1767,13 @@ function removeItemsGenerated() {
     const command = ['exec', 'sssb', 'remove-items', '--app', app]
     const root = path.join(GEN, app)
     const dirs = ['src', 'messages', 'tests', 'config'].map((dir) => path.join(root, dir))
+    /** What the command may change and the restore puts back: those directories, and the files at the app's root (playwright.config.ts). */
+    const touched = () => [
+        ...dirs.flatMap((dir) => filesUnder(dir)),
+        ...readdirSync(root, { withFileTypes: true })
+            .filter((entry) => entry.isFile())
+            .map((entry) => path.join(root, entry.name)),
+    ]
     /** What a dev server leaves behind: a type validator naming the route the command is about to delete. */
     const staleValidator = path.join(root, '.next/dev/types/validator.ts')
     const plantStaleValidator = () => {
@@ -1786,14 +1793,14 @@ function removeItemsGenerated() {
 
     // The default mode first, which keeps the database half: no other gate runs what it leaves. Typecheck and lint over
     // it, then the app goes back to what the generator wrote, for the whole slice.
-    const written = new Map(dirs.flatMap((dir) => filesUnder(dir)).map((file) => [file, readFileSync(file)]))
+    const written = new Map(touched().map((file) => [file, readFileSync(file)]))
     plantStaleValidator()
     run('pnpm', command, { cwd: GEN })
     if (existsSync(staleValidator))
         fail("sssb remove-items left Next's dev type validator, which names the deleted route")
     run('pnpm', ['run', 'typecheck'], { cwd: GEN, env: generatedEnv() })
     run('pnpm', ['run', 'lint'], { cwd: GEN, env: generatedEnv() })
-    for (const file of dirs.flatMap((dir) => filesUnder(dir))) if (!written.has(file)) rmSync(file)
+    for (const file of touched()) if (!written.has(file)) rmSync(file)
     for (const [file, content] of written) {
         mkdirSync(path.dirname(file), { recursive: true })
         writeFileSync(file, content)
