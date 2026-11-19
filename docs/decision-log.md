@@ -6039,6 +6039,14 @@ standing rule for these sessions says.
 - **`CLERK_JWT_KEY` must be a 2048-bit RSA public key in SPKI PEM** (round-3 review): Clerk's `loadClerkJwkFromPem`
   strips that key's fixed prefix as text, so a private key, a certificate, another size or another type passes
   `createPublicKey` and still fails every session check.
+- **`Authorization` is put back only into a list Clerk built** (round-4 review): the handler records whether the app's
+  proxy answered with its own override list, and a list the proxy built stands as it is, `Authorization` left out on
+  purpose included. The handler throws if Clerk hands it a request it was not given, rather than handing the app's
+  proxy the stripped copy. The tests' Clerk follows Clerk's own decoration rules (only a "next" or a same-origin
+  rewrite is decorated, a "next" becoming a rewrite) and check the headers a route receives with Next's own merge.
+- **Clerk's Frontend API proxy is not provided for** (round-4 review): it would forward the stripped copy, with no body
+  and no `Authorization`, but it runs only with `frontendApiProxy` set or a production key on a `.vercel.app` host,
+  and SSSB sets neither. An app that turns it on must exempt its proxy path from the copy.
 
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 

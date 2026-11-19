@@ -27,18 +27,27 @@ export function withClerk(
     proxy: NextProxy,
 ): (request: NextRequest, event: NextFetchEvent) => Promise<Response | null | undefined | void> {
     const jwtKey = clerkJwtKey(process.env['CLERK_JWT_KEY'])
-    // Clerk hands its handler the request it was given, the copy: the app's proxy gets the original.
-    const originals = new WeakMap<NextRequest, NextRequest>()
+    // Clerk hands its handler the request it was given, which may be the copy: the app's proxy gets the original. What
+    // the handler learns (whether the app's proxy listed the headers to forward) decides whether Authorization is put
+    // back.
+    const requests = new WeakMap<NextRequest, { original: NextRequest; proxyListed: boolean }>()
     const clerk = clerkMiddleware(
-        (_auth, request, event) => proxy(originals.get(request) ?? request, event),
+        async (_auth, request, event) => {
+            const state = requests.get(request)
+            if (!state) throw new Error("Clerk's middleware handed its handler a request it was not given")
+            const response = await proxy(state.original, event)
+            state.proxyListed = Boolean(response?.headers.get(OVERRIDE))
+            return response
+        },
         jwtKey ? { jwtKey } : {},
     )
     return async (request, event) => {
         const authorization = request.headers.get('authorization')
-        if (authorization === null) return clerk(request, event)
-        const copy = withoutAuthorization(request)
-        originals.set(copy, request)
-        return keepAuthorization(await clerk(copy, event), authorization)
+        const shown = authorization === null ? request : withoutAuthorization(request)
+        const state = { original: request, proxyListed: false }
+        requests.set(shown, state)
+        const response = await clerk(shown, event)
+        return authorization === null || state.proxyListed ? response : keepAuthorization(response, authorization)
     }
 }
 
@@ -54,7 +63,8 @@ const OVERRIDE = 'x-middleware-override-headers'
 /**
  * Next forwards a request with the headers a proxy's response lists in `x-middleware-override-headers` (each value in
  * `x-middleware-request-<name>`), when there is that list. Clerk builds it from the request it was shown when the app's
- * proxy did not, which would drop `Authorization` on its way to the route: put it back.
+ * proxy did not (the caller checks that), which would drop `Authorization` on its way to the route: put it back. A
+ * list the app's proxy built is its own, `Authorization` left out on purpose included.
  */
 function keepAuthorization<T extends Response | null | undefined | void>(response: T, authorization: string): T {
     const listed = response?.headers.get(OVERRIDE)
