@@ -1,4 +1,5 @@
 // @ts-check
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -589,7 +590,12 @@ export class SssbApp extends Construct {
         // sent. This viewer-request function sets it, and its port, from the request CloudFront received
         // (src/forwarded-host.js). A viewer-request CloudFront Function beside an origin-request Lambda@Edge is a
         // combination CloudFront allows on one behavior.
+        // Its name is unique per account across regions, so it is keyed like the deployment: by region, stack name and
+        // construct path (CDK's default leaves the stack name out, and one stack deployed under two names into one
+        // account would collide), and kept within CloudFront's 64 characters.
+        const forwardedHostKey = createHash('sha256').update(`${stack.stackName}/${this.node.path}`).digest('hex')
         const forwardedHost = new aws_cloudfront.Function(this, 'ForwardedHost', {
+            functionName: cdk.Fn.join('-', [cdk.Aws.REGION, slug.slice(0, 20), forwardedHostKey.slice(0, 16)]),
             runtime: aws_cloudfront.FunctionRuntime.JS_2_0,
             code: aws_cloudfront.FunctionCode.fromInline(FORWARDED_HOST_SOURCE),
             comment: `${slug}: x-forwarded-host and x-forwarded-port from the viewer's request`,

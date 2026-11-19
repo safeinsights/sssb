@@ -742,6 +742,47 @@ describe("the server's Function URL behind CloudFront", () => {
     })
 })
 
+describe("the forwarded-host function's name", () => {
+    const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
+    /**
+     * The function's name as the template gives it, in a stack of the given name.
+     * @param {string} stackName
+     * @param {string} slug
+     */
+    function nameIn(stackName, slug) {
+        const app = new cdk.App({ outdir: makeTestTmpDir('sssb-cdk-'), context: { 'aws:cdk:bundling-stacks': [] } })
+        // One construct path, as one infra/app.ts deployed as two environments under two stack names would give.
+        const stack = new cdk.Stack(app, 'Shared', { stackName })
+        new SssbApp(stack, 'Default', {
+            appDir,
+            slug,
+            params: { database: { transport: 'data-api' } },
+            environment: 'Staging',
+            production: false,
+        })
+        const fns = Object.values(/** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])).filter(
+            (r) => r.Type === 'AWS::CloudFront::Function',
+        )
+        expect(fns).toHaveLength(1)
+        return /** @type {any} */ (fns[0])?.Properties?.Name
+    }
+
+    it("differs between two stack names in one account and region, and stays within CloudFront's 64 characters", () => {
+        const slug = /** @type {string} */ (
+            /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+        )
+        const staging = nameIn('app-staging', slug)
+        const production = nameIn('app-production', slug)
+        expect(staging).not.toEqual(production)
+        // The region is a pseudo-parameter until deploy: the rest of the name is literal.
+        const [joiner, [region, ...rest]] = staging['Fn::Join']
+        expect(region).toEqual({ Ref: 'AWS::Region' })
+        const literal = rest.join(joiner)
+        expect(literal).toMatch(/^[A-Za-z0-9_-]+$/)
+        expect('ap-southeast-5'.length + joiner.length + literal.length).toBeLessThanOrEqual(64)
+    })
+})
+
 describe('the forwarded-host function', () => {
     /** The function as CloudFront's JS runtime loads it: a script defining `handler`, run alone. */
     const handler = /** @type {(event: any) => any} */ (vm.runInNewContext(`${FORWARDED_HOST_SOURCE}\nhandler`, {}))
@@ -762,6 +803,12 @@ describe('the forwarded-host function', () => {
         // Everything else goes on as the viewer sent it.
         expect(headers['host']).toEqual({ value: 'app.example.org' })
         expect(headers['cookie']).toEqual({ value: 'a=1' })
+    })
+
+    it('lowercases the host and drops any port the Host carried', () => {
+        expect(request({ host: { value: 'App.Example.ORG:8443' } })['x-forwarded-host']).toEqual({
+            value: 'app.example.org',
+        })
     })
 
     it('sets them on a request that carried none, and drops a forged host when there is no Host to take', () => {
