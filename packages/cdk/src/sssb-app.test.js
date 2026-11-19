@@ -4,6 +4,8 @@
 // environment (moved here from packages/kit's production-guard test, which read the old stack's source), and
 // each synth assertion the construct makes, seen to FAIL on the thing it guards. Offline, like synth: nothing
 // is deployed and no credentials are read.
+import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
@@ -14,6 +16,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../../../tests/support/tmp-dir'
 import { dataApiShapeProblems, lambdaBundles, lambdaFunction, secretGrantProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf } from '@sssb/tools/kit'
+import { handler as bodyHashHandler } from './assets/body-hash/index.mjs'
 import { databaseNameFor, SssbApp } from './index.js'
 import { toolsVersionProblem } from './sssb-app.js'
 
@@ -30,25 +33,102 @@ const APPS = readdirSync(path.join(REPO, 'apps')).filter((app) =>
 
 /**
  * One SssbApp in a stack of its own, in an assembly directory this test owns. `configure` runs after the
- * construct and before synth, as an adopter's own code would.
- * @param {{ appDir: string, slug: string, transport: Transport, bundle?: boolean, configure?: (app: SssbApp) => void }} options
+ * construct and before synth, as an adopter's own code would. `region` gives the stack an explicit one; left out,
+ * the stack is environment-agnostic, as the starter's is until cutover.
+ * @param {{ appDir: string, slug: string, transport: Transport, bundle?: boolean, production?: boolean, region?: string, configure?: (app: SssbApp) => void }} options
  */
-function synthesize({ appDir, slug, transport, bundle = true, configure }) {
+function synthesize({ appDir, slug, transport, bundle = true, production = false, region, configure }) {
     const outdir = makeTestTmpDir('sssb-cdk-')
     const context = bundle ? {} : { 'aws:cdk:bundling-stacks': [] }
     const app = new cdk.App({ outdir, context })
-    const stack = new cdk.Stack(app, `ShapeCheck-${transport}`)
+    const stack = new cdk.Stack(app, `ShapeCheck-${transport}`, region === undefined ? {} : { env: { region } })
     const construct = new SssbApp(stack, 'Default', {
         appDir,
         slug,
         params: { database: { transport } },
-        environment: 'Staging',
-        production: false,
+        environment: production ? 'Production' : 'Staging',
+        production,
     })
     configure?.(construct)
     const assembly = app.synth()
     const all = /** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])
-    return { all, assembly: assembly.directory }
+    return { all, assembly: assembly.directory, stacks: assembly.stacks }
+}
+
+/** The body-hash function's source, as the construct deploys it. */
+const BODY_HASH_SOURCE = readFileSync(path.join(REPO, 'packages/cdk/src/assets/body-hash/index.mjs'), 'utf8')
+
+/**
+ * What is wrong with how the distribution reaches the server's Function URL, or nothing: the default behavior's
+ * origin is the Function URL behind an origin access control that signs every request, and its origin request runs
+ * the body-hash function, given the body, from a version in this stack that Lambda@Edge may assume the role of and
+ * that is destroyed with the stack.
+ * @param {Resources} all
+ * @param {string} assembly
+ * @returns {string[]}
+ */
+function functionUrlOriginProblems(all, assembly) {
+    /** @type {string[]} */
+    const problems = []
+    /** @param {string} type */
+    const ofType = (type) => Object.entries(all).filter(([, r]) => r.Type === type)
+    const distributions = ofType('AWS::CloudFront::Distribution')
+    if (distributions.length !== 1) return [`one distribution, not ${distributions.length}`]
+    const config = /** @type {any} */ (distributions[0]?.[1].Properties)?.DistributionConfig
+    const behavior = config?.DefaultCacheBehavior
+    const origin = (config?.Origins ?? []).find((/** @type {any} */ o) => o.Id === behavior?.TargetOriginId)
+    const [serverUrl] = ofType('AWS::Lambda::Url').filter(([, r]) =>
+        JSON.stringify(r.Properties?.['TargetFunctionArn']).includes('"Server'),
+    )
+    if (serverUrl?.[1].Properties?.['AuthType'] !== 'AWS_IAM') problems.push("the server's Function URL takes AWS_IAM")
+    if (!JSON.stringify(origin?.DomainName ?? null).includes(serverUrl?.[0] ?? '-')) {
+        problems.push("the default behavior's origin is the server's Function URL")
+    }
+    const oacId = origin?.OriginAccessControlId?.['Fn::GetAtt']?.[0]
+    const oac = /** @type {any} */ (oacId === undefined ? undefined : all[oacId])?.Properties?.OriginAccessControlConfig
+    if (oac?.OriginAccessControlOriginType !== 'lambda' || oac?.SigningBehavior !== 'always') {
+        problems.push('that origin is behind an origin access control that signs every request')
+    }
+    // Only this distribution may invoke the server: every permission on it is CloudFront's, for this distribution.
+    const serverPermissions = ofType('AWS::Lambda::Permission').filter(([, r]) =>
+        JSON.stringify(r.Properties?.['FunctionName']).includes('"Server'),
+    )
+    const distributionId = distributions[0]?.[0]
+    if (
+        serverPermissions.length === 0 ||
+        !serverPermissions.every(
+            ([, r]) =>
+                r.Properties?.['Principal'] === 'cloudfront.amazonaws.com' &&
+                JSON.stringify(r.Properties?.['SourceArn']).includes(`"${distributionId}"`),
+        )
+    ) {
+        problems.push('every permission to invoke the server is CloudFront’s, for this distribution alone')
+    }
+    const associations = /** @type {any[]} */ (behavior?.LambdaFunctionAssociations ?? [])
+    const originRequest = associations.filter((a) => a.EventType === 'origin-request')
+    if (originRequest.length !== 1) return [...problems, 'the default behavior runs one origin-request function']
+    if (originRequest[0].IncludeBody !== true) problems.push('the origin-request function is given the body')
+    const versionId = originRequest[0].LambdaFunctionARN?.Ref
+    const version = versionId === undefined ? undefined : all[versionId]
+    if (version?.Type !== 'AWS::Lambda::Version') return [...problems, 'it runs a version of a function in this stack']
+    if (/** @type {any} */ (version).DeletionPolicy !== 'Delete')
+        problems.push('that version is destroyed with the stack, not retained')
+    const functionId = /** @type {any} */ (version.Properties)?.FunctionName?.Ref
+    const code = lambdaBundles(all, assembly).get(functionId)
+    if (code !== BODY_HASH_SOURCE) problems.push('the version is of the body-hash function, src/assets/body-hash')
+    const fn = /** @type {any} */ (all[functionId])?.Properties
+    if (fn?.Handler !== 'index.handler') problems.push("the body-hash function's handler is index.handler")
+    // Lambda@Edge runs x86_64 only, and a Node runtime the guide lists.
+    if (JSON.stringify(fn?.Architectures) !== '["x86_64"]' || fn?.Runtime !== 'nodejs22.x') {
+        problems.push('the body-hash function is x86_64 on nodejs22.x')
+    }
+    const role = /** @type {any} */ (all[fn?.Role?.['Fn::GetAtt']?.[0]])?.Properties
+    const trusted = JSON.stringify(role?.AssumeRolePolicyDocument ?? null)
+    if (!trusted.includes('edgelambda.amazonaws.com')) problems.push("Lambda@Edge may assume the function's role")
+    if ((fn?.Environment ?? fn?.VpcConfig ?? fn?.Layers) !== undefined) {
+        problems.push('the body-hash function has no environment, VPC or layers (Lambda@Edge allows none)')
+    }
+    return problems
 }
 
 /** @param {Resources} all @param {string} type */
@@ -91,6 +171,10 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
             for (const [id, code] of bundles) {
                 expect(code.includes('test-fixture'), `${id}'s bundle holds code from a test fixture`).toBe(false)
             }
+
+            // Next's standalone server listens where the Web Adapter calls it (the construct's comment says why).
+            expect(server.env['HOSTNAME']).toBe('0.0.0.0')
+            expect(functionUrlOriginProblems(all, assembly)).toEqual([])
 
             // The production fail-closed guard (packages/kit/src/adapters/index.ts) is irrelevant only while
             // every deployed environment pins APP_MODE=real and sets neither opt-in.
@@ -427,6 +511,226 @@ describe('a production deployment', () => {
             }
         },
     )
+})
+
+describe("the server's Function URL behind CloudFront", () => {
+    const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
+    const slug = /** @type {string} */ (
+        /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+    )
+
+    it.each(
+        /** @type {[Transport, boolean][]} */ ([
+            ['pg', false],
+            ['pg', true],
+            ['data-api', false],
+            ['data-api', true],
+        ]),
+    )(
+        'takes a request body on the %s shape (production: %s): the origin request adds its hash',
+        (transport, production) => {
+            const { all, assembly } = synthesize({ appDir, slug, transport, production, bundle: false })
+            expect(functionUrlOriginProblems(all, assembly)).toEqual([])
+            expect(lambdaFunction(all, 'Server').env['HOSTNAME']).toBe('0.0.0.0')
+        },
+    )
+
+    it('refuses a permission that lets anyone else invoke the server', () => {
+        const { all, assembly } = synthesize({
+            appDir,
+            slug,
+            transport: 'data-api',
+            bundle: false,
+            configure: (app) =>
+                app.server.addPermission('Anyone', {
+                    principal: new cdk.aws_iam.AnyPrincipal(),
+                    action: 'lambda:InvokeFunctionUrl',
+                }),
+        })
+        expect(functionUrlOriginProblems(all, assembly)).toEqual([
+            'every permission to invoke the server is CloudFront’s, for this distribution alone',
+        ])
+    })
+
+    it('gives each SssbApp in a stack outside us-east-1 its own edge stack', () => {
+        const outdir = makeTestTmpDir('sssb-cdk-')
+        const app = new cdk.App({ outdir, context: { 'aws:cdk:bundling-stacks': [] } })
+        const stack = new cdk.Stack(app, 'TwoApps', { env: { region: 'eu-west-1' } })
+        for (const id of ['Default', 'Second']) {
+            new SssbApp(stack, id, {
+                appDir,
+                slug,
+                params: { database: { transport: 'data-api' } },
+                environment: 'Staging',
+                production: false,
+            })
+        }
+        const stacks = app.synth().stacks
+        expect(stacks.filter((s) => s.environment.region === 'us-east-1')).toHaveLength(2)
+    })
+
+    /**
+     * The edge stack of one SssbApp in `region`, tagged by `tag` after it is built, as an adopter's code would tag it.
+     * @param {string} region
+     * @param {(app: cdk.App, stack: cdk.Stack) => void} tag
+     * @param {Record<string, unknown>} [context]
+     */
+    function edgeStackOf(region, tag, context = {}) {
+        const outdir = makeTestTmpDir('sssb-cdk-')
+        const app = new cdk.App({ outdir, context: { 'aws:cdk:bundling-stacks': [], ...context } })
+        const stack = new cdk.Stack(app, 'Shared', { env: { account: '123456789012', region } })
+        new SssbApp(stack, 'Default', {
+            appDir,
+            slug,
+            params: { database: { transport: 'data-api' } },
+            environment: 'Staging',
+            production: false,
+        })
+        tag(app, stack)
+        const edge = app.synth().stacks.filter((s) => s.environment.region === 'us-east-1')
+        expect(edge).toHaveLength(1)
+        const artifact = /** @type {cdk.cx_api.CloudFormationStackArtifact} */ (edge[0])
+        /** @param {any} r */
+        const tagsOf = (r) =>
+            Object.fromEntries((r.Properties?.Tags ?? []).map((/** @type {any} */ t) => [t.Key, t.Value]))
+        const edgeResources = Object.values(/** @type {Resources} */ (artifact.template.Resources))
+        const parent = /** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])
+        const server = tagsOf(parent[lambdaFunction(parent, 'Server').id])
+        return {
+            artifact,
+            server,
+            fn: tagsOf(edgeResources.find((r) => r.Type === 'AWS::Lambda::Function')),
+            role: tagsOf(edgeResources.find((r) => r.Type === 'AWS::IAM::Role')),
+        }
+    }
+
+    it("deploys the edge stack under the parent stack's tags, and one per region the app is deployed to", () => {
+        // One stack id, synthesized once per region it is deployed to, as one app's staging and production would be in
+        // a single account.
+        const west = edgeStackOf('eu-west-1', (_, stack) => cdk.Tags.of(stack).add('Owner', 'team-west'))
+        const oregon = edgeStackOf('us-west-2', (_, stack) => cdk.Tags.of(stack).add('Owner', 'team-oregon'))
+        expect([west.artifact.tags, oregon.artifact.tags]).toEqual([{ Owner: 'team-west' }, { Owner: 'team-oregon' }])
+        expect([west.fn, west.role]).toEqual([{ Owner: 'team-west' }, { Owner: 'team-west' }])
+        expect(west.artifact.stackName).not.toBe(oregon.artifact.stackName)
+    })
+
+    it("gives the edge function the server's tags however they were set", () => {
+        // explicitStackTags (cdk init's default) tags resources and not the stack.
+        const explicit = edgeStackOf('eu-west-1', (_, stack) => cdk.Tags.of(stack).add('Owner', 'team'), {
+            '@aws-cdk/core:explicitStackTags': true,
+        })
+        expect([explicit.server, explicit.fn, explicit.role]).toEqual([
+            { Owner: 'team' },
+            { Owner: 'team' },
+            { Owner: 'team' },
+        ])
+        // The stack overrides the app's value, and removes a tag the app sets: the edge function follows the server.
+        const layered = edgeStackOf('eu-west-1', (app, stack) => {
+            cdk.Tags.of(app).add('Env', 'default')
+            cdk.Tags.of(app).add('Gone', 'yes')
+            cdk.Tags.of(stack).add('Env', 'staging')
+            cdk.Tags.of(stack).remove('Gone')
+        })
+        expect(layered.server).toEqual({ Env: 'staging' })
+        expect([layered.fn, layered.role, layered.artifact.tags]).toEqual([
+            { Env: 'staging' },
+            { Env: 'staging' },
+            { Env: 'staging' },
+        ])
+    })
+
+    it('keeps the function at one construct path whether the stack names us-east-1 or no region', () => {
+        const ids = (/** @type {string | undefined} */ region) =>
+            Object.entries(synthesize({ appDir, slug, transport: 'data-api', bundle: false, region }).all)
+                .filter(([, r]) => r.Type === 'AWS::Lambda::Function' || r.Type === 'AWS::IAM::Role')
+                .map(([id]) => id)
+                .filter((id) => id.startsWith('BodyHash'))
+        expect(ids('us-east-1')).toEqual(ids(undefined))
+        expect(ids(undefined)).toHaveLength(2)
+    })
+
+    it('keeps the function in a us-east-1 stack, and in a us-east-1 stack of its own when the stack is elsewhere', () => {
+        const east = synthesize({ appDir, slug, transport: 'data-api', bundle: false, region: 'us-east-1' })
+        expect(east.stacks.map((s) => s.environment.region)).toEqual(['us-east-1'])
+        expect(functionUrlOriginProblems(east.all, east.assembly)).toEqual([])
+
+        const west = synthesize({ appDir, slug, transport: 'data-api', bundle: false, region: 'eu-west-1' })
+        const edge = west.stacks.filter((s) => s.environment.region === 'us-east-1')
+        expect(edge).toHaveLength(1)
+        const edgeResources = /** @type {Resources} */ (edge[0]?.template.Resources)
+        const fns = Object.entries(edgeResources).filter(([, r]) => r.Type === 'AWS::Lambda::Function')
+        expect(fns).toHaveLength(1)
+        expect(lambdaBundles(edgeResources, west.assembly).get(/** @type {string} */ (fns[0]?.[0]))).toBe(
+            BODY_HASH_SOURCE,
+        )
+        const edgeFn = /** @type {any} */ (fns[0]?.[1].Properties)
+        expect([edgeFn.Handler, edgeFn.Runtime, edgeFn.Architectures, edgeFn.Environment]).toEqual([
+            'index.handler',
+            'nodejs22.x',
+            ['x86_64'],
+            undefined,
+        ])
+        const versions = Object.values(edgeResources).filter((r) => r.Type === 'AWS::Lambda::Version')
+        expect(versions.map((r) => /** @type {any} */ (r).DeletionPolicy)).toEqual(['Delete'])
+        expect(JSON.stringify(Object.values(edgeResources).find((r) => r.Type === 'AWS::IAM::Role'))).toContain(
+            'edgelambda.amazonaws.com',
+        )
+        const distribution = /** @type {any} */ (
+            Object.values(west.all).find((r) => r.Type === 'AWS::CloudFront::Distribution')
+        )
+        const behavior = distribution?.Properties?.DistributionConfig?.DefaultCacheBehavior
+        expect(behavior.LambdaFunctionAssociations).toEqual([
+            {
+                EventType: 'origin-request',
+                IncludeBody: true,
+                LambdaFunctionARN: { 'Fn::GetAtt': [expect.stringMatching(/^BodyHashArnReader/), 'FunctionArn'] },
+            },
+        ])
+    })
+})
+
+describe('the body-hash function', () => {
+    /**
+     * An origin-request event carrying `body`.
+     * @param {{ inputTruncated?: boolean, encoding?: string, data?: string } | undefined} body
+     * @param {Record<string, { key?: string, value: string }[]>} [headers]
+     */
+    const event = (body, headers = {}) => ({
+        Records: [{ cf: { request: { method: 'POST', uri: '/api/items', headers, ...(body && { body }) } } }],
+    })
+    /** @param {string | Buffer} bytes */
+    const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+
+    it('sets the SHA-256 of the body CloudFront hands over, in place of whatever the viewer sent', async () => {
+        const payload = Buffer.from('{"name":"ünïcode ✓"}\n\u0000binary', 'utf8')
+        const forged = { 'x-amz-content-sha256': [{ key: 'X-Amz-Content-Sha256', value: 'UNSIGNED-PAYLOAD' }] }
+        const result = /** @type {any} */ (
+            await bodyHashHandler(event({ encoding: 'base64', data: payload.toString('base64') }, forged))
+        )
+        expect(result.headers['x-amz-content-sha256']).toEqual([
+            { key: 'x-amz-content-sha256', value: sha256(payload) },
+        ])
+        // The body itself goes on untouched: what was hashed is what Lambda receives.
+        expect(result.body).toEqual({ encoding: 'base64', data: payload.toString('base64') })
+        expect(result.uri).toBe('/api/items')
+    })
+
+    it('hashes a text body as UTF-8, and a request with no body as the empty string', async () => {
+        const text = /** @type {any} */ (await bodyHashHandler(event({ encoding: 'text', data: 'a=1&b=é' })))
+        expect(text.headers['x-amz-content-sha256'][0].value).toBe(sha256(Buffer.from('a=1&b=é', 'utf8')))
+        const empty = /** @type {any} */ (await bodyHashHandler(event(undefined)))
+        expect(empty.headers['x-amz-content-sha256'][0].value).toBe(sha256(''))
+        const blank = /** @type {any} */ (await bodyHashHandler(event({ encoding: 'base64', data: '' })))
+        expect(blank.headers['x-amz-content-sha256'][0].value).toBe(sha256(''))
+    })
+
+    it('answers 413 for a body CloudFront truncated, rather than a hash of part of it', async () => {
+        const result = /** @type {any} */ (
+            await bodyHashHandler(event({ inputTruncated: true, encoding: 'base64', data: 'AAAA' }))
+        )
+        expect(result.status).toBe('413')
+        expect(result).not.toHaveProperty(['uri'])
+    })
 })
 
 describe('a synth that does not bundle this stack', () => {

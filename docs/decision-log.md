@@ -5948,6 +5948,58 @@ public GitHub release of `safeinsights/sssb`, marked Latest while it is the newe
   job's test, and reads a boolean flag as gh does (`--x`, `--x=true`, `--x=false`), so `--prerelease=false` and
   `--latest` are told apart.
 
+## `SssbApp` takes request bodies, and pins the server's `HOSTNAME` (2026-11-19, `fix/cdk-function-url-post`)
+
+Pages, the first adopter, found before its first deploy that `SssbApp`'s distribution refuses every request with a
+body (its Function URL is behind an origin access control, which needs the body's hash), and that the server's
+`HOSTNAME` must be `0.0.0.0`. ADR-0001's addendum of 2026-11-19 holds the hosting decision and its rejected
+alternatives (no origin access control with a secret header, an ALB, API Gateway, a CloudFront Function, hashing in the
+browser). JP's standing rule for these sessions is to decide and record; each choice below is one he would otherwise
+have been asked.
+
+- **An origin-request Lambda@Edge function, not viewer-request.** It runs just before CloudFront sends the request to
+  the origin, and CloudFront hands it up to 1 MB of body against a viewer-request function's 40 KB. Pages chose the
+  same.
+- **A body over 1 MB answers 413 from the function.** Rejected: **forwarding it with the hash of the part CloudFront
+  handed over**, which Lambda refuses with a 403 that names nothing. Rejected: **not setting the header**, the same 403.
+- **The header is always set, a request with no body getting the empty string's hash.** Rejected: **setting it only on
+  `POST`, `PUT` and `PATCH`**: a viewer's own `x-amz-content-sha256` would then reach the signer on every other method,
+  and whether Lambda accepts a body on a `DELETE` would become this function's question.
+- **A stack whose region is us-east-1 or unresolved keeps the function in the stack; a stack with an explicit region
+  elsewhere gets CDK's `EdgeFunction`.** `EdgeFunction` refuses an environment-agnostic stack, which the starter's is
+  until cutover, and `pnpm synth` must stay offline; and one construct path for both in-stack cases means naming
+  us-east-1 at cutover does not replace the function (a replicated one cannot be deleted for hours). Rejected: **a
+  CloudFormation rule refusing any other region** up front: CloudFormation's guide shows rules reading template
+  parameters, never a pseudo parameter such as `AWS::Region`, this could not be tried without an account, and a rule
+  CloudFormation refused would stop every deploy of the stack.
+  CloudFront's own refusal of the association is the error instead. Its cost: that refusal comes after the database
+  is created, so a production stack (retained database and buckets) deployed that way may leave them behind; the
+  starter's infra README says to give the stack its `env` first.
+- **`EdgeFunction`'s us-east-1 stack is one per `SssbApp` and region (`edge-<region>-<construct address>`), not CDK's
+  one per parent stack.** CDK's default collides on a second `SssbApp` in one stack, and is shared by one stack deployed
+  to two regions of an account. Rejected: **CDK's default name**, for those two reasons.
+- **That stack carries exactly the app's tags.** CDK copies the parent's tags into it when it creates it, before any
+  `Tags.of(...)` aspect has applied, and under `explicitStackTags` (`cdk init`'s default) the parent stack has no stack
+  tags at all. An aspect run after every tag aspect gives each of its resources the server function's final tags, and
+  the stack the parent stack's. Rejected: **asking adopters to tag at the App**, which the starter's `infra/app.ts`
+  does not do and a tag policy would refuse silently until the first deploy.
+- **The function's version is destroyed with the stack, not retained (CDK's default).** Its logical id carries a hash
+  of the code, so a retained one would pile up on every change, and would enter the stateful-logical-ids snapshot, which
+  takes any retained resource, under a name that changes with the code. The cost: a delete can fail while CloudFront
+  holds replicas, recorded in the `deploy-pipeline` row.
+- **The edge role's trust in `edgelambda.amazonaws.com` is CDK's.** `Distribution` adds it for every function it runs at
+  the edge; the test reads it from the template rather than the construct adding a second statement.
+- **`HOSTNAME=0.0.0.0` in the server's environment, not in a `run.sh` SSSB writes.** The deploy pipeline, and so its
+  `run.sh`, is the adopter's (`deploy-pipeline`); the environment is the one place the construct controls. Rejected:
+  **SSSB shipping the `run.sh`**, which would decide the pipeline's packaging for it.
+- **The live proofs extend two existing cutover rows** (`origin-not-publicly-reachable`, `deploy-pipeline`) rather than
+  adding one. A new row is a new id in `@sssb/kit/cutover/rows.json`, which `sssb doctor` reports as missing from every
+  adopter's own checklist.
+- **Out of scope, reported to the manager:** CloudFront sends the origin the Function URL's own host
+  (`ALL_VIEWER_EXCEPT_HOST_HEADER`), so the app builds absolute URLs and redirects on the Function URL's host. Pages sets
+  `x-forwarded-host` from the viewer's `Host` in a CloudFront Function of its own; one in `SssbApp` would also decide
+  what becomes of a viewer's own `X-Forwarded-Host`.
+
 ## One command removes the starter's Items slice (2026-11-19, `feat/remove-starter-items`)
 
 Adoption follow-up 2 (`docs/adoption-review-2026-11.md`, ranked item 2; `.claude/future-tasks/resolved/create-blank-option.md`).
