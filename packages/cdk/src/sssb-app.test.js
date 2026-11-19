@@ -569,29 +569,74 @@ describe("the server's Function URL behind CloudFront", () => {
         expect(stacks.filter((s) => s.environment.region === 'us-east-1')).toHaveLength(2)
     })
 
-    it("deploys the edge stack under the parent stack's tags, and one per region the app is deployed to", () => {
-        // One stack id, synthesized once per region it is deployed to, as one app's staging and production would be
-        // in a single account.
-        const edgeStackOf = (/** @type {string} */ region) => {
-            const app = new cdk.App({ outdir: makeTestTmpDir('sssb-cdk-'), context: { 'aws:cdk:bundling-stacks': [] } })
-            const stack = new cdk.Stack(app, 'Shared', { env: { account: '123456789012', region } })
-            new SssbApp(stack, 'Default', {
-                appDir,
-                slug,
-                params: { database: { transport: 'data-api' } },
-                environment: 'Staging',
-                production: false,
-            })
-            // As the starter's infra/app.ts tags its stack: by aspect, after SssbApp is built.
-            cdk.Tags.of(stack).add('Owner', `team-${region}`)
-            const edge = app.synth().stacks.filter((s) => s.environment.region === 'us-east-1')
-            expect(edge).toHaveLength(1)
-            return /** @type {cdk.cx_api.CloudFormationStackArtifact} */ (edge[0])
+    /**
+     * The edge stack of one SssbApp in `region`, tagged by `tag` after it is built, as an adopter's code would tag it.
+     * @param {string} region
+     * @param {(app: cdk.App, stack: cdk.Stack) => void} tag
+     * @param {Record<string, unknown>} [context]
+     */
+    function edgeStackOf(region, tag, context = {}) {
+        const outdir = makeTestTmpDir('sssb-cdk-')
+        const app = new cdk.App({ outdir, context: { 'aws:cdk:bundling-stacks': [], ...context } })
+        const stack = new cdk.Stack(app, 'Shared', { env: { account: '123456789012', region } })
+        new SssbApp(stack, 'Default', {
+            appDir,
+            slug,
+            params: { database: { transport: 'data-api' } },
+            environment: 'Staging',
+            production: false,
+        })
+        tag(app, stack)
+        const edge = app.synth().stacks.filter((s) => s.environment.region === 'us-east-1')
+        expect(edge).toHaveLength(1)
+        const artifact = /** @type {cdk.cx_api.CloudFormationStackArtifact} */ (edge[0])
+        /** @param {any} r */
+        const tagsOf = (r) =>
+            Object.fromEntries((r.Properties?.Tags ?? []).map((/** @type {any} */ t) => [t.Key, t.Value]))
+        const edgeResources = Object.values(/** @type {Resources} */ (artifact.template.Resources))
+        const parent = /** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])
+        const server = tagsOf(parent[lambdaFunction(parent, 'Server').id])
+        return {
+            artifact,
+            server,
+            fn: tagsOf(edgeResources.find((r) => r.Type === 'AWS::Lambda::Function')),
+            role: tagsOf(edgeResources.find((r) => r.Type === 'AWS::IAM::Role')),
         }
-        const west = edgeStackOf('eu-west-1')
-        const oregon = edgeStackOf('us-west-2')
-        expect([west.tags, oregon.tags]).toEqual([{ Owner: 'team-eu-west-1' }, { Owner: 'team-us-west-2' }])
-        expect(west.stackName).not.toBe(oregon.stackName)
+    }
+
+    it("deploys the edge stack under the parent stack's tags, and one per region the app is deployed to", () => {
+        // One stack id, synthesized once per region it is deployed to, as one app's staging and production would be in
+        // a single account.
+        const west = edgeStackOf('eu-west-1', (_, stack) => cdk.Tags.of(stack).add('Owner', 'team-west'))
+        const oregon = edgeStackOf('us-west-2', (_, stack) => cdk.Tags.of(stack).add('Owner', 'team-oregon'))
+        expect([west.artifact.tags, oregon.artifact.tags]).toEqual([{ Owner: 'team-west' }, { Owner: 'team-oregon' }])
+        expect([west.fn, west.role]).toEqual([{ Owner: 'team-west' }, { Owner: 'team-west' }])
+        expect(west.artifact.stackName).not.toBe(oregon.artifact.stackName)
+    })
+
+    it("gives the edge function the server's tags however they were set", () => {
+        // explicitStackTags (cdk init's default) tags resources and not the stack.
+        const explicit = edgeStackOf('eu-west-1', (_, stack) => cdk.Tags.of(stack).add('Owner', 'team'), {
+            '@aws-cdk/core:explicitStackTags': true,
+        })
+        expect([explicit.server, explicit.fn, explicit.role]).toEqual([
+            { Owner: 'team' },
+            { Owner: 'team' },
+            { Owner: 'team' },
+        ])
+        // The stack overrides the app's value, and removes a tag the app sets: the edge function follows the server.
+        const layered = edgeStackOf('eu-west-1', (app, stack) => {
+            cdk.Tags.of(app).add('Env', 'default')
+            cdk.Tags.of(app).add('Gone', 'yes')
+            cdk.Tags.of(stack).add('Env', 'staging')
+            cdk.Tags.of(stack).remove('Gone')
+        })
+        expect(layered.server).toEqual({ Env: 'staging' })
+        expect([layered.fn, layered.role, layered.artifact.tags]).toEqual([
+            { Env: 'staging' },
+            { Env: 'staging' },
+            { Env: 'staging' },
+        ])
     })
 
     it('keeps the function at one construct path whether the stack names us-east-1 or no region', () => {

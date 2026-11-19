@@ -231,6 +231,21 @@ function stagedBundle(fn) {
 
 export { databaseNameFor } from './database-name.js'
 
+/** After every tag aspect: CDK's own run at `AspectPriority.MUTATING` (200) or the default (500). */
+const MIRROR_PRIORITY = 900
+
+/**
+ * Makes `manager` hold exactly `wanted`, over any tag an aspect set or will set (a tag's priority is CDK's 100 at most,
+ * and a higher one wins).
+ * @param {cdk.TagManager} manager
+ * @param {Record<string, string>} wanted
+ */
+function mirrorTags(manager, wanted) {
+    const priority = 10_000
+    for (const key of Object.keys(manager.tagValues())) if (!(key in wanted)) manager.removeTag(key, priority)
+    for (const [key, value] of Object.entries(wanted)) manager.setTag(key, value, priority)
+}
+
 /**
  * An SSSB app's deployment (ADR-0001, ADR-0014 part 8): the Next standalone server in one Lambda behind the
  * AWS Lambda Web Adapter, its Function URL behind CloudFront with static assets from S3, the framework's
@@ -545,20 +560,25 @@ export class SssbApp extends Construct {
             // to two regions of an account would share.
             const edgeFunction = new aws_cloudfront.experimental.EdgeFunction(this, 'BodyHash', {
                 ...bodyHashProps,
-                stackId: `edge-lambda-stack-${stack.region}-${this.node.addr}`,
+                stackId: `edge-${stack.region}-${this.node.addr}`,
             })
-            // CDK copies the parent's tags into that stack when it creates it, before `Tags.of(stack).add` has applied
-            // any (an aspect, at synth), so it would deploy untagged. Its stack-level tags are set from the parent's
-            // once they are known; CloudFormation applies stack tags to the resources it creates.
+            // That stack is the app's too, so it carries the app's tags: CDK copies the parent's into it when it is
+            // created, before any `Tags.of(...)` has applied (they are aspects, applied at synth). So, last, each of
+            // its resources is given exactly the tags the server function ended with, and the stack exactly the
+            // parent stack's, whatever scope or filter set them (`explicitStackTags` tags resources only).
             const edgeStack = cdk.Stack.of(edgeFunction.lambda)
-            cdk.Aspects.of(edgeStack).add({
-                visit: (node) => {
-                    if (node !== edgeStack) return
-                    for (const [key, value] of Object.entries(stack.tags.tagValues())) {
-                        if (!(key in edgeStack.tags.tagValues())) edgeStack.tags.setTag(key, value)
-                    }
+            const serverTags = /** @type {cdk.CfnResource & cdk.ITaggable} */ (server.node.defaultChild).tags
+            cdk.Aspects.of(edgeStack).add(
+                {
+                    visit: (node) => {
+                        if (node === edgeStack) mirrorTags(edgeStack.tags, stack.tags.tagValues())
+                        else if (node instanceof cdk.CfnResource && cdk.TagManager.isTaggable(node)) {
+                            mirrorTags(node.tags, serverTags.tagValues())
+                        }
+                    },
                 },
-            })
+                { priority: MIRROR_PRIORITY },
+            )
             bodyHash = edgeFunction
         }
 
