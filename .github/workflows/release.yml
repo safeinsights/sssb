@@ -521,6 +521,8 @@ jobs:
     demo:
         name: demo
         needs: pack
+        # As `publish`: a tag that publishes nothing gets no page either.
+        if: needs.pack.outputs.count != '0'
         runs-on: ubuntu-latest
         timeout-minutes: 90
         permissions:
@@ -627,8 +629,13 @@ jobs:
                   gh release download "$tag" --repo "$repo" --dir "$got" --pattern '*'
                   (cd "$got" && sha256sum -- * | sort) | diff "$RUNNER_TEMP/expected" - || { echo "::error::$tag holds other files than the demo"; exit 1; }
 
+                  # Latest only while no higher plain release tag exists, so a re-run of an older tag's job, or two tags'
+                  # runs finishing out of order, never moves Latest (and the README's link) back to an older demo.
+                  newest=$(gh api "repos/$repo/git/matching-refs/tags/v" --paginate --jq '.[].ref' \
+                      | sed -n 's|^refs/tags/v\(0\.[0-9]*\.[0-9]*\)$|\1|p' | sort -t . -k 1,1n -k 2,2n -k 3,3n | tail -n 1)
+                  if [ "$newest" = "$VERSION" ]; then latest=true; else latest=false; fi
                   if [ "$state" = draft ]; then
-                      gh release edit "$tag" --repo "$repo" --title "$tag" --notes-file "$dir/notes.md" --draft=false --prerelease=false --latest
+                      gh release edit "$tag" --repo "$repo" --title "$tag" --notes-file "$dir/notes.md" --draft=false --prerelease=false --latest="$latest"
                   fi
                   shown=$(gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
                   [ "$shown" = "false false" ] || { echo "::error::$tag is not a published release ($shown)"; exit 1; }

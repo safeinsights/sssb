@@ -167,9 +167,10 @@ describe('the one way onto npm', () => {
         const { demo, 'github-release': page } = release.jobs
         expect(demo.needs).toBe('pack')
         expect(page.needs).toEqual(['pack', 'demo'])
+        // `pack`'s gates (a plain tag on main, after checks passed on it), and, as `publish`, only a tag that publishes
+        expect(demo.if).toBe("needs.pack.outputs.count != '0'")
+        expect(page.if).toBeUndefined()
         for (const job of [demo, page]) {
-            // inheriting `pack`'s gates: a plain tag on main, after checks passed on it
-            expect(job.if).toBeUndefined()
             expect(environment(job)).toBeUndefined()
             expect(JSON.stringify(job)).not.toMatch(/\bsecrets\b|id-token|npm-publish/)
             expect(publishCommands(runs(job))).toEqual([])

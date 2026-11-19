@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { DEMO_ASSET, demo, releaseNotes } from '../../scripts/release.mjs'
+import { installFakeGh, runStep, workflowStep } from '../support/fake-gh-release'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
@@ -112,5 +113,53 @@ describe('release release-notes (the release page body)', () => {
         expect(notes.stdout).toContain('## Try the showcase')
         expect(readFileSync(file, 'utf8')).toBe(HTML)
         expect(cli('demo', VERSION).status).toBe(1)
+    })
+})
+
+describe("release.yml's demo job, then its github-release job, as the tag's run hands one to the other", () => {
+    it('checks the demo checks built, writes the notes for this commit, and the page publishes exactly that file', () => {
+        const root = checkout({ budget: 100_000 })
+        mkdirSync(path.join(root, 'scripts'))
+        for (const f of ['release.mjs', 'release-notes.mjs']) {
+            copyFileSync(path.join(SCRIPTS, f), path.join(root, 'scripts', f))
+        }
+        const temp = makeTestTmpDir('sssb-release-page-')
+        mkdirSync(path.join(temp, 'built'))
+        writeFileSync(path.join(temp, 'built', 'index.html'), HTML)
+        installFakeGh(temp)
+        const state = { tags: [`v${VERSION}`], release: null, calls: [] }
+
+        const demoStep = workflowStep('demo', 'check the demo and write the release notes')
+        const checked = runStep(temp, demoStep, state, VERSION, { cwd: root, env: { GITHUB_SHA: SHA } })
+        expect(checked.stderr).toBe('')
+        expect(checked.status).toBe(0)
+        const notes = readFileSync(path.join(temp, 'release-page', 'notes.md'), 'utf8')
+        expect(notes).toContain(`"ref": "${SHA}"`)
+        expect(notes).toContain('releases/download/v0.3.0/sssb-showcase.html')
+        expect(readFileSync(path.join(temp, 'summary.md'), 'utf8')).toBe(notes)
+
+        // `release-page` is uploaded from and downloaded to the same path under the runner's temp directory
+        const page = runStep(temp, workflowStep('github-release', 'publish the release page'), state, VERSION)
+        expect(page.stderr).toBe('')
+        expect(page.status).toBe(0)
+        expect(page.state.release).toMatchObject({ draft: false, prerelease: false, latest: true, notes })
+        expect(readFileSync(page.state.release!.assets[DEMO_ASSET]!, 'utf8')).toBe(HTML)
+    })
+
+    it('stops before writing any notes when the demo checks built is over budget', () => {
+        const root = checkout({ budget: 10 })
+        mkdirSync(path.join(root, 'scripts'))
+        for (const f of ['release.mjs', 'release-notes.mjs']) {
+            copyFileSync(path.join(SCRIPTS, f), path.join(root, 'scripts', f))
+        }
+        const temp = makeTestTmpDir('sssb-release-page-')
+        mkdirSync(path.join(temp, 'built'))
+        writeFileSync(path.join(temp, 'built', 'index.html'), HTML)
+        const state = { tags: [`v${VERSION}`], release: null, calls: [] }
+        const demoStep = workflowStep('demo', 'check the demo and write the release notes')
+        const checked = runStep(temp, demoStep, state, VERSION, { cwd: root, env: { GITHUB_SHA: SHA } })
+        expect(checked.status).toBe(1)
+        expect(checked.stderr).toMatch(/over the 10 byte budget/)
+        expect(() => readFileSync(path.join(temp, 'release-page', 'notes.md'))).toThrow()
     })
 })

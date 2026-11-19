@@ -47,6 +47,15 @@ const save = () => fs.writeFileSync(file, JSON.stringify(state))
 const opt = (name) => { const i = args.indexOf(name); return i < 0 ? undefined : args[i + 1] }
 const flag = (name) => args.includes(name) || args.includes(name + '=true') ? true : args.includes(name + '=false') ? false : undefined
 const die = (msg) => { save(); process.stderr.write(msg + '\\n'); process.exit(1) }
+if (args[0] === 'api') {
+  // the repository's tags, as GitHub's matching-refs answers for the prefix \`v\`
+  if (args[1] !== 'repos/safeinsights/sssb/git/matching-refs/tags/v') die('unexpected gh ' + args.join(' '))
+  const out = JSON.stringify(state.tags.filter((t) => t.startsWith('v')).map((t) => ({ ref: 'refs/tags/' + t })))
+  const jq = opt('--jq')
+  process.stdout.write(jq ? execFileSync('jq', ['-r', jq], { input: out, encoding: 'utf8' }) : out + '\\n')
+  save()
+  process.exit(0)
+}
 if (args[0] !== 'release') die('unexpected gh ' + args.join(' '))
 const [, cmd, tag] = args
 if (opt('--repo') !== 'safeinsights/sssb') die('wrong repo')
@@ -94,12 +103,20 @@ save()
  * Runs a step's script as GitHub runs it (`bash --noprofile --norc -eo pipefail`) in a runner whose temp directory is
  * `temp`, with the fake `gh` first on PATH, and returns what it printed and the fake's state after it.
  */
-export function runStep(temp: string, script: string, state: State, version: string) {
+export function runStep(
+    temp: string,
+    script: string,
+    state: State,
+    version: string,
+    { cwd, env = {} }: { cwd?: string; env?: Record<string, string> } = {},
+) {
     const stateFile = path.join(temp, 'gh-state.json')
     writeFileSync(stateFile, JSON.stringify(state))
     const result = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script], {
         encoding: 'utf8',
+        cwd,
         env: {
+            ...env,
             NODE_ENV: 'test',
             PATH: `${path.join(temp, 'bin')}:${process.env['PATH']}`,
             RUNNER_TEMP: temp,

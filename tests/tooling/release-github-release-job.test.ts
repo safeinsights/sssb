@@ -128,6 +128,33 @@ describe("release.yml's github-release job", () => {
         expect(b.state.calls).toEqual([])
     })
 
+    it('leaves Latest alone when a higher plain release is tagged, and ignores a higher candidate', () => {
+        const older = runner()
+        const behind = run(older.temp, { ...fresh(), tags: [TAG, 'v0.3.1', 'v0.10.0-rc.0'] })
+        expect(behind.status).toBe(0)
+        expect(behind.state.release).toMatchObject({ draft: false, prerelease: false, latest: false })
+        const newest = runner()
+        // numerically, not as text: 0.3.0 is above 0.2.10, and a candidate's tag is not a release
+        const ahead = run(newest.temp, { ...fresh(), tags: ['v0.2.10', TAG, 'v0.3.1-rc.0'] })
+        expect(ahead.status).toBe(0)
+        expect(ahead.state.release).toMatchObject({ latest: true })
+    })
+
+    it('publishes a draft that was made a prerelease as a plain release, and refuses a published prerelease', () => {
+        const { temp } = runner()
+        const draft = { ...existingRelease(temp, {}, { draft: true, prerelease: true }) }
+        const fixed = run(temp, { ...fresh(), release: draft })
+        expect(fixed.status).toBe(0)
+        expect(fixed.state.release).toMatchObject({ draft: false, prerelease: false, latest: true })
+
+        const other = runner()
+        const published = existingRelease(other.temp, { [DEMO]: BODY }, { draft: false, prerelease: true })
+        const refused = run(other.temp, { ...fresh(), release: published })
+        expect(refused.status).toBe(1)
+        expect(refused.stdout).toMatch(/::error::v0\.3\.0 is not a published release \(false true\)/)
+        expect(writes(refused.state)).toEqual([])
+    })
+
     it("refuses a candidate's version, and a tag that does not exist", () => {
         const { temp } = runner()
         const candidate = run(temp, fresh(), '0.3.0-rc.0')
