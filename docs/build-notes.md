@@ -2364,7 +2364,7 @@ old pending files beside their `pre/` copies, which is not that tree).
 
 A child session started in the manager's worktree switched branches in it, and another session then checked out its own
 branch there while the first still had staged work: the first commit landed on the second session's branch, with two of
-its unstaged files staged in the commit. Recovery that touched nothing of the other session's: `git reset --soft`, unstage
+its files in the commit. Recovery that touched nothing of the other session's: `git reset --soft`, unstage
 only the files that were not mine, save the rest with `git diff --cached --binary`, restore exactly those paths, then
 `git worktree add` a private worktree on the branch and `git apply --index` the patch. The lesson is the same as the
 rule about shared checkouts, one level down: read `git branch --show-current` and `git status` before every commit in a

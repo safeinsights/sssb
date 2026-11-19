@@ -5683,10 +5683,11 @@ asking JP, as his standing rule for these sessions says.
   repository's own CI. Reproduced in a scratch project and gone with the entries.
     - **Rejected: explain it in the README or the printed next steps.** The warning would stay on every adopter's first
       install; an adopter reads the explanation after they have already worried.
-    - **Rejected: a blanket `allowedVersions: { eslint: '*' }` or `ignoreMissing`.** It would hide a real eslint
-      mismatch from every other plugin, which is the check a peer warning exists to give.
-    - **Rejected: adding the rule to this repository's own `pnpm-workspace.yaml`.** It never prints the warning on a
-      frozen install, and a second copy of the list is one more place to forget to delete.
+    - **Rejected: a blanket `allowedVersions: { eslint: '*' }`.** It would hide a real eslint mismatch from every other
+      plugin, which is the check a peer warning exists to give.
+    - **Rejected: adding the rule to this repository's own `pnpm-workspace.yaml`.** `pnpm install` here printed no
+      warning in this session, though `pnpm peers check` lists the same two plugins; the entry matters to a first
+      install in a generated workspace, and a second copy of the list is one more place to forget to delete.
 - **`AbilitySubject` is an intersection (`@sssb/kit/core/abilities`), and the starter writes
   `export type AppSubjectFields = Record<never, never>`.** The kit's fixture does the same, so the framework's own tests
   compile the new form and the showcase (an interface with fields) compiles the old one. ADR-0012 has the addendum.
