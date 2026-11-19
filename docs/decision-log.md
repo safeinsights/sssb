@@ -6855,6 +6855,7 @@ JP asked for the fix. Decisions, with the rejected alternative:
   which this change would have made a regression, since without `redirectUrl` Clerk's own flow handled it.
 - **Two invitation mails stay possible**: Clerk can deliver its own, and no API call turns that off per invitation, so
   the `auth-dev` row asks for the instance to be set so an invitee gets one.
+
 ## ADR-0015 addendum: auth as a provider bundle, datastores in tiers (2026-11-19, `docs/adr-0015-addendum`)
 
 JP asked, after reading ADR-0015, why real auth is tied to Clerk when the fake works as an adapter, and whether an app
