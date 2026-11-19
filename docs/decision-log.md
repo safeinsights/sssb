@@ -6631,6 +6631,7 @@ to decide and record; each choice below is one he would otherwise have been aske
     - the default certificate's minimum TLS (`viewer-tls-minimum.md`);
     - the live check of a tagged Lambda@Edge function (`edge-function-tags-live-check.md`);
     - a sandboxing CSP for the static files (`static-files-sandbox-csp.md`).
+
 ## The adoption guide is split in two (2026-11-19, `docs/adopting-guide-split`)
 
 The adoption review's follow-up 1 (`docs/adoption-review-2026-11.md`, ranked item 1): `docs/adopting.md` had grown to
