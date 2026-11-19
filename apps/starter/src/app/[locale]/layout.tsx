@@ -12,8 +12,8 @@ import { routing } from '@sssb/kit/i18n/routing'
 import { getTenantTheme } from '@sssb/kit/theme'
 import { tenants } from '@/seed'
 
-// The Simulator panel, in simulated mode only: the dynamic import keeps it, and everything behind it, out of a real
-// build's client bundle. Its server side is `src/app/api/simulator/[...path]/route.ts`.
+// The Simulator panel, in simulated mode only: a real build never renders it, so no page there loads its client code.
+// Its server side is `src/app/api/simulator/[...path]/route.ts`.
 async function SimulatorChrome({ locale, children }: { locale: string; children: ReactNode }) {
     if (!isSimulated) return children
     const { SimulatorHost } = await import('@sssb/kit/components/simulator/simulator-host')

@@ -142,9 +142,9 @@ export interface HooksAppProps {
  * navigation happens via `onSelect`/mail's `onOpenLink`, data arrives as props; the host owns fetching and polling
  * (the kit's own server host, ./simulator-host, an app's own glue, or the static demo's shell). Tab strip:
  * People / Mail / Messages / Events / Jobs / Hooks / …host `extraTabs`… / Errors / Snapshots / Tours —
- * `data-testid="simulator-tab-<id>"`, each tab but People present only when the host passes its props. App tabs are registered on the seam (@sssb/app-config/simulator)
- * and composed by the host into `extraTabs`, slotted in between Hooks and Errors so the panel itself
- * knows nothing of app content. Transient
+ * `data-testid="simulator-tab-<id>"`, each tab but People present only when the host passes its props. App tabs are
+ * registered on the seam (@sssb/app-config/simulator) and composed by the host into `extraTabs`, slotted in between
+ * Hooks and Errors so the panel itself knows nothing of app content. Transient
  * feedback stays inside simulator: a notice overlay anchored at the panel's bottom edge when
  * expanded (absolute, so it never shifts the scroll body), a pulsing unread badge on the pill when
  * collapsed — never app-level toasts that could collide with future product ones. The header shows

@@ -6,8 +6,8 @@ import type { SimulatorRouteContext } from '@sssb/kit/server-lib/simulator-api'
  * lands here and is answered by SSSB's `simulatorApi` (People, Mail, and Jobs with the world clock). A route file of
  * this app's own beside it, `api/simulator/<name>/route.ts`, still wins for its path.
  *
- * Each handler opens with the simulated-mode 404 and loads SSSB's handler only after it, so a real build never
- * evaluates the simulated world. That first line is also the gate the authorization scan checks: these handlers are
+ * Each handler opens with the simulated-mode 404 and loads SSSB's handler only after it, so a real build never loads
+ * it. That first line is also the gate the authorization scan checks: these handlers are
  * exempt from `authorize(...)` as a simulated-world surface, and only while each one opens with it.
  */
 export async function GET(request: Request, context: SimulatorRouteContext): Promise<Response> {

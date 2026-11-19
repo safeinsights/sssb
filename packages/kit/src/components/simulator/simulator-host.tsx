@@ -63,8 +63,8 @@ function readStoredScope(): 'person' | 'all' | null {
 /**
  * The Simulator on an app's own `pnpm dev`: the panel, fed by the kit's server host
  * (`@sssb/kit/server-lib/simulator-api`, which the app mounts at `src/app/api/simulator/[...path]/route.ts`). The app's
- * locale layout renders it around the page, in simulated mode only and through a dynamic import, so a real build
- * ships none of it.
+ * locale layout renders it around the page, in simulated mode only and through a dynamic import, so no page of a real
+ * build loads it.
  *
  * It wires the tabs that host serves: People (switch to anyone, signed in or not), Mail (each person's inbox, or all
  * of it) and Jobs with the world clock (run what is queued, move the clock, run what is due). The panel leaves out

@@ -30,16 +30,17 @@ import { dispatchWebhook } from './webhook-dispatch'
  * keeps route files of its own under `api/simulator/` still owns them: Next routes a static segment before a
  * catch-all.
  *
- * Simulated mode only. The app's route file opens each handler with `if (!isSimulated) return 404` and imports this
- * module only after it (the gate the authorization scan's `simulator/` exemption checks, `@sssb/kit/authz/route-policy`),
- * and this handler opens with the same check, so a real build neither evaluates the simulated world nor answers from
- * it. Inside a simulated world it is a mode gate, never a role gate: every path works signed out, so switching to a
- * low-privilege person can never strand the operator.
+ * Simulated mode only. The app's route file should open each handler with `if (!isSimulated) return 404` (the gate the
+ * authorization scan's `simulator/` exemption checks, `@sssb/kit/authz/route-policy`, so an app's route without it
+ * fails the scan) and import this module only after it, as SSSB's starter does; and this handler opens with the same
+ * check, so in a real build it answers 404 however it is reached. Inside a simulated world it is a mode gate, never a
+ * role gate: every path works signed out, so switching to a low-privilege person can never strand the operator.
  *
- * Every POST must say `content-type: application/json`. These calls sign a browser in as anyone and empty the mail
- * catch-store, and a page on another origin can send a simple POST (text/plain, no preflight) to a developer's
- * localhost or to a hosted simulated demo; asking for JSON makes such a request preflight, and the preflight fails
- * because nothing here sends `Access-Control-Allow-Origin`. The host always sends JSON.
+ * Every POST must say `content-type: application/json`. These calls sign a browser in as anyone (as the app's own
+ * dev sign-in route does) and empty the mail catch-store, and a page on another origin can send a simple POST
+ * (text/plain, no preflight) to a developer's localhost or to a hosted simulated demo; asking for JSON makes such a
+ * request preflight, and the preflight fails because nothing here sends `Access-Control-Allow-Origin`. The host always
+ * sends JSON.
  */
 
 /** Next's context for a `[...path]` route: the segments after `/api/simulator/`. */

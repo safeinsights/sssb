@@ -1,8 +1,8 @@
 import { expect, test, type Page } from '@playwright/test'
 
 /**
- * The claim this app exists to prove: an item written in one tenant is invisible from the other, through the entire stack (UI → route → withTenant → RLS
- * on pglite).
+ * The claim this app exists to prove: an item written in one tenant is invisible from the other, through the
+ * entire stack (UI → route → withTenant → RLS on pglite).
  *
  * Crossing tenants is done the way a real user would, not through the Simulator panel: sign out, sign in
  * as somebody whose home tenant differs.

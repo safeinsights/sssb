@@ -31,7 +31,7 @@ test('the Simulator signs you in as anyone, and serves its mail and jobs tabs', 
     await page.getByTestId('simulator-tab-mail').click()
     await expect(page.getByTestId('simulator-mail')).toBeVisible()
 
-    // Running what is due leaves the clock where it is and says what happened.
+    // Running what is due answers with a notice inside the panel.
     await page.getByTestId('simulator-tab-jobs').click()
     await expect(page.getByTestId('simulator-clock-now')).toBeVisible()
     await page.getByTestId('simulator-clock-run-due').click()
