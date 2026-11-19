@@ -5788,3 +5788,43 @@ public GitHub release of `safeinsights/sssb`, marked Latest while it is the newe
 - **The fake `gh` the prerelease job's test used moved to `tests/support/fake-gh-release.ts`**, shared with the new
   job's test, and reads a boolean flag as gh does (`--x`, `--x=true`, `--x=false`), so `--prerelease=false` and
   `--latest` are told apart.
+
+## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
+
+`sssb pin [--app <dir>]` (`packages/tools/src/commands/pin.js`) reads the release commit from the installed kit's stamp
+(`dist/release.json`, through `kit.js`'s `kitReleaseStampOf`) and writes it into every `uses: <repo>/.github/workflows/…@<ref>`
+line under `.github/workflows/` and every `extraKnownMarketplaces` entry of `.claude/settings.json` that names SSSB's repository.
+Decisions, each with the alternative rejected:
+
+- **A text edit, not a re-print.** The workflow is edited line by line and `settings.json` at the offsets of the `ref`
+  string (a small JSON scanner), so the adopter's formatting, key order and inline arrays survive and the diff is the two
+  pins. Rejected: `JSON.stringify` of the parsed settings, which reflows anything Prettier laid out another way and
+  buries the pin in noise; and a YAML round trip, which drops comments.
+- **Judged before written.** Every pin is planned first (`planPins`, pure), and a refusal anywhere writes nothing, so a
+  bad `settings.json` never leaves the workflow raised and the marketplace behind. Rejected: raising what can be raised
+  and failing on the rest, which leaves the two pins on two commits, the state this command exists to end.
+- **What it refuses.** No release commit to pin to: SSSB's own repository (`isInRepoKit`, even with a `dist/` a pack left
+  behind, as doctor ignores it), a kit with no stamp or a stamp that names no commit. Files that are not the shape it
+  edits: no workflow calls SSSB's reusable workflow, `settings.json` not JSON, no marketplace from SSSB's repository, a
+  `ref` that is not a string. Exit 1 and a message, as every `UsageError`.
+- **A missing `.claude/settings.json` is not a refusal**, as it is not one for doctor (a workspace whose people do not use
+  Claude Code has no plugin): the workflow is raised and the run says there was no second pin. Rejected: refusing, which
+  leaves such a workspace no command for its one pin. A marketplace entry with no `ref` (it follows the default branch) gets
+  one added, in the entry's own layout, since doctor reports exactly that as a pin that differs.
+- **The version comment moves, an adopter's own comment does not.** A trailing `# @sssb/create 0.2.0`, `# @sssb/kit 0.2.0`
+  or `# v0.2.0` is what the generator and the old notes wrote, and a stale one names a release the pin has left; any other
+  comment is left. Rejected: rewriting every trailing comment, which deletes text the adopter wrote, and leaving them all,
+  which the old hand edit had to remember ("and the version in the comment after it").
+- **One definition of a pin.** `doctor-checks.js` now exports the `uses:` regex (`WORKFLOW_USES`), the marketplace's
+  repository test (`sourceRepository`) and `stampedCommit`, which doctor's report and this command both use, so they
+  cannot disagree about what a pin or a stamp is. The command picks its app as `sssb guide` does (`--app`, the working
+  directory, else the workspace's first app that resolves `@sssb/kit`) instead of importing doctor's chooser, whose
+  messages name doctor.
+- **The release notes' step 3 is the command.** `upgradeSection` no longer writes a yaml and a json block with `<sha>` in
+  them, nor the `git ls-remote` that read the SHA off a tag: the installed kit has the commit. It keeps one sentence of
+  hand edit for when the command refuses, a candidate's notes still name the commit (`sha`), and `docs/adopting.md`'s step 4
+  says the same. `docs/releases/v0.2.0.md`, a dated record, still carries the hand edit. Rejected: keeping the hand edit
+  beside the command, which would be two ways to do it in every release's notes.
+- **Not done here:** the generator's own text in a workspace's `README.md` and `CLAUDE.md` (`packages/create/src/files.js`,
+  "Raise the pin when you upgrade") still says to raise the pins without naming the command; it stays true, and changing it
+  changes what `@sssb/create` writes, so it is a separate change.

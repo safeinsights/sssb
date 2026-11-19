@@ -109,7 +109,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - **`@sssb/kit` stamps the commit it is packed from** into `dist/release.json` (its `prepack`,
   `packages/kit/scripts/stamp-release.mjs`), refusing shipped sources that differ from it under the same switch.
   `sssb doctor` reports, never fails, a workflow or marketplace pin that is not that commit, or a pinned marketplace no
-  plugin is enabled from; `release.mjs candidate`
+  plugin is enabled from, and `sssb pin` writes both pins from the stamp (it refuses where there is none); `release.mjs candidate`
   refuses a candidate whose kit names another. In-repo there is no stamp: the kit is source.
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.

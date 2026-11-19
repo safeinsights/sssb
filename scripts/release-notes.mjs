@@ -61,10 +61,10 @@ const COMMIT = /^[0-9a-f]{40}$/
  * The standing "Upgrading to this release" section (`docs/adopting.md`, "Upgrading by release", says why each step is
  * there): what every release asks of a workspace, whatever its entries say, with the commands and this release's version
  * filled in. The release commit's SHA is filled in only when the caller has it. The notes are a file IN the release
- * commit, so `prepare` cannot know it: without a `sha` the section has the one command that reads it off the release's
- * tag (a lightweight tag on that commit, `git tag "v$VERSION"` in release.yml), and `release.mjs candidate-notes`, which
- * runs on the tag with the SHA in hand, writes it in. The pin is a SHA, never the tag: `sssb doctor` reports a pin that
- * is "a branch or tag, not a commit" as differing from the release commit.
+ * commit, so `prepare` cannot know it, and the pins do not need it: `sssb pin` reads it from the installed kit's release
+ * stamp (`dist/release.json`) and writes both. `release.mjs candidate-notes`, which runs on the tag with the SHA in hand,
+ * names it in the step. The pin is a SHA, never the tag: `sssb doctor` reports a pin that is "a branch or tag, not a
+ * commit" as differing from the release commit, and `sssb pin` writes the SHA.
  * @param {{ version: string, sha?: string, repo?: string }} options
  * @returns {string} markdown, no trailing newline, starting at its `##` heading
  */
@@ -72,7 +72,6 @@ export function upgradeSection({ version, sha, repo = RELEASE_REPOSITORY }) {
     if (sha !== undefined && !COMMIT.test(sha)) throw new Error(`not a commit: '${sha}'`)
     const candidate = RC_VERSION.test(version)
     const tag = `v${version}`
-    const pin = sha ?? '<sha>'
     const move = candidate
         ? [
               `**1. Move every \`@sssb/*\` package to this candidate, together.** A candidate is a GitHub prerelease and nothing`,
@@ -109,21 +108,7 @@ export function upgradeSection({ version, sha, repo = RELEASE_REPOSITORY }) {
               'pnpm install',
               '```',
           ]
-    const commit =
-        sha === undefined
-            ? [
-                  `**3. Move both pins to this release's commit.** It is the commit the tag \`${tag}\` names, and the pins take`,
-                  `the commit's SHA, never the tag (\`sssb doctor\` reports a tag as differing). This prints the SHA, as does`,
-                  `\`sssb doctor\` beside any pin that differs; write it where \`<sha>\` stands below:`,
-                  '',
-                  '```sh',
-                  `git ls-remote https://github.com/${repo} 'refs/tags/${tag}' 'refs/tags/${tag}^{}' | tail -n 1 | cut -f 1`,
-                  '```',
-              ]
-            : [
-                  `**3. Move both pins to this release's commit,** \`${sha}\`. The pins take the commit's SHA, never the tag`,
-                  `\`${tag}\` (\`sssb doctor\` reports a tag as differing).`,
-              ]
+    const commit = sha === undefined ? '' : ` (\`${sha}\`)`
     return [
         `## ${UPGRADE_HEADING}`,
         '',
@@ -139,19 +124,18 @@ export function upgradeSection({ version, sha, repo = RELEASE_REPOSITORY }) {
         'pnpm exec sssb guide',
         '```',
         '',
-        ...commit,
+        `**3. Raise both pins to this release's commit${commit}.** The reusable workflow's \`uses:\` in`,
+        "`.github/workflows/checks.yml` and the plugin marketplace's `ref` in `.claude/settings.json` are two pins on one commit",
+        "of SSSB's repository, and the installed `@sssb/kit` records it. This reads it there and writes both, printing each pin it",
+        'changed, and does nothing to one that is already current. It refuses, changing nothing, when the kit carries no release',
+        'stamp or a file is not the shape it edits:',
         '',
-        'In `.github/workflows/checks.yml`, the `sssb` job:',
-        '',
-        '```yaml',
-        `uses: ${repo}/.github/workflows/app-checks.yml@${pin} # ${tag}`,
+        '```sh',
+        'pnpm exec sssb pin',
         '```',
         '',
-        'In `.claude/settings.json`, the `ref` of the `sssb` marketplace:',
-        '',
-        '```json',
-        JSON.stringify({ extraKnownMarketplaces: { sssb: { source: { source: 'github', repo, ref: pin } } } }, null, 4),
-        '```',
+        `If it refuses, make the two edits by hand, to the commit \`sssb doctor\` names beside a pin that differs: the \`uses: ${repo}/.github/workflows/app-checks.yml@<commit>\``,
+        `line and the marketplace's \`ref\`. A pin takes the commit's SHA, never the tag \`${tag}\`, which can be moved.`,
         '',
         'Then each person updates their installed plugin and restarts Claude Code:',
         '',
