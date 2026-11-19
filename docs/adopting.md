@@ -714,7 +714,10 @@ changes go and a patch is compatible. From 0.2.0 each release is published to np
 `safeinsights/sssb` (the release candidates before it were GitHub prereleases instead), and its notes are in SSSB's
 repository, under `docs/releases/` (`docs/releases/v0.2.0.md`, say).
 
-An upgrade is one change in your repository, made on a branch like any other:
+An upgrade is one change in your repository, made on a branch like any other. Every release's notes open with the
+section "Upgrading to this release", which carries steps 2, 3, 4 and 6 below as commands, with that release's version in
+them (a candidate's prerelease notes also have its commit, which a plain release's notes read off its tag). The steps
+say why each is there:
 
 1. **Read the notes of every release after yours, in order.** A release candidate's notes carry only what changed
    since the previous candidate, so a workspace on v0.2.0-rc.1 that skips a candidate reads the skipped one's notes
@@ -762,7 +765,10 @@ An upgrade is one change in your repository, made on a branch like any other:
     - **Scaffold changes to apply by hand**: changes to files `@sssb/create` wrote once, which no release touches
       (the CI caller, the gitleaks rules, the root config). You make them.
 
-    Then delete what each entry's "Now deletable" describes, wherever your tree has it.
+    Then delete what each entry's "Now deletable" describes, wherever your tree has it, and run `pnpm knip`: a vendor
+    SDK (`@aws-sdk/client-s3`, say) that your app listed only for code you deleted is now flagged as unused, because
+    the kit's adapter that replaces it carries its own copy. Remove it from the `package.json` that lists it, unless
+    other code still imports it.
 
 6. **Check, then push**: `pnpm exec sssb doctor`, which fails on versions out of step, a second copy of a peer and
    a stale guide copy, and only REPORTS a pin that is not the release commit or a framework cutover row your

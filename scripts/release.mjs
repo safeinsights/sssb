@@ -47,14 +47,16 @@
 //                                 `pnpm pack` lays them out, and prints each one's name, file, size, sha256 and sha512
 //                                 as JSON. Needs no installed dependencies.
 //   candidate-notes <version> <owner/repo> <sha> <assets.json>
-//                                 The GitHub prerelease's notes: the release commit's docs/releases/v<version>.md, then
-//                                 how to install each tarball by URL, its sha512, and how to verify its attestation.
+//                                 The GitHub prerelease's notes: the release commit's docs/releases/v<version>.md, with the
+//                                 commit's SHA written into its "Upgrading to this release" section, then how to install
+//                                 each tarball by URL, its sha512, and how to verify its attestation.
 //
 // Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout carries only the result.
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -743,8 +745,9 @@ export function unwrap(markdown) {
 
 /**
  * The GitHub prerelease's notes: the release notes the release commit carries (`docs/releases/v<version>.md`, written
- * by `prepare` and checked by `verify-release`), then how to install each tarball by URL, its sha512, and how to
- * verify the attestation. An adopter commits the lockfile and installs with `--frozen-lockfile`: a release asset can be
+ * by `prepare` and checked by `verify-release`), with the commit's SHA written into their "Upgrading to this release"
+ * section (the file cannot name the commit it is part of), then how to install each tarball by URL, its sha512, and
+ * how to verify the attestation. An adopter commits the lockfile and installs with `--frozen-lockfile`: a release asset can be
  * replaced under the same URL, and the lockfile's integrity is what pins the bytes (ADR-0014 part 10).
  * @param {string} root the release commit's checkout
  * @param {string} version
@@ -756,10 +759,15 @@ export function candidateNotes(root, version, repo, sha, assets) {
     if (!RC_VERSION.test(version)) throw new Error(`not a release candidate: '${version}'`)
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`not a repository: '${repo}'`)
     if (!SHA.test(sha)) throw new Error(`not a commit: '${sha}'`)
-    const notes = readFileSync(path.join(root, notesPath(version)), 'utf8')
-    if (!notes.startsWith(`# Release notes: v${version}\n`)) {
+    const committed = readFileSync(path.join(root, notesPath(version)), 'utf8')
+    if (!committed.startsWith(`# Release notes: v${version}\n`)) {
         throw new Error(`${notesPath(version)} is not the release notes of v${version}`)
     }
+    // The file's "Upgrading to this release" cannot name the commit it is part of; here the SHA is in hand, so it is
+    // written in. The module is loaded here, synchronously (Node 24 `require`s an ES module), and not imported at the
+    // top: the push and publish jobs run a lone copy of this file.
+    const { upgradeSection, withUpgradeSection } = createRequire(import.meta.url)('./release-notes.mjs')
+    const notes = withUpgradeSection(committed, upgradeSection({ version, sha, repo }))
     const url = (/** @type {string} */ file) => `https://github.com/${repo}/releases/download/v${version}/${file}`
     // The generator is run, never depended on: it is left out of the dependencies, and said how to run.
     const generator = assets.find((a) => a.name === GENERATOR)
