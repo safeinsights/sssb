@@ -4,9 +4,9 @@
 
 ### The starter's layout mounts the auth provider in real mode
 
-**Kind.** scaffold
+**Kind.** none
 
-**Action.** optional
+**Action.** none
 
 **What changed.** The starter's `src/app/[locale]/layout.tsx` rendered SSSB's real sign-in form without the provider
 its hooks need, so real-mode sign-in in a generated app failed to render. It now mounts `RealAuthProviders` in real

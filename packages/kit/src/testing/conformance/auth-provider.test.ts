@@ -33,7 +33,7 @@ function app(files: Record<string, string>): string {
 
 const check =
     realAuthProvider.tests[
-        'every route module that loads a real auth form sits under a layout that loads RealAuthProviders'
+        'every page that reaches a real auth form sits under a layout that reaches RealAuthProviders'
     ]!
 const walked = realAuthProvider.tests["the app's src/app is really walked"]!
 

@@ -180,9 +180,7 @@ export const realAuthProvider: CheckImpl = {
             expect(walked, `no page or layout found under ${path.join(appDir, 'src', 'app')}`).toBeGreaterThan(0)
             expect(unreadable, 'these files could not be read').toEqual([])
         },
-        'every route module that loads a real auth form sits under a layout that loads RealAuthProviders': ({
-            appDir,
-        }) => {
+        'every page that reaches a real auth form sits under a layout that reaches RealAuthProviders': ({ appDir }) => {
             const { gaps } = realAuthProviderGaps(appDir)
             expect(
                 gaps,
