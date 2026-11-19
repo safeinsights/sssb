@@ -1,6 +1,7 @@
 import type { EmailPort } from '../../ports/email'
 import type { JobsPort } from '../../ports/jobs'
 import type { LlmPort } from '../../ports/llm'
+import type { StoragePort } from '../../ports/storage'
 import { OPTIONAL_PORTS, type OptionalPort } from './optional-ports'
 
 /**
@@ -38,4 +39,16 @@ export const absentEmail: EmailPort = {
 
 export const absentJobs: JobsPort = {
     start: async () => absent('jobs'),
+}
+
+/** Every method throws: an app that stores nothing never calls it, and one that does learns which switch to change. */
+export const absentStorage: StoragePort = {
+    put: async () => absent('storage'),
+    get: async () => absent('storage'),
+    getSignedDownloadUrl: async () => absent('storage'),
+    createUploadTarget: async () => absent('storage'),
+    list: async () => absent('storage'),
+    delete: async () => absent('storage'),
+    copy: async () => absent('storage'),
+    head: async () => absent('storage'),
 }

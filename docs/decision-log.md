@@ -6660,3 +6660,42 @@ verify` after it, `pnpm knip` and `pnpm lint:fix`. Not run: `pnpm create @sssb` 
 - **Citations of moved sections are repointed in place** (code comments, `CLAUDE.md`, `CONTRIBUTING.md`, the
   release-notes script, `sssb remove-items`' refusal, open future tasks), and ADR-0014 gets an addendum naming where
   its cited sections live; dated records and ADR bodies are left as they were.
+
+## Storage is an optional port: a deployment needs no S3 bucket (2026-11-19, `feat/storage-optional`)
+
+JP, 2026-11-19: an SSSB deployment must not require an S3 bucket. Storage gets the treatment the 2026-11-19 entry
+"Real mode requires only the optional ports an app uses" gave LLM, email and jobs. JP's standing rule for these
+sessions: decide, and record the rejected alternative.
+
+- **A switch, `STORAGE_PROVIDER` (`s3` | `none`), set by `SssbApp` from `params.ports.storage`**, in the optional
+  ports' one table (`packages/kit/src/adapters/real/optional-ports.ts`, `packages/cdk/src/optional-ports.js`). Unset is
+  `s3`, so a deployment that sets nothing requires what it did. A string with named choices, not a boolean, so a later
+  choice can name another provider (the sibling study `docs/swappable-ports`, an app's own adapter for a kit port, would
+  be one more value). Rejected: inferring storage from whether `STORAGE_BUCKET` is set, which the `DATABASE_TRANSPORT`
+  rule already refuses (a half-configured port must fail at boot, not quietly vanish).
+- **`none` is the absent port (`absentStorage`)**: every method throws `AbsentPortError` naming the switch, and the S3
+  adapter is a dynamic import, so the SDK never loads. Rejected: a no-op or in-memory storage, which would accept a
+  `put` and lose it.
+- **What in the framework uses storage, and what each does without it.** The kit stores nothing of its own: its
+  inbound email handling keeps no attachments and its digest job sends mail only. The job handler context carries the
+  port, and gets the absent one, so a handler that stores fails its job with the switch named (proven for the
+  in-process runner). The seed and the Simulator use the fake storage, in simulated mode only, which ignores the
+  switch as it ignores the other ports'. Exports, attachments and uploads are the app's (the showcase's), so they
+  require the port, and the showcase declares `s3`.
+- **`AWS_REGION` is required only by what calls AWS**: storage on `s3`, `JOBS_RUNNER=codebuild` (both in the ports'
+  table) and the Data API transport (`DATA_API_REGION_ENV` in `adapters/real/index.ts`). A `pg` deployment with
+  `storage: 'none'` and in-process jobs calls no AWS API, so requiring a region there would be a placeholder.
+  Rejected: adding it to `DATABASE_ENV['data-api']`, whose every variable `SssbApp`'s test expects on the server, where
+  Lambda reserves `AWS_REGION` and sets it itself.
+- **`SssbApp` with `none` builds no storage bucket, sets no `STORAGE_BUCKET` and grants no S3**; with `s3` the bucket's
+  construct id, and so its logical id, is unchanged, and the stateful-ids snapshot (synthesized with `ports` left out)
+  is unchanged. `storageBucket` becomes `Bucket | undefined`, filed with the required-env snapshot's `minor`.
+  Rejected: adding `storage: 'none'` shapes to the snapshot, which would change it for nothing that is replaced; a
+  test in `sssb-app.test.js` proves every other stateful id stays put on `none`.
+- **Switching a deployed stack from `s3` to `none` is documented, not refused.** The bucket leaves the stack: in
+  production its removal policy (`Retain`) keeps it, orphaned with its objects; elsewhere `autoDeleteObjects` empties it
+  and it is deleted, as on the stack's own deletion. Rejected: refusing the switch (synth cannot see what is deployed)
+  and keeping the bucket on `none` (then every deployment still has one, which is what JP ruled out).
+- **The starter declares `storage: 'none'`**: it stores no files, so a generated app deploys without a bucket, with a
+  comment saying to set `s3` when it starts storing (cutover row `cloud-accounts`, which now says the storage checks
+  do not apply with `none`). Rejected: `s3`, a bucket every generated app would carry and cut over before it needs one.

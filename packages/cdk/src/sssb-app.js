@@ -369,6 +369,8 @@ export class SssbApp extends Construct {
         }
         // The optional ports' switches (LLM_PROVIDER, …), from `params.ports`: validated here, before anything is built.
         const portsEnv = portsEnvironment(props.params?.ports)
+        // Storage left out is the framework's default, `s3`: the bucket below exists unless the app says `none`.
+        const storesObjects = portsEnv['STORAGE_PROVIDER'] !== 'none'
         const scheduledTick = props.scheduledTick
         // Duck-typed: an imported secret (`Secret.fromSecretCompleteArn`) is no `Secret` instance.
         const tickSecret = /** @type {{ secretArn?: unknown, grantRead?: unknown } | undefined} */ (
@@ -453,14 +455,19 @@ export class SssbApp extends Construct {
         })
         // App object storage (StoragePort) — private, NEVER behind CloudFront: sharing the CDN
         // bucket would make app-stored objects publicly fetchable and let the app overwrite
-        // served JS.
-        const storageBucket = new aws_s3.Bucket(this, 'StorageBucket', {
-            blockPublicAccess: aws_s3.BlockPublicAccess.BLOCK_ALL,
-            enforceSSL: true,
-            encryption: aws_s3.BucketEncryption.S3_MANAGED,
-            removalPolicy,
-            autoDeleteObjects: !isProd,
-        })
+        // served JS. Only for an app that stores objects (`params.ports.storage` not `none`). Its construct id, and so
+        // its logical id, is the same whenever it exists (the stateful logical ids snapshot). Switching an existing
+        // deployment to `none` removes it from the stack: in production its removal policy retains it, orphaned with
+        // its objects; elsewhere it is emptied and deleted, as on the stack's own deletion.
+        const storageBucket = storesObjects
+            ? new aws_s3.Bucket(this, 'StorageBucket', {
+                  blockPublicAccess: aws_s3.BlockPublicAccess.BLOCK_ALL,
+                  enforceSSL: true,
+                  encryption: aws_s3.BucketEncryption.S3_MANAGED,
+                  removalPolicy,
+                  autoDeleteObjects: !isProd,
+              })
+            : undefined
 
         // The database half of each Lambda's environment (the framework's real adapters read it at boot).
         // data-api builds no DATABASE_URL at all: the credential stays in Secrets Manager, where the Data
@@ -529,12 +536,12 @@ export class SssbApp extends Construct {
                 APP_MODE: 'real',
                 NEXT_TELEMETRY_DISABLED: '1',
                 ...databaseEnv,
-                STORAGE_BUCKET: storageBucket.bucketName,
+                ...(storageBucket && { STORAGE_BUCKET: storageBucket.bucketName }),
                 ...portsEnv,
             },
         })
         grantDatabase(server)
-        storageBucket.grantReadWrite(server)
+        storageBucket?.grantReadWrite(server)
 
         // AWS_IAM, not NONE. A Function URL with NONE answers anyone on the internet who has the URL,
         // and putting CloudFront in front of it does not change that — the origin stays directly

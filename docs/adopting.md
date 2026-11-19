@@ -120,8 +120,9 @@ Postgres, the migrator, alarms and a budget. `pnpm synth` checks it offline. Bef
 - **Fill in `apps/<app>/config/params.ts`.** A `// cutover:` comment above each group of `PLACEHOLDER_` values names the
   row that fills it.
 - **Replace the `UPDATE-ME` tags** in `apps/<app>/infra/lib/tags.ts` with your organisation's.
-- **Choose your optional ports** in `params.ts`'s `ports`: `llm`, `email`, `inboundEmail` and `jobs`. `none` leaves a
-  port out, so real mode needs none of its settings. Never fill an unused port's settings with placeholders.
+- **Choose your optional ports** in `params.ts`'s `ports`: `llm`, `email`, `inboundEmail`, `jobs` and `storage`.
+  `none` leaves a port out, so real mode needs none of its settings (with `storage: 'none'`, no S3 bucket). Never fill
+  an unused port's settings with placeholders.
 - **Turn on the scheduled tick.** Recurring work (digests, reminders) and webhook retries only run when something calls
   your app's cron route. Pass `scheduledTick: { webhookSecret }` to `SssbApp`, where `webhookSecret` is the Secrets
   Manager secret (an `ISecret`) holding the same plain-string value as your server's `WEBHOOK_SECRET`, and the route is
