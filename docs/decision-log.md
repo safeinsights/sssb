@@ -6661,6 +6661,41 @@ verify` after it, `pnpm knip` and `pnpm lint:fix`. Not run: `pnpm create @sssb` 
   release-notes script, `sssb remove-items`' refusal, open future tasks), and ADR-0014 gets an addendum naming where
   its cited sections live; dated records and ADR bodies are left as they were.
 
+## ADR-0015 is Proposed: swappable kit ports (2026-11-19, `docs/swappable-ports`)
+
+JP asked whether an adopter could use libsql or Turso, Cloudflare R2, Auth0 or other optional providers, and whether
+the spine could stay required but swappable. The answer is a Proposed ADR
+(`docs/adr/0015-app-supplied-adapters-for-kit-ports.md`), no code. Decisions taken in writing it, under the standing
+rule for these sessions, several of them changed by its review (an Opus and a Fable reviewer):
+
+- **The study ends in a recommendation, not a menu.** Rejected: each port's options unranked, which hands the approver
+  the analysis instead of a decision.
+- **Protocol choices before app adapters.** Storage's `s3` choice takes an endpoint (R2, MinIO, B2), and email gains an
+  `smtp` choice; the `app` value is limited to the ports no protocol covers (LLM, analytics, jobs, auth). Rejected, at
+  first drafted: R2 and other providers as app adapters too, which puts a third-party contract on storage and email for
+  vendors a protocol already reaches. Both reviewers raised it.
+- **The app supplies only the real adapter; the fake stays SSSB's.** Rejected: app-supplied fakes, because the
+  Simulator reads the fakes' state and the hermetic promise would become each app's.
+- **Registration in three seam modules (settings as data, factories handed in by the registry, the auth provider's
+  middleware on its own for the request proxy), with the full factory signature settled at once, and a graph check,
+  not a lint rule, keeping app adapters out of the registry's module graph.** Rejected, at first drafted: one module read by `createRealPorts`, which would pull every
+  app adapter into `sssb check-real-env`'s CommonJS bundle and could deadlock boot through the registry; and an
+  argument-less factory, which a job runner cannot use.
+- **Analytics in two parts: a patch now, so real mode without a key gets a no-op and never the fake (which writes
+  under `.data/`, likely failing on Lambda's read-only directory), then an explicit switch, default `posthog`, filed as
+  the breaking change it is.** Rejected: "the same default behaviour", which is the inference the switch rule forbids;
+  and folding the patch into the switch's step, which would leave a likely live defect waiting on unrelated work.
+- **No `app` for inbound email.** Another provider is the app's route outside `webhooks/` under its own exemption.
+  Rejected: an `app` value that changes nothing `none` does not.
+- **libsql and Turso are answered "not an adapter"**, with both tenancy strategies and what each does to ADR-0004; a
+  different Postgres host is a conditional yes, its conditions named (genuine PostgreSQL 16+, an owner that may create
+  roles, no `BYPASSRLS`, a migrate entry point off AWS). Rejected: "any Postgres works today", which overstated it.
+- **Vendor suites run apart from the hermetic contract run**, in `tests/ports/` with a runner of their own. Rejected:
+  putting credentials into the contract run.
+- **Build on first real demand.** Rejected: building every port's swap now, ahead of any adopter asking.
+- **`docs/adr/README.md` lists 0015 as Proposed** and its count sentence says fifteen. `CLAUDE.md`'s list of Accepted
+  ADRs is unchanged until JP decides.
+
 ## Storage is an optional port: a deployment needs no S3 bucket (2026-11-19, `feat/storage-optional`)
 
 JP, 2026-11-19: an SSSB deployment must not require an S3 bucket. Storage gets the treatment the 2026-11-19 entry
