@@ -5668,7 +5668,7 @@ outside it now, so this is that refresh.
 - **Fixed by raising both `typescript-eslint` ranges from `^8.72.0` to `^8.73.0`** and refreshing the lockfile
   (`pnpm update typescript-eslint -r`). 8.73.0's estree takes `minimatch` `^11.0.1`, and the lockfile no longer holds
   10.2.6 (11.0.8 and 3.1.5 remain, neither affected). No override: the fix is the parent's own range.
-- **The floor in `packages/eslint-plugin` moves too, so a changeset (patch, Kind `none`, Action `optional`).** The floor
+- **The floor in `packages/eslint-plugin` moves too, so a changeset (patch, Kind `scaffold`, Action `optional`).** The floor
   alone does not fix an adopter: `@sssb/create` also writes `typescript-eslint` into the workspace root's
   `devDependencies` at this repository's root range (`ROOT_DEV_DEPENDENCIES` in `packages/create/src/template.js`), so a
   workspace generated at 0.2.0 or earlier holds 8.72 and `minimatch` 10 through its own range, and on upgrading the plugin

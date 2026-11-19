@@ -4,7 +4,7 @@
 
 ### The lint preset now requires typescript-eslint 8.73
 
-**Kind.** none
+**Kind.** scaffold
 
 **Action.** optional
 
