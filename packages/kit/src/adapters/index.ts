@@ -16,6 +16,7 @@ import { fakeJobs } from './fake/jobs'
 import { fakeLlm } from './fake/llm'
 import { fakeStorage } from './fake/storage'
 import { lazyJobs } from './lazy-jobs'
+import { appMode, isSimulated } from './run-mode'
 
 /**
  * The adapter registry: the ONE place run mode selects implementations. Simulated is the default —
@@ -28,12 +29,10 @@ import { lazyJobs } from './lazy-jobs'
  * is for Postgres and `.data/` is for S3. So `if (isSimulated) -> fakeDb` reads correctly: in a
  * simulated world, the DB port is served by a fake.
  *
- * `APP_MODE` only ever tests for `'real'`, so an older `APP_MODE=fake` still resolves to `simulated`
- * and no deployed config breaks.
+ * The mode itself is read in ./run-mode.ts, which loads nothing else, so the request proxy (./proxy.ts) can ask it
+ * without loading this registry; it is re-exported here, where everything else imports it from.
  */
-export type AppMode = 'simulated' | 'real'
-export const appMode: AppMode = process.env['APP_MODE'] === 'real' ? 'real' : 'simulated'
-export const isSimulated = appMode === 'simulated'
+export { appMode, isSimulated, type AppMode } from './run-mode'
 
 /**
  * Demo build flag. packages/kit/src/adapters is where process.env is read (lint-enforced), so run-mode
