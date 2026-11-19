@@ -1,6 +1,11 @@
-# Adopting this template
+# Adopting SSSB
 
-Adoption is one command, which writes a new repository for your app:
+Adoption is one command, which writes a new repository for your app, and an upgrade is a new release of SSSB's
+packages. There is no fork and no merge: your repository holds your app and its config, and SSSB arrives as versioned
+dependencies (`@sssb/kit`, `@sssb/tools`, `@sssb/eslint-plugin`, `@sssb/cdk`), a reusable CI workflow and a Claude Code
+plugin, the last two pinned to the release's commit of SSSB's repository
+([ADR-0014](adr/0014-distribution-as-versioned-packages.md); fork and merge,
+[ADR-0013](adr/0013-upstream-updates-fork-and-merge.md), is superseded).
 
 ```sh
 pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research --owner @acme-org/devs
@@ -19,9 +24,42 @@ renamed, its root config on SSSB's presets, its CI (a workflow calling SSSB's re
 versioned dependencies. What it deliberately leaves for you (deployment params, seed data, cutover rows, repository
 settings) is listed under "What the generator leaves for you" below.
 
-**Until SSSB's packages are published** (ADR-0014's P14), `pnpm create @sssb` cannot fetch the generator from npm,
-and its default `--sssb` (`^` and the generator's own version) has no release to resolve. Run the generator from a
-checkout of SSSB instead, against SSSB's packages packed into a directory:
+## Before SSSB is on npm: a release candidate's tarballs
+
+**The command above needs SSSB's first npm release** (ADR-0014's P14). Until then npm holds only placeholders under
+these names (`0.0.0`), so `pnpm create @sssb` cannot fetch the generator, and its default `--sssb` (`^` and the
+generator's own version) has no release to resolve. SSSB's releases so far are **release candidates**, published
+from v0.2.0-rc.1 on as GitHub prereleases of `safeinsights/sssb` (v0.2.0-rc.0 was tagged, and its notes are in the
+repository, but CI failed on its commit and nothing was published), each with five tarballs (the four packages and
+the generator) and notes that say
+how to install them. Generate from one by running its generator against its tarballs, here v0.2.0-rc.2 (take the newest
+on the repository's releases page; `gh` must be signed in, or download the five files from that page by hand):
+
+```sh
+mkdir sssb-v0.2.0-rc.2 && cd sssb-v0.2.0-rc.2
+gh release download v0.2.0-rc.2 --repo safeinsights/sssb
+tar -xzf sssb-create-0.2.0-rc.2.tgz
+node package/bin/create.js ~/acme --sssb . --name "Acme Research" \
+    --repo acme-org/acme-research --owner @acme-org/devs
+```
+
+The workspace then depends on each package by an absolute `file:` path into that directory, which resolves on your
+machine and nowhere else, so CI's install would fail. The next steps the generator prints go straight to
+`pnpm install`, so do this first: **before the first `pnpm install`, point each at its URL**, as the JSON in the
+notes' "Installing this release candidate" section gives it
+(`https://github.com/safeinsights/sssb/releases/download/v<version>/<tarball>`): the root `package.json`
+(`@sssb/tools`), `apps/<app>/package.json` (`@sssb/kit`, `@sssb/tools` and `@sssb/eslint-plugin`) and
+`apps/<app>/infra/package.json` (`@sssb/cdk` and `@sssb/tools`). Then install and commit `pnpm-lock.yaml`. A
+release asset can be replaced under the same URL, so the lockfile's `integrity` is what pins the bytes: check it
+against the sha512 each candidate's notes list, and again whenever the lockfile is regenerated (the reusable workflow
+installs with `--frozen-lockfile`). The notes also say how to verify each tarball's attestation.
+
+Once SSSB is on npm, generate with `pnpm create @sssb` as above: the workspace depends on the packages by version.
+
+### From a checkout of SSSB, at an unreleased commit
+
+To try a commit no release carries yet, run the generator from a checkout of SSSB against SSSB's packages packed into a
+directory:
 
 ```sh
 # in a checkout of SSSB, installed (the kit's prepack builds with its devDependencies)
@@ -46,46 +84,56 @@ node packages/create/bin/create.js ~/acme --sssb ~/sssb-tarballs --name "Acme Re
 - **`--sssb <dir>` wants exactly one `sssb-<package>-<version>.tgz` for each of `kit`, `tools`, `eslint-plugin`
   and `cdk`, all of the generator's own version** (`packages/create/package.json`'s). The workspace depends on them
   by absolute `file:` path, in each package that takes one, and needs no `overrides`: no SSSB package depends on
-  another (`@sssb/tools` is a peer of `@sssb/cdk`, which `apps/<app>/infra/` installs beside it). When you move to
-  published versions, replace the `file:` paths with the version.
+  another (`@sssb/tools` is a peer of `@sssb/cdk`, which `apps/<app>/infra/` installs beside it). Such a workspace is
+  for trying the commit on your machine; generate the one you keep from a release.
 
 The workspace has no showcase. The showcase stays in SSSB's repository as the worked example you will read most in
 week one: keep a checkout of SSSB beside your own (`pnpm install && pnpm dev` there), read the slice you need, and
 build its equivalent in your app.
 
 The rest of this document is what that command does not do: which parts of the tree are yours, how
-your product extends the framework, and the discipline that keeps the whole thing honest.
+your product extends the framework, how you take a new release, and the discipline that keeps the whole thing honest.
 
-## What is here
+## What is yours, and what is SSSB's
 
-Three kinds of thing live in this repo (see
-[ADR-0012](adr/0012-framework-app-line-and-registration.md) for the full line):
+Three kinds of thing are involved (see [ADR-0012](adr/0012-framework-app-line-and-registration.md) for the line
+between framework and app):
 
-- **The framework** (**SSSB**): the workspace package `packages/kit`, imported as `@sssb/kit/...` —
-  ports/adapters, RLS tenancy, authz, jobs/schedules, webhooks in and out, notifications,
-  agreements/gates, the Simulator dev/demo harness, its screens and its half of the i18n catalog. You
-  extend it; you don't edit it. (Its route wrappers necessarily stay in an app's `apps/<app>/src/app` — Next.js
-  requires it.)
-- **Two example apps.** `apps/showcase` — a support desk: tickets, escalations, attachments, two job kinds, two
-  actors, six people — exists so every framework capability has a living worked example. Read it as
-  the reference; the generator never copies it. `apps/starter` — one entity, one card, two tenants, and a seam
-  whose other eleven modules register nothing — is **the one you keep**: the generator's template. It is also the framework's second
-  consumer, which is what makes the framework/app line falsifiable rather than merely asserted:
-  anything SSSB reaches for that only exists because the showcase supplies it fails to compile there.
-- **The repo scaffold**: the verify gate, lint fences, CI, docs doctrine. You keep it. The infra draft is
-  no longer part of it: each app carries its own, `apps/<app>/infra/`, a stack holding SSSB's `SssbApp`
-  construct (`packages/cdk`), so the starter you keep arrives with a deployment of its own.
-  One rule in it reaches your own tests: a test that needs a scratch directory calls
-  `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `@sssb/tools/testing/tmp-dir` (`tests/support/tmp-dir.ts` re-exports it), never `mkdtemp` (lint
-  bans it), and `test:unit`, `test:coverage` and `test:contract` run through
-  `sssb check-tmpdir-leak`, which fails the run if a directory made that way survives it.
+- **Your workspace**, every file `@sssb/create` wrote: the app under `apps/<app>/` (its routes, its seam in
+  `apps/<app>/src/app-config/`, its screens, domain, seed, catalogs and tests), its deployment in
+  `apps/<app>/infra/`, the root config on SSSB's presets, the CI workflow, the owner files, the cutover checklist,
+  `README.md` and `CLAUDE.md`. All of it is yours to edit. A release never changes it: where a release changes what the
+  generator would write, its notes say what to change by hand ("Upgrading by release" below).
+- **SSSB's packages**, installed as dependencies at one version, which you never edit:
+    - **`@sssb/kit`**, the framework: ports and adapters, RLS tenancy, authz, jobs and schedules, webhooks in and out,
+      notifications, agreements and gates, the Simulator dev and demo harness, its screens and its half of the i18n
+      catalog, the conformance suite (`@sssb/kit/testing`) and the app guide. You extend it through the seam. (Its route
+      wrappers necessarily stay in your `apps/<app>/src/app`: Next.js requires it.)
+    - **`@sssb/tools`**, the `sssb` CLI (`sssb doctor`, `sssb guide`, `sssb check-fences` and the rest), the Next,
+      Vite and Vitest presets and the tsconfig base your configs extend, and helpers for your tests: a test that needs a
+      scratch directory calls `makeTestTmpDir()` / `makeTestTmpDirAsync()` from `@sssb/tools/testing/tmp-dir`, never
+      `mkdtemp` (lint bans it), and `test:unit`, `test:coverage` and `test:contract` run through
+      `sssb check-tmpdir-leak`, which fails the run if a directory made that way survives it.
+    - **`@sssb/eslint-plugin`**, the lint fences, applied by your app's `eslint.config.mjs`.
+    - **`@sssb/cdk`**, the `SssbApp` construct your `apps/<app>/infra/` stack holds.
 
-Apps live under `apps/` — one per product, each with its own `package.json`, configs and tests
-(ADR-0007). Root commands that operate on ALL apps (`pnpm verify`, `pnpm typecheck`, `pnpm lint`,
-`pnpm test:unit`, `pnpm test:e2e`, `pnpm build`, the demo-static trio) fan out with
-`pnpm --filter './apps/*'`, so they pick up an added or renamed app with no edit. The commands that
-must pick ONE app (`pnpm dev`, `pnpm tick`, `pnpm start`, and the showcase-only `pnpm ladle`, `pnpm build:demo`,
-`pnpm dev:real`, `pnpm llm:record`) name an app; in a workspace the generator writes, they name yours.
+    Beside them, pinned to the release's commit of SSSB's repository: the **reusable CI workflow** your
+    `.github/workflows/checks.yml` calls, and the **Claude Code plugin** your `.claude/settings.json` enables.
+
+- **SSSB's repository**, which you read and never copy. `apps/showcase`, a support desk (tickets, escalations,
+  attachments, two job kinds, two actors, six people), exists so every framework capability has a living worked
+  example; the generator never copies it. `apps/starter` (one entity, one card, two tenants, and a seam whose other
+  eleven modules register nothing) is the generator's template, the app you started from. It is also the framework's
+  second consumer, which is what makes the framework/app line falsifiable rather than merely asserted: anything SSSB
+  reaches for that only exists because the showcase supplies it fails to compile there. SSSB's docs (this one, the
+  ADRs, the recipes, the runbooks) live there too.
+
+Apps live under `apps/`, one per product, each with its own `package.json`, configs and tests (ADR-0007). The root
+commands that act on every app (`pnpm build`, `pnpm typecheck`, `pnpm test:e2e`, the fences, the demo-static trio)
+fan out over `apps/*`, so they pick up a second app with no edit; the root's `sssb.apps` and the `APPS` list in each
+root Vitest config name the apps one by one, so a second app is added there. The commands that must pick ONE app
+(`pnpm dev`, `pnpm tick`, `pnpm start`) name the generated app; "What the showcase's absence costs" below lists every
+root script.
 
 ## First boot
 
@@ -314,7 +362,8 @@ These are the parts that take judgement:
   then on, so keep the import line. Edit nothing in the guide's
   copy (a rerun overwrites it). Its header stamps the hash of the guide it was copied from, and `sssb doctor` fails
   when that is not the installed kit's guide, so after an upgrade `pnpm exec sssb guide` refreshes it and the change
-  reaches your diff. The app-author commands arrive as SSSB's Claude Code plugin, which `.claude/settings.json`
+  reaches your diff (on a release up to v0.2.0-rc.2, add `--app apps/<app>` at the root: "Upgrading by release",
+  step 3). The app-author commands arrive as SSSB's Claude Code plugin, which `.claude/settings.json`
   enables from SSSB's marketplace pinned to the workflow's commit: `/sssb:new-slice`, `/sssb:new-entity` and the
   rest. A commit `ref` needs Claude Code 2.1.324 or later, and enabling it does not install it: each person runs
   `claude plugin install sssb@sssb --scope project` once per clone, after trusting the folder.
@@ -338,7 +387,7 @@ looking at the product signed in as its own people, and nothing they used showed
 **Replace it; do not build beside it.** The seed world is one world, and the framework's pickers list
 all of it — `@sssb/kit/seed/contracts` has no notion of a person who exists but is not offered. A product
 world added NEXT TO `northwind` and `westgate` therefore puts both on every sign-in screen. Nothing in
-`packages/kit` needs the starter's names: SSSB's own tests run against `packages/kit/test-fixture`.
+`@sssb/kit` needs the starter's names: SSSB's own tests run against `packages/kit/test-fixture` in SSSB's repository.
 What does read them by literal id is yours to change in the same commit:
 
 - `apps/<app>/tests/e2e/items.spec.ts` signs in as `person-owner` and `person-other-tenant` and asserts
@@ -480,25 +529,32 @@ or that lists no test, fails too; a config kept outside the app's directory is n
 
 ## Layout
 
+The workspace the generator writes, as far as you build in it:
+
 ```
-packages/kit/src/            the framework — never edit for product work
-packages/kit/test-fixture/   the framework's OWN app seam, for its OWN tests — not yours, not shipped
 apps/<app>/config/            APP_SLUG and (optionally) deployment params
 apps/<app>/src/app/           Next route files (thin wrappers; framework routes live here too)
 apps/<app>/src/app-config/    THE SEAM — your registrations
 apps/<app>/src/components/    your screens/cards
-apps/<app>/src/domain/        your domain modules
-apps/<app>/src/ports/         your own ports, for a vendor SSSB has no port for (docs/recipes/app-owned-adapter.md)
-apps/<app>/src/adapters/      their registry and fakes; adapters/real/ is the app's only vendor-SDK directory
+apps/<app>/src/domain/        your domain modules (not generated: create it when you need it)
+apps/<app>/src/ports/         your own ports, for a vendor SSSB has no port for (docs/recipes/app-owned-adapter.md; not generated)
+apps/<app>/src/adapters/      their registry and fakes; adapters/real/ is the app's only vendor-SDK directory (not generated)
 apps/<app>/src/demo-static/   your half of the file:// demo twin (the framework half is SSSB's)
 apps/<app>/src/seed/          your seed world (fills in @sssb/kit/seed/contracts)
 apps/<app>/messages/          your i18n namespaces (the framework ships its own catalog)
 apps/<app>/tests/             your e2e, static-demo and contract specs
+apps/<app>/infra/             the app's deployment: a CDK app holding SSSB's SssbApp construct (@sssb/cdk)
+docs/cutover-checklist.md     what the app defers until it has real accounts
+.claude/sssb-guide.md         SSSB's app guide, a stamped copy that `sssb guide` refreshes; CLAUDE.md imports it
+.github/workflows/checks.yml  your CI, calling SSSB's reusable workflow at a pinned commit
 ```
+
+The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and you never edit it.
 
 ### What you may import from SSSB
 
-`packages/kit/package.json`'s `exports` map is the contract: it lists the 139 subpaths your app may
+`@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
+lists the 139 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 63 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
@@ -509,25 +565,23 @@ SSSB only through `@sssb/kit/testing/e2e`, which ships compiled and seam-free (t
 verifier). A spec that needs one of your app's constants reads it from a module that imports nothing from SSSB
 but types, as the showcase's pagination spec reads `apps/showcase/src/domain/ticket-page-size.ts`. If you find yourself
 reaching for an internal, that is a signal the capability needs a seam, not a wider fence; if a module
-really is part of the contract and merely has no importer yet, that is an SSSB change: add the line upstream
-(ADR-0013, "Sending an SSSB fix back upstream") and take it back by merge, because in your fork the map is a
-conflict on every later update.
+really is part of the contract and merely has no importer yet, that is an SSSB change, which reaches you in a release
+("Changing SSSB itself" below).
 
-One call site reaches SSSB by file path instead of by subpath, because its tool needs a file rather
-than a module specifier, and it is the one to remember if you move things: each app's
-`next.config.ts` points next-intl at `packages/kit/src/i18n/request.ts`. The migrator Lambda used to be the
-second; the `SssbApp` construct (`packages/cdk`) now resolves it as `@sssb/kit/adapters/real/migrate-handler`
-from the app's own directory, and passes the app's seam to esbuild explicitly. Nothing typechecks
-`apps/<app>/infra/`; its `synth` is its check.
+Nothing of yours reaches SSSB by file path. The two tools that need a file rather than a module specifier get it from
+SSSB: your `next.config.ts` wraps its config in `withSssb` from `@sssb/tools/next`, which points next-intl at the
+framework's request config, and the `SssbApp` construct (`@sssb/cdk`) resolves the migrator as
+`@sssb/kit/adapters/real/migrate-handler` from the app's own directory and passes the app's seam to esbuild
+explicitly. The app's `typecheck` covers `apps/<app>/infra/` (`tsc -p infra`), and `pnpm synth` synthesizes it.
 
 ### When a lint fence must let one of your modules through
 
 Some fences take named exceptions. Today one does: `sssb/no-raw-db-handle`, which bans `getDb()` in every
-module of your app (tenant-scoped data goes through `db.withTenant()`, ADR-0004). If a module of yours truly
+module under your app's `src` (tests are exempt, except a route's or a screen's; tenant-scoped data goes through
+`db.withTenant()`, ADR-0004). If a module of yours truly
 needs the raw client, say a maintenance job that runs as the system across every tenant, list it in your app's
-own `apps/<app>/lint-exceptions.mjs`. Don't edit SSSB's `eslint.config.mjs` or the fences in
-`packages/eslint-plugin`: every later SSSB update to them would conflict with your edit, and a path you wrote there
-names your app's directory, which a later rename of the app would silently stop matching.
+own `apps/<app>/lint-exceptions.mjs`. The fences themselves are `@sssb/eslint-plugin`, an installed package you never
+edit, and switching one off in your `eslint.config.mjs` instead is exactly what `sssb check-fences` reports (below).
 
 ```js
 // apps/<app>/lint-exceptions.mjs
@@ -591,23 +645,24 @@ therefore declares an empty one and suppresses `@typescript-eslint/no-empty-obje
 **To add a feature slice**: run `/sssb:new-slice` (and the per-capability scaffolds `/sssb:new-entity`,
 `/sssb:new-job`, `/sssb:new-actor`, `/sssb:new-notification-kind`, `/sssb:new-webhook-event`, `/sssb:new-tour`,
 `/sssb:new-preset`, `/sssb:new-preset-operation`: SSSB's Claude Code plugin). Each walks the house way:
-screen in your app's `apps/<app>/src/components` (yours) or `packages/kit/src/components` (framework-generic),
-thin route, seam registrations, an RLS migration copied from the reference
-(`apps/starter/src/app-config/db/migrations/1001_items.ts`), colocated tests, e2e, then `pnpm verify` +
-`pnpm test:contract`.
+screen in your app's `apps/<app>/src/components`, thin route, seam registrations, an RLS migration copied from the
+reference (`apps/<app>/src/app-config/db/migrations/1001_items.ts`, the starter's), colocated tests, e2e, then
+`pnpm verify` + `pnpm test:contract`. A screen generic enough for every app on SSSB belongs in the framework, which is
+an SSSB change ("Changing SSSB itself" below).
 
-**To remove a demo slice** (if you keep the showcase around for a while): delete its card + routes +
-`apps/<app>/src/domain/` module + seam entries (ability case, table, migration, message namespace, vocabulary
-entries) and its e2e specs, then update the static twin (`apps/<app>/src/demo-static/app.tsx`) and run the full
-gate. Tickets is the most-wired example (assistant tool, export job, inbound handler all reference it)
-— replace those seam entries together. An unused framework capability needs nothing: an empty
-registration is the off switch.
+**To remove a slice** (the starter's Items, once you have built your own from it): delete its card + routes +
+`apps/<app>/src/domain/` module, if it has one + seam entries (ability case, table, migration, message namespace,
+vocabulary entries) and its e2e specs, then update the static twin (`apps/<app>/src/demo-static/app.tsx`) and run the
+full gate. A slice that other seam entries reference (a job, an inbound handler or an assistant tool, as the
+showcase's tickets are) has those entries replaced in the same change. An unused framework capability needs nothing:
+an empty registration is the off switch.
 
 **Static demo parity**: every slice ships its in-memory twin so the single-file `file://` demo keeps
 walking end-to-end. You only write your DOMAIN half — `apps/<app>/src/demo-static/app.tsx` is a
 composition root that adds your rows and cards to the framework world `@sssb/kit/demo-static` already
 simulates (people, mail, jobs, schedules, webhooks, notifications, agreements, audit, snapshots). For one
-table that is 74 lines; the showcase's, with three entities plus actors and the assistant, is 669.
+table that is under a hundred lines; the showcase's, with three entities plus actors and the assistant, is over six
+hundred.
 Budget-gated per app (`pnpm check:demo-size`, each app passing its own byte budget). The starter's is
 the number you inherit, sized for YOUR growth (room to grow to the showcase's size), and it is yours to
 re-set in `apps/<app>/package.json`, with the reason recorded in `apps/<app>/DEMO-SIZE.md` beside it; the
@@ -618,11 +673,12 @@ the ONLY door for your shell, too: the `nav`, `welcome` and `dashboard` it passe
 the demo shows, so a navigation you build for the real app is absent from the twin until you pass it
 there.
 
-**How a second app keeps the seam honest**: `apps/starter/tsconfig.json` includes the whole of
-`packages/kit/src` (minus tests and stories), so `pnpm typecheck` compiles the ENTIRE framework
+**Why the seam holds for an app SSSB has never seen**: in SSSB's repository, `apps/starter/tsconfig.json` includes
+the whole of `packages/kit/src` (minus tests and stories), so `pnpm typecheck` there compiles the ENTIRE framework
 against the starter's registrations — a framework module that assumed the showcase's tables or
 vocabulary fails there and nowhere else. `apps/starter/src/sssb.conformance.test.ts` then runs SSSB's
-conformance suite a second time, under the starter's aliases. Each check was watched failing before being trusted.
+conformance suite a second time, under the starter's aliases, and every release is gated on both apps and on a
+workspace generated from the packed packages. Each check was watched failing before being trusted.
 
 ### The scheduled tick
 
@@ -696,56 +752,103 @@ older server that migration cannot run. Everything SSSB targets already meets it
 `packages/cdk/src/sssb-app.js` (16.10), CI's contract job (`postgres:16` in `.github/workflows/app-checks.yml`), pglite
 (18.6) and the embedded Postgres that a local `pnpm test:contract` starts (18.4).
 
-## Staying current with SSSB
+## Upgrading by release
 
-A workspace `pnpm create @sssb` writes depends on SSSB's packages by version, so an update is `pnpm up` (every
-`@sssb/*` package together: they share one version), reading the release notes' "Seam changes"
-([ADR-0014](adr/0014-distribution-as-versioned-packages.md)), and raising the commit your
-`.github/workflows/checks.yml` pins SSSB's reusable workflow to, and the plugin marketplace's `ref` in
-`.claude/settings.json`, to the one the notes name (`sssb doctor` reports either when it is not the release commit
-the installed `@sssb/kit` names). Then run
-`pnpm exec sssb guide` to refresh `.claude/sssb-guide.md`: `sssb doctor` fails until its stamp is the installed
-kit's guide. A repository
-adopted earlier as a fork of this one takes updates by `git merge` until it switches:
-[ADR-0013](adr/0013-upstream-updates-fork-and-merge.md) records that workflow, including which directories reliably
-conflict.
+SSSB's packages are released together, at one version, from `main` in SSSB's repository, and nothing is backported: a
+fix arrives in the next release (ADR-0014 part 10). While the version is 0.x, a minor (0.2 to 0.3) is where breaking
+changes go and a patch is compatible. Each release is a GitHub release of `safeinsights/sssb`, tagged `v<version>`,
+and its notes are also in SSSB's repository, under `docs/releases/` (`docs/releases/v0.2.0-rc.2.md`, say).
 
-### When an update changes what your seam must say
+An upgrade is one change in your repository, made on a branch like any other:
 
-A merge from SSSB can make your app stop compiling, or fail the authorize scan, until you add a line. These come from the change that
-let non-session callers reach `authorize()` (ADR-0012, 2026-11-16 addendum):
+1. **Read the notes of every release after yours, in order.** A release candidate's notes carry only what changed
+   since the previous candidate, so a workspace on v0.2.0-rc.1 that skips a candidate reads the skipped one's notes
+   and then the new one's; rc.1's own notes cover the changes since rc.0. Every
+   entry sits in one of four sections, which are always there ("Seam changes", "Framework migrations", "Operator
+   actions", "Scaffold changes to apply by hand"), or under "Other changes", and says whether its action is required,
+   optional or none, what changed, what to do ("To adopt") and the local code it makes deletable ("Now deletable").
+2. **Move every `@sssb/*` package to the new version, together.** Each package of the workspace that uses one
+   declares it: the root `package.json` (`@sssb/tools`), `apps/<app>/package.json` (`@sssb/kit`, `@sssb/tools`,
+   `@sssb/eslint-plugin`) and `apps/<app>/infra/package.json` (`@sssb/cdk`, `@sssb/tools`), plus any package of your
+   own that took one. Installed from a release candidate, change each URL to the new release's (the version is in
+   it twice, in the tag and in the file name); from npm, once SSSB is published there, change each version. **First
+   make any "Scaffold changes to apply by hand" entry that touches how the packages install**, or the install keeps
+   the old release: a workspace generated before v0.2.0-rc.2 has an `overrides` block for the `@sssb/*` packages in
+   `pnpm-workspace.yaml` (and maybe `blockExoticSubdeps: false`), which pins them whatever the `package.json` files
+   say, and rc.2's notes remove both. Then `pnpm install`, check that the lockfile resolves each package to the new
+   release and that its `integrity` matches the new notes' sha512, and commit the lockfile. `@sssb/create` is no
+   dependency, so there is nothing to move for it. `sssb doctor` names the `@sssb/kit` version it found in its
+   opening lines, and fails when the `@sssb/*` packages the app resolves (`@sssb/kit`, `@sssb/tools`,
+   `@sssb/eslint-plugin`) are not all at one version; `@sssb/cdk` and the infra's `@sssb/tools` are checked when
+   `SssbApp` synthesizes, which refuses a version other than its own.
+3. **Refresh the app guide's copy**: `pnpm exec sssb guide` from the workspace root, then read the diff of
+   `.claude/sssb-guide.md`. Those are the rules every agent in your repository follows, and they change only through
+   a diff of your own; `sssb doctor` fails until the copy is the installed kit's. (On a release up to v0.2.0-rc.2 the
+   command needs `--app apps/<app>` at the root, or run it in the app's directory.)
+4. **Raise both pins to the release commit**, the commit of SSSB's repository the release was cut from: in
+   `.github/workflows/checks.yml`, the `sssb` job's `uses: safeinsights/sssb/.github/workflows/app-checks.yml@<commit>`
+   (and the version in the comment after it), and in `.claude/settings.json`, the `sssb` marketplace's `ref`. A
+   release candidate's notes name the commit ("cut from"), the installed kit records it as `commit` in its
+   `dist/release.json`, and `sssb doctor` names it beside any pin that differs. Your CI and your Claude Code plugin
+   are read at that commit, so a pin left behind runs the old release's checks and commands against the new
+   packages. Then each person updates their installed plugin: `claude plugin marketplace update sssb`, then
+   `claude plugin update sssb@sssb --scope project`, and restart Claude Code (the update applies on restart).
+5. **Apply each entry's "To adopt"**, section by section:
+    - **Seam changes**: what your app must say or satisfy to build (next section). `pnpm typecheck` and `pnpm lint`
+      point at most of them, the conformance suite and `sssb doctor` at the rest.
+    - **Framework migrations**: they run with your app's own migrations, in order; an entry says what to order
+      around or do before you deploy.
+    - **Operator actions**: what whoever deploys does (a parameter, an environment variable, a secret, an IAM
+      permission, a resource replaced), with any new cutover row for `docs/cutover-checklist.md`; `sssb doctor`
+      reports a framework row the file does not mention.
+    - **Scaffold changes to apply by hand**: changes to files `@sssb/create` wrote once, which no release touches
+      (the CI caller, the gitleaks rules, the root config). You make them.
 
-- `apps/<app>/src/app-config/abilities.ts` must export `AppPersonCredentialKind` and
-  `AppMachineCredentialKind` (types), plus `appMachineAbilityRules` and `nonSessionAdministration`
-  (values). `never`, `return false` and `{}` opt out.
-- An `AbilityActor` literal whose `manageAll` may be true must state its session:
-  `credential: { kind: 'session', id: null }`. Without it the literal no longer compiles, because only a
-  stated session wields `manageAll`. A literal with `manageAll: false` needs nothing, but without a
-  session credential it can no longer take a session-only action (inviting a member, changing the org,
-  managing a webhook endpoint, accepting terms).
-- `abilityActorFromCredential` takes an `OrgIdentity`, and only `orgIdentityForSlug` (`@sssb/kit/db/org-lookup`)
-  makes one: a hand-paired `{ id, slug }` no longer compiles.
-- A mutating route under `api/service/` must call `authorize(...)` with the actor `withServiceCaller`
-  passes. The scan's message says how.
+    Then delete what each entry's "Now deletable" describes, wherever your tree has it.
+
+6. **Check, then push**: `pnpm exec sssb doctor`, which fails on versions out of step, a second copy of a peer and
+   a stale guide copy, and only REPORTS a pin that is not the release commit or a framework cutover row your
+   checklist does not mention: read its `report` lines, not just its last one. Then `pnpm verify`. CI then runs
+   SSSB's checks at the new pin.
+
+Until SSSB's first npm release, every release is a candidate, installed by URL as in step 2. A release that turns your
+app red with no entry saying why is a bug in its notes: report it in SSSB's repository.
+
+A repository that adopted SSSB by forking it, before the packages existed, switches to them once and then upgrades
+by release like any generated workspace. ADR-0014 part 11 ("Pages' migration from fork to dependency") is that switch
+for the first adopter's layout, and the notes from v0.2.0-rc.0 on cover every change since keel's `24b0589` (rc.0's
+"Since keel 24b0589" entries, then each later release's).
+
+### When a release changes what your seam must say
+
+"Seam changes" is the section that can stop your app compiling: a new required export in an `app-config` module, an
+`exports` removal, a raised peer floor, or a lint rule, conformance check, `sssb doctor` check or tsconfig option that
+newly fails app code (ADR-0014 part 10 lists what counts as breaking). Its entries say exactly what to add. For
+example, v0.2.0-rc.0's notes carried the change that let non-session callers reach `authorize()` (ADR-0012, 2026-11-16
+addendum): `apps/<app>/src/app-config/abilities.ts` must export `AppPersonCredentialKind`,
+`AppMachineCredentialKind`, `appMachineAbilityRules` and `nonSessionAdministration`, and an `AbilityActor` literal
+whose `manageAll` may be true must state its session. `tsc` points at each place. A workspace generated at a release
+already says what that release's seam asks.
+
+## Changing SSSB itself
+
+Your workspace never carries a change to SSSB's packages. A fix or a capability that belongs in the framework, the
+tools, the fences, the construct or the plugin is a pull request (or first, for a capability, a capability request)
+in SSSB's repository, where it is built and tested against both of SSSB's apps and a generated workspace
+(`CONTRIBUTING.md` there), and it reaches you in the next release. If you cannot wait, `pnpm patch` can carry it in
+your workspace meanwhile; remove the patch when you upgrade to the release that has the fix. Something that only your
+app needs is not an SSSB change at all: it lives in your app (`docs/recipes/app-owned-adapter.md` for a vendor SSSB
+has no port for).
 
 ## Keeping the docs honest
 
-The doc set is mapped in [docs/README.md](README.md), which splits it three ways: doctrine (binding, and
-**gated** — `tests/docs/doc-paths.test.ts` fails the build if a doctrine doc cites a path that does not
-exist), dated records, and future tasks. Three consequences for you:
+The docs in your workspace are yours: `README.md`, `CLAUDE.md` (your own rules, below the line that imports SSSB's
+guide), `docs/cutover-checklist.md` and `apps/<app>/DEMO-SIZE.md`. SSSB's doc set (this guide, the ADRs, the recipes,
+the runbooks, and its dated records) stays in SSSB's repository, mapped in [docs/README.md](README.md); the generator
+copies none of it but the app guide (`.claude/sssb-guide.md`), so read it there, at the release you are on.
 
-- **The records (`docs/decision-log.md`, `docs/build-notes.md`) are the template's, not yours.** They are
-  append-only, so nothing rewrites them; keep appending your own entries below the inherited ones, or
-  truncate them at the date you forked and keep the habit. `build-notes.md` in particular earns its keep
-  the first time something behaves strangely.
-- **`.claude/future-tasks/`** carries designed-but-unbuilt work with the design written down. Keep the
-  ones you want, delete the rest.
-- **Docs that arrive by `git merge upstream/main`** may cite `apps/showcase` or `apps/starter`, which you
-  no longer have. The gate passes those, since they name SSSB's reference apps, and still checks every citation
-  of your own app and of SSSB. (It used to fail on them.)
-
-The habits that keep the rest truthful, which you inherit: record unplanned decisions in
-`decision-log.md` and hard-won lessons in `build-notes.md` as they happen; amend an ADR by appending a
-dated addendum, never by editing what it said; run the `sssb:doc-steward` agent on every branch diff before a
-PR; `/sssb:pre-pr` runs the verify gate plus a branch review. `CLAUDE.md` teaches all of this to agent
-sessions — keep it current as your product diverges.
+The habits worth taking with you: record unplanned decisions and hard-won lessons as they happen (SSSB keeps
+`docs/decision-log.md` and `docs/build-notes.md`, append-only, and a file of your own does the same job); amend a
+decision by appending a dated note, never by editing what it said; run the plugin's `sssb:doc-steward` agent on a
+branch diff before a PR; and `/sssb:pre-pr` runs the verify gate plus a branch review. `CLAUDE.md` teaches all of this
+to agent sessions: keep it current as your product diverges.

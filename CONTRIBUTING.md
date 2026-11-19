@@ -34,9 +34,9 @@ adapter" below are how you implement one that has passed — not a green light o
 - `pnpm verify` is the local gate and must be green before you push. It does **not** run everything CI
   does: `pnpm test:contract`, `pnpm jscpd`, `pnpm test:coverage` and the secret scan are CI-only, so run
   `pnpm test:contract` yourself for any migration or database change.
-- **Adopters sending a fix upstream:** branch off `upstream/main`, not your fork's `main`, and send only
-  the `packages/kit` change — see `docs/adr/0013-upstream-updates-fork-and-merge.md`, which explains
-  why an SSSB change carried locally in a fork is a permanent merge-conflict generator.
+- **Adopters sending a fix:** your workspace installs SSSB's packages, so a fix to one is a PR here, built and
+  tested against both apps in this repository, and it reaches you in a release. Until then `pnpm patch` can carry
+  it in your workspace; drop the patch when you upgrade to the release that has the fix (`docs/adopting.md`).
 
 ## The ports rule (the one rule that matters most)
 
