@@ -114,8 +114,8 @@ the tests in the next section, belongs to that app: `apps/<app>/src/ports/` for 
 `adapters/real/`. The fence is the same one, drawn twice: the app's registry and fake are as vendor-free
 and `process.env`-free as the rest of the app, the registry takes the run mode from SSSB's `isSimulated`,
 and nothing else on the app's request path imports a real adapter statically, its own or SSSB's. `docs/recipes/app-owned-adapter.md` is the
-how-to. The reason it is not "add it to SSSB" is ADR-0013: an adopter does not edit `packages/kit`, and
-a port SSSB would never accept upstream would otherwise be a merge conflict in their fork forever.
+how-to. The reason it is not "add it to SSSB" is that an adopter cannot edit `@sssb/kit` (it is an installed
+package, ADR-0014), and a port SSSB would never accept would otherwise be a local patch to it carried forever.
 
 **Why.** A small owned interface makes the fake trivial to write, keeps dev/demo/test hermetic and
 deterministic, and turns a vendor swap into a local change. Stubbing the vendor's surface instead couples
@@ -128,9 +128,9 @@ migrate call sites opportunistically). See ADRs [0003](adr/0003-auth-clerk-headl
 scaffolds a framework port with both adapters (`/new-kit-port`), and the plugin's `/sssb:new-port`
 (`plugins/sssb/commands/new-port.md`) one the app owns.
 
-## What the template ships — three kinds of things ✅
+## What SSSB ships — three kinds of things ✅
 
-**Principle.** The template ships exactly three kinds of things: (1) universal capabilities, fully
+**Principle.** SSSB ships exactly three kinds of things: (1) universal capabilities, fully
 worked — used by essentially every instance, each gets a port, a real adapter for a default vendor, a
 fake, and Simulator presence; (2) one worked example per integration class — not the vendor, but the
 proven end-to-end shape (async external counterparty with callback, streaming vendor API, presigned
@@ -146,10 +146,10 @@ fails both tests below, its adapter is written in that app, behind a port the ap
 already owns, such as the SMS channel, follows that seam's own recipe.
 
 **The two tests for shipping vendor code.** _Universality_ — will every instance use it? — and
-_new-class_ — does it demonstrate integration mechanics the template doesn't already teach? A vendor
+_new-class_ — does it demonstrate integration mechanics SSSB doesn't already teach? A vendor
 adapter must pass at least one; failing both makes it dead code with a maintenance bill, fighting the
-project's own dead-code discipline. This is not the same test as whether a _capability_ belongs in the
-template — authz, audit, and cross-org requests all shipped port-less because they pass universality
+project's own dead-code discipline. This is not the same test as whether a _capability_ belongs in
+SSSB — authz, audit, and cross-org requests all shipped port-less because they pass universality
 (or new-class) without needing vendor code at all. The port test governs vendor code specifically.
 
 **The third test, for shipping UI: does this component encode a framework invariant, or is it generic
@@ -184,11 +184,11 @@ outcome this test is designed to produce.
 
 **Why.** Making the line explicit stops "one worked example per class" from quietly drifting into "one
 adapter per vendor an instance might someday want" — the same dead-code-with-a-maintenance-bill failure
-mode the ports boundary already guards against for vendors the app calls, applied here to vendors the
-template ships speculatively. The UI test does the same job for components, where the drift is toward a
+mode the ports boundary already guards against for vendors the app calls, applied here to vendors
+SSSB would ship speculatively. The UI test does the same job for components, where the drift is toward a
 house design system nobody asked the framework for.
 
-**Tradeoff.** Some genuinely useful vendor integrations stay out of the template even though building
+**Tradeoff.** Some genuinely useful vendor integrations stay out of SSSB even though building
 them would be easy, because a second worked example of an already-demonstrated class is repetition, not
 coverage. See `docs/app-coverage-gaps.md` for the doctrine's origin and worked application.
 
@@ -535,7 +535,7 @@ forced: serverless request/response cannot hold a socket. The shape that satisfi
 doctrine is a sidecar (Hocuspocus/Yjs, persisting CRDT state to its own table) **plus a single-user flag
 that bypasses the service entirely** and is exercised in production-adjacent preview environments. That
 degrade path is the load-bearing fact: **single-user editing is a viable product mode**, so the hermetic
-scaffold never needs the service at all. The recipe, when an app on this template is genuinely forced
+scaffold never needs the service at all. The recipe, when an app on SSSB is genuinely forced
 here:
 
 1. **Single-user is the default and the fake.** The editing feature ships first with no service — plain

@@ -1,18 +1,21 @@
-# SSSB — a multi-tenant application template
+# SSSB — a foundation for multi-tenant web applications
 
 A production-shaped Next.js foundation you generate a workspace from and build a product on: ports-and-adapters
 architecture, Postgres row-level-security tenancy, and a local development loop that runs the whole world on your
 laptop with no docker, no credentials, and no network.
+
+To see it working, clone this repository and run:
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-That is the entire setup. The app boots in seconds against fake adapters — in-process Postgres, a person
-picker instead of a hosted IdP, caught email in a dev mailbox, deterministic canned model replies — with
-two seeded tenants and six people already in the world. **Fresh clone to running app in under two minutes
-is this repo's standing acceptance test**, not an aspiration.
+That is the entire setup. It boots the showcase, SSSB's worked example app, in seconds against fake adapters —
+in-process Postgres, a person picker instead of a hosted IdP, caught email in a dev mailbox, deterministic canned
+model replies — with two seeded tenants and six people already in the world. **Fresh clone to running app in under
+two minutes is a standing acceptance test**, here and in every workspace the generator writes, not an aspiration.
+To build a product on SSSB, you generate a workspace of your own instead ("Starting a product on it", below).
 
 Prerequisites: Node ≥ 24 (`.nvmrc` pins it), pnpm ≥ 11, and — once, before `pnpm verify` —
 `pnpm exec playwright install chromium`.
@@ -47,6 +50,10 @@ Here the fakes compose into a world with inhabitants, and a panel called **Simul
 
 You can hold every job in the world at `queued` and watch the choreography, then let them complete inline
 again. None of this reaches production: real builds ship zero Simulator client code.
+
+In the showcase all of it runs on `pnpm dev`. An app the generator writes has the Simulator in its single-file static
+demo from the start; the panel on its own `pnpm dev` takes route glue that only the showcase carries today
+(`.claude/future-tasks/starter-starting-points.md`).
 
 ### 2. The boundaries are enforced by the build, not by documentation
 
@@ -102,35 +109,36 @@ the narrow interfaces in [packages/kit/src/ports/](packages/kit/src/ports/)
 row-level security: every tenant-scoped query runs inside `withTenant()`. Inside a tenant, `authorize()` is
 the single choke point for resource-level decisions. All UI copy flows through next-intl (`en` + `es`).
 
-## Using it as a template
+## Starting a product on it
 
-Read **[docs/adopting.md](docs/adopting.md)**. The short version: the framework is `packages/kit`, your
-app extends it only through the `apps/<app>/src/app-config/` registration seam, and a capability you don't
+Read **[docs/adopting.md](docs/adopting.md)**. The short version: the framework is `@sssb/kit` (`packages/kit`
+here), your app extends it only through the `apps/<app>/src/app-config/` registration seam, and a capability you don't
 want is turned off by registering nothing for it.
 
 ```sh
 pnpm create @sssb acme --name "Acme Research" --repo acme-org/acme-research --owner @acme-org/devs
 ```
 
-That writes a new workspace in `acme/`: your app, generated from `apps/starter` and renamed, with its root config,
-its CI (a workflow calling SSSB's reusable one), its owner files and SSSB's packages as dependencies — the whole
-mechanical half of adoption. Until SSSB's packages are on npm, run the generator from a checkout of this repository
-against packed tarballs; [docs/adopting.md](docs/adopting.md) has the commands. Two example apps ship here: `apps/showcase` (a support desk — tickets, escalations, file
-attachments, an export job run by a simulated external service) so every framework capability has a living
-worked example, and `apps/starter`, the template the generator copies. Build against the showcase as your
+That writes a new workspace in `acme/`: your app in apps/acme/, generated from `apps/starter` and renamed, with its
+root config, its CI (a workflow calling SSSB's reusable one), its owner files and SSSB's packages as dependencies —
+the whole mechanical half of adoption. The app sits under `apps/` so that a second app or a package of your own is a
+sibling rather than a special case; one app is the usual shape.
+
+Two example apps ship here: `apps/showcase` (a support desk — tickets, escalations, file attachments, an export job
+run by a simulated external service) so every framework capability has a living worked example, and `apps/starter`, the template the generator copies. Build against the showcase as your
 reference; it stays here and is never copied.
 
-A generated workspace depends on SSSB's packages by version and upgrades with `pnpm up` and the release notes
-([ADR-0014](docs/adr/0014-distribution-as-versioned-packages.md)). A repository adopted earlier as a fork of this
-one takes updates by `git merge` until it switches — see
-[ADR-0013](docs/adr/0013-upstream-updates-fork-and-merge.md).
+A generated workspace depends on SSSB's packages by version and upgrades by release: move the packages to the new
+version and follow its release notes ([docs/adopting.md](docs/adopting.md), "Upgrading by release";
+[ADR-0014](docs/adr/0014-distribution-as-versioned-packages.md)). You never fork or merge this repository.
 
 ## What this is not, and what to expect
 
-**It is not a library.** You do not add it to an existing app; you start from it. It hands you the verify
-gate, the lint fences, the CI workflows and the docs doctrine along with the code, and `pnpm add` cannot
-deliver any of that. [ADR-0013](docs/adr/0013-upstream-updates-fork-and-merge.md) explains why it stays
-that way, and what would change the answer.
+**It is a framework you start from, not a library you add.** Its code ships as versioned packages (`@sssb/kit` and
+its siblings), but you don't `pnpm add` it to an existing app: `pnpm create @sssb` writes a workspace that carries the
+verify gate, the lint fences, the CI workflow and the agent guide along with your app, and upgrades arrive as
+releases of the packages. [ADR-0014](docs/adr/0014-distribution-as-versioned-packages.md) explains the split between
+what the packages carry and what the generator writes once.
 
 **It is opinionated on purpose.** One component library, one data layer, one way to do tenancy. The
 decisions are written down in `docs/adr/` with their reasoning, and treated as settled for routine work.
@@ -139,13 +147,13 @@ New information reopens one; taste does not.
 **Some of it is authored but unverified.** Every adapter that needs a real credential — auth, email,
 LLM, object storage, analytics — is typechecked against its vendor SDK and has never spoken to the real
 service. Those carry an `AUTHORED — CUTOVER` header and a row in
-[docs/cutover-checklist.md](docs/cutover-checklist.md) naming the exact proof each one owes. The template
-is honest about this rather than quietly hoping; the fakes are what you actually develop against.
+[docs/cutover-checklist.md](docs/cutover-checklist.md) naming the exact proof each one owes. SSSB is honest
+about this rather than quietly hoping; the fakes are what you actually develop against.
 
 **Who maintains it.** SSSB is maintained by SafeInsights, and it is not SafeInsights-specific. The guard is the
-universality test in [docs/development-approach.md](docs/development-approach.md) ("What the template ships"):
+universality test in [docs/development-approach.md](docs/development-approach.md) ("What SSSB ships"):
 vendor code ships only if essentially every product built on SSSB will use it or it demonstrates a class of
-integration the template does not yet teach, a component only if it encodes a framework invariant, and
+integration SSSB does not yet teach, a component only if it encodes a framework invariant, and
 everything else is a recipe.
 
 **Support posture.** Issues and PRs are welcome — especially improvements to

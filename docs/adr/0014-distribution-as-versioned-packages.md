@@ -1227,3 +1227,48 @@ placeholders (`0.0.0`, `0.0.0-stage`) and no release candidate. Both reproduced 
 - **Pack and consume's pages shape installs the notes' recipe** (`notesRecipe`): the notes `candidateNotes` renders
   for the packed tarballs, their JSON of URLs taken verbatim, served from a local server, with pnpm's defaults but for
   the generated workspace's `minimumReleaseAge` guard, installed with `--ignore-scripts`.
+
+## Addendum — 2026-11-18: P15, ADR-0013 superseded
+
+P15 is done. ADR-0013's Status is now Superseded (by this ADR), with a dated addendum of its own saying what replaces
+each of its parts; its body is unchanged. The two conditions the body and the 2026-11-17 addendum named are met: the
+generator replaced fork and merge (P12), and Pages has switched (P8: `safeinsights/pages#11` took v0.2.0-rc.1 and
+`safeinsights/pages#14` v0.2.0-rc.2, merged into its `integration` branch). This ADR's header line "Supersedes, if
+accepted" now simply holds.
+
+`docs/adopting.md` was rewritten around the generator and upgrading by release, with its fork-era sections retired:
+taking updates by `git merge`, the advice that a local edit to the framework or to SSSB's lint config would conflict
+on the next merge, sending a fix "upstream" from a fork, and the layout and root scripts of SSSB's own repository
+presented as the adopter's. It says how a workspace is generated and upgraded both before SSSB's first npm release
+(P14), from a release candidate's tarballs, and after it, by version. Writing it found that `pnpm exec sssb guide`,
+which the generated `README.md` and `CLAUDE.md` tell people to run and the workspace root is where they run it, failed
+there; it now starts from the workspace's first app as `sssb doctor` does (`docs/decision-log.md`, 2026-11-18, P15).
+
+## Addendum — 2026-11-18: P14, the first release to public npm, as built
+
+P14's row says "0.1.0 goes out through P1b's workflow". The group reached P14 at `0.2.0-rc.2`, its third release
+candidate, so **the first public release is 0.2.0**: leaving Changesets' pre mode takes a candidate to the version it
+was heading for (a patch or a minor on `0.2.0-rc.2` is `0.2.0`; a major, 1.0.0, is refused by `release.mjs check`).
+`docs/decision-log.md` (2026-11-18, P14) has each choice below with what was rejected.
+
+- **`private` comes off all five `@sssb/*` packages, and pre mode is left by deleting `.changeset/pre.json`** in the
+  same change, as the P7 addendum required. Not `changeset pre exit`: its `"mode": "exit"` would be one more state
+  for `release.mjs` and the notes tool to read, and it differs from no pre state only in forcing a patch when
+  nothing is pending and in deleting `pre.json` in the release commit, which `verify-release` would then have to
+  accept. This reverses the P7 addendum's "P14 leaves pre mode (`changeset pre exit`)".
+- **The candidates' changesets are released by the first plain release.** Out of pre mode Changesets counts the files
+  in `.changeset/pre/` as pending, so 0.2.0 versions from them and the new ones and deletes them all; `release.mjs`
+  (`check`, `prepare`, `verify-release`) and `scripts/release-notes.mjs` read the same set, so **0.2.0's notes are
+  every change since the first candidate**, and `--since v0.2.0-rc.2` gives what is new since the last.
+- **The release is rehearsed on every PR**: CI's `release-dry-run` job (`checks.yml`) runs `plan`'s, `push`'s, `pack`'s
+  and `publish`'s commands in its own checkout, ending in the pinned npm's `publish --provenance --dry-run`, with no
+  id-token, environment or token of any kind.
+- **Nothing reaches npm before `int-p14` merges into `main`**, and the reason is held by a test,
+  `tests/tooling/release-reach.test.ts`: release.yml starts only on a push to `main` or a `v*` tag; `publish`, the one
+  job with npm's id-token in `npm-publish`, needs `pack`, which runs only for a plain tag on `main`, after `checks`
+  passes on that commit; no other workflow holds an id-token, an environment or a secret, or runs a publish but as a
+  dry run. The tag is cut only by `push`, on `main`. The repository and npm settings that carry the same path
+  (release.yml's header) are JP's, unchanged by this step.
+- **`docs/adopting.md`'s "Before SSSB is on npm" section, which P15 wrote for a workspace on a candidate's tarballs,
+  becomes one paragraph**: from 0.2.0 `pnpm create @sssb` resolves from npm, and a workspace on a candidate moves to it
+  by replacing each tarball URL with the version. Generating from a checkout at an unreleased commit stays.

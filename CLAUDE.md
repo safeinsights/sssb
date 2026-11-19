@@ -11,13 +11,14 @@ release and the gates are made. Nothing the guide says is repeated here. An app-
 checks its paths against `apps/starter`.
 
 Multi-tenant web app foundation, built to be adopted: `docs/adopting.md` is the adopter guide; keep it truthful.
-Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0014) and don't relitigate them;
-0014 is a plan carried out in steps (its implementation plan), so until a step lands, the tree and the docs
-describe what is built, not what 0014 will build.
+Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0012 and 0014) and don't
+relitigate them; 0013 (fork and merge) is Superseded by 0014, so nothing here tells an adopter to fork, merge or
+send a change "upstream" from a fork. 0014 is a plan carried out in steps (its implementation plan), so until a step
+lands, the tree and the docs describe what is built, not what 0014 will build.
 The philosophy behind these rules — thin slices, ports/adapters, hermetic dev, demo mode, one-app default —
 is `docs/development-approach.md`; read it to understand the why, not just the what.
-Before adding a new vendor adapter, check the template/instance doctrine
-(`docs/development-approach.md`, "What the template ships"): vendor code must pass the universality
+Before adding a new vendor adapter, check what SSSB ships
+(`docs/development-approach.md`, "What SSSB ships"): vendor code must pass the universality
 or new-class test — otherwise it's a recipe in `docs/recipes/`. A new framework COMPONENT has its own
 test in that section: does it encode a framework invariant, or is it generic presentation? A sign-in
 screen does; a sortable table does not (`docs/recipes/list-kit.md`).
@@ -134,7 +135,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   **`sssb check-e2e`** (`pnpm check:e2e`, per app) asks
   Playwright which files each config loads, and fails a spec that reaches the kit other than through
   `@sssb/kit/testing/e2e`, directly or through an app module or a workspace package.
-- `pnpm verify` does NOT run `test:contract`, jscpd, coverage, gitleaks or pack and consume — CI runs those
+- `pnpm verify` does NOT run `test:contract`, jscpd, coverage, gitleaks, the licence scan or pack and consume — CI runs those
   (`.github/workflows/checks.yml`). **CI's app checks are the reusable workflow an adopter calls**
   (`.github/workflows/app-checks.yml`, ADR-0014 P10): `checks.yml`'s `sssb` job calls it (by its local path), so
   its checks are named `sssb / <job>` (`sssb / all-checks` fails unless every one ran and passed), and each job's
@@ -183,8 +184,10 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   authorization entirely. It proves the route is the KIND the reason describes, never the reason's whole claim;
   ADR-0012 states the limit.
 - A `knip.json` entry is justified in `docs/build-notes.md`. CI additionally runs coverage reporting, jscpd
-  duplication, and gitleaks secret scanning — see `.github/workflows/checks.yml` and
-  `.github/workflows/app-checks.yml`.
+  duplication, gitleaks secret scanning and the licence scan (`scripts/licence-scan.mjs` against
+  `.github/licence-policy.json`: a new copyleft, source-available or unknown licence in the installed closure fails
+  it unless the policy names it with a reason; `pnpm install` first, then `node scripts/licence-scan.mjs`) — see
+  `.github/workflows/checks.yml` and `.github/workflows/app-checks.yml`.
 - Unit tests are colocated (`*.test.ts(x)`), run by Vitest — `vitest.config.ts` has ONE PROJECT PER APP
   because `@sssb/app-config/*` is a bare specifier and a single alias can only name one app, PLUS a `kit`
   project that runs the packages' suites against the framework's own seam (`packages/kit/test-fixture`). SSSB's
@@ -195,7 +198,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   and `SHOWCASE_PORT`/`STARTER_PORT`/`LADLE_PORT`/`CONTRACT_PG_PORT` override it (the last also isolates
   `pnpm test:contract` between worktrees). Each app declares its slot in its package.json
   (`"sssb": { "port": "starter" }`); the slot is a port band, not the app's name, so the app `@sssb/create` writes
-  keeps `starter` too.
+  keeps `starter` too. An app may instead declare a slot of its own, `{ "name": "<name>", "default": <port> }` (its
+  override `<NAME>_PORT`, its derived worktree port from 20000-29999 keyed on the name too); `sssb doctor` fails two apps
+  on one slot or one default.
 - **Scratch directories in this repo's tests**: `tests/support/tmp-dir.ts` re-exports `@sssb/tools/testing/tmp-dir`,
   and the framework's own tests use its copy, `packages/kit/src/testing/tmp-dir.ts`; `sssb/no-direct-mkdtemp` bans the
   raw calls in test files, and `test:unit`, `test:coverage` and `test:contract` run through `sssb check-tmpdir-leak`.
@@ -210,7 +215,9 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   The playwright configs blank the variable and refuse to load while a ticking dev server's marker is live.
 - **A PR that changes what ships to adopters adds a changeset** (`.changeset/README.md` has the template and what
   counts): every `@sssb/*` package's shipped files and `apps/starter`, the generator's template. It is the release-note entry, with a "Now deletable" part,
-  and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset.
+  and `changeset-required` in CI fails the PR without one. Adopters would see no difference: an empty changeset. A
+  change to a release snapshot (`packages/cdk/release-snapshots/`, the stateful logical ids;
+  `packages/kit/release-snapshots/`, the required environment) needs one that files `minor`.
 - Conventional commits: lowercase subject, ≤100 chars (commitlint hook enforces).
 - Before opening a PR, run `/sssb:pre-pr` (verify + subagent branch review).
 - **Merging: use a merge commit** (`gh pr merge --merge`) — that is what this repo's history is made of.
@@ -269,8 +276,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   records (`build-notes.md`, `decision-log.md`, ADR bodies and anything appended to them) are exempt — see
   `docs/README.md` for the split. If you move a directory, the gate is what tells you which docs you
   just falsified. A citation of `apps/showcase` or `apps/starter` is checked strictly while that app
-  exists and passes where it does not (it then names SSSB's reference app, and a doc merged in from
-  upstream must not turn an adopter's gate red); write `apps/<app>/…` when you mean the reader's own app.
+  exists and passes where it does not (it then names SSSB's reference app; `sssb.docPaths.referenceApps` lists
+  them, for any doc set the engine checks); write `apps/<app>/…` when you mean the reader's own app.
 - **An adopter's workspace is generated, not forked**: `pnpm create @sssb <dir>` (`@sssb/create`, ADR-0014 P12)
   writes it from `apps/starter` plus generated root config, renaming the app on the way. The generator renames
   only the app's identity, each in one place that `packages/create/src/generate.js` names: `APP_SLUG` and the

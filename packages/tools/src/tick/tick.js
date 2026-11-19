@@ -14,10 +14,39 @@
 // where the server keeps `.data` (`APP_DATA_DIR` overrides it, for both).
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { portFor } from '../ports.js'
+import { foreignAppSlotProblem, portFor } from '../ports.js'
 
-/** The apps that have a tick route. The key is the PORT key (a slot, not the app's name, so it survives a rename of the app). */
-export const TICK_APPS = ['showcase', 'starter']
+/**
+ * The built-in apps that have a tick route. The key is the PORT key (a slot, not the app's name, so it survives a
+ * rename of the app). An app that declares a slot of its own (`"sssb": { "port": { "name": … } }`) ticks under that
+ * name, which `tickSlot` resolves from the declaration the command read.
+ */
+const TICK_APPS = ['showcase', 'starter']
+
+/**
+ * What an app name on a tick command line means: a built-in app, or the slot the app in the working directory
+ * declares under that name. Undefined when it is neither.
+ * @param {string} app
+ * @param {import('../ports.d.ts').PortDeclaration | undefined} [declared]
+ * @returns {import('../ports.d.ts').PortDeclaration | undefined}
+ */
+export function tickSlot(app, declared) {
+    // Another app's built-in slot is no app of this one's when it declares a slot of its own (foreignAppSlotProblem).
+    if (TICK_APPS.includes(app)) {
+        return foreignAppSlotProblem(app, declared) === null
+            ? /** @type {import('../ports.d.ts').PortService} */ (app)
+            : undefined
+    }
+    return declared !== undefined && typeof declared === 'object' && declared.name === app ? declared : undefined
+}
+
+/**
+ * The names `tickSlot` accepts, for a usage message.
+ * @param {import('../ports.d.ts').PortDeclaration | undefined} [declared]
+ */
+export function tickAppNames(declared) {
+    return typeof declared === 'object' ? [declared.name] : [...TICK_APPS]
+}
 
 export const TICK_PATH = '/api/webhooks/cron'
 
@@ -29,7 +58,7 @@ const MIN_TIMEOUT_SECONDS = 0.1
 const MAX_TIMEOUT_SECONDS = 3600
 
 const USAGE = `usage: pnpm tick [--url <origin>] [--timeout <seconds>]   (sssb tick also takes --app <dir>)
-       (per app: pnpm tick = showcase, pnpm tick:starter = starter; direct: sssb tick <${TICK_APPS.join('|')}> ...)
+       (per app: pnpm tick = showcase, pnpm tick:starter = starter; direct: sssb tick <${TICK_APPS.join('|')}, or the slot an app declares for itself> ...)
 
   --url <origin>       the dev server's origin, loopback only (default: this checkout's port for the app)
   --timeout <seconds>  give up on the request after this long, ${MIN_TIMEOUT_SECONDS} to ${MAX_TIMEOUT_SECONDS} (default ${DEFAULT_TIMEOUT_SECONDS})`
@@ -71,9 +100,10 @@ export function parseLoopbackOrigin(value) {
 
 /**
  * @param {string[]} argv the arguments after the script name
+ * @param {import('../ports.d.ts').PortDeclaration} [declared] the port slot the app in the working directory declares
  * @returns {{ app: string, origin: string, timeoutMs: number }}
  */
-export function parseTickArgs(argv) {
+export function parseTickArgs(argv, declared) {
     /** @type {string | undefined} */
     let app
     /** @type {string | undefined} */
@@ -111,8 +141,13 @@ export function parseTickArgs(argv) {
     }
 
     if (app === undefined) throw new TickError('which app? the first argument is the app', { usage: true })
-    if (!TICK_APPS.includes(app)) {
-        throw new TickError(`unknown app "${app}" (known: ${TICK_APPS.join(', ')})`, { usage: true })
+    const slot = tickSlot(app, declared)
+    if (slot === undefined) {
+        throw new TickError(
+            foreignAppSlotProblem(app, declared) ??
+                `unknown app "${app}" (known: ${tickAppNames(declared).join(', ')})`,
+            { usage: true },
+        )
     }
 
     let origin
@@ -120,7 +155,7 @@ export function parseTickArgs(argv) {
         origin = parseLoopbackOrigin(url)
     } else {
         try {
-            origin = `http://localhost:${portFor(/** @type {'showcase' | 'starter'} */ (app))}`
+            origin = `http://localhost:${portFor(slot)}`
         } catch (error) {
             throw new TickError(error instanceof Error ? error.message : String(error), { usage: true })
         }
@@ -261,10 +296,13 @@ export function tickDidWork(body) {
     )
 }
 
-/** @param {string[]} argv */
-export async function main(argv) {
+/**
+ * @param {string[]} argv
+ * @param {import('../ports.d.ts').PortDeclaration} [declared] the port slot the app in the working directory declares
+ */
+export async function main(argv, declared) {
     try {
-        const { origin, timeoutMs } = parseTickArgs(argv)
+        const { origin, timeoutMs } = parseTickArgs(argv, declared)
         const body = await tickOnce({ origin, timeoutMs })
         console.log(summarizeTick(body))
         return 0

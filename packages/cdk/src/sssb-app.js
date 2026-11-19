@@ -352,6 +352,23 @@ export class SssbApp extends Construct {
             removalPolicy,
         })
         const secret = /** @type {cdk.aws_secretsmanager.ISecret} */ (db.secret)
+        // The cluster's `removalPolicy` does not reach its generated master secret, which CDK synthesizes with
+        // `DeletionPolicy: Delete` whatever the cluster does. In production the stack would then keep the database
+        // and delete the only credentials to it, so the secret gets the cluster's policy. The logical id is
+        // unchanged (a new one would replace the secret, and with it the password the cluster was created with).
+        // `db.secret` is not the secret: it is the SecretTargetAttachment that CDK returns from `secret.attach`, so the
+        // policy goes on the underlying `AWS::SecretsManager::Secret`, found in the cluster's subtree. Nothing else
+        // holds the credentials: no KMS key (the cluster and the secret name none, so they use the account's AWS-managed
+        // keys; the buckets use S3's), no rotation schedule, and the attachment names a secret and a cluster
+        // and nothing else, the username and password being the secret's own `GenerateSecretString`.
+        const generatedSecrets = db.node.findAll().filter((c) => c instanceof cdk.aws_secretsmanager.CfnSecret)
+        if (generatedSecrets.length !== 1) {
+            throw new Error(
+                `SssbApp: expected the database cluster to own one generated secret, found ${generatedSecrets.length}`,
+            )
+        }
+        const [generatedSecret] = /** @type {cdk.aws_secretsmanager.CfnSecret[]} */ (generatedSecrets)
+        generatedSecret?.applyRemovalPolicy(removalPolicy)
 
         // ---- buckets ----------------------------------------------------------------------
         // CDN-served build assets — written by the deploy pipeline only.

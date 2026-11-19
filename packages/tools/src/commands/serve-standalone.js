@@ -11,9 +11,9 @@
 import { spawn } from 'node:child_process'
 import { cpSync, existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
-import { appPortService } from '../app-port.js'
+import { appPortService, serviceNamed, servicesKnownTo } from '../app-port.js'
 import { takeAppDir, UsageError } from '../app.js'
-import { portFor, SERVICE_NAMES } from '../ports.js'
+import { portFor } from '../ports.js'
 
 /**
  * The single server.js Next emitted, wherever it nested it.
@@ -34,10 +34,11 @@ function findServer(dir) {
 /** @param {string[]} args */
 export async function run(args) {
     const root = takeAppDir(args)
-    if (args.length > 1) throw new UsageError(`usage: sssb serve-standalone [${SERVICE_NAMES.join('|')}]`)
-    const service = args[0] ?? (process.env['PORT'] ? undefined : appPortService(root))
-    if (service !== undefined && !SERVICE_NAMES.includes(/** @type {import('../ports.d.ts').PortService} */ (service)))
-        throw new UsageError(`sssb serve-standalone: unknown port service "${service}"`)
+    if (args.length > 1) throw new UsageError(`usage: sssb serve-standalone [${servicesKnownTo(root).join('|')}]`)
+    const service =
+        args[0] === undefined ? (process.env['PORT'] ? undefined : appPortService(root)) : serviceNamed(root, args[0])
+    if (args[0] !== undefined && service === undefined)
+        throw new UsageError(`sssb serve-standalone: unknown port service "${args[0]}"`)
 
     const standalone = path.join(root, '.next', 'standalone')
     if (!existsSync(standalone)) {
@@ -52,7 +53,7 @@ export async function run(args) {
         cpSync(path.join(root, 'public'), path.join(serverDir, 'public'), { recursive: true })
     }
 
-    const port = process.env['PORT'] ?? String(portFor(/** @type {import('../ports.d.ts').PortService} */ (service)))
+    const port = process.env['PORT'] ?? String(portFor(service))
 
     // PIN THE WORLD TO THE APP, not to the build output. The fake adapters resolve `.data` relative to the working
     // directory, and this child's is `serverDir`, somewhere inside `.next/standalone/…`. Left alone it writes its

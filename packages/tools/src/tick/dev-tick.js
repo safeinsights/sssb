@@ -23,8 +23,8 @@
 // `process.env`, and nothing in the server changes. The ticking itself is ticker.js, which owns start, stop,
 // the interval and its status and knows nothing of the environment: this file is the policy for `pnpm dev`.
 import { spawn } from 'node:child_process'
-import { portFor } from '../ports.js'
-import { TICK_APPS } from './tick.js'
+import { foreignAppSlotProblem, portFor } from '../ports.js'
+import { tickAppNames, tickSlot } from './tick.js'
 import { createTicker, intervalProblem } from './ticker.js'
 import { tickerMarkerPath } from './ticker-marker.js'
 
@@ -61,20 +61,28 @@ export function resolveDevTick(env) {
  * `sssb dev-tick <app> -- <command...>`
  *
  * @param {string[]} argv
+ * @param {import('../ports.d.ts').PortDeclaration} [declared] the port slot the app in the working directory declares
  * @returns {{ app: string, command: string[] } | { error: string }}
  */
-export function parseDevArgs(argv) {
+export function parseDevArgs(argv, declared) {
     const dash = argv.indexOf('--')
     const app = argv[0]
-    if (dash !== 1 || argv.length < 3 || !TICK_APPS.includes(app)) {
-        return { error: `usage: sssb dev-tick <${TICK_APPS.join('|')}> -- <the dev server's command...>` }
+    if (dash !== 1 || argv.length < 3 || tickSlot(app, declared) === undefined) {
+        return {
+            error:
+                (dash === 1 && foreignAppSlotProblem(app, declared)) ||
+                `usage: sssb dev-tick <${tickAppNames(declared).join('|')}> -- <the dev server's command...>`,
+        }
     }
     return { app, command: argv.slice(dash + 1) }
 }
 
-/** @param {string[]} argv */
-export async function main(argv) {
-    const parsed = parseDevArgs(argv)
+/**
+ * @param {string[]} argv
+ * @param {import('../ports.d.ts').PortDeclaration} [declared] the port slot the app in the working directory declares
+ */
+export async function main(argv, declared) {
+    const parsed = parseDevArgs(argv, declared)
     if ('error' in parsed) {
         console.error(parsed.error)
         return 2
@@ -98,7 +106,7 @@ export async function main(argv) {
     // `next dev` exited 0, removed the marker and left no process behind).
     for (const name of /** @type {const} */ (['SIGINT', 'SIGTERM', 'SIGHUP'])) process.on(name, () => child.kill(name))
 
-    const origin = `http://localhost:${portFor(/** @type {'showcase' | 'starter'} */ (parsed.app))}`
+    const origin = `http://localhost:${portFor(/** @type {import('../ports.d.ts').PortDeclaration} */ (tickSlot(parsed.app, declared)))}`
     const ticker = createTicker({ origin, markerFile: tickerMarkerPath() })
     if (wanted.mode === 'on') {
         console.log(

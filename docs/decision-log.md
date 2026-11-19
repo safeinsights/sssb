@@ -5123,3 +5123,532 @@ _Accepted gap_ and adds to the rule.
   `packages/kit/tsconfig.strict.json`, is what compiles the kit against a seam without `appRoles` (the strict config
   resolves the seam to the fixture, which exports it): reading `.appRoles` directly fails `apps/starter` and
   `apps/showcase` with TS2339 and passes the strict config.
+
+## P14: the first release to public npm (2026-11-18, `release/p14-first-npm-release`)
+
+JP's standing rule for this work: decide, record the decision and what was rejected, and report it.
+
+- **0.2.0, not 0.1.0.** The P14 row predates the candidates; the group is at `0.2.0-rc.2`, and leaving pre mode takes
+  it to `0.2.0`. Recorded in an ADR-0014 addendum rather than by editing the row. Rejected: forcing 0.1.0, which is
+  behind the candidates already installed and which `prepare` refuses as going backwards.
+- **Pre mode is left by deleting `.changeset/pre.json`.** Rejected: `changeset pre exit` (`"mode": "exit"`). Read
+  from `@changesets/assemble-release-plan` 7.0.0 and `apply-release-plan` 8.1.1: both release every `pre/`
+  changeset and delete it; exit mode adds a forced patch when nothing is pending and deletes `pre.json` in the
+  release commit, which `verify-release` would then have to accept. Deleting it in the PR keeps one state fewer.
+- **Out of pre mode the `pre/` changesets are pending everywhere at once**: `loadWorkspace`, `verify-release` and the
+  notes tool. `check` judges them again (the next release reads them); all 31 pass today's lint. `check`'s rule
+  against a pending changeset reusing a consumed one's name now holds in both modes. Rejected: leaving them unlinted
+  out of pre mode, which would let the release find a malformed one after merge.
+- **The first plain release's notes are every changeset since the first candidate.** Rejected: notes that point at
+  the three candidates' prereleases, which an adopter starting on 0.2.0 from npm would have to chase. Pages, on rc.2,
+  gets its delta from `--since v0.2.0-rc.2`; the "Upgrading to this release" section is a sibling task's.
+- **The changeset is `scaffold`, `optional`, a patch on all five packages.** An adopter on a candidate's tarballs
+  keeps working; moving to npm is their choice. A patch and a minor both release 0.2.0 from `0.2.0-rc.2`. Rejected:
+  `required`/`minor`, which would tell pages it breaks by doing nothing.
+- **The release dry-run is a `checks.yml` job that rehearses the real commands**, `prepare` → `verify-release` (from a
+  copied checker) → local commit and tag → `publishable` → `pnpm pack` → `preflight` (reading npm) → `npx
+npm@11.21.2 publish --provenance --dry-run`. Measured: npm 11.21.2 accepts `--provenance --dry-run` with no OIDC
+  token (it signs nothing on a dry run) and refuses a prerelease version without `--tag`, so the rehearsal fails a
+  release that would publish a candidate. The job holds `contents: read` only, keeps no credentials, and sets
+  `SSSB_CREATE_UNPUSHED_PIN` for its packing (its release commit exists only there). Rejected: a dry-run job in
+  `release.yml` (it would run only on `main` and tags, after the decision), and packing at the PR's own version
+  (`0.2.0-rc.2`, which is not what a merge publishes). Not a required check until JP adds it to the rulesets.
+- **"Nothing publishes early" is a test over the workflow files** (`tests/tooling/release-reach.test.ts`), not prose:
+  the triggers, the `if`s and `needs` from a tag to `publish`, the order of `pack`'s gates, the id-token holders, and
+  no publish elsewhere but a dry run. Each was seen red: a `pull_request` trigger added to release.yml, and
+  `--dry-run` dropped from the rehearsal. What it cannot read (environments' deployment rules, the tag ruleset, npm's
+  trusted publishers) stays JP's settings, listed in release.yml's header.
+- **A copy of this repository's own tree is released in a test** (manifests and `.changeset/` only): `prepare` with
+  the real CLI, then `verify-release` and `publishable`. While the group is a candidate, the release must be its own
+  version. Seen red with `verify-release`'s `pre/` handling removed.
+- **Not changed: `pack` still packs again on the tag** rather than publishing the tarballs `checks`' pack-and-consume
+  job tested on the release commit, as a candidate's tag does. Out of this task's scope; the rehearsal packs as `pack`
+  does.
+
+## Pack and consume proves the by-version install against a local registry (2026-11-18, `release/p14-first-npm-release`)
+
+`registryRecipe` (pages shape) installs the packed `@sssb/*` by version, as `@sssb/create` writes them without
+`--sssb`, from a minimal npm registry on 127.0.0.1 that serves the TARBALLS directory (`.npmrc` `@sssb:registry=`, so
+only the scope is local). It runs for every packed version: a caret range on a prerelease matches it.
+
+- **The specifier is read from the packed generator's own output**: the step runs `create.js <dir> --yes` with no
+  `--sssb` and collects the `@sssb/*` specifiers from the generated manifests, rather than hard-coding `^` or importing
+  `generate.js` out of the tarball. The generator is what is under proof, so a hard-coded rule would pass a generator
+  that stopped writing it. Rejected: importing `resolveSssb` (not exported, and a second path to the same rule).
+- **The tarball URL in the packument has npm's own shape** (`/<name>/-/<unscoped>-<version>.tgz`), so pnpm records
+  an integrity alone in the lockfile; the lockfile check then refuses any `tarball:` or `file:` outright, which a
+  free-form URL would have made impossible to tell from a mis-resolution. Rejected: reusing `SERVE_DIRECTORY` with
+  flat file URLs.
+- **The pure helpers sit in `scripts/pack-and-consume.mjs`, between `registry-helpers` markers, and the test loads that
+  text as a module.** The usual home, `scripts/pack-and-consume/checks.mjs`, was outside the files this change was
+  allowed to touch (another session edits the release scripts in parallel), and the script cannot be imported (it runs
+  the job). Move them into `checks.mjs` when that is open: the test's loader then becomes an import.
+- **Correction, same branch: the registry recipe's pure helpers moved to `scripts/pack-and-consume/checks.mjs`**, where
+  the script's other pure checks live, and the test imports them; the marker-delimited block loaded as a data-URL
+  module (the entry above) is gone. The rehearsal job also re-installs, frozen, on its local release commit before
+  packing, as `pack` installs on the tag.
+
+## Release snapshots: stateful logical ids and the required environment, each a `minor` to change (2026-11-18, `release/p14-first-npm-release`)
+
+ADR-0014 part 10 says CI snapshots the logical ids of stateful resources and the `REQUIRED_ENV` list, and a change to
+either requires a `minor` changeset; its P14 row lands them. Built as two committed JSON files and one rule in the
+`changeset-required` gate.
+
+- **Plain JSON compared with `toEqual`, not a Vitest snapshot.** `toMatchFileSnapshot` (or `toMatchSnapshot`) is
+  rewritten by `vitest -u`, and a run outside CI writes a missing one, so deleting or regenerating the file would make
+  the test pass and leave the gate nothing to see. The tests read the file and fail with the full new content in the
+  message, to be copied in by hand beside the changeset. Rejected: a Vitest file snapshot, relying on CI never passing
+  `-u` (true today, but a local `-u` is the habit that would rewrite it silently).
+- **Where they live: `packages/<package>/release-snapshots/`**, outside each package's `files` allowlist, so neither
+  ships (`packages/kit/release-snapshots/required-env.json`, `packages/cdk/release-snapshots/stateful-logical-ids.json`).
+  The gate matches the directory pattern, not two named files, so a package that adds a snapshot is covered the day it
+  lands; `tests/tooling/changesets.test.ts` checks this repository's two exist. Rejected: a repo-level directory (the
+  kit's test would read a path out of the package) and a JSON under `src` (it would ship).
+- **The required environment is read from `assertRealEnv`, not exported.** The kit test empties the environment, sets
+  only `DATABASE_TRANSPORT`, and records the variables `assertRealEnv` names as missing, per transport: that is
+  `REQUIRED_ENV` and `DATABASE_ENV` together, as a deployment meets them at boot. Rejected: exporting `REQUIRED_ENV`
+  from `adapters/real/index.ts` (a published subpath, so a new name on the public surface, for a test), and moving it
+  into an unpublished module of its own (a shipped source change made only to be testable). The cost is that the test
+  parses the error's `Missing env:` list; a change to that message fails the test loudly rather than passing.
+- **What counts as stateful** is `STATEFUL_TYPES` in `packages/cdk/src/stateful-logical-ids.test.js`, with a reason per
+  type: the cluster, its writer instance, its subnet group (a new one has a new name, and CloudFormation's reference
+  lists the cluster's `DBSubnetGroupName` as requiring replacement, so it would take the cluster with it; not
+  re-checked against the reference offline when this was written), the cluster's secret, and the buckets;
+  plus KMS keys, DynamoDB tables, EFS file systems, Cognito user pools and log groups, which `SssbApp` does not create
+  today, so one added later is snapshotted from its first commit; plus any resource whose DeletionPolicy or
+  UpdateReplacePolicy is `Retain`, `RetainExceptOnCreate` or `Snapshot`. Rejected: snapshotting every logical id (a
+  Lambda's or an alarm's replacement loses nothing, and a `minor` for each would teach people to ignore the rule), and
+  the network (VPC, subnets, security groups), whose replacement loses no data.
+- **Synthesized from `apps/starter` under the id `Default`, in four shapes** (each transport, staging and production),
+  the ids an adopter's stack holds. Today all four are the same six resources; they are kept apart so a resource only
+  one shape creates is still caught.
+- **The gate:** a PR that changes, deletes or moves a file under `packages/*/release-snapshots/` must add a changeset
+  with a line filing `minor` for an `@sssb/*` package, read as `scripts/release.mjs`'s `changesetReleases` reads the
+  frontmatter (inlined: the gate's tests run it in scratch repositories without the repo's scripts). Any `@sssb/*`
+  package counts, since the group is fixed and one minor bumps all of them. Rejected: requiring the package that owns
+  the snapshot (the same release either way). Exempt: the release merge, a file merged in from `main` (its PR carried
+  the changeset), and a snapshot's first commit (it records the current state and changes nothing; this PR is one).
+  Not exempt: Dependabot, since a person committing an updated snapshot to a Dependabot branch is how a CDK bump that
+  moves a logical id would arrive, so the check runs before the Dependabot exemption.
+- **`runGate` in `tests/tooling/changesets.test.ts` now removes its scratch repository as soon as the gate has run.**
+  With about twenty more scratch repositories, removing them all in the file's `afterAll` overran the 10-second hook timeout on a loaded machine
+  (load average 18).
+- **Noticed, not changed:** the cluster's secret (`DbSecret…`) synthesizes with `DeletionPolicy: Delete` even when
+  `production` is true, while the cluster, its instance, its subnet group and both buckets are retained. The snapshot
+  records it by type, so it is covered either way; whether the secret should be retained is a question for `@sssb/cdk`.
+
+## An app declares a port slot of its own (2026-11-18, `feat/app-declared-port-slots`)
+
+Built from `.claude/future-tasks/resolved/port-slots-for-adopter-apps.md` (the future task, moved there by this change; an
+earlier entry names its old path): a workspace with two apps of its own, both made from the starter, both declared
+`starter` and bound one port. The design stood as written (`"sssb": { "port": { "name": "ledger", "default": 3700 } }`
+beside the string form); the judgement calls it left open, each with what it beat:
+
+- **The override variable is `<NAME>_PORT`, from the slot's name with `-` as `_` (`LEDGER_PORT`, `BACK_OFFICE_PORT`).**
+  The built-ins already follow it (`STARTER_PORT`, `CONTRACT_PG_PORT`), and a name made of lowercase words and `-` maps
+  to exactly one variable. Rejected: an `env` field in the declaration, which is one more thing for two apps to
+  declare the same way by mistake (it is refused: a slot has `name` and `default` only). A name whose variable is a
+  built-in's (`contract-pg`) is refused too, since the two services would then read one variable.
+- **A worktree's port comes from 20000-29999, `20000 + sha1(root NUL name) % 10000`.** The design asked for a band the
+  four built-in slots do not use, keyed on the name as well as the checkout. It is clear of every built-in default and
+  derived band (3000, 3100, 3200-3599, 5439-5639, 61000-61199) and below the ephemeral ranges (Linux 32768, macOS 49152),
+  so the OS never hands one out. Ten thousand ports make two slots of one worktree collide about once in ten thousand,
+  and a collision is a loud EADDRINUSE, as it already is for the built-ins. Rejected: a narrow band beside the built-ins
+  (3600-3999, 400 ports), where two slots of one worktree would collide forty times as often; and a scan for a free port,
+  which the module's header rules out (two processes could disagree on the answer).
+- **A declared default may not lie in a port band SSSB's own services use, nor above 49151 or below 1024.** In a main
+  checkout it is the port; if it sat in a built-in's derived band a linked worktree of SSSB could derive the very port
+  an adopter's main checkout binds, the collision the built-ins' separate bands exist to rule out. The task's own
+  example, 3300, is inside the showcase and starter band (3200-3599), so the examples use 3700 and 3710. Rejected: accepting
+  any port and leaving a collision to a loud bind failure, which the doctor cannot see in advance.
+- **Two apps on one slot, and two on distinct slots with one default, both fail `sssb doctor`.** The second is the
+  collision the first check cannot see: in a main checkout two distinct names with one default still bind one port. A
+  worktree's derived ports differ by name, so only the default needs checking. An app with no declaration is not
+  checked (launch-json already skips it), and an invalid declaration is a failure naming its package.json, where it was
+  a failure of `sssb port` alone before.
+- **`originFor()` and `portFor()` with no argument read the app the working directory is in, the nearest package.json at or
+  above it that declares a port (no higher than the checkout root); a Playwright config names its own app with
+  `originForApp(__dirname)`.** The first design read the working directory's package.json alone and told adopters to
+  call `originFor()` in the config. Review found `pnpm knip` (in `pnpm verify` and the generated workflow) loads every
+  workspace's Playwright config from the workspace root, where the call threw and knip exited 2, as `playwright test -c
+apps/x/…` from the root does; and a test run from `apps/x/tests` read no declaration at all. The config's own
+  directory is the one place that names the app wherever it is loaded, and Playwright and knip both compile the config
+  to CommonJS, so `__dirname` holds; `originForApp` resolves symlinks, as `sssb port` (which runs in a real working
+  directory) does. Rejected: the nearest package.json of any kind, which lets a package nested in the app (its `infra/`)
+  hide the app's slot, and `originFor(readPortDeclaration(__dirname))`, which hands an undefined declaration to the
+  no-argument form when the app declares none, a worse error than the one `originForApp` gives. With no app around it
+  throws, and says to name a service, run from the app, or use `originForApp`.
+- **`tick` and `dev-tick` know a custom slot only for the app in the working directory (or `--app`).** A slot is the
+  declaring app's alone, so `sssb tick portal` run from the ledger app is an unknown app, listing the known ones, rather
+  than a guess at another app's default. Rejected: reading every app's declaration in the workspace, which the commands
+  (which run in one app's directory, and from a package script) do not otherwise do.
+- **An app on a slot of its own may not name `showcase` or `starter`.** Review found the hole in the design as written: a
+  second app made from the starter keeps `originFor('starter')`, `sssb tick starter` and `sssb dev-tick starter --` in
+  files the generator copies, so its dev server would bind its own slot while its ticker and e2e run used the first
+  app's port, the wrong-app adoption this exists to stop, with `sssb doctor` green because the declarations differ.
+  `portFor`, `sssb port`, `serve-standalone`, `tick` and `dev-tick` now refuse another app's built-in slot when the
+  app in the working directory declares a custom one (`foreignAppSlotProblem`, `packages/tools/src/ports.js`), naming
+  what to do. `ladle` and `contractPg` stay free to name. Rejected: a doctor check that reads each app's scripts and
+  Playwright config for a stale slot name, which has to parse shell command lines and TypeScript to find what a
+  one-line refusal at the point of use catches with certainty. The pack-and-consume pages shape, which has two apps
+  made from the starter, now gives its ledger a slot of its own the way `docs/adopting.md` tells an adopter to; with
+  both on `starter` it failed `sssb doctor` by design.
+- **The string form is untouched**: `portForRoot(…, 'starter')` takes the same code path to the same numbers (the
+  existing tests pass unchanged), and a built-in's derived port is still keyed on the checkout alone. One message
+  changed: a declaration naming an unknown service now says `unknown service "x"` with the known ones and the slot form,
+  where it said `declares port service "x"`.
+
+Not done: `.claude/future-tasks/neutral-app-port-service.md` (a neutral slot the generator writes in place of
+`starter`) still stands; this makes it buildable without a new built-in. The starter and the showcase keep their string
+declarations, so an app the generator writes is unchanged.
+
+## P15: ADR-0013 superseded, and the adopter guide rewritten around the generator and upgrading by release (2026-11-18, `docs/p15-adopting-by-release`)
+
+ADR-0014's P15 row. Its two dependencies are done: the generator (P12) and Pages' switch (P8:
+`safeinsights/pages#11`, v0.2.0-rc.1, and `safeinsights/pages#14`, v0.2.0-rc.2, both merged into Pages'
+`integration`). ADR-0013's Status line now says Superseded, with a dated addendum saying what replaces each of its
+parts; its body is unchanged. ADR-0014 gains a matching addendum.
+
+- **Chosen: supersede ADR-0013 now, not at the first npm release (P14).** The plan row depends on P8 and P12 only, and
+  what ADR-0013 decided (fork and merge as the way updates arrive) stopped being true for the one adopter at P8. P14
+  changes where the tarballs come from, not whether there is a merge.
+- **Chosen: before npm, generate from a release candidate's tarballs, then point the `file:` dependencies at the
+  release's URLs before the first install.** The guide's pre-npm path used to be packing SSSB's packages from a
+  checkout, which pins whatever commit the checkout is at, not a release. Run against a downloaded candidate (the
+  generator's own `--sssb .`, as the candidate's notes say), the workspace pins the release commit, and its `file:`
+  paths name the download directory, which CI cannot see; the six dependency lines in three `package.json` files are
+  changed to the URLs the notes print. Tried on v0.2.0-rc.2: generated, URLs swapped, installed, `sssb doctor` all ok,
+  the pins matching the kit's release stamp. **Rejected:** a generator flag taking a release's URLs, which is
+  `@sssb/create` work for after P14 shows what the npm path looks like, and teaching the checkout path first. The
+  checkout path stays, as a subsection for trying an unreleased commit.
+- **Chosen: the upgrade's version step says "change each version" in each `package.json`, not `pnpm up`.** The old
+  text said `pnpm up`; a URL dependency has no range for it to move, and with nothing on npm yet the npm form cannot be
+  tried. Listing the three files and the packages each declares is true for both and checkable. The generated
+  `README.md`'s shorter "Upgrading SSSB" section is left as it is: it says nothing false.
+- **Chosen: fix `sssb guide` rather than teach `--app`.** Writing the upgrade steps against a generated workspace found
+  that `pnpm exec sssb guide`, which the generated `README.md` and `CLAUDE.md` tell people to run, failed at the
+  workspace root ("does not resolve @sssb/kit"), the bug `fix/doctor-from-root` fixed for doctor. It now starts from
+  the workspace's first app the same way, saying so; an explicit `--app` is never replaced. **Rejected:** writing
+  `--app apps/<app>` into the guide alone, for the reason that entry gives, and because the shipped text would stay
+  wrong. The guide says releases up to v0.2.0-rc.2 need `--app` at the root. A changeset (`@sssb/tools`, none).
+  Seen red: the new test fails with `run` calling `takeAppDir` again, and passes with the fix.
+- **Retired from `docs/adopting.md`**: taking updates by `git merge`; "add the line upstream and take it back by
+  merge" for an `exports` entry; "don't edit SSSB's `eslint.config.mjs` … every later SSSB update would conflict";
+  "if you keep the showcase around"; the layout's `packages/kit/src` and `packages/kit/test-fixture` lines; the stale
+  claims that `next.config.ts` points next-intl at `packages/kit/src/i18n/request.ts` and that nothing typechecks an
+  app's `infra/`; and the advice on SSSB's dated records ("truncate them at the date you forked"), which the generator
+  never copies. New sections: "Upgrading by release", "Changing SSSB itself".
+- **The same fork-era advice outside the guide went too**, as doctrine must stay true: `README.md`, `CONTRIBUTING.md`
+  ("sending a fix upstream" from a fork), `docs/README.md` and `CLAUDE.md` (the doc gate's rule for reference-app
+  citations no longer argued from merged-in docs), `docs/development-approach.md`, and the two recipes that pointed at
+  ADR-0013 (`app-owned-adapter.md`, `workspace-coder.md`). `CLAUDE.md`'s "Follow the Accepted ones (0001–0014)" now
+  names 0013 as Superseded.
+- **Walked as an adopter, twice.** A workspace generated from v0.2.0-rc.2's tarballs and one generated at rc.1 and
+  upgraded to rc.2 by the new section's steps (`sssb doctor` ok, `pnpm typecheck` and `pnpm lint` green after). The
+  upgrade found the one trap the steps had in the wrong order: a workspace generated before rc.2 carries an
+  `overrides` block mapping the `@sssb/*` packages to the old tarballs, so changing the `package.json` URLs and
+  installing kept rc.1, with doctor still ok at rc.1. rc.2's notes remove the block, but as a scaffold change, which
+  step 5 applied after step 2's install. Step 2 now says to make an install-affecting scaffold change first, and to
+  check what the lockfile resolves. **Rejected:** having `sssb doctor` fail an `overrides` block for `@sssb/*`, a
+  `@sssb/tools` change worth considering separately, since an override is the adopter's own setting.
+
+## The authorization scan counts a denial only where it reaches the handler's outcome (2026-11-18, `fix/authz-scan-unawaited`)
+
+The 2026-11-17 entry on the scan left a known hole to lint. A handler that calls an `async` same-file helper without
+awaiting it "reaches" `authorize`, yet the helper's `ForbiddenError` becomes an unhandled rejection and the handler goes
+on to mutate. The lint rule that entry named was never added. The session that fixed the hole made these decisions
+under JP's standing rule. Two Opus review rounds, a sweep of the walk's trust points, and an Opus review of the
+second round's fixes widened the fix from the floating helper to every place the walk lost a denial.
+
+- **A scan change, not type-aware lint.** `route-scan.ts` now walks each function under an outcome: whether a throw
+  at that point, and a promise the function returns, reach what Next awaits. `authorize` throws synchronously, so it
+  counts wherever a throw does. A call into an `async` function, or into a call a function is handed to, carries the
+  denial only when its result is `await`ed or returned on the spot (`settledBy`).
+    - Rejected: `@typescript-eslint/no-floating-promises` scoped to route files. It answers a different question. It
+      accepts `void p`, `p.catch(() => {})` and `p.then(ok, onError)` as handled, and each of those drops the denial.
+    - The lint rule would sit beside a conformance check that still passed the route.
+    - An adopter can turn a lint rule off, where a conformance opt-out has to be named and given a reason.
+    - It needs type information in `@sssb/eslint-plugin`'s preset (`parserOptions.projectService`), so every
+      adopter's lint run would build a type-checked program.
+    - The scan needs no types. The only functions it credits are same-file ones and literals, and it can see whether
+      each is `async`.
+- **A function handed to an unknown call needs that call awaited or returned, sync or async.** The scan cannot read
+  the callee. `.then`, a timer, `new Promise` and an `async` wrapper (`db.withTenant`) all run a sync function where
+  its throw never reaches the handler. Rejected: trusting any sync callback to run in place. That passes
+  `load().then((row) => authorize(row))`, and an unawaited `db.withTenant(org, () => { authorize(…) })`.
+- **Array iteration methods are known by name, and an `async` callback to one is dropped.** An array iteration method
+  is recognized when its receiver is neither an import nor an object whose code is in this file (whose `forEach` is
+  its own). An `async` callback to one is dropped, so `await ids.forEach(async (id) => …)` fails: awaiting
+  `forEach`'s `undefined` settles nothing. A sync callback runs in place, so `items.forEach((i) => authorize(…))` and
+  `items.map((i) => { authorize(…); return i })` count as statements of their own. A `map`, `filter` or `flatMap` on
+  a receiver that is visibly an iterator (`ids.values()`, `.keys()`, `.entries()`, `Iterator.from(…)`) runs nothing
+  until consumed, so it counts for nothing.
+    - Rejected: requiring every callback's call to be awaited, the first draft. That failed the `forEach` idiom.
+    - Rejected: trusting the names on any receiver. That passes Ramda's curried `R.forEach(() => authorize(…))`, which
+      only defines a function.
+    - Rejected: treating `map`, `filter` and `flatMap` as lazy everywhere, the second draft. That failed the
+      per-item `map` on an array, a natural bulk-route shape, to catch a lazy iterator nobody consumes.
+- **A callee whose code is in this file is not trusted the way an imported wrapper is.** `isSameFile` covers:
+    - a function, class or object literal, or an array literal holding one;
+    - a function or class declaration;
+    - a variable or destructured name holding one of those, or what such a callee returns (also through either arm
+      of a ternary, either side of `&&`, `||`, `??` or a comma);
+    - anything the file assigns to.
+
+    A function handed to such a callee counts for nothing, and so does one handed to a same-file wrapper handler or to
+    a wrapper nested in one. The scan can read that code, but it does not follow a function through a parameter, so
+    it could neither trust nor check what `async function run(fn) { fn() }` does with `fn`.
+    - Rejected: binding arguments to parameters and following them. Done soundly, that needs a binding environment
+      per call site (bindings merged across call sites credit a floating site through an awaited one). That is too
+      much new machinery in a security gate for a shape no route uses.
+    - An imported wrapper stays trusted, as before. Its code is out of sight either way.
+
+- **A `try` whose `catch` can do anything but rethrow swallows the denial.** That covers a catch that falls through,
+  returns, or leaves by `break` or `continue`. A `finally` that can leave in the throw's place also swallows it. A
+  promise the `try` returns (`return p`) is not caught; `return await p` throws inside it.
+    - Rejected: leaving `try` alone, the first draft. `try { authorize(…) } catch (e) { log(e) }` passed.
+    - Rejected: crediting a catch that returns. A handler's `catch { return new Response(…) }` might answer 403 or 200,
+      and the scan cannot read which. An async helper's `catch { return }` resolves, and the handler goes on.
+      `withPortErrors` or a rethrow is the shape to write.
+    - No route in either app or the fixture has a `try` around `authorize`.
+- **`settledBy` passes through the left of `||` and `??`.** A promise is truthy and never nullish, so it is their
+  value. It does not pass through the left of `&&`.
+- **Fail closed on chains, stored promises and `Promise.all`.** `await check().then(…)`, `const p = check(); …;
+await p` and `await Promise.all(ids.map(async …))` do carry a rejection. The scan does not follow a chain, a
+  variable or `Promise.all`'s array, and a stored promise lets the handler mutate before the await. All three fail;
+  `await check()`, or a `for … of` that awaits each, is the shape to write.
+- **Gate calls are unchanged.** `calls` (`auth.updateProfile`, `auth.setActiveOrg`) still counts an unawaited call,
+  because there the call is the mutation the port guards: a rejected one mutated nothing. A gate proves the kind of
+  route, not that it waits.
+- **No route in either app or the fixture changes verdict.** Every one authorizes in its body, or in a wrapper it
+  returns. The real trees were scanned after each round.
+
+## Licence scan: a pnpm-native CI job, not a required check (2026-11-18, `ci/licence-scan`)
+
+The Canopy survey deferred a licence scan ("Trivy or equivalent"), and P14 is about to put SSSB's packages on public
+npm, so what an adopter inherits through them matters now. The question was whether a licence gate catches anything
+real at a cost worth a check. It does, and it earns a job. JP's standing rule applied: decided here, not asked.
+
+- **What the survey found, today.** `pnpm licenses list --json` over the workspace less the showcase: 763 packages,
+  of which 745 are MIT, Apache-2.0, ISC or BSD, and the rest is a short list worth knowing: `sentry` 0.49.0 (**FSL-1.1-Apache-2.0**,
+  source-available, with a competing-use restriction), which `@sentry/bundler-plugins` depends on, so it
+  arrives with `@sentry/nextjs`, one of the kit's own dependencies; `@img/sharp-libvips-*` (**LGPL-3.0-or-later**), `next`'s image
+  library as a shared native library; `lightningcss` and its platform binaries, and `axe-core` (**MPL-2.0**);
+  `caniuse-lite` (CC-BY-4.0, data); and BlueOak, Python-2.0, Unlicense, CC0 and `(MIT OR CC0-1.0)`, which are permissive.
+  Over the whole workspace there is also `only` (**no licence declared**), a dependency of Koa under the showcase's
+  component workshop, which is why the showcase is out of scope. None of the first group is a defect; each is a fact
+  an adopter's legal review would want and nobody had written down, and the FSL one is invisible from a dependency list
+  (it is two hops below a package the kit names). That is the case for the job. The probe below also met
+  `parse-cache-control` declaring `BSD`, which is not an SPDX identifier: a registry's loose strings are noise the
+  policy must be able to except, not a reason to loosen it.
+- **The tool is `pnpm licenses`, run by `scripts/licence-scan.mjs`, judged against `.github/licence-policy.json`.**
+  No new binary, action or package to pin or trust, no network beyond the install CI does anyway, and the scan takes about a
+  second. The policy is an allowlist of SPDX identifiers (an `OR` expression needs one side, an `AND` both) plus named
+  exceptions, each naming the package and the licence it carries today (so a bump that changes the licence fails
+  again) and a reason. An exception that matches no installed package fails too, unless marked `platform`, so the
+  ledger cannot rot. Weak copyleft (MPL, LGPL), source-available and data licences are exceptions with reasons, never
+  in `allowed`: a new one is a decision for review.
+- **Scope: every workspace project but the showcase**, which is a superset of what ships: the published packages with
+  their dev and peer-installed tools, the starter that `@sssb/create` copies, and the workspace root whose tools the generated
+  root repeats. A superset, because reading the exact closure of each published package (`--prod` per project) would
+  miss the starter's and the root's dev tools, which an adopter inherits too, and a dev-only copyleft tool
+  is still a fact to tell them. The cost is that a repo-only tool (Changesets, jscpd) is held to the same list;
+  none is a problem today.
+- **A job of its own in `checks.yml` (`licence-scan`), not a step of `repo-checks`**, so a licence failure is a red
+  check named for it and does not hide in a bigger one; and not a step of the reusable `app-checks.yml`, which every
+  adopter calls: an adopter's own dependencies are theirs to judge, and what SSSB hands them is judged here. The script is
+  dependency-free, so an adopter who wants the same gate can copy it and a policy (a recipe if one asks).
+- **Not a required check, by instruction, and what that means.** Making it required is a ruleset change, which is JP's:
+  add the status check `licence-scan` to the required checks of the rulesets on `main` and `integration` (and on any
+  integration branch of the day, `int-p14` now). Until then a red `licence-scan` blocks no merge. It still holds a
+  _release_ back: `release.yml` waits for the whole `checks` workflow to conclude `success` on the merge commit, so a
+  licence the policy fails, merged to `main`, stops the next release until it is decided. That is the right place for
+  it to bite; it is stated so nobody is surprised. `tests/tooling/app-checks-workflow.test.ts` lists the job as
+  advisory beside the required names, and moves to the required list with the ruleset.
+- **Rejected: Trivy** (`trivy fs --scanners license`), the tool the request named. Not run here: this session could not
+  fetch and run the binary (the sandbox refused the download) and Docker's daemon was down, so this is its documented
+  behaviour, not a measurement. For pnpm it reads the `package.json` files under `node_modules` ("you need to download
+  dependencies to `node_modules` beforehand", trivy.dev/latest/docs/coverage/language/nodejs/), the same data `pnpm
+licenses` reads, so it needs the same install; what it would add is Google's licence classification mapped to
+  severities (trivy.dev/latest/docs/scanner/license/), and what it would cost is a downloaded binary or an action to pin and
+  keep current (the repository already pins gitleaks that way), and no place in the repository to record WHY a licence was
+  accepted, which the policy file is for. Both pages were read on 2026-11-18. Revisit if the gate should also cover container images, which this project has none of.
+- **Rejected: `license-checker` and its forks.** Not evaluated beyond this: it would be a new dependency to keep
+  current for the data `pnpm licenses` already gives, and the policy and exception work would still be ours to write.
+- **Rejected: the exact production closure only.** See scope.
+- **Rejected: a step in `repo-checks`.** That job is required, so the step would have made the licence scan a required
+  check by the back door, which is the ruleset change JP keeps.
+- **A limit, stated:** `pnpm licenses` sees what this machine installed, so a per-platform native package is judged on the
+  platform that runs the scan (CI is Linux; a local run on macOS sees the `darwin` binaries, which the `platform`
+  exceptions cover by prefix). A licence that exists only on a platform CI does not run is not seen.
+- **Seen red.** The scan was run over the real install: with `ffmpeg-static` (GPL-3.0-or-later) added to the root's
+  dev dependencies it failed naming it (and `parse-cache-control`, `BSD`), and passed again once the manifest and
+  lockfile were restored; with the `sentry` exception removed from a copy of the policy it failed naming `sentry@0.49.0`;
+  with an exception for a package that is not installed added, it failed naming the stale entry.
+  `tests/tooling/licence-scan.test.ts` holds the same cases against fixed reports, with the expression grammar.
+
+## P14 review: what the rounds changed, and corrections to the entries above (2026-11-18, `release/p14-first-npm-release`)
+
+- **Review round 1 (Opus code, Fable "can anything reach npm early").** Fable found no way through, and three LOWs
+  that are now closed: the own-tree test pins the next release to exactly 0.2.0 until `docs/releases/v0.2.0.md`
+  exists (a hand-edited manifest version would otherwise plan another); `release-reach.test.ts` holds every step of
+  `plan`, `push`, `pack` and `publish` to no `continue-on-error`, no `|| true` and no `if:` but on artifact uploads,
+  and each gate's answer to being required; and it counts `secrets: inherit`, `secrets['X']` and a publish through a
+  `uses:` action. Opus found that the rehearsal would cut `main`'s latest release again on a PR into a base behind
+  `main` (`integration` before its sync): it now rehearses this commit with `origin/main` merged in, locally, and says
+  "not rehearsed" when they conflict. Rejected: filtering the job to PRs into `main` and `int-*`, which leaves a
+  stale base unrehearsed. Also from it: the checker is copied before `prepare` runs; the database's network
+  (`AWS::EC2::VPC`, `Subnet`, `SecurityGroup`) joins the logical-id snapshot, since a new one means moving a subnet
+  group RDS refuses to move; and a test holds every `need('X')` in `createRealPorts` to the required environment,
+  which the snapshot alone did not see. Each new assertion was seen red.
+- **Corrections, from the claim check** (the entries above stay as written):
+    - "P14": `prepare` would not refuse a planned 0.1.0 "as going backwards". Its floors are the latest plain `v*` tag
+      (none yet) and npm's `latest` (0.0.0). What stops a hand-edited version is the own-tree pin in
+      `tests/tooling/release-pre-mode.test.ts`.
+    - "P14": the rehearsal does not fail a release that would publish a candidate. A candidate plan ends the step,
+      green, with a summary line, before anything is packed. npm 11.21.2 does refuse a prerelease without `--tag`,
+      measured again, but the rehearsal never asks it. Out of pre mode `check` refuses a public group in pre mode,
+      so no candidate is planned.
+    - "Release snapshots": the four shapes no longer hold "the same six resources". With the network counted, each
+      pg shape holds 14 and each data-api shape 10, and the sets differ: pg has the migrator's and the server's
+      security groups and the public and private subnets, data-api the database subnets. The rejected "including
+      the network" is reversed by the review bullet above. The subnet-group reason is confirmed: `DBSubnetGroupName`
+      on `AWS::RDS::DBCluster` is "Update requires: Replacement"
+      (docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbcluster.html).
+    - "Release snapshots": the snapshot gate's exemptions also include a PR opened before the gate's cutover, since
+      that early exit runs first (`.github/scripts/require-changeset.sh`).
+
+## Adoption wording review, and `apps/<app>/` kept for a one-app workspace (2026-11-18, `docs/adoption-review`)
+
+At JP's request: reword the README's "not a library" section, sweep the wording an adopter or evaluator meets, and
+judge whether adoption is as simple as it can be (`docs/adoption-review-2026-11.md`).
+
+- **"The template" now names only the generator's template, `apps/starter`.** Across the doctrine docs it meant SSSB
+  itself, a fork-era usage that reads as "what `apps/starter` carries" now that the generator has a template. The
+  section `docs/development-approach.md` and four other docs cite is "What SSSB ships"; `docs/app-coverage-gaps.md`'s
+  "template/instance doctrine" is "What SSSB ships, and what an instance builds". "Instance" for an adopter's product
+  stays: it was never misleading. Rejected: keeping the old heading for its citations' sake, which keeps the
+  ambiguity; ADR-0014's body cites the old heading and stays as written.
+- **README: "It is a framework you start from, not a library you add."** The manager's wording, with the packages
+  named and "writes a workspace that carries" for "hands you". Rejected: keeping "not a library", which is false of
+  `@sssb/kit`.
+- **SSSB's cutover checklist says it is SSSB's own** and the worked reference, not "your instance's": a generated
+  workspace writes its own.
+- **The changeset README's "Known gaps" no longer describes adoption as a fork.** It names the two things adopters
+  receive that the changeset gate does not see: the reusable workflow and the generator's `ROOT_FILES`.
+- **The generated README links SSSB's adoption guide and the showcase at the pinned commit**, and the generator's
+  printed next steps end with what `pnpm dev` does. `tests/tooling/create-generate.test.ts` allows exactly those
+  links in `README.md` (each a line of its own, at a 40-character commit) past its "no survivor of SSSB's repository"
+  check, and holds each linked path to one SSSB's repository has. Rejected: naming SSSB's repository only through the
+  packages' `repository` field, as `SECURITY.md` does, which gives a newcomer no link to click.
+- **`docs/adopting.md` opens with a five-step reading path, and "Trying an unreleased commit of SSSB" moved under
+  "Changing SSSB itself"**, out of the newcomer's way. Its "First boot" no longer says the Simulator drives a generated
+  app's `pnpm dev`: the server-side panel is the showcase's alone. Rejected for this PR: splitting the guide into a
+  short guide and a reference (`.claude/future-tasks/adopting-guide-split.md`), a larger diff that deserves its own
+  review.
+- **A one-app workspace keeps its app under `apps/<app>/`** (ADR-0007 stands), explained in one sentence in the
+  generated README, SSSB's README and `docs/adopting.md`. Rejected, as proposals for JP: the app at the workspace root,
+  and the workspace with its app at `app/`. Both make every tool carry a second layout for good, since pages (a
+  workspace with an app and packages of its own) stays on `apps/`, for a one-segment gain the root scripts already
+  hide. The review doc has the table.
+- **Review round (Opus code, Opus newcomer, Fable on the review doc).** The code reviewer found no defect and three
+  test gaps, all closed: the README's links are held to a `--workflow-ref` override, to paths that exist at the
+  pinned commit rather than in the working tree, and, past the survivor check, to the exact link text the generator
+  writes. The newcomer found the app guide's two worked examples (`1001_items.ts`, the items route) were the files
+  the adoption guide says to delete: the guide now says where to read them once removed. Rejected: describing the
+  patterns in the guide itself, which makes the guide a second copy of code it should point at. Also fixed from that
+  walk: the generated app's "template" copy and `TEMPLATE-UPDATE-ME` tags (now `UPDATE-ME`, named in the generated
+  README), the `scheduled-tick` row's "both example apps", a misnamed section, the stale "until SSSB's first npm
+  release", and the migration number for a first table. Fable found the review overstated the alternatives' tool
+  costs (the CLI already treats a non-`apps/` layout as first-class) and leaned on pages as decisive; the layout
+  section now answers ADR-0007's own "for a product, root is right" with the three-package argument, weighs a fixed
+  `apps/web/`, a layout flag and a symlink, and pairs the recommendation with `sssb add-app`. The guide's stamped copy
+  stays, on ADR-0014 part 9's trust decision; deriving both pins from the kit on upgrade is a follow-up.
+
+## Every release's notes carry a standing "Upgrading to this release" section (2026-11-18, `feat/release-notes-upgrade-section`)
+
+Pages, taking v0.2.0-rc.2, hit three steps the notes did not list: `sssb doctor` failed until `sssb guide` was rerun, the
+reusable-workflow pin and the plugin pin had to move to the release commit, and knip flagged three AWS SDK packages the
+app no longer used after it switched to `createS3Storage`. The first two are what every upgrade takes, so they are now
+a section of every release's notes, written by `upgradeSection` in `scripts/release-notes.mjs`; the third is a step in
+that section too.
+
+- **The section is generated, not a changeset.** It is the first `##` section of the notes, ahead of the entries (an
+  adopter does it first), with the version filled in: move the `@sssb/*` packages (from npm for a plain release, by
+  tarball URL for a candidate), `pnpm exec sssb guide`, both pins, apply the entries and `pnpm knip`, then `sssb doctor`
+  and `pnpm verify`. `assembleNotes` adds it whenever it is given a version, so `prepare`'s notes, `--since` notes and
+  `--at --version` regenerations all carry it, and `pnpm release:notes` with no version (a preview) does not. Rejected: a
+  changeset for it, which only the release that carried it would show, and an entry in each release's `docs/adopting.md`
+  alone, which an adopter reading the notes would not see. `docs/adopting.md`'s "Upgrading by release" now points at the
+  section and keeps the reasons.
+- **How it names the release commit.** The notes are a file in the release commit, so `prepare` cannot know its SHA, and
+  `verify-release` accepts only the staged patch it plans. A plain release's section therefore has the pins as
+  `<sha>` and the one command that reads it off the release's tag
+  (`git ls-remote https://github.com/safeinsights/sssb 'refs/tags/vX.Y.Z' 'refs/tags/vX.Y.Z^{}' | tail -n 1 | cut -f 1`,
+  which prints the peeled commit when a tag is annotated and the commit when it is lightweight, as release.yml's
+  `git tag "v$VERSION"` makes it; run against v0.2.0-rc.2 it printed the commit `git rev-parse` gives). A candidate's
+  prerelease notes are written by `release.mjs candidate-notes` on the tag, with the SHA in hand, and it writes the SHA
+  into the section (`withUpgradeSection` replaces it, or inserts it into a file that has none). Rejected: pinning the
+  tag, which `sssb doctor` reports as differing ("a branch or tag, not a commit"), a follow-up commit that edits the
+  file with its own SHA (the notes of a release would then differ from the file at its tag), and leaving the SHA to
+  `sssb doctor`, which prints it only beside a pin that already differs. A test drops the section's own yaml and json
+  blocks into a workspace and runs doctor's `pinReport` on them: `ok` with the SHA, a report with the tag.
+- **The knip step is general, not a second changeset.** After an adopter deletes what an entry's "Now deletable"
+  describes, a vendor SDK its `package.json` listed only for that code is flagged, because the kit's adapter that
+  replaces it depends on the SDK itself (`@aws-sdk/client-s3`, `s3-presigned-post`, `s3-request-presigner` are kit
+  dependencies). That holds for any release that publishes an adapter, so it is a step of the standing section (and of
+  "Upgrading by release", step 5) with `@aws-sdk/client-s3` as the example. Rejected: a new changeset beside
+  `kit-s3-storage-factory`, which would name the S3 case and leave the next one unlisted; and an edit to that changeset,
+  which an earlier candidate already carried (`.changeset/README.md`: a name is never reused, a file is edited only to
+  correct it).
+- **`candidateNotes` stays synchronous** and loads `release-notes.mjs` with `createRequire` (Node 24 requires an ES
+  module). Rejected: a static import, which breaks the `push` and `publish` jobs' lone copy of `release.mjs` (it is
+  loaded in `candidateNotes` alone, and `candidate-notes` runs on a full checkout), and an `async` `candidateNotes`,
+  which `pack-and-consume`'s synchronous `step()` and every caller would follow.
+- **The repository is `safeinsights/sssb` by default.** `upgradeSection` takes `repo` (`candidateNotes` passes the one it
+  is given); `prepare` does not, since the notes tool takes no environment. Rejected: reading it from the kit's
+  `repository` field, which would make a dependency-free module read manifests for one string.
+- **Ranges.** The package step shows `^<version>`, as `@sssb/create` writes them, not an exact version: `sssb doctor`
+  checks that the packages resolve to one version, which a range over one release line does.
+
+## A production stack keeps its database secret (2026-11-18, `fix/cdk-retain-db-secret`)
+
+Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluster's `DbSecret…` synthesizing with
+`DeletionPolicy: Delete` in production). JP decided it is fixed before 0.2.0 ships.
+
+- **The secret takes the cluster's removal policy: `Retain` for both policies in production, `Delete` otherwise.**
+  Deleting or replacing a production stack kept the cluster and dropped the only credentials to it. A synth comparison
+  of the pg and data-api stacks, production and not, before and after, differs in exactly two lines: the production
+  secret's `DeletionPolicy` and `UpdateReplacePolicy`. The two non-production templates are byte-identical. The logical
+  id (`DbSecretCF6D79B0`) is unchanged, so the snapshot is too (the secret was already in it, by type), and the changeset
+  is a `patch`, not the snapshot's `minor`.
+- **The policy goes on the underlying `CfnSecret`, found in the cluster's subtree.** `DatabaseCluster.secret` is the
+  `SecretTargetAttachment` CDK returns from `secret.attach`, not the `Secret`: the first attempt, `applyRemovalPolicy`
+  on `db.secret`, retained the attachment and left the secret on `Delete`, and the new test caught it. The construct
+  throws if the cluster does not own exactly one `CfnSecret`, so a CDK change that moves it fails the synth rather than
+  quietly dropping the policy.
+- **Nothing else needs it.** There is no KMS key (the cluster uses the account's AWS-managed key, the secret the
+  AWS-managed `aws/secretsmanager` key, the buckets S3's own) and no rotation schedule; a test pins both
+  as absent on both shapes, so one added later is a decision made then. The secret's attachment stays `Delete`: its
+  synthesized properties are the secret, the cluster and the target type, and the username and password are the secret's
+  own `GenerateSecretString`. Not exercised against AWS (no live calls): whether deleting the attachment while the secret
+  stays also strips the connection details (host, port) the attachment adds to the secret's value is not known here, and
+  the credentials survive either way.
+- **Rejected: leaving the secret `Delete`.** It keeps the database and discards its credentials: the operator has a
+  cluster they can only reach by resetting its master password. **Rejected:
+  retaining it in every stage.** A non-production stack is meant to disappear whole (`removalPolicy` DESTROY on the
+  cluster and the buckets), and a retained secret per torn-down staging stack is an orphan that costs money and names a
+  cluster that no longer exists.
+- **Rejected: a fixed secret name.** It would make a redeploy after a teardown collide with the retained secret. CDK's
+  generated name does not, so the retained one is simply left for the operator to delete (the changeset says so).
+- **Corrections, from the claim check** (the bullets above stay as written):
+    - "'The template' now names only the generator's template": true of the doctrine docs once `SECURITY.md`,
+      `.claude/commands/new-kit-port.md` and the issue templates were swept too, which the claim check found still
+      saying it (two cited the old heading). Five open future tasks keep "an app derived from this template" in their
+      "Found by" line, as provenance.
+    - "four other docs cite" the section: seven do (README, CONTRIBUTING, CLAUDE.md, docs/README and three recipes),
+      plus the two the sweep above reached.
+    - "names the two things adopters receive that the changeset gate does not see": there are more. The generator
+      also reads the root's dependency ranges and engines, `pnpm-workspace.yaml`'s build approvals and release age,
+      and the gitleaks version from this repository when it is packed (`TemplateMeta` in
+      `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.

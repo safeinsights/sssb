@@ -87,6 +87,7 @@ describe('assembleNotes', () => {
         const { markdown } = assembleNotes(asList(files), { version: '0.2.0' })
         const headings = [...markdown.matchAll(/^## (.+)$/gm)].map((m) => m[1])
         expect(headings).toEqual([
+            'Upgrading to this release',
             'Seam changes',
             'Framework migrations',
             'Operator actions',

@@ -9,18 +9,18 @@ repo, for the reason given in §9.
 
 ## 1. Whose port is it?
 
-Run the vendor through the two tests that govern vendor code (`docs/development-approach.md`, "What the
-template ships"):
+Run the vendor through the two tests that govern vendor code (`docs/development-approach.md`, "What
+SSSB ships"):
 
 - **It passes one of them** (every instance needs it, or it teaches an integration mechanic SSSB lacks),
-  or **SSSB's own code calls it.** Then it is SSSB's port, under `packages/kit/src/ports/`. Build it with
-  `/new-kit-port` and send it upstream (`docs/adr/0013-upstream-updates-fork-and-merge.md`). Do not carry it
-  in your fork.
+  or **SSSB's own code calls it.** Then it is SSSB's port, under `packages/kit/src/ports/` in SSSB's repository.
+  Propose it there (a capability request, then a PR built with `/new-kit-port`); it reaches your app in a release.
+  Do not patch it into your installed `@sssb/kit`.
 - **It fails both, and only your app calls it.** Then it is yours, and this page applies.
 
-Why not put it in `packages/kit` anyway: ADR-0013 promises that `packages/kit/**` merges cleanly
-from upstream because you never edit it. A port SSSB would never accept upstream cannot be sent there,
-so it would stay in your fork as a merge conflict on every update.
+Why not put it in `@sssb/kit` anyway: your app installs the framework as a package (ADR-0014), and you never edit
+it. A port SSSB would never accept cannot be sent there, so it would live as a local patch to an installed package,
+redone on every upgrade.
 
 Some vendors plug into a swap point SSSB already owns, such as the SMS notification channel. Their own
 recipes (`docs/recipes/sms-twilio.md`, `docs/recipes/web-push.md`) say where that code goes.

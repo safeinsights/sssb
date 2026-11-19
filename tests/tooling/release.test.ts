@@ -56,7 +56,7 @@ function writeJson(file: string, value: unknown) {
  * A workspace with these packages and changesets (`{ id: frontmatter lines }`), committed when `git` is set.
  * `installed` runs `pnpm install --ignore-scripts` first, as the `plan` job does, under a root `prepare` script
  * that leaves a `prepare-ran` file wherever a later step runs scripts after all. `pre` writes `.changeset/pre.json` in
- * pre mode with the tag `rc`; by default it is written when the fixed group is private, as this repository has it
+ * pre mode with the tag `rc`; by default it is written when the fixed group is private, as this repository had it
  * until P14 (a private group's releases are candidates, ADR-0014 P7).
  */
 function workspace(
@@ -479,7 +479,7 @@ describe('release.mjs run alone, as the push and publish jobs run it', () => {
 })
 
 describe('release publishable (the tag)', () => {
-    it('is empty while every package is private: the publish is a no-op until P14', async () => {
+    it('is empty while every package is private: the publish was a no-op until P14', async () => {
         expect(await publishable(workspace([KIT('0.1.0'), APP]), '0.1.0')).toEqual([])
     })
 
@@ -817,6 +817,12 @@ describe('a release candidate, end to end, against a local fake tag', () => {
         expect(notes).toContain(`"@sssb/kit": "${url}"`)
         expect(notes).toContain(`| \`@sssb/kit\` | [\`sssb-kit-0.2.0-rc.0.tgz\`](${url}) | \`${assets[0].sha512}\` |`)
         expect(notes).toContain(`cut from \`${SHA}\``)
+        // the standing section, written into the file's own, names this commit: no tag to resolve, no `<sha>` left
+        expect(notes.match(/^## Upgrading to this release$/gm)).toHaveLength(1)
+        expect(notes).toContain(`safeinsights/sssb/.github/workflows/app-checks.yml@${SHA} # v0.2.0-rc.0`)
+        expect(notes).toContain(`"ref": "${SHA}"`)
+        expect(notes).not.toContain('<sha>')
+        expect(notes).not.toContain('git ls-remote')
         expect(notes).not.toContain('package/bin/create.js')
         // the generator is listed and said how to run, never depended on
         const generator = { name: '@sssb/create', file: 'sssb-create-0.2.0-rc.0.tgz', sha512: 'sha512-AAAA' }

@@ -7,12 +7,12 @@ recipe doctrine (`docs/development-approach.md`), the plan is the deliverable an
 
 ## 1. Why this is a recipe, not shipped code
 
-Run it against the two tests that govern vendor code (`docs/development-approach.md`, "What the
-template ships"):
+Run it against the two tests that govern vendor code (`docs/development-approach.md`, "What
+SSSB ships"):
 
 - **Universality** — will every instance provision per-person cloud workspaces? No. Almost none will;
   it is infrastructure for a product that is itself a development environment.
-- **New-class** — does it teach an integration mechanic the template lacks? No. It is an outbound
+- **New-class** — does it teach an integration mechanic SSSB lacks? No. It is an outbound
   authenticated REST call to a vendor, with a polled long-running operation behind it — the class the
   LLM, email and webhook-dispatch adapters already demonstrate.
 
@@ -27,11 +27,11 @@ no app's domain. §5 says how to get the one legitimate use of that first choice
 Scaffold with `/new-kit-port workspace` (`.claude/commands/new-kit-port.md`) for SSSB's port, or `/sssb:new-port
 workspace` (the plugin's `plugins/sssb/commands/new-port.md`) for one the app owns; both first ask whose port it is.
 This recipe predates app-owned ports and assumes SSSB's: if only your app will call it, the same three
-files can live in your app instead (`docs/recipes/app-owned-adapter.md`), and a fork is better off that
-way (ADR-0013). Be clear about where SSSB's answer lands:
-the command writes under `packages/kit/src/ports/`, `packages/kit/src/adapters/fake/` and
-`packages/kit/src/adapters/real/` and wires the registry in `packages/kit/src/adapters/index.ts` — in
-your repo that tree is yours to extend, but it is also the published surface. Nothing becomes importable
+files can live in your app instead (`docs/recipes/app-owned-adapter.md`), and an adopter's workspace, which
+installs `@sssb/kit` rather than holding its source, can only do it that way. Be clear about where SSSB's answer
+lands: the command writes under `packages/kit/src/ports/`, `packages/kit/src/adapters/fake/` and
+`packages/kit/src/adapters/real/` and wires the registry in `packages/kit/src/adapters/index.ts`, in SSSB's
+repository, where that tree is also the published surface. Nothing becomes importable
 as `@sssb/kit/ports/workspace` until you add the line to `packages/kit/package.json`'s `exports` map
 deliberately (the `sssb/public-surface` lint rule reads that map). The port itself stays generic — it
 names no backend and no product, the way `llm` names no model vendor — so it belongs there; anything

@@ -28,7 +28,7 @@ config name no service at all and nothing is left for the generator to rename. K
 release, so a workspace generated before the change keeps working, and say so in a changeset ("Scaffold changes to
 apply by hand").
 
-Overlaps `port-slots-for-adopter-apps.md`, which lets an app declare a slot of its own so two apps in one workspace
-stop sharing one: build them together, since both change how an app declares its slot. Pin: the survivor check in
+Overlapped `resolved/port-slots-for-adopter-apps.md`, now built: an app can declare a slot of its own
+(`{ "name": …, "default": … }`), read by every command, so the generator could write one in place of `starter`. Pin: the survivor check in
 `tests/tooling/create-generate.test.ts` allows no `starter` in the generated app; the starter's dev server, e2e and
 tick still bind its old port in a main checkout and its derived one in a worktree.

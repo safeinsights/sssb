@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// SSSB's release logic (ADR-0014 part 10). `.github/workflows/release.yml` and CI's `release-plan` job call
-// it; nothing else should. Every command reads Changesets' own config and planner, so the plan judged here is
+// SSSB's release logic (ADR-0014 part 10). `.github/workflows/release.yml` and CI's `release-plan` and
+// `release-dry-run` jobs run it; pack and consume imports `candidateNotes`, and the tests import it. Every command reads Changesets' own config and planner, so the plan judged here is
 // the plan `changeset version` applies.
 //
 //   check                         Every PR. Fails on a `major` changeset for a package on 0.x, and on any plan
@@ -9,10 +9,12 @@
 //                                 a group member outside packages/ or without repository.url, a group that is part
 //                                 private, a changeset whose body is not a readable release-note entry
 //                                 (scripts/release-notes.mjs), and a private group outside pre mode `rc` or a public
-//                                 one inside it. While the group is private (until P14) every release is a release
+//                                 one inside it. While the group was private (until P14) every release was a release
 //                                 candidate, `0.x.y-rc.N`, cut by a merge to main and shipped as a GitHub prerelease
-//                                 (ADR-0014 P7); .changeset/pre.json and a config that versions private packages are
-//                                 what make Changesets plan one.
+//                                 (ADR-0014 P7); .changeset/pre.json and a config that versions private packages
+//                                 made Changesets plan one. From P14 the group is public and out of pre mode, and a
+//                                 release is a plain `0.x.y` on npm, carrying the candidates' `.changeset/pre/` files
+//                                 the first time.
 //   prepare [--allow-dirty]       The `plan` job. Plans, guards, writes the release notes (assembled from the pending
 //                                 changesets by scripts/release-notes.mjs) to docs/releases/v<version>.md, then runs
 //                                 `changeset version` in the working tree and commits nothing. stdout is one JSON
@@ -21,11 +23,12 @@
 //   verify-release <version>      The `push` job, which holds the release app's key. From HEAD alone, works out
 //                                 the release the pending changesets imply (a candidate's `-rc.N` as Changesets 3
 //                                 numbers it) and fails unless the staged patch is exactly that, notes file included,
-//                                 each consumed changeset deleted or, in pre mode, moved unchanged to
-//                                 `.changeset/pre/`; prints `verified <version>`. Needs no installed dependencies.
-//   publishable <version>         The tag's pack job. The packages to publish, as JSON, and `[]` while every
-//                                 package is private. Fails if a non-private package is outside the fixed group
-//                                 or at another version.
+//                                 each consumed changeset deleted (out of pre mode, the `.changeset/pre/` ones too)
+//                                 or, in pre mode, moved unchanged to `.changeset/pre/`; prints `verified <version>`.
+//                                 Needs no installed dependencies.
+//   publishable <version>         The tag's pack job. The packages to publish, as JSON (`[]` were every package
+//                                 private). Fails if a non-private package is outside the fixed group or at another
+//                                 version.
 //   preflight <version> <sha> <tarball>…
 //                                 The publish job, before its first publish. Prints the tarballs still to publish
 //                                 after checking each one's own manifest. A version already on npm from this
@@ -44,14 +47,16 @@
 //                                 `pnpm pack` lays them out, and prints each one's name, file, size, sha256 and sha512
 //                                 as JSON. Needs no installed dependencies.
 //   candidate-notes <version> <owner/repo> <sha> <assets.json>
-//                                 The GitHub prerelease's notes: the release commit's docs/releases/v<version>.md, then
-//                                 how to install each tarball by URL, its sha512, and how to verify its attestation.
+//                                 The GitHub prerelease's notes: the release commit's docs/releases/v<version>.md, with the
+//                                 commit's SHA written into its "Upgrading to this release" section, then how to install
+//                                 each tarball by URL, its sha512, and how to verify its attestation.
 //
 // Failures exit 1 with the reason on stderr. Children write to stderr too, so stdout carries only the result.
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -99,8 +104,9 @@ function compareVersions(a, b) {
 /**
  * `.changeset/pre.json` as Changesets 3 writes it (`changeset pre enter rc`): exactly `{"mode": "pre", "tag": "rc"}`,
  * read without a dependency (the `push` job installs none). Absent means no pre mode. Anything else, `exit` mode
- * included, fails: SSSB enters pre mode for its release candidates while the packages are private and leaves it at
- * P14, and nothing between is a state a release should guess at.
+ * included, fails: SSSB entered pre mode for its release candidates while the packages were private and left it at
+ * P14 by deleting this file (not by `changeset pre exit`, whose `"mode": "exit"` would leave one more state for every
+ * reader to know; docs/decision-log.md, 2026-11-18, P14), and nothing between is a state a release should guess at.
  * @param {string | null} text the file's contents, or null when there is none
  * @returns {{ mode: 'pre', tag: 'rc' } | null}
  */
@@ -200,14 +206,17 @@ async function loadWorkspace(root) {
     const plan = (cfg) =>
         assembleReleasePlan(changesets, packages, cfg, pre ?? undefined).releases.filter((r) => r.type !== 'none')
     // In pre mode Changesets moves each changeset it consumes to `.changeset/pre/` (id `pre/<name>`) and keeps it
-    // until pre mode ends; only the others are pending.
-    const pending = changesets.filter((c) => !c.id.startsWith('pre/'))
+    // until pre mode ends; only the others are pending. OUT of pre mode (ADR-0014 P14 left it by deleting
+    // `.changeset/pre.json`) Changesets counts every one, `pre/` included, and its next `changeset version` releases and
+    // deletes them all: the first plain release carries the whole series of candidates
+    // (`@changesets/assemble-release-plan` 7.0.0, `getRelevantChangesets`).
+    const pending = pre ? changesets.filter((c) => !c.id.startsWith('pre/')) : changesets
     return { packages: packages.packages, config, fixed, changesets, pending, pre, plan }
 }
 
 /**
  * The PR check. Returns the problems (empty when the changesets are acceptable) and the plan it judged: the
- * one Changesets will apply once `private` comes off, which is the only plan that can ever reach npm.
+ * one Changesets will apply as if every package were public, which is the only plan that can ever reach npm.
  */
 export async function check(root) {
     const ws = await loadWorkspace(root)
@@ -252,9 +261,8 @@ export async function check(root) {
         }
     } else if (ws.pre) {
         problems.push(
-            'the fixed group is public: leave pre mode before releasing it to npm (ADR-0014 P14, ' +
-                '.claude/future-tasks/p14-leave-pre-mode.md); release candidates are GitHub prereleases of the private ' +
-                'group only',
+            'the fixed group is public: leave pre mode before releasing it to npm, by deleting .changeset/pre.json ' +
+                '(ADR-0014 P14). Release candidates were GitHub prereleases of the private group only',
         )
     }
     // ONE VERSION FOR THE GROUP, as its manifests say. Changesets plans a fixed group from its highest version, but
@@ -268,20 +276,20 @@ export async function check(root) {
         )
     }
     // In pre mode Changesets moves a consumed changeset to `.changeset/pre/<name>.md`, so a pending one with a name
-    // already there would overwrite it, which `verify-release` refuses after merge. Names are never reused.
-    if (ws.pre) {
-        const consumed = new Set(ws.changesets.filter((c) => c.id.startsWith('pre/')).map((c) => c.id.slice(4)))
-        for (const c of ws.pending) {
-            if (consumed.has(c.id)) {
-                problems.push(
-                    `.changeset/${c.id}.md has the name of a changeset an earlier release candidate consumed ` +
-                        `(.changeset/pre/${c.id}.md); give it another name`,
-                )
-            }
+    // already there would overwrite it, which `verify-release` refuses after merge. Out of pre mode both are pending and
+    // both would be released, but the notes would list two entries under one name. Names are never reused.
+    const consumed = new Set(ws.changesets.filter((c) => c.id.startsWith('pre/')).map((c) => c.id.slice(4)))
+    for (const c of ws.changesets) {
+        if (consumed.has(c.id)) {
+            problems.push(
+                `.changeset/${c.id}.md has the name of a changeset an earlier release candidate consumed ` +
+                    `(.changeset/pre/${c.id}.md); give it another name`,
+            )
         }
     }
-    // Only the PENDING ones: a consumed changeset (`pre/`) was released with its candidate, and a rule or a group that
-    // changed since must not turn that record red on every later PR.
+    // Only the PENDING ones: in pre mode a consumed changeset (`pre/`) was released with its candidate, and a rule or a
+    // group that changed since must not turn that record red on every later PR. Out of pre mode the `pre/` ones are
+    // pending again, and the next release reads them: they are judged like any other.
     for (const changeset of ws.pending) {
         for (const release of changeset.releases) {
             // A changeset that names a package outside the group is never consumed while that package is
@@ -461,7 +469,7 @@ export async function prepare(root, { allowDirty = false, fetchImpl = fetch } = 
 
 /**
  * The packages a tag publishes: every non-private workspace package, each of which must be in the fixed group
- * and at the tag's version. Empty while every package is private, which makes the publish a no-op until P14.
+ * and at the tag's version. Empty were every package private, which made the publish a no-op until P14.
  */
 export async function publishable(root, version) {
     if (!PLAIN_VERSION.test(version)) throw new Error(`not a release version: '${version}'`)
@@ -737,8 +745,9 @@ export function unwrap(markdown) {
 
 /**
  * The GitHub prerelease's notes: the release notes the release commit carries (`docs/releases/v<version>.md`, written
- * by `prepare` and checked by `verify-release`), then how to install each tarball by URL, its sha512, and how to
- * verify the attestation. An adopter commits the lockfile and installs with `--frozen-lockfile`: a release asset can be
+ * by `prepare` and checked by `verify-release`), with the commit's SHA written into their "Upgrading to this release"
+ * section (the file cannot name the commit it is part of), then how to install each tarball by URL, its sha512, and
+ * how to verify the attestation. An adopter commits the lockfile and installs with `--frozen-lockfile`: a release asset can be
  * replaced under the same URL, and the lockfile's integrity is what pins the bytes (ADR-0014 part 10).
  * @param {string} root the release commit's checkout
  * @param {string} version
@@ -750,10 +759,15 @@ export function candidateNotes(root, version, repo, sha, assets) {
     if (!RC_VERSION.test(version)) throw new Error(`not a release candidate: '${version}'`)
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`not a repository: '${repo}'`)
     if (!SHA.test(sha)) throw new Error(`not a commit: '${sha}'`)
-    const notes = readFileSync(path.join(root, notesPath(version)), 'utf8')
-    if (!notes.startsWith(`# Release notes: v${version}\n`)) {
+    const committed = readFileSync(path.join(root, notesPath(version)), 'utf8')
+    if (!committed.startsWith(`# Release notes: v${version}\n`)) {
         throw new Error(`${notesPath(version)} is not the release notes of v${version}`)
     }
+    // The file's "Upgrading to this release" cannot name the commit it is part of; here the SHA is in hand, so it is
+    // written in. The module is loaded here, synchronously (Node 24 `require`s an ES module), and not imported at the
+    // top: the push and publish jobs run a lone copy of this file.
+    const { upgradeSection, withUpgradeSection } = createRequire(import.meta.url)('./release-notes.mjs')
+    const notes = withUpgradeSection(committed, upgradeSection({ version, sha, repo }))
     const url = (/** @type {string} */ file) => `https://github.com/${repo}/releases/download/v${version}/${file}`
     // The generator is run, never depended on: it is left out of the dependencies, and said how to run.
     const generator = assets.find((a) => a.name === GENERATOR)
@@ -808,6 +822,8 @@ export function candidateNotes(root, version, repo, sha, assets) {
 const GENERATOR = '@sssb/create'
 
 const CHANGESET_FILE = /^\.changeset\/[^/]+\.md$/
+/** A changeset an earlier release candidate consumed: pending again once pre mode is left (ADR-0014 P14). */
+const PRE_CHANGESET_FILE = /^\.changeset\/pre\/[^/]+\.md$/
 const MANIFEST = /^packages\/[^/]+\/package\.json$/
 const CHANGELOG = /^packages\/[^/]+\/CHANGELOG\.md$/
 
@@ -882,8 +898,11 @@ export function verifyRelease(root, version) {
         if (pre && !priv) problems.push(`${file} is public, and a release candidate is cut only of the private group`)
         if (pre || !priv) released.set(file, manifest.version)
     }
-    // Pending is `.changeset/<name>.md`; in pre mode the ones already consumed sit in `.changeset/pre/` and are not.
-    const pending = tracked.filter((f) => CHANGESET_FILE.test(f) && isChangesetName(path.basename(f)))
+    // Pending is `.changeset/<name>.md`; in pre mode the ones already consumed sit in `.changeset/pre/` and are not. Out
+    // of pre mode (from P14) Changesets releases those too, and the release deletes them as it deletes the others.
+    const pending = tracked.filter(
+        (f) => (CHANGESET_FILE.test(f) || (!pre && PRE_CHANGESET_FILE.test(f))) && isChangesetName(path.basename(f)),
+    )
     const bumps = []
     for (const file of pending) {
         for (const r of changesetReleases(atHead(file), file)) {
@@ -891,7 +910,8 @@ export function verifyRelease(root, version) {
             else bumps.push(r.type)
         }
     }
-    if (released.size === 0) problems.push('no fixed-group package is public, so there is nothing to release')
+    if (released.size === 0)
+        problems.push('no fixed-group package is released (none is public, or in pre mode none exists)')
     else {
         try {
             const expected = impliedVersion([...released.values()], bumps, pre !== null)

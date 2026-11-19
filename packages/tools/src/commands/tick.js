@@ -3,7 +3,7 @@
 // scheduled-tick route once and says what ran. The logic is ../tick/tick.js. It runs in the app's directory (`--app`,
 // else the working directory), where the server keeps `.data`, and `<app>` (the port slot) defaults to the one the
 // app declares (`"sssb": { "port": … }`).
-import { declaredPortService } from '../app-port.js'
+import { declaredPortService, portNameOf } from '../app-port.js'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { takeAppDir } from '../app.js'
@@ -19,6 +19,9 @@ export async function run(args) {
     const declared = hasApp ? declaredPortService(appDir) : undefined
     const first = args[0]
     return await main(
-        declared !== undefined && (first === undefined || first.startsWith('-')) ? [declared, ...args] : args,
+        declared !== undefined && (first === undefined || first.startsWith('-'))
+            ? [portNameOf(declared), ...args]
+            : args,
+        declared,
     )
 }

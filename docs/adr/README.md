@@ -1,10 +1,11 @@
 # Architecture Decision Records
 
-All fourteen decisions below are **Accepted** (approver: JP Slavinsky). They are the one-way doors — the
+Thirteen of the fourteen decisions below are **Accepted** (approver: JP Slavinsky). They are the one-way doors — the
 choices that shaped everything after them and are expensive to reverse — and they are not open for
 relitigation in routine work. If new information genuinely challenges one, raise it with the approver.
-[0014](0014-distribution-as-versioned-packages.md) will supersede 0013 when its generator replaces fork and
-merge; until then 0013 describes how updates arrive.
+0013 is **Superseded** by [0014](0014-distribution-as-versioned-packages.md): adopters no longer fork and merge, they
+generate a workspace and upgrade by release ([../adopting.md](../adopting.md)). 0013 stays as the record of why fork
+and merge was chosen and what replaced it.
 
 The operating philosophy these decisions serve (thin slices, ports and adapters, hermetic dev, demo mode,
 the one-app default) is in [../development-approach.md](../development-approach.md); the ADRs are the
@@ -43,5 +44,5 @@ authoritative.
 | [0010](0010-observability-sentry-posthog.md)        | Observability: Sentry errors + PostHog analytics                 |
 | [0011](0011-email-mailgun.md)                       | Email: Mailgun, react-email, the port as the catch-point         |
 | [0012](0012-framework-app-line-and-registration.md) | The framework/app line: registration through the app-config seam |
-| [0013](0013-upstream-updates-fork-and-merge.md)     | Upstream updates: publishable-shaped, distributed by fork/merge  |
+| [0013](0013-upstream-updates-fork-and-merge.md)     | Superseded: publishable-shaped, distributed by fork/merge        |
 | [0014](0014-distribution-as-versioned-packages.md)  | Distribution: versioned packages, renamed SSSB                   |

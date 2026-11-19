@@ -113,10 +113,11 @@ Next:
   pnpm --filter './apps/*' exec playwright install chromium
   pnpm verify
 
+\`pnpm dev\` then runs the app, seeded and offline, with no credentials.
+
 On GitHub, require the check \`sssb / all-checks\` on your default branch (it fails unless every one of SSSB's
-checks ran and passed), and turn on private vulnerability reporting. README.md lists the rest.${
-        placeholders.length > 0 ? `\nStill to fill in: ${placeholders.join('; ')}.` : ''
-    }`)
+checks ran and passed), and turn on private vulnerability reporting. README.md lists the rest, and links SSSB's
+guide to building on it.${placeholders.length > 0 ? `\nStill to fill in: ${placeholders.join('; ')}.` : ''}`)
     return 0
 }
 

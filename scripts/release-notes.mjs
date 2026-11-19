@@ -2,16 +2,24 @@
 // SSSB's release notes, assembled from the pending changesets (ADR-0014 part 10 and P7; `.changeset/README.md` is the
 // writer's side). A changeset is a release-note entry with a fixed body, and this turns the set of them into the notes
 // an adopter reads: "Seam changes", "Framework migrations", "Operator actions" and "Scaffold changes to apply by hand"
-// (the Kind of each entry), then "Other changes", each entry with its What changed, To adopt and Now deletable.
+// (the Kind of each entry), then "Other changes", each entry with its What changed, To adopt and Now deletable. With a
+// version, "Upgrading to this release" comes first (`upgradeSection`): the steps every upgrade takes, whatever the
+// entries say.
 //
 //   node scripts/release-notes.mjs [--version <v>] [--since <ref>] [--at <rev>] [--out <file>] [--check]
 //
-//   (no flags)    every changeset in the working tree's `.changeset/`, to stdout
+//   (no flags)    every pending changeset in the working tree's `.changeset/` (out of pre mode, `pre/` too), to stdout
 //   --since <ref> only the changesets ADDED after <ref> (a tag or a commit) that are still there, and, as "Corrections
 //                 to earlier notes", those EDITED since: a release candidate's notes are what is new since the previous
 //                 candidate. Read from git (`--at`, default HEAD), not the working tree
 //   --at <rev>    read `.changeset/` as of <rev> instead of the working tree. A release deletes the changesets it
-//                 consumes (in pre mode, which is every release until P14, it moves them to `.changeset/pre/`), so `--at <release commit>^` regenerates a release's notes after the fact
+//                 consumes (in pre mode, which was every release until P14, it moves them to `.changeset/pre/`), so
+//                 `--at <release commit>^` regenerates a release's notes after the fact
+//
+// Which changesets are read is what Changesets would consume: in pre mode (`.changeset/pre.json` with `"mode": "pre"`)
+// the files directly in `.changeset/`; out of it, those and the ones earlier candidates moved to `.changeset/pre/`, which
+// the next release takes and deletes. So the first plain release's notes (ADR-0014 P14) carry every change since the
+// first candidate, and `--since <the last candidate's tag>` what is new since it.
 //   --version <v> the heading's version
 //   --out <file>  write the notes there instead of stdout
 //   --check       judge the changesets and print nothing but the problems
@@ -41,6 +49,165 @@ const KINDS = SECTIONS.map((s) => s.kind)
 const ACTIONS = ['required', 'optional', 'none']
 const BUMPS = ['patch', 'minor']
 const PACKAGE = /^@sssb\/[a-z0-9-]+$/
+
+/** The heading of the standing upgrade section: every release's notes carry it, so `withUpgradeSection` finds it by it. */
+export const UPGRADE_HEADING = 'Upgrading to this release'
+/** The repository whose tag names a release's commit, when `upgradeSection` is not told another. */
+const RELEASE_REPOSITORY = 'safeinsights/sssb'
+const RC_VERSION = /-rc\.\d+$/
+const COMMIT = /^[0-9a-f]{40}$/
+
+/**
+ * The standing "Upgrading to this release" section (`docs/adopting.md`, "Upgrading by release", says why each step is
+ * there): what every release asks of a workspace, whatever its entries say, with the commands and this release's version
+ * filled in. The release commit's SHA is filled in only when the caller has it. The notes are a file IN the release
+ * commit, so `prepare` cannot know it: without a `sha` the section has the one command that reads it off the release's
+ * tag (a lightweight tag on that commit, `git tag "v$VERSION"` in release.yml), and `release.mjs candidate-notes`, which
+ * runs on the tag with the SHA in hand, writes it in. The pin is a SHA, never the tag: `sssb doctor` reports a pin that
+ * is "a branch or tag, not a commit" as differing from the release commit.
+ * @param {{ version: string, sha?: string, repo?: string }} options
+ * @returns {string} markdown, no trailing newline, starting at its `##` heading
+ */
+export function upgradeSection({ version, sha, repo = RELEASE_REPOSITORY }) {
+    if (sha !== undefined && !COMMIT.test(sha)) throw new Error(`not a commit: '${sha}'`)
+    const candidate = RC_VERSION.test(version)
+    const tag = `v${version}`
+    const pin = sha ?? '<sha>'
+    const move = candidate
+        ? [
+              `**1. Move every \`@sssb/*\` package to this candidate, together.** A candidate is a GitHub prerelease and nothing`,
+              `is on npm: in the root \`package.json\`, each \`apps/<app>/package.json\` and \`apps/<app>/infra/package.json\`, and any`,
+              `package of your own that depends on one, point each \`@sssb/*\` dependency at its tarball URL (the prerelease's notes`,
+              `list them, under "Installing this release candidate") and install. First make any "Scaffold changes to apply by hand" entry below that touches how packages`,
+              `install, or the install keeps the old release. Commit the lockfile.`,
+              '',
+              '```sh',
+              'pnpm install',
+              '```',
+          ]
+        : [
+              `**1. Move every \`@sssb/*\` package to ${version}, together.** In the root \`package.json\`, each`,
+              `\`apps/<app>/package.json\` and \`apps/<app>/infra/package.json\`, and any package of your own that depends on one,`,
+              `change each \`@sssb/*\` version, then install and commit the lockfile. First make any "Scaffold changes to apply by`,
+              `hand" entry below that touches how packages install (a workspace that installed a candidate by tarball URL drops`,
+              `its \`overrides\` for them), or the install keeps the old release.`,
+              '',
+              '```json',
+              JSON.stringify(
+                  {
+                      '@sssb/kit': `^${version}`,
+                      '@sssb/tools': `^${version}`,
+                      '@sssb/eslint-plugin': `^${version}`,
+                      '@sssb/cdk': `^${version}`,
+                  },
+                  null,
+                  4,
+              ),
+              '```',
+              '',
+              '```sh',
+              'pnpm install',
+              '```',
+          ]
+    const commit =
+        sha === undefined
+            ? [
+                  `**3. Move both pins to this release's commit.** It is the commit the tag \`${tag}\` names, and the pins take`,
+                  `the commit's SHA, never the tag (\`sssb doctor\` reports a tag as differing). This prints the SHA, as does`,
+                  `\`sssb doctor\` beside any pin that differs; write it where \`<sha>\` stands below:`,
+                  '',
+                  '```sh',
+                  `git ls-remote https://github.com/${repo} 'refs/tags/${tag}' 'refs/tags/${tag}^{}' | tail -n 1 | cut -f 1`,
+                  '```',
+              ]
+            : [
+                  `**3. Move both pins to this release's commit,** \`${sha}\`. The pins take the commit's SHA, never the tag`,
+                  `\`${tag}\` (\`sssb doctor\` reports a tag as differing).`,
+              ]
+    return [
+        `## ${UPGRADE_HEADING}`,
+        '',
+        'Every release asks these of a workspace, whatever its entries say. Make them on a branch, in order, then read the',
+        'entries below.',
+        '',
+        ...move,
+        '',
+        "**2. Refresh the app guide's copy,** the rules every agent in your repository follows. `sssb doctor` fails until the",
+        "copy is the installed kit's; read the diff of `.claude/sssb-guide.md`.",
+        '',
+        '```sh',
+        'pnpm exec sssb guide',
+        '```',
+        '',
+        ...commit,
+        '',
+        'In `.github/workflows/checks.yml`, the `sssb` job:',
+        '',
+        '```yaml',
+        `uses: ${repo}/.github/workflows/app-checks.yml@${pin} # ${tag}`,
+        '```',
+        '',
+        'In `.claude/settings.json`, the `ref` of the `sssb` marketplace:',
+        '',
+        '```json',
+        JSON.stringify({ extraKnownMarketplaces: { sssb: { source: { source: 'github', repo, ref: pin } } } }, null, 4),
+        '```',
+        '',
+        'Then each person updates their installed plugin and restarts Claude Code:',
+        '',
+        '```sh',
+        'claude plugin marketplace update sssb',
+        'claude plugin update sssb@sssb --scope project',
+        '```',
+        '',
+        '**4. Apply each entry below, then drop what it left unused.** Do each "To adopt" and delete what each "Now deletable"',
+        'describes, then run `pnpm knip`. A vendor SDK your app listed only for code you deleted (`@aws-sdk/client-s3` for a',
+        "copy of the kit's S3 storage adapter, say) is now flagged as unused, because the kit's adapter that replaces it",
+        'carries its own copy: remove it from the `package.json` that lists it, unless other code still imports it.',
+        '',
+        '```sh',
+        'pnpm knip',
+        '```',
+        '',
+        '**5. Check, then push.** Read every line `sssb doctor` reports, not just the last: it fails on versions out of step and',
+        'a stale guide copy, and only reports a pin that is not the release commit.',
+        '',
+        '```sh',
+        'pnpm exec sssb doctor',
+        'pnpm verify',
+        '```',
+    ].join('\n')
+}
+
+/**
+ * Markdown notes with their upgrade section replaced by `section` (or, when they have none, with it inserted before the
+ * first `##` heading outside a code block, or appended). A section runs from its heading to the next `##` heading
+ * outside a code block.
+ * @param {string} markdown
+ * @param {string} section from `upgradeSection`
+ */
+export function withUpgradeSection(markdown, section) {
+    const lines = markdown.replace(/\n+$/, '').split('\n')
+    const { inside } = fenceMask(lines)
+    const headings = lines.flatMap((l, i) => (!inside[i] && /^## /.test(l) ? [i] : []))
+    const start = headings.find((i) => lines[i] === `## ${UPGRADE_HEADING}`)
+    const block = section.split('\n')
+    if (start !== undefined) {
+        const end = headings.find((i) => i > start) ?? lines.length
+        lines.splice(start, end - start, ...block, ...(end < lines.length ? [''] : []))
+    } else {
+        const at = headings[0] ?? lines.length
+        // appended after prose that has no `##`: a blank line first, so it stays a heading of its own
+        lines.splice(
+            at,
+            0,
+            ...(at === lines.length && lines.length > 0 ? [''] : []),
+            ...block,
+            ...(at < lines.length ? [''] : []),
+        )
+    }
+    return lines.join('\n') + '\n'
+}
 
 /** Whether Changesets (@changesets/read 1.0.1) reads this `.changeset/` file as a changeset. */
 export function isChangesetName(name) {
@@ -284,6 +451,7 @@ export function assembleNotes(changesets, { version, since, corrections = [], ju
                   .filter(Boolean)
                   .join(' '),
     )
+    if (version) out.push('', upgradeSection({ version }))
     for (const { kind, heading } of SECTIONS) {
         const inSection = entries.filter((e) => e.kind === kind).sort((a, b) => rank(a.action) - rank(b.action))
         // The four named sections are always present, empty or not (ADR-0014 part 10); "Other changes" only when used.
@@ -330,14 +498,53 @@ function git(root, args) {
 }
 
 /**
- * Names under `.changeset/` as of a revision, optionally only those a diff from `since` adds (`A`) or edits (`M`) and
- * that are still there.
+ * Whether a `.changeset/pre.json` (its text, or null when there is none) puts Changesets in pre mode, where a changeset
+ * in `.changeset/pre/` is consumed. Out of it (ADR-0014 P14 deleted the file) Changesets releases those too, so they
+ * are pending, and in the notes. `release.mjs` judges the file's exact shape; this reads only its mode.
+ * @param {string | null} text
+ */
+function preModeOf(text) {
+    if (text === null) return false
+    try {
+        return JSON.parse(text)?.mode === 'pre'
+    } catch {
+        throw new Error('.changeset/pre.json is not JSON')
+    }
+}
+
+/**
+ * The changesets Changesets would consume, as paths relative to `.changeset/` (`name.md`, or `pre/name.md` once pre
+ * mode is left), from a listing of `.changeset/` and, out of pre mode, of `.changeset/pre/`.
+ * @param {string[]} top the names directly in `.changeset/`
+ * @param {() => string[]} consumed the names in `.changeset/pre/`, read only when they count
+ * @param {boolean} pre
+ */
+function pendingNames(top, consumed, pre) {
+    const names = top.filter(isChangesetName)
+    if (!pre)
+        names.push(
+            ...consumed()
+                .filter(isChangesetName)
+                .map((name) => `pre/${name}`),
+        )
+    return names
+}
+
+/**
+ * Pending changesets under `.changeset/` as of a revision (relative to `.changeset/`), optionally only those a diff
+ * from `since` adds (`A`) or edits (`M`) and that are still there.
  * @param {string} root
  * @param {{ since?: string, at: string, filter?: 'A' | 'M' }} where
  */
 function namesAt(root, { since, at, filter }) {
-    const listed = git(root, ['ls-tree', '-z', '--name-only', at, '.changeset/']).split('\0').filter(Boolean)
-    const names = listed.map((f) => path.posix.basename(f)).filter(isChangesetName)
+    const list = (/** @type {string} */ dir) =>
+        git(root, ['ls-tree', '-z', '--name-only', at, `${dir}/`])
+            .split('\0')
+            .filter(Boolean)
+            .map((f) => path.posix.basename(f))
+    const top = list('.changeset')
+    const pre = top.includes('pre.json') && preModeOf(git(root, ['show', `${at}:.changeset/pre.json`]))
+    const names = pendingNames(top, () => list('.changeset/pre'), pre)
     if (since === undefined || filter === undefined) return names
     const changed = new Set(
         git(root, [
@@ -353,7 +560,7 @@ function namesAt(root, { since, at, filter }) {
         ])
             .split('\0')
             .filter(Boolean)
-            .map((f) => path.posix.basename(f)),
+            .map((f) => path.posix.relative('.changeset', f)),
     )
     return names.filter((n) => changed.has(n))
 }
@@ -371,7 +578,14 @@ export function readChangesets(root, { since, at, edited = false } = {}) {
     }
     if (at === undefined && since === undefined) {
         const dir = path.join(root, '.changeset')
-        const names = existsSync(dir) ? readdirSync(dir).filter(isChangesetName) : []
+        const preJson = path.join(dir, 'pre.json')
+        const names = existsSync(dir)
+            ? pendingNames(
+                  readdirSync(dir),
+                  () => (existsSync(path.join(dir, 'pre')) ? readdirSync(path.join(dir, 'pre')) : []),
+                  preModeOf(existsSync(preJson) ? readFileSync(preJson, 'utf8') : null),
+              )
+            : []
         return names
             .sort()
             .map((name) => ({ file: `.changeset/${name}`, text: readFileSync(path.join(dir, name), 'utf8') }))
