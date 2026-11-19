@@ -5989,3 +5989,21 @@ standing rule for these sessions says.
   adopter misses the rule.
 - **Not verified live**: a real sign-in through Clerk's middleware, its handshake redirect and `auth()` in a page and
   an API route. Those are the `auth-dev` row of `docs/cutover-checklist.md`.
+- **`CLERK_JWT_KEY` is passed to Clerk's middleware as `jwtKey` when set, and stays optional** (round-1 review).
+  Clerk 7.10 does not read it from the environment (its `constants.js` reads the publishable, secret, machine-secret and
+  encryption keys, not the JWT key), and without it Clerk's middleware, now on every `/api` route, fetches its signing
+  keys from Clerk's API for any bearer JWT whose key id it has not cached: a service caller's token, or one an
+  unauthenticated client makes up, each costing a Clerk request against the instance's rate limit. With `jwtKey` Clerk
+  verifies locally. Rejected: **making it required** in `assertRealEnv`, which changes the required-environment release
+  snapshot while another task is reworking which settings real mode requires; it is a cutover-checklist step instead.
+  Rejected: **skipping Clerk's middleware on requests with an `Authorization` header**, which would break a Clerk
+  session token sent in that header.
+- **A failed load of the Clerk half is forgotten** (round-1 review), so the next request tries again instead of every
+  request failing until a restart.
+- **The page matcher still leaves out any path with a dot** (round-1 review, kept): in real mode such a page would not
+  pass Clerk's middleware and its `auth()` would fail. Rejected: **Clerk's matcher, which leaves out only listed static
+  extensions**: it would send `/robots.txt` and any other unlisted file to the locale routing, which redirects it. The
+  guide says a page path has no dot.
+- **API request bodies now pass through the proxy** (round-1 review, kept): Next buffers at most
+  `proxyClientMaxBodySize` (10MB by default) of a proxied body, above the 5MB attachment limit. An app that raises an
+  upload limit past it raises that setting too; the guide says so.

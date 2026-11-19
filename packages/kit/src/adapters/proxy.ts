@@ -21,7 +21,13 @@ export function withAuthProxy(proxy: NextProxy): (request: NextRequest, event: N
     if (isSimulated) return async (request, event) => proxy(request, event)
     let real: Promise<(request: NextRequest, event: NextFetchEvent) => Promise<ProxyResult>> | undefined
     return async (request, event) => {
-        real ??= import('./real/clerk-proxy').then(({ withClerk }) => withClerk(proxy))
+        // A failed load is forgotten, so the next request tries again rather than failing until a restart.
+        real ??= import('./real/clerk-proxy')
+            .then(({ withClerk }) => withClerk(proxy))
+            .catch((error: unknown) => {
+                real = undefined
+                throw error
+            })
         return (await real)(request, event)
     }
 }

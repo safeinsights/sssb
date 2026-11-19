@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 // The run mode, and a stand-in for the real half (realHalf): its factory runs only when the module is loaded, so
 // `loads` is the module-load spy that proves simulated mode never reaches Clerk's code.
-const h = vi.hoisted(() => ({ simulated: true, loads: 0, seen: [] as string[] }))
+const h = vi.hoisted(() => ({ simulated: true, loads: 0, seen: [] as string[], failNext: false }))
 vi.mock('./run-mode', () => ({
     get isSimulated() {
         return h.simulated
@@ -12,12 +12,16 @@ vi.mock('./run-mode', () => ({
 function realHalf() {
     h.loads += 1
     return {
-        withClerk:
-            (proxy: (request: NextRequest, event: NextFetchEvent) => unknown) =>
-            async (request: NextRequest, event: NextFetchEvent) => {
+        withClerk: (proxy: (request: NextRequest, event: NextFetchEvent) => unknown) => {
+            if (h.failNext) {
+                h.failNext = false
+                throw new Error('Clerk failed to load')
+            }
+            return async (request: NextRequest, event: NextFetchEvent) => {
                 h.seen.push('clerk')
                 return proxy(request, event)
-            },
+            }
+        },
     }
 }
 
@@ -40,6 +44,7 @@ beforeEach(() => {
     vi.doMock('./real/clerk-proxy', realHalf)
     h.loads = 0
     h.seen = []
+    h.failNext = false
     appProxy.mockClear()
 })
 
@@ -66,5 +71,16 @@ describe('withAuthProxy in real mode', () => {
         expect(page?.headers.get('x-app-proxy')).toBe('ran')
         expect(h.seen).toEqual(['clerk', 'app /en/items', 'clerk', 'app /api/items'])
         expect(h.loads).toBe(1)
+    })
+
+    test('tries again on the next request when loading Clerk failed', async () => {
+        h.simulated = false
+        h.failNext = true
+        const proxy = await load()
+        await expect(proxy(new NextRequest('https://app.example.org/en/items'), event)).rejects.toThrow(
+            'Clerk failed to load',
+        )
+        await proxy(new NextRequest('https://app.example.org/en/items'), event)
+        expect(h.seen).toEqual(['clerk', 'app /en/items'])
     })
 })
