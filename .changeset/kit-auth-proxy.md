@@ -12,8 +12,7 @@
 not see, and SSSB never ran that middleware, so in real mode every sign-in failed. The new published subpath
 `@sssb/kit/adapters/proxy` exports `withAuthProxy(proxy)`: in real mode it runs your proxy inside Clerk's
 `clerkMiddleware`, loading it with `import()` on the first request; in simulated mode it runs your proxy as it is and
-loads no Clerk code, so `pnpm dev` stays hermetic. It protects no route: each route's `authorize()` still does. The
-published surface grows to 140 subpaths.
+loads no Clerk code, so `pnpm dev` stays hermetic. It protects no route: each route's `authorize()` still does.
 
 **To adopt.** In `src/proxy.ts`, wrap your proxy and send it every API route as well as your pages. Your proxy still
 decides what each path gets; let an API route through untouched:
