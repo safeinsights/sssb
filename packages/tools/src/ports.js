@@ -225,15 +225,31 @@ export function portForRoot(root, service, env = process.env) {
 }
 
 /**
- * The declaration to use when a caller names none: the one the package.json in the working directory makes. A
- * Playwright config runs from its app's directory, so `originFor()` there is the app's own origin.
+ * The app the working directory is in: the nearest directory at or above it that holds a package.json, no higher than
+ * the checkout's root. Undefined when there is none.
+ * @param {string} start
+ * @returns {string | undefined}
+ */
+function appDirOf(start) {
+    const top = findCheckoutRoot(start)
+    for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
+        if (existsSync(path.join(dir, 'package.json'))) return dir
+        if (dir === top || path.dirname(dir) === dir) return undefined
+    }
+}
+
+/**
+ * The declaration to use when a caller names none: the one the app the working directory is in makes (a Playwright
+ * run, a test, a script from the app's own directory or below it).
  * @returns {import('./ports.d.ts').PortDeclaration}
  */
 function declaredHere() {
-    const declared = readPortDeclaration(process.cwd())
+    const appDir = appDirOf(process.cwd())
+    const declared = appDir === undefined ? undefined : readPortDeclaration(appDir)
     if (declared === undefined) {
         throw new Error(
-            `ports: no service named, and ${path.join(process.cwd(), 'package.json')} declares none ("sssb": { "port": … }): name one, or run this from the app's directory`,
+            `ports: no service named, and the app around ${process.cwd()} declares none ("sssb": { "port": … } in its ` +
+                "package.json): name one, run this from the app's directory, or use originForApp(<the app's directory>)",
         )
     }
     return declared
@@ -257,12 +273,9 @@ export function foreignAppSlotProblem(service, declared) {
 export function portFor(service) {
     // A service an app copied from the starter, `originFor('starter')`, would silently name the starter's port in an
     // app that declares a slot of its own: its dev server on its slot, its e2e run on another app's. Refused.
-    if (
-        typeof service === 'string' &&
-        APP_SERVICES.includes(service) &&
-        existsSync(path.join(process.cwd(), 'package.json'))
-    ) {
-        const problem = foreignAppSlotProblem(service, readPortDeclaration(process.cwd()))
+    const appDir = typeof service === 'string' && APP_SERVICES.includes(service) ? appDirOf(process.cwd()) : undefined
+    if (appDir !== undefined) {
+        const problem = foreignAppSlotProblem(service, readPortDeclaration(appDir))
         if (problem !== null) throw new Error(`ports: ${problem}`)
     }
     return portForRoot(findCheckoutRoot(process.cwd()), service ?? declaredHere())
@@ -271,6 +284,15 @@ export function portFor(service) {
 /** @type {import('./ports.d.ts').originFor} */
 export function originFor(service) {
     return `http://localhost:${portFor(service)}`
+}
+
+/** @type {import('./ports.d.ts').originForApp} */
+export function originForApp(appDir) {
+    const declared = readPortDeclaration(appDir)
+    if (declared === undefined) {
+        throw new Error(`ports: ${path.join(appDir, 'package.json')} declares no port service ("sssb": { "port": … })`)
+    }
+    return `http://localhost:${portForRoot(findCheckoutRoot(appDir), declared)}`
 }
 
 /** @type {import('./ports.d.ts').SERVICE_NAMES} */

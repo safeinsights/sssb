@@ -16,13 +16,14 @@ as before: `"sssb": { "port": { "name": "ledger", "default": 3700 } }`. The name
 default is an integer from 1024 to 49151 that no SSSB service's port holds (3000, 3100, 3200-3599, 5439-5639,
 20000-29999, 61000-61199). The override is `LEDGER_PORT` (`<NAME>_PORT`, `-` as `_`), and a linked worktree derives the
 port from 20000-29999, keyed on the name as well as the checkout. `sssb port`, `sssb tick`, `sssb dev-tick`,
-`sssb serve-standalone` and `sssb launch-json` read the declaration; `originFor()` and `portFor()` from
-`@sssb/tools/ports`, called with no argument in the app's directory, read it too. `sssb doctor` now fails an invalid
+`sssb serve-standalone` and `sssb launch-json` read the declaration; `originForApp(__dirname)` from
+`@sssb/tools/ports` reads it for a Playwright config, and `originFor()` and `portFor()` called with no argument read it from the app
+the working directory is in. `sssb doctor` now fails an invalid
 declaration, two apps on one slot, and two slots with one default.
 
 **To adopt.** A workspace with one app needs nothing. A workspace with a second app declares its slot in that app's
-`package.json` (above) in place of `"port": "starter"`, and in the app: its `playwright.config.ts` calls `originFor()`
-with no argument instead of `originFor('starter')`, its `dev` script is `sssb dev-tick -- next dev …` (no `starter`
+`package.json` (above) in place of `"port": "starter"`, and in the app: its `playwright.config.ts` calls `originForApp(__dirname)`
+instead of `originFor('starter')`, its `dev` script is `sssb dev-tick -- next dev …` (no `starter`
 before the `--`) and a `tick` script is `sssb tick` (no `starter`; the commands refuse `starter` and `showcase` in an
 app that declares a slot of its own, rather than quietly use the other app's port), and a contract test's `portFor('contractPg')` stays.
 Run `pnpm exec sssb doctor`: it fails while two apps share a slot.

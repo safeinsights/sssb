@@ -264,8 +264,9 @@ second app declares a slot of its own in its `package.json`, in place of the str
 "sssb": { "port": { "name": "ledger", "default": 3700 } }
 ```
 
-and its `playwright.config.ts` calls `originFor()` with no argument, which reads that declaration from the app's
-directory (Playwright runs from there). `sssb port`, `sssb tick` and `sssb dev-tick` read it the same way when given no
+and its `playwright.config.ts` calls `originForApp(__dirname)` (from `@sssb/tools/ports`; Playwright compiles the config to
+CommonJS) in place of `originFor('starter')`, which reads that declaration wherever the config is loaded from (`pnpm knip`
+loads it from the workspace root). `sssb port`, `sssb tick` and `sssb dev-tick` read it the same way when given no
 app argument: in the second app's scripts drop the `starter` from `sssb dev-tick starter -- next dev …` and
 `sssb tick starter` (left in, `sssb tick`, `sssb port` and `portFor('starter')` refuse: it is the first app's slot, and using it would tick and test the first app's port), or name the slot, `sssb tick ledger`. The
 override is `LEDGER_PORT` (`<NAME>_PORT`, with `-` as `_`), and a linked worktree derives the port from 20000-29999,

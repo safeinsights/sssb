@@ -62,3 +62,11 @@ export declare function originFor(service?: PortDeclaration): string
  * dev server on its own slot and its ticker or e2e run on the other app's port.
  */
 export declare function foreignAppSlotProblem(service: string, declared: PortDeclaration | undefined): string | null
+
+/**
+ * `http://localhost:<port>` for the app whose package.json is in `appDir`, from the port slot it declares: for a
+ * Playwright config of an app on a slot of its own, `originForApp(__dirname)`, which names the app wherever the config
+ * is loaded from (the workspace root, by knip or `playwright test -c`, or the app's own directory). Throws when the app
+ * declares none.
+ */
+export declare function originForApp(appDir: string): string

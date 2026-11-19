@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parsePortDeclaration, portForRoot, readPortDeclaration } from '@sssb/tools/ports'
+import { originForApp, parsePortDeclaration, portForRoot, readPortDeclaration } from '@sssb/tools/ports'
 import { makeTestTmpDir } from '../support/tmp-dir'
 
 /**
@@ -281,6 +281,27 @@ describe('the declaration an app makes in its package.json', () => {
             JSON.stringify({ name: 'plain', sssb: { port: 'starter' } }),
         )
         expect(printed(path.join(main, 'apps', 'plain')).stdout.trim()).toBe('3100 http://localhost:3100')
+
+        // From a directory below the app (its tests/), the app around it is the one that counts.
+        mkdirSync(path.join(main, 'apps', 'ledger', 'tests'), { recursive: true })
+        expect(printed(path.join(main, 'apps', 'ledger', 'tests')).stdout.trim()).toBe('3700 http://localhost:3700')
+        // From the workspace root (knip, `playwright test -c apps/ledger/…`), no app is around: the config names its own.
+        const root = printed(main)
+        expect(root.status).not.toBe(0)
+        expect(root.stderr).toMatch(/no service named, and the app around .* declares none/)
+        const named = spawnSync(
+            process.execPath,
+            [
+                '--input-type=module',
+                '-e',
+                `import {originForApp} from ${JSON.stringify(PORTS_JS)}; console.log(originForApp(${JSON.stringify(path.join(main, 'apps', 'ledger'))}), originForApp(${JSON.stringify(path.join(worktree, 'apps', 'ledger'))}))`,
+            ],
+            { cwd: main, env, encoding: 'utf8' },
+        )
+        expect(named.stderr).toBe('')
+        expect(named.stdout.trim()).toBe(`http://localhost:3700 http://localhost:${port}`)
+        expect(() => originForApp(path.join(main, 'apps'))).toThrow(/cannot read/)
+        expect(() => originForApp(appWith({}))).toThrow(/declares no port service/)
     })
 
     it('refuses another app’s built-in slot in an app that declares its own, which a starter-derived script would use by mistake', () => {
@@ -319,6 +340,6 @@ describe('the declaration an app makes in its package.json', () => {
         const dir = appWith({})
         const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: dir, encoding: 'utf8' })
         expect(run.status).not.toBe(0)
-        expect(run.stderr).toMatch(/no service named, and .*package.json declares none/)
+        expect(run.stderr).toMatch(/no service named, and the app around .* declares none/)
     })
 })

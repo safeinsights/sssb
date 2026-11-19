@@ -647,7 +647,15 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         manifest.scripts[script] = manifest.scripts[script].replace(from, to)
     }
     writeJson(manifestFile, manifest)
-    replaceOnce(path.join(dir, 'playwright.config.ts'), "originFor('starter')", 'originFor()')
+    // `originForApp(__dirname)` names the app wherever the config is loaded from: `pnpm knip` loads every workspace's
+    // config from the root, where a bare `originFor()` finds no app. Playwright compiles the config to CommonJS.
+    const config = path.join(dir, 'playwright.config.ts')
+    replaceOnce(
+        config,
+        "import { originFor } from '@sssb/tools/ports'",
+        "import { originForApp } from '@sssb/tools/ports'",
+    )
+    replaceOnce(config, "originFor('starter')", 'originForApp(__dirname)')
 }
 
 /**

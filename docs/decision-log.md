@@ -5154,9 +5154,17 @@ beside the string form); the judgement calls it left open, each with what it bea
   worktree's derived ports differ by name, so only the default needs checking. An app with no declaration is not
   checked (launch-json already skips it), and an invalid declaration is a failure naming its package.json, where it was
   a failure of `sssb port` alone before.
-- **`originFor()` and `portFor()` with no argument read the working directory's package.json, with no walk up.** A
-  Playwright config runs from its app's directory; a walk up to a nearest declaring package could silently pick the
-  workspace root's. With no declaration there it throws and says to name a service or run from the app.
+- **`originFor()` and `portFor()` with no argument read the app the working directory is in (the nearest package.json at
+  or above it, no higher than the checkout root); a Playwright config names its own app with `originForApp(__dirname)`.**
+  The first design read the working directory's package.json alone and told adopters to call `originFor()` in the
+  config. Review found `pnpm knip` (in `pnpm verify` and the generated workflow) loads every workspace's Playwright
+  config from the workspace root, where the call threw and knip exited 2, as `playwright test -c apps/x/…` from the
+  root does; and a test run from `apps/x/tests` read no declaration at all. The config's own directory is the one
+  place that names the app wherever it is loaded, and Playwright and knip both compile the config to CommonJS, so
+  `__dirname` holds. Rejected: a walk up to the nearest package.json that DECLARES a slot, which from the workspace root
+  could pick the root's own, and `originFor(readPortDeclaration(__dirname))`, which hands an undefined declaration to the
+  no-argument form when the app declares none, a worse error than the one `originForApp` gives. With no app around it
+  throws, and says to name a service, run from the app, or use `originForApp`.
 - **`tick` and `dev-tick` know a custom slot only for the app in the working directory (or `--app`).** A slot is the
   declaring app's alone, so `sssb tick portal` run from the ledger app is an unknown app, listing the known ones, rather
   than a guess at another app's default. Rejected: reading every app's declaration in the workspace, which the commands
