@@ -6801,19 +6801,21 @@ and record the rejected alternative.
 JP asked, after reading ADR-0015, why real auth is tied to Clerk when the fake works as an adapter, and whether an app
 could forgo the tenancy promise or keep its data in another store (DynamoDB, say). He framed SSSB as separating an app's
 logic, its simulated world and its tours from the vendors underneath, while staying honest about what each arrangement
-can guarantee, and asked for this addendum. Decisions taken in writing it:
+can guarantee, and asked for this addendum. Decisions taken in writing it, several changed by its Opus review:
 
-- **The unit of an auth swap is a bundle** (server port, request middleware, client provider, sign-in and invite
-  bodies, required settings), with Clerk refactored into SSSB's real bundle first. Rejected: keeping `auth: 'app'` as a
-  port alone, which leaves every other piece still naming Clerk.
-- **Datastores in three tiers, each stating its guarantee**: Postgres with RLS for both the framework's and the app's
-  tables (the default, unchanged); the framework on Postgres with the app's data elsewhere (possible today, its store
-  the app's to isolate); and the framework's own data on another store, behind repository ports, proven per backend.
-  Rejected: the body's "the engine stays fixed", which answered "can it be done" where the honest answer is "here is
-  what each choice promises"; and offering other stores without a stated guarantee.
-- **DynamoDB's isolation is IAM's `LeadingKeys`, proven against AWS only**, because DynamoDB local accepts any
-  credentials. Rejected: claiming a hermetic proof for it.
-- **A declared single-tenant app keeps RLS on Postgres** (one statement per transaction) and may use the query-layer
-  tier only on another store, by name. Rejected: dropping RLS for single-tenant Postgres apps, which saves almost
-  nothing and loses the proof.
-- **Auth as a bundle moves ahead of the `app` mechanism for the other ports**; tier 3 comes last, on demand.
+- **The unit of an auth swap is a bundle, and it owns the invitation link**; kit entry points that dispatch on
+  `AUTH_PROVIDER` choose it. Rejected: `auth: 'app'` as a port alone, which leaves every other piece naming Clerk; and,
+  as first drafted, a bundle with no way of being chosen, the app's route files still loading Clerk's modules by path.
+- **Datastores in three tiers, each stating its guarantee.** Rejected: the body's "the engine stays fixed", which
+  answered "can it be done" where the honest answer is "here is what each choice promises"; and other stores offered
+  without a stated guarantee.
+- **DynamoDB's `LeadingKeys` isolation is comparable to row-level security, not stronger**: whatever mints the
+  per-tenant session holds the boundary, as `set_config` does, and the proof runs against AWS only. Rejected, as first
+  drafted: "enforced by the database's access control" without those limits.
+- **A single-tenant declaration means the deployment is the boundary, checked by boot refusing a second tenant**; on
+  another store it replaces the per-table policies and two-tenant proofs. Rejected, as first drafted: tying it to the
+  query-layer filter, which is several tenants in one store.
+- **Auth as a bundle comes after the `app` mechanism, when an adopter needs another provider.** Rejected, as first
+  drafted: ahead of the mechanism, which would build it on the hardest port or deliver a refactor no provider can use.
+- **The invitation link is a separate fix, now**: the framework mails `/accept-invite?invite=<id>` in every mode, which
+  Clerk's accept form, reading `__clerk_ticket`, cannot use.
