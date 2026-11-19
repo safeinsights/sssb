@@ -982,3 +982,12 @@ to a same-file callee or a same-file wrapper counts for nothing. The decision lo
   for an array's, which runs its callback in place, though the iterator runs it only when consumed.
 - An `authorize` named through `authorizeModules` must throw synchronously, as SSSB's does. A floating call to an
   async one would count.
+
+## Addendum 2026-11-18: `AppSubjectFields` may be any object type
+
+`AbilitySubject` is now `AppSubjectFields & { type; orgId?; ownerId? }`, an intersection, where it was an
+`interface` that extended `AppSubjectFields`. The 2026-07-31 exception ("`AppSubjectFields` must be an interface, so an
+app with no extra fields declares an empty one and suppresses `@typescript-eslint/no-empty-object-type`") no longer
+holds: an app with none writes `export type AppSubjectFields = Record<never, never>`, and an app with fields may
+declare an interface, a type alias or a mapped type. `appNotificationCopy` is the one seam module left that an empty
+registration does not fully switch off.

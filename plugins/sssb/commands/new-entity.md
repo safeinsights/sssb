@@ -31,8 +31,8 @@ generated it: its subject in `src/app-config/abilities.ts`, its table in
    is protected; nothing else proves your proofs cross a tenant boundary
    (`https://github.com/safeinsights/sssb/blob/<ref>/docs/adr/0004-tenancy-rls.md`, addendum of 2026-11-16).
 3. **Data access**: create `src/domain/db/<entity>.ts`, and for the pure logic create `src/domain/<entity>.ts` (a
-   generated app has no `src/domain/` yet; the reference app's
-   escalations are the pair:
+   generated app has `src/domain/db/items.ts` only, the starter's paged list, which is the pattern for a list that grows; the reference app's
+   escalations are the pair for the rest:
    `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/domain/db/escalations.ts`
    and `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/domain/escalations.ts`). Tenant-scoped
    queries only inside `db.withTenant()`; `getDb()` is banned (`sssb/no-raw-db-handle`).

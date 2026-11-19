@@ -10,18 +10,11 @@ import type { AbilityAction, AbilityActor, AbilitySubject, NonSessionAdministrat
 export type AppSubjectType = 'Item'
 
 /**
- * App-specific fields merged into the framework's AbilitySubject (`AbilitySubject extends
- * AppSubjectFields`). This app has NONE: every one of its subjects is scoped by the framework's own
- * `orgId`, so there is nothing to add.
- *
- * The empty interface is deliberate and is the one place "an unused capability needs no scaffolding"
- * is not quite free: because the framework EXTENDS this type, it must be an interface (a mapped type
- * such as `Record<never, never>` cannot be extended), and an empty interface is exactly what
- * `@typescript-eslint/no-empty-object-type` exists to flag. The suppression is narrow and local; the
- * alternative — inventing a field this app does not have — would be worse.
+ * App-specific fields merged into the framework's AbilitySubject (`AbilitySubject = AppSubjectFields & { … }`).
+ * This app has NONE: every one of its subjects is scoped by the framework's own `orgId`, so there is nothing
+ * to add, and `Record<never, never>` says so. An app with fields declares them here as an interface or a type.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface AppSubjectFields {}
+export type AppSubjectFields = Record<never, never>
 
 /**
  * The credential kinds, beyond SSSB's own, by which a PERSON or a MACHINE can reach this app (composed

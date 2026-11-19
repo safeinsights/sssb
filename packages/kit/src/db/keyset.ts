@@ -37,7 +37,7 @@ import type { DB } from './schema'
  * The page predicate is a row-value comparison, `(created_at, id) < ($1, $2)`, which is both the
  * exact meaning of "strictly after this position in `created_at DESC, id DESC`" and the form Postgres
  * can satisfy from an index on `(…, created_at DESC, id DESC)` — see
- * each app’s own `1004_*_keyset_index` migration for the index a paged table wants.
+ * each app’s own `*_keyset_index` migration for the index a paged table wants.
  *
  * **Ordering by another column.** `created_at` is the default ordering key, and the optional trailing
  * `orderBy` argument swaps it for any other NOT NULL `timestamptz` column of the paged table — a list

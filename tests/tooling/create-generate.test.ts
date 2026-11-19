@@ -382,6 +382,9 @@ describe('@sssb/create: the generated workspace', () => {
         const workspace = read(ws, 'pnpm-workspace.yaml')
         expect(workspace).toMatch(/^dedupePeerDependents: false$/m)
         expect(workspace).toMatch(/^allowBuilds:$/m)
+        expect(workspace).toMatch(
+            /^peerDependencyRules:\n {4}allowedVersions:\n {8}'eslint-plugin-react>eslint': '10'\n {8}'eslint-plugin-jsx-a11y>eslint': '10'$/m,
+        )
         expect(workspace).toMatch(/^minimumReleaseAgeExclude:\n {4}- '@sssb\/\*'$/m)
         expect(workspace).not.toMatch(/^overrides:/m)
     })

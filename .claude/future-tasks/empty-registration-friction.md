@@ -1,7 +1,11 @@
-# "Empty registration is the off switch" is true 11 times out of 12
+# "Empty registration is the off switch" is true 11 times out of 12 (now: all but `appNotificationCopy`)
 
-**Priority:** P2 · **Status:** open
+**Priority:** P2 · **Status:** half done (2026-11-18: `AppSubjectFields` is fixed; `appNotificationCopy` is still open)
 **Found by:** `apps/starter`, 2026-07-31. Recorded in ADR-0012, "Unused capability = empty registration".
+
+**Done 2026-11-18 (adoption follow-up 9):** `AbilitySubject` is now `AppSubjectFields & { … }`, an intersection, so an app with no
+fields writes `export type AppSubjectFields = Record<never, never>` with no suppression (`apps/starter`, the kit's fixture). Only
+`appNotificationCopy` below remains.
 
 Two seam modules make an app that wants NOTHING still write something:
 

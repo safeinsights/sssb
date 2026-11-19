@@ -15,6 +15,7 @@
         "empty": "Aún no hay elementos en este equipo.",
         "addLabel": "Nuevo elemento",
         "addButton": "Añadir elemento",
-        "readOnlyHint": "Tienes acceso de solo lectura a los elementos de este equipo."
+        "readOnlyHint": "Tienes acceso de solo lectura a los elementos de este equipo.",
+        "loadMore": "Ver elementos anteriores"
     }
 }
