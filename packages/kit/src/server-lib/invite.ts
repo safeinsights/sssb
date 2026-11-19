@@ -35,7 +35,15 @@ export async function sendOrgInvite(input: {
     /** Any absolute URL on this host; the accept link is built against its origin. */
     baseUrl: string
 }): Promise<Membership> {
-    const membership = await auth.createInvite({ email: input.email, role: input.role, orgSlug: input.orgSlug })
+    // The adapter builds the link the invitee follows, from the app's accept page: only it knows what that page reads
+    // to find the invitation (the fake's `?invite=<id>`, Clerk's `__clerk_ticket`).
+    const acceptPageUrl = new URL(`/${input.inviter.locale}/accept-invite`, input.baseUrl).toString()
+    const { acceptUrl, ...membership } = await auth.createInvite({
+        email: input.email,
+        role: input.role,
+        orgSlug: input.orgSlug,
+        acceptPageUrl,
+    })
 
     // Audit trail: the invite is the audited mutation — a Membership was created.
     await recordAuditEvent(db, {
@@ -47,32 +55,32 @@ export async function sendOrgInvite(input: {
         subjectId: membership.id,
     })
 
-    const acceptUrl = new URL(
-        `/${input.inviter.locale}/accept-invite?invite=${membership.id}`,
-        input.baseUrl,
-    ).toString()
-    // The invitee has no account (and so no locale) yet — the inviter's locale is the best available
-    // signal for the email copy (ADR-0008).
-    const t = await getTranslations({ locale: input.inviter.locale, namespace: 'email' })
-    // Deferred: the notification email is a post-response side effect — a slow mail provider must never
-    // add latency to the invite request. Simulated mode runs it inline (deterministic + visible in
-    // Simulator events); real mode sends it via Next's after().
-    await deferAfterResponse('invite-email', () =>
-        sendTemplate(email, {
-            to: input.email,
-            subject: t('inviteSubject', { org: input.orgName }),
-            template: InviteEmail({
-                labels: {
-                    preview: t('invitePreview', { org: input.orgName }),
-                    heading: t('inviteHeading', { org: input.orgName }),
-                    body: t('inviteBody', { inviter: input.inviter.name, org: input.orgName, role: input.role }),
-                    button: t('inviteButton'),
-                    linkFallback: t('inviteLinkFallback'),
-                },
-                acceptUrl,
+    // No link means the provider delivers the invitation itself; a mail of ours with no working link would only
+    // confuse the invitee.
+    if (acceptUrl !== null) {
+        // The invitee has no account (and so no locale) yet — the inviter's locale is the best available
+        // signal for the email copy (ADR-0008).
+        const t = await getTranslations({ locale: input.inviter.locale, namespace: 'email' })
+        // Deferred: the notification email is a post-response side effect — a slow mail provider must never
+        // add latency to the invite request. Simulated mode runs it inline (deterministic + visible in
+        // Simulator events); real mode sends it via Next's after().
+        await deferAfterResponse('invite-email', () =>
+            sendTemplate(email, {
+                to: input.email,
+                subject: t('inviteSubject', { org: input.orgName }),
+                template: InviteEmail({
+                    labels: {
+                        preview: t('invitePreview', { org: input.orgName }),
+                        heading: t('inviteHeading', { org: input.orgName }),
+                        body: t('inviteBody', { inviter: input.inviter.name, org: input.orgName, role: input.role }),
+                        button: t('inviteButton'),
+                        linkFallback: t('inviteLinkFallback'),
+                    },
+                    acceptUrl,
+                }),
             }),
-        }),
-    )
+        )
+    }
     await analytics.capture('org_invite_sent', { tenant: input.tenantSlug, org: input.orgSlug, role: input.role })
 
     // Notification fan-out: tell the inviting team's OTHER admins that an invite went out. The invitee

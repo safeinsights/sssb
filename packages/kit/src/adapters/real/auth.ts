@@ -5,6 +5,7 @@ import { isRestricted, isRole, type Role } from '../../core/roles'
 import type {
     AuthPort,
     AuthUser,
+    CreatedInvite,
     InviteInput,
     Membership,
     MemberStanding,
@@ -178,7 +179,14 @@ export const realAuth: AuthPort = {
         return [...active, ...invited]
     },
 
-    async createInvite(invite: InviteInput): Promise<Membership> {
+    /**
+     * Clerk's organization invitation. `redirectUrl` sends the invitee to the app's accept page, which reads the
+     * `__clerk_ticket` Clerk adds to the URL (./accept-invite-form.tsx); the invitation's own `url` is the link to
+     * mail, which Clerk documents as "The URL that the user can use to accept the invitation" and types as nullable.
+     * Clerk can also deliver the invitation email itself; which of the two an invitee gets is the `auth-dev` cutover
+     * row's to settle.
+     */
+    async createInvite(invite: InviteInput): Promise<CreatedInvite> {
         const { userId } = await auth()
         if (!userId) throw new AuthRequiredError()
         const client = await clerkClient()
@@ -189,8 +197,16 @@ export const realAuth: AuthPort = {
             inviterUserId: userId,
             role: 'org:member',
             publicMetadata: { role: invite.role },
+            redirectUrl: invite.acceptPageUrl,
         })
-        return { id: created.id, name: null, email: created.emailAddress, role: invite.role, status: 'invited' }
+        return {
+            id: created.id,
+            name: null,
+            email: created.emailAddress,
+            role: invite.role,
+            status: 'invited',
+            acceptUrl: created.url,
+        }
     },
 
     async listMyOrgs(): Promise<OrgRef[]> {

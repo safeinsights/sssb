@@ -132,7 +132,12 @@ describe('people', () => {
 describe('an invited person', () => {
     test('is a People row without an account, and becoming them signs this browser out onto the welcome page', async () => {
         const { fakeAuth } = await import('../adapters/fake/auth')
-        const { id } = await fakeAuth.createInvite({ email: 'new.hand@example.test', role: 'member', orgSlug: 'wharf' })
+        const { id } = await fakeAuth.createInvite({
+            email: 'new.hand@example.test',
+            role: 'member',
+            orgSlug: 'wharf',
+            acceptPageUrl: 'http://localhost:3000/en/accept-invite',
+        })
         await call('viewpoint', { json: { person: 'person:fixture-lead', locale: 'en' } })
 
         const summary = (await (await call('summary')).json()) as SimulatorSummary
