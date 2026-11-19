@@ -10,6 +10,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symli
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import vm from 'node:vm'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -17,6 +18,7 @@ import { makeTestTmpDir } from '../../../tests/support/tmp-dir'
 import { dataApiShapeProblems, lambdaBundles, lambdaFunction, secretGrantProblems } from '@sssb/tools/assembly-checks'
 import { kitDirOf } from '@sssb/tools/kit'
 import { handler as bodyHashHandler } from './assets/body-hash/index.mjs'
+import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
 import { databaseNameFor, SssbApp } from './index.js'
 import { PORT_SWITCHES } from './optional-ports.js'
 import { toolsVersionProblem } from './sssb-app.js'
@@ -70,6 +72,55 @@ function synthesize({
     const assembly = app.synth()
     const all = /** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])
     return { all, assembly: assembly.directory, stacks: assembly.stacks }
+}
+
+/**
+ * What is wrong with how viewers reach the distribution, or nothing: no behavior takes plain HTTP, and every behavior
+ * whose origin is the server's Function URL runs the forwarded-host CloudFront Function on the viewer request, that
+ * function being `FORWARDED_HOST_SOURCE` on the JS 2.0 runtime.
+ * @param {Resources} all
+ * @returns {string[]}
+ */
+function viewerProblems(all) {
+    /** @type {string[]} */
+    const problems = []
+    const distributions = Object.values(all).filter((r) => r.Type === 'AWS::CloudFront::Distribution')
+    if (distributions.length !== 1) return [`one distribution, not ${distributions.length}`]
+    const config = /** @type {any} */ (distributions[0]?.Properties)?.DistributionConfig
+    const behaviors = [config?.DefaultCacheBehavior, ...(config?.CacheBehaviors ?? [])]
+    for (const b of behaviors) {
+        if (!['redirect-to-https', 'https-only'].includes(b?.ViewerProtocolPolicy)) {
+            problems.push(`${b?.PathPattern ?? 'the default behavior'} takes plain HTTP (${b?.ViewerProtocolPolicy})`)
+        }
+    }
+    const serverOrigins = new Set(
+        (config?.Origins ?? [])
+            .filter((/** @type {any} */ o) => JSON.stringify(o.DomainName ?? null).includes('ServerFunctionUrl'))
+            .map((/** @type {any} */ o) => o.Id),
+    )
+    const appBehaviors = behaviors.filter((b) => serverOrigins.has(b?.TargetOriginId))
+    if (appBehaviors.length === 0) problems.push('a behavior reaches the server')
+    const functions = Object.entries(all).filter(([, r]) => r.Type === 'AWS::CloudFront::Function')
+    const forwardedHost = functions.find(
+        ([, r]) => /** @type {any} */ (r.Properties)?.FunctionCode === FORWARDED_HOST_SOURCE,
+    )
+    if (forwardedHost === undefined) return [...problems, 'the forwarded-host function is deployed as its source']
+    const [id, fn] = forwardedHost
+    if (/** @type {any} */ (fn.Properties)?.FunctionConfig?.Runtime !== 'cloudfront-js-2.0') {
+        problems.push('the forwarded-host function runs on cloudfront-js-2.0')
+    }
+    const arn = JSON.stringify({ 'Fn::GetAtt': [id, 'FunctionARN'] })
+    for (const b of appBehaviors) {
+        const viewerRequest = (b?.FunctionAssociations ?? []).filter(
+            (/** @type {any} */ a) => a.EventType === 'viewer-request',
+        )
+        if (viewerRequest.length !== 1 || JSON.stringify(viewerRequest[0].FunctionARN) !== arn) {
+            problems.push(
+                `${b?.PathPattern ?? 'the default behavior'} runs the forwarded-host function on the viewer request`,
+            )
+        }
+    }
+    return problems
 }
 
 /** The body-hash function's source, as the construct deploys it. */
@@ -224,6 +275,7 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
             // Next's standalone server listens where the Web Adapter calls it (the construct's comment says why).
             expect(server.env['HOSTNAME']).toBe('0.0.0.0')
             expect(functionUrlOriginProblems(all, assembly)).toEqual([])
+            expect(viewerProblems(all)).toEqual([])
 
             // The production fail-closed guard (packages/kit/src/adapters/index.ts) is irrelevant only while
             // every deployed environment pins APP_MODE=real and sets neither opt-in.
@@ -711,6 +763,7 @@ describe("the server's Function URL behind CloudFront", () => {
         (transport, production) => {
             const { all, assembly } = synthesize({ appDir, slug, transport, production, bundle: false })
             expect(functionUrlOriginProblems(all, assembly)).toEqual([])
+            expect(viewerProblems(all)).toEqual([])
             expect(lambdaFunction(all, 'Server').env['HOSTNAME']).toBe('0.0.0.0')
         },
     )
@@ -866,6 +919,83 @@ describe("the server's Function URL behind CloudFront", () => {
                 LambdaFunctionARN: { 'Fn::GetAtt': [expect.stringMatching(/^BodyHashArnReader/), 'FunctionArn'] },
             },
         ])
+    })
+})
+
+describe("the forwarded-host function's name", () => {
+    const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
+    /**
+     * The function's name as the template gives it, in a stack of the given name.
+     * @param {string} stackName
+     * @param {string} slug
+     */
+    function nameIn(stackName, slug) {
+        const app = new cdk.App({ outdir: makeTestTmpDir('sssb-cdk-'), context: { 'aws:cdk:bundling-stacks': [] } })
+        // One construct path, as one infra/app.ts deployed as two environments under two stack names would give.
+        const stack = new cdk.Stack(app, 'Shared', { stackName })
+        new SssbApp(stack, 'Default', {
+            appDir,
+            slug,
+            params: { database: { transport: 'data-api' } },
+            environment: 'Staging',
+            production: false,
+        })
+        const fns = Object.values(/** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])).filter(
+            (r) => r.Type === 'AWS::CloudFront::Function',
+        )
+        expect(fns).toHaveLength(1)
+        return /** @type {any} */ (fns[0])?.Properties?.Name
+    }
+
+    it("differs between two stack names in one account and region, and stays within CloudFront's 64 characters", () => {
+        const slug = /** @type {string} */ (
+            /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+        )
+        const staging = nameIn('app-staging', slug)
+        const production = nameIn('app-production', slug)
+        expect(staging).not.toEqual(production)
+        // The region is a pseudo-parameter until deploy: the rest of the name is literal.
+        const [joiner, [region, ...rest]] = staging['Fn::Join']
+        expect(region).toEqual({ Ref: 'AWS::Region' })
+        const literal = rest.join(joiner)
+        expect(literal).toMatch(/^[A-Za-z0-9_-]+$/)
+        expect('ap-southeast-5'.length + joiner.length + literal.length).toBeLessThanOrEqual(64)
+    })
+})
+
+describe('the forwarded-host function', () => {
+    /** The function as CloudFront's JS runtime loads it: a script defining `handler`, run alone. */
+    const handler = /** @type {(event: any) => any} */ (vm.runInNewContext(`${FORWARDED_HOST_SOURCE}\nhandler`, {}))
+    /** @param {Record<string, { value: string, multiValue?: { value: string }[] }>} headers */
+    const request = (headers) => handler({ request: { method: 'GET', uri: '/en', querystring: {}, headers } }).headers
+
+    it('overwrites a forged x-forwarded-host and port with the host CloudFront received and 443', () => {
+        const headers = request({
+            host: { value: 'app.example.org' },
+            'x-forwarded-host': { value: 'evil.example', multiValue: [{ value: 'evil.example' }, { value: 'b' }] },
+            'x-forwarded-port': { value: '8443' },
+            forwarded: { value: 'host=evil.example;proto=http' },
+            cookie: { value: 'a=1' },
+        })
+        expect(headers['x-forwarded-host']).toEqual({ value: 'app.example.org' })
+        expect(headers['x-forwarded-port']).toEqual({ value: '443' })
+        expect(headers).not.toHaveProperty(['forwarded'])
+        // Everything else goes on as the viewer sent it.
+        expect(headers['host']).toEqual({ value: 'app.example.org' })
+        expect(headers['cookie']).toEqual({ value: 'a=1' })
+    })
+
+    it('lowercases the host and drops any port the Host carried', () => {
+        expect(request({ host: { value: 'App.Example.ORG:8443' } })['x-forwarded-host']).toEqual({
+            value: 'app.example.org',
+        })
+    })
+
+    it('sets them on a request that carried none, and drops a forged host when there is no Host to take', () => {
+        expect(request({ host: { value: 'd111.cloudfront.net' } })['x-forwarded-host']).toEqual({
+            value: 'd111.cloudfront.net',
+        })
+        expect(request({ 'x-forwarded-host': { value: 'evil.example' } })).not.toHaveProperty(['x-forwarded-host'])
     })
 })
 
