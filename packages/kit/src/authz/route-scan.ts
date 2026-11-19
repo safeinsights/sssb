@@ -21,23 +21,32 @@ import ts from 'typescript'
  * - in a function literal passed as an argument (`withPortErrors(async () => { … })`), which the call is
  *   ASSUMED to invoke and to carry its failure in the call's own result. That is the wrapper idiom every route
  *   uses, and the one trust this module extends: it cannot read an imported wrapper to see whether it really
- *   calls its argument;
+ *   calls its argument. It extends none to a callee whose code is in this file (`isSameFile`): a function is not
+ *   followed through a parameter, so what such a callee is handed counts for nothing;
  * - in a function declared in the SAME module and called (or passed as an argument) from the handler's
  *   path, followed to any depth. A function that is only defined, or that the file reassigns or declares twice,
  *   is not followed;
  * - where its denial reaches the handler's OUTCOME, the promise Next awaits. `authorize` throws synchronously, so a
- *   denial reaches it through every synchronous frame. It is lost at an async boundary nobody awaits: in an
- *   `async` function, a throw only rejects the function's promise, and a function handed to a call may run later
- *   (`.then`, a timer, an async wrapper). So a call into an `async` function, or one a function is handed to,
- *   carries the denial only when its result is `await`ed or returned on the spot (`return`, an arrow's expression
- *   body; through parentheses, a type assertion, a ternary arm, or the right of `&&`, `||`, `??` or a comma). A
- *   statement of its own, `void`, a variable awaited later, a `.then` or `.catch` chain, an argument, all leave the
- *   promise floating, and nothing in it counts. (The rule is syntactic: a sync function counts as throwing in
- *   place, and `authorize` from `ScanOptions.authorizeModules` must throw synchronously too, as SSSB's does.)
+ *   denial goes up through every synchronous frame, and is lost in three places:
+ *   - an async boundary nobody awaits. In an `async` function a throw only rejects the function's promise, and a
+ *     function handed to a call may run later (`.then`, a timer, an async wrapper). So a call into an `async`
+ *     function, or one a function is handed to, carries the denial only when its result is `await`ed or returned
+ *     on the spot (`settledBy`: `return`, an arrow's expression body; through parentheses, a type assertion, a
+ *     ternary arm, the right of `&&`, `||`, `??` or a comma, or the left of `||` or `??`). A statement of its own,
+ *     `void`, a variable awaited later, a `.then` or `.catch` chain, an argument, all leave the promise floating;
+ *   - an array iteration method (`forEach`, `map`, …, by name, on a receiver that is not an import). It drops an
+ *     `async` function's promise, awaited or not. The eager ones (`forEach`, `some`, `every`, `find…`, `reduce…`)
+ *     run a sync function in place, so its throw goes up through the call; `map`, `filter` and `flatMap`, which an
+ *     iterator runs lazily, are trusted only as any other call is;
+ *   - a `try` whose `catch` can do anything but rethrow (fall through, `return`, `break` or `continue` out of
+ *     itself), or whose `finally` can leave in the throw's place. A promise the `try` returns is not caught.
+ *   (The rule is syntactic: a sync function counts as throwing in place, and an `authorize` named by
+ *   `ScanOptions.authorizeModules` must throw synchronously too, as SSSB's does.)
  *
  * For a handler that is a wrapper's result (`export const POST = withX(fn)`), the wrapper call itself and
  * its other arguments run once, when the module loads; only the functions handed to it run per request, so
- * only those are the handler's path, and the wrapper, being what Next calls, is trusted to carry their failure.
+ * only those are the handler's path. The wrapper, being what Next calls, is trusted to carry their failure, unless
+ * its code is in this file, or it sits inside a wrapper whose code is.
  *
  * What is NOT followed, and so does not count: a call into another module (an imported helper that calls
  * `authorize` inside it), a method on an object, a getter, a class body, a generator (calling one runs none of its
@@ -253,10 +262,11 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
         return (
             `${where} exports a mutating handler that does not reach authorize(...) on its own path, and the route is ` +
             `not in the exemption map. A call in a string, a comment, another handler, a dead branch, an uncalled ` +
-            `function or another module does not count, nor does one in an async function or a callback whose ` +
-            `promise the handler neither awaits nor returns. Call authorize(...) in this handler (or in a function in ` +
-            `this file that it calls, awaiting it if it is async), or, only if it is genuinely not a per-actor product ` +
-            `mutation, add a justified exemption.` +
+            `function or another module does not count, nor does one whose denial cannot reach the handler: in an ` +
+            `async function or a callback whose promise the handler neither awaits nor returns, in a callback handed ` +
+            `to a function of this file, or in a try whose catch does not rethrow. Call authorize(...) in this handler ` +
+            `(or in a function in this file that it calls, awaiting it if it is async), or, only if it is genuinely ` +
+            `not a per-actor product mutation, add a justified exemption.` +
             (policy.hint ? ` ${policy.hint}` : '')
         )
     }
