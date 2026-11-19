@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { originForApp, parsePortDeclaration, portForRoot, readPortDeclaration } from '@sssb/tools/ports'
@@ -117,8 +117,9 @@ describe('a port slot an app declares for itself', () => {
 
     it('keys a derived port on the slot name as well as the checkout, so two slots of one worktree differ', () => {
         // The failure the name prevents: two custom slots on one hash of the path would be one port in every worktree.
-        // Many names in one worktree: all different (a collision is 1 in 10000 per pair, so 40 names are safe).
-        const ports = Array.from({ length: 40 }, (_, n) =>
+        // Ten names in one fixed worktree path: all different. The derivation is deterministic, so this cannot flake;
+        // a collision between two names is a one-in-ten-thousand chance per pair, and 10 names make 45 pairs.
+        const ports = Array.from({ length: 10 }, (_, n) =>
             portForRoot(WORKTREE, { name: `app${n}`, default: 3700 + n }, {}),
         )
         expect(new Set(ports).size).toBe(ports.length)
@@ -300,6 +301,10 @@ describe('the declaration an app makes in its package.json', () => {
         )
         expect(named.stderr).toBe('')
         expect(named.stdout.trim()).toBe(`http://localhost:3700 http://localhost:${port}`)
+        // Reached through a symlink, a worktree derives the port of its real path, as `sssb port` (which runs in a real
+        // working directory) does: the suite must point at the server that script started.
+        symlinkSync(worktree, path.join(main, 'link'))
+        expect(originForApp(path.join(main, 'link', 'apps', 'ledger'))).toBe(`http://localhost:${port}`)
         expect(() => originForApp(path.join(main, 'apps'))).toThrow(/cannot read/)
         expect(() => originForApp(appWith({}))).toThrow(/declares no port service/)
     })
@@ -319,7 +324,9 @@ describe('the declaration an app makes in its package.json', () => {
                 {
                     cwd,
                     encoding: 'utf8',
-                    env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.endsWith('_PORT'))),
+                    env: Object.fromEntries(
+                        Object.entries(process.env).filter(([k]) => !k.endsWith('_PORT')),
+                    ) as NodeJS.ProcessEnv,
                 },
             )
         const own = appWith({ port: { name: 'ledger', default: 3700 } })

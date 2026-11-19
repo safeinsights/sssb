@@ -998,7 +998,7 @@ export function cutoverReport(rows, checklist) {
 
 /**
  * PORT SLOTS: two apps of one workspace must not bind one port. An app declares its slot in its package.json
- * (`"sssb": { "port": "starter" }`, or a slot of its own, `{ "name": "ledger", "default": 3300 }`), the slot fixes the
+ * (`"sssb": { "port": "starter" }`, or a slot of its own, `{ "name": "ledger", "default": 3700 }`), the slot fixes the
  * port its dev server, its Playwright config and its ticker use, so two apps on one slot start on one port: the second
  * server fails to bind, or, under Playwright's `reuseExistingServer`, the second app's suite ADOPTS the first app's
  * server and tests the wrong app (docs/build-notes.md). Fails: a declaration that is not valid, two apps on one slot

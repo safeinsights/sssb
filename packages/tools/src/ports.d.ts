@@ -2,7 +2,7 @@
 export type PortService = 'showcase' | 'starter' | 'ladle' | 'contractPg'
 
 /**
- * A port slot an app names for itself, in its package.json: `"sssb": { "port": { "name": "ledger", "default": 3300 } }`.
+ * A port slot an app names for itself, in its package.json: `"sssb": { "port": { "name": "ledger", "default": 3700 } }`.
  * `name` is lowercase words joined by `-` (at most 32 characters) and is not a built-in's; it names the `LEDGER_PORT`
  * variable (`<NAME>_PORT`, with `-` as `_`). `default` is the port in a main checkout, an integer from 1024 to 49151
  * that no built-in service or custom slot's derived band holds.

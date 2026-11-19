@@ -58,7 +58,7 @@ const MIN_TIMEOUT_SECONDS = 0.1
 const MAX_TIMEOUT_SECONDS = 3600
 
 const USAGE = `usage: pnpm tick [--url <origin>] [--timeout <seconds>]   (sssb tick also takes --app <dir>)
-       (per app: pnpm tick = showcase, pnpm tick:starter = starter; direct: sssb tick <${TICK_APPS.join('|')}|the app's own slot> ...)
+       (per app: pnpm tick = showcase, pnpm tick:starter = starter; direct: sssb tick <${TICK_APPS.join('|')}, or the slot an app declares for itself> ...)
 
   --url <origin>       the dev server's origin, loopback only (default: this checkout's port for the app)
   --timeout <seconds>  give up on the request after this long, ${MIN_TIMEOUT_SECONDS} to ${MAX_TIMEOUT_SECONDS} (default ${DEFAULT_TIMEOUT_SECONDS})`

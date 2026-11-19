@@ -5140,10 +5140,9 @@ beside the string form); the judgement calls it left open, each with what it bea
   four built-in slots do not use, keyed on the name as well as the checkout. It is clear of every built-in default and
   derived band (3000, 3100, 3200-3599, 5439-5639, 61000-61199) and below the ephemeral ranges (Linux 32768, macOS 49152),
   so the OS never hands one out. Ten thousand ports make two slots of one worktree collide about once in ten thousand,
-  and a collision is a loud EADDRINUSE, as it already is for the built-ins. Rejected: a band beside the built-ins
-  (3600-3999 holds 200 slots at best, and the built-in bands are 2 ports wide per slot so reusing their shape would
-  squeeze each app into a pair), and a scan for a free port, which the module's header refuses (two processes would
-  disagree).
+  and a collision is a loud EADDRINUSE, as it already is for the built-ins. Rejected: a narrow band beside the built-ins
+  (3600-3999, 400 ports), where two slots of one worktree would collide forty times as often; and a scan for a free port,
+  which the module's header rules out (two processes could disagree on the answer).
 - **A declared default may not lie in a port band SSSB's own services use, nor above 49151 or below 1024.** In a main
   checkout it is the port; if it sat in a built-in's derived band a linked worktree of SSSB could derive the very port
   an adopter's main checkout binds, the collision the built-ins' separate bands exist to rule out. The task's own
