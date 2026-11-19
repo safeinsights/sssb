@@ -5173,6 +5173,7 @@ parts; its body is unchanged. ADR-0014 gains a matching addendum.
   step 5 applied after step 2's install. Step 2 now says to make an install-affecting scaffold change first, and to
   check what the lockfile resolves. **Rejected:** having `sssb doctor` fail an `overrides` block for `@sssb/*`, a
   `@sssb/tools` change worth considering separately, since an override is the adopter's own setting.
+
 ## The authorization scan counts a denial only where it reaches the handler's outcome (2026-11-18, `fix/authz-scan-unawaited`)
 
 The 2026-11-17 entry on the scan left a known hole to lint. A handler that calls an `async` same-file helper without
