@@ -569,6 +569,41 @@ describe("the server's Function URL behind CloudFront", () => {
         expect(stacks.filter((s) => s.environment.region === 'us-east-1')).toHaveLength(2)
     })
 
+    it("deploys the edge stack under the parent stack's tags, and one per region the app is deployed to", () => {
+        // One stack id, synthesized once per region it is deployed to, as one app's staging and production would be
+        // in a single account.
+        const edgeStackOf = (/** @type {string} */ region) => {
+            const app = new cdk.App({ outdir: makeTestTmpDir('sssb-cdk-'), context: { 'aws:cdk:bundling-stacks': [] } })
+            const stack = new cdk.Stack(app, 'Shared', { env: { account: '123456789012', region } })
+            new SssbApp(stack, 'Default', {
+                appDir,
+                slug,
+                params: { database: { transport: 'data-api' } },
+                environment: 'Staging',
+                production: false,
+            })
+            // As the starter's infra/app.ts tags its stack: by aspect, after SssbApp is built.
+            cdk.Tags.of(stack).add('Owner', `team-${region}`)
+            const edge = app.synth().stacks.filter((s) => s.environment.region === 'us-east-1')
+            expect(edge).toHaveLength(1)
+            return /** @type {cdk.cx_api.CloudFormationStackArtifact} */ (edge[0])
+        }
+        const west = edgeStackOf('eu-west-1')
+        const oregon = edgeStackOf('us-west-2')
+        expect([west.tags, oregon.tags]).toEqual([{ Owner: 'team-eu-west-1' }, { Owner: 'team-us-west-2' }])
+        expect(west.stackName).not.toBe(oregon.stackName)
+    })
+
+    it('keeps the function at one construct path whether the stack names us-east-1 or no region', () => {
+        const ids = (/** @type {string | undefined} */ region) =>
+            Object.entries(synthesize({ appDir, slug, transport: 'data-api', bundle: false, region }).all)
+                .filter(([, r]) => r.Type === 'AWS::Lambda::Function' || r.Type === 'AWS::IAM::Role')
+                .map(([id]) => id)
+                .filter((id) => id.startsWith('BodyHash'))
+        expect(ids('us-east-1')).toEqual(ids(undefined))
+        expect(ids(undefined)).toHaveLength(2)
+    })
+
     it('keeps the function in a us-east-1 stack, and in a us-east-1 stack of its own when the stack is elsewhere', () => {
         const east = synthesize({ appDir, slug, transport: 'data-api', bundle: false, region: 'us-east-1' })
         expect(east.stacks.map((s) => s.environment.region)).toEqual(['us-east-1'])

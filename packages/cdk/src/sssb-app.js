@@ -534,16 +534,32 @@ export class SssbApp extends Construct {
         }
         /** @type {cdk.aws_lambda.IVersion} */
         let bodyHash
-        if (cdk.Token.isUnresolved(stack.region)) {
-            // The distribution adds Lambda@Edge to the role's trust, as it does for every function it runs at the edge.
+        if (cdk.Token.isUnresolved(stack.region) || stack.region === 'us-east-1') {
+            // In the stack, whether its region is us-east-1 or unknown until deploy: one construct path for both, so
+            // naming the region later does not replace the function. The distribution adds Lambda@Edge to the role's
+            // trust, as it does for every function it runs at the edge.
             bodyHash = new aws_lambda.Function(this, 'BodyHash', bodyHashProps).currentVersion
         } else {
-            // A us-east-1 stack per SssbApp: CDK's default is one per parent stack, in which a second SssbApp's
-            // `BodyHash` would collide with the first's.
-            bodyHash = new aws_cloudfront.experimental.EdgeFunction(this, 'BodyHash', {
+            // A us-east-1 stack per SssbApp and per region it serves. CDK's default is one per parent stack path, in
+            // which a second SssbApp's `BodyHash` would collide with the first's, and which deployments of one stack
+            // to two regions of an account would share.
+            const edgeFunction = new aws_cloudfront.experimental.EdgeFunction(this, 'BodyHash', {
                 ...bodyHashProps,
-                stackId: `edge-lambda-stack-${this.node.addr}`,
+                stackId: `edge-lambda-stack-${stack.region}-${this.node.addr}`,
             })
+            // CDK copies the parent's tags into that stack when it creates it, before `Tags.of(stack).add` has applied
+            // any (an aspect, at synth), so it would deploy untagged. Its stack-level tags are set from the parent's
+            // once they are known; CloudFormation applies stack tags to the resources it creates.
+            const edgeStack = cdk.Stack.of(edgeFunction.lambda)
+            cdk.Aspects.of(edgeStack).add({
+                visit: (node) => {
+                    if (node !== edgeStack) return
+                    for (const [key, value] of Object.entries(stack.tags.tagValues())) {
+                        if (!(key in edgeStack.tags.tagValues())) edgeStack.tags.setTag(key, value)
+                    }
+                },
+            })
+            bodyHash = edgeFunction
         }
 
         // ---- cloudfront ---------------------------------------------------------------------
