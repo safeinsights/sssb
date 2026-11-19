@@ -5698,6 +5698,7 @@ asking JP, as his standing rule for these sessions says.
       the `@sssb/app-config/notifications` alias, which has no "absent" form a type checker accepts, so an optional
       export means a framework contract change (a default the seam falls back to) that deserves its own entry. The
       future task stays open for that half, and says so.
+
 ## `sssb doctor` reports the adopter's own settings (2026-11-19, `feat/doctor-reports-settings`)
 
 Adoption review follow-up 8 (`docs/adoption-review-2026-11.md`, "What surprised" 11): the settings only the adopter can
