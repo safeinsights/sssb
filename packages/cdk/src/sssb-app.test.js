@@ -696,8 +696,15 @@ describe('the storage port', () => {
     /** The server's statements that name an S3 action. @param {Resources} all */
     const serverS3 = (all) => statementsOf(all, 'Server').filter((st) => JSON.stringify(st.Action).includes('"s3:'))
 
-    describe.each([false, true])('on a deployment with production %s', (production) => {
-        const shape = production ? 'pg, production' : 'pg'
+    describe.each(
+        /** @type {[Transport, boolean][]} */ ([
+            ['pg', false],
+            ['pg', true],
+            ['data-api', false],
+            ['data-api', true],
+        ]),
+    )('on the %s shape with production %s', (transport, production) => {
+        const shape = `${transport}${production ? ', production' : ''}`
 
         it.each([
             ['left out', undefined],
@@ -708,7 +715,7 @@ describe('the storage port', () => {
                 const { all } = synthesize({
                     appDir,
                     slug,
-                    transport: 'pg',
+                    transport,
                     bundle: false,
                     production,
                     ...(ports && { ports: /** @type {any} */ (ports) }),
@@ -725,7 +732,7 @@ describe('the storage port', () => {
             const { all } = synthesize({
                 appDir,
                 slug,
-                transport: 'pg',
+                transport,
                 bundle: false,
                 production,
                 ports: { storage: 'none' },
