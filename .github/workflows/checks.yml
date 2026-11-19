@@ -19,8 +19,8 @@ permissions: {}
 # every job still runs and reports a conclusion, under its own name, so no required check goes missing, and the
 # expensive ones (the reusable workflow's contract, e2e, static demos and synth, through its `docs-only` input; and
 # below, knip and jscpd, the release rehearsal, both pack and consume shapes and the licence scan) run only a step
-# that says they skipped. Lint, typecheck and the unit tests, which read the docs, and the cheap gates always run in
-# full, and so does every push to main.
+# that says they skipped. The lint, typecheck and unit-test job (its lint and tests read the docs) and the cheap gates
+# always run in full, and so does every push to main.
 
 concurrency:
     # A PR's newer push cancels its older run. A push to main never does: release.yml waits for this workflow to
@@ -39,15 +39,17 @@ jobs:
     # tests/tooling/app-checks-workflow.test.ts holds this call to that shape.
     sssb:
         needs: changes
-        # Whatever `changes` did: a failed or skipped `changes` leaves its output empty, which is the full run, where
-        # without this the call would be skipped and `sssb / all-checks` would never report.
+        # Whatever `changes` did, so the call is never skipped (a skipped call would leave `sssb / all-checks`
+        # unreported). A failed script leaves `changes` green with an empty answer, so `docs-only` is false and
+        # everything runs. A `changes` that fails outright (its checkout) never reads as the fast path either: should
+        # GitHub skip the called jobs for the failed dependency, `all-checks` (which runs always) fails.
         if: ${{ !cancelled() }}
         uses: ./.github/workflows/app-checks.yml
         permissions:
             contents: read
         with:
             synth: ./apps/*/infra
-            # Only the literal `true` is the fast path: an empty output (a `changes` that failed) runs everything.
+            # Only the literal `true` is the fast path: an empty output (a `changes` that failed) is false.
             docs-only: ${{ needs.changes.outputs.docs-only == 'true' }}
 
     # Whether this run is a pull request that changes only documentation (.github/scripts/docs-only.sh says what that
@@ -68,6 +70,8 @@ jobs:
                   persist-credentials: false
             - name: docs only?
               id: docs
+              # A script that fails writes no answer, which is the full run; failing this job could skip the call's.
+              continue-on-error: true
               run: bash .github/scripts/docs-only.sh
               env:
                   EVENT_NAME: ${{ github.event_name }}

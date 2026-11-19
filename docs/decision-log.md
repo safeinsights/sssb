@@ -6723,8 +6723,9 @@ and record the rejected alternative.
   secret) and `repo-checks`' bidi scan (a doc can carry bidi characters). Every push to `main` runs everything.
 - **Each job still runs and reports; only its steps are gated**, behind a visible "Skipped (docs-only change)" step.
   Rejected: a `paths:` filter on the trigger, which leaves a required check that never reports pending forever
-  (CanopyCMS's `dual-build` comment); and job-level `if:` skips, which report a skipped matrix job under its
-  unexpanded name and would make `all-checks` accept skips, weakening the one check an adopter requires.
+  (CanopyCMS's `dual-build` comment); and job-level `if:` skips, under which a matrix never expands, so no shard
+  reports under its own name, and which would make `all-checks` accept skips, weakening the one check an adopter
+  requires.
 - **The reusable workflow takes the answer as an input, `docs-only`, false by default**, so an adopter who sets
   nothing runs exactly what it did, and `all-checks` is unchanged: a job that ran its fast path concluded success.
   The contract job's Postgres service gets an empty image on the fast path, which starts none. Rejected: a pathspec
@@ -6741,9 +6742,21 @@ and record the rejected alternative.
   a reusable workflow's input must be known when the call starts. Rejected: every job `needs: changes`. A job whose
   dependency failed is skipped, and a skipped job reports as a passing check, so a failed `changes` would have turned
   `repo-checks`, `adoption-probe` and `pack-and-consume` green unrun. The `sssb` call runs `if: ${{ !cancelled() }}`
-  and passes `docs-only` only when the output is exactly `true`, so a failed `changes` gives the full run.
-- **What it saves.** On #78's full run (2026-11-19) the jobs took 32 runner-minutes, 5m36s end to end. The fast path
-  skips about 25 of those minutes, less about 2 for the skip jobs' checkouts, so roughly 70% fewer runner-minutes. The
-  wall clock barely moves: `lint-typecheck-unit` (5m22s there) is the critical path and runs in full, and the `sssb`
-  call now starts after `changes` (some seconds, on every run). Recorded as a future task: a docs-only mode for that
-  job that runs only what reads the docs.
+  and passes `docs-only` only when the output is exactly `true`. The script's step in `changes` is
+  `continue-on-error`, so a script that fails leaves no answer and a green `changes`, and everything runs. A `changes`
+  that fails outright (its checkout) never reads as the fast path either: should GitHub skip the called jobs for the
+  failed dependency, `all-checks` fails. Either way the check is red or does the work, never green unrun.
+- **What the fast path trusts, and what still catches a mistake in it.** That no job with a fast path reads a path
+  the script counts as documentation: true when it was written (the readers of `docs/` outside `docs/releases/` are
+  the unit tests and `sssb doctor`, all in `lint-typecheck-unit`), held only by review for a script added later, and
+  by a test for a tracked symlink into those directories (`tests/tooling/docs-only.test.ts`). The push run on `main`
+  is always the full one, and the release gate reads only push runs (`wait-for-checks`, `scripts/release.mjs`), so a
+  mistake can reach `main` but never a release. And a docs-only pull request no longer notices a base that is already
+  red: its own checks pass on the base's tested tree, as they would have on the same tree before.
+- **What it saves, measured.** #78's full run (2026-11-19): 32 runner-minutes, 5m36s end to end. The probe,
+  safeinsights/sssb#79 (one line of `docs/README.md`, closed unmerged): 8 runner-minutes, 5m57s end to end, every check
+  green, each fast-path job done in 2 to 8 seconds with only its skip step run, and `contract` starting no database.
+  So a docs-only pull request costs a quarter of the runner time, and the wall clock does not move:
+  `lint-typecheck-unit` (5m41s on the probe) is the critical path and runs in full. Recorded as a future task
+  (`.claude/future-tasks/docs-only-lint-typecheck-unit.md`): a docs-only mode for that job that runs only what reads
+  the docs.

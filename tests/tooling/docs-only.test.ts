@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -14,9 +14,19 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  */
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const SCRIPT = path.join(ROOT, '.github/scripts/docs-only.sh')
+/** git with none of this machine's configuration: a developer's own (quotePath, ignoreSubmodules, signing) changes answers. */
+const GIT_ENV = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'test',
+    GIT_AUTHOR_EMAIL: 'test@example.invalid',
+    GIT_COMMITTER_NAME: 'test',
+    GIT_COMMITTER_EMAIL: 'test@example.invalid',
+}
 
 function git(dir: string, ...args: string[]): string {
-    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: GIT_ENV })
     if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`)
     return result.stdout
 }
@@ -54,7 +64,7 @@ function decide(dir: string, event = 'pull_request'): { answer: string; output: 
     const result = spawnSync('bash', [SCRIPT], {
         cwd: dir,
         encoding: 'utf8',
-        env: { ...process.env, EVENT_NAME: event, GITHUB_OUTPUT: outputFile },
+        env: { ...GIT_ENV, EVENT_NAME: event, GITHUB_OUTPUT: outputFile },
     })
     expect(result.status, result.stderr).toBe(0)
     const output = readFileSync(outputFile, 'utf8')
@@ -134,6 +144,19 @@ describe('docs-only.sh', () => {
         expect(decide(dir).answer).toBe('false')
     })
 
+    it('answers false for a submodule added beside docs, whatever git is configured to ignore', () => {
+        const dir = pullRequest((d) => {
+            write(d, 'docs/adr/0001.md', 'changed\n')
+            // A repository inside the checkout: `git add -A` records it as a gitlink.
+            mkdirSync(path.join(d, 'vendor'))
+            git(path.join(d, 'vendor'), 'init', '-q')
+            git(path.join(d, 'vendor'), 'commit', '-q', '--allow-empty', '-m', 'vendored')
+        })
+        git(dir, 'config', 'diff.ignoreSubmodules', 'all')
+        expect(decide(dir).log).toContain('vendor is not documentation')
+        expect(decide(dir).answer).toBe('false')
+    })
+
     // The merge commit is judged against its first parent, the base as it is now: a base that moved on with code is not
     // the pull request's change, and a docs-only head merged over it is still docs-only.
     it('judges the change against the current base, not against where the branch started', () => {
@@ -144,5 +167,22 @@ describe('docs-only.sh', () => {
         git(dir, 'commit', '-q', '-m', 'base moves')
         git(dir, 'merge', '-q', '--no-ff', '--no-edit', 'pr-change')
         expect(decide(dir).answer).toBe('true')
+    })
+
+    // The fast path trusts that the jobs it skips read nothing under these directories. A tracked symlink into one
+    // would let a change there reach code those jobs build, and not count as code.
+    it('finds no tracked symlink in this repository that resolves into docs/ or .claude/future-tasks/', () => {
+        const links = spawnSync('git', ['ls-files', '-s'], { cwd: ROOT, encoding: 'utf8' })
+            .stdout.split('\n')
+            .filter((line) => line.startsWith('120000 '))
+            .map((line) => line.split('\t')[1]!)
+        const into = links.filter((link) => {
+            const target = path.relative(
+                ROOT,
+                path.resolve(ROOT, path.dirname(link), readlinkSync(path.join(ROOT, link))),
+            )
+            return /^(docs|\.claude\/future-tasks)(\/|$)/.test(target)
+        })
+        expect(into).toEqual([])
     })
 })
