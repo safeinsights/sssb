@@ -5983,9 +5983,12 @@ Decided without asking, as JP's standing rule for these sessions says.
   would trip `no-empty-object-type`, as `AppSubjectFields` did); an empty `appMigrations`; an empty proofs body, so
   `pnpm test:contract` runs only the framework's half, which the command and the guide say. Typecheck, lint, knip, the conformance suite and the
   contract runner pass on it. `DashboardScreen`'s `children` became optional for the same reason.
-- **It adds one e2e spec, `tests/e2e/dashboard.spec.ts`** (sign in as `person-owner`, reach the dashboard of `Northwind`),
-  because an app with no spec in its e2e directory fails `sssb check-e2e` and its CI shard. Rejected: leaving the directory
-  empty, and a spec per seed person.
+- **It writes no replacement e2e spec.** An app with no spec in its e2e directory fails `sssb check-e2e` and its CI shard,
+  but the starter has had a second one since follow-up 6, `simulator.spec.ts` (sign in through the Simulator, its tabs),
+  which names no item and stays. `tests/tooling/remove-items.test.ts` asserts it is what remains, so a change that
+  removes it fails there and must give the command a spec to write. Rejected: a `dashboard.spec.ts` the command
+  writes (the one file it would add to an adopter's tree, repeating the sign-in the Simulator's spec already walks;
+  an earlier version of this change had it, and dropped it when the starter gained its own spec).
 - **The proof is a leg of the `generated` shape in pack and consume, not a new job.** A new job is a new check name, and the
   ruleset requires its checks by name (a settings change this work may not make). The leg runs after "every file the
   generator wrote is unchanged", because removing the slice rewrites those files, and before the partial installs. It deletes the

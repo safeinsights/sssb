@@ -344,8 +344,8 @@ world added NEXT TO `northwind` and `westgate` therefore puts both on every sign
 `@sssb/kit` needs the starter's names: SSSB's own tests run against `packages/kit/test-fixture` in SSSB's repository.
 What does read them by literal id is yours to change in the same commit:
 
-- `apps/<app>/tests/e2e/items.spec.ts` (after `sssb remove-items`, `dashboard.spec.ts`) signs in as `person-owner`
-  (and the first also as `person-other-tenant`) and asserts the tenant names; `apps/<app>/tests/demo-static/static-shell.spec.ts` signs in as `person-owner` and
+- `apps/<app>/tests/e2e/items.spec.ts` and `simulator.spec.ts` sign in as `person-owner` and `person-other-tenant`
+  and assert the tenant names (`sssb remove-items` deletes the first); `apps/<app>/tests/demo-static/static-shell.spec.ts` signs in as `person-owner` and
   `person-teammate` and asserts their names.
 - `staffOrgSlug` in `apps/<app>/src/app-config/abilities.ts` must name a real seed org.
 
@@ -615,7 +615,7 @@ an SSSB change ("Changing SSSB itself" below).
 
 **To remove the Items slice**: `pnpm exec sssb remove-items` from the app's directory (or `--app apps/<app>`), after
 `--dry-run` has told you what it will do. It takes out the card, the route, the query, the ability, the catalog namespace, the
-dashboard's and the static demo's card and the specs, and writes one e2e spec that signs in and reaches the dashboard; the
+dashboard's and the static demo's card and the specs that name Items (the Simulator's e2e spec stays); the
 app typechecks, lints and passes its conformance suite afterwards, which `pack-and-consume` proves on every change. The
 migrations are the one decision it leaves to you: `--drop-migrations` also removes `1001_items`, `1002_items_keyset_index`, the
 table's type and its RLS proofs, which is right only for a database that never ran them (delete `apps/<app>/.data`, and your

@@ -93,8 +93,8 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   new CLI command is a module in `packages/tools/src/commands/` plus one entry in `bin/sssb.js`'s `COMMANDS`; a new published
   helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
 - **`sssb remove-items` is a pair of diffs of the starter** (`packages/tools/src/remove-items/code.patch` and
-  `database.patch`, applied exactly by `exact-patch.js`): the starter's Items slice taken out of an adopter's app, with one
-  e2e spec written. **A change to a starter file the diffs touch, or to the Items slice itself, fails
+  `database.patch`, applied exactly by `exact-patch.js`): the starter's Items slice taken out of an adopter's app (the
+  Simulator's e2e spec is what keeps `tests/e2e` from emptying). **A change to a starter file the diffs touch, or to the Items slice itself, fails
   `tests/tooling/remove-items.test.ts`** until the diffs are regenerated (the command's header says how), and pack and
   consume's `generated` shape runs the command and the workspace's gates over what it leaves. The two files are the only
   non-JavaScript files `@sssb/tools` ships (`toolsShippedFileProblems` names them).

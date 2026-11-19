@@ -129,7 +129,6 @@ describe('sssb remove-items', () => {
         expect(out).toContain('delete src/components/items-card.tsx')
         expect(out).toContain('delete src/app/api/items/route.ts')
         expect(out).toContain('edit   src/app-config/abilities.ts')
-        expect(out).toContain('add    tests/e2e/dashboard.spec.ts')
         expect(out).not.toContain('1001_items')
         expect(snapshot(app)).toEqual(before)
         expect(removeItems(app, '--dry-run', '--drop-migrations').out).toContain(
@@ -151,7 +150,8 @@ describe('sssb remove-items', () => {
             'tests/e2e/items.spec.ts',
         ])
             expect(existsSync(path.join(app, gone)), gone).toBe(false)
-        expect(existsSync(path.join(app, 'tests/e2e/dashboard.spec.ts'))).toBe(true)
+        // The e2e directory keeps a spec (an app with none fails `sssb check-e2e`): the Simulator's, which names no item.
+        expect(readdirSync(path.join(app, 'tests/e2e'))).toEqual(['simulator.spec.ts'])
         // The migrations a database may have recorded stay, registered, with the table's type and its proofs.
         expect(readdirSync(path.join(app, 'src/app-config/db/migrations')).sort()).toEqual([
             '1001_items.ts',

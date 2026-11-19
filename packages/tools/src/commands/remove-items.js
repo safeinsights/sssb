@@ -6,8 +6,8 @@
 // WHAT IT DOES. Two patches, `remove-items/code.patch` and `remove-items/database.patch` (a unified diff of the starter
 // against the starter without Items, applied EXACTLY by ./exact-patch.js). The code half removes everything an app's
 // code says about Items: the card, the route, the query, the ability, the catalog namespace, the dashboard's glue, the
-// static demo's card, the specs, and the proofs of paging. It adds one e2e spec (sign in, reach the dashboard), because
-// an app with no e2e spec fails `sssb check-e2e`. The database half removes the migrations, the table's type and its
+// static demo's card, the specs that name Items, and the proofs of paging. It writes nothing of its own: the starter's
+// other e2e spec (the Simulator's) stays, so the app still has one for `sssb check-e2e`. The database half removes the migrations, the table's type and its
 // RLS proofs, and only runs with `--drop-migrations`.
 //
 // THE RULE FOR MIGRATIONS. A database that ran `1001_items` records it, and the migrator refuses to start when a migration
@@ -47,7 +47,7 @@ export async function run(args) {
                 USAGE,
                 '',
                 "Takes the starter's example Items slice out of the app (the card, the route, the query, the ability, the catalog",
-                "namespace, the dashboard's and the static demo's card, the specs) and puts in one e2e spec that signs in.",
+                "namespace, the dashboard's and the static demo's card, the specs that name Items).",
                 '',
                 '  --drop-migrations  also remove 1001_items, 1002_items_keyset_index, the table type and its RLS proofs. For an app whose',
                 '                     database has never run them: delete the local `.data` after. A database that ran a migration',

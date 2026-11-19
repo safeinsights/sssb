@@ -37,18 +37,28 @@ index 07b6b29..7a7ecf8 100644
      }
  }
 diff --git a/playwright.config.ts b/playwright.config.ts
-index 63b4ce9..5e8e432 100644
+index c4b9593..100a04f 100644
 --- a/playwright.config.ts
 +++ b/playwright.config.ts
-@@ -21,7 +21,7 @@ export default defineConfig({
+@@ -20,15 +20,15 @@ const BASE_URL = originFor('starter')
+ export default defineConfig({
      testDir: './tests/e2e',
      fullyParallel: true,
-     // This app's whole suite is ONE spec, so it always starts against a cold dev server and pays a
--    // full Next compile on every route it touches — sign-in, dashboard, the items route. The default
-+    // full Next compile on every route it touches — sign-in and the dashboard. The default
+-    // This app's whole suite is two short specs, so the first always starts against a cold dev server and pays a
+-    // full Next compile on every route it touches — sign-in, dashboard, the items route, the Simulator's. The default
++    // This app's whole suite is one short spec, so it always starts against a cold dev server and pays a
++    // full Next compile on every route it touches — sign-in, dashboard, the Simulator's. The default
      // 30s is marginal for that (it timed out on the first run and passed on retry), and there is no
      // warm-up pass to inherit, so the budget is raised rather than left to flake.
      timeout: 60_000,
+     expect: { timeout: 15_000 },
+     forbidOnly: !!process.env['CI'],
+     retries: process.env['CI'] ? 2 : 1,
+-    // One worker, on CI too — this app's whole suite is two short specs, so parallelism buys little here,
++    // One worker, on CI too — this app's whole suite is one short spec, so parallelism buys little here,
+     // and more workers against one shared world (one `.data` behind one dev server) cost reliability rather than
+     // saving time.
+     workers: 1,
 diff --git a/src/app-config/abilities.ts b/src/app-config/abilities.ts
 index c69a9ec..851160c 100644
 --- a/src/app-config/abilities.ts
@@ -678,41 +688,20 @@ index d859cdf..dad4e92 100644
      // The whole Simulator panel comes from the package: an app that registers no tabs still gets the
      // framework's, and switching people still works.
      await page.getByTestId('simulator-pill').click()
-diff --git a/tests/e2e/dashboard.spec.ts b/tests/e2e/dashboard.spec.ts
-new file mode 100644
-index 0000000..031a674
---- /dev/null
-+++ b/tests/e2e/dashboard.spec.ts
-@@ -0,0 +1,14 @@
-+import { expect, test } from '@playwright/test'
-+
-+/**
-+ * This app's whole e2e budget so far: a person signs in through the dev picker and lands on the dashboard of
-+ * their own tenant, through the entire stack (UI, route, session, seed). Replace it with the claim your
-+ * product exists to prove.
-+ */
-+test('a person signs in and lands on their dashboard', async ({ page }) => {
-+    await page.goto('/en/signin')
-+    await page.getByTestId('person-person-owner').click()
-+    await page.waitForURL('**/dashboard')
-+    await expect(page.getByTestId('active-tenant')).toHaveText('Northwind')
-+    await expect(page.getByTestId('signed-in-as')).toBeVisible()
-+})
 diff --git a/tests/e2e/items.spec.ts b/tests/e2e/items.spec.ts
 deleted file mode 100644
-index 8512f01..0000000
+index 6c6e8cb..0000000
 --- a/tests/e2e/items.spec.ts
 +++ /dev/null
-@@ -1,103 +0,0 @@
+@@ -1,102 +0,0 @@
 -import { expect, test, type Page } from '@playwright/test'
 -
 -/**
-- * This app's whole e2e budget, spent on the one claim this app exists to prove: an item written
-- * in one tenant is invisible from the other, through the entire stack (UI → route → withTenant → RLS
-- * on pglite).
+- * The claim this app exists to prove: an item written in one tenant is invisible from the other, through the
+- * entire stack (UI → route → withTenant → RLS on pglite).
 - *
-- * This app has no Simulator panel, so crossing tenants is done the way a real user would — sign out,
-- * sign in as somebody whose home tenant differs.
+- * Crossing tenants is done the way a real user would, not through the Simulator panel: sign out, sign in
+- * as somebody whose home tenant differs.
 - */
 -
 -async function signInAs(page: Page, personId: string) {
