@@ -852,8 +852,18 @@ describe("what counts as a handler's own path", () => {
             expect: 'authorized',
         },
         {
-            name: 'inside a try whose catch returns (it may answer 403)',
+            name: 'inside a try whose catch returns (a response the scan cannot read: a 403 or a 200)',
             files: post(`try { ${CALL} } catch { return new Response(null, { status: 403 }) }`),
+            expect: 'open',
+        },
+        {
+            name: 'an async helper whose catch returns, awaited (the helper resolves, the handler goes on)',
+            files: post('await check()', `async function check() { try { ${CALL} } catch { return } }\n`),
+            expect: 'open',
+        },
+        {
+            name: 'inside a try whose catch returns only from a nested function, then rethrows',
+            files: post(`try { ${CALL} } catch (e) { const f = () => { return 1 }; throw e }`),
             expect: 'authorized',
         },
         { name: 'inside a try with only a finally', files: post(`try { ${CALL} } finally {}`), expect: 'authorized' },
@@ -865,6 +875,31 @@ describe("what counts as a handler's own path", () => {
         {
             name: 'inside a catch whose finally returns in its place',
             files: post(`try {} catch { ${CALL} } finally { return new Response() }`),
+            expect: 'open',
+        },
+        {
+            name: 'inside a try whose catch breaks out of a labeled block',
+            files: post(`out: { try { ${CALL} } catch { break out } }\nreturn new Response()`),
+            expect: 'open',
+        },
+        {
+            name: 'inside a try whose catch breaks out of a do-while (false)',
+            files: post(`do { try { ${CALL} } catch { break } } while (false)`),
+            expect: 'open',
+        },
+        {
+            name: 'inside a try whose catch continues its loop',
+            files: post(`for (const x of [1]) { try { ${CALL} } catch { continue } }`),
+            expect: 'open',
+        },
+        {
+            name: 'inside a try whose catch breaks only an inner loop, then rethrows',
+            files: post(`try { ${CALL} } catch (e) { for (;;) { break } throw e }`),
+            expect: 'authorized',
+        },
+        {
+            name: 'inside a try whose finally may return in its place',
+            files: post(`try { ${CALL} } finally { if (cond) return new Response() }`),
             expect: 'open',
         },
         {
@@ -1278,6 +1313,78 @@ describe("a denial counts only when it reaches the handler's outcome", () => {
             expect: 'open',
         },
         {
+            name: 'a callback to a let wrapper',
+            files: post(`await run(async () => { ${CALL} })`, 'let run = async (fn: Function) => { await fn() }\n'),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a method of a same-file object',
+            files: post(
+                `await o.run(async () => { ${CALL} })`,
+                'const o = { run: async (fn: Function) => { await fn() } }\n',
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a method of a same-file object, by element access',
+            files: post(
+                `await o['run'](async () => { ${CALL} })`,
+                'const o = { run: async (fn: Function) => { await fn() } }\n',
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a same-file class',
+            files: post(`await new Runner(async () => { ${CALL} })`, 'class Runner { constructor(fn: Function) {} }\n'),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to what a same-file factory returns',
+            files: post(
+                `await run(async () => { ${CALL} })`,
+                'function mk() { return async (fn: Function) => { await fn() } }\nconst run = mk()\n',
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a method of a local holding an awaited import',
+            files: post(
+                `const client = await connect()\nawait client.run(async () => { ${CALL} })`,
+                'declare const connect: () => Promise<{ run: Function }>\n',
+            ),
+            expect: 'authorized',
+        },
+        {
+            name: 'a sync callback to map whose result is dropped (an iterator runs map lazily)',
+            files: post(`ids.values().map(() => { ${CALL}; return 1 })`, 'declare const ids: number[]\n'),
+            expect: 'open',
+        },
+        {
+            name: 'a sync callback to an imported namespace map (a library, perhaps curried)',
+            files: post(`R.map(() => ${CALL})`, "import * as R from 'ramda'\n"),
+            expect: 'open',
+        },
+        {
+            name: 'a sync callback to forEach on an import',
+            files: post(`items.forEach(() => ${CALL})`, "import { items } from './items'\n"),
+            expect: 'open',
+        },
+        {
+            name: 'an async callback to forEach by element access, awaited',
+            files: post(`await ids['forEach'](async () => { ${CALL} })`, 'declare const ids: number[]\n'),
+            expect: 'open',
+        },
+        {
+            name: 'a sync callback to forEach by element access',
+            files: post(`ids['forEach'](() => ${CALL})`, 'declare const ids: number[]\n'),
+            expect: 'authorized',
+        },
+        {
+            name: 'a sync callback to forEach on a same-file function result',
+            files: post(`list().forEach(() => ${CALL})`, 'function list() { return [1] }\n'),
+            expect: 'authorized',
+        },
+        {
             name: 'a callback to a same-file wrapper that drops its promise',
             files: post(`await run(async () => { ${CALL} })`, 'async function run(fn: () => Promise<void>) { fn() }\n'),
             expect: 'open',
@@ -1404,6 +1511,20 @@ describe("a denial counts only when it reaches the handler's outcome", () => {
             })
         expectVerdicts(route('function withL(fn: Function) { return async () => { fn() } }'), { POST: 'open' })
         expectVerdicts(route('const withL = (fn: Function) => async () => fn()'), { POST: 'open' })
+        expectVerdicts(route('let withL = (fn: Function) => async () => fn()'), { POST: 'open' })
+        expectVerdicts(route('function withL(fn: Function) { return fn }\nwithL = withL'), { POST: 'open' })
+    })
+
+    it('a wrapper nested in a same-file wrapper is not trusted either', () => {
+        const route = (handler: string) =>
+            verdicts({
+                'route.ts': `${AUTHORIZE}${DECLS}import { withX } from './wrappers'\nfunction withL(fn: Function) { return fn }\n${handler}`,
+            })
+        expectVerdicts(route(`export const POST = withL(withX(async () => { ${CALL} }))`), { POST: 'open' })
+        expectVerdicts(route(`export const POST = withX(withX(async () => { ${CALL} }))`), { POST: 'authorized' })
+        expectVerdicts(route(`export const POST = w.withL(async () => { ${CALL} })\nconst w = { withL }`), {
+            POST: 'open',
+        })
     })
 
     it('a helper reached on two paths counts when one of them reaches the outcome', () => {
