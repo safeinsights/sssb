@@ -120,6 +120,18 @@ describe('policyProblems', () => {
         ])
     })
 
+    it('refuses a wildcard that is not a prefix of some length', () => {
+        const withPackage = (pkg: string) => ({
+            ...POLICY,
+            exceptions: [{ package: pkg, license: 'GPL-3.0-only', reason: 'x'.repeat(50) }],
+        })
+        for (const bad of ['*', 'a*', '*-lib', 'a*b*', '@x*y'])
+            expect(policyProblems(withPackage(bad)), bad).toHaveLength(1)
+        for (const good of ['lightningcss-*', '@img/sharp-libvips-*', 'exact-name']) {
+            expect(policyProblems(withPackage(good)), good).toEqual([])
+        }
+    })
+
     it('holds every exception of the repository policy to a reason that is more than a word', () => {
         for (const e of policyFile.exceptions) expect(e.reason.length, e.package).toBeGreaterThan(40)
     })

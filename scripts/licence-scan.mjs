@@ -103,6 +103,9 @@ export function policyProblems(policy) {
         if (!isRecord(e)) problems.push(`${where} is not an object`)
         else {
             if (typeof e.package !== 'string' || e.package === '') problems.push(`${where} has no \`package\``)
+            else if (e.package.includes('*') && !/^[^*]{4,}\*$/.test(e.package)) {
+                problems.push(`${where}.package may use \`*\` only as the last character, after at least four others`)
+            }
             if (typeof e.license !== 'string' || e.license === '') problems.push(`${where} has no \`license\``)
             if (typeof e.reason !== 'string' || e.reason.trim() === '') problems.push(`${where} has no \`reason\``)
             if (e.platform !== undefined && typeof e.platform !== 'boolean')
