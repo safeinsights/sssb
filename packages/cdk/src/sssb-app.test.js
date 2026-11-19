@@ -356,29 +356,77 @@ describe('a stack whose synthesizer prefixes its asset keys', () => {
 })
 
 describe('a production deployment', () => {
-    it('keeps its data: the database and both buckets are retained, and the writer stays warm', () => {
+    /**
+     * A bare SssbApp of the first app, as production or not, in a stack of its own.
+     * @param {Transport} transport @param {boolean} production
+     */
+    function templateOf(transport, production) {
         const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
         const slug = /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))
         const outdir = makeTestTmpDir('sssb-cdk-')
         const app = new cdk.App({ outdir, context: { 'aws:cdk:bundling-stacks': [] } })
-        const stack = new cdk.Stack(app, 'Production')
+        const stack = new cdk.Stack(app, production ? 'Production' : 'Staging')
         new SssbApp(stack, 'Default', {
             appDir,
             slug: /** @type {string} */ (slug?.[1]),
-            params: { database: { transport: 'pg' } },
-            environment: 'Production',
-            production: true,
+            params: { database: { transport } },
+            environment: production ? 'Production' : 'Staging',
+            production,
         })
         const template = /** @type {{ Resources: Record<string, any> }} */ (Template.fromStack(stack).toJSON())
-        const ofType = (/** @type {string} */ type) => Object.values(template.Resources).filter((r) => r.Type === type)
-        const [cluster] = ofType('AWS::RDS::DBCluster')
+        return (/** @type {string} */ type) => Object.entries(template.Resources).filter(([, r]) => r.Type === type)
+    }
+
+    /**
+     * The one `[logical id, resource]` of a type: a template with none or two is a failure, not a pass.
+     * @param {[string, any][]} entries
+     * @returns {[string, any]}
+     */
+    function only(entries) {
+        expect(entries).toHaveLength(1)
+        return /** @type {[string, any]} */ (entries[0])
+    }
+
+    it('keeps its data: the database and both buckets are retained, and the writer stays warm', () => {
+        const ofType = templateOf('pg', true)
+        const [, cluster] = only(ofType('AWS::RDS::DBCluster'))
         expect(cluster.DeletionPolicy).toBe('Retain')
         expect(cluster.Properties.ServerlessV2ScalingConfiguration.MinCapacity).toBe(1)
         const buckets = ofType('AWS::S3::Bucket')
         expect(buckets).toHaveLength(2)
-        expect(buckets.every((b) => b.DeletionPolicy === 'Retain')).toBe(true)
+        expect(buckets.every(([, b]) => b.DeletionPolicy === 'Retain')).toBe(true)
         expect(ofType('Custom::S3AutoDeleteObjects')).toHaveLength(0)
     })
+
+    it.each(/** @type {Transport[]} */ (['pg', 'data-api']))(
+        'keeps the credentials to the data it keeps: the %s database secret is retained in production only',
+        (transport) => {
+            // The cluster's removalPolicy does not reach its generated master secret; without its own policy it is
+            // Delete, and deleting a production stack would keep the database and drop the only credentials to it.
+            const [prodId, prod] = only(templateOf(transport, true)('AWS::SecretsManager::Secret'))
+            expect(prod.DeletionPolicy).toBe('Retain')
+            expect(prod.UpdateReplacePolicy).toBe('Retain')
+            // The logical id is what CloudFormation knows the secret by: a new one would replace it (and its password).
+            expect(prodId).toBe('DbSecretCF6D79B0')
+            // A non-production stack still goes away whole, secret included.
+            const [devId, dev] = only(templateOf(transport, false)('AWS::SecretsManager::Secret'))
+            expect(devId).toBe(prodId)
+            expect(dev.DeletionPolicy).toBe('Delete')
+            expect(dev.UpdateReplacePolicy).toBe('Delete')
+        },
+    )
+
+    it.each(/** @type {Transport[]} */ (['pg', 'data-api']))(
+        'has no other holder of what the retained data needs on the %s shape: no KMS key, no rotation schedule',
+        (transport) => {
+            // The cluster and the secret use the account's AWS-managed keys and the buckets S3's own, so there is no
+            // customer key to retain, and the secret is never rotated. One added later is a decision: retain it in
+            // production too.
+            for (const type of ['AWS::KMS::Key', 'AWS::SecretsManager::RotationSchedule']) {
+                expect(templateOf(transport, true)(type), type).toHaveLength(0)
+            }
+        },
+    )
 })
 
 describe('a synth that does not bundle this stack', () => {
