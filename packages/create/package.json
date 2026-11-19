@@ -8,7 +8,7 @@
         "directory": "packages/create"
     },
     "type": "module",
-    "description": "SSSB's generator: `pnpm create @sssb <dir>` writes a new app workspace from SSSB's starter, its infra/ included, with the workspace's config on SSSB's presets, the owner files and a CI workflow calling SSSB's reusable checks. Plain JavaScript with no dependencies; it never depends on another SSSB package (ADR-0014, rule 4).",
+    "description": "SSSB's generator: `pnpm create @sssb <dir>` writes a new app workspace from SSSB's starter, its infra/ included, with the workspace's config on SSSB's presets, the owner files and a CI workflow calling SSSB's reusable checks; `@sssb/create/add-app` writes a further app into an existing one, for `sssb add-app`. Plain JavaScript with no dependencies; it never depends on another SSSB package (ADR-0014, rule 4).",
     "bin": {
         "sssb-create": "./bin/create.js"
     },

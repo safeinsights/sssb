@@ -226,6 +226,21 @@ export async function run(args) {
                 'to add one beside: a new workspace is `pnpm create @sssb <dir>`',
         )
     }
+    const { templateDir, module } = createPackage(root, create)
+    const generator = /** @type {{ addApp: AddApp, checkSlug: (slug: string) => void }} */ (
+        await import(pathToFileURL(module).href)
+    )
+    /** @type {<T>(work: () => T) => T} the generator's refusals, as this command's */
+    const asUsage = (work) => {
+        try {
+            return work()
+        } catch (error) {
+            if (error instanceof Error && error.name === 'CreateError')
+                throw new UsageError(`sssb add-app: ${error.message}`)
+            throw error
+        }
+    }
+    asUsage(() => generator.checkSlug(slug))
     const appDir = path.join(root, 'apps', slug)
     const names = new Set(
         [root, ...workspacePackages(root)].flatMap((dir) => {
@@ -238,17 +253,7 @@ export async function run(args) {
             throw new UsageError(`sssb add-app: the workspace already has a package named ${taken}: pick another slug`)
     }
     const portSlot = newPortSlot({ root, apps, slug, slot, port })
-    const { templateDir, module } = createPackage(root, create)
-
-    const { addApp } = /** @type {{ addApp: AddApp }} */ (await import(pathToFileURL(module).href))
-    let added
-    try {
-        added = addApp({ templateDir, root, slug, name: name ?? null, port: portSlot, like })
-    } catch (error) {
-        if (error instanceof Error && error.name === 'CreateError')
-            throw new UsageError(`sssb add-app: ${error.message}`)
-        throw error
-    }
+    const added = asUsage(() => generator.addApp({ templateDir, root, slug, name: name ?? null, port: portSlot, like }))
 
     // The one list of apps: named in `sssb.apps` when the root keeps one (else apps/* is the list, and holds it).
     const manifestFile = path.join(root, 'package.json')

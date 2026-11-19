@@ -12,7 +12,7 @@ import { checkPackageNames, SSSB_PACKAGES, writeApp } from './generate.js'
 import { holdSignals, releaseSignals } from './signals.js'
 import { filesUnder, readTemplate } from './template.js'
 
-export { CreateError }
+export { checkSlug, CreateError }
 
 /**
  * @typedef {{

@@ -20,6 +20,7 @@ import {
     importerSeamProblems,
     isInRepoKit,
     kitImporters,
+    knipGaps,
     missingTests,
     nodeLinkerProblem,
     packageDirFrom,
@@ -1530,6 +1531,35 @@ describe('cutoverReport', () => {
             sssbOnly: ['release-app'],
         })
         expect(cutoverReport(rows, null).unmentioned).toEqual(['auth-dev', 'errors', 'look-alike'])
+    })
+})
+
+describe('knipGaps: the apps knip.json gives no workspace (reported, never failed)', () => {
+    it("names each app, and each app's seam package, that knip.json's workspaces do not, globs counted", () => {
+        const root = makeTestTmpDir('doctor-knip-')
+        const apps = ['apps/console', 'apps/ledger'].map((app) =>
+            pkg(path.join(root, app), { name: path.basename(app) }),
+        )
+        const seams = apps.map((app) => pkg(path.join(app, 'src/app-config'), { name: `${path.basename(app)}-seam` }))
+        const packages = [...apps, ...seams]
+        expect(knipGaps(root, apps, packages)).toBeNull()
+
+        json(path.join(root, 'knip.json'), {
+            workspaces: { '.': {}, 'apps/console': {}, 'apps/console/src/app-config': {} },
+        })
+        expect(knipGaps(root, apps, packages)).toEqual({
+            file: 'knip.json',
+            missing: ['apps/ledger', 'apps/ledger/src/app-config'],
+        })
+        // A seam that is no workspace package (SSSB's own repository, where aliases carry it) is not knip's to name.
+        expect(knipGaps(root, apps, apps)).toEqual({ file: 'knip.json', missing: ['apps/ledger'] })
+        json(path.join(root, 'knip.json'), { workspaces: { 'apps/*': {}, 'apps/*/src/app-config/': {} } })
+        expect(knipGaps(root, apps, packages)).toEqual({ file: 'knip.json', missing: [] })
+        // One config for every package, or a config doctor cannot read.
+        json(path.join(root, 'knip.json'), { entry: ['src/index.ts'] })
+        expect(knipGaps(root, apps, packages)).toBeNull()
+        write(path.join(root, 'knip.json'), '{ // a comment\n}')
+        expect(knipGaps(root, apps, packages)).toMatchObject({ file: 'knip.json', unread: expect.any(String) })
     })
 })
 

@@ -1098,6 +1098,12 @@ function doctorAndCheckE2e() {
         console.log(doctor.stdout)
         if (doctor.stdout.includes('in-repo mode'))
             fail(`${app}: sssb doctor took the tarball's kit for this repo's own`)
+        // `sssb add-app` leaves knip.json to the person, and doctor names what it lacks (a report, never a failure).
+        if (
+            !/^report +knip: knip\.json gives 2 of the apps' packages no workspace/m.test(doctor.stdout) ||
+            !doctor.stdout.includes('apps/ledger/src/app-config')
+        )
+            fail(`${app}: sssb doctor does not report the ledger's packages that knip.json gives no workspace`)
         const checked = run('pnpm', ['run', 'check:e2e'], { cwd: appDir(app), capture: true })
         console.log(checked.stdout)
         if (app !== 'console') continue
