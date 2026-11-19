@@ -18,7 +18,12 @@ import { SssbApp } from './index.js'
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 const SNAPSHOT = path.join(REPO, 'packages/cdk/release-snapshots/stateful-logical-ids.json')
-/** The app the snapshot is synthesized from: the starter, the deployment an adopter's app starts as. */
+/**
+ * The app the snapshot is synthesized from: the starter, the deployment an adopter's app starts as, but with
+ * `params.ports` left out, so every optional port is at its default and storage (`s3`) has its bucket. The starter
+ * itself declares `storage: 'none'`; `sssb-app.test.js` checks that shape against this snapshot, every id but the
+ * bucket's.
+ */
 const APP_DIR = path.join(REPO, 'apps/starter')
 
 /**
@@ -34,7 +39,8 @@ const APP_DIR = path.join(REPO, 'apps/starter')
  *   group would replace the cluster.
  * - `AWS::SecretsManager::Secret`: the cluster's master credentials. A new secret is a new password and a new ARN,
  *   which the deployment's environment and any grant an operator wrote name.
- * - `AWS::S3::Bucket`: the app's object storage (`StorageBucket`) and the CDN's assets (`AssetsBucket`). A new bucket
+ * - `AWS::S3::Bucket`: the app's object storage (`StorageBucket`, unless `params.ports.storage` is `none`) and the
+ *   CDN's assets (`AssetsBucket`). A new bucket
  *   is an empty one under another name.
  *
  * Not created today, listed so that one added later is snapshotted the day it lands:

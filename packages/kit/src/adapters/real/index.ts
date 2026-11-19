@@ -7,11 +7,10 @@ import type { JobsPort } from '../../ports/jobs'
 import type { LlmPort } from '../../ports/llm'
 import type { StoragePort } from '../../ports/storage'
 import { fakeAnalytics } from '../fake/analytics'
-import { absentEmail, absentJobs, absentLlm } from './absent'
+import { absentEmail, absentJobs, absentLlm, absentStorage } from './absent'
 import { realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { optionalPortsEnv, portChoice } from './optional-ports'
-import { createRealStorage } from './storage'
 
 interface RealPorts {
     auth: AuthPort
@@ -26,19 +25,30 @@ interface RealPorts {
 /**
  * Env var -> cutover-checklist row, for what every real deployment needs. Fails fast with the full list, not one var
  * at a time. The database's variables follow DATABASE_TRANSPORT (./database-transport.ts), and the optional ports'
- * (LLM, outbound and inbound email, the job runner) follow their switches (./optional-ports.ts).
+ * (LLM, outbound and inbound email, the job runner, storage) follow their switches (./optional-ports.ts).
  */
 const REQUIRED_ENV: Record<string, string> = {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'auth-dev',
     CLERK_SECRET_KEY: 'auth-dev',
-    STORAGE_BUCKET: 'cloud-accounts',
-    AWS_REGION: 'cloud-accounts',
     // The shared secret the cron route (the scheduled tick) and the jobs webhook verify (`withWebhookSecret`).
     WEBHOOK_SECRET: 'job-runner',
 }
 
+/**
+ * The Data API transport's region. Not in DATABASE_ENV, whose every variable SssbApp sets on the server: on Lambda the
+ * runtime sets AWS_REGION, a variable a function may not set itself. The optional ports that call AWS require it too
+ * (./optional-ports.ts).
+ */
+const DATA_API_REGION_ENV: Record<string, string> = { AWS_REGION: 'cloud-accounts' }
+
 export function assertRealEnv(): void {
-    const required = { ...REQUIRED_ENV, ...DATABASE_ENV[databaseTransport()], ...optionalPortsEnv() }
+    const transport = databaseTransport()
+    const required = {
+        ...REQUIRED_ENV,
+        ...DATABASE_ENV[transport],
+        ...(transport === 'data-api' ? DATA_API_REGION_ENV : {}),
+        ...optionalPortsEnv(),
+    }
     const missing = Object.keys(required).filter((name) => !process.env[name])
     if (missing.length > 0) {
         const rows = [...new Set(missing.map((name) => required[name]))]
@@ -81,8 +91,8 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
     }
     // Each database transport, PostHog and every optional adapter below is a dynamic import, so a deployment loads
     // the SDK of what it chose and nothing else: a `pg` deployment never loads the RDS Data SDK and a Data API one never
-    // loads `pg`, PostHog loads only with a key, and a port switched off (`none`) never loads its vendor's. Auth (Clerk)
-    // and storage (S3) serve every deployment, so they are imported as this module is.
+    // loads `pg`, PostHog loads only with a key, and a port switched off (`none`) never loads its vendor's (storage's
+    // S3 SDK included). Auth (Clerk) serves every deployment, so it is imported as this module is.
     const db =
         databaseTransport() === 'data-api'
             ? (await import('./db-data-api')).createRealDataApiDb({
@@ -92,7 +102,10 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
                   region: need('AWS_REGION'),
               })
             : (await import('./db')).createRealDb(need('DATABASE_URL'))
-    const storage = createRealStorage(need('STORAGE_BUCKET'), need('AWS_REGION'))
+    const storage =
+        portChoice('storage') === 's3'
+            ? (await import('./storage')).createRealStorage(need('STORAGE_BUCKET'), need('AWS_REGION'))
+            : absentStorage
     const llm =
         portChoice('llm') === 'anthropic' ? (await import('./llm')).createRealLlm(need('ANTHROPIC_API_KEY')) : absentLlm
     const email =
