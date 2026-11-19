@@ -6497,6 +6497,7 @@ Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-r
     - **The client-bundle guard also refuses Node's builtins, `pg`, Clerk's server module, the AWS SDKs and
       `next/server`**, not only `next/headers` and `server-only`.
     - **Phase 1 stops here:** the second round found nothing at MEDIUM or above.
+
 ## `SssbApp` tells the app the viewer's host, and redirects plain HTTP to HTTPS (2026-11-19, `fix/cdk-forwarded-host-https`)
 
 Two real-mode defects found while fixing POSTs (`fix/cdk-function-url-post`). CloudFront sends the server's Function
