@@ -5653,6 +5653,82 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
       and the gitleaks version from this repository when it is packed (`TemplateMeta` in
       `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.
 
+## The Simulator on a generated app's `pnpm dev`, stage 1 (2026-11-18, `feat/simulator-on-app-dev`)
+
+Adoption follow-up 6 (`docs/adoption-review-2026-11.md`): the panel's server side ships from `@sssb/kit` behind one
+catch-all route, starting with People, Mail and Jobs with the world clock. JP's standing rule for these sessions: decide,
+record the rejected alternative here, report it.
+
+- **One handler, one route file, and no change to the authorization scan.** `@sssb/kit/server-lib/simulator-api`
+  exports `simulatorApi(request, context)`, which dispatches on the catch-all's segments through a fixed table
+  (`Object.hasOwn`, so `constructor` is a 404, not a prototype key). The app's `src/app/api/simulator/[...path]/route.ts`
+  opens each verb with `if (!isSimulated) return new Response(null, { status: 404 })` and `import()`s the kit's handler
+  only after it. That first line is exactly the gate the existing `simulator/` prefix exemption already checks
+  (`opens-with-simulated-404`, `packages/kit/src/authz/route-policy.ts`), so the scan accepts the file with no new
+  exemption, no new gate kind and no new entry in the framework's policy; the probe that removed the line from POST
+  failed the starter's `authz-mutations` check. **Rejected: `export { simulatorApi as GET, simulatorApi as POST } from
+'@sssb/kit/server-lib/simulator-api'`**, a true one-line mount. It passes the scan as it stands: the scan follows a
+  re-export to the function that defines the handler and checks the gate there (a probe re-exporting an ungated POST
+  under `simulator/` failed `authz-mutations`; re-exporting `simulatorApi`, which opens with the gate, passed). It was
+  rejected for two other reasons: it loads the kit's module in every build, real ones included, and the route's
+  exemption would rest on the scan resolving into the installed package, which was proven here only against the
+  workspace link, never against `@sssb/kit` installed from npm. The gate in the app's own file holds however the
+  package resolves. Two five-line handlers are its price. **Rejected: a handler factory taking
+  options** (`createSimulatorApi({ … })`): stage 1 has nothing an app would configure, and a factory call at module
+  scope is code that runs in a real build before any gate.
+- **The kit's handler gates itself too, and a real build never loads it.** `simulatorApi` repeats the simulated-mode
+  404 as its own first line (a test runs it with `isSimulated` false; a probe that removed it went red), and the route
+  imports it dynamically after the gate, so a real build never loads the module. (The fake adapters it calls are in
+  every build regardless: the adapter registry, `packages/kit/src/adapters/index.ts:11-17`, imports them statically.)
+  The showcase's route files import their handlers' modules statically; that stays as it was.
+- **Every POST must be `application/json`, or 415 before it runs.** The showcase asks this only of the ticker. Here the
+  same handler signs a browser in as anyone (`viewpoint`) and empties the mail catch-store, and a page on another
+  origin can send a no-preflight `text/plain` POST to a developer's localhost or a hosted simulated demo. The host
+  always sends JSON, so the rule costs nothing. **Rejected: matching the showcase's routes exactly**, which would have
+  made the kit's version the weaker of two copies. A known path with the wrong method is 405 with `Allow`; an unknown
+  one 404, so an app's own `api/simulator/<name>/route.ts` beside the catch-all keeps working (Next routes the static
+  segment first).
+- **The client is the kit's too: `@sssb/kit/components/simulator/simulator-host`, rendered by the starter's locale
+  layout** through the same simulated-only dynamic import the showcase uses for its glue. Without it the route has no
+  caller, and a generated app would need the glue this task exists to remove. It is the showcase glue's People, Mail
+  and Jobs half (polling, notices, mail scope, clock), about 330 lines against 867. **Rejected: shipping the route
+  alone in stage 1** and the client in a later stage: nothing would prove the route on an app's own server, and the
+  brief's "first tabs that make the case" need a panel to make it.
+- **The panel shows only the tabs its host wires.** `SimulatorPanel`'s per-tab props (everything but People) are
+  optional, and a tab without its props is not in the strip, as Tours already worked. A persisted tab the host does not
+  show falls back to People. The showcase and the static demo pass every prop, so nothing changes for them.
+  **Rejected: passing empty data for the unserved tabs**, which shows Hooks, Events and Snapshots tabs that never fill
+  and buttons that call paths the host does not serve.
+- **The stage-1 tabs: People, Mail (outbound catch-store only), Jobs with schedules and the world clock.** Ten of the
+  showcase's 33 route files. Left for later stages, one future task each: Snapshots, presets and tours
+  (`.claude/future-tasks/simulator-host-stage-2-world-state.md`); Events, Messages, inbound mail, Hooks and Errors
+  (`…-stage-3-subsystem-tabs.md`); the dev ticker and app-registered tabs such as Actors (`…-stage-4-ticker-and-app-tabs.md`);
+  the showcase onto the kit's host (`…-stage-5-showcase-migration.md`). **The dev ticker is not in stage 1** although it
+  sits on the Jobs tab: its policy module builds on `@sssb/tools`, which `@sssb/kit` does not depend on, and its origin
+  is the app's port slot. That is a package-graph decision of its own (stage 4). The clock's advance, reset and
+  run-due are in.
+- **The showcase keeps its own glue for now.** It uses every tab; migrating it means stages 2 to 4 first, or mounting
+  the catch-all beside 23 of its route files while keeping its glue anyway. **Rejected: migrating the showcase in
+  stage 1.** Until stage 5 the kit's host has one consumer, the starter (and every generated app), plus the kit's own
+  unit test against the fixture seam and the starter's e2e spec, which the adoption probe runs in a generated workspace.
+- **`viewpoint` refuses a person who is not in the world** (400 `unknown person`), where the showcase's route lets
+  `devSignIn` throw its `ForbiddenError` (a 403). The other differences from the showcase's routes came from review
+  (next bullet); otherwise every path answers what the showcase's route answers, field for field.
+- **Hardening from review** (an Opus and a Fable reviewer; simulated worlds only, nothing reachable in a real build):
+  `viewpoint` answers a remembered `lastPath` only when it is a path on this origin, because it is recorded from a
+  page-view beacon's body and the client navigates to it; `mail/seen` accepts only someone in the world, since the key
+  is written to the state file every poll reads; and the clock stops at a century ahead in all (a year per call was
+  already the cap, but repeated calls could leave the range a `Date` holds). On the client, every navigation the host
+  makes (`viewpoint`'s answer, a mail link, a locale switch) goes through one check, `sameOriginPath`
+  (`packages/kit/src/core/same-origin-path.ts`, internal), which parses the target rather than testing a prefix:
+  `/\host`, a tab inside the path and `/.//host` all read as another origin to a browser. Overlapping poll answers are
+  applied in order (a ticket per fetch), and a mail answer for a scope no longer shown is dropped. **Rejected: two
+  copies of the check, one per side**: the first round had them, and the second found the client's mail links still on
+  the old prefix test.
+- **The starter's e2e budget grows by one spec** (`apps/starter/tests/e2e/simulator.spec.ts`): signed out, open the
+  panel, become a person in the other tenant, see Mail and Jobs and not Hooks, run what is due. It is what makes the
+  mount a gate in every generated workspace.
+
 ## Small starter fixes: a paged items list, the eslint 10 peers, an empty `AppSubjectFields` (2026-11-18, `fix/starter-small-fixes`)
 
 Adoption follow-up 9 (`docs/adoption-review-2026-11.md`, ranked item 9 and "What surprised" 2 and 9). Decided without

@@ -8,9 +8,8 @@ import { dataDir } from './data-dir'
 /**
  * Simulator continuity (simulated-mode-only, NOT a port): who's who is a session (`${APP_SLUG}_session`);
  * whose WORLD you're looking at is the viewpoint. A signed-in session's viewpoint always follows
- * it; the cookie only matters when there's no session (e.g. an invited-but-unregistered viewer —
- * arrives in a later slice). `person:<id>` covers seeded/dynamic people; `invited:<inviteId>`
- * is reserved for that later slice.
+ * it; the cookie only matters when there's no session (an invited-but-unregistered viewer).
+ * `person:<id>` covers seeded/dynamic people; `invited:<inviteId>` is a pending invite (`readInvites`, ./auth.ts).
  */
 export type PersonKey = `person:${string}` | `invited:${string}`
 
