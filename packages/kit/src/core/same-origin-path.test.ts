@@ -9,6 +9,9 @@ describe('sameOriginPath', () => {
         ['/', '/'],
         ['/en/./dashboard', '/en/dashboard'],
         ['/en/a/../dashboard', '/en/dashboard'],
+        ['/en/search?q=a\\b', '/en/search?q=a\\b'],
+        ['/en#a\\b', '/en#a\\b'],
+        ['/en/search?q=a b', '/en/search?q=a%20b'],
     ])('keeps a path on this origin: %j', (value, path) => {
         expect(sameOriginPath(value)).toBe(path)
     })
@@ -20,6 +23,7 @@ describe('sameOriginPath', () => {
         '/\\elsewhere.example/',
         '/\t/elsewhere.example/',
         '/\n/elsewhere.example/',
+        '/en?\t',
         '/.//elsewhere.example/',
         '/en/../..//elsewhere.example/',
         'javascript:alert(1)',

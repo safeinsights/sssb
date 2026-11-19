@@ -90,13 +90,18 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     const summaryTickets = useTickets()
     const mailTickets = useTickets()
     const jobsTickets = useTickets()
-    // The mail scope last asked for: an answer for another scope (the summary's first answer turns "all" into one
-    // person's inbox) is dropped even when it is the newest to arrive.
-    const mailQuery = useRef('')
 
     const personEmail = summary.people.find((person) => person.key === summary.viewpoint)?.email ?? null
     // Signed out, or no viewpoint yet: there is no one's own inbox to show, so the scope is every inbox.
     const effectiveMailScope: 'person' | 'all' = personEmail ? mailScope : 'all'
+    const mailQuery = effectiveMailScope === 'all' ? 'all=1' : `person=${encodeURIComponent(summary.viewpoint ?? '')}`
+    // The scope this render shows. An answer for another scope is dropped even when it is the newest to arrive: the
+    // summary's first answer turns "all" into one person's inbox, and an action's callback can hold an older render's
+    // fetch.
+    const shownMailQuery = useRef(mailQuery)
+    useEffect(() => {
+        shownMailQuery.current = mailQuery
+    }, [mailQuery])
 
     const pushNotice = useCallback((text: string) => {
         const id = (noticeSeq.current += 1)
@@ -120,12 +125,10 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     }, [pushNotice, t, summaryTickets])
 
     const refreshMail = useCallback(async () => {
-        const query = effectiveMailScope === 'all' ? 'all=1' : `person=${encodeURIComponent(summary.viewpoint ?? '')}`
-        mailQuery.current = query
         const ticket = mailTickets.take()
-        const next = await getJson<SimulatorMail>(`mail?${query}`)
-        if (next && query === mailQuery.current && mailTickets.fresh(ticket)) setMail(next)
-    }, [effectiveMailScope, summary.viewpoint, mailTickets])
+        const next = await getJson<SimulatorMail>(`mail?${mailQuery}`)
+        if (next && mailQuery === shownMailQuery.current && mailTickets.fresh(ticket)) setMail(next)
+    }, [mailQuery, mailTickets])
 
     const refreshJobs = useCallback(async () => {
         const ticket = jobsTickets.take()
@@ -204,22 +207,26 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     function handleOpenLink(href: string) {
         // Same origin only, and never silently. A path is followed; so is an absolute URL on this origin, since a real
         // email carries one. Both go through `sameOriginPath`, which refuses what a browser would read as another
-        // origin (`//host`, `/\host`, a tab inside); a `//host` link is then judged as a URL below.
+        // origin (`/\host`, a tab inside). A protocol-relative `//host` link is resolved against this page, so it is
+        // judged by its host like any absolute URL; one with no origin at all (`mailto:`) is unusable here.
         const path = sameOriginPath(href)
         if (path) {
             window.location.assign(path)
             return
         }
         try {
-            const url = new URL(href)
+            const url = href.startsWith('//') ? new URL(href, window.location.href) : new URL(href)
             const local =
                 url.origin === window.location.origin ? sameOriginPath(url.pathname + url.search + url.hash) : null
             if (local) {
                 window.location.assign(local)
                 return
             }
-            if (url.origin === window.location.origin) pushNotice(t('noticeLinkUnusable', { href }))
-            else pushNotice(t('noticeLinkOrigin', { origin: url.origin }))
+            if (url.origin === window.location.origin || url.origin === 'null') {
+                pushNotice(t('noticeLinkUnusable', { href }))
+            } else {
+                pushNotice(t('noticeLinkOrigin', { origin: url.origin }))
+            }
         } catch {
             pushNotice(t('noticeLinkUnusable', { href }))
         }
