@@ -454,7 +454,7 @@ describe('toolsShippedFileProblems', () => {
 describe('pluginManifestProblems', () => {
     const good = {
         name: '@sssb/eslint-plugin',
-        dependencies: { ignore: '^5.3.2', 'typescript-eslint': '^8.72.0' },
+        dependencies: { ignore: '^5.3.2', 'typescript-eslint': '^8.73.0' },
         peerDependencies: { eslint: '^10.13.0' },
     }
     it('passes the shape @sssb/eslint-plugin must have', () => {

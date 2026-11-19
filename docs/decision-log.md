@@ -5652,3 +5652,31 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
       also reads the root's dependency ranges and engines, `pnpm-workspace.yaml`'s build approvals and release age,
       and the gitleaks version from this repository when it is packed (`TemplateMeta` in
       `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.
+
+## Dependabot alert 82 (`minimatch`) closed by taking `typescript-eslint` 8.73 (2026-11-19, `deps/minimatch-alert-82`)
+
+The 2026-11-17 dependency audit accepted GHSA-g3hv-75wg-m249 until the next `typescript-eslint` refresh ("Accepted:
+GHSA-g3hv-75wg-m249" above), because 8.73.0, published 2026-11-16, was inside the two-day release-age window. It is
+outside it now, so this is that refresh.
+
+- **What was affected.** Of the three `minimatch` versions in `pnpm-lock.yaml`, only 10.2.6 is in the advisory's range
+  (`>= 7.0.0, < 11.0.1`): 3.1.5 is below it and 11.0.8 is above the fix. `pnpm why minimatch` shows one parent for 10.2.6,
+  `@typescript-eslint/typescript-estree` 8.72.2, reached through `typescript-eslint`, which the root
+  `package.json` (dev) and `@sssb/eslint-plugin` (a shipped dependency) both take. The code runs only when ESLint
+  parses a project; no request path reaches it, and the globs are the workspace's own configuration. So the alert was
+  dev-scope for SSSB and for an adopter alike, and reachable only by a hostile glob in a lint config.
+- **Fixed by raising both `typescript-eslint` ranges from `^8.72.0` to `^8.73.0`** and refreshing the lockfile
+  (`pnpm update typescript-eslint -r`). 8.73.0's estree takes `minimatch` `^11.0.1`, and the lockfile no longer holds
+  10.2.6 (11.0.8 and 3.1.5 remain, neither affected). No override: the fix is the parent's own range.
+- **The floor in `packages/eslint-plugin` moves too, so a changeset (patch, Kind `none`).** Leaving it at `^8.72.0` would
+  fix SSSB's lockfile only: an adopter whose lockfile holds 8.72 would stay on `minimatch` 10 until it chose to update
+  `typescript-eslint` itself. Raising a dependency's floor within the same major breaks no one.
+  `scripts/pack-and-consume/consumer-lock.yaml` was refreshed (`pnpm pack-and-consume --update-lockfile`) because the root's
+  range is part of what the generator copies into a workspace.
+- **Rejected: a `pnpm.overrides` entry forcing `minimatch` 11 onto 8.72's estree.** It forces a new major onto a
+  parent that declared `^10.2.2`, on the strength of nothing but the advisory, and would have to be removed later; the
+  parent's own release does the same without one. (The 2026-11-17 entry rejected it for the same reason.)
+- **Rejected: leaving the alert open as accepted.** The accepted reason, the release-age window, no longer holds.
+- **For JP.** The alert should close by itself when Dependabot rescans `int-adoption` and then `main` (the fix
+  reaches `main` with the next release merge). If it is still open after that, dismiss nothing: re-read it, because
+  it would then name something else. Nothing here needs a setting change.
