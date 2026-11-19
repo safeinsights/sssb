@@ -5188,6 +5188,7 @@ apps/x/…` from the root does; and a test run from `apps/x/tests` read no decla
 Not done: `.claude/future-tasks/neutral-app-port-service.md` (a neutral slot the generator writes in place of
 `starter`) still stands; this makes it buildable without a new built-in. The starter and the showcase keep their string
 declarations, so an app the generator writes is unchanged.
+
 ## P15: ADR-0013 superseded, and the adopter guide rewritten around the generator and upgrading by release (2026-11-18, `docs/p15-adopting-by-release`)
 
 ADR-0014's P15 row. Its two dependencies are done: the generator (P12) and Pages' switch (P8:
