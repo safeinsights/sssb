@@ -1,5 +1,14 @@
-import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFile, spawnSync } from 'node:child_process'
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
@@ -1830,6 +1839,54 @@ describe.concurrent('sssb doctor with no --app, from the root of a workspace who
             expect(fromRoot.code, fromRoot.out).toBe(1)
             expect(fromRoot.out).toMatch(/FAIL +workspace walk: it does not reach every app the workspace names/)
             expect(fromRoot.out).toMatch(/apps\/b is named by the workspace/)
+        },
+        E2E_TIMEOUT,
+    )
+
+    it(
+        "reports the adopter's own GitHub settings and plugin install, read-only, and never fails on them; skips them in CI",
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-e2e-settings-', 'in-repo')
+            spawnSync('git', ['init', '-q', ws])
+            spawnSync('git', ['-C', ws, 'remote', 'add', 'origin', 'https://github.com/acme-org/acme.git'])
+            json(path.join(ws, '.claude', 'settings.json'), { enabledPlugins: { 'sssb@sssb': true } })
+            const tools = makeTestTmpDir('sssb-doctor-e2e-settings-bin-')
+            const gh = path.join(tools, 'bin', 'gh')
+            write(
+                gh,
+                `#!/bin/sh
+echo "$@" >> '${path.join(tools, 'gh.log')}'
+case "$4" in
+  repos/acme-org/acme) echo '{"default_branch":"main","private":false,"owner":{"type":"User"}}';;
+  repos/acme-org/acme/rules/branches/main) echo '[]';;
+  repos/acme-org/acme/private-vulnerability-reporting) echo '{"enabled":true}';;
+  *) echo '{"message":"Branch not protected"}'; echo 'gh: Branch not protected (HTTP 404)' >&2; exit 1;;
+esac
+`,
+            )
+            chmodSync(gh, 0o755)
+            const env = {
+                PATH: `${path.join(tools, 'bin')}:${process.env.PATH ?? ''}`,
+                CLAUDE_CONFIG_DIR: path.join(tools, 'no-claude'),
+            }
+            const local = await doctor(ws, 'apps/a', { ...env, CI: '' })
+            expect(local.out).toMatch(
+                /^report +github: sssb \/ all-checks is a required check on main: it is not \(reported, not failed:/m,
+            )
+            expect(local.out).toMatch(/^ok +github: private vulnerability reporting is on$/m)
+            expect(local.out).toMatch(
+                /^report +claude plugin: sssb@sssb is enabled by \.claude\/settings\.json but not installed/m,
+            )
+            expect(local.code, local.out).toBe(0)
+            for (const call of readFileSync(path.join(tools, 'gh.log'), 'utf8').trim().split('\n'))
+                expect(call).toMatch(/^api --method GET /)
+
+            writeFileSync(path.join(tools, 'gh.log'), '')
+            const ci = await doctor(ws, 'apps/a', { ...env, CI: 'true' })
+            expect(ci.out).toMatch(/^report +github settings and plugin install: not checked: CI is set/m)
+            expect(ci.out).not.toMatch(/required check/)
+            expect(readFileSync(path.join(tools, 'gh.log'), 'utf8')).toBe('')
+            expect(ci.code, ci.out).toBe(0)
         },
         E2E_TIMEOUT,
     )

@@ -471,7 +471,14 @@ Kysely...), an importer of the framework anywhere in the workspace that does not
 a `link:` (which the next `pnpm add <pkg>` for the app unlinks) or by a name that no workspace package, or several,
 have, and an
 `@sssb/*` package out of step with the framework's version, and it reports framework cutover rows your
-`docs/cutover-checklist.md` never mentions. Inside SSSB's own repository it says "in-repo mode" and checks each app's
+`docs/cutover-checklist.md` never mentions. It also reports, never failing and never changing anything, the settings
+only you can make: when `gh` is signed in, whether `sssb / all-checks` is a required check on your repository's default
+branch (a ruleset or branch protection), whether private vulnerability reporting is on and, for a private repository
+in an organization, whether its Actions policy lets it call SSSB's reusable workflow; and whether the Claude Code
+plugin your `.claude/settings.json` enables is installed on this machine. These are read-only GitHub API requests
+through `gh`; a missing or signed-out `gh`, no network, or a setting your account may not read gives "not checked"
+and the reason. None of it runs when `CI` is set (a CI token cannot read these settings, and CI has no Claude Code).
+Inside SSSB's own repository it says "in-repo mode" and checks each app's
 seam aliases instead of links. **`sssb check-e2e`** asks your own Playwright which files your configs load
 (`playwright test --list`, which starts no server and needs no browser), bundles each, and fails, naming spec and
 framework file, if a spec reaches the framework other than through `@sssb/kit/testing/e2e`, the one entry Node can

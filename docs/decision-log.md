@@ -5652,3 +5652,62 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
       also reads the root's dependency ranges and engines, `pnpm-workspace.yaml`'s build approvals and release age,
       and the gitleaks version from this repository when it is packed (`TemplateMeta` in
       `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.
+
+## `sssb doctor` reports the adopter's own settings (2026-11-19, `feat/doctor-reports-settings`)
+
+Adoption review follow-up 8 (`docs/adoption-review-2026-11.md`, "What surprised" 11): the settings only the adopter can
+make are named in the README and the generated workspace, and nothing tells them they are still undone. The code is
+`packages/tools/src/commands/doctor-settings.js`; `doctor.js` appends its lines after the cutover rows. Decided
+without asking, as JP's standing rule for these sessions says.
+
+- **Reported, never failed, never written.** Every line is `ok` or `report`, and the exit code does not move: the
+  settings are the adopter's, in GitHub and on a machine, and a doctor that went red on a missing `gh` or a plugin
+  nobody here uses would break `pnpm verify` for people who did nothing wrong. Read-only is enforced where the process
+  starts: the only way out is `ghGet`, `gh api --method GET <path>`, stdin closed, prompts and update notices off,
+  `GH_HOST` pinned to github.com, eight seconds a call, and a test fails if any call is not that. Rejected: failing on
+  "not required" (it would be the first doctor failure that no commit of the workspace can fix).
+- **Skipped when `CI` is set** (anything but empty, `0` or `false`), with one line saying so. In CI the token is the
+  job's `GITHUB_TOKEN`, which cannot read rulesets, branch protection or private vulnerability reporting, so every line
+  would read "not checked"; CI has no Claude Code, so the plugin line would always be a false alarm; and the checks
+  would add network calls to the gate that runs doctor on every PR (`sssb ci` and `adoption-probe` both run it).
+  Rejected: running them with `GITHUB_TOKEN` (noise, not information); a flag to force them in CI (nothing needs it:
+  `gh` on a laptop is where the answer is wanted).
+- **The repository is the workspace's `origin` remote** (`git config --get remote.origin.url`, github.com only), not
+  the kit's: the settings are the adopter's. No GitHub origin reads "not checked". Rejected: `gh repo view` (needs a
+  signed-in `gh` and a network call just to learn the name, which git already holds); a field in
+  `package.json` (a second copy of what git knows); a `--repo` flag (one more thing to remember).
+- **"Required" looks in both places GitHub keeps it**: the rules that apply to the default branch
+  (`rules/branches/<branch>`, readable by anyone who can read the repository, an organization's rulesets included) and
+  classic branch protection (`protection/required_status_checks`, admin-only), matching the context
+  `sssb / all-checks` exactly (the reusable workflow is called by a job named `sssb`). "Not required" is said only when
+  the rulesets were read and branch protection was read or answered "Branch not protected"; a protection the account
+  may not read says "not confirmed" and names why, because "not required" would be a claim doctor cannot back.
+  Rejected: rulesets only (misses every repository on classic protection, the default for older ones); calling a
+  failure to read "not required" (the most common wrong report a non-admin would see).
+- **Private vulnerability reporting** is `GET repos/<r>/private-vulnerability-reporting`: `enabled: false` is `report`,
+  a failure is "not checked".
+- **The reusable workflow is reported only for a private repository in an organization** (the review's case), read from
+  the Actions policy at both levels, the organization's and the repository's (`allowed_actions`: `all`, `local_only`,
+  or `selected` with `patterns_allowed`). Each level is judged on its own and a level that cannot be read (it needs an
+  admin) is named and never guessed: "no" if any readable level refuses, "yes, as far as the policies that could be
+  read go" if some could not be read, "not checked" if neither could. `selected` is judged by matching the workspace's
+  own `uses:` (`owner/name/.github/workflows/file@ref`) against `patterns_allowed`, with `*` as any run of characters;
+  GitHub's exact wildcard rules are not published precisely enough to prove this, so it is the one approximation here,
+  and the line says "none of its N pattern(s) matches", never "not allowed". Rejected: the organization level only
+  (needs organization admin, which an adopter with repository admin lacks); saying "check by hand" for `selected`
+  (no use to the adopter who has it right).
+- **The plugin line covers every plugin the shared `.claude/settings.json` enables** (`enabledPlugins` true, or a
+  non-empty constraint array), not only SSSB's: the install step is the same for any, and telling them apart would
+  need the kit's repository and a marketplace walk. No enabled plugin, no line. Installed means a record in
+  `<CLAUDE_CONFIG_DIR or ~/.claude>/plugins/installed_plugins.json` (`plugins["<plugin>@<marketplace>"]`) that is
+  user scope, or project or local scope with a `projectPath` that is this workspace. A plugin installed only for
+  another clone says so and names the path. **Assumption not verified**: this machine's record has only a user-scope
+  install, so the `projectPath` field of a project-scope entry is read from Claude Code's documented format, not from
+  a record seen here; if it differs, the line reads "not installed" for a project-scope install, which is a false
+  report, never a failure, and the fix is one field name. Rejected: `claude plugin list` (starts Claude Code, slow,
+  and its output is not a stable format); counting a user-scope install as not enough (it makes the plugin available
+  everywhere, which is what the workspace wants).
+- **A machine with no install record at all reads "not installed … ignore it when nobody here uses Claude Code"**
+  rather than silence: a workspace that enables a plugin should hear that this clone lacks it, and the line names the
+  one command. Rejected: skipping the line when `claude` is not on PATH (a laptop whose Claude Code lives elsewhere
+  would never hear).
