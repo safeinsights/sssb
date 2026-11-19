@@ -6734,3 +6734,64 @@ sessions: decide, and record the rejected alternative.
 - **The starter declares `storage: 'none'`**: it stores no files, so a generated app deploys without a bucket, with a
   comment saying to set `s3` when it starts storing (cutover row `cloud-accounts`, which now says the storage checks
   do not apply with `none`). Rejected: `s3`, a bucket every generated app would carry and cut over before it needs one.
+
+## A fast path for docs-only pull requests (2026-11-19, `ci/docs-only-fast-path`)
+
+JP, 2026-11-19, on safeinsights/sssb#78 (three markdown files, every job run): "Is there an optimization here? See
+CanopyCMS". CanopyCMS's `ci.yml` (`dual-build`, `standalone-image`, `release-dry-run`) runs every job so each reports a
+conclusion, and gates its expensive steps per step. SSSB copies that. JP's standing rule for these sessions: decide,
+and record the rejected alternative.
+
+- **Docs-only is narrow: every changed path under `docs/` (but `docs/releases/`) or `.claude/future-tasks/`**
+  (`.github/scripts/docs-only.sh`). Docs are not inert here, so the jobs that read them keep no fast path:
+  `lint-typecheck-unit` runs Prettier, the doc-path gate, and the plugin, generator and release-notes tests. The jobs
+  that do take one read no doc: e2e, the static demos, the contract tests and synth build and test the apps; both pack
+  and consume shapes pack the packages and generate from the starter, and the generated README links SSSB's docs by
+  URL without reading them (`packages/create/src/files.js`). `docs/releases/` is excluded because `scripts/release.mjs`
+  writes a release's notes there and the release rehearsal runs it. Rejected: root markdown (`CLAUDE.md`,
+  `README.md`) and `.changeset/`, for want of evidence that no fast-path job reads them (the release jobs read
+  `.changeset/`); a path joins the list only with that evidence.
+- **Which jobs take it.** The reusable workflow's `contract`, `e2e`, `demo-static` and `synth`, and checks.yml's
+  `adoption-probe`, `pack-and-consume`, `release-dry-run`, `licence-scan` and `repo-checks`' knip, jscpd and spike suite.
+  Always in full: `lint-typecheck-unit` (it reads the docs), `discover` (cheap, and the matrices keep every shard's
+  check under its own name), `release-plan` (half a minute), `changeset-required`, `secret-scan` (a doc can leak a
+  secret) and `repo-checks`' bidi scan (a doc can carry bidi characters). Every push to `main` runs everything.
+- **Each job still runs and reports; only its steps are gated**, behind a visible "Skipped (docs-only change)" step.
+  Rejected: a `paths:` filter on the trigger, which leaves a required check that never reports pending forever
+  (CanopyCMS's `dual-build` comment); and job-level `if:` skips, under which a matrix never expands, so no shard
+  reports under its own name, and which would make `all-checks` accept skips, weakening the one check an adopter
+  requires.
+- **The reusable workflow takes the answer as an input, `docs-only`, false by default**, so an adopter who sets
+  nothing runs exactly what it did, and `all-checks` is unchanged: a job that ran its fast path concluded success.
+  The contract job's Postgres service gets an empty image on the fast path, which starts none. Rejected: a pathspec
+  input the reusable workflow evaluates itself, which would put diff logic in the file adopters pin, for a docs set
+  that is theirs to decide.
+- **Plain git, not `dorny/paths-filter`.** The script diffs the pull request's merge commit (two parents, as
+  actions/checkout leaves it) against its first parent, the base as it is when the run starts, with `--no-renames`
+  so a file moved out of code counts. Anything else answers false: another event, a HEAD that is not a merge commit,
+  an empty diff, a path git quotes. Rejected: the action, a third-party dependency with the repository's checkout in
+  reach, which lists a pull request's files through the API (`pull-requests: read`, a permission no job here has).
+  The rulesets require the branch up to date, and bringing it up to date makes a new merge commit and a new run, so a
+  fast path decided on an old base is never the one a merge goes on.
+- **checks.yml's own jobs each run the script themselves; only the `sssb` call waits on a `changes` job**, because
+  a reusable workflow's input must be known when the call starts. Rejected: every job `needs: changes`. A job whose
+  dependency failed is skipped, and a skipped job reports as a passing check, so a failed `changes` would have turned
+  `repo-checks`, `adoption-probe` and `pack-and-consume` green unrun. The `sssb` call runs `if: ${{ !cancelled() }}`
+  and passes `docs-only` only when the output is exactly `true`. The script's step in `changes` is
+  `continue-on-error`, so a script that fails leaves no answer and a green `changes`, and everything runs. A `changes`
+  that fails outright (its checkout) never reads as the fast path either: should GitHub skip the called jobs for the
+  failed dependency, `all-checks` fails. Either way the check is red or does the work, never green unrun.
+- **What the fast path trusts, and what still catches a mistake in it.** That no job with a fast path reads a path
+  the script counts as documentation: true when it was written (the readers of `docs/` outside `docs/releases/` are
+  the unit tests and `sssb doctor`, all in `lint-typecheck-unit`), held only by review for a script added later, and
+  by a test for a tracked symlink into those directories (`tests/tooling/docs-only.test.ts`). The push run on `main`
+  is always the full one, and the release gate reads only push runs (`wait-for-checks`, `scripts/release.mjs`), so a
+  mistake can reach `main` but never a release. And a docs-only pull request no longer notices a base that is already
+  red: its own checks pass on the base's tested tree, as they would have on the same tree before.
+- **What it saves, measured.** #78's full run (2026-11-19): 32 runner-minutes, 5m36s end to end. The probe,
+  safeinsights/sssb#79 (one line of `docs/README.md`, closed unmerged): 8 runner-minutes, 5m57s end to end, every check
+  green, each fast-path job done in 2 to 8 seconds with only its skip step run, and `contract` starting no database.
+  So a docs-only pull request costs a quarter of the runner time, and the wall clock does not move:
+  `lint-typecheck-unit` (5m41s on the probe) is the critical path and runs in full. Recorded as a future task
+  (`.claude/future-tasks/docs-only-lint-typecheck-unit.md`): a docs-only mode for that job that runs only what reads
+  the docs.
