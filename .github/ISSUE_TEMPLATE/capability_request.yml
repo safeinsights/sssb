@@ -1,12 +1,12 @@
 name: Capability request
-description: Propose something the template should ship, or explain why it should not
+description: Propose something SSSB should ship, or explain why it should not
 labels: [capability]
 body:
     - type: markdown
       attributes:
           value: |
-              This template deliberately ships less than it could. Before proposing, read
-              **"What the template ships"** in `docs/development-approach.md` — it defines the tests a
+              SSSB deliberately ships less than it could. Before proposing, read
+              **"What SSSB ships"** in `docs/development-approach.md` — it defines the tests a
               capability must pass, and `docs/recipes/` is where things that fail them go instead.
 
               A well-argued "this should stay a recipe" is as useful as a well-argued "this should ship".
@@ -14,7 +14,7 @@ body:
       id: capability
       attributes:
           label: The capability
-          description: What an app built on this template would be able to do that it cannot today.
+          description: What an app built on SSSB would be able to do that it cannot today.
       validations:
           required: true
     - type: dropdown
@@ -22,11 +22,11 @@ body:
       attributes:
           label: Which test does it pass?
           description: |
-              The first two govern vendor code and are stated in "What the template ships" in
+              The first two govern vendor code and are stated in "What SSSB ships" in
               `docs/development-approach.md`. A vendor adapter must pass at least one.
           options:
               - Universality — will every instance built on this use it?
-              - New class — does it demonstrate integration mechanics the template does not already teach?
+              - New class — does it demonstrate integration mechanics SSSB does not already teach?
               - Framework invariant (UI) — does the component encode a rule, or is it generic presentation?
               - None of these — I think it belongs in docs/recipes/ instead
       validations:

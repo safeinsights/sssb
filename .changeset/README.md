@@ -22,9 +22,11 @@ CI's `changeset-required` job fails a PR that changes what ships to adopters and
 Not gated: `apps/showcase`, `packages/seed` (the showcase's world, `@app/seed`), tests, scripts, docs and the
 lockfile. Each app's deployment is in the app, so `apps/starter/infra/` is gated with the starter, while
 `apps/showcase/infra/` is not. The files `@sssb/create` writes once are written by `packages/create`, which the gate
-covers. **Known gaps:** two things adopters receive are not gated: the reusable workflow
-(`.github/workflows/app-checks.yml`), which a workspace runs at the commit it pins, and the root files the generator
-copies as they are (`ROOT_FILES` in `packages/create/src/template.js`). Write a changeset for a change to one anyway.
+covers. **Known gaps:** what adopters receive from outside those paths is not gated: the reusable workflow
+(`.github/workflows/app-checks.yml`), which a workspace runs at the commit it pins, the root files the generator
+copies as they are (`ROOT_FILES` in `packages/create/src/template.js`), and what it reads from this repository's root
+when it is packed (`TemplateMeta` in the same file: the root's dependency ranges and engines, `pnpm-workspace.yaml`'s
+build approvals and release age, the gitleaks version in `checks.yml`). Write a changeset for a change to one anyway.
 
 Exempt: a PR from `integration` into `main` in this repository (the release merge); Dependabot's PRs, unless one
 changes the kit's `peerDependencies` (a raised peer floor is breaking); a PR opened before the gate reached its base

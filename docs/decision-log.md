@@ -5610,3 +5610,14 @@ that section too.
   `repository` field, which would make a dependency-free module read manifests for one string.
 - **Ranges.** The package step shows `^<version>`, as `@sssb/create` writes them, not an exact version: `sssb doctor`
   checks that the packages resolve to one version, which a range over one release line does.
+- **Corrections, from the claim check** (the bullets above stay as written):
+    - "'The template' now names only the generator's template": true of the doctrine docs once `SECURITY.md`,
+      `.claude/commands/new-kit-port.md` and the issue templates were swept too, which the claim check found still
+      saying it (two cited the old heading). Five open future tasks keep "an app derived from this template" in their
+      "Found by" line, as provenance.
+    - "four other docs cite" the section: seven do (README, CONTRIBUTING, CLAUDE.md, docs/README and three recipes),
+      plus the two the sweep above reached.
+    - "names the two things adopters receive that the changeset gate does not see": there are more. The generator
+      also reads the root's dependency ranges and engines, `pnpm-workspace.yaml`'s build approvals and release age,
+      and the gitleaks version from this repository when it is packed (`TemplateMeta` in
+      `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.

@@ -44,10 +44,10 @@ cover about 80% of it for someone not using Claude Code.
 **What surprised**, most costly first.
 
 1. **The app guide's worked examples were the files the adoption guide says to delete.** `.claude/sssb-guide.md` cited
-   `1001_items.ts` and `api/items/route.ts` as the patterns to copy, the copy may not be edited, and "Replace it; do
-   not build beside it" removes both. Fixed here: the guide says where to read them once removed.
+   `1001_items.ts` and `api/items/route.ts` as the patterns to copy, the copy may not be edited, and the adoption
+   guide's "then remove Items the way 'To remove a slice' below describes" deletes both. Fixed here: the guide says where to read them once removed.
 2. **The example to copy breaks a rule.** The items route's GET returns an unbounded list, while the guide requires
-   keyset paging for a list that can grow; the only paged example is the showcase's. Follow-up 6.
+   keyset paging for a list that can grow; the only paged example is the showcase's. Follow-up 9.
 3. **The Simulator, the README's first selling point, is not on a generated app's `pnpm dev`.** The panel, its presets
    and tours are in the app's single-file static demo, but the server-side panel needs about 870 lines of glue and 33
    route files that only the showcase carries. The README and `docs/adopting.md` ("First boot") implied otherwise
@@ -91,7 +91,7 @@ JP's question: does it seem odd that a workspace with one app, the adopting app,
 
 **What ADR-0007 said, and why it is still the answer.** ADR-0007 opens by granting that for a single product "the
 Next app at the repo root" is the natural shape, and chose `apps/` for SSSB's own repository, whose two apps exist to
-falsify the framework. It did not decide an adopter's layout. What decides it now is that a generated workspace is a
+falsify the framework. It put an adopter's one app under `apps/` only as what the fork era's eject left behind. What decides it now is that a generated workspace is a
 workspace whatever its layout: the app, its seam (`apps/<app>/src/app-config`, a workspace package so that pnpm keeps
 it linked into the app's `@sssb/kit`) and its deployment (`apps/<app>/infra`, a CDK app with its own dependencies,
 moved into the app by ADR-0014's D8 so the root names no app) are three packages. So the choice is not "a workspace or
@@ -143,8 +143,10 @@ files; where pages would have something to do, the last column says so.
 | 8   | **The adopter's own settings, reported**: `sssb doctor` reports, when `gh` is signed in, whether `sssb / all-checks` is required and private vulnerability reporting is on, and whether the plugin the workspace enables is installed. Changing a setting stays the adopter's.              | Low to medium                                                         | Low                                                                     | nothing                                    | this review                                        |
 | 9   | **Small starter fixes**: keyset paging in the items route, so the example obeys the guide; the eslint 10 peer warning on first install, fixed or explained; an empty `AppSubjectFields` without a lint suppression (`.claude/future-tasks/empty-registration-friction.md`).                 | Low to medium                                                         | Low                                                                     | nothing                                    | this review                                        |
 
-Smaller things this review fixed instead of listing: "the template" meaning SSSB itself throughout the doctrine docs
-(the generator's template is `apps/starter`, so the phrase now names only that), the README's "It is not a library"
+Smaller things this review fixed instead of listing: "the template" meaning SSSB itself in the doctrine docs,
+`SECURITY.md`, a maintainer command and the issue templates (the generator's template is `apps/starter`, so the phrase
+now names only that there; a few open future tasks keep the fork era's "an app derived from this template" as
+provenance), the README's "It is not a library"
 heading, SSSB's cutover checklist calling itself the reader's, the changeset README's description of adoption as a
 fork, the generator's printed next steps leaving out `pnpm dev`, the generated README's missing links, the guide's
 worked examples, the generated app's template wording and tags, and a few contradictions in `docs/adopting.md` (a

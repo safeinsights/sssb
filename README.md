@@ -135,7 +135,7 @@ version and follow its release notes ([docs/adopting.md](docs/adopting.md), "Upg
 ## What this is not, and what to expect
 
 **It is a framework you start from, not a library you add.** Its code ships as versioned packages (`@sssb/kit` and
-three more), but you don't `pnpm add` it to an existing app: `pnpm create @sssb` writes a workspace that carries the
+its siblings), but you don't `pnpm add` it to an existing app: `pnpm create @sssb` writes a workspace that carries the
 verify gate, the lint fences, the CI workflow and the agent guide along with your app, and upgrades arrive as
 releases of the packages. [ADR-0014](docs/adr/0014-distribution-as-versioned-packages.md) explains the split between
 what the packages carry and what the generator writes once.
