@@ -163,7 +163,7 @@ is written.
 `APP_SLUG` (in the app's `apps/<app>/config/app.ts`) is the single source of MECHANICAL identity — session and
 viewpoint cookies, the fake-auth JWT issuer, the service-token audience, webhook header names, CDK
 stack/DB/budget/tags all derive from it. Other identifiers are deliberately NEUTRAL and never need
-renaming (`APP_DATA_DIR` and the `app-simulator-*` browser keys; the dev-server port slot is named for the slug, "Port slots" below). What is left is display copy, package naming, and the owner files.
+renaming (`APP_DATA_DIR` and the `app-simulator-*` browser keys). The dev-server port slot is named for the slug by the generator ("Port slots" below). What is left is display copy, package naming, and the owner files.
 
 The owner files route YOUR users — a security report, a code-owner review, a conduct complaint — so they must
 name you, never SSSB's maintainer. The generator writes them from its flags: `--repo` fills the advisory links in

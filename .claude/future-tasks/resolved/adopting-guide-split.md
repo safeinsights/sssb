@@ -31,19 +31,20 @@ in one of the two, and the doc-path gate and the create tests are green.
 
 ## Resolution (2026-11-19, `docs/adopting-guide-split`)
 
-- **`docs/adopting.md` is the guide**, 921 lines down to 155, in the order a newcomer acts: generate, first boot (with
+- **`docs/adopting.md` is the guide**, 921 lines down to 156, in the order a newcomer acts: generate, first boot (with
   the Simulator a generated app's `pnpm dev` now has), take out the starter's content (`sssb remove-items`), a first
   entity file by file with tenant, organization (team) and the staff team defined where the reader first needs them,
   deploy and cut over (`SssbApp`, `params.ports`, the scheduled tick, the checklist), and "Upgrading by release" (kept
   as the heading every generated README links, with `sssb guide` and `sssb pin`).
 - **`docs/adopting-reference.md` holds the rest** (836 lines), moved section by section, with the release-candidate
   and fork-era history deleted rather than moved, and the stale "the starter has no server-side Simulator" corrected.
-- **Every command the guide shows was run** against a workspace generated from this commit's packed packages (the
-  generator from the checkout, `--sssb` the tarballs): install, Playwright, `pnpm dev` (the app, the Simulator's API),
-  `pnpm tick`, `pnpm build:demo-static`, `pnpm sssb:doctor`, `pnpm synth`, `sssb guide`, `sssb pin`,
-  `sssb remove-items --drop-migrations` (dry run and real) and `pnpm verify` after it, green. `pnpm create @sssb`
-  itself reaches npm's last release, so the run used the checkout's generator; `claude plugin install` was not run
-  (it changes the machine's Claude Code state).
+- **The guide's commands were run** against a workspace generated from this commit's packed packages (the generator
+  from the checkout, `--sssb` the tarballs): install, Playwright, `pnpm verify` on the fresh workspace (by the newcomer
+  review), `pnpm dev` (the app, the Simulator's API), `pnpm tick`, `pnpm build:demo-static`, `pnpm sssb:doctor`,
+  `pnpm synth`, `sssb guide`, `sssb pin`, `sssb remove-items --drop-migrations` (dry run and real), `pnpm verify` after
+  it, `pnpm knip` and `pnpm lint:fix`, all green. Not run: `pnpm create @sssb` and `npm create @sssb` (they reach npm's
+  last release, which predates this branch's commands, so the checkout's generator stood in), and the three `claude
+plugin` commands (they change the machine's Claude Code state).
 - Citations of moved sections were repointed (`CLAUDE.md`, `CONTRIBUTING.md`, `docs/README.md`, the release-notes
   script, `sssb remove-items`' refusal, kit comments, `public-surface.test.ts`, two open future tasks), and ADR-0014 has
   an addendum naming where its cited sections now live.

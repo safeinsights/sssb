@@ -13,7 +13,7 @@ cd acme
 git init                                                    # before the install, whose `prepare` sets up git hooks
 pnpm install
 pnpm --filter './apps/*' exec playwright install chromium   # once, for the e2e suites
-pnpm verify                                                 # what CI runs, offline: no docker, no credentials
+pnpm verify                                                 # what CI runs but the secret scan, offline: no credentials
 ```
 
 With npm, the options follow a `--`: `npm create @sssb acme -- --name "Acme Research"`. Your app is under `apps/`, in a
@@ -23,8 +23,8 @@ create @sssb`".
 
 Keep a checkout of SSSB's repository beside your own. Its showcase app (`apps/showcase`) is a working example of every
 capability, and the one you will read most in your first week. To see every capability working first, run the demo tour
-there ([runbooks/demo.md](runbooks/demo.md)), or open the showcase's single-file demo that SSSB's README links from its
-latest release.
+there ([runbooks/demo.md](runbooks/demo.md)). From the first release after 0.2.0, SSSB's README also links the showcase
+as one HTML file you can open without cloning.
 
 ## 2. First boot
 
@@ -117,10 +117,11 @@ the rest.
 `apps/<app>/infra/app.ts` is a CDK app holding `SssbApp` (`@sssb/cdk`): the server on Lambda behind CloudFront, Aurora
 Postgres, the migrator, alarms and a budget. `pnpm synth` checks it offline. Before a first deploy:
 
-- **Fill in `apps/<app>/config/params.ts`.** Each `PLACEHOLDER_` there names the cutover row that fills it.
+- **Fill in `apps/<app>/config/params.ts`.** A `// cutover:` comment above each group of `PLACEHOLDER_` values names the
+  row that fills it.
 - **Replace the `UPDATE-ME` tags** in `apps/<app>/infra/lib/tags.ts` with your organisation's.
-- **Choose your optional ports** in its `ports`: `llm`, `email`, `inboundEmail` and `jobs`. `none` leaves a port out, so
-  real mode needs none of its settings. Never fill an unused port's settings with placeholders.
+- **Choose your optional ports** in `params.ts`'s `ports`: `llm`, `email`, `inboundEmail` and `jobs`. `none` leaves a
+  port out, so real mode needs none of its settings. Never fill an unused port's settings with placeholders.
 - **Turn on the scheduled tick.** Recurring work (digests, reminders) and webhook retries only run when something calls
   your app's cron route. Pass `scheduledTick: { webhookSecret }` to `SssbApp`, where `webhookSecret` is the Secrets
   Manager secret (an `ISecret`) holding the same plain-string value as your server's `WEBHOOK_SECRET`, and the route is

@@ -6518,7 +6518,7 @@ The adoption review's follow-up 1 (`docs/adoption-review-2026-11.md`, ranked ite
 921 lines, of which a newcomer needs about 150. JP's standing rule for these sessions: decide, and record the rejected
 alternative.
 
-- **`docs/adopting.md` is the guide (155 lines), `docs/adopting-reference.md` the reference.** The guide keeps the
+- **`docs/adopting.md` is the guide (156 lines), `docs/adopting-reference.md` the reference.** The guide keeps the
   file name every link already uses, and the heading "Upgrading by release", which every generated README links by
   anchor. Rejected: a new name for the guide (`docs/start.md`) with `adopting.md` as the reference, which breaks every
   generated workspace's README link and a test that holds it.
@@ -6531,11 +6531,12 @@ alternative.
   fork-era switch, the story behind the required `appName` prop, the history of SSSB's test fixture, and "the starter
   has no server-side Simulator" (false since follow-up 6). Rejected: a history section in the reference, which the
   decision log and ADRs already are.
-- **Every command the guide shows was run** against a workspace generated from this commit's packed packages, with the
+- **The guide's commands were run** against a workspace generated from this commit's packed packages, with the
   checkout's generator (`pnpm create @sssb` reaches npm's last release, which predates `sssb remove-items` and the rest):
-  `pnpm dev` on a free port of its own and stopped after its checks, the Simulator's API, `pnpm tick`, the static demo,
-  doctor, synth, `sssb guide`, `sssb pin`, `sssb remove-items` and `pnpm verify` after it. `claude plugin install` was
-  not run: it changes the machine's Claude Code state, and doctor prints the same command.
+  `pnpm verify` on the fresh workspace, `pnpm dev` on a free port of its own and stopped after its checks, the
+  Simulator's API, `pnpm tick`, the static demo, doctor, synth, `sssb guide`, `sssb pin`, `sssb remove-items`, `pnpm
+verify` after it, `pnpm knip` and `pnpm lint:fix`. Not run: `pnpm create @sssb` and `npm create @sssb` (for that
+  reason), and the three `claude plugin` commands, which change the machine's Claude Code state.
 - **Citations of moved sections are repointed in place** (code comments, `CLAUDE.md`, `CONTRIBUTING.md`, the
   release-notes script, `sssb remove-items`' refusal, open future tasks), and ADR-0014 gets an addendum naming where
   its cited sections live; dated records and ADR bodies are left as they were.

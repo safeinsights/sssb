@@ -1309,8 +1309,8 @@ name, on purpose") cannot happen. `starter` keeps working for every workspace ge
 
 Adoption follow-up 1 split the adopter guide in two. `docs/adopting.md` is now a short guide in the order a newcomer
 acts, and keeps "Upgrading by release" (the heading every generated README links). Everything else is in
-`docs/adopting-reference.md`, so the sections this ADR's body and earlier addenda cite are there: "When a release
-changes what your seam must say" (part 10), "Cutover" (the Postgres floor), "`pnpm create @sssb`" and its
-subsections, and each upgrade step's reason ("Upgrading, step by step"). ADR-0004's citation of "Cutover" (the
-Postgres floor) is to the reference too. `docs/decision-log.md` (2026-11-19, "The
+`docs/adopting-reference.md`, among it the section part 10 cites (now "When a release changes what your seam must
+say"), the internal-module count ADR-0002 and ADR-0012 cite ("What you may import from SSSB"), and "Cutover", which
+ADR-0004 cites for the Postgres floor. The sections the P15 addendum ("Before SSSB is on npm") and the 2026-11-19
+port-slot addendum ("The port key keeps its old name") cite were deleted before this split. `docs/decision-log.md` (2026-11-19, "The
 adoption guide is split in two") has the choices and what was rejected.
