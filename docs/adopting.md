@@ -364,7 +364,7 @@ is protected, not that your proofs exercise two tenants — so it is yours to ke
 
 **The Items slice is a worked example, so take what it teaches before you delete it.**
 `apps/<app>/src/app-config/db/migrations/1001_items.ts` is a worked RLS migration — in a generated workspace, the only one there — and its
-section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it; `1002_items_keyset_index.ts`, `src/domain/db/items.ts` and the route show how a list pages. Build your first real slice
+section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it; `1002_items_keyset_index.ts`, `apps/<app>/src/domain/db/items.ts` and the route show how a list pages. Build your first real slice
 from them (`/sssb:new-slice`), then remove Items the way "To remove a slice" below describes. Give your first table
 the next number, `1003_<name>` (`1002_items_keyset_index` is the paging index for Items): renaming `1001_items` instead means wiping `apps/<app>/.data` first (the app guide). There is
 no flag that does this for you yet; `.claude/future-tasks/create-blank-option.md` carries the design.
