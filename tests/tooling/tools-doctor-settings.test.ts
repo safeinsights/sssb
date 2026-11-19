@@ -234,6 +234,28 @@ describe('requiredCheckReport: is `sssb / all-checks` required on the default br
         expect(requiredCheckReport(REPO, 'main', unprotected.gh).title).toMatch(/: it is not \(reported/)
     })
 
+    it("reads what a non-admin account is really answered on SSSB's own repository (captured, 2026-11-19)", () => {
+        // Branch protection's own endpoint: 404 "Not Found". The branch: protected (by a ruleset), classic protection off.
+        const answers = (rules: unknown) => ({
+            [RULES]: yes(rules),
+            [PROTECTION]: no('not-found', 'Not Found', 404),
+            [`repos/${REPO}/branches/main`]: yes({
+                protected: true,
+                protection: {
+                    enabled: false,
+                    required_status_checks: { enforcement_level: 'off', contexts: [], checks: [] },
+                },
+            }),
+        })
+        const ruleRequires = stubGh(answers([...ruleset(REQUIRED_CHECK, 'repo-checks')]))
+        expect(requiredCheckReport(REPO, 'main', ruleRequires.gh).status).toBe('ok')
+        const nothing = stubGh(answers([{ type: 'deletion' }]))
+        expect(requiredCheckReport(REPO, 'main', nothing.gh)).toMatchObject({
+            status: 'report',
+            lines: ['nothing is a required check on main'],
+        })
+    })
+
     it('does not call a protected branch "not required" when its answer carries no required checks, or the rules are no list', () => {
         const forbidden = no('forbidden', 'GitHub refused (HTTP 403)', 403)
         const branch = `repos/${REPO}/branches/main`

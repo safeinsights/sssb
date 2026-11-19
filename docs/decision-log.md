@@ -5667,8 +5667,9 @@ without asking, as JP's standing rule for these sessions says.
   `GH_HOST` pinned to github.com, eight seconds a call, and a test fails if any call is not that. Rejected: failing on
   "not required" (it would be the first doctor failure that no commit of the workspace can fix).
 - **Skipped when `CI` is set** (anything but empty, `0` or `false`), with one line saying so. In CI the token is the
-  job's `GITHUB_TOKEN`, which cannot read rulesets, branch protection or private vulnerability reporting, so every line
-  would read "not checked"; CI has no Claude Code, so the plugin line would always be a false alarm; and the checks
+  job's `GITHUB_TOKEN`, which cannot be relied on to read these settings (observed with a non-admin account: the
+  organization's and the repository's Actions policies answer 403), so lines would read "not checked"; a CI runner
+  does not normally have Claude Code, so the plugin line would be a false alarm; and the checks
   would add network calls to the gate that runs doctor on every PR (`sssb ci` and `adoption-probe` both run it).
   Rejected: running them with `GITHUB_TOKEN` (noise, not information); a flag to force them in CI (nothing needs it:
   `gh` on a laptop is where the answer is wanted).
@@ -5677,12 +5678,13 @@ without asking, as JP's standing rule for these sessions says.
   signed-in `gh` and a network call just to learn the name, which git already holds); a field in
   `package.json` (a second copy of what git knows); a `--repo` flag (one more thing to remember).
 - **"Required" looks in both places GitHub keeps it**: the rules that apply to the default branch
-  (`rules/branches/<branch>`, readable by anyone who can read the repository, an organization's rulesets included) and
-  classic branch protection (`protection/required_status_checks`, admin-only), matching the context
+  (`rules/branches/<branch>`, an organization's rulesets included; read by a non-admin account with push access on
+  SSSB's own repository, where it lists `sssb / all-checks`) and classic branch protection
+  (`protection/required_status_checks`, which answered that account a bare 404 "Not Found"), matching the context
   `sssb / all-checks` exactly (the reusable workflow is called by a job named `sssb`). "Not required" is said only when
-  the rulesets were read and branch protection was read or answered "Branch not protected"; a protection the account
-  may not read says "not confirmed" and names why, because "not required" would be a claim doctor cannot back.
-  Rejected: rulesets only (misses every repository on classic protection, the default for older ones); calling a
+  the rulesets were read and branch protection was read or answered that it requires nothing (an admin's 404 "Branch not
+  protected"); a protection the account may not read says "not confirmed" and names why, because "not required" would be a claim doctor cannot back.
+  Rejected: rulesets only (misses every repository on classic protection); calling a
   failure to read "not required" (the most common wrong report a non-admin would see).
 - **Private vulnerability reporting** is `GET repos/<r>/private-vulnerability-reporting`: `enabled: false` is `report`,
   a failure is "not checked".
@@ -5702,8 +5704,8 @@ without asking, as JP's standing rule for these sessions says.
   `<CLAUDE_CONFIG_DIR or ~/.claude>/plugins/installed_plugins.json` (`plugins["<plugin>@<marketplace>"]`) that is
   user scope, or project or local scope with a `projectPath` that is this workspace. A plugin installed only for
   another clone says so and names the path. **Assumption not verified**: this machine's record has only a user-scope
-  install, so the `projectPath` field of a project-scope entry is read from Claude Code's documented format, not from
-  a record seen here; if it differs, the line reads "not installed" for a project-scope install, which is a false
+  install, so the `projectPath` field of a project-scope entry is assumed, from memory of Claude Code's format and not
+  from a record or its documentation; if it differs, the line reads "not installed" for a project-scope install, which is a false
   report, never a failure, and the fix is one field name. Rejected: `claude plugin list` (starts Claude Code, slow,
   and its output is not a stable format); counting a user-scope install as not enough (it makes the plugin available
   everywhere, which is what the workspace wants).
@@ -5715,10 +5717,11 @@ without asking, as JP's standing rule for these sessions says.
   turns an unreadable file or an answer shaped unlike GitHub's documents into one "not checked" line, so a root-owned
   install record cannot stop a run. The rules are read 100 to a page, because the `required_status_checks` rule can be
   on page two of the default thirty. A 404 "Required status checks not enabled" counts as "branch protection requires
-  nothing", like "Branch not protected". When branch protection's own endpoint is admin-only, the branch
-  (`repos/<r>/branches/<branch>`, readable by anyone who can read the repository) is the fallback for
-  `protected` and `protection.required_status_checks`: its shape is from GitHub's documentation, not seen here, and a
-  shape that differs leaves "not confirmed". The organization's own reusable workflows are never held to the Actions
+  nothing", like "Branch not protected". When branch protection's own endpoint does not answer a non-admin, the branch
+  (`repos/<r>/branches/<branch>`, read by the same non-admin account) is the fallback for `protected` and
+  `protection.required_status_checks`: seen on SSSB's own repository as `protected: true` with
+  `protection: { enabled: false, required_status_checks: { enforcement_level: 'off', contexts: [], checks: [] } }`
+  (the branch is protected by a ruleset), and a shape that differs leaves "not confirmed". The organization's own reusable workflows are never held to the Actions
   policy (`local_only` and `selected` both allow them), only a call into another owner is; an enterprise-level
   `local_only` is not told apart from the organization's. The organization's `enabled_repositories: none` is "Actions
   off". An older install record with one entry per plugin, not a list, reads as a user-level install.

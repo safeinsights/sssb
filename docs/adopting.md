@@ -477,7 +477,7 @@ branch (a ruleset or branch protection), whether private vulnerability reporting
 in an organization, whether its Actions policy lets it call SSSB's reusable workflow; and whether the Claude Code
 plugin your `.claude/settings.json` enables is installed on this machine. These are read-only GitHub API requests
 through `gh`; a missing or signed-out `gh`, no network, or a setting your account may not read gives "not checked"
-and the reason. None of it runs when `CI` is set (a CI token cannot read these settings, and CI has no Claude Code).
+and the reason. None of it runs when `CI` is set (a CI token cannot be relied on to read these settings, and a CI runner does not normally have Claude Code).
 Inside SSSB's own repository it says "in-repo mode" and checks each app's
 seam aliases instead of links. **`sssb check-e2e`** asks your own Playwright which files your configs load
 (`playwright test --list`, which starts no server and needs no browser), bundles each, and fails, naming spec and

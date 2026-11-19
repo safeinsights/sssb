@@ -8,9 +8,10 @@
 //   - GitHub is read with `gh api --method GET <path>` and nothing else (`ghGet`), with a short timeout, stdin closed
 //     and prompts off. A `gh` that is missing, signed out, offline, or refused for a setting yields "not checked" with
 //     the reason, and doctor moves on.
-//   - Neither is looked at when `CI` is set: CI's token is the job's `GITHUB_TOKEN`, which cannot read these settings
-//     (it would only ever answer "not checked"), CI has no Claude Code, and the check would add network calls to the
-//     gate that runs doctor on every PR. The line says so, so a log is not silent about it.
+//   - Neither is looked at when `CI` is set: CI's token is the job's `GITHUB_TOKEN`, which cannot be relied on to read
+//     these settings (the Actions policies, for one, answer 403 to a caller without administration), a CI runner
+//     does not normally have Claude Code, and the check would add network calls to the gate that runs doctor on every
+//     PR. The line says so, so a log is not silent about it.
 //
 // The functions here judge what they are handed; `settingsReports` reads the world and hands it over.
 import { spawnSync } from 'node:child_process'
@@ -30,7 +31,7 @@ export const REQUIRED_CHECK = 'sssb / all-checks'
  * @typedef {(apiPath: string) => GhSuccess | GhFailure} Gh one read-only GET of GitHub's API
  */
 
-/** Seconds `gh` has to answer one request: doctor stays fast, and a hung network is "not checked". */
+/** Milliseconds `gh` has to answer one request: doctor stays fast, and a hung network is "not checked". */
 const GH_TIMEOUT_MS = 8000
 
 /**
@@ -182,10 +183,14 @@ export function requiredContexts(rules, protection) {
 }
 
 /**
- * IS `sssb / all-checks` REQUIRED on the default branch, by a ruleset or by branch protection. Rulesets are readable by
- * anyone who can read the repository, branch protection only by an admin: the answer is "not required" only when the
- * rulesets were read and branch protection answered "not protected" or was read too; a protection the account may not
- * read leaves it unconfirmed, and the line says so rather than claiming either way.
+ * IS `sssb / all-checks` REQUIRED on the default branch, by a ruleset or by branch protection. Observed with a
+ * non-admin account (push access) on SSSB's own repository: the rules for the branch are readable and list the check
+ * (`rules/branches/{branch}`, https://docs.github.com/rest/repos/rules#get-rules-for-a-branch), the branch itself is
+ * readable and says `protected` and what `protection.required_status_checks` holds (`branches/{branch}`), and branch
+ * protection's own endpoint answers 404 "Not Found" (https://docs.github.com/rest/branches/branch-protection#get-status-checks-protection),
+ * which for that account does not say whether the branch is protected. So "not required" is said only when the
+ * rulesets were read and branch protection was read too (its own endpoint, or the branch's `protection`), or answered
+ * that nothing is required; otherwise the line is "not confirmed" and says what could not be read.
  * @param {string} repository
  * @param {string} branch
  * @param {Gh} gh
@@ -200,8 +205,8 @@ export function requiredCheckReport(repository, branch, gh) {
     const read = requiredContexts(rules, protection)
     const { fromRules } = read
     let { fromProtection } = read
-    // Two 404s say nothing is required by branch protection: the branch is not protected, or it is protected without
-    // required status checks.
+    // An admin's 404 can say nothing is required by branch protection ("Branch not protected", or "Required status checks
+    // not enabled": GitHub's messages, not seen from the non-admin account above, whose 404 is a bare "Not Found").
     const unprotected =
         !protection.ok &&
         protection.kind === 'not-found' &&
@@ -307,7 +312,7 @@ function actionsPolicy(scope, calls, gh) {
     if (foreign.length === 0)
         return {
             allows: true,
-            line: `${name} Actions policy: ${allowed}, and ${calls.join(', ')} is the organization's own`,
+            line: `${name} Actions policy: ${allowed}, and ${calls.join(', ')} ${calls.length === 1 ? 'is' : 'are'} the organization's own`,
         }
     if (allowed === 'local_only')
         return {
@@ -415,9 +420,10 @@ const real = (dir) => {
  * THE PLUGIN THE WORKSPACE ENABLES IS INSTALLED. Enabling is the workspace's (`enabledPlugins` in its shared
  * `.claude/settings.json`) and installing is the person's, once per clone (`claude plugin install <plugin> --scope
  * project`), so a workspace can enable a plugin nobody has. Claude Code records each install in
- * `<config dir>/plugins/installed_plugins.json`, under `plugins["<plugin>@<marketplace>"]`, with the scope and, for a
- * project or local one, the project's path: installed for this workspace when it is a user-scope install, or one for
- * this very directory.
+ * `<config dir>/plugins/installed_plugins.json`, under `plugins["<plugin>@<marketplace>"]`, a list of entries with a
+ * `scope` (a user-scope entry is the one shape seen on a real machine, version 2 of the record). That a project or
+ * local entry names its project in `projectPath` is ASSUMED, not seen: installed for this workspace when an entry is a
+ * user-scope (or managed) one, or one whose `projectPath` is this very directory.
  * @param {{
  *   settings: { file: string, text: string } | null,
  *   installed: { file: string, text: string } | null,
@@ -524,8 +530,8 @@ export function settingsReports({ root, env = process.env, gh = ghGet(env), work
             {
                 status: 'report',
                 title:
-                    `${title}: not checked: CI is set (a CI token cannot read an adopter's repository settings and CI has no ` +
-                    'Claude Code; run `sssb doctor` on your own machine)',
+                    `${title}: not checked: CI is set (a CI token cannot be relied on to read these settings and a ` +
+                    'CI runner does not normally have Claude Code; run `sssb doctor` on your own machine)',
             },
         ]
     /** @type {Report[]} */
