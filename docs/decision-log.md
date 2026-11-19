@@ -5725,3 +5725,13 @@ without asking, as JP's standing rule for these sessions says.
   **Rejected: deriving the required check's name from the workflow's calling job** (`checks / all-checks` for a job
   named `checks`): the generator writes the job `sssb`, the guide and README name `sssb / all-checks`, and an adopter who
   renamed it chose a name SSSB cannot vouch for; the report says what it looked for.
+- **From the second review round** (no finding above LOW). A protected branch's answer counts as read only when it
+  carries `protection.required_status_checks`, and an `enforcement_level` of `off` requires nothing; otherwise the line
+  is "not confirmed", never "it is not". A rulesets answer that is not a list is unread. An organization with Actions
+  enabled for selected repositories, or a `selected` list with a blocking `!` pattern, is not judged: the line says it
+  was not read or evaluated. A `managed`-scope install counts for every workspace. **Accepted, not changed:** a local
+  `pnpm verify` (where `CI` is not set) now makes up to nine `gh` calls against this repository's own `origin`, and a
+  doctor e2e that does not set `CI` reads the developer's Claude config folder: neither can fail a run, and a time
+  budget or an in-repo skip would be a second mechanism for a cost of about a second. `sha_pinning_required` is not
+  modelled. `githubRepositoryOf` (shared with the pin report) keeps its unanchored host match: tightening it changes
+  the pin report too, and a look-alike origin only changes which repository doctor reads, by GET.

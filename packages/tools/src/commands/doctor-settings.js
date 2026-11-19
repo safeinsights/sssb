@@ -211,11 +211,15 @@ export function requiredCheckReport(repository, branch, gh) {
     let protectionRead = protection.ok || unprotected
     if (!protectionRead) {
         const branchInfo = gh(`repos/${repository}/branches/${encoded}`)
-        if (branchInfo.ok && typeof branchInfo.json?.protected === 'boolean') {
+        const info = branchInfo.ok ? branchInfo.json : null
+        if (info?.protected === false) protectionRead = true
+        // A protected branch counts as read only when the answer carries its required checks: without them it says
+        // nothing about what is required, and "not required" would be a guess.
+        else if (info?.protected === true && typeof info.protection?.required_status_checks === 'object') {
+            const checks = info.protection.required_status_checks
             protectionRead = true
-            if (branchInfo.json.protected === true) {
-                const checks = branchInfo.json?.protection?.required_status_checks
-                const contexts = [...listOf(checks?.contexts), ...listOf(checks?.checks).map((check) => check?.context)]
+            if (checks !== null && checks.enforcement_level !== 'off') {
+                const contexts = [...listOf(checks.contexts), ...listOf(checks.checks).map((check) => check?.context)]
                 fromProtection = [...new Set(contexts.filter((c) => typeof c === 'string'))]
             }
         }
@@ -225,7 +229,7 @@ export function requiredCheckReport(repository, branch, gh) {
         return { status: 'ok', title: `${what} (branch protection requires it)` }
 
     const required = [...new Set([...fromRules, ...fromProtection])]
-    if (rules.ok && protectionRead)
+    if (rules.ok && Array.isArray(rules.json) && protectionRead)
         return {
             status: 'report',
             title:
@@ -240,6 +244,7 @@ export function requiredCheckReport(repository, branch, gh) {
     /** @type {string[]} */
     const unread = []
     if (!rules.ok) unread.push(`rulesets: ${rules.message}`)
+    else if (!Array.isArray(rules.json)) unread.push('rulesets: GitHub answered with something that is not a list')
     if (!protectionRead && !protection.ok) unread.push(`branch protection: ${protection.message}`)
     return {
         status: 'report',
@@ -287,6 +292,12 @@ function actionsPolicy(scope, calls, gh) {
     if (enabled === false) return { allows: false, line: `${name} Actions policy: Actions are not enabled` }
     if (enabledRepositories === 'none')
         return { allows: false, line: `${name} Actions policy: Actions are enabled for no repository` }
+    // Which repositories an organization enabled is a list this does not read: say so rather than say "yes".
+    if (enabledRepositories === 'selected')
+        return {
+            allows: null,
+            line: `${name} Actions policy: Actions are enabled for selected repositories only; whether this one is among them was not read`,
+        }
     if (allowed === 'all' || typeof allowed !== 'string')
         return { allows: true, line: `${name} Actions policy: all actions and workflows allowed` }
     // The organization's own actions and reusable workflows are always allowed: only a call into another owner is held
@@ -311,6 +322,12 @@ function actionsPolicy(scope, calls, gh) {
         }
     /** @type {string[]} */
     const patterns = Array.isArray(selected.json?.patterns_allowed) ? selected.json.patterns_allowed : []
+    // A pattern that blocks (`!owner/*`) overrides the ones that allow, and the matching here only knows the allowing ones.
+    if (patterns.some((pattern) => pattern.startsWith('!')))
+        return {
+            allows: null,
+            line: `${name} Actions policy: selected actions only, with a blocking pattern (!…) that was not evaluated`,
+        }
     const blocked = foreign.filter((call) => !patterns.some((pattern) => globMatches(pattern, call)))
     return blocked.length === 0
         ? {
@@ -457,10 +474,14 @@ export function pluginReport({ settings, installed, root }) {
               : []
         const mine = entries.filter(
             (/** @type {any} */ entry) =>
-                entry?.scope === 'user' || (typeof entry?.projectPath === 'string' && real(entry.projectPath) === here),
+                entry?.scope === 'user' ||
+                entry?.scope === 'managed' ||
+                (typeof entry?.projectPath === 'string' && real(entry.projectPath) === here),
         )
         if (mine.length > 0) {
-            lines.push(`${key}: installed${mine[0].version ? ` (${mine[0].version})` : ''}, scope ${mine[0].scope}`)
+            lines.push(
+                `${key}: installed${typeof mine[0].version === 'string' && mine[0].version ? ` (${mine[0].version})` : ''}, scope ${mine[0].scope}`,
+            )
             continue
         }
         missing.push(key)

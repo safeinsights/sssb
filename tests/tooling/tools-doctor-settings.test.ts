@@ -234,6 +234,26 @@ describe('requiredCheckReport: is `sssb / all-checks` required on the default br
         expect(requiredCheckReport(REPO, 'main', unprotected.gh).title).toMatch(/: it is not \(reported/)
     })
 
+    it('does not call a protected branch "not required" when its answer carries no required checks, or the rules are no list', () => {
+        const forbidden = no('forbidden', 'GitHub refused (HTTP 403)', 403)
+        const branch = `repos/${REPO}/branches/main`
+        const bare = stubGh({ [RULES]: yes([]), [PROTECTION]: forbidden, [branch]: yes({ protected: true }) })
+        expect(requiredCheckReport(REPO, 'main', bare.gh).title).toMatch(/: not confirmed:/)
+        const off = stubGh({
+            [RULES]: yes([]),
+            [PROTECTION]: forbidden,
+            [branch]: yes({
+                protected: true,
+                protection: { required_status_checks: { enforcement_level: 'off', contexts: [REQUIRED_CHECK] } },
+            }),
+        })
+        expect(requiredCheckReport(REPO, 'main', off.gh).title).toMatch(/: it is not \(reported/)
+        const odd = stubGh({ [RULES]: yes({ message: 'proxy' }), [PROTECTION]: NOT_PROTECTED })
+        const report = requiredCheckReport(REPO, 'main', odd.gh)
+        expect(report.title).toMatch(/: not confirmed:/)
+        expect(report.lines).toEqual(['rulesets: GitHub answered with something that is not a list'])
+    })
+
     it('survives a body shaped unlike GitHub documents', () => {
         const { gh } = stubGh({
             [RULES]: yes([{ type: 'required_status_checks', parameters: { required_status_checks: 'nope' } }]),
@@ -316,6 +336,26 @@ describe('reusableWorkflowReport: can a private organization repository call SSS
         expect(mixed.status).toBe('report')
         expect(mixed.lines?.[0]).toBe(
             `the organization's Actions policy: only the organization's own actions and reusable workflows, and ${CALL} is not`,
+        )
+    })
+
+    it('does not say "yes" for what it did not read: selected repositories, or a blocking pattern', () => {
+        const selectedRepos = stubGh({
+            [ORG]: yes({ enabled_repositories: 'selected', allowed_actions: 'all' }),
+            [REPOSITORY]: no('forbidden', 'GitHub refused (HTTP 403)', 403),
+        })
+        const first = reusableWorkflowReport(REPO, [CALL], selectedRepos.gh)
+        expect(first.status).toBe('report')
+        expect(first.title).toMatch(/: not checked: neither policy could be read$/)
+        const blocking = stubGh({
+            [ORG]: yes({ enabled_repositories: 'all', allowed_actions: 'selected' }),
+            [`${ORG}/selected-actions`]: yes({ patterns_allowed: ['*', '!safeinsights/*'] }),
+            [REPOSITORY]: no('forbidden', 'GitHub refused (HTTP 403)', 403),
+        })
+        const second = reusableWorkflowReport(REPO, [CALL], blocking.gh)
+        expect(second.status).toBe('report')
+        expect(second.lines?.[0]).toBe(
+            "the organization's Actions policy: selected actions only, with a blocking pattern (!…) that was not evaluated",
         )
     })
 
