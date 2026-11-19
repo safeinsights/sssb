@@ -696,7 +696,8 @@ first value, which is what real mode required before the switches existed.
 - **`storage: 'none'` needs no S3 bucket.** Real mode then requires neither `STORAGE_BUCKET` nor, unless the Data API
   transport or the CodeBuild runner needs it, `AWS_REGION`, and `SssbApp` builds no storage bucket and grants the server
   no S3 access. SSSB itself stores nothing; your app's uploads, attachments and job artifacts do, and each call
-  through the absent port throws, as does a job handler's (the job is recorded `failed` with that message). Switching
+  through the absent port throws, a job handler's too (on `jobs: 'in-process'` the job is recorded `failed` with that
+  message). Switching
   a deployed stack from `s3` to `none` takes the bucket out of the stack: a `production: true` deployment retains it,
   with its objects, outside the stack; any other deletes it and everything in it, as deleting the stack would. Copy
   out what you need first. Switching back builds a new, empty bucket under the same logical id, never the old one.

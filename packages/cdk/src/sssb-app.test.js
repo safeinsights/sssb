@@ -728,7 +728,7 @@ describe('the storage port', () => {
             },
         )
 
-        it('storage none builds no bucket, sets no STORAGE_BUCKET, grants no S3, and keeps every other stateful id', () => {
+        it('storage none builds no bucket, sets no STORAGE_BUCKET, grants the server no S3, and keeps every other stateful id', () => {
             const { all } = synthesize({
                 appDir,
                 slug,
