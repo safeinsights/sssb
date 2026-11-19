@@ -129,16 +129,30 @@ export async function run(args) {
         return 0
     }
 
-    for (const [file, action] of actions) {
-        const full = path.join(appDir, file)
-        if (action === 'delete') {
-            rmSync(full)
-            pruneEmptyDirectories(path.dirname(full), appDir)
-        } else {
-            mkdirSync(path.dirname(full), { recursive: true })
-            writeFileSync(full, /** @type {string} */ (state.get(file)))
+    let written = 0
+    try {
+        for (const [file, action] of actions) {
+            const full = path.join(appDir, file)
+            if (action === 'delete') {
+                rmSync(full)
+                pruneEmptyDirectories(path.dirname(full), appDir)
+            } else {
+                mkdirSync(path.dirname(full), { recursive: true })
+                writeFileSync(full, /** @type {string} */ (state.get(file)))
+            }
+            written++
         }
+    } catch (error) {
+        // Every refusal is decided before the first write; this is the disk failing part-way, which no plan can rule out.
+        throw new UsageError(
+            `sssb remove-items: the disk failed after ${written} of ${actions.size} files (${/** @type {Error} */ (error).message}). The app is half changed: \`git status\` shows which, and \`git restore .\` puts it back before you run this again.`,
+        )
     }
+    // Next's dev server writes a type validator that names every route file (`.next/dev/types/validator.ts`), and the app's
+    // tsconfig includes it. `next typegen`, which `pnpm typecheck` runs, rewrites only `.next/types`, so after the route
+    // is gone a leftover validator fails typecheck on a module that no longer exists. It is generated, ignored by git, and
+    // written again by the next `pnpm dev`.
+    rmSync(path.join(appDir, '.next/dev/types'), { recursive: true, force: true })
     console.log(
         [
             `sssb remove-items: took the Items slice out of ${where}.`,

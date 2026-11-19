@@ -1765,16 +1765,47 @@ function generatedUntouched() {
 function removeItemsGenerated() {
     const app = path.join('apps', GEN_APP)
     const command = ['exec', 'sssb', 'remove-items', '--app', app]
+    const root = path.join(GEN, app)
+    const dirs = ['src', 'messages', 'tests', 'config'].map((dir) => path.join(root, dir))
+    /** What a dev server leaves behind: a type validator naming the route the command is about to delete. */
+    const staleValidator = path.join(root, '.next/dev/types/validator.ts')
+    const plantStaleValidator = () => {
+        mkdirSync(path.dirname(staleValidator), { recursive: true })
+        writeFileSync(staleValidator, "export type Stale = typeof import('../../../src/app/api/items/route.js')\n")
+    }
+    const itemsLeft = () =>
+        dirs
+            .flatMap((dir) => filesUnder(dir))
+            .filter((file) => /\bitems?\b/i.test(readFileSync(file, 'utf8')))
+            .map((file) => path.relative(root, file))
+
     const dry = run('pnpm', [...command, '--dry-run', '--drop-migrations'], { cwd: GEN, capture: true })
     if (!dry.stdout.includes('delete src/components/items-card.tsx'))
         fail(`sssb remove-items --dry-run does not say it would delete the Items card:\n${dry.stdout}${dry.stderr}`)
     generatedUntouched()
+
+    // The default mode first, which keeps the database half: no other gate runs what it leaves. Typecheck and lint over
+    // it, then the app goes back to what the generator wrote, for the whole slice.
+    const written = new Map(dirs.flatMap((dir) => filesUnder(dir)).map((file) => [file, readFileSync(file)]))
+    plantStaleValidator()
+    run('pnpm', command, { cwd: GEN })
+    if (existsSync(staleValidator))
+        fail("sssb remove-items left Next's dev type validator, which names the deleted route")
+    run('pnpm', ['run', 'typecheck'], { cwd: GEN, env: generatedEnv() })
+    run('pnpm', ['run', 'lint'], { cwd: GEN, env: generatedEnv() })
+    for (const file of dirs.flatMap((dir) => filesUnder(dir))) if (!written.has(file)) rmSync(file)
+    for (const [file, content] of written) {
+        mkdirSync(path.dirname(file), { recursive: true })
+        writeFileSync(file, content)
+    }
+    generatedUntouched()
+    console.log('the default mode (the database half kept) typechecks and lints; the app is back as generated')
+
+    plantStaleValidator()
     run('pnpm', [...command, '--drop-migrations'], { cwd: GEN })
-    const root = path.join(GEN, app)
-    const left = ['src', 'messages', 'tests', 'config']
-        .flatMap((dir) => filesUnder(path.join(root, dir)))
-        .filter((file) => /\bitems?\b/i.test(readFileSync(file, 'utf8')))
-        .map((file) => path.relative(root, file))
+    if (existsSync(staleValidator))
+        fail("sssb remove-items left Next's dev type validator, which names the deleted route")
+    const left = itemsLeft()
     if (left.length > 0) fail(`sssb remove-items left the Items slice in ${left.join(', ')}`)
     // What the command tells an adopter to do after --drop-migrations: the dev database the earlier gates ran
     // recorded 1001_items, and the migrator refuses a recorded migration that is gone from the code.

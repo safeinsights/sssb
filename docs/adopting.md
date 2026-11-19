@@ -363,14 +363,15 @@ seed. Drop the second tenant's sign-in and its cross-tenant assertions from the 
 and keep the cross-tenant proofs. Nothing gates that last part — the RLS coverage check proves every table
 is protected, not that your proofs exercise two tenants — so it is yours to keep honest.
 
-**The Items slice is a worked example, so take what it teaches before you delete it.**
+**The Items slice is a worked example, so read what it teaches before you delete it, and delete it before you register your own.**
 `apps/<app>/src/app-config/db/migrations/1001_items.ts` is a worked RLS migration — in a generated workspace, the only one there — and its
-section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it; `1002_items_keyset_index.ts`, `apps/<app>/src/domain/db/items.ts` and the route show how a list pages. Build your first real slice
-from them (`/sssb:new-slice`), then take Items out in one step: `pnpm exec sssb remove-items --drop-migrations`
-("To remove the Items slice" below). A database that never ran `1001_items` (a workspace you just generated) takes that flag, and your
-first table is then `1001_<name>`, after you delete `apps/<app>/.data`. Once a database has run the migrations, run it without
-the flag, which leaves them in place, and give your first table the next number, `1003_<name>`: the migrator refuses a
-migration it recorded that is gone from the code.
+section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it; `1002_items_keyset_index.ts`, `apps/<app>/src/domain/db/items.ts` and the route show how a list pages. Read them,
+then take Items out in one step: `pnpm exec sssb remove-items --app apps/<app> --drop-migrations` ("To remove the Items slice" below), and build
+your first real slice (`/sssb:new-slice`, which cites the removed files at the pinned commit). Run it first: it refuses, naming each file, once your registrations sit
+beside Items' in `abilities.ts`, `messages.ts`, the migration list, the catalogs or the dashboard's glue, and then the sweep is by hand. A database that never ran
+`1001_items` (a workspace you just generated) takes that flag, and your first table is then `1001_<name>`, after you delete
+`apps/<app>/.data`. Once a database has run the migrations, run it without the flag, which leaves them in place, and give your first
+table the next number, `1003_<name>`: the migrator refuses a migration it recorded that is gone from the code.
 
 **Wire the static demo last, and look at it.** A shell or a home screen you build in
 `apps/<app>/src/components` reaches the real app through its route files and reaches the static demo

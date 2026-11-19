@@ -6002,6 +6002,18 @@ Decided without asking, as JP's standing rule for these sessions says.
 - **Hunks are not anchored to the ends of a file.** A hunk with fewer than three lines of context sits at a file's start or
   end, and anchoring it there refused an adopter who had added a comment above the imports. A hunk applies when what it names
   occurs exactly once, anywhere, and a file deletion needs the file to be exactly what the starter wrote. Rejected: anchoring.
+- **It also removes `.next/dev/types`, Next's dev type validator**, found by review. `next dev` writes a validator naming every
+  route file, the app's tsconfig includes it, and `next typegen` (what `pnpm typecheck` runs) rewrites only `.next/types`, so an
+  adopter who had run `pnpm dev` or the e2e got a TS2307 on the deleted route at their next `pnpm verify`. It is generated and
+  ignored by git. The pack-and-consume leg plants such a validator and checks it is gone, and a unit test pins the same.
+  Rejected: telling the adopter to delete `.next`.
+- **Pack and consume runs both modes**: the default (database half kept) first, typecheck and lint only, then the app is put
+  back as generated and the whole slice goes with the full gates. Rejected: the default mode with only a file-list test.
+- **Known limits, accepted.** The writes are not transactional (a failing disk leaves a half-removed app; the message says
+  `git restore .`). A hunk is matched on its own text, so an adopter helper appended to a file whose imports the patch
+  removes fails typecheck loudly rather than silently. A CRLF checkout of an adopter's files refuses every hunk (the shipped
+  patches are `eol=lf` by `.gitattributes`). Rejected: a rollback journal, and line-ending normalization, for failures that
+  are loud and leave the diff in git.
 
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 

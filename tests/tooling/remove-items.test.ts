@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { generate } from '../../packages/create/src/generate.js'
@@ -135,6 +135,17 @@ describe('sssb remove-items', () => {
             'delete src/app-config/db/migrations/1001_items.ts',
         )
         expect(snapshot(app)).toEqual(before)
+    })
+
+    it("takes Next's stale dev type validator with it, which names a route that is gone", () => {
+        const app = fresh()
+        const validator = path.join(app, '.next/dev/types/validator.ts')
+        mkdirSync(path.dirname(validator), { recursive: true })
+        writeFileSync(validator, "export type Stale = typeof import('../../../src/app/api/items/route.js')\n")
+        expect(removeItems(app, '--dry-run').status).toBe(0)
+        expect(existsSync(validator)).toBe(true)
+        expect(removeItems(app).status).toBe(0)
+        expect(existsSync(path.dirname(validator))).toBe(false)
     })
 
     it('takes the code out and keeps the database half, registered, by default', () => {
