@@ -929,7 +929,8 @@ export function checkE2eFailProblems(result, { config, kitFile }) {
  * the `dist` an install reads (`integrity` and `shasum`, from the tarball's bytes) and the tarball's URL in the shape
  * npm's own registry uses (`<registry><name>/-/<unscoped name>-<version>.tgz`), which pnpm leaves out of the lockfile
  * as it does for npm's. `latest` is the version itself: a caret range on a prerelease matches it.
- * @param {{ name: string, version: string }} manifest
+ * @template {{ name: string, version: string }} M
+ * @param {M} manifest
  * @param {Buffer} bytes the tarball
  * @param {string} registry the registry's URL, ending in a slash
  */
