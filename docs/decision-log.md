@@ -5698,6 +5698,7 @@ asking JP, as his standing rule for these sessions says.
       the `@sssb/app-config/notifications` alias, which has no "absent" form a type checker accepts, so an optional
       export means a framework contract change (a default the seam falls back to) that deserves its own entry. The
       future task stays open for that half, and says so.
+
 ## Dependabot alert 82 (`minimatch`) closed by taking `typescript-eslint` 8.73 (2026-11-18, `deps/minimatch-alert-82`)
 
 The 2026-11-17 dependency audit accepted GHSA-g3hv-75wg-m249 until the next `typescript-eslint` refresh ("Accepted:
