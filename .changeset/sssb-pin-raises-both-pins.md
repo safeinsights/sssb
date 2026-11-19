@@ -6,7 +6,7 @@
 
 **Kind.** none
 
-**Action.** optional
+**Action.** none
 
 **What changed.** A new command, `pnpm exec sssb pin`, reads the release commit the installed `@sssb/kit` records
 (`dist/release.json`) and writes it into your two pins on SSSB's repository: the reusable workflow's `uses:` line in
@@ -19,7 +19,7 @@ or `.claude/settings.json` is not JSON or declares no marketplace from SSSB's re
 `.claude/settings.json` has the workflow pin raised alone. "Upgrading to this release" in the notes and `sssb doctor`'s
 report of a pin that differs now name it.
 
-**To adopt.** Optional. At your next upgrade, after you install the new packages, run `pnpm exec sssb pin` in place of
+**To adopt.** Nothing is required. At your next upgrade, after you install the new packages, run `pnpm exec sssb pin` in place of
 editing the `uses:` line and the marketplace's `ref` by hand, read the diff of the two files, and commit it with the
 package versions. Each person then runs `claude plugin marketplace update sssb` and
 `claude plugin update sssb@sssb --scope project`, as before.
