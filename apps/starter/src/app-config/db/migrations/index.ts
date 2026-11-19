@@ -1,5 +1,6 @@
 import type { Migration } from 'kysely/migration'
 import * as m1001 from './1001_items'
+import * as m1002 from './1002_items_keyset_index'
 
 /**
  * The APP's migrations (the seam side of @sssb/kit/db/migrations, ADR-0012). Numbering convention: framework
@@ -8,4 +9,5 @@ import * as m1001 from './1001_items'
  */
 export const appMigrations: Record<string, Migration> = {
     '1001_items': m1001,
+    '1002_items_keyset_index': m1002,
 }

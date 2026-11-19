@@ -5653,6 +5653,52 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
       and the gitleaks version from this repository when it is packed (`TemplateMeta` in
       `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.
 
+## Small starter fixes: a paged items list, the eslint 10 peers, an empty `AppSubjectFields` (2026-11-18, `fix/starter-small-fixes`)
+
+Adoption follow-up 9 (`docs/adoption-review-2026-11.md`, ranked item 9 and "What surprised" 2 and 9). Decided without
+asking JP, as his standing rule for these sessions says.
+
+- **The starter's items route pages like the showcase's tickets route.** `GET /api/items` parses `?cursor=` with
+  `parseDbKeysetCursor` (400 `invalid-cursor`), clamps `?limit=` with `clampKeysetLimit` (the primitive's default of
+  20, since the starter has no page-size constant of its own), and the query is `listItems` in `src/domain/db/items.ts`,
+  ordered by the primitive's fixed `created_at`, `id`. The response gains `nextCursor`. The card shows "Show older
+  items" and the glue appends. The static demo twin holds every item in memory and stays unpaged: `hasMore` defaults to
+  false, and a twin with a handful of in-memory rows teaches nothing a cursor chain would.
+    - **Rejected: leave the query in the route.** The RLS proofs must drive the production read path, and a route file
+      exports nothing a proof can import. A new `domain/db/` directory costs the adopter one file, and it is where
+      `/sssb:new-slice` already tells them to put a table's queries.
+    - **Rejected: edit `1001_items` to carry the index.** An applied migration is a record, and pages (the first
+      adopter) copied the starter on 0.2.0 and has run it. `1002_items_keyset_index` is the shape of the change an
+      adopter makes later, a list that grew on a table that exists.
+    - **Rejected: a `limit` constant and a visible page-size control.** The default of 20 is enough for an example, the
+      e2e creates 22 rows to cross it, and a constant is one more thing for follow-up 2 (removing the Items slice) to
+      delete.
+    - **Rejected: `useEffect` calling a `useCallback` loader, as the showcase's glue does.** The starter's lint has no
+      suppression and an adopter copies this file, so the first page is fetched inside the effect's own promise chain
+      (`react-hooks/set-state-in-effect` does not fire there) and the loader is a module-level function.
+- **The eslint 10 peer warning is silenced by two `peerDependencyRules.allowedVersions` entries in the generated
+  `pnpm-workspace.yaml`**, `eslint-plugin-react>eslint` and `eslint-plugin-jsx-a11y>eslint`, both `'10'`, under a comment
+  that says why and when to delete them. Checked on 2026-11-18: no release of either plugin lists eslint 10 (the latest,
+  7.37.5 and 6.10.2, stop at 9), so there is no version to bump to, and the preset runs both under eslint 10 in this
+  repository's own CI. Reproduced in a scratch project and gone with the entries.
+    - **Rejected: explain it in the README or the printed next steps.** The warning would stay on every adopter's first
+      install; an adopter reads the explanation after they have already worried.
+    - **Rejected: a blanket `allowedVersions: { eslint: '*' }`.** It would hide a real eslint mismatch from every other
+      plugin, which is the check a peer warning exists to give.
+    - **Rejected: adding the rule to this repository's own `pnpm-workspace.yaml`.** `pnpm install` here printed no
+      warning in this session, though `pnpm peers check` lists the same two plugins; the entry matters to a first
+      install in a generated workspace, and a second copy of the list is one more place to forget to delete.
+- **`AbilitySubject` is an intersection (`@sssb/kit/core/abilities`), and the starter writes
+  `export type AppSubjectFields = Record<never, never>`.** The kit's fixture does the same, so the framework's own tests
+  compile the new form and the showcase (an interface with fields) compiles the old one. ADR-0012 has the addendum.
+    - **Rejected: keep the interface and widen the lint rule's exemption** (`allowInterfaces: 'with-single-extends'` or a
+      per-file override). It would remove the suppression from the starter by hiding the same friction in a preset an
+      adopter cannot see, and the next one to write an empty interface would not be told.
+    - **Rejected: also making `appNotificationCopy` optional in this change.** The framework imports it by name through
+      the `@sssb/app-config/notifications` alias, which has no "absent" form a type checker accepts, so an optional
+      export means a framework contract change (a default the seam falls back to) that deserves its own entry. The
+      future task stays open for that half, and says so.
+
 ## Dependabot alert 82 (`minimatch`) closed by taking `typescript-eslint` 8.73 (2026-11-18, `deps/minimatch-alert-82`)
 
 The 2026-11-17 dependency audit accepted GHSA-g3hv-75wg-m249 until the next `typescript-eslint` refresh ("Accepted:
