@@ -1,12 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
 
 /**
- * This app's whole e2e budget, spent on the one claim this app exists to prove: an item written
- * in one tenant is invisible from the other, through the entire stack (UI → route → withTenant → RLS
+ * The claim this app exists to prove: an item written in one tenant is invisible from the other, through the entire stack (UI → route → withTenant → RLS
  * on pglite).
  *
- * This app has no Simulator panel, so crossing tenants is done the way a real user would — sign out,
- * sign in as somebody whose home tenant differs.
+ * Crossing tenants is done the way a real user would, not through the Simulator panel: sign out, sign in
+ * as somebody whose home tenant differs.
  */
 
 async function signInAs(page: Page, personId: string) {

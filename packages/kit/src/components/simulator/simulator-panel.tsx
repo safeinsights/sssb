@@ -24,21 +24,6 @@ const WIDTH_KEY = 'app-simulator-width'
 const TAB_KEY = 'app-simulator-tab'
 const COACH_KEY = 'app-simulator-coach-dismissed'
 
-// The panel's OWN (framework) tabs — one per subsystem. App tabs arrive via `extraTabs` and slot in
-// between Hooks and Errors; the active tab is therefore a plain string (a core id OR an extra id).
-type SimulatorTab = 'people' | 'mail' | 'messages' | 'events' | 'jobs' | 'hooks' | 'errors' | 'snapshots' | 'tours'
-const CORE_TAB_IDS: SimulatorTab[] = [
-    'people',
-    'mail',
-    'messages',
-    'events',
-    'jobs',
-    'hooks',
-    'errors',
-    'snapshots',
-    'tours',
-]
-
 /** One app-registered tab, composed by the host (label already translated, content already built). */
 export interface SimulatorExtraTab {
     id: string
@@ -154,10 +139,10 @@ export interface HooksAppProps {
  * The Simulator panel (ADR-0006 twin lives in @sssb/kit/demo-static): collapsed = a small fixed pill (no
  * layout shift); expanded = a right-docked column with its own dark skin so it reads as "not the
  * product". The column is sticky so it stays docked while long pages scroll. Router-agnostic —
- * navigation happens via `onSelect`/mail's `onOpenLink`, data arrives as props; the glue
- * (src/app/[locale]/simulator-glue.tsx) owns fetching and polling. Tab strip:
+ * navigation happens via `onSelect`/mail's `onOpenLink`, data arrives as props; the host owns fetching and polling
+ * (the kit's own server host, ./simulator-host, an app's own glue, or the static demo's shell). Tab strip:
  * People / Mail / Messages / Events / Jobs / Hooks / …host `extraTabs`… / Errors / Snapshots / Tours —
- * `data-testid="simulator-tab-<id>"`. App tabs are registered on the seam (@sssb/app-config/simulator)
+ * `data-testid="simulator-tab-<id>"`, each tab but People present only when the host passes its props. App tabs are registered on the seam (@sssb/app-config/simulator)
  * and composed by the host into `extraTabs`, slotted in between Hooks and Errors so the panel itself
  * knows nothing of app content. Transient
  * feedback stays inside simulator: a notice overlay anchored at the panel's bottom edge when
@@ -181,7 +166,7 @@ export function SimulatorPanel({
     audit,
     jobs,
     hooks,
-    extraTabs,
+    extraTabs = [],
     runServerErrorScenario,
     snapshots,
     tours,
@@ -198,20 +183,22 @@ export function SimulatorPanel({
     /** When provided, the header shows a locale switcher — the host owns what switching does (a
      *  full reload in the real app, in-memory state in the static demo). */
     onLocaleChange?: (locale: string) => void
-    mail: MailAppProps
+    // Every tab but People exists only when the host wires it: a host that serves a subset of the subsystems (the
+    // kit's own server host, ./simulator-host) leaves the rest out, and their tabs are not shown at all.
+    mail?: MailAppProps | undefined
     /** Inbound email: the Mail tab's "compose inbound" affordance + world inbound list. */
-    inbound: InboundAppProps
-    messages: SmsMessageRow[]
-    events: AnalyticsEvent[]
+    inbound?: InboundAppProps | undefined
+    messages?: SmsMessageRow[] | undefined
+    events?: AnalyticsEvent[] | undefined
     /** Compliance-grade audit trail, rendered read-only beneath the analytics events. */
-    audit: AuditEntry[]
-    jobs: JobsAppProps
-    hooks: HooksAppProps
+    audit?: AuditEntry[] | undefined
+    jobs?: JobsAppProps | undefined
+    hooks?: HooksAppProps | undefined
     /** App-registered tabs (@sssb/app-config/simulator), composed by the host. Rendered between Hooks and
      *  Errors — visual order and the `simulator-tab-<id>` testid derive from each tab's id. */
-    extraTabs: SimulatorExtraTab[]
-    runServerErrorScenario: () => Promise<ScrubResult>
-    snapshots: SnapshotsAppProps
+    extraTabs?: SimulatorExtraTab[] | undefined
+    runServerErrorScenario?: (() => Promise<ScrubResult>) | undefined
+    snapshots?: SnapshotsAppProps | undefined
     /** Scripted walkthroughs (@sssb/kit/demo-static/tour/use-tours). Undefined when the app registers no
      *  tours — the tab then doesn't exist at all, which is the off-switch an adopter gets for free. */
     tours?: ToursAppProps | undefined
@@ -255,6 +242,22 @@ export function SimulatorPanel({
     // A core tab's content shows only in an expanded panel (the hidden kept-alive panel holds nothing else).
     const showing = (tab: string) => !collapsed && activeTab === tab
 
+    // Host `extraTabs` slot in between Hooks and Errors — where Actors sat when it was hard-coded — so
+    // visual order and the `simulator-tab-<id>` testids are preserved as app tabs register.
+    const tabs: { id: string; label: string }[] = [
+        { id: 'people', label: t('peopleTab') },
+        ...(mail ? [{ id: 'mail', label: t('mailTab') }] : []),
+        ...(messages ? [{ id: 'messages', label: t('messagesTab') }] : []),
+        ...(events ? [{ id: 'events', label: t('eventsTab') }] : []),
+        ...(jobs ? [{ id: 'jobs', label: t('jobsTab') }] : []),
+        ...(hooks ? [{ id: 'hooks', label: t('hooksTab') }] : []),
+        ...extraTabs.map((tab) => ({ id: tab.id, label: tab.label })),
+        ...(runServerErrorScenario ? [{ id: 'errors', label: t('errorsTab') }] : []),
+        ...(snapshots ? [{ id: 'snapshots', label: t('snapshotsTab') }] : []),
+        // Tours sits beside Snapshots (state and narrative, in that order) and only when the app has any.
+        ...(tours ? [{ id: 'tours', label: t('toursTab') }] : []),
+    ]
+
     const totalUnread = people.reduce((sum, person) => sum + person.unreadMail, 0)
     const badgeRef = useRef<HTMLDivElement | null>(null)
     // Focus follows a toggle (WCAG 2.4.3): the control the user pressed unmounts (the pill) or is hidden with the panel
@@ -269,8 +272,9 @@ export function SimulatorPanel({
         // Reading localStorage is an external-system sync (SSR has none), so this legitimately
         // sets state from an effect rather than during render.
         const storedCollapsed = readStoredCollapsed()
-        // Core ids ∪ the host's extra-tab ids — a persisted app tab must survive reload.
-        const storedTab = readStoredTab([...CORE_TAB_IDS, ...extraTabs.map((tab) => tab.id)])
+        // The tabs this host wires (core and extra): a persisted app tab survives a reload, and one this host
+        // does not show falls back to People.
+        const storedTab = readStoredTab(tabs.map((tab) => tab.id))
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setCollapsed(storedCollapsed)
         setWidth(readStoredWidth())
@@ -481,22 +485,6 @@ export function SimulatorPanel({
         </>
     ) : null
 
-    // Host `extraTabs` slot in between Hooks and Errors — where Actors sat when it was hard-coded — so
-    // visual order and the `simulator-tab-<id>` testids are preserved as app tabs register.
-    const tabs: { id: string; label: string }[] = [
-        { id: 'people', label: t('peopleTab') },
-        { id: 'mail', label: t('mailTab') },
-        { id: 'messages', label: t('messagesTab') },
-        { id: 'events', label: t('eventsTab') },
-        { id: 'jobs', label: t('jobsTab') },
-        { id: 'hooks', label: t('hooksTab') },
-        ...extraTabs.map((tab) => ({ id: tab.id, label: tab.label })),
-        { id: 'errors', label: t('errorsTab') },
-        { id: 'snapshots', label: t('snapshotsTab') },
-        // Tours sits beside Snapshots (state and narrative, in that order) and only when the app has any.
-        ...(tours ? [{ id: 'tours', label: t('toursTab') }] : []),
-    ]
-
     // The person the panel is currently "watching" — powers the header chip so it's always clear
     // whose world this is, even before switching tabs.
     const person = people.find((person) => person.key === viewpoint) ?? null
@@ -652,16 +640,16 @@ export function SimulatorPanel({
                         <PeopleApp people={people} viewpoint={viewpoint} onSelect={onSelect} />
                     </>
                 ) : null}
-                {showing('mail') ? (
+                {showing('mail') && mail ? (
                     <Stack gap="lg">
-                        <InboundApp {...inbound} />
+                        {inbound ? <InboundApp {...inbound} /> : null}
                         <MailApp {...mail} />
                     </Stack>
                 ) : null}
-                {showing('events') ? <EventsApp events={events} audit={audit} /> : null}
-                {showing('jobs') ? <JobsApp {...jobs} /> : null}
-                {showing('messages') ? <MessagesApp messages={messages} /> : null}
-                {showing('hooks') ? <HooksApp {...hooks} /> : null}
+                {showing('events') && events ? <EventsApp events={events} audit={audit ?? []} /> : null}
+                {showing('jobs') && jobs ? <JobsApp {...jobs} /> : null}
+                {showing('messages') && messages ? <MessagesApp messages={messages} /> : null}
+                {showing('hooks') && hooks ? <HooksApp {...hooks} /> : null}
                 {/* App tabs render their host-built content here (between Hooks and Errors). An ordinary
                     tab's live content (iframe / mounted node) unmounts with it; a keepMounted one is there
                     from page load, stays put, and is only hidden (./tab-mount). */}
@@ -673,12 +661,12 @@ export function SimulatorPanel({
                         </Box>
                     )
                 })}
-                {showing('errors') ? (
+                {showing('errors') && runServerErrorScenario ? (
                     <Box style={lightBoxStyle}>
                         <ErrorsApp runServerScenario={runServerErrorScenario} />
                     </Box>
                 ) : null}
-                {showing('snapshots') ? <SnapshotsApp {...snapshots} /> : null}
+                {showing('snapshots') && snapshots ? <SnapshotsApp {...snapshots} /> : null}
                 {showing('tours') && tours ? <ToursApp {...tours} /> : null}
             </Box>
             {/* Notices overlay the panel's bottom edge (absolute, not in flow) so a transient

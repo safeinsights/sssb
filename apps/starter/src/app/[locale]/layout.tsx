@@ -6,11 +6,19 @@ import { hasLocale, NextIntlClientProvider } from 'next-intl'
 import { setRequestLocale } from 'next-intl/server'
 import { notFound } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { auth, isDemoMode } from '@sssb/kit/adapters/index'
+import { auth, isDemoMode, isSimulated } from '@sssb/kit/adapters/index'
 import { DemoBadge } from '@sssb/kit/components/demo-badge'
 import { routing } from '@sssb/kit/i18n/routing'
 import { getTenantTheme } from '@sssb/kit/theme'
 import { tenants } from '@/seed'
+
+// The Simulator panel, in simulated mode only: the dynamic import keeps it, and everything behind it, out of a real
+// build's client bundle. Its server side is `src/app/api/simulator/[...path]/route.ts`.
+async function SimulatorChrome({ locale, children }: { locale: string; children: ReactNode }) {
+    if (!isSimulated) return children
+    const { SimulatorHost } = await import('@sssb/kit/components/simulator/simulator-host')
+    return <SimulatorHost locale={locale}>{children}</SimulatorHost>
+}
 
 export const metadata = {
     title: 'Starter',
@@ -45,7 +53,7 @@ export default async function LocaleLayout({
             <body>
                 <NextIntlClientProvider>
                     <MantineProvider theme={theme}>
-                        {children}
+                        <SimulatorChrome locale={locale}>{children}</SimulatorChrome>
                         {isDemoMode ? <DemoBadge /> : null}
                     </MantineProvider>
                 </NextIntlClientProvider>
