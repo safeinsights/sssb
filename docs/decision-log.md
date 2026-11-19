@@ -6767,6 +6767,7 @@ rejected alternative.
 - **The check ships as `@sssb/kit` minor**, though the brief said patch: an adopter whose layout lacks the provider sees
   its suite go red on upgrade, and the release notes call an action-required change a minor. The analytics fix is a
   patch, and the starter's change a patch of `@sssb/create`.
+
 ## A fast path for docs-only pull requests (2026-11-19, `ci/docs-only-fast-path`)
 
 JP, 2026-11-19, on safeinsights/sssb#78 (three markdown files, every job run): "Is there an optimization here? See
