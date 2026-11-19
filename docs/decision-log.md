@@ -5968,7 +5968,13 @@ have been asked.
 - **A stack whose region is us-east-1 or unresolved keeps the function in the stack; a stack with an explicit region
   elsewhere gets CDK's `EdgeFunction`.** `EdgeFunction` refuses an environment-agnostic stack, which the starter's is
   until cutover, and `pnpm synth` must stay offline; and one construct path for both in-stack cases means naming
-  us-east-1 at cutover does not replace the function (a replicated one cannot be deleted for hours).
+  us-east-1 at cutover does not replace the function (a replicated one cannot be deleted for hours). Rejected: **a
+  CloudFormation rule refusing any other region** up front: CloudFormation's guide shows rules reading template
+  parameters, never a pseudo parameter such as `AWS::Region`, this could not be tried without an account, and a rule
+  CloudFormation refused would stop every deploy of the stack.
+  CloudFront's own refusal of the association is the error instead. Its cost: that refusal comes after the database
+  is created, so a production stack (retained database and buckets) deployed that way may leave them behind; the
+  starter's infra README says to give the stack its `env` first.
 - **`EdgeFunction`'s us-east-1 stack is one per `SssbApp` and region (`edge-<region>-<construct address>`), not CDK's
   one per parent stack.** CDK's default collides on a second `SssbApp` in one stack, and is shared by one stack deployed
   to two regions of an account. Rejected: **CDK's default name**, for those two reasons.
@@ -5976,12 +5982,7 @@ have been asked.
   `Tags.of(...)` aspect has applied, and under `explicitStackTags` (`cdk init`'s default) the parent stack has no stack
   tags at all. An aspect run after every tag aspect gives each of its resources the server function's final tags, and
   the stack the parent stack's. Rejected: **asking adopters to tag at the App**, which the starter's `infra/app.ts`
-  does not do and a tag policy would refuse silently until the first deploy. Rejected: **a CloudFormation rule refusing any other region** up front:
-  CloudFormation's guide shows rules reading template parameters, never a pseudo parameter such as `AWS::Region`, this
-  could not be tried without an account, and a rule CloudFormation refused would stop every deploy of the stack.
-  CloudFront's own refusal of the association is the error instead. Its cost: that refusal comes after the database
-  is created, so a production stack (retained database and buckets) deployed that way may leave them behind; the
-  starter's infra README says to give the stack its `env` first.
+  does not do and a tag policy would refuse silently until the first deploy.
 - **The function's version is destroyed with the stack, not retained (CDK's default).** Its logical id carries a hash
   of the code, so a retained one would pile up on every change, and would enter the stateful-logical-ids snapshot, which
   takes any retained resource, under a name that changes with the code. The cost: a delete can fail while CloudFront
