@@ -66,7 +66,7 @@ export interface SssbAppProps {
      * A response headers policy of your own, on the three behaviors this construct builds in place of SSSB's (AWS's
      * managed SecurityHeadersPolicy). It replaces all of it: HSTS, nosniff, the referrer policy and frame options come
      * from your policy or not at all. A behavior you add to the distribution yourself gets no policy unless you give
-     * it one: this property, or `responseHeadersPolicy` on the construct.
+     * it one: the construct exposes the policy in use as `responseHeadersPolicy`.
      */
     readonly responseHeadersPolicy?: cdk.interfaces.aws_cloudfront.IResponseHeadersPolicyRef
     /**

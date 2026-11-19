@@ -4,11 +4,11 @@
  * runtime: one `handler` and no modules, so it is kept as source). CloudFront must send the Function URL its own
  * `Host`, to sign the request, so the viewer's host reaches the app only as `x-forwarded-host`: Next fills that header
  * only when it is absent (next/dist/server/base-server.js), and Clerk's request URL, Next's server-action origin check
- * and next-intl's domain redirects read it (Next's own `request.url` names the server's own address, `localhost` and its port, either way). A viewer could
- * otherwise set it, and `x-forwarded-port` (next-intl's domain redirects read that too), to anything. So both are set
- * here from the request CloudFront received, overwriting what the viewer sent: the `Host` it routed by (lowercased, any
- * port dropped), and 443, the only port a viewer reaches the app on once every behavior redirects HTTP to HTTPS. A
- * viewer's RFC 7239 `Forwarded` is dropped, never being CloudFront's. `X-Forwarded-Proto` is CloudFront's: functions
+ * and next-intl's domain redirects read it (Next's own `request.url` names the server's own address, `localhost` and
+ * its port, either way). A viewer could otherwise set it, and `x-forwarded-port` (next-intl's domain redirects read
+ * that too), to anything. So both are set here from the request CloudFront received, overwriting what the viewer sent:
+ * the `Host` it routed by (lowercased, any port dropped), and 443, the only port a viewer reaches the app on once every
+ * behavior redirects HTTP to HTTPS. A viewer's RFC 7239 `Forwarded` is dropped, never being CloudFront's. `X-Forwarded-Proto` is CloudFront's: functions
  * may not touch it, and it removes a viewer's (CloudFront's guide, "Request and response behavior for custom
  * origins").
  */

@@ -6,8 +6,9 @@
 ## What happens
 
 `SssbApp`'s distribution is served on its `*.cloudfront.net` name with CloudFront's default certificate. With that
-certificate, the minimum TLS version a viewer may use cannot be raised. CloudFront's guide puts the security policy
-at TLSv1 for the default certificate ("Supported protocols and ciphers between viewers and CloudFront"). A
+certificate, the minimum TLS version a viewer may use cannot be raised. For the default certificate CloudFront
+"automatically sets the security policy to TLSv1" (CloudFront's guide, "Distribution settings", "Security policy
+(minimum SSL/TLS version)"). A
 `minimumProtocolVersion` on the distribution takes effect only with a certificate of the adopter's own.
 
 Nothing to build until then: the distribution has no custom domain, by design, until the `domains-and-certs` cutover

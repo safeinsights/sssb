@@ -24,8 +24,8 @@ so would a us-east-1 stack whose resources the adopter tags.
 
 ## The check
 
-Deploy a stack with an explicit region outside us-east-1 (the starter's `apps/starter/infra/app.ts` with an `env`), tagged as the
-starter tags it. Confirm three things:
+Deploy a stack with an explicit region outside us-east-1 (the starter's `apps/starter/infra/app.ts` with an `env`),
+tagged as the starter tags it. Confirm three things:
 
 1. The `edge-<region>-…` stack deploys.
 2. Its function and role carry the app's tags (`aws lambda list-tags`, `aws iam list-role-tags`).
