@@ -140,7 +140,10 @@ ends as the signal asked.
 - **CI**: `.github/workflows/checks.yml`, on pushes to `main` and on pull requests, with three jobs. `sssb` calls
   SSSB's reusable workflow (`.github/workflows/app-checks.yml` in SSSB's repository) pinned to a commit, with
   `contents: read`, no secrets and `synth: ./apps/<slug>/infra`, so its checks are named `sssb / <job>` and
-  `sssb / all-checks` is the one to require. `workspace-checks` runs knip and jscpd, which SSSB's workflow does not;
+  `sssb / all-checks` is the one to require. Its `docs-only` input (false unless you set it) is a fast path for a change
+  you have judged can affect none of the contract tests, e2e, static demos and synth: those jobs then report success
+  without running their work, so compute it from what your own pull request changed, as SSSB's own `checks.yml` does
+  (`.github/scripts/docs-only.sh` in SSSB's repository). `workspace-checks` runs knip and jscpd, which SSSB's workflow does not;
   `secret-scan` runs gitleaks over the whole history with your `.gitleaks.toml`.
 - **The owner files**, from `--repo` and `--owner`: `CODEOWNERS`, `SECURITY.md` (your own short policy, which
   points at SSSB only for a root cause in a shape SSSB gave the app), `CODE_OF_CONDUCT.md`, and under
