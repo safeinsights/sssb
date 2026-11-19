@@ -19,7 +19,7 @@ function run(path: string) {
 }
 
 describe('the proxy', () => {
-    it.each(['/', '/en/items', '/es', '/api', '/api/items', '/api/webhooks/cron', '/api/items/report.csv'])(
+    it.each(['/', '/en/projects', '/es', '/api', '/api/projects', '/api/webhooks/cron', '/api/projects/report.csv'])(
         'is run on %s',
         (path) => {
             expect(unstable_doesMiddlewareMatch({ config, url: path })).toBe(true)
@@ -31,12 +31,12 @@ describe('the proxy', () => {
     })
 
     it('hands a page to the locale routing', async () => {
-        const response = await run('/items')
-        expect(response?.headers.get('location')).toBe('http://localhost:3100/en/items')
+        const response = await run('/projects')
+        expect(response?.headers.get('location')).toBe('http://localhost:3100/en/projects')
     })
 
     it('passes an API route through untouched', async () => {
-        const response = await run('/api/items')
+        const response = await run('/api/projects')
         expect(response?.headers.get('x-middleware-next')).toBe('1')
         expect(response?.headers.get('location')).toBeNull()
         expect(response?.headers.get('x-middleware-rewrite')).toBeNull()

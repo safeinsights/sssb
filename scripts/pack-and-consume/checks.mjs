@@ -331,9 +331,14 @@ export function toolsManifestProblems(manifest) {
     return problems
 }
 
+/** The only non-JavaScript files in the packed @sssb/tools: what `sssb remove-items` applies. */
+const REMOVE_ITEMS_PATCHES = ['src/remove-items/code.patch', 'src/remove-items/database.patch']
+
 /**
  * What the packed @sssb/tools may ship: JavaScript Node loads directly, its hand-written declarations and the
- * tsconfig base (ADR-0014 part 2: "every other package ships JavaScript"), and no tests. Returns the problems.
+ * tsconfig base (ADR-0014 part 2: "every other package ships JavaScript"), no tests, and the two diffs `sssb remove-items`
+ * reads at run time, `src/remove-items/{code,database}.patch`: data, not code, which is all part 2 was written to keep
+ * a build step out of. Returns the problems.
  * @param {readonly string[]} files every file in the package, relative to its root, `/`-separated
  */
 export function toolsShippedFileProblems(files) {
@@ -342,6 +347,7 @@ export function toolsShippedFileProblems(files) {
         if (['package.json', 'tsconfig.base.json', 'README.md', 'LICENSE'].includes(file)) continue
         if (/\.test\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: a test file is shipped`)
         else if (!/^(bin|src)\//.test(file)) problems.push(`${file}: outside bin/ and src/`)
+        else if (REMOVE_ITEMS_PATCHES.includes(file)) continue
         else if (!/\.(js|mjs|d\.ts)$/.test(file)) problems.push(`${file}: neither JavaScript nor a declaration file`)
     }
     if (!files.includes('bin/sssb.js')) problems.push('bin/sssb.js: the CLI is not shipped')

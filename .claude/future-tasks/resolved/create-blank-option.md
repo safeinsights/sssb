@@ -1,6 +1,6 @@
 # `@sssb/create` has no option that removes the starter's own content
 
-**Priority:** P2 · **Status:** open
+**Priority:** P2 · **Status:** done 2026-11-19 (adoption follow-up 2): `sssb remove-items`, the command the 2026-11-18 addendum names, not a `--blank` flag
 **Found by:** an adopter's report, 2026-10-02. Their product's static demo opened on the starter's
 tenants and its Items card four days after adoption. The doc half is fixed (`docs/adopting.md`, "The
 starter's content is still wired into your UI"); this is the half that would make the sweep a command.
@@ -97,3 +97,22 @@ The review (`docs/adoption-review-2026-11.md`, follow-up 2) ranks this second, a
 command (`sssb` or the plugin's) that removes the Items slice from an app, tested once against the starter. One
 starter shape stays, the command's test is the gate, and an adopter can run it after generating, when they have read
 what Items teaches.
+
+## Resolved, 2026-11-19
+
+Built as the addendum suggested: `pnpm exec sssb remove-items [--drop-migrations] [--dry-run]` (`packages/tools/src/commands/remove-items.js`),
+two diffs of the starter (`packages/tools/src/remove-items/`), applied exactly and refusing, with nothing written, when
+a file is not what the starter wrote. One starter shape stays. What the three points above turned out to be:
+
+1. **Zero tables and zero subjects compile.** `AppSubjectType = never`, `AppTables = Record<never, never>` (an interface would
+   trip `no-empty-object-type`, as `AppSubjectFields` did), an empty `appMigrations`, an empty proofs body: typecheck, lint,
+   knip, the conformance suite and the contract runner (the framework's half only) pass.
+2. **The adoption probe has its leg**, inside the `generated` shape (no new job, so no new required check): after the untouched
+   check, it runs the command and the workspace's gates again. Seen red first (a hunk dropped from the patch, a starter file
+   edited).
+3. **The worked RLS example goes with Items under `--drop-migrations`**, and stays without it. `/sssb:new-slice` and
+   `/sssb:new-entity` now say to read the removed files at the pinned commit; the starter's `1001_items.ts` is their one citation
+   in a generated workspace.
+
+`docs/decision-log.md` (2026-11-19, "One command removes the starter's Items slice") has the choices and what was rejected.
+What is left: the welcome subtitle (`welcome.subtitle`), which this command does not touch.

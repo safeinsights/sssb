@@ -92,6 +92,12 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   the tools it configures (Vite's React plugin, next-intl's plugin, jest-dom) from the app, never its own copies. A
   new CLI command is a module in `packages/tools/src/commands/` plus one entry in `bin/sssb.js`'s `COMMANDS`; a new published
   helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
+- **`sssb remove-items` is a pair of diffs of the starter** (`packages/tools/src/remove-items/code.patch` and
+  `database.patch`, applied exactly by `exact-patch.js`): the starter's Items slice taken out of an adopter's app (the
+  Simulator's e2e spec is what keeps the app's e2e directory from emptying). **A change to a starter file the diffs touch, or to the Items slice itself, fails
+  `tests/tooling/remove-items.test.ts`** until the diffs are regenerated (the command's header says how), and pack and
+  consume's `generated` shape runs the command and the workspace's gates over what it leaves. The two files are the only
+  non-JavaScript files `@sssb/tools` ships (`toolsShippedFileProblems` names them).
 - **`@sssb/create` (`packages/create`) is the generator** (ADR-0014 P12): `pnpm create @sssb <dir>` runs its bin,
   `sssb-create`. Plain JavaScript with no dependencies at all, SSSB's packages included (rule 4), because it runs
   before anything is installed. **Its template is the files git tracks in `apps/starter`**, copied from the working

@@ -342,12 +342,12 @@ These are the parts that take judgement:
 A rename changes what the app is called, not what it shows. In the app the generator writes, four pieces
 of the starter are still reachable by anyone who opens your app or your static demo:
 
-| What survives                                    | Where it lives                                                                                                                                                                                                                                                                                                                                                                                   | Where it shows                                                                                 |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| The seed world: two tenants, two teams, 3 people | `apps/<app>/src/seed/index.ts`                                                                                                                                                                                                                                                                                                                                                                   | every sign-in picker (the app's, the static demo's, the Simulator's People tab); tenant themes |
-| The welcome subtitle                             | `welcome.subtitle` in `apps/<app>/messages/en.json` + `es.json`                                                                                                                                                                                                                                                                                                                                  | the app's root page AND the static demo's first screen — they share one component              |
-| The Items slice                                  | `apps/<app>/src/components/items-card.tsx`, `apps/<app>/src/app/api/items/route.ts`, `apps/<app>/src/domain/db/items.ts`, the dashboard route's `page.tsx` and `dashboard-glue.tsx` under `apps/<app>/src/app/`, the `Item` case in `apps/<app>/src/app-config/abilities.ts`, the table, migrations and RLS proofs under `apps/<app>/src/app-config/db/`, the `items` namespace in both catalogs | every signed-in person's dashboard                                                             |
-| The static demo's composition root               | `apps/<app>/src/demo-static/app.tsx`                                                                                                                                                                                                                                                                                                                                                             | the whole `file://` demo: it passes `nav={null}`, the starter's welcome screen and Items card  |
+| What survives                                                | Where it lives                                                                                                                                                                                                                                                                                                                                                                                   | Where it shows                                                                                 |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| The seed world: two tenants, two teams, 3 people             | `apps/<app>/src/seed/index.ts`                                                                                                                                                                                                                                                                                                                                                                   | every sign-in picker (the app's, the static demo's, the Simulator's People tab); tenant themes |
+| The welcome subtitle                                         | `welcome.subtitle` in `apps/<app>/messages/en.json` + `es.json`                                                                                                                                                                                                                                                                                                                                  | the app's root page AND the static demo's first screen — they share one component              |
+| The Items slice (`pnpm exec sssb remove-items` takes it out) | `apps/<app>/src/components/items-card.tsx`, `apps/<app>/src/app/api/items/route.ts`, `apps/<app>/src/domain/db/items.ts`, the dashboard route's `page.tsx` and `dashboard-glue.tsx` under `apps/<app>/src/app/`, the `Item` case in `apps/<app>/src/app-config/abilities.ts`, the table, migrations and RLS proofs under `apps/<app>/src/app-config/db/`, the `items` namespace in both catalogs | every signed-in person's dashboard                                                             |
+| The static demo's composition root                           | `apps/<app>/src/demo-static/app.tsx`                                                                                                                                                                                                                                                                                                                                                             | the whole `file://` demo: it passes `nav={null}`, the starter's welcome screen and Items card  |
 
 None of it fails a gate, which is why it is listed here: a real adopter shipped a product demo that
 opened on the starter's tenants and its Items card, four days after adopting. The team had been
@@ -359,8 +359,8 @@ world added NEXT TO `northwind` and `westgate` therefore puts both on every sign
 `@sssb/kit` needs the starter's names: SSSB's own tests run against `packages/kit/test-fixture` in SSSB's repository.
 What does read them by literal id is yours to change in the same commit:
 
-- `apps/<app>/tests/e2e/items.spec.ts` signs in as `person-owner` and `person-other-tenant` and asserts
-  the tenant names; `apps/<app>/tests/demo-static/static-shell.spec.ts` signs in as `person-owner` and
+- `apps/<app>/tests/e2e/items.spec.ts` and `simulator.spec.ts` sign in as `person-owner` and `person-other-tenant`
+  and assert the tenant names (`sssb remove-items` deletes the first); `apps/<app>/tests/demo-static/static-shell.spec.ts` signs in as `person-owner` and
   `person-teammate` and asserts their names.
 - `staffOrgSlug` in `apps/<app>/src/app-config/abilities.ts` must name a real seed org.
 
@@ -378,12 +378,15 @@ seed. Drop the second tenant's sign-in and its cross-tenant assertions from the 
 and keep the cross-tenant proofs. Nothing gates that last part — the RLS coverage check proves every table
 is protected, not that your proofs exercise two tenants — so it is yours to keep honest.
 
-**The Items slice is a worked example, so take what it teaches before you delete it.**
+**The Items slice is a worked example, so read what it teaches before you delete it, and delete it before you register your own.**
 `apps/<app>/src/app-config/db/migrations/1001_items.ts` is a worked RLS migration — in a generated workspace, the only one there — and its
-section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it; `1002_items_keyset_index.ts`, `apps/<app>/src/domain/db/items.ts` and the route show how a list pages. Build your first real slice
-from them (`/sssb:new-slice`), then remove Items the way "To remove a slice" below describes. Give your first table
-the next number, `1003_<name>` (`1002_items_keyset_index` is the paging index for Items): renaming `1001_items` instead means wiping `apps/<app>/.data` first (the app guide). There is
-no flag that does this for you yet; `.claude/future-tasks/create-blank-option.md` carries the design.
+section of `apps/<app>/src/app-config/db/rls-proofs.ts` is the proof that goes with it; `1002_items_keyset_index.ts`, `apps/<app>/src/domain/db/items.ts` and the route show how a list pages. Read them,
+then take Items out in one step: `pnpm exec sssb remove-items --app apps/<app> --drop-migrations` ("To remove the Items slice" below), and build
+your first real slice (`/sssb:new-slice`, which cites the removed files at the pinned commit). Run it first: it refuses, naming each file, once your registrations sit
+beside Items' in `abilities.ts`, `messages.ts`, the migration list, the catalogs or the dashboard's glue, and then the sweep is by hand. A database that never ran
+`1001_items` (a workspace you just generated) takes that flag, and your first table is then `1001_<name>`, after you delete
+`apps/<app>/.data`. Once a database has run the migrations, run it without the flag, which leaves them in place, and give your first
+table the next number, `1003_<name>`: the migrator refuses a migration it recorded that is gone from the code.
 
 **Wire the static demo last, and look at it.** A shell or a home screen you build in
 `apps/<app>/src/components` reaches the real app through its route files and reaches the static demo
@@ -626,7 +629,20 @@ reference (`apps/<app>/src/app-config/db/migrations/1001_items.ts`, the starter'
 (`new-slice.md`, say), which reads as step-by-step instructions without Claude Code. A screen generic enough for every app on SSSB belongs in the framework, which is
 an SSSB change ("Changing SSSB itself" below).
 
-**To remove a slice** (the starter's Items, once you have built your own from it): delete its card + routes +
+**To remove the Items slice**: `pnpm exec sssb remove-items` from the app's directory (or `--app apps/<app>`), after
+`--dry-run` has told you what it will do. It takes out the card, the route, the query, the ability, the catalog namespace, the
+dashboard's and the static demo's card and the specs that name Items (the Simulator's e2e spec stays); the
+app typechecks, lints and passes its conformance suite afterwards, which `pack-and-consume` proves on every change. The
+migrations are the one decision it leaves to you: `--drop-migrations` also removes `1001_items`, `1002_items_keyset_index`, the
+table's type and its RLS proofs, which is right only for a database that never ran them (delete `apps/<app>/.data`, and your
+first table is `1001_<name>`). Without the flag they stay, registered, because a database records each migration it runs and
+the migrator refuses to start when one it recorded is gone. The choice is made once: the command does not take the database half
+later. It refuses, naming each file and changing nothing, when a file is not what the starter wrote (you edited the card, or removed
+the route by hand): finish by hand from the list below, or restore the file and run it again. An unused framework capability
+needs nothing: an empty registration is the off switch (`AppSubjectType = never`, an empty `appMigrations`, an empty proofs body
+and `Record<never, never>` for `AppTables`, with `pnpm test:contract` then running only the framework's half).
+
+**To remove any other slice** (one you built, or the showcase's): delete its card + routes +
 `apps/<app>/src/domain/` module, if it has one + seam entries (ability case, table, migration, message namespace and its
 `APP_NAMESPACES` entry in `apps/<app>/src/app-config/messages.ts`, vocabulary entries) and its e2e specs, then update the static twin (`apps/<app>/src/demo-static/app.tsx`) and run the
 full gate. A slice that other seam entries reference (a job, an inbound handler or an assistant tool, as the
