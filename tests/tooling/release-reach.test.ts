@@ -181,6 +181,13 @@ describe('the one way onto npm', () => {
         expect(publishCommands(script)).toEqual([
             'npx --yes npm@11.21.2 publish "$file" --access public --provenance --dry-run',
         ])
+        // the checker is copied before `prepare` runs anything that could rewrite it, as `push` copies it from a fresh
+        // checkout; and what is rehearsed is this commit with `main` in it, as a merge would release it
+        expect(script.indexOf('cp scripts/release.mjs "$RUNNER_TEMP/release.mjs"')).toBeGreaterThanOrEqual(0)
+        expect(script.indexOf('cp scripts/release.mjs')).toBeLessThan(script.indexOf('release.mjs prepare'))
+        expect(job.steps?.find((s) => s.name === 'take in main, as a merge to main would')?.run).toContain(
+            'merge -q --no-edit origin/main',
+        )
         // the npm it rehearses with is the one `publish` publishes with
         expect(runs(release.jobs.publish)).toContain(
             'npx --yes npm@11.21.2 publish "$file" --access public --provenance',

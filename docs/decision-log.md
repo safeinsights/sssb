@@ -5300,3 +5300,15 @@ licenses` reads, so it needs the same install; what it would add is Google's lic
   lockfile were restored; with the `sentry` exception removed from a copy of the policy it failed naming `sentry@0.49.0`;
   with an exception for a package that is not installed added, it failed naming the stale entry.
   `tests/tooling/licence-scan.test.ts` holds the same cases against fixed reports, with the expression grammar.
+- **Review round 1 (Opus code, Fable "can anything reach npm early").** Fable found no way through, and three LOWs
+  that are now closed: the own-tree test pins the next release to exactly 0.2.0 until `docs/releases/v0.2.0.md`
+  exists (a hand-edited manifest version would otherwise plan another); `release-reach.test.ts` holds every step of
+  `plan`, `push`, `pack` and `publish` to no `continue-on-error`, no `|| true` and no `if:` but on artifact uploads,
+  and each gate's answer to being required; and it counts `secrets: inherit`, `secrets['X']` and a publish through a
+  `uses:` action. Opus found that the rehearsal would cut `main`'s latest release again on a PR into a base behind
+  `main` (`integration` before its sync): it now rehearses this commit with `origin/main` merged in, locally, and says
+  "not rehearsed" when they conflict. Rejected: filtering the job to PRs into `main` and `int-*`, which leaves a
+  stale base unrehearsed. Also from it: the checker is copied before `prepare` runs; the database's network
+  (`AWS::EC2::VPC`, `Subnet`, `SecurityGroup`) joins the logical-id snapshot, since a new one means moving a subnet
+  group RDS refuses to move; and a test holds every `need('X')` in `createRealPorts` to the required environment,
+  which the snapshot alone did not see. Each new assertion was seen red.

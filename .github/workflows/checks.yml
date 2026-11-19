@@ -102,15 +102,40 @@ jobs:
               with:
                   fetch-depth: 0
                   persist-credentials: false
+            # What a merge to `main` would release is this commit with `main` in it: a base branch (an integration
+            # branch) can be behind `main`'s latest release commit, and rehearsing without it would cut that release
+            # again. Merged here only, never pushed. A base that conflicts with `main` cannot reach it as it is, so
+            # there is nothing to rehearse until it is synced, and the job says so rather than fail every PR into it.
+            - name: take in main, as a merge to main would
+              id: main
+              run: |
+                  set -euo pipefail
+                  if git merge-base --is-ancestor origin/main HEAD; then
+                      echo "rehearse=true" >> "$GITHUB_OUTPUT"
+                  elif git -c user.name=rehearsal -c user.email=rehearsal@example.invalid -c core.hooksPath=/dev/null \
+                      merge -q --no-edit origin/main; then
+                      echo "rehearse=true" >> "$GITHUB_OUTPUT"
+                  else
+                      git merge --abort
+                      echo "::warning::this commit conflicts with main, so what a merge would release cannot be rehearsed"
+                      echo "Not rehearsed: this commit conflicts with main; sync its base with main first." >> "$GITHUB_STEP_SUMMARY"
+                      echo "rehearse=false" >> "$GITHUB_OUTPUT"
+                  fi
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+              if: steps.main.outputs.rehearse == 'true'
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              if: steps.main.outputs.rehearse == 'true'
               with:
                   node-version-file: .nvmrc
                   cache: pnpm
             - run: pnpm install --frozen-lockfile --ignore-scripts
+              if: steps.main.outputs.rehearse == 'true'
             - name: rehearse plan, push, pack and publish
+              if: steps.main.outputs.rehearse == 'true'
               run: |
                   set -euo pipefail
+                  # the checker, copied out before anything the release runs can touch it, as the push job copies it
+                  cp scripts/release.mjs "$RUNNER_TEMP/release.mjs"
                   # plan
                   result=$(node scripts/release.mjs prepare)
                   echo "$result"
@@ -120,9 +145,8 @@ jobs:
                   fi
                   version=$(jq -r '.version' <<<"$result")
                   [[ "$version" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]] || { echo "::error::not a 0.x release version: '$version'"; exit 1; }
-                  # push, without the push: the checker copied out first, as the push job copies it
+                  # push, without the push
                   git add -A
-                  cp scripts/release.mjs "$RUNNER_TEMP/release.mjs"
                   out=$(node "$RUNNER_TEMP/release.mjs" verify-release "$version")
                   [ "$out" = "verified $version" ] || { echo "::error::verify-release did not report a pass"; exit 1; }
                   git -c user.name=rehearsal -c user.email=rehearsal@example.invalid -c core.hooksPath=/dev/null \

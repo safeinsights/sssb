@@ -43,8 +43,12 @@ const APP_DIR = path.join(REPO, 'apps/starter')
  * - `AWS::Cognito::UserPool`: it holds the users, and their ids.
  * - `AWS::Logs::LogGroup`: a new one starts empty, and its retention says the history mattered.
  *
- * Left out: the network (VPC, subnets, security groups, NAT), the Lambdas and their roles, CloudFront, the alarms and
- * the budget. Replacing them loses no data: the next deploy creates them again.
+ * The database's network: `AWS::EC2::VPC`, `AWS::EC2::Subnet` and `AWS::EC2::SecurityGroup`. They hold no data, but
+ * the cluster lives in them: a new VPC or subnet means moving the subnet group in use, which RDS refuses, so the
+ * next `cdk deploy` fails and rolls back for every deployed app.
+ *
+ * Left out: the rest of the network (route tables, NAT, endpoints), the Lambdas and their roles, CloudFront, the
+ * alarms and the budget. Replacing them loses nothing and moves nothing stateful: the next deploy creates them again.
  *
  * Any other resource whose DeletionPolicy or UpdateReplacePolicy keeps it (`Retain`, `RetainExceptOnCreate`,
  * `Snapshot`) is in the snapshot too: whoever wrote the policy said it holds something worth keeping.
@@ -60,6 +64,9 @@ const STATEFUL_TYPES = [
     'AWS::EFS::FileSystem',
     'AWS::Cognito::UserPool',
     'AWS::Logs::LogGroup',
+    'AWS::EC2::VPC',
+    'AWS::EC2::Subnet',
+    'AWS::EC2::SecurityGroup',
 ]
 const KEEPING_POLICIES = ['Retain', 'RetainExceptOnCreate', 'Snapshot']
 

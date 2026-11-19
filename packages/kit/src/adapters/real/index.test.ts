@@ -155,4 +155,16 @@ describe('the required environment', () => {
                 `so (Kind operator, Action required):\n${JSON.stringify(actual, null, 4)}\n`,
         ).toEqual(committed)
     })
+
+    // `createRealPorts` reads its variables through `need(name)`, which throws when one is missing: a name read there
+    // and not required by `assertRealEnv` would stop a deployment from booting while the snapshot above stayed green.
+    it('covers every variable the real ports need', async () => {
+        const source = readFileSync(path.join(import.meta.dirname, 'index.ts'), 'utf8')
+        const needed = [...source.matchAll(/\bneed\(\s*'([A-Z0-9_]+)'\s*\)/g)].map((m) => m[1])
+        expect(needed.length).toBeGreaterThan(0)
+        expect(source).not.toMatch(/\bneed\(\s*[^'\s)]/) // a name not written as a literal could not be checked here
+        const required = new Set<string>()
+        for (const transport of DATABASE_TRANSPORTS) for (const name of await requiredOn(transport)) required.add(name)
+        expect(needed.filter((name) => !required.has(name))).toEqual([])
+    })
 })
