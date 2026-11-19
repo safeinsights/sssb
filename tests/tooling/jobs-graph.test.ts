@@ -3,6 +3,9 @@ import { build, type Metafile, type Plugin } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 
 /**
+ * Two things every job handler's import graph must hold, read from esbuild's own account of each seam's `jobs` module
+ * (what `jobHandlers` registers, and everything those handlers import), for the fixture and both apps.
+ *
  * A real deployment has no seed: its people are the identity provider's and its rows the database's. So no job
  * handler, framework or app, may reach a seed module by a static import, which would load the seed in every
  * deployment and let a handler read from it. A dynamic `import()` is allowed: that is how simulated-only code (the fake
@@ -51,31 +54,59 @@ function staticReach(metafile: Metafile, entry: string): Map<string, string[]> {
     return reached
 }
 
+/** esbuild's account of one seam's `jobs` module, and that module's key in it. */
+async function graphOf(seam: string, tsconfig: string): Promise<{ metafile: Metafile; entry: string }> {
+    const result = await build({
+        entryPoints: [path.join(REPO, seam, 'jobs.ts')],
+        absWorkingDir: REPO,
+        bundle: true,
+        write: false,
+        platform: 'node',
+        format: 'esm',
+        metafile: true,
+        logLevel: 'silent',
+        tsconfig: path.join(REPO, tsconfig),
+        alias: { '@sssb/app-config': path.join(REPO, seam) },
+        plugins: [workspaceOnly],
+    })
+    return { metafile: result.metafile, entry: path.relative(REPO, path.join(REPO, seam, 'jobs.ts')) }
+}
+
 describe('job handlers reach no seed module by a static import', () => {
     it.each(SEAMS)(
         'in $name',
         async ({ seam, tsconfig }) => {
-            const result = await build({
-                entryPoints: [path.join(REPO, seam, 'jobs.ts')],
-                absWorkingDir: REPO,
-                bundle: true,
-                write: false,
-                platform: 'node',
-                format: 'esm',
-                metafile: true,
-                logLevel: 'silent',
-                tsconfig: path.join(REPO, tsconfig),
-                alias: { '@sssb/app-config': path.join(REPO, seam) },
-                plugins: [workspaceOnly],
-            })
-            const entry = path.relative(REPO, path.join(REPO, seam, 'jobs.ts'))
-            const reached = staticReach(result.metafile, entry)
+            const { metafile, entry } = await graphOf(seam, tsconfig)
+            const reached = staticReach(metafile, entry)
             // The walk saw the handlers: the framework's digest handler is registered in every seam.
             expect([...reached.keys()].some((file) => file.endsWith('jobs/digest-email.ts'))).toBe(true)
             const seeds = [...reached.entries()]
                 .filter(([file]) => SEED.test(file))
                 .map(([, chain]) => chain.join(' -> '))
             expect(seeds).toEqual([])
+        },
+        60_000,
+    )
+})
+
+/**
+ * The job handlers are reached from client components too: `@sssb/kit/core/jobs` imports the seam's `jobs` module for
+ * its kinds, and a dashboard's client glue imports `core/jobs`. A bundler then puts everything the handlers can
+ * import into the client bundle, dynamic imports included, and refuses a module that needs the server
+ * (`next/headers`, `server-only`): the showcase's build failed on exactly that once. So nothing a handler reaches, by
+ * any import, may be one.
+ */
+describe('job handlers reach nothing a client bundle refuses, by any import', () => {
+    it.each(SEAMS)(
+        'in $name',
+        async ({ seam, tsconfig }) => {
+            const { metafile } = await graphOf(seam, tsconfig)
+            const serverOnly = Object.entries(metafile.inputs).flatMap(([file, input]) =>
+                input.imports
+                    .filter((edge) => edge.path === 'next/headers' || edge.path === 'server-only')
+                    .map((edge) => `${file} imports ${edge.path}`),
+            )
+            expect(serverOnly).toEqual([])
         },
         60_000,
     )

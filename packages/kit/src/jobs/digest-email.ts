@@ -46,8 +46,10 @@ function snippet(body: string): string {
  * member, as the auth port lists them (the identity provider in a deployment, the simulated world's people in a
  * demo). Never the seed: a deployment has none, and its people are the provider's.
  *
- * The locale is the person's own only in a simulated world, where the fake auth adapter knows it (loaded only
- * there, as `makeNotifyDeps` does); the auth port carries none, so a deployment writes in the app's default.
+ * The locale is the person's own only in a simulated world, where the seed knows it (loaded only there, by a dynamic
+ * import: the seed is plain data, which every bundle that reaches this module may carry, where the fake auth adapter
+ * reads request cookies and may not be in a client one); the auth port carries none, so a deployment writes in the
+ * app's default.
  *
  * A team with no active member: in a simulated world, a synthetic per-org address, still visible under Simulator
  * Mail's "all" scope, so the demo never shows an empty digest; in a deployment, nobody (null), and nothing is sent.
@@ -55,9 +57,11 @@ function snippet(body: string): string {
 async function digestRecipient(auth: AuthPort, orgSlug: string): Promise<{ to: string; locale: Locale } | null> {
     const members = (await auth.listMembers(orgSlug)).filter((m) => m.status === 'active' && m.email !== '')
     const chosen = members.find((m) => m.role === 'admin') ?? members[0]
-    const resolveLocale = isSimulated ? (await import('../adapters/fake/auth')).personLocale : undefined
-    if (chosen) return { to: chosen.email, locale: resolveLocale?.(chosen.id) ?? routing.defaultLocale }
-    return isSimulated ? { to: `${orgSlug}@digest.example`, locale: routing.defaultLocale } : null
+    if (!chosen) return isSimulated ? { to: `${orgSlug}@digest.example`, locale: routing.defaultLocale } : null
+    const seedLocale = isSimulated
+        ? (await import('@sssb/app-config/seed')).people.find((person) => person.id === chosen.id)?.locale
+        : undefined
+    return { to: chosen.email, locale: seedLocale ?? routing.defaultLocale }
 }
 
 /**
