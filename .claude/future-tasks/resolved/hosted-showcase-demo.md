@@ -23,14 +23,14 @@ build fails before it publishes.
 
 ## What was built
 
-- **release.yml's `demo` and `github-release` jobs** run on a plain release's tag, after `pack` (so only for a plain
-  tag on `main` once `checks` passed on it), beside `publish`: neither needs it, it needs neither, and neither holds an
-  id-token, an environment or a secret. `demo` (`contents: read`, `actions: read`) downloads the
-  `static-demo-showcase` artifact the checks run on the release commit built, size-checked and drove from `file://`,
-  checks it with `release.mjs demo` (named `sssb-showcase.html`, an HTML document, within the showcase's
-  `check:demo-size` budget) and writes the page's notes with `release.mjs release-notes`. `github-release`
-  (`contents: write` only, nothing checked out or installed) creates a draft, attaches the demo, checks it byte for
-  byte, and publishes it as the latest release; a re-run finishes a draft or confirms a published release.
+- **release.yml's `demo` and `github-release` jobs** run on a plain release's tag, after `pack` (so only for a plain tag
+  on `main` once `checks` passed on it), beside `publish`: neither needs it, it needs neither, and neither holds an
+  id-token, an environment or a secret. `demo` (`contents: read`, `actions: read`) downloads the `static-demo-showcase`
+  artifact the checks run on the release commit built, size-checked and drove from `file://`, checks it with
+  `release.mjs demo` (named `sssb-showcase.html`, an HTML document, within the showcase's `check:demo-size` budget) and
+  writes the page's notes with `release.mjs release-notes`. `github-release` (`contents: write` only, nothing checked
+  out or installed) creates a draft, attaches the demo, checks it byte for byte, and publishes it, marked Latest while
+  its tag is the highest plain release tag; a re-run finishes a draft or confirms a published release.
 - **The asset name carries no version** (`sssb-showcase.html`, not the design's `sssb-showcase-<version>.html`), so
   the README's `releases/latest/download/sssb-showcase.html` always names the latest release's copy.
 - **"Fails before it publishes"** is the CI gate's: a demo that does not build or exceeds its budget fails `checks`'

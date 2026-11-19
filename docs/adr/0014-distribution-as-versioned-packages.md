@@ -1276,10 +1276,10 @@ was heading for (a patch or a minor on `0.2.0-rc.2` is `0.2.0`; a major, 1.0.0, 
 ## Addendum — 2026-11-18: a plain release has a GitHub release, with the showcase's demo
 
 Part 10 and P14 left a plain release on npm with no GitHub release (only candidates had one). From the first release
-after 0.2.0, release.yml's `demo` and `github-release` jobs also make the tag's GitHub release, marked Latest: its
-notes, and `sssb-showcase.html`, the showcase's single-file static demo as `checks` built and drove it on the release
-commit, which the README links as `releases/latest/download/sssb-showcase.html` (adoption follow-up 4). They need
-`pack` and nothing needs them, so the path onto npm is the one this ADR describes, unchanged;
+after 0.2.0, release.yml's `demo` and `github-release` jobs also make the tag's GitHub release, marked Latest while it
+is the newest: its notes, and `sssb-showcase.html`, the showcase's single-file static demo as `checks` built and drove
+it on the release commit, which the README links as `releases/latest/download/sssb-showcase.html` (adoption follow-up
+4). They need `pack` and nothing needs them, so the path onto npm is the one this ADR describes, unchanged;
 `tests/tooling/release-reach.test.ts` now holds that nothing but `pack` is upstream of `publish` and nothing is
-downstream of it. `docs/decision-log.md` (2026-11-18, "A hosted showcase demo on each release") has the choices and
-what was rejected.
+downstream of it. `docs/decision-log.md` (2026-11-18, "A hosted showcase demo on each release") has the choices and what
+was rejected.

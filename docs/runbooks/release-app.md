@@ -26,13 +26,14 @@ version on npm. Each run is in GitHub's Actions tab, workflow `release`.
    (`release.mjs preflight`: the fixed group, this version, not private, not already on npm from another commit, not
    behind npm's `latest`) and publishes it with provenance through the pinned npm. A re-run skips what is already on
    npm from this commit, so it resumes a publish that stopped part-way.
-5. **`demo`** and **`github-release`**, beside `publish` and never gating it (both need `pack` alone, and nothing
-   needs them), make the tag's GitHub release: `demo` takes the showcase's single-file static demo that `checks` built,
-   held to its size budget and drove from `file://` on the release commit (the `static-demo-showcase` artifact),
-   checks it (`release.mjs demo`) and writes the page's notes (`release.mjs release-notes`); `github-release`, with
-   only `contents: write`, makes a draft holding `sssb-showcase.html`, checks it byte for byte, and publishes it as the
-   latest release. The README links `releases/latest/download/sssb-showcase.html`. A re-run finishes a draft and
-   confirms a published release, never changing one.
+5. **`demo`** and **`github-release`**, beside `publish` and never gating it (`demo` needs `pack`, `github-release`
+   needs `pack` and `demo`, and nothing needs either), make the tag's GitHub release: `demo` takes the showcase's
+   single-file static demo that `checks` built, held to its size budget and drove from `file://` on the release commit
+   (the `static-demo-showcase` artifact), checks it (`release.mjs demo`) and writes the page's notes
+   (`release.mjs release-notes`); `github-release`, with only `contents: write`, makes a draft holding
+   `sssb-showcase.html`, checks it byte for byte, and publishes it, marked Latest unless a higher release is already tagged. The README links
+   `releases/latest/download/sssb-showcase.html`. A re-run finishes a draft and confirms a published release, never
+   changing one.
 
 The push to `main` also runs `plan` again, on the release commit, which finds nothing pending and stops. If any step
 fails, nothing later runs: a failed `push` leaves no tag (the push is atomic) and the next merge cuts the release; a

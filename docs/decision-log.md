@@ -5658,8 +5658,8 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
 Adoption follow-up 4 (`docs/adoption-review-2026-11.md`): an evaluator should see the Simulator without cloning SSSB.
 JP's standing rule for these sessions is to decide and record; each choice below is one he would otherwise have been
 asked. **This makes a new outward artifact**: from the first release after 0.2.0, every plain release's tag makes a
-public GitHub release of `safeinsights/sssb`, marked Latest, holding its notes and `sssb-showcase.html`. Nothing about
-what or when anything publishes to npm changes.
+public GitHub release of `safeinsights/sssb`, marked Latest while it is the newest, holding its notes and
+`sssb-showcase.html`. Nothing about what or when anything publishes to npm changes.
 
 - **A GitHub release asset, made by release.yml for every plain release.** Two jobs, `demo` and `github-release`,
   split as the candidate's `candidate` and `prerelease` are (the one that reads holds no write token and runs no
@@ -5684,8 +5684,8 @@ what or when anything publishes to npm changes.
   the tag's run for a file CI never drove. The artifact's 14-day retention bounds a re-run, which is days, not weeks.
 - **The asset is `sssb-showcase.html` in every release, not `sssb-showcase-<version>.html`** as the future task
   sketched: `releases/latest/download/<name>` needs one name, and the release page says the version. Rejected:
-  **attaching both names**, two copies of one file. The release is marked Latest (candidates stay never-Latest), which
-  is what makes that URL the newest release's.
+  **attaching both names**, two copies of one file. The newest release is marked Latest (candidates stay never-Latest),
+  which is what makes that URL the newest release's.
 - **The README links `releases/latest/download/sssb-showcase.html` and says every release after 0.2.0 carries it**,
   so the link reads true before and after the next release; until it, the link answers 404 and the same sentence names
   `pnpm build:demo-static`. Rejected: **backfilling a 0.2.0 GitHub release** by hand, an outward artifact this task was

@@ -572,10 +572,11 @@ jobs:
 
     # The GitHub release, the only job that writes to the repository on a plain tag, with the run's own token (no app:
     # a release is not a push, and starts no workflow). It checks out nothing, installs nothing and runs only gh, jq
-    # and sha256sum. As `prerelease` does, it creates a DRAFT holding the demo, checks it byte for byte against what
-    # `demo` checked, and only then makes it visible, here as the repository's latest release, whose
-    # `releases/latest/download/sssb-showcase.html` the README links. A re-run finishes a draft a failed run left, and
-    # confirms a published release rather than changing it; a published release whose demo differs fails here.
+    # and shell tools. As `prerelease` does, it creates a DRAFT holding the demo, checks it byte for byte against what
+    # `demo` checked, and only then makes it visible, as a plain release marked Latest while its tag is the highest
+    # plain release tag, so the README's `releases/latest/download/sssb-showcase.html` names the newest release's
+    # demo. A re-run finishes a draft a failed run left, and confirms a published release rather than changing it; a
+    # published release whose demo differs fails here.
     github-release:
         name: github-release
         needs: [pack, demo]

@@ -5,9 +5,9 @@ architecture, Postgres row-level-security tenancy, and a local development loop 
 laptop with no docker, no credentials, and no network.
 
 To see it with nothing to install, download the showcase as one HTML file from the latest release,
-[`sssb-showcase.html`](https://github.com/safeinsights/sssb/releases/latest/download/sssb-showcase.html), and open
-it in a browser: it runs from `file://`, the Simulator and its tours included. Every release after 0.2.0 carries it;
-`pnpm build:demo-static` in `apps/showcase` builds the same file from a checkout.
+[`sssb-showcase.html`](https://github.com/safeinsights/sssb/releases/latest/download/sssb-showcase.html), and open it in
+a browser: it runs from `file://`, the Simulator and its tours included. Every release after 0.2.0 carries it;
+`pnpm build:demo-static` in `apps/showcase` builds it from a checkout, as `dist-demo/index.html`.
 
 To run the whole of it, clone this repository and run:
 
