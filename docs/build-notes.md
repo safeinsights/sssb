@@ -2377,6 +2377,6 @@ the context lines of a hunk are what make it safe, and fewer than three of them 
 reason to pin the hunk there: pinning it refused a file whose only difference was a comment added above the imports.
 "The text it names occurs once" is the whole rule, and it refuses both an edited hunk and an ambiguous one. Second, a
 deleted file has to be checked as a whole, not as a hunk: a patch that deletes `items-card.tsx` and finds its lines in a file
-that also has a line the adopter appended would otherwise delete the adopter's line with it, so the applier requires nothing
-to remain after the removal. The test that holds this (`tests/tooling/remove-items.test.ts`) runs the real CLI over an app
+that also has a line the adopter appended would otherwise remove the matched lines, keep the adopter's, and then delete the
+file with it, so the applier requires nothing to remain after the removal. The test that holds this (`tests/tooling/remove-items.test.ts`) runs the real CLI over an app
 the generator wrote, which is also what catches a starter change that makes a hunk stop applying.

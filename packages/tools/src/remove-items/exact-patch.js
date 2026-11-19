@@ -4,12 +4,12 @@
 // edited inside a hunk is refused, never patched around, and a file that is not found, or is found twice, is
 // refused too. A hunk may move (the adopter added lines above it); it may not change.
 //
-// Why this and not `git apply`: it must work where there is no repository (a tarball, a scratch copy), name what it
+// Why this and not `git apply`: it must work where there is no repository (a tarball, a scratch copy), and say what it
 // would refuse before it touches a file.
 //
 // The patches are `git diff --no-renames -U3 --relative=<app>` between the starter and the starter with the Items
-// slice taken out; `tests/tooling/remove-items.test.ts` proves they apply to the starter, and to a workspace
-// generated from it, and leave no Items behind.
+// slice taken out; `tests/tooling/remove-items.test.ts` proves they apply to an app the generator wrote from the
+// starter, and leave no Items behind.
 
 /** One line of a hunk: ' ' (context, kept), '-' (removed) or '+' (added). @typedef {{ op: ' ' | '-' | '+', text: string }} HunkLine */
 /** @typedef {{ lines: HunkLine[] }} Hunk */

@@ -1760,7 +1760,8 @@ function generatedUntouched() {
  * first: a dry run that changes nothing, then the whole slice (`--drop-migrations`: this workspace's database has never
  * run its migrations), then the gates an adopter runs next on what is left. The patch it applies is a diff of the
  * starter, so what this proves is the generator's output and the packed @sssb/tools together: the app still typechecks,
- * lints, passes its conformance suite and the contract runner on zero app tables, knip and jscpd, builds, and signs in.
+ * lints, passes its conformance suite and the contract runner on zero app tables, knip and jscpd, and (in a full run, with
+ * the e2e and the build verify adds) builds and signs in.
  */
 function removeItemsGenerated() {
     const app = path.join('apps', GEN_APP)
