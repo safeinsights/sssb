@@ -14,7 +14,8 @@
 //              embedded Postgres) held to the conformance suite, the reusable workflow's `sssb ci lint-typecheck-unit`
 //              and `sssb ci synth`, `pnpm knip` and `pnpm jscpd` (the workspace's own CI job), then that the workflow's
 //              pin, the plugin marketplace's in `.claude/settings.json` and the packed kit's release stamp are one
-//              commit, which holds the plugin, and that `sssb doctor` says they match. CI's `adoption-probe`
+//              commit, which holds the plugin, and that `sssb doctor` says they match. Then it runs `sssb remove-items --drop-migrations` on the app (after the untouched
+//              check, which it would trip, and before the partial installs) and the gates again over what is left. CI's `adoption-probe`
 //              job, a required check. A failure here is the generator's to fix, never this script's.
 //   (neither)  both, the pages shape first.
 //
@@ -1755,6 +1756,38 @@ function generatedUntouched() {
 }
 
 /**
+ * THE ITEMS SLICE COMES OUT (adoption follow-up 2). `sssb remove-items` on the generated app, as an adopter runs it
+ * first: a dry run that changes nothing, then the whole slice (`--drop-migrations`: this workspace's database has never
+ * run its migrations), then the gates an adopter runs next on what is left. The patch it applies is a diff of the
+ * starter, so what this proves is the generator's output and the packed @sssb/tools together: the app still typechecks,
+ * lints, passes its conformance suite and the contract runner on zero app tables, knip and jscpd, builds, and signs in.
+ */
+function removeItemsGenerated() {
+    const app = path.join('apps', GEN_APP)
+    const command = ['exec', 'sssb', 'remove-items', '--app', app]
+    const dry = run('pnpm', [...command, '--dry-run', '--drop-migrations'], { cwd: GEN, capture: true })
+    if (!dry.stdout.includes('delete src/components/items-card.tsx'))
+        fail(`sssb remove-items --dry-run does not say it would delete the Items card:\n${dry.stdout}${dry.stderr}`)
+    generatedUntouched()
+    run('pnpm', [...command, '--drop-migrations'], { cwd: GEN })
+    const root = path.join(GEN, app)
+    const left = ['src', 'messages', 'tests', 'config']
+        .flatMap((dir) => filesUnder(path.join(root, dir)))
+        .filter((file) => /\bitems?\b/i.test(readFileSync(file, 'utf8')))
+        .map((file) => path.relative(root, file))
+    if (left.length > 0) fail(`sssb remove-items left the Items slice in ${left.join(', ')}`)
+    // What the command tells an adopter to do after --drop-migrations: the dev database the earlier gates ran
+    // recorded 1001_items, and the migrator refuses a recorded migration that is gone from the code.
+    rmSync(path.join(root, '.data'), { recursive: true, force: true })
+    console.log('the Items slice is out; the same gates run over what is left')
+    verifyGenerated()
+    unitGenerated()
+    contractGenerated()
+    run('pnpm', ['knip'], { cwd: GEN })
+    run('pnpm', ['jscpd'], { cwd: GEN })
+}
+
+/**
  * THE SEAM SURVIVES pnpm's partial installs: `pnpm add`, `remove` and `update` for the app (from the root, `--filter
  * <app>`), as an author runs them,
  * each followed by `sssb doctor` and the lockfile's seam link. A `link:` seam passed a fresh install and was unlinked by
@@ -1996,6 +2029,10 @@ if (RUN_GENERATED) {
     step('generated: pnpm jscpd (the workspace’s own job)', () => run('pnpm', ['jscpd'], { cwd: GEN }))
     step('generated: the workflow and plugin pins are the kit’s release commit, and the plugin is there', pinsGenerated)
     step('generated: every file the generator wrote is unchanged', generatedUntouched)
+    step(
+        'generated: sssb remove-items takes the Items slice out, and the gates pass over what is left',
+        removeItemsGenerated,
+    )
     step('generated: pnpm add, remove and update keep the seam linked (sssb doctor)', partialInstallsKeepSeam)
 }
 
