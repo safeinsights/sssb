@@ -6735,6 +6735,39 @@ sessions: decide, and record the rejected alternative.
   comment saying to set `s3` when it starts storing (cutover row `cloud-accounts`, which now says the storage checks
   do not apply with `none`). Rejected: `s3`, a bucket every generated app would carry and cut over before it needs one.
 
+## Two real-mode fixes: keyless analytics, and the starter's auth provider (2026-11-19, `fix/realmode-analytics-and-clerk-provider`)
+
+The two follow-ups ADR-0015's study found, each verified from the code first; neither was observed on a deployment, and
+pages' sandbox branch has both (its locale layout mounts no provider while its sign-in page loads SSSB's real form, and
+its deployment sets no `POSTHOG_KEY` or `APP_DATA_DIR`). JP's standing rule for these sessions: decide, and record the
+rejected alternative.
+
+- **Real mode without `POSTHOG_KEY` gets a no-op adapter** (`packages/kit/src/adapters/real/no-analytics.ts`), never
+  the fake, whose `capture` and `isFlagEnabled` create and write `.data/analytics` in the working directory, the
+  read-only deployment package on Lambda. Rejected: pointing `APP_DATA_DIR` at `/tmp` in `SssbApp`, which would keep a
+  simulated-world store, per instance and lost on recycle, behind a real deployment; and an `AbsentPortError`, which
+  would fail every invite.
+- **A flag answers the default its caller passes**, as the PostHog adapter does when PostHog cannot be reached.
+  Rejected: `false` for every flag, which would override a caller that declared `true` as the safe default.
+- **The real ports reach no fake adapter at all**: the bundle test now fails one. Rejected: checking the analytics
+  module alone, when the import of any fake into the real registry is the class of mistake.
+- **This is the patch ADR-0015 proposed, not its analytics switch**, which stays proposed.
+- **The starter's locale layout mounts `RealAuthProviders` in real mode**, as the showcase's does: `@clerk/react`
+  6.18.8's `useSignIn` calls `useAssertWrappedByClerkProvider`, which throws outside `ClerkProvider`, and the starter's
+  real-mode sign-in page renders SSSB's form that calls it.
+- **A conformance check, `real-auth-provider`, holds every app to it**: from each of Next's rendering files under
+  `src/app` it follows the app's own imports (relative, `@/`, `@sssb/app-config/`; type-only ones skipped) with
+  TypeScript's parser, and a file that reaches SSSB's real sign-in or invite form needs a layout or template wrapping
+  it that reaches the provider. Rejected: a test of the starter alone, which would not have caught pages, the first
+  adopter, which has the same gap; a render test of the layout in real mode, which needs the real registry to boot;
+  and, as first written, judging only a layout's own imports and a module's own directory, which review showed failing
+  correct apps (a provider behind a wrapper module, a form in a shared folder) that could only opt out. Its limits are
+  in its header: it reads imports, not whether they run, and no alias but those two. SSSB's fixture opts out (no
+  `src/app`); scratch apps test the check itself.
+- **The check ships as `@sssb/kit` minor**, though the brief said patch: an adopter whose layout lacks the provider sees
+  its suite go red on upgrade, and the release notes call an action-required change a minor. The analytics fix is a
+  patch, and the starter's change a patch of `@sssb/create`.
+
 ## A fast path for docs-only pull requests (2026-11-19, `ci/docs-only-fast-path`)
 
 JP, 2026-11-19, on safeinsights/sssb#78 (three markdown files, every job run): "Is there an optimization here? See

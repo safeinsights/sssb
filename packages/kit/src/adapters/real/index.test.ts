@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeTestTmpDir } from '../../testing/tmp-dir'
 import { DATABASE_TRANSPORTS } from './database-transport'
 import { OPTIONAL_PORTS } from './optional-ports'
 
@@ -27,7 +28,7 @@ const loaded = vi.hoisted(() => ({
 }))
 
 vi.mock('./auth', () => ({ realAuth: {} }))
-vi.mock('./analytics', () => ({ createRealAnalytics: () => ({}) }))
+vi.mock('./analytics', () => ({ createRealAnalytics: () => ({ kind: 'posthog' }) }))
 
 const COMMON_ENV = {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'pk',
@@ -344,6 +345,40 @@ describe('the required environment', () => {
 })
 
 /**
+ * Analytics in a real deployment without `POSTHOG_KEY`. It used to be the simulated world's fake, which writes every
+ * capture and reads every flag under `.data/` in the working directory: on Lambda that is inside the deployment
+ * package (Next's standalone server changes to its own directory), which is read-only, so sending an invite (which
+ * awaits a capture) would most likely fail in any deployment without a key. It is now a no-op
+ * that touches no file. The data directory here cannot be created (its parent is a file), as `.data` cannot be in a
+ * read-only directory, so a single filesystem write fails the test.
+ */
+describe('analytics in real mode', () => {
+    const PG = { DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' }
+
+    it('without a key captures nothing, answers every flag with its default, and touches no file', async () => {
+        const dir = makeTestTmpDir('real-analytics-')
+        const blocker = path.join(dir, 'a-file')
+        writeFileSync(blocker, '')
+        stubEnv({ ...PG, POSTHOG_KEY: undefined, APP_DATA_DIR: path.join(blocker, 'data') })
+        const { createRealPorts } = await import('./index')
+        const ports = await createRealPorts(HOOKS)
+        await expect(ports.analytics.capture('org_invite_sent', { role: 'member' }, 'user-1')).resolves.toBeUndefined()
+        await expect(ports.analytics.isFlagEnabled('demo-banner')).resolves.toBe(false)
+        await expect(ports.analytics.isFlagEnabled('demo-banner', true)).resolves.toBe(true)
+        expect(readdirSync(dir)).toEqual(['a-file'])
+        await ports.db.getDb().destroy()
+    })
+
+    it('with a key is the PostHog adapter', async () => {
+        stubEnv({ ...PG, POSTHOG_KEY: 'phc_test' })
+        const { createRealPorts } = await import('./index')
+        const ports = await createRealPorts(HOOKS)
+        expect(ports.analytics).toEqual({ kind: 'posthog' })
+        await ports.db.getDb().destroy()
+    })
+})
+
+/**
  * `sssb check-real-env` (the `dev:real` preflight) bundles this module as CommonJS, every dynamic import's target
  * included, and CommonJS refuses the adapter registry's top-level await. So nothing this module can load may reach the
  * registry: not the notification modules, and not the app's job handlers (`@sssb/app-config/jobs`), which may import
@@ -372,6 +407,8 @@ describe('the real ports, as the dev:real preflight bundles them', () => {
         expect(
             reached.filter((file) => /adapters[\\/]index\.ts$|server-lib[\\/]|app-config[\\/]jobs/.test(file)),
         ).toEqual([])
+        // Nor a fake adapter: a real deployment never serves one (the keyless analytics case above is why).
+        expect(reached.filter((file) => /adapters[\\/]fake[\\/]/.test(file))).toEqual([])
     })
 })
 

@@ -5,15 +5,18 @@ import { conformanceSuite } from './index'
 
 /**
  * The conformance suite, run against the framework's OWN seam (packages/kit/test-fixture), exactly as every app runs
- * it against its own from `src/sssb.conformance.test.ts`. The fixture opts out of one check, which also keeps the
+ * it against its own from `src/sssb.conformance.test.ts`. The fixture opts out of two checks, which also keeps the
  * opt-out path exercised: its routes are a reference tree under `test-fixture/api`, not an app's `src/app`, and the
- * kit's own scan (packages/kit/src/authz/authorized-mutations.test.ts) is what walks them.
+ * kit's own scan (packages/kit/src/authz/authorized-mutations.test.ts) is what walks them; and with no `src/app` it
+ * renders no page to hold to `real-auth-provider`, which ./conformance/auth-provider.test.ts runs on scratch apps.
  */
 conformanceSuite({
     appDir: path.resolve(import.meta.dirname, '../../test-fixture'),
     optOut: {
         'authz-mutations':
             "the fixture's routes live under test-fixture/api, not src/app; authorized-mutations.test.ts scans them",
+        'real-auth-provider':
+            'the fixture has no src/app and renders no page; auth-provider.test.ts runs the check on scratch apps',
     },
 })
 
