@@ -1564,6 +1564,11 @@ describe('knipGaps: the apps knip.json gives no workspace (reported, never faile
         expect(knipGaps(root, apps, packages)).toMatchObject({ generator: true })
         json(path.join(root, 'knip.json'), { ignoreDependencies: ['@sssb/create'] })
         expect(knipGaps(root, apps, packages)).toMatchObject({ generator: false })
+        // An entry with a regular expression's characters is one, to knip.
+        json(path.join(root, 'knip.json'), { ignoreDependencies: ['@sssb/.*'] })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: false })
+        json(path.join(root, 'knip.json'), { ignoreDependencies: ['@sssb/kit', '(unclosed'] })
+        expect(knipGaps(root, apps, packages)).toMatchObject({ generator: true })
         json(path.join(root, 'knip.json'), { workspaces: { '.': { ignoreDependencies: ['esbuild'] }, 'apps/*': {} } })
         expect(knipGaps(root, apps, packages)).toMatchObject({ generator: true })
         json(path.join(root, 'knip.json'), {
@@ -1571,8 +1576,14 @@ describe('knipGaps: the apps knip.json gives no workspace (reported, never faile
         })
         expect(knipGaps(root, apps, packages)).toMatchObject({ generator: false })
         rmSync(path.join(root, 'package.json'))
-        write(path.join(root, 'knip.json'), '{ // a comment\n}')
+        write(path.join(root, 'knip.json'), '{ "workspaces": {')
         expect(knipGaps(root, apps, packages)).toMatchObject({ file: 'knip.json', unread: expect.any(String) })
+        // knip reads a knip.json with comments, trailing commas or a byte-order mark too.
+        write(
+            path.join(root, 'knip.json'),
+            '\uFEFF{ // why\n "workspaces": { "apps/*": {}, "apps/*/src/app-config": {}, },\n}',
+        )
+        expect(knipGaps(root, apps, packages)).toEqual({ file: 'knip.json', missing: [], generator: false })
         // An app that is no workspace package is the root's, for knip.
         json(path.join(root, 'knip.json'), { workspaces: { '.': {} } })
         expect(knipGaps(root, apps, [])).toEqual({ file: 'knip.json', missing: [], generator: false })

@@ -164,6 +164,14 @@ describe('sssb add-app', () => {
                 expect(readdirSync(path.join(ws, 'apps'))).toEqual(['console'])
             }
             refused(['console'], /already has a package named console/)
+            // The slug of an app already here, whatever its packages are called.
+            const appTs = read(ws, 'apps/console/config/app.ts')
+            writeFileSync(
+                path.join(ws, 'apps/console/config/app.ts'),
+                appTs.replace("APP_SLUG = 'console'", "APP_SLUG = 'pages'"),
+            )
+            refused(['pages'], /apps\/console is the app "pages" \(its config\/app.ts APP_SLUG\)/)
+            writeFileSync(path.join(ws, 'apps/console/config/app.ts'), appTs)
             refused(['ledger', '--slot', 'starter'], /apps\/console already declares the port slot "starter"/)
             refused(['ledger', '--port', '3100'], /default 3100 is the default of the built-in "starter"/)
             refused(['ledger', '--port', '3000'], /default 3000 is the default of the built-in "showcase"/)

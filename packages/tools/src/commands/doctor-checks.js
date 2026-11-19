@@ -1111,8 +1111,10 @@ export function knipGaps(root, apps, packages) {
     if (file === undefined) return null
     let config
     try {
-        const text = readFileSync(path.join(root, file), 'utf8')
-        config = JSON.parse(file.endsWith('.jsonc') ? withoutJsonComments(text) : text)
+        // As knip reads it: a byte-order mark dropped, and comments and trailing commas allowed in every one of its names
+        // (it falls back to JSONC for a `.json` too). Plain JSON passes through unchanged.
+        const text = readFileSync(path.join(root, file), 'utf8').replace(/^\uFEFF/, '')
+        config = JSON.parse(withoutJsonComments(text))
     } catch (error) {
         return { file, unread: error instanceof Error ? error.message : String(error) }
     }
@@ -1127,7 +1129,18 @@ export function knipGaps(root, apps, packages) {
     const manifestFile = path.join(root, 'package.json')
     const rootManifest = existsSync(manifestFile) ? readJson(manifestFile) : {}
     const installs = ['dependencies', 'devDependencies'].some((field) => rootManifest?.[field]?.['@sssb/create'])
-    const generator = Boolean(installs) && !ignored.includes('@sssb/create')
+    // knip reads an entry with a regular expression's characters as one (its `toRegexOrString`).
+    const ignores = (/** @type {unknown} */ entry) => {
+        if (typeof entry !== 'string') return false
+        if (entry === '@sssb/create') return true
+        if (!/[*+\\(|{^$]/.test(entry)) return false
+        try {
+            return new RegExp(entry).test('@sssb/create')
+        } catch {
+            return false
+        }
+    }
+    const generator = Boolean(installs) && !ignored.some(ignores)
     if (!hasWorkspaces) return { file, missing: null, generator }
     const keys = Object.keys(workspaces)
     const named = (/** @type {string} */ rel) =>

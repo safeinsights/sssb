@@ -290,6 +290,19 @@ export async function run(args) {
                     'named: pnpm mistakes one for the other. Pick another slug',
             )
     }
+    // Nor the slug of an app already here, whatever its packages are called: the slug names the session cookie, the
+    // contract database and the deployment's stack.
+    for (const app of apps) {
+        const config = path.join(app, 'config', 'app.ts')
+        const declared = existsSync(config)
+            ? /export const APP_SLUG = '([^']+)'/.exec(readFileSync(config, 'utf8'))?.[1]
+            : undefined
+        if (declared === slug)
+            throw new UsageError(
+                `sssb add-app: ${path.relative(root, app)} is the app "${slug}" (its config/app.ts APP_SLUG), and the ` +
+                    'slug names the session cookie, the contract database and the stack: pick another slug',
+            )
+    }
     const portSlot = newPortSlot({ root, apps, slug, slot, port })
     // The one list of apps: named in `sssb.apps` when the root keeps one (else apps/* is the list, and holds it). Written
     // by the generator's `finish`, under its signal hold, so an interrupted run takes the entry back with the app.
