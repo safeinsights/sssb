@@ -82,8 +82,9 @@ the usual shape: it sits under `apps/` so that a second app, or a package of you
 function), is a sibling rather than a special case, and so that the root's commands mean the same with one app or
 several. The root
 commands that act on every app (`pnpm build`, `pnpm typecheck`, `pnpm test:e2e`, the fences, the demo-static trio)
-fan out over `apps/*`, so they pick up a second app with no edit; the root's `sssb.apps` and the `APPS` list in each
-root Vitest config name the apps one by one, so a second app is added there. The commands that must pick ONE app
+fan out over `apps/*`, so they pick up a second app with no edit; the root's `sssb.apps` names the apps one by one, and
+the root's Vitest configs read it, so a second app is one entry there, which `pnpm exec sssb add-app <slug>` writes with
+the app ("A workspace with two apps" below). The commands that must pick ONE app
 (`pnpm dev`, `pnpm tick`, `pnpm start`) name the generated app; "What the showcase's absence costs" below lists every
 root script.
 
@@ -187,7 +188,7 @@ ends as the signal asked.
   approvals, `dedupePeerDependents: false`, a `peerDependencyRules` entry that silences the eslint 10 warning
   from `eslint-plugin-react` and `eslint-plugin-jsx-a11y` (delete it when both declare eslint 10), and SSSB's
   `minimumReleaseAge` with `@sssb/*` exempt), the Vitest configs on `@sssb/tools/vitest` (`vitest.config.ts` and
-  `vitest.contract.config.ts`), `tsconfig.json`, `eslint.config.mjs` (for the root's own files), knip, jscpd,
+  `vitest.contract.config.ts`, a project for each app `sssb.apps` names), `tsconfig.json`, `eslint.config.mjs` (for the root's own files), knip, jscpd,
   gitleaks, git-ignore and Prettier-ignore configs, and lint-staged's. `.editorconfig`, `.nvmrc`,
   `.prettierrc.json`, the two husky hooks and `commitlint.config.mjs` are copied from SSSB's root as they are.
 - **CI**: `.github/workflows/checks.yml`, on pushes to `main` and on pull requests, with three jobs. `sssb` calls
@@ -275,6 +276,20 @@ override is `LEDGER_PORT` (`<NAME>_PORT`, with `-` as `_`), and a linked worktre
 keyed on the name as well as the checkout. The name is lowercase words joined by `-`; the default is an integer from 1024 to 49151
 outside the ports SSSB's own services use (3000, 3100, 3200-3599, 5439-5639, 20000-29999, 61000-61199).
 `sssb doctor` fails two apps that declare one slot, or two slots with one default, and a declaration that is not valid.
+
+**`pnpm exec sssb add-app <slug>` writes the second app** (`--name "<Name>"`, `--slot <name>` and `--port <port>` are
+optional). It takes the starter from the `@sssb/create` installed at the workspace root, at your SSSB version
+(`pnpm add -D -w @sssb/create@<version>`; the command prints the line when it is missing), renames it as the generator
+renamed your first app, and writes it under `apps/<slug>/`, taking each `@sssb` package as your first app takes it, on
+a slot of its own (named for the slug, its default the first free one from 3700 up) with the edits above made, and
+names it in the root's `sssb.apps`. Then `pnpm install` and `pnpm exec sssb doctor`, which names what the workspace
+still needs: a root Vitest config that keeps a list of apps of its own (one written before `@sssb/tools/vitest`'s
+`workspaceAppProjects`), and, as a report, a `knip.json` with no workspace for the new app and its seam (copy the first
+app's two entries), and a root `@sssb/create` that knip would call unused (remove it once your apps are written, or
+ignore it in `knip.json`). The root's `dev`, `tick` and `start` scripts and the CI workflow's `synth` name one app on
+purpose; the command says what to add for the second. **`pnpm jscpd` fails while the new app is still the starter**:
+`.jscpd.json` measures duplication across every app's source, and two copies of the starter are one; make the apps your
+own, or, while you do, add `"apps/<slug>/src/**"` to its `ignore` and take it out again once the app is its own.
 
 Nothing the generator renames is a literal an adopter has to hunt for, and no test hard-codes the product's
 name: `apps/*/tests/catalog.ts` reads the app's own catalog and the specs assert against that. A rename
