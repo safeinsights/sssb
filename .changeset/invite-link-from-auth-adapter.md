@@ -16,7 +16,9 @@ not be accepted from SSSB's mail. The link is now the auth adapter's to build: `
 page's path to Clerk as `redirectUrl` (a path, since a deployed request's URL names the server's own host) and returns
 Clerk's invitation URL. When the adapter returns no link, `sendOrgInvite` sends no mail of its own, and it never
 returns the link to its caller: it is the invitee's credential. `RealAcceptInviteForm` takes an optional `status`, the
-page's `__clerk_status`: `sign_in`, an invitee who already has an account, signs in by ticket rather than signing up.
+page's `__clerk_status`: `sign_in`, an invitee who already has an account, signs in by ticket rather than signing up,
+and `complete`, an invitation Clerk already accepted, only redirects. It also submits a ticket once, after Clerk has
+loaded: it used to submit it again as Clerk loaded, and twice under React's StrictMode.
 
 **To adopt.** If your app calls `sendOrgInvite`, its code changes nothing, but in real mode Clerk now sends invitees to
 your `/<locale>/accept-invite` page: an app that invites people needs that page, rendering `RealAcceptInviteForm` with

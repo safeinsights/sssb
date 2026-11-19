@@ -6851,8 +6851,13 @@ JP asked for the fix. Decisions, with the rejected alternative:
   headers here, which is that future task's whole job.
 - **An existing user's invitation is handled**: setting `redirectUrl` sends every invitee to the accept form, and Clerk
   marks one who already has an account `__clerk_status=sign_in`, which takes `signIn.ticket()` (Clerk's guide to
-  accepting organization invitations). The form takes the status as an optional prop. Rejected: leaving it for later,
-  which this change would have made a regression, since without `redirectUrl` Clerk's own flow handled it.
+  accepting organization invitations). The form takes the status as an optional prop, and `complete` (Clerk accepted it
+  already) only redirects. Rejected: leaving it for later, which this change would have made a regression, since
+  without `redirectUrl` Clerk's own flow handled it.
+- **The form submits a ticket once, after Clerk has loaded**, reading Clerk's resources through a ref. Review found the
+  sign-up path already submitting twice under StrictMode and again as clerk-js loaded and the resources changed
+  identity; a ticket is single-use, so the second submission could report an error for an accepted invitation.
+  Rejected: depending on the resources in the effect, which is what re-ran it.
 - **Two invitation mails stay possible**: Clerk can deliver its own, and no API call turns that off per invitation, so
   the `auth-dev` row asks for the instance to be set so an invitee gets one.
 
