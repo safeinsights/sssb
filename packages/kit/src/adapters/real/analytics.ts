@@ -3,7 +3,7 @@ import type { AnalyticsPort } from '../../ports/analytics'
 
 /**
  * AUTHORED — CUTOVER (`analytics`): typechecked, never run against a real project. Enabled in
- * staging/prod only (ADR-0010); everywhere else the no-op fake is wired even in real mode.
+ * staging/prod only (ADR-0010): a real deployment without a key gets the no-op (./no-analytics.ts).
  */
 export function createRealAnalytics(apiKey: string, host: string): AnalyticsPort {
     const client = new PostHog(apiKey, { host, flushAt: 1, flushInterval: 5_000 })

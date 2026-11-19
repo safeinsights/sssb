@@ -6,10 +6,10 @@ import { CutoverPendingError } from '../../ports/errors'
 import type { JobsPort } from '../../ports/jobs'
 import type { LlmPort } from '../../ports/llm'
 import type { StoragePort } from '../../ports/storage'
-import { fakeAnalytics } from '../fake/analytics'
 import { absentEmail, absentJobs, absentLlm, absentStorage } from './absent'
 import { realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
+import { noAnalytics } from './no-analytics'
 import { optionalPortsEnv, portChoice } from './optional-ports'
 
 interface RealPorts {
@@ -123,10 +123,11 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
             : runner === 'in-process'
               ? await inProcessJobs(hooks, { db, storage, email, llm, auth: realAuth })
               : absentJobs
-    // PostHog only where a key is configured (staging/prod per ADR-0010); the simulated one otherwise.
+    // PostHog only where a key is configured (staging/prod per ADR-0010); a no-op otherwise (./no-analytics.ts), never
+    // the simulated world's fake, which writes under `.data/`.
     const analytics = env['POSTHOG_KEY']
         ? (await import('./analytics')).createRealAnalytics(env['POSTHOG_KEY'], env['POSTHOG_HOST'] ?? '')
-        : fakeAnalytics
+        : noAnalytics
     return {
         auth: realAuth,
         db,

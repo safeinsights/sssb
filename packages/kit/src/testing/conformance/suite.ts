@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { realAuthProvider } from './auth-provider'
 import { authzMutations } from './authz'
 import { appRolesCheck, migrationOrder, rlsPglite } from './db'
 import { demoPresets } from './demo-presets'
@@ -28,6 +29,7 @@ import { registerTestTmpDirCleanup } from '../tmp-dir'
 /** The unit checks' implementations, by id. The contract checks are `@sssb/kit/testing/contract`'s. */
 const IMPLEMENTATIONS: Readonly<Record<string, CheckImpl>> = {
     'authz-mutations': authzMutations,
+    'real-auth-provider': realAuthProvider,
     'i18n-partition': i18nPartition,
     'i18n-parity': i18nParity,
     'rls-pglite': rlsPglite,
