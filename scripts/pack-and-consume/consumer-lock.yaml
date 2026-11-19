@@ -69,7 +69,7 @@ importers:
         specifier: ~6.0.3
         version: 6.0.3
       typescript-eslint:
-        specifier: ^8.72.0
+        specifier: ^8.73.0
         version: 8.73.0(eslint@10.15.0(jiti@2.7.0))(typescript@6.0.3)
       vitest:
         specifier: ^4.1.12
@@ -430,27 +430,27 @@ packages:
   '@cacheable/utils@2.5.0':
     resolution: {integrity: sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA==}
 
-  '@clerk/backend@3.29.0':
-    resolution: {integrity: sha512-VmoVqkQXDs3hi2HsUomqe9Z/izoGgQ+IbY8fJN9VsqSdKVgHGUBw6CjDbOufkDakDuC8zBtcT9sn0M3QR3RHfQ==}
+  '@clerk/backend@3.30.0':
+    resolution: {integrity: sha512-3VeYOs0awboLZ3oK0zp3hY9xFVQYd4Yt4FrYmP5jun1Im36v7cyteZgDd1bG2YfYWM1ETKkRymxU2v1rQNMwnA==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/nextjs@7.10.0':
-    resolution: {integrity: sha512-AT0MdW6iAe0i0JpYFM54FBc+EiI7m25OF6/F7nkhppOk7DJaN2TVp9E/82Dqh5fe0lsm3+sNZxOeZy1evUEYdg==}
+  '@clerk/nextjs@7.10.1':
+    resolution: {integrity: sha512-tPlvSO5AVr0vyBOm+s/c6kmpJHKfJiS+OZXYtDc9syesiM9jEJc5Qm9CZKP9Cj6+sQfkqDIvQuEWYuGU+zpvyw==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       next: ^15.2.8 || ^15.3.8 || ^15.4.10 || ^15.5.9 || ^15.6.0-0 || ^16.0.10 || ^16.1.0-0
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/react@6.18.8':
-    resolution: {integrity: sha512-4f/9t9x28JbMueJMPNLUsG/f3Kilzubdz1hnjOj4j6HFLmO48R907+ozWdte1t+Vsj1SJooJBqZj/nIU78JvNw==}
+  '@clerk/react@6.18.9':
+    resolution: {integrity: sha512-39e3XtC5z8/l59c6hMmmO5Hxfjpgq31oNp3qvLo6zTLm6tTOK73TKeE1Ge7mwjl2Lhk60eysTq3r9mubZUTjsQ==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/shared@4.45.1':
-    resolution: {integrity: sha512-rAGh+U8dSE6Ov1I3mXysIHaGhxx63ET+24kW4gnmApJvrfU8nq9JT9pQOoyzG3X4PQa93aaAsxkck46CynDeHA==}
+  '@clerk/shared@4.46.0':
+    resolution: {integrity: sha512-eb60E6xjOzcBu1B1C3Y1XucVwbo5PtkQI/gbSHEwqDwjsC9G++ePzuyzyINGkGt65ia3w6qMN1iRcdd1w/jzlQ==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -2217,23 +2217,23 @@ packages:
     engines: {node: '>=18.0.0'}
 
   '@sssb/cdk@file:../tarballs/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz':
-    resolution: {integrity: sha512-YYdepYBLoNhzCJls4vsppVnNS4sfxGW2JAqN9HgoPfHepxxbxYNu6KGDEYcscQR2HU/9Qr/z343XbUlQlX1ssQ==, tarball: file:../tarballs/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz}
+    resolution: {integrity: sha512-oFjp8MTltAEVvlfUs8P1/BjS/aSTpQX1RoF1nGW6AgjN1qmMvO5j8fzIMY4IO5W4pW+7IP3b6+lWxQXC9hho7Q==, tarball: file:../tarballs/sssb-cdk-__PACK_AND_CONSUME_VERSION__.tgz}
     version: __PACK_AND_CONSUME_VERSION__
     engines: {node: '>=24'}
     peerDependencies:
-      '@sssb/tools': 0.2.0-rc.1
+      '@sssb/tools': 0.2.0
       aws-cdk-lib: ^2.274.0
       constructs: ^10.8.1
 
   '@sssb/eslint-plugin@file:../tarballs/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz':
-    resolution: {integrity: sha512-FQ+NYXbAhlZFko00OZPokvWH+i98G2wbz167VDCXohcSElKAk5g+AzSrlLFXarTtEI+orEI+I9DLJ3G30TsxtQ==, tarball: file:../tarballs/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz}
+    resolution: {integrity: sha512-rnfkj3CZ9IcwpCczkC/7+/OQxeY2QK36eT5OXE++DxBAVjfkQivNATccpiK07ktVAb2gwQIzGE1HQdPGnU6CUQ==, tarball: file:../tarballs/sssb-eslint-plugin-__PACK_AND_CONSUME_VERSION__.tgz}
     version: __PACK_AND_CONSUME_VERSION__
     engines: {node: '>=24'}
     peerDependencies:
       eslint: ^10.13.0
 
   '@sssb/kit@file:../tarballs/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz':
-    resolution: {integrity: sha512-Z/07YFaAtPAuRZ5lCty9ieuPxp5CFUQeTI0WLoXHt0sqkUjX4e2ibk/5VTz6/76hEOqWZ8h7w/N24YGfNWGQqg==, tarball: file:../tarballs/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz}
+    resolution: {integrity: sha512-sNspLDjgu8dri94+XwQ884XecQXmGBA0ADNFDbVItt6bh8TKHYJYgMrxxNINjuy8NBHJjA0+gn1Veticf0pWEw==, tarball: file:../tarballs/sssb-kit-__PACK_AND_CONSUME_VERSION__.tgz}
     version: __PACK_AND_CONSUME_VERSION__
     peerDependencies:
       '@mantine/core': ^9.7.3
@@ -2256,7 +2256,7 @@ packages:
         optional: true
 
   '@sssb/tools@file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz':
-    resolution: {integrity: sha512-l0SJcdwgP1kVmSU38P2opsjoOUbpG8jHwrgE/Ae/YrWes5B6WeAK7TAyspvkkCDMCmuxyfIrPsyRAOM9owQgyw==, tarball: file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz}
+    resolution: {integrity: sha512-2c9DQca2CCkmCExB9tW6RqaOjKfdklK4HTUxXPsMZjGYhoqPiiZbQlDZGgZx3vKmdqiaXRCQD5eNb6BPuj8pYw==, tarball: file:../tarballs/sssb-tools-__PACK_AND_CONSUME_VERSION__.tgz}
     version: __PACK_AND_CONSUME_VERSION__
     engines: {node: '>=24'}
     hasBin: true
@@ -2697,8 +2697,8 @@ packages:
   base-64@1.0.0:
     resolution: {integrity: sha512-kwDPIFCGx0NZHog36dj+tHiwP4QMzsZ3AgMViUBKI0+V5n4U0ufTCUMhnQ04diaRI8EX/QcPfql7zlhZ7j4zgg==}
 
-  baseline-browser-mapping@2.11.37:
-    resolution: {integrity: sha512-QYph+vfurmaxhNwi9FprfmtkT5cx2Keg8FzZ0vnjO8ukscIybVyZGMFwdllKGlTI6qyU8ck43OM9UXh+IFJihQ==}
+  baseline-browser-mapping@2.11.38:
+    resolution: {integrity: sha512-rMgy5YW7x28SMfXHLlVZDBqlWzYZ0x2rVR/6FWrNBF0chjigARK1H6nM0hKA1Um3kPOlkQFVtjJs00d2N1ezuw==}
     engines: {node: '>=6.0.0'}
     hasBin: true
 
@@ -2912,8 +2912,8 @@ packages:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
     engines: {node: '>= 0.4'}
 
-  electron-to-chromium@1.5.486:
-    resolution: {integrity: sha512-rpybw4Ac4ak/An6G1Me2+61xzwobowDGyuJe71QHHOVpkZv4fPVobsLl7WH6zHSKusAMpaHxGKTpOvpy7+r3dQ==}
+  electron-to-chromium@1.5.487:
+    resolution: {integrity: sha512-qWotOhQYeYEj+DK4+Y+cfPj44qiC6ETIiWtJLfmDJydED2BJJ7loPA4SfBbbrMI6X/X3tryJgxnY9nxsO545Zw==}
 
   embedded-postgres@18.4.0-beta.17:
     resolution: {integrity: sha512-ORT/A1YiO6ecpRHpyIIBgyCR/8ASqqYZuFw11aX9PkqTX3FUM5+9sNOXY1mGIixxsm2TWSIA5WghJEk7A5ZxVw==}
@@ -3746,8 +3746,8 @@ packages:
     resolution: {integrity: sha512-I9jwMn07Sy/IwOj3zVkVik2JTvgpaykDZEigL6Rx6N9LbMywwUSMtxET+7lVoDLLd3O3IXwJwvuuns8UB/HeAg==}
     engines: {node: '>=4'}
 
-  minimatch@11.0.8:
-    resolution: {integrity: sha512-nFQuYSTVrGvysVBps5Ih+0BdnYFN/Cj3C816r6+p7yK+FHrVLGE4O4N9AFwykrlNlvM2HYt+Rad1Uiro6h88Ig==}
+  minimatch@11.0.9:
+    resolution: {integrity: sha512-KCFkfyjqerNlSstjlhIGNXIKZGA/6O4V4RlhZ+Dsr621SPPw0mzlypE9D9ZOoPiVefHID+j7/XuMMlqfD/F60Q==}
     engines: {node: 20 || >=22}
 
   minimatch@3.1.5:
@@ -5044,41 +5044,41 @@ snapshots:
       hashery: 1.5.1
       keyv: 5.6.0
 
-  '@clerk/backend@3.29.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
+  '@clerk/backend@3.30.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@clerk/shared': 4.45.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/shared': 4.46.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       standardwebhooks: 1.1.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/nextjs@7.10.0(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
+  '@clerk/nextjs@7.10.1(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@clerk/backend': 3.29.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@clerk/react': 6.18.8(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@clerk/shared': 4.45.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/backend': 3.30.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/react': 6.18.9(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/shared': 4.46.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       next: 16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react: 19.3.1
       react-dom: 19.3.1(react@19.3.1)
       server-only: 0.0.1
 
-  '@clerk/nextjs@7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
+  '@clerk/nextjs@7.10.1(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@clerk/backend': 3.29.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@clerk/react': 6.18.8(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@clerk/shared': 4.45.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/backend': 3.30.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/react': 6.18.9(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/shared': 4.46.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       next: 16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react: 19.3.1
       react-dom: 19.3.1(react@19.3.1)
       server-only: 0.0.1
 
-  '@clerk/react@6.18.8(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
+  '@clerk/react@6.18.9(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
-      '@clerk/shared': 4.45.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/shared': 4.46.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react: 19.3.1
       react-dom: 19.3.1(react@19.3.1)
 
-  '@clerk/shared@4.45.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
+  '@clerk/shared@4.46.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@tanstack/query-core': 5.107.1
       dequal: 2.0.3
@@ -5373,7 +5373,7 @@ snapshots:
     dependencies:
       '@eslint/object-schema': 3.0.5
       debug: 4.4.3
-      minimatch: 11.0.8
+      minimatch: 11.0.9
     transitivePeerDependencies:
       - supports-color
 
@@ -6435,7 +6435,7 @@ snapshots:
       '@aws-sdk/client-secrets-manager': 3.1170.0
       '@aws-sdk/s3-presigned-post': 3.1170.0
       '@aws-sdk/s3-request-presigner': 3.1170.0
-      '@clerk/nextjs': 7.10.0(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/nextjs': 7.10.1(next@16.4.6(@babel/core@7.29.13)(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@electric-sql/pglite': 0.5.16
       '@mantine/core': 9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@mantine/form': 9.8.1(react@19.3.1)
@@ -6485,7 +6485,7 @@ snapshots:
       '@aws-sdk/client-secrets-manager': 3.1170.0
       '@aws-sdk/s3-presigned-post': 3.1170.0
       '@aws-sdk/s3-request-presigner': 3.1170.0
-      '@clerk/nextjs': 7.10.0(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@clerk/nextjs': 7.10.1(next@16.4.6(@opentelemetry/api@1.10.0)(@playwright/test@1.65.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@electric-sql/pglite': 0.5.16
       '@mantine/core': 9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@mantine/form': 9.8.1(react@19.3.1)
@@ -6752,7 +6752,7 @@ snapshots:
       '@typescript-eslint/types': 8.73.0
       '@typescript-eslint/visitor-keys': 8.73.0
       debug: 4.4.3
-      minimatch: 11.0.8
+      minimatch: 11.0.9
       semver: 7.8.6
       tinyglobby: 0.2.17
       ts-api-utils: 2.5.0(typescript@6.0.3)
@@ -6987,7 +6987,7 @@ snapshots:
 
   base-64@1.0.0: {}
 
-  baseline-browser-mapping@2.11.37: {}
+  baseline-browser-mapping@2.11.38: {}
 
   bowser@2.15.0: {}
 
@@ -7006,9 +7006,9 @@ snapshots:
 
   browserslist@4.29.6:
     dependencies:
-      baseline-browser-mapping: 2.11.37
+      baseline-browser-mapping: 2.11.38
       caniuse-lite: 1.0.30001826
-      electron-to-chromium: 1.5.486
+      electron-to-chromium: 1.5.487
       node-releases: 2.0.64
       update-browserslist-db: 1.4.0(browserslist@4.29.6)
 
@@ -7198,7 +7198,7 @@ snapshots:
       es-errors: 1.3.0
       gopd: 1.2.0
 
-  electron-to-chromium@1.5.486: {}
+  electron-to-chromium@1.5.487: {}
 
   embedded-postgres@18.4.0-beta.17:
     dependencies:
@@ -7474,7 +7474,7 @@ snapshots:
       imurmurhash: 0.1.4
       is-glob: 4.0.3
       json-stable-stringify-without-jsonify: 1.0.1
-      minimatch: 11.0.8
+      minimatch: 11.0.9
       natural-compare: 1.4.0
       optionator: 0.9.4
     optionalDependencies:
@@ -7647,7 +7647,7 @@ snapshots:
 
   glob@14.0.6:
     dependencies:
-      minimatch: 11.0.8
+      minimatch: 11.0.9
       minipass: 7.1.3
       path-scurry: 3.0.0
 
@@ -8161,7 +8161,7 @@ snapshots:
 
   min-indent@1.0.1: {}
 
-  minimatch@11.0.8:
+  minimatch@11.0.9:
     dependencies:
       '@isaacs/nonrecursive-glob-match': 1.1.0
       brace-expansion: 5.0.13
@@ -8226,7 +8226,7 @@ snapshots:
     dependencies:
       '@next/env': 16.4.6
       '@swc/helpers': 0.5.23
-      baseline-browser-mapping: 2.11.37
+      baseline-browser-mapping: 2.11.38
       caniuse-lite: 1.0.30001826
       postcss: 8.5.23
       react: 19.3.1
@@ -8253,7 +8253,7 @@ snapshots:
     dependencies:
       '@next/env': 16.4.6
       '@swc/helpers': 0.5.23
-      baseline-browser-mapping: 2.11.37
+      baseline-browser-mapping: 2.11.38
       caniuse-lite: 1.0.30001826
       postcss: 8.5.23
       react: 19.3.1
