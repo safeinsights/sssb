@@ -40,8 +40,9 @@ jobs:
     sssb:
         needs: changes
         # Whatever `changes` did, so the call is never skipped (a skipped call would leave `sssb / all-checks`
-        # unreported). A failed `changes` never reads as the fast path: its output is empty, so `docs-only` is false,
-        # and should GitHub skip the called jobs because a dependency failed, `all-checks` (which runs always) fails.
+        # unreported). A failed script leaves `changes` green with an empty answer, so `docs-only` is false and
+        # everything runs. A `changes` that fails outright (its checkout) never reads as the fast path either: should
+        # GitHub skip the called jobs for the failed dependency, `all-checks` (which runs always) fails.
         if: ${{ !cancelled() }}
         uses: ./.github/workflows/app-checks.yml
         permissions:
@@ -69,6 +70,8 @@ jobs:
                   persist-credentials: false
             - name: docs only?
               id: docs
+              # A script that fails writes no answer, which is the full run; failing this job could skip the call's.
+              continue-on-error: true
               run: bash .github/scripts/docs-only.sh
               env:
                   EVENT_NAME: ${{ github.event_name }}

@@ -6741,9 +6741,10 @@ and record the rejected alternative.
   a reusable workflow's input must be known when the call starts. Rejected: every job `needs: changes`. A job whose
   dependency failed is skipped, and a skipped job reports as a passing check, so a failed `changes` would have turned
   `repo-checks`, `adoption-probe` and `pack-and-consume` green unrun. The `sssb` call runs `if: ${{ !cancelled() }}`
-  and passes `docs-only` only when the output is exactly `true`, so a failed `changes` never reads as the fast path:
-  the call runs with `docs-only` false, and should GitHub skip the called jobs for the failed dependency, `all-checks`
-  fails. Either way the check is red or does the work, never green unrun.
+  and passes `docs-only` only when the output is exactly `true`. The script's step in `changes` is
+  `continue-on-error`, so a script that fails leaves no answer and a green `changes`, and everything runs. A `changes`
+  that fails outright (its checkout) never reads as the fast path either: should GitHub skip the called jobs for the
+  failed dependency, `all-checks` fails. Either way the check is red or does the work, never green unrun.
 - **What the fast path trusts, and what still catches a mistake in it.** That no job with a fast path reads a path
   the script counts as documentation: true when it was written (the readers of `docs/` outside `docs/releases/` are
   the unit tests and `sssb doctor`, all in `lint-typecheck-unit`), held only by review for a script added later, and

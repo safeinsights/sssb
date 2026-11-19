@@ -270,8 +270,16 @@ describe("checks.yml's call to it", () => {
 // green: a step left ungated runs on the fast path (only slower), but a step gated by the wrong expression, or a job
 // that waits on `changes`, can skip real work on a change that is not documentation, or report success unrun.
 describe('the docs-only fast path', () => {
-    const gated = (step: Step, gate: string) =>
-        step.if === `\${{ ${gate} }}` || step.if === gate || (step.if ?? '').startsWith(`\${{ ${gate} && `)
+    // Exactly the gate, or the gate AND one further condition that cannot run the step on its own: no `||` (which
+    // binds looser than `&&`), and no status function but `failure()`.
+    const gated = (step: Step, gate: string) => {
+        const cond = step.if ?? ''
+        if (cond === gate || cond === `\${{ ${gate} }}`) return true
+        const tail = new RegExp(`^\\$\\{\\{ ${gate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} && (.+) \\}\\}$`).exec(
+            cond,
+        )?.[1]
+        return tail !== undefined && !tail.includes('||') && !/\b(always|success|cancelled)\(\)/.test(tail)
+    }
 
     it('defaults to the full run for a caller that does not set it', () => {
         expect(reusable.on.workflow_call?.inputs?.['docs-only']).toMatchObject({ type: 'boolean', default: false })
@@ -313,10 +321,12 @@ describe('the docs-only fast path', () => {
         expect(changes.outputs).toEqual({ 'docs-only': '${{ steps.docs.outputs.docs-only }}' })
         expect(changes.if).toBeUndefined()
         const decide = changes.steps?.find((step) => step.run?.includes('docs-only.sh'))
+        // A script that fails leaves the job green with an empty answer, the full run, rather than failing the job.
         expect(decide).toMatchObject({
             id: 'docs',
             run: 'bash .github/scripts/docs-only.sh',
             env: { EVENT_NAME: '${{ github.event_name }}' },
+            'continue-on-error': true,
         })
     })
 
@@ -336,6 +346,10 @@ describe('the docs-only fast path', () => {
         })
         expect(skip?.name).toBe(SKIPPED)
         expect(skip?.if).toBe("steps.docs.outputs.docs-only == 'true'")
+        expect(
+            rest.some((step) => !ALWAYS_RUN_STEPS.includes(step.run ?? '')),
+            `${id} has work behind the gate`,
+        ).toBe(true)
         for (const step of rest) {
             if (ALWAYS_RUN_STEPS.includes(step.run ?? '')) {
                 expect(step.if, step.run).toBeUndefined()

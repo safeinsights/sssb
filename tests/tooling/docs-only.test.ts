@@ -14,9 +14,19 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  */
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const SCRIPT = path.join(ROOT, '.github/scripts/docs-only.sh')
+/** git with none of this machine's configuration: a developer's own (quotePath, ignoreSubmodules, signing) changes answers. */
+const GIT_ENV = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'test',
+    GIT_AUTHOR_EMAIL: 'test@example.invalid',
+    GIT_COMMITTER_NAME: 'test',
+    GIT_COMMITTER_EMAIL: 'test@example.invalid',
+}
 
 function git(dir: string, ...args: string[]): string {
-    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: GIT_ENV })
     if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`)
     return result.stdout
 }
@@ -54,7 +64,7 @@ function decide(dir: string, event = 'pull_request'): { answer: string; output: 
     const result = spawnSync('bash', [SCRIPT], {
         cwd: dir,
         encoding: 'utf8',
-        env: { ...process.env, EVENT_NAME: event, GITHUB_OUTPUT: outputFile },
+        env: { ...GIT_ENV, EVENT_NAME: event, GITHUB_OUTPUT: outputFile },
     })
     expect(result.status, result.stderr).toBe(0)
     const output = readFileSync(outputFile, 'utf8')
