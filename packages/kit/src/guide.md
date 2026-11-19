@@ -36,6 +36,10 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   anything that phones home.
 - Anything that needs real credentials, accounts or money is a row in the workspace's cutover checklist, never a
   blocker: the app boots, and is tested, without it.
+- `src/proxy.ts` default-exports the app's proxy wrapped in `withAuthProxy` from `@sssb/kit/adapters/proxy`, and its
+  `config.matcher` sends it every page and every `/api` route: in real mode SSSB's auth adapter needs its provider's
+  middleware to have seen the request, and `withAuthProxy` runs that middleware around your proxy (loading none of it
+  in simulated mode). Never import the provider's middleware yourself.
 
 ## Data
 

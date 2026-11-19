@@ -5825,3 +5825,45 @@ public GitHub release of `safeinsights/sssb`, marked Latest while it is the newe
 - **The fake `gh` the prerelease job's test used moved to `tests/support/fake-gh-release.ts`**, shared with the new
   job's test, and reads a boolean flag as gh does (`--x`, `--x=true`, `--x=false`), so `--prerelease=false` and
   `--latest` are told apart.
+
+## Real-mode sign-in: the kit runs Clerk's middleware around the app's proxy (2026-11-19, `fix/kit-clerk-middleware`)
+
+The first adopter's first real-mode deployment found that SSSB's Clerk adapter (`packages/kit/src/adapters/real/auth.ts`)
+calls `auth()` and `currentUser()`, which refuse a request Clerk's `clerkMiddleware` did not see, and that nothing in
+SSSB ran that middleware: every real sign-in failed. The adopter wrapped its own proxy. Decided without asking, as JP's
+standing rule for these sessions says.
+
+- **A wrapper the app's `src/proxy.ts` calls, `withAuthProxy(proxy)` from `@sssb/kit/adapters/proxy`.** The app's
+  proxy keeps deciding what each path gets. Rejected: **the kit owning the proxy with an app hook**. Apps' proxies
+  differ in what they see (the adopter's answers page hosts on every path, `/_next` included), and Next reads
+  `config.matcher` only as a literal in the app's own file, so the kit could not own the part that matters most.
+- **The Clerk half is `packages/kit/src/adapters/real/clerk-proxy.ts`, internal, reached only by `import()` from
+  `packages/kit/src/adapters/proxy.ts` in real mode, on the first request.** Vendor SDKs stay in the adapters, and
+  simulated mode loads no Clerk code. Rejected: **publishing the Clerk half** for the app to load itself, which hands
+  every app the run-mode branch the guide keeps out of app code. Rejected: **a top-level `await import()`** in the
+  kit's module: lazy loading keeps importing `@sssb/kit/adapters/proxy` free of effects (its tests load it in both modes
+  without Clerk), at the price of loading Clerk on the first real request instead of at start.
+- **The run mode moved to `packages/kit/src/adapters/run-mode.ts`, which the registry re-exports.** The proxy asks it
+  without importing the registry. Rejected: **importing `isSimulated` from `@sssb/kit/adapters/index`** in the proxy,
+  as the adopter did: that loads every port and fake into the proxy, and in real mode builds the real ports there,
+  refusing to start without the LLM, mail and job-runner settings, for a module that needs one boolean. Rejected: **a
+  second reader of `APP_MODE`**, which the run-mode lint rule exists to prevent in apps. The fail-closed production
+  guard stays in the registry, which every route still loads.
+- **No edge-runtime branch.** Next 16 runs a proxy on the Node.js runtime and refuses a `runtime` setting in it (Next's
+  `proxy.md`, "Runtime"; `get-page-static-info.js`: "Proxy always runs on Node.js runtime"), so `import()` of Clerk's
+  Node build is an ordinary one.
+- **Both apps' matchers add `/api/:path*` and keep the page pattern as it was; the proxy passes an API route
+  through with `NextResponse.next()`.** Clerk must see API routes too (its error for a missing middleware names the
+  matcher). Rejected: **`/:path*`**, which would run Clerk and the locale routing on every static file and `/_next`
+  request. The old pattern excluded every path starting with `api` (`/apiary` too); `startsWith('/api')` keeps that.
+- **Both apps' `src/proxy.test.ts` mock `next-intl/middleware`.** next-intl's ESM build imports `next/server` without
+  an extension, which Node's resolver refuses under Vitest; the test checks the proxy's routing, not next-intl's.
+  The matcher is tested with Next's own `unstable_doesMiddlewareMatch`.
+- **`@sssb/kit` minor, Kind `seam`, Action `required`; `@sssb/create` minor, Kind `scaffold`, Action `required`.** A
+  new published subpath is a seam change, and an app that does not adopt it cannot sign in in real mode. Rejected:
+  **Action `optional` and a patch**: the app is broken without it in the one mode that has users.
+- **The wiring is a guide rule kept by hand.** Rejected for now: **a conformance check that reads `src/proxy.ts`**,
+  which would have to parse the matcher literal and recognise the wrapper through aliases; worth it only if an
+  adopter misses the rule.
+- **Not verified live**: a real sign-in through Clerk's middleware, its handshake redirect and `auth()` in a page and
+  an API route. Those are the `auth-dev` row of `docs/cutover-checklist.md`.
