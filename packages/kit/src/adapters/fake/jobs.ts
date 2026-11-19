@@ -1,7 +1,7 @@
 import { jobHandlers, serviceManagedOrgSlugs } from '@sssb/app-config/jobs'
 import { isJobKind, type JobStatus } from '../../core/jobs'
-import { InvalidTransitionError } from '../../core/state-machine'
-import { type JobTimelineEntry, loadTimelines, recordJobStatus, toIso } from '../../db/jobs'
+import { type JobTimelineEntry, loadTimelines, toIso } from '../../db/jobs'
+import { runJobInProcess } from '../../jobs/run-in-process'
 import { NotFoundError } from '../../ports/errors'
 import type { JobsPort, SubmittedJob } from '../../ports/jobs'
 import { readFlags } from './analytics'
@@ -40,47 +40,17 @@ async function notifyTerminal(job: SubmittedJob, status: 'completed' | 'failed')
 }
 
 /**
- * Runs a submitted job to completion in-process. recordJobStatus enforces the state machine, so an
- * instant fake still records queued -> running -> completed (or -> failed) — the exact transitions
- * the real CodeBuild path will report via the service-authenticated jobs webhook. Never checks
- * the held flag itself: holding only gates fakeJobs.start(); runPendingJobs() steps held jobs
- * forward deliberately.
+ * Runs a submitted job to completion in-process (`runJobInProcess`, shared with the real in-process runner). An
+ * instant fake still records queued -> running -> completed (or -> failed), the transitions a CodeBuild run reports
+ * through the service-authenticated jobs webhook. A concurrent runner (a second run-pending click racing an instant
+ * start) that already claimed the job makes this return false. Never checks the held flag itself: holding only gates
+ * fakeJobs.start(); runPendingJobs() steps held jobs forward deliberately.
  */
 async function executeJob(job: SubmittedJob): Promise<boolean> {
     await fakeDb.ready()
-    try {
-        await recordJobStatus(fakeDb, job.tenantId, job.id, 'running')
-    } catch (error) {
-        // A concurrent runner (a second run-pending click racing an instant start) already claimed
-        // this job — losing that race is benign, not a 500.
-        if (error instanceof InvalidTransitionError) return false
-        throw error
-    }
-    if (!isJobKind(job.kind)) {
-        await recordJobStatus(fakeDb, job.tenantId, job.id, 'failed', { error: `unknown job kind: ${job.kind}` })
-        return true
-    }
-    try {
-        const handler = jobHandlers[job.kind]
-        if (!handler) throw new Error(`no job handler registered for kind: ${job.kind}`)
-        const { resultKey } = await handler(job.payload, {
-            db: fakeDb,
-            storage: fakeStorage,
-            email: fakeEmail,
-            llm: fakeLlm,
-            tenantId: job.tenantId,
-            orgId: job.orgId,
-            jobId: job.id,
-        })
-        await recordJobStatus(fakeDb, job.tenantId, job.id, 'completed', { resultKey })
-        await notifyTerminal(job, 'completed')
-    } catch (error) {
-        await recordJobStatus(fakeDb, job.tenantId, job.id, 'failed', {
-            error: error instanceof Error ? error.message : String(error),
-        })
-        await notifyTerminal(job, 'failed')
-    }
-    return true
+    return runJobInProcess(job, { db: fakeDb, storage: fakeStorage, email: fakeEmail, llm: fakeLlm }, (status) =>
+        notifyTerminal(job, status),
+    )
 }
 
 export const fakeJobs: JobsPort = {
