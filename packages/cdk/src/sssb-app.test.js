@@ -89,6 +89,21 @@ function functionUrlOriginProblems(all, assembly) {
     if (oac?.OriginAccessControlOriginType !== 'lambda' || oac?.SigningBehavior !== 'always') {
         problems.push('that origin is behind an origin access control that signs every request')
     }
+    // Only this distribution may invoke the server: every permission on it is CloudFront's, for this distribution.
+    const serverPermissions = ofType('AWS::Lambda::Permission').filter(([, r]) =>
+        JSON.stringify(r.Properties?.['FunctionName']).includes('"Server'),
+    )
+    const distributionId = distributions[0]?.[0]
+    if (
+        serverPermissions.length === 0 ||
+        !serverPermissions.every(
+            ([, r]) =>
+                r.Properties?.['Principal'] === 'cloudfront.amazonaws.com' &&
+                JSON.stringify(r.Properties?.['SourceArn']).includes(`"${distributionId}"`),
+        )
+    ) {
+        problems.push('every permission to invoke the server is CloudFront’s, for this distribution alone')
+    }
     const associations = /** @type {any[]} */ (behavior?.LambdaFunctionAssociations ?? [])
     const originRequest = associations.filter((a) => a.EventType === 'origin-request')
     if (originRequest.length !== 1) return [...problems, 'the default behavior runs one origin-request function']
@@ -103,6 +118,10 @@ function functionUrlOriginProblems(all, assembly) {
     if (code !== BODY_HASH_SOURCE) problems.push('the version is of the body-hash function, src/assets/body-hash')
     const fn = /** @type {any} */ (all[functionId])?.Properties
     if (fn?.Handler !== 'index.handler') problems.push("the body-hash function's handler is index.handler")
+    // Lambda@Edge runs x86_64 only, and a Node runtime the guide lists.
+    if (JSON.stringify(fn?.Architectures) !== '["x86_64"]' || fn?.Runtime !== 'nodejs22.x') {
+        problems.push('the body-hash function is x86_64 on nodejs22.x')
+    }
     const role = /** @type {any} */ (all[fn?.Role?.['Fn::GetAtt']?.[0]])?.Properties
     const trusted = JSON.stringify(role?.AssumeRolePolicyDocument ?? null)
     if (!trusted.includes('edgelambda.amazonaws.com')) problems.push("Lambda@Edge may assume the function's role")
@@ -516,6 +535,40 @@ describe("the server's Function URL behind CloudFront", () => {
         },
     )
 
+    it('refuses a permission that lets anyone else invoke the server', () => {
+        const { all, assembly } = synthesize({
+            appDir,
+            slug,
+            transport: 'data-api',
+            bundle: false,
+            configure: (app) =>
+                app.server.addPermission('Anyone', {
+                    principal: new cdk.aws_iam.AnyPrincipal(),
+                    action: 'lambda:InvokeFunctionUrl',
+                }),
+        })
+        expect(functionUrlOriginProblems(all, assembly)).toEqual([
+            'every permission to invoke the server is CloudFront’s, for this distribution alone',
+        ])
+    })
+
+    it('gives each SssbApp in a stack outside us-east-1 its own edge stack', () => {
+        const outdir = makeTestTmpDir('sssb-cdk-')
+        const app = new cdk.App({ outdir, context: { 'aws:cdk:bundling-stacks': [] } })
+        const stack = new cdk.Stack(app, 'TwoApps', { env: { region: 'eu-west-1' } })
+        for (const id of ['Default', 'Second']) {
+            new SssbApp(stack, id, {
+                appDir,
+                slug,
+                params: { database: { transport: 'data-api' } },
+                environment: 'Staging',
+                production: false,
+            })
+        }
+        const stacks = app.synth().stacks
+        expect(stacks.filter((s) => s.environment.region === 'us-east-1')).toHaveLength(2)
+    })
+
     it('keeps the function in a us-east-1 stack, and in a us-east-1 stack of its own when the stack is elsewhere', () => {
         const east = synthesize({ appDir, slug, transport: 'data-api', bundle: false, region: 'us-east-1' })
         expect(east.stacks.map((s) => s.environment.region)).toEqual(['us-east-1'])
@@ -529,6 +582,18 @@ describe("the server's Function URL behind CloudFront", () => {
         expect(fns).toHaveLength(1)
         expect(lambdaBundles(edgeResources, west.assembly).get(/** @type {string} */ (fns[0]?.[0]))).toBe(
             BODY_HASH_SOURCE,
+        )
+        const edgeFn = /** @type {any} */ (fns[0]?.[1].Properties)
+        expect([edgeFn.Handler, edgeFn.Runtime, edgeFn.Architectures, edgeFn.Environment]).toEqual([
+            'index.handler',
+            'nodejs22.x',
+            ['x86_64'],
+            undefined,
+        ])
+        const versions = Object.values(edgeResources).filter((r) => r.Type === 'AWS::Lambda::Version')
+        expect(versions.map((r) => /** @type {any} */ (r).DeletionPolicy)).toEqual(['Delete'])
+        expect(JSON.stringify(Object.values(edgeResources).find((r) => r.Type === 'AWS::IAM::Role'))).toContain(
+            'edgelambda.amazonaws.com',
         )
         const distribution = /** @type {any} */ (
             Object.values(west.all).find((r) => r.Type === 'AWS::CloudFront::Distribution')

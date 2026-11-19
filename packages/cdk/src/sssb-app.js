@@ -538,7 +538,12 @@ export class SssbApp extends Construct {
             // The distribution adds Lambda@Edge to the role's trust, as it does for every function it runs at the edge.
             bodyHash = new aws_lambda.Function(this, 'BodyHash', bodyHashProps).currentVersion
         } else {
-            bodyHash = new aws_cloudfront.experimental.EdgeFunction(this, 'BodyHash', bodyHashProps)
+            // A us-east-1 stack per SssbApp: CDK's default is one per parent stack, in which a second SssbApp's
+            // `BodyHash` would collide with the first's.
+            bodyHash = new aws_cloudfront.experimental.EdgeFunction(this, 'BodyHash', {
+                ...bodyHashProps,
+                stackId: `edge-lambda-stack-${this.node.addr}`,
+            })
         }
 
         // ---- cloudfront ---------------------------------------------------------------------
