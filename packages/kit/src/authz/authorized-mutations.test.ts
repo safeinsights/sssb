@@ -251,6 +251,22 @@ describe('the shapes the text-matching scan passed now fail', () => {
             fails: ['POST'],
         },
         {
+            name: 'authorize(...) only in an async helper the handler does not await',
+            rel: 'repro/route.ts',
+            src:
+                `${AUTHORIZE}declare const user: never\nasync function check() { ${CREATE} }\n` +
+                'export async function POST() { check(); return Response.json({ mutated: true }) }\n',
+            fails: ['POST'],
+        },
+        {
+            name: 'the same async helper, awaited, passes',
+            rel: 'repro/route.ts',
+            src:
+                `${AUTHORIZE}declare const user: never\nasync function check() { ${CREATE} }\n` +
+                'export async function POST() { await check(); return Response.json({}) }\n',
+            fails: [],
+        },
+        {
             name: 'a service route naming withServiceCaller only in a string',
             rel: 'service/repro/route.ts',
             src: `${AUTHORIZE}declare const user: never\nconst note = 'withServiceCaller('\nexport async function POST() { ${CREATE}; return Response.json({ note }) }\n`,

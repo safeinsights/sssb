@@ -19,15 +19,35 @@ import ts from 'typescript'
  *   `'x' ?? …`, or a `const` bound to such a literal. Constants are literals, `!`, `void` and parentheses;
  *   nothing else is evaluated;
  * - in a function literal passed as an argument (`withPortErrors(async () => { … })`), which the call is
- *   ASSUMED to invoke. That is the wrapper idiom every route uses, and the one trust this module extends:
- *   it cannot read an imported wrapper to see whether it really calls its argument;
+ *   ASSUMED to invoke and to carry its failure in the call's own result. That is the wrapper idiom every route
+ *   uses, and the one trust this module extends: it cannot read an imported wrapper to see whether it really
+ *   calls its argument. It extends none to a callee whose code is in this file (`isSameFile`): a function is not
+ *   followed through a parameter, so what such a callee is handed counts for nothing;
  * - in a function declared in the SAME module and called (or passed as an argument) from the handler's
  *   path, followed to any depth. A function that is only defined, or that the file reassigns or declares twice,
- *   is not followed.
+ *   is not followed;
+ * - where its denial reaches the handler's OUTCOME, the promise Next awaits. `authorize` throws synchronously, so a
+ *   denial goes up through every synchronous frame, and is lost in three places:
+ *   - an async boundary nobody awaits. In an `async` function a throw only rejects the function's promise, and a
+ *     function handed to a call may run later (`.then`, a timer, an async wrapper). So a call into an `async`
+ *     function, or one a function is handed to, carries the denial only when its result is `await`ed or returned
+ *     on the spot (`settledBy`: `return`, an arrow's expression body; through parentheses, a type assertion, a
+ *     ternary arm, the right of `&&`, `||`, `??` or a comma, or the left of `||` or `??`). A statement of its own,
+ *     `void`, a variable awaited later, a `.then` or `.catch` chain, an argument, all leave the promise floating;
+ *   - an array iteration method (`forEach`, `map`, …, by name, on a receiver that is neither an import nor an
+ *     object whose code is in this file). It drops an `async` function's promise, awaited or not, and runs a sync
+ *     one in place, so its throw goes up through the call; but a `map`, `filter` or `flatMap` on a receiver that is
+ *     visibly an iterator (`xs.values()`, `Iterator.from(…)`) runs nothing until consumed;
+ *   - a `try` whose `catch` can do anything but rethrow (fall through, `return`, `break` or `continue` out of
+ *     itself), or whose `finally` can leave in the throw's place. A promise the `try` returns (`return p`) is not
+ *     caught; `return await p` throws inside it.
+ *   (The rule is syntactic: a sync function counts as throwing in place, and an `authorize` named by
+ *   `ScanOptions.authorizeModules` must throw synchronously too, as SSSB's does.)
  *
  * For a handler that is a wrapper's result (`export const POST = withX(fn)`), the wrapper call itself and
  * its other arguments run once, when the module loads; only the functions handed to it run per request, so
- * only those are the handler's path.
+ * only those are the handler's path. The wrapper, being what Next calls, is trusted to carry their failure, unless
+ * its code is in this file, or it sits inside a wrapper whose code is.
  *
  * What is NOT followed, and so does not count: a call into another module (an imported helper that calls
  * `authorize` inside it), a method on an object, a getter, a class body, a generator (calling one runs none of its
@@ -243,9 +263,11 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
         return (
             `${where} exports a mutating handler that does not reach authorize(...) on its own path, and the route is ` +
             `not in the exemption map. A call in a string, a comment, another handler, a dead branch, an uncalled ` +
-            `function or another module does not count. Call authorize(...) in this handler (or in a function in this ` +
-            `file that it calls), or, only if it is genuinely not a per-actor product mutation, add a justified ` +
-            `exemption.` +
+            `function or another module does not count, nor does one whose denial cannot reach the handler: in an ` +
+            `async function or a callback whose promise the handler neither awaits nor returns, in a callback handed ` +
+            `to a function of this file, or in a try whose catch does not rethrow. Call authorize(...) in this handler ` +
+            `(or in a function in this file that it calls, awaiting it if it is async), or, only if it is genuinely ` +
+            `not a per-actor product mutation, add a justified exemption.` +
             (policy.hint ? ` ${policy.hint}` : '')
         )
     }
@@ -477,11 +499,26 @@ class RootScanner {
     }
 }
 
+/**
+ * Where a failure at one point of the walk goes: whether a throw there, or a rejection of the promise the current
+ * function returns, reaches the handler's outcome (what Next awaits). A handler's own body reaches it both ways.
+ */
+interface Outcome {
+    /** A throw here reaches the handler's outcome. In an async function, that is a rejection of its promise. */
+    thrown: boolean
+    /** A promise the current function returns reaches the handler's outcome, so a rejection of it does. */
+    returned: boolean
+}
+
+const HANDLER_OUTCOME: Outcome = { thrown: true, returned: true }
+const LOST: Outcome = { thrown: false, returned: false }
+
 /** Walks one handler's path, collecting the calls on it. One instance per handler, never shared. */
 class Reach {
     readonly calls = new Set<string>()
     authorize = false
-    private readonly invoked = new Set<ts.Node>()
+    /** Each function walked, per outcome it was walked under: a cycle stops, a second path that reaches does not. */
+    private readonly invoked = new Map<ts.Node, Set<string>>()
 
     private readonly src: Source
     private readonly authorizeModules: readonly string[]
@@ -491,72 +528,190 @@ class Reach {
         this.authorizeModules = authorizeModules
     }
 
-    invoke(fn: ts.FunctionLikeDeclaration): void {
-        if (this.invoked.has(fn)) return
-        this.invoked.add(fn)
+    /** Walks `fn`'s body, where `outcome` says what reaches the handler's outcome from inside it. */
+    invoke(fn: ts.FunctionLikeDeclaration, outcome: Outcome = HANDLER_OUTCOME): void {
+        const key = `${outcome.thrown}/${outcome.returned}`
+        const seen = this.invoked.get(fn) ?? new Set<string>()
+        if (seen.has(key)) return
+        seen.add(key)
+        this.invoked.set(fn, seen)
         // Calling a generator runs none of its body; it only makes an iterator.
         if (fn.asteriskToken) return
         // Parameter defaults are not visited: one runs only when its argument is missing, which for a handler
         // depends on what Next passes, and for a helper on the caller. Not counting them fails closed.
         if (!fn.body) return
-        if (ts.isBlock(fn.body)) this.statements(fn.body.statements)
-        else this.visit(fn.body)
+        if (ts.isBlock(fn.body)) this.statements(fn.body.statements, outcome)
+        else this.visit(fn.body, outcome)
     }
 
     /**
      * A handler that is a call's result. The call and its non-function arguments ran when the module loaded;
-     * per request, only the functions handed to it run (a nested wrapper's, too: `withA(withB(fn))`).
+     * per request, only the functions handed to it run (a nested wrapper's, too: `withA(withB(fn))`). The wrapper
+     * is what Next calls, and is trusted to carry their failure to Next (see the header). A wrapper declared in
+     * this file is not: the scan can read it, but does not follow a function through its parameter, so what it
+     * is handed counts for nothing, and so does what a wrapper inside it is handed.
      */
-    wrapped(call: ts.CallExpression): void {
+    wrapped(call: ts.CallExpression, outcome: Outcome = HANDLER_OUTCOME): void {
+        const own = this.isSameFile(call.expression) ? LOST : outcome
         for (const argument of call.arguments) {
             const a = unwrap(argument)
-            if (isFunctionLiteral(a)) this.invoke(a)
-            else if (ts.isCallExpression(a)) this.wrapped(a)
+            if (isFunctionLiteral(a)) this.invoke(a, own)
+            else if (ts.isCallExpression(a)) this.wrapped(a, own)
             else {
                 const local = this.localFunction(a)
-                if (local) this.invoke(local)
+                if (local) this.invoke(local, own)
             }
         }
     }
 
-    visit(node: ts.Node): void {
+    /**
+     * A callee whose code is in this file, which the scan could read but does not follow through a parameter, so it
+     * is never trusted the way an imported wrapper is. Its head (through `o.run`, `o['run']`, `new C`, `mk()`,
+     * `await`, either arm of a ternary, either side of `&&`, `||`, `??` or a comma) is a function, class or object
+     * literal, an array literal holding one, or a name declared here as a function or class, as a variable or
+     * destructured name whose initializer is any of those, or as anything the file assigns to. A parameter, an
+     * import, a global, and a local holding anything else (`const client = await connect()`) are not: their code
+     * is out of the scan's sight either way.
+     */
+    private isSameFile(callee: ts.Expression, seen: Set<ts.Node> = new Set()): boolean {
+        let e = unwrap(callee)
+        while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) e = unwrap(e.expression)
+        if (isFunctionLiteral(e) || ts.isClassExpression(e) || ts.isObjectLiteralExpression(e)) return true
+        if (ts.isArrayLiteralExpression(e)) {
+            return e.elements.some((element) => !ts.isOmittedExpression(element) && this.isSameFile(element, seen))
+        }
+        if (ts.isCallExpression(e) || ts.isNewExpression(e) || ts.isAwaitExpression(e) || ts.isSpreadElement(e)) {
+            return this.isSameFile(e.expression, seen)
+        }
+        if (ts.isConditionalExpression(e))
+            return this.isSameFile(e.whenTrue, seen) || this.isSameFile(e.whenFalse, seen)
+        if (ts.isBinaryExpression(e)) return this.isSameFile(e.left, seen) || this.isSameFile(e.right, seen)
+        if (!ts.isIdentifier(e)) return false
+        const symbol = this.src.checker.getSymbolAtLocation(e)
+        if (symbol !== undefined && this.src.reassigned.has(symbol)) return true
+        const decl = declarationOf(this.src, e)
+        if (decl === undefined) return false
+        if (ts.isFunctionDeclaration(decl) || ts.isClassDeclaration(decl)) return true
+        const variable = variableOf(decl)
+        if (variable?.initializer === undefined) return false
+        // A name defined in terms of itself (`const a = b(); const b = a()`) fails closed.
+        if (seen.has(variable)) return true
+        seen.add(variable)
+        return this.isSameFile(variable.initializer, seen)
+    }
+
+    /**
+     * Whether a method's receiver is an object whose code is in this file (an object or class literal, a `new` of a
+     * same-file class, a class, or a variable or destructured name holding one), so that its `forEach` is its own
+     * and not an array's. A call's or an `await`'s result is taken for data, as an array is.
+     */
+    private isSameFileObject(receiver: ts.Expression, seen: Set<ts.Node> = new Set()): boolean {
+        let e = unwrap(receiver)
+        while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) e = unwrap(e.expression)
+        if (ts.isObjectLiteralExpression(e) || ts.isClassExpression(e)) return true
+        if (ts.isNewExpression(e)) return this.isSameFile(e.expression)
+        if (ts.isConditionalExpression(e)) {
+            return this.isSameFileObject(e.whenTrue, seen) || this.isSameFileObject(e.whenFalse, seen)
+        }
+        if (ts.isBinaryExpression(e)) return this.isSameFileObject(e.left, seen) || this.isSameFileObject(e.right, seen)
+        if (!ts.isIdentifier(e)) return false
+        const decl = declarationOf(this.src, e)
+        if (decl === undefined) return false
+        if (ts.isClassDeclaration(decl)) return true
+        const variable = variableOf(decl)
+        if (variable?.initializer === undefined || seen.has(variable)) return false
+        seen.add(variable)
+        return this.isSameFileObject(variable.initializer, seen)
+    }
+
+    /**
+     * `xs.forEach`, `xs['map']` and the like, by name: an array iteration method, unless the receiver's head is an
+     * import, where the same name is often a library's (Ramda's curried `R.map`, `Effect.map`), deferred or lazy, or
+     * an object whose code is in this file, whose `forEach` is its own. `lazy` is a `map`, `filter` or `flatMap` on
+     * a receiver that is visibly an iterator (`xs.values()`, `.keys()`, `.entries()`, `Iterator.from(…)`), which
+     * runs nothing until something consumes it.
+     */
+    private iterationMethod(callee: ts.Expression): { name: string; lazy: boolean } | undefined {
+        let name: string | undefined
+        if (ts.isPropertyAccessExpression(callee)) name = callee.name.text
+        else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
+            name = callee.argumentExpression.text
+        }
+        if (name === undefined || !ARRAY_ITERATION.has(name)) return undefined
+        const receiver = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
+        let head = receiver
+        for (;;) {
+            if (ts.isPropertyAccessExpression(head) || ts.isElementAccessExpression(head))
+                head = unwrap(head.expression)
+            else if (ts.isCallExpression(head)) head = unwrap(head.expression)
+            else break
+        }
+        if (ts.isIdentifier(head) && valueImportOf(declarationOf(this.src, head)) !== undefined) return undefined
+        if (this.isSameFileObject(receiver)) return undefined
+        return { name, lazy: !EAGER_ITERATION.has(name) && isIterator(receiver) }
+    }
+
+    private visit(node: ts.Node, outcome: Outcome): void {
         // A function or class body runs only when called; a type never runs.
         if (ts.isFunctionLike(node) || ts.isClassLike(node) || ts.isTypeNode(node)) return
-        if (ts.isCallExpression(node) || ts.isNewExpression(node)) return this.call(node)
+        if (ts.isCallExpression(node) || ts.isNewExpression(node)) return this.call(node, outcome)
         // The initializer runs; a default inside a destructuring pattern runs only when the value is missing.
-        if (ts.isVariableDeclaration(node)) return node.initializer && this.visit(node.initializer)
+        if (ts.isVariableDeclaration(node)) return node.initializer && this.visit(node.initializer, outcome)
         // A condition always runs; only the branch it rules out is dead.
         if (ts.isConditionalExpression(node)) {
             const condition = constantTruth(this.src, node.condition)
-            this.visit(node.condition)
-            if (condition !== false) this.visit(node.whenTrue)
-            if (condition !== true) this.visit(node.whenFalse)
+            this.visit(node.condition, outcome)
+            if (condition !== false) this.visit(node.whenTrue, outcome)
+            if (condition !== true) this.visit(node.whenFalse, outcome)
             return
         }
         if (ts.isBinaryExpression(node) && isShortCircuit(node.operatorToken.kind)) {
-            this.visit(node.left)
-            if (!rightIsDead(this.src, node)) this.visit(node.right)
+            this.visit(node.left, outcome)
+            if (!rightIsDead(this.src, node)) this.visit(node.right, outcome)
             return
         }
-        ts.forEachChild(node, (child) => this.visit(child))
+        ts.forEachChild(node, (child) => this.visit(child, outcome))
     }
 
-    private call(node: ts.CallExpression | ts.NewExpression): void {
+    private call(node: ts.CallExpression | ts.NewExpression, outcome: Outcome): void {
         const callee = unwrap(node.expression)
         const name = gateName(this.src, callee)
         if (name) this.calls.add(name)
-        if (this.isAuthorize(callee)) this.authorize = true
-        this.callable(callee)
-        for (const argument of node.arguments ?? []) this.callable(argument)
-    }
-
-    /** A callee or an argument: a function literal or a same-file function by name runs; anything else is visited. */
-    private callable(expression: ts.Expression): void {
-        const e = unwrap(expression)
-        if (isFunctionLiteral(e)) return this.invoke(e)
-        this.visit(e)
-        const local = this.localFunction(e)
-        if (local) this.invoke(local)
+        // `authorize` throws synchronously, so its denial reaches the outcome wherever a throw here does.
+        if (outcome.thrown && this.isAuthorize(callee)) this.authorize = true
+        // The promise this call returns reaches the outcome only when it is awaited or returned on the spot.
+        const settled = settledBy(node)
+        const result = settled === 'await' ? outcome.thrown : settled === 'return' ? outcome.returned : false
+        // Called directly, a sync function throws into this point; an async one only rejects its promise.
+        const direct = (fn: ts.FunctionLikeDeclaration): Outcome =>
+            isAsync(fn) ? { thrown: result, returned: result } : { thrown: outcome.thrown, returned: result }
+        if (isFunctionLiteral(callee)) this.invoke(callee, direct(callee))
+        else {
+            this.visit(callee, outcome)
+            const local = this.localFunction(callee)
+            if (local) this.invoke(local, direct(local))
+        }
+        // A function handed to a call is assumed to be invoked, and its failure to come out of the call's own result:
+        // the callee is not read, and may run it now or later (`.then`, a timer, an async wrapper). Two exceptions.
+        // An array's iteration method drops an async function's promise, awaited or not, and runs a sync one in
+        // place, so it throws through the call; a lazy one on an iterator runs nothing. A callee whose code is in
+        // this file is not followed through its parameter, so what it is handed counts for nothing.
+        const method = this.iterationMethod(callee)
+        const handed = (fn: ts.FunctionLikeDeclaration): Outcome => {
+            if (method !== undefined)
+                return isAsync(fn) || method.lazy ? LOST : { thrown: outcome.thrown, returned: false }
+            if (this.isSameFile(callee)) return LOST
+            return result ? HANDLER_OUTCOME : LOST
+        }
+        for (const argument of node.arguments ?? []) {
+            const a = unwrap(argument)
+            if (isFunctionLiteral(a)) this.invoke(a, handed(a))
+            else {
+                this.visit(a, outcome)
+                const local = this.localFunction(a)
+                if (local) this.invoke(local, handed(local))
+            }
+        }
     }
 
     private localFunction(e: ts.Expression): ts.FunctionLikeDeclaration | undefined {
@@ -593,57 +748,167 @@ class Reach {
         return false
     }
 
-    private statements(list: readonly ts.Statement[]): void {
+    private statements(list: readonly ts.Statement[], outcome: Outcome): void {
         for (const statement of list) {
-            this.statement(statement)
+            this.statement(statement, outcome)
             if (alwaysExits(this.src, statement)) return
         }
     }
 
-    private statement(s: ts.Statement): void {
-        if (ts.isExpressionStatement(s)) this.visit(s.expression)
-        else if (ts.isVariableStatement(s)) this.visit(s.declarationList)
+    private statement(s: ts.Statement, outcome: Outcome): void {
+        if (ts.isExpressionStatement(s)) this.visit(s.expression, outcome)
+        else if (ts.isVariableStatement(s)) this.visit(s.declarationList, outcome)
         else if (ts.isReturnStatement(s) || ts.isThrowStatement(s)) {
-            if (s.expression) this.visit(s.expression)
+            if (s.expression) this.visit(s.expression, outcome)
         } else if (ts.isIfStatement(s)) {
             const condition = constantTruth(this.src, s.expression)
-            this.visit(s.expression)
-            if (condition !== false) this.statement(s.thenStatement)
-            if (condition !== true && s.elseStatement) this.statement(s.elseStatement)
-        } else if (ts.isBlock(s)) this.statements(s.statements)
+            this.visit(s.expression, outcome)
+            if (condition !== false) this.statement(s.thenStatement, outcome)
+            if (condition !== true && s.elseStatement) this.statement(s.elseStatement, outcome)
+        } else if (ts.isBlock(s)) this.statements(s.statements, outcome)
         else if (ts.isTryStatement(s)) {
-            this.statements(s.tryBlock.statements)
-            if (s.catchClause) this.statements(s.catchClause.block.statements)
-            if (s.finallyBlock) this.statements(s.finallyBlock.statements)
+            // A throw in the `try` goes on only if the `catch` rethrows on every path: it neither falls through, nor
+            // returns, nor jumps out of itself (`break`, `continue`). A throw in either, or a promise either returns,
+            // goes on only if the `finally` has no way to leave in its place. A promise the `try` returns (`return p`,
+            // not `return await p`, which throws inside it) is not caught by the `catch`.
+            const finallyMayLeave = s.finallyBlock !== undefined && leavesBlock(s.finallyBlock, true)
+            const catchSwallows =
+                s.catchClause !== undefined &&
+                (!alwaysExits(this.src, s.catchClause.block) || leavesBlock(s.catchClause.block, true))
+            const thrown = outcome.thrown && !finallyMayLeave
+            const returned = outcome.returned && !finallyMayLeave
+            this.statements(s.tryBlock.statements, { thrown: thrown && !catchSwallows, returned })
+            if (s.catchClause) this.statements(s.catchClause.block.statements, { thrown, returned })
+            if (s.finallyBlock) this.statements(s.finallyBlock.statements, outcome)
         } else if (ts.isWhileStatement(s)) {
             const condition = constantTruth(this.src, s.expression)
-            this.visit(s.expression)
-            if (condition !== false) this.statement(s.statement)
+            this.visit(s.expression, outcome)
+            if (condition !== false) this.statement(s.statement, outcome)
         } else if (ts.isDoStatement(s)) {
-            this.statement(s.statement)
+            this.statement(s.statement, outcome)
             // The condition runs only when the body falls through or continues; a body that always returns
             // never reaches it.
-            if (reachesLoopEnd(this.src, s)) this.visit(s.expression)
+            if (reachesLoopEnd(this.src, s)) this.visit(s.expression, outcome)
         } else if (ts.isForStatement(s)) {
-            if (s.initializer) this.visit(s.initializer)
+            if (s.initializer) this.visit(s.initializer, outcome)
             const condition = s.condition ? constantTruth(this.src, s.condition) : true
-            if (s.condition) this.visit(s.condition)
+            if (s.condition) this.visit(s.condition, outcome)
             if (condition !== false) {
-                this.statement(s.statement)
-                if (s.incrementor && reachesLoopEnd(this.src, s)) this.visit(s.incrementor)
+                this.statement(s.statement, outcome)
+                if (s.incrementor && reachesLoopEnd(this.src, s)) this.visit(s.incrementor, outcome)
             }
         } else if (ts.isForOfStatement(s) || ts.isForInStatement(s)) {
-            this.visit(s.expression)
-            this.statement(s.statement)
+            this.visit(s.expression, outcome)
+            this.statement(s.statement, outcome)
         } else if (ts.isSwitchStatement(s)) {
-            this.visit(s.expression)
+            this.visit(s.expression, outcome)
             for (const clause of s.caseBlock.clauses) {
-                if (ts.isCaseClause(clause)) this.visit(clause.expression)
-                this.statements(clause.statements)
+                if (ts.isCaseClause(clause)) this.visit(clause.expression, outcome)
+                this.statements(clause.statements, outcome)
             }
-        } else if (ts.isLabeledStatement(s)) this.statement(s.statement)
+        } else if (ts.isLabeledStatement(s)) this.statement(s.statement, outcome)
         // Anything else (a function or class declaration, an import, an enum) runs nothing on this path that
         // the scan credits: fail closed.
+    }
+}
+
+function isAsync(fn: ts.FunctionLikeDeclaration): boolean {
+    return hasModifier(fn, ts.SyntaxKind.AsyncKeyword)
+}
+
+/** Iteration methods that call their function argument before they return, on an array, and on an iterator that has them. */
+const EAGER_ITERATION: ReadonlySet<string> = new Set([
+    'every',
+    'find',
+    'findIndex',
+    'findLast',
+    'findLastIndex',
+    'forEach',
+    'reduce',
+    'reduceRight',
+    'some',
+])
+
+/** Every array iteration method: on an array all run in place; on an iterator `filter`, `flatMap`, `map` are lazy. */
+const ARRAY_ITERATION: ReadonlySet<string> = new Set([...EAGER_ITERATION, 'filter', 'flatMap', 'map'])
+
+/** A receiver that is visibly an iterator: `xs.values()`, `xs.keys()`, `xs.entries()` or `Iterator.from(…)`. */
+function isIterator(receiver: ts.Expression): boolean {
+    const e = unwrap(receiver)
+    if (!ts.isCallExpression(e) || !ts.isPropertyAccessExpression(e.expression)) return false
+    const name = e.expression.name.text
+    if (name === 'values' || name === 'keys' || name === 'entries') return true
+    const target = unwrap(e.expression.expression)
+    return name === 'from' && ts.isIdentifier(target) && target.text === 'Iterator'
+}
+
+/** The variable declaration a declared name belongs to, through destructuring; undefined for a parameter. */
+function variableOf(decl: ts.Declaration): ts.VariableDeclaration | undefined {
+    let node: ts.Node = decl
+    while (ts.isBindingElement(node) || ts.isObjectBindingPattern(node) || ts.isArrayBindingPattern(node)) {
+        node = node.parent
+    }
+    return ts.isVariableDeclaration(node) ? node : undefined
+}
+
+/**
+ * Whether `block` has a way out of itself other than falling off its end or throwing: a `break` or `continue` whose
+ * target is outside it, and with `returns`, a `return`. Nested functions are not looked into.
+ */
+function leavesBlock(block: ts.Block, returns: boolean): boolean {
+    let found = false
+    const walk = (node: ts.Node, labels: readonly string[], loops: number, switches: number): void => {
+        if (found || ts.isFunctionLike(node) || ts.isClassLike(node)) return
+        if (ts.isReturnStatement(node)) {
+            if (returns) found = true
+        } else if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) {
+            if (node.label) found = !labels.includes(node.label.text)
+            else found = ts.isBreakStatement(node) ? loops + switches === 0 : loops === 0
+            if (found) return
+        }
+        const inner = ts.isLabeledStatement(node) ? [...labels, node.label.text] : labels
+        const loop = ts.isIterationStatement(node, false) ? 1 : 0
+        const swtch = ts.isSwitchStatement(node) ? 1 : 0
+        ts.forEachChild(node, (child) => walk(child, inner, loops + loop, switches + swtch))
+    }
+    walk(block, [], 0, 0)
+    return found
+}
+
+/**
+ * What happens to the value of `call` on the spot: it is `await`ed, or returned from the function it sits in (by
+ * `return`, or as an arrow's expression body). On the way it may pass through parentheses, a type assertion
+ * (`as`, `satisfies`, `!`, `<T>`), a ternary's arm, the right of `&&`, `||`, `??` or a comma, or the left of `||` or
+ * `??` (a promise is truthy and never nullish, so it is their value), which hand it on. Anything else (a statement
+ * of its own, `void`, a variable, an argument, a `.then`) leaves its promise floating, as far as the scan can see.
+ */
+function settledBy(call: ts.Expression): 'await' | 'return' | undefined {
+    let node: ts.Node = call
+    for (;;) {
+        const parent: ts.Node = node.parent
+        const operator = ts.isBinaryExpression(parent) ? parent.operatorToken.kind : undefined
+        if (
+            ts.isParenthesizedExpression(parent) ||
+            ts.isAsExpression(parent) ||
+            ts.isSatisfiesExpression(parent) ||
+            ts.isNonNullExpression(parent) ||
+            ts.isTypeAssertionExpression(parent) ||
+            (ts.isConditionalExpression(parent) && parent.condition !== node) ||
+            (ts.isBinaryExpression(parent) &&
+                parent.right === node &&
+                operator !== undefined &&
+                (isShortCircuit(operator) || operator === ts.SyntaxKind.CommaToken)) ||
+            (ts.isBinaryExpression(parent) &&
+                parent.left === node &&
+                (operator === ts.SyntaxKind.BarBarToken || operator === ts.SyntaxKind.QuestionQuestionToken))
+        ) {
+            node = parent
+            continue
+        }
+        if (ts.isAwaitExpression(parent)) return 'await'
+        if (ts.isReturnStatement(parent)) return 'return'
+        if (ts.isArrowFunction(parent) && parent.body === node) return 'return'
+        return undefined
     }
 }
 
