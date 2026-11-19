@@ -722,9 +722,8 @@ changes go and a patch is compatible. From 0.2.0 each release is published to np
 repository, under `docs/releases/` (`docs/releases/v0.2.0.md`, say).
 
 An upgrade is one change in your repository, made on a branch like any other. Every release's notes open with the
-section "Upgrading to this release", which carries steps 2, 3, 4 and 6 below as commands, with that release's version in
-them (a candidate's prerelease notes also have its commit, which a plain release's notes read off its tag). The steps
-say why each is there:
+section "Upgrading to this release", which carries steps 2, 3, 4 and 6 below as commands, with that release's version
+in them (a candidate's prerelease notes also name its commit). The steps say why each is there:
 
 1. **Read the notes of every release after yours, in order.** A release candidate's notes carry only what changed
    since the previous candidate, so a workspace on v0.2.0-rc.1 that skips a candidate reads the skipped one's notes
@@ -752,15 +751,21 @@ say why each is there:
    `.claude/sssb-guide.md`. Those are the rules every agent in your repository follows, and they change only through
    a diff of your own; `sssb doctor` fails until the copy is the installed kit's. (On a release up to v0.2.0-rc.2 the
    command needs `--app apps/<app>` at the root, or run it in the app's directory.)
-4. **Raise both pins to the release commit**, the commit of SSSB's repository the release was cut from: in
-   `.github/workflows/checks.yml`, the `sssb` job's `uses: safeinsights/sssb/.github/workflows/app-checks.yml@<commit>`
-   (and the version in the comment after it), and in `.claude/settings.json`, the `sssb` marketplace's `ref`. A
-   release's tag `v<version>` is that commit (a release candidate's notes also name it, "cut from"), the installed kit
-   records it as `commit` in its
-   `dist/release.json`, and `sssb doctor` names it beside any pin that differs. Your CI and your Claude Code plugin
-   are read at that commit, so a pin left behind runs the old release's checks and commands against the new
-   packages. Then each person updates their installed plugin: `claude plugin marketplace update sssb`, then
-   `claude plugin update sssb@sssb --scope project`, and restart Claude Code (the update applies on restart).
+4. **Raise both pins to the release commit**, the commit of SSSB's repository the release was cut from: `pnpm exec sssb pin`
+   from the workspace root (after the install in step 2, which brings the kit it reads). Your CI's `sssb` job calls SSSB's
+   reusable workflow at one pin (`.github/workflows/checks.yml`, `uses: safeinsights/sssb/.github/workflows/app-checks.yml@<commit>`,
+   and the version in the comment after it) and your Claude Code plugin loads from SSSB's marketplace at the other
+   (`.claude/settings.json`, the `sssb` marketplace's `ref`), so a pin left behind runs the old release's checks and commands
+   against the new packages. The installed kit records the commit as `commit` in its `dist/release.json`, and the command
+   writes it to both, printing each pin it changed with the commit it replaced; run again, it changes nothing. It edits the
+   two files' text and nothing else in them but the version in a workflow comment (`# @sssb/create 0.2.0`, `# v0.2.0`) after the pin. It refuses, and writes nothing, when there is no commit to read (SSSB's own
+   repository, where the kit is source, or a kit packed by hand without a stamp) or when a file is not the shape it
+   edits: no workflow calls SSSB's reusable workflow, or `.claude/settings.json` is not JSON or declares no marketplace
+   from SSSB's repository. When it refuses, make the two edits by hand, to the release's commit: the one `sssb doctor` names beside a pin that differs, or, for a kit with no stamp,
+   which doctor cannot compare, the one the release's tag `v<version>` names (a release candidate's notes also name it,
+   "cut from"); the pin takes the SHA, never the tag. A workspace with no `.claude/settings.json` has no second pin, and the command raises
+   the first alone. Then each person updates their installed plugin: `claude plugin marketplace update sssb`, then
+   `claude plugin update sssb@sssb --scope project`, and restarts Claude Code (the update applies on restart).
 5. **Apply each entry's "To adopt"**, section by section:
     - **Seam changes**: what your app must say or satisfy to build (next section). `pnpm typecheck` and `pnpm lint`
       point at most of them, the conformance suite and `sssb doctor` at the rest.
