@@ -6007,3 +6007,20 @@ standing rule for these sessions says.
 - **API request bodies now pass through the proxy** (round-1 review, kept): Next buffers at most
   `proxyClientMaxBodySize` (10MB by default) of a proxied body, above the 5MB attachment limit. An app that raises an
   upload limit past it raises that setting too; the guide says so.
+- **A request carrying a token in `Authorization` skips Clerk's middleware** (round-2 review, then a sweep). Clerk
+  accepts any kind of token there (`acceptsToken: 'any'`, set after the app's options, so it cannot be narrowed) and
+  verifies its machine tokens (`ak_`, `mt_`, `oat_`) through its API on every request, which `jwtKey` does not help.
+  Round 1 and round 2 found the same shape (a caller-chosen value that makes Clerk call its API), so instead of a third
+  round the sweep listed where Clerk 7.10's `authenticateRequest` reads caller input: the `Authorization` header
+  (`parseAuthorizationHeader`: the token after `Bearer `, or the whole value when it is one word), the session, refresh,
+  handshake and dev-browser cookies, and the handshake query parameters. The header is closed by skipping Clerk when it
+  would read a token there, by its own rule: SSSB's users sign in by Clerk's session cookie, and SSSB's own bearer
+  tokens (the webhook secret, service callers' JWTs) are checked by their routes and never need Clerk. Another scheme
+  (`Basic …`) gives Clerk no token, so Clerk still runs. The session and handshake tokens are closed by `jwtKey`, which
+  stays optional (above) and is a cutover step. Not followed to the end: whether a forged expired session token with a
+  refresh cookie reaches Clerk's refresh call before its signature is checked; with `jwtKey` set the signature check is
+  local either way. Rejected: **skipping Clerk only for the three machine-token prefixes**, which leaves a one-word
+  value and any prefix Clerk adds later.
+- **`CLERK_JWT_KEY` is read as a secret store often holds it** (`\n` escapes, surrounding space) **and refused at the
+  first real request if it is not a PEM public key** (round-2 review): Clerk would otherwise fail every session check
+  with it and sign everyone out, without saying why.
