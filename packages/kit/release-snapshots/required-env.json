@@ -40,12 +40,16 @@
             "none": []
         },
         "JOBS_RUNNER": {
-            "codebuild": ["JOBS_CODEBUILD_PROJECT"],
+            "codebuild": ["AWS_REGION", "JOBS_CODEBUILD_PROJECT"],
             "in-process": [],
             "none": []
         },
         "LLM_PROVIDER": {
             "anthropic": ["ANTHROPIC_API_KEY"],
+            "none": []
+        },
+        "STORAGE_PROVIDER": {
+            "s3": ["AWS_REGION", "STORAGE_BUCKET"],
             "none": []
         }
     }
