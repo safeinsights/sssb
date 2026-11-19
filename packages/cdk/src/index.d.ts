@@ -12,6 +12,31 @@ export declare function databaseNameFor(slug: string): string
 /** How the app reaches Postgres: the app's `params.database.transport` (ADR-0002, addendum 2026-11-16). */
 export type DatabaseTransport = 'pg' | 'data-api'
 
+/**
+ * Which of SSSB's optional ports the app uses: the app's `params.ports`. The construct sets each one given as the
+ * server's switch (`LLM_PROVIDER`, `EMAIL_PROVIDER`, `INBOUND_EMAIL_PROVIDER`, `JOBS_RUNNER`); a port left out keeps
+ * the framework's default (the first choice of each). `none` makes the port absent: its settings are not required, and
+ * a call through it fails naming the switch. `jobs: 'in-process'` runs each job's handler in the server, with no
+ * CodeBuild project.
+ */
+export interface OptionalPorts {
+    readonly llm?: 'anthropic' | 'none'
+    readonly email?: 'mailgun' | 'none'
+    readonly inboundEmail?: 'mailgun' | 'none'
+    readonly jobs?: 'codebuild' | 'in-process' | 'none'
+}
+
+/** The scheduled tick: what runs the app's scheduled work (its cron route) in the deployment. */
+export interface ScheduledTickProps {
+    /**
+     * The secret the server's `WEBHOOK_SECRET` holds, a plain string, which the tick sends to the cron route. The
+     * construct never puts its value in an environment: the tick's function reads it on each run.
+     */
+    readonly webhookSecret: cdk.aws_secretsmanager.ISecret
+    /** How often the tick runs, in whole minutes: 5 minutes when left out. */
+    readonly every?: cdk.Duration
+}
+
 export interface SssbAppProps {
     /**
      * The app's directory: the one whose `package.json` depends on `@sssb/kit` and whose `src/app-config` is
@@ -24,12 +49,17 @@ export interface SssbAppProps {
      * underscore (`databaseNameFor`).
      */
     readonly slug: string
-    /** The app's deployment params (`config/params.ts`); the construct reads `database.transport`. */
-    readonly params: { readonly database: { readonly transport: DatabaseTransport } }
+    /** The app's deployment params (`config/params.ts`); the construct reads `database.transport` and `ports`. */
+    readonly params: { readonly database: { readonly transport: DatabaseTransport }; readonly ports?: OptionalPorts }
     /** The deployment's name, as the app's own policy spells it (`Staging`, `Production`). */
     readonly environment: string
     /** A production deployment: the database keeps a warm writer and the data stores are retained. */
     readonly production: boolean
+    /**
+     * Run the app's scheduled work: an EventBridge rule that POSTs the app's cron route with the webhook secret, by
+     * invoking the server directly. Left out, nothing in the deployment ticks it.
+     */
+    readonly scheduledTick?: ScheduledTickProps
 }
 
 /**
@@ -51,4 +81,6 @@ export declare class SssbApp extends Construct {
     readonly assetsBucket: cdk.aws_s3.Bucket
     readonly storageBucket: cdk.aws_s3.Bucket
     readonly databaseTransport: DatabaseTransport
+    /** The scheduled tick's function, when `scheduledTick` is given. */
+    readonly scheduledTick: cdk.aws_lambda.Function | undefined
 }
