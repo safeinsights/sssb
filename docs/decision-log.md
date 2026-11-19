@@ -6291,3 +6291,31 @@ Decisions, each with the alternative rejected:
   a rerun finishes it); a `settings.json` that exists but declares no SSSB marketplace refuses, where an absent one does
   not (a file that is there and says nothing about the plugin is more likely a mistake than a workspace without one); a
   `uses:` line inside a `run: |` block scalar counts as a pin, in doctor's report too.
+
+## `SssbApp` tells the app the viewer's host, and takes no plain HTTP (2026-11-19, `fix/cdk-forwarded-host-https`)
+
+Two real-mode defects found while fixing POSTs (`fix/cdk-function-url-post`). CloudFront sends the server's Function
+URL its own `Host` (it signs for it) and forwarded a viewer's `X-Forwarded-Host` as sent, so the app built redirects,
+absolute links and Clerk's URLs on the Function URL's host, or on a host the viewer chose. And the two S3 behaviors
+(`/_next/static/*`, `/assets/*`) answered plain HTTP. Pages worked around the first with a CloudFront Function of its
+own. JP's standing rule for these sessions is to decide and record; each choice below is one he would otherwise have
+been asked.
+
+- **A viewer-request CloudFront Function sets `x-forwarded-host` from the `Host` CloudFront received**
+  (`packages/cdk/src/forwarded-host.js`), on every behavior that reaches the server (today the default one), overwriting
+  what the viewer sent. Next fills `x-forwarded-host` only when it is absent (`next/dist/server/base-server.js`), and
+  Clerk builds its request URL from it. Rejected: **setting it in the origin-request Lambda@Edge** that already hashes
+  the body: by the origin request the `Host` is the Function URL's, and a second job for that function costs nothing
+  less. Rejected: **forwarding the viewer's `Host`**: the Function URL then refuses the request (CloudFront's guide for
+  `AllViewerExceptHostHeader`). CloudFront allows a viewer-request CloudFront Function beside an origin-request
+  Lambda@Edge on one behavior.
+- **It also sets `x-forwarded-port` to 443 and drops a viewer's `Forwarded`.** Clerk reads the port beside the host, a
+  viewer could set it, and 443 is the only port a viewer reaches the app on once HTTP redirects. Nothing in Next or Clerk
+  reads `Forwarded`; a viewer's is never CloudFront's. `X-Forwarded-Proto` is left alone: functions may not touch it,
+  CloudFront removes a viewer's, and the origin request policy forwards CloudFront's own `CloudFront-Forwarded-Proto`.
+- **Every behavior redirects HTTP to HTTPS**, as the default behavior already did. Rejected: **`https-only`**, which
+  answers 403: no safer, since the plain request has already crossed by then, and a typed `http://` link would break.
+- **The function is exposed as `SssbApp.forwardedHost`**, so an adopter who adds a behavior of their own to the
+  server's origin can associate it. Rejected: **keeping it private**, which would leave such a behavior forgeable.
+- **Out of scope:** an HSTS header (a response-headers policy; pages sets its own), and `X-Forwarded-For`, to which
+  CloudFront appends the viewer's address after any the viewer sent, so the first entry is the viewer's to choose.
