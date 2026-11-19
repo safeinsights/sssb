@@ -5728,6 +5728,7 @@ record the rejected alternative here, report it.
 - **The starter's e2e budget grows by one spec** (`apps/starter/tests/e2e/simulator.spec.ts`): signed out, open the
   panel, become a person in the other tenant, see Mail and Jobs and not Hooks, run what is due. It is what makes the
   mount a gate in every generated workspace.
+
 ## Dependabot alert 82 (`minimatch`) closed by taking `typescript-eslint` 8.73 (2026-11-18, `deps/minimatch-alert-82`)
 
 The 2026-11-17 dependency audit accepted GHSA-g3hv-75wg-m249 until the next `typescript-eslint` refresh ("Accepted:
