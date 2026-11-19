@@ -454,10 +454,18 @@ describe('the scheduled tick', () => {
             expect(rules[0]?.Properties?.['ScheduleExpression']).toBe('rate(5 minutes)')
             const target = /** @type {any} */ (rules[0]?.Properties ?? {})['Targets'][0]
             expect(target.RetryPolicy).toEqual({ MaximumRetryAttempts: 0 })
+            // And Lambda's own retries of an asynchronous invocation, which EventBridge's policy does not reach.
+            const invokeConfigs = Object.values(all).filter((r) => r.Type === 'AWS::Lambda::EventInvokeConfig')
+            expect(invokeConfigs).toHaveLength(1)
+            expect(invokeConfigs[0]?.Properties?.['MaximumRetryAttempts']).toBe(0)
 
             const tick = lambdaFunction(all, 'ScheduledTick')
             const server = lambdaFunction(all, 'Server')
             expect(JSON.stringify(target.Arn)).toContain(tick.id)
+            expect(JSON.stringify(invokeConfigs[0]?.Properties?.['FunctionName'])).toContain(tick.id)
+            const alarm = Object.entries(all).find(([id]) => id.startsWith('ScheduledTickErrorsAlarm'))?.[1]
+            expect(alarm?.Properties?.['MetricName']).toBe('Errors')
+            expect(JSON.stringify(alarm?.Properties?.['Dimensions'])).toContain(tick.id)
             expect(tick.inVpc).toBe(false)
             expect(tick.env['SERVER_FUNCTION_NAME']).toEqual({ Ref: server.id })
             expect(tick.env['WEBHOOK_SECRET_ARN']).toBe(SECRET_ARN)

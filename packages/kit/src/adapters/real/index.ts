@@ -12,6 +12,7 @@ import { createRealAnalytics } from './analytics'
 import { realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { createRealDb } from './db'
+import type { NotifyJobTerminal } from './jobs-in-process'
 import { optionalPortsEnv, portChoice } from './optional-ports'
 import { createRealStorage } from './storage'
 
@@ -51,7 +52,16 @@ export function assertRealEnv(): void {
     }
 }
 
-export async function createRealPorts(): Promise<RealPorts> {
+/**
+ * What the adapter registry hands the real ports. `notifyJobTerminal` is how the in-process job runner notifies a
+ * job's org: the notification modules import the registry, so this module, which the registry loads while it is being
+ * evaluated, and which `sssb check-real-env` bundles on its own, must never import them.
+ */
+interface RealPortsHooks {
+    notifyJobTerminal: NotifyJobTerminal
+}
+
+export async function createRealPorts(hooks: RealPortsHooks): Promise<RealPorts> {
     assertRealEnv()
     const env = process.env
     // assertRealEnv above already proved every required variable is set; this narrows the type.
@@ -88,7 +98,10 @@ export async function createRealPorts(): Promise<RealPorts> {
         runner === 'codebuild'
             ? (await import('./jobs')).createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION'))
             : runner === 'in-process'
-              ? (await import('./jobs-in-process')).createInProcessJobs({ db, storage, email, llm, auth: realAuth })
+              ? (await import('./jobs-in-process')).createInProcessJobs(
+                    { db, storage, email, llm },
+                    hooks.notifyJobTerminal,
+                )
               : absentJobs
     return {
         auth: realAuth,

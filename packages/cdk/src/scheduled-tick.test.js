@@ -2,7 +2,7 @@
 import { Buffer } from 'node:buffer'
 import { TextEncoder } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { CRON_PATH, cronEvent, tick } from './assets/scheduled-tick/index.mjs'
+import { CRON_PATH, cronEvent, handler, TICK_ENV, tick } from './assets/scheduled-tick/index.mjs'
 
 const NOW = new Date('2026-11-19T03:30:00.000Z')
 const HOST = 'abc123.lambda-url.us-east-1.on.aws'
@@ -72,5 +72,54 @@ describe('the scheduled tick', () => {
         const missing = run({ secret: '' })
         await expect(missing.result).rejects.toThrow(/the webhook secret has no string value/)
         expect(missing.sent).toEqual([])
+    })
+
+    it('as the Lambda entry, reads the secret and invokes the server named in its environment', async () => {
+        /** @type {{ client: string, command: string, input: any }[]} */
+        const sent = []
+        /** @param {string} client @param {string} command @param {(input: any) => object} answer */
+        const sdkModule = (client, command, answer) => ({
+            [client]: class {
+                /** @param {{ name: string, input: any }} cmd */
+                async send(cmd) {
+                    sent.push({ client, command: cmd.name, input: cmd.input })
+                    return answer(cmd.input)
+                }
+            },
+            [command]: class {
+                /** @param {any} input */
+                constructor(input) {
+                    this.name = command
+                    this.input = input
+                }
+            },
+        })
+        /** @type {Record<string, object>} */
+        const modules = {
+            '@aws-sdk/client-secrets-manager': sdkModule('SecretsManagerClient', 'GetSecretValueCommand', () => ({
+                SecretString: 's3cret',
+            })),
+            '@aws-sdk/client-lambda': sdkModule('LambdaClient', 'InvokeCommand', () => ({
+                Payload: new TextEncoder().encode(JSON.stringify({ statusCode: 200, body: '{"ok":true}' })),
+            })),
+        }
+        await handler(
+            {},
+            { awsRequestId: 'req-9' },
+            {
+                sdk: async (name) => modules[name],
+                env: {
+                    [TICK_ENV.webhookSecretArn]: 'arn:secret',
+                    [TICK_ENV.serverFunctionName]: 'app-Server',
+                    [TICK_ENV.serverHost]: HOST,
+                },
+            },
+        )
+        expect(sent.map(({ command }) => command)).toEqual(['GetSecretValueCommand', 'InvokeCommand'])
+        expect(sent[0]?.input).toEqual({ SecretId: 'arn:secret' })
+        expect(sent[1]?.input.FunctionName).toBe('app-Server')
+        const event = JSON.parse(sent[1]?.input.Payload)
+        expect(event.headers).toMatchObject({ authorization: 'Bearer s3cret', host: HOST })
+        expect(event.requestContext.requestId).toBe('req-9')
     })
 })

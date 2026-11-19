@@ -21,6 +21,13 @@ import { TextDecoder } from 'node:util'
 export const CRON_PATH = '/api/webhooks/cron'
 const USER_AGENT = 'sssb-scheduled-tick'
 
+/** The function's environment, by the names the construct sets (`../../scheduled-tick.js` imports these). */
+export const TICK_ENV = {
+    serverFunctionName: 'SERVER_FUNCTION_NAME',
+    serverHost: 'SERVER_HOST',
+    webhookSecretArn: 'WEBHOOK_SECRET_ARN',
+}
+
 /**
  * The Function URL event for one POST of the cron route.
  * @param {{ secret: string, host: string, requestId: string, now: Date }} input
@@ -95,19 +102,23 @@ export async function tick({ readSecret, invoke, host, requestId, now }) {
  */
 const runtimeSdk = async (name) => createRequire(import.meta.url)(name)
 
-/** @param {unknown} _event @param {{ awsRequestId: string }} context */
-export async function handler(_event, context) {
-    const { SecretsManagerClient, GetSecretValueCommand } = await runtimeSdk('@aws-sdk/client-secrets-manager')
-    const { LambdaClient, InvokeCommand } = await runtimeSdk('@aws-sdk/client-lambda')
+/**
+ * The Lambda entry. `sdk` and `env` are the runtime's unless a test passes stand-ins.
+ * @param {unknown} _event
+ * @param {{ awsRequestId: string }} context
+ * @param {{ sdk?: (name: string) => Promise<any>, env?: Record<string, string | undefined> }} [overrides]
+ */
+export async function handler(_event, context, { sdk = runtimeSdk, env = process.env } = {}) {
+    const { SecretsManagerClient, GetSecretValueCommand } = await sdk('@aws-sdk/client-secrets-manager')
+    const { LambdaClient, InvokeCommand } = await sdk('@aws-sdk/client-lambda')
     const secrets = new SecretsManagerClient({})
     const lambda = new LambdaClient({})
-    const env = process.env
     const body = await tick({
         readSecret: async () =>
-            (await secrets.send(new GetSecretValueCommand({ SecretId: env['WEBHOOK_SECRET_ARN'] }))).SecretString,
+            (await secrets.send(new GetSecretValueCommand({ SecretId: env[TICK_ENV.webhookSecretArn] }))).SecretString,
         invoke: (payload) =>
-            lambda.send(new InvokeCommand({ FunctionName: env['SERVER_FUNCTION_NAME'], Payload: payload })),
-        host: env['SERVER_HOST'] ?? '',
+            lambda.send(new InvokeCommand({ FunctionName: env[TICK_ENV.serverFunctionName], Payload: payload })),
+        host: env[TICK_ENV.serverHost] ?? '',
         requestId: context.awsRequestId,
         now: new Date(),
     })

@@ -45,4 +45,10 @@ export type JobHandler = (payload: unknown, ctx: JobContext) => Promise<{ result
  */
 export interface JobsPort {
     start(job: SubmittedJob): Promise<void>
+    /**
+     * Optional: for a runner whose jobs can be lost mid-run (the in-process runner, whose invocation can end before it
+     * records an outcome), fails each job it judges lost and says how many. The scheduled tick calls it, when the port
+     * has it, before it drains the due schedules.
+     */
+    sweep?(now: Date): Promise<number>
 }

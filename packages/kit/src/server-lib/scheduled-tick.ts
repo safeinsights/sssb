@@ -32,6 +32,9 @@ export interface ScheduledTickResult {
 
 export async function runScheduledTick(): Promise<ScheduledTickResult> {
     const now = isSimulated ? worldNow() : new Date()
+    // A runner that can lose a job mid-run (JOBS_RUNNER=in-process) fails the lost ones first; its own count is not
+    // reported here, the failed jobs' errors say it.
+    await jobs.sweep?.(now)
     const { spawned, failed } = await runDueSchedules(db, jobs, now)
     const deliveries = await runDueDeliveries(db, now, dispatchWebhook)
     return { spawned, failed, deliveries }

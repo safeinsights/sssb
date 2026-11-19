@@ -41,6 +41,9 @@ const DATA_API_ENV = {
     DATABASE_NAME: 'app',
 }
 
+/** What the registry hands createRealPorts. */
+const HOOKS = { notifyJobTerminal: async () => {} }
+
 function stubEnv(env: Record<string, string | undefined>): void {
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
 }
@@ -73,7 +76,9 @@ beforeEach(() => {
     })
     vi.doMock('./jobs-in-process', () => {
         loaded.inProcess += 1
-        return { createInProcessJobs: () => ({ kind: 'in-process' }) }
+        return {
+            createInProcessJobs: (ports: unknown, notify: unknown) => ({ kind: 'in-process', ports, notify }),
+        }
     })
     stubEnv({ ...COMMON_ENV, DATABASE_TRANSPORT: undefined, DATABASE_URL: undefined })
     stubEnv(Object.fromEntries(Object.keys(DATA_API_ENV).map((name) => [name, undefined])))
@@ -91,7 +96,7 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
     ])('a pg deployment (DATABASE_TRANSPORT %s) never loads the RDS Data SDK', async (_label, transport) => {
         stubEnv({ DATABASE_TRANSPORT: transport, DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
         const { createRealPorts } = await import('./index')
-        const ports = await createRealPorts()
+        const ports = await createRealPorts(HOOKS)
         expect(loaded).toMatchObject({ rdsDataSdk: 0, dataApiTransport: 0 })
         await ports.db.getDb().destroy()
     })
@@ -99,7 +104,7 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
     it('DATABASE_TRANSPORT=data-api loads it, and needs no DATABASE_URL', async () => {
         stubEnv({ DATABASE_TRANSPORT: 'data-api', ...DATA_API_ENV })
         const { createRealPorts } = await import('./index')
-        const ports = await createRealPorts()
+        const ports = await createRealPorts(HOOKS)
         expect(loaded.dataApiTransport).toBe(1)
         expect(loaded.rdsDataSdk).toBeGreaterThan(0)
         expect(typeof ports.db.withTenant).toBe('function')
@@ -108,7 +113,7 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
     it('an unknown transport fails instead of falling back to pg', async () => {
         stubEnv({ DATABASE_TRANSPORT: 'mysql', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
         const { createRealPorts } = await import('./index')
-        await expect(createRealPorts()).rejects.toThrow(/DATABASE_TRANSPORT must be one of pg, data-api/)
+        await expect(createRealPorts(HOOKS)).rejects.toThrow(/DATABASE_TRANSPORT must be one of pg, data-api/)
     })
 
     it("each transport requires its own variables, and names its own cutover row when they're missing", async () => {
@@ -134,7 +139,7 @@ describe('the optional ports follow their switches, and a port switched off is a
     it('unset switches are the defaults: every optional port is on, as before the switches', async () => {
         stubEnv(PG)
         const { createRealPorts } = await import('./index')
-        const ports = await createRealPorts()
+        const ports = await createRealPorts(HOOKS)
         expect(loaded).toMatchObject({ llm: 1, email: 1, codebuild: 1, inProcess: 0 })
         expect([ports.llm, ports.email, ports.jobs]).toEqual([
             { kind: 'anthropic' },
@@ -149,7 +154,7 @@ describe('the optional ports follow their switches, and a port switched off is a
         stubEnv(Object.fromEntries(OPTIONAL_SETTINGS_ALL.map((name) => [name, undefined])))
         const { createRealPorts } = await import('./index')
         const { AbsentPortError } = await import('./absent')
-        const ports = await createRealPorts()
+        const ports = await createRealPorts(HOOKS)
         expect(loaded).toMatchObject({ llm: 0, email: 0, codebuild: 0, inProcess: 0 })
         const job = { id: 'j', kind: 'k', tenantId: 't', orgId: null, payload: {} }
         const message = { to: 'a@example.com', subject: 's', html: 'h', text: 't' }
@@ -165,9 +170,14 @@ describe('the optional ports follow their switches, and a port switched off is a
     it('JOBS_RUNNER=in-process needs no CodeBuild project and never loads the CodeBuild runner', async () => {
         stubEnv({ ...PG, JOBS_RUNNER: 'in-process', JOBS_CODEBUILD_PROJECT: undefined })
         const { createRealPorts } = await import('./index')
-        const ports = await createRealPorts()
+        const ports = await createRealPorts(HOOKS)
         expect(loaded).toMatchObject({ codebuild: 0, inProcess: 1 })
-        expect(ports.jobs).toEqual({ kind: 'in-process' })
+        // It runs jobs with the deployment's own ports, and notifies through the registry's hook.
+        expect(ports.jobs).toEqual({
+            kind: 'in-process',
+            ports: { db: ports.db, storage: ports.storage, email: ports.email, llm: ports.llm },
+            notify: HOOKS.notifyJobTerminal,
+        })
         await ports.db.getDb().destroy()
     })
 

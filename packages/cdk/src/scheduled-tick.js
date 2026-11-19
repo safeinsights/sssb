@@ -2,8 +2,9 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as cdk from 'aws-cdk-lib'
+import { TICK_ENV } from './assets/scheduled-tick/index.mjs'
 
-const { aws_events, aws_events_targets, aws_lambda } = cdk
+const { aws_cloudwatch, aws_events, aws_events_targets, aws_lambda } = cdk
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -44,18 +45,29 @@ export function addScheduledTick(scope, { server, functionUrl, webhookSecret, ev
         // Longer than the server's 30 seconds, so a slow tick is cut short by the server's own timeout, never this one.
         timeout: cdk.Duration.minutes(1),
         environment: {
-            SERVER_FUNCTION_NAME: server.functionName,
+            [TICK_ENV.serverFunctionName]: server.functionName,
             // The Function URL's host (`https://<host>/`): the request's Host, as the server would see it at its URL.
-            SERVER_HOST: cdk.Fn.select(2, cdk.Fn.split('/', functionUrl.url)),
-            WEBHOOK_SECRET_ARN: webhookSecret.secretArn,
+            [TICK_ENV.serverHost]: cdk.Fn.select(2, cdk.Fn.split('/', functionUrl.url)),
+            [TICK_ENV.webhookSecretArn]: webhookSecret.secretArn,
         },
     })
+    // EventBridge invokes a Lambda target asynchronously, and Lambda retries a failed asynchronous invocation twice
+    // unless told otherwise: without this, one failed tick would invoke the server twice more.
+    ticker.configureAsyncInvoke({ retryAttempts: 0 })
     webhookSecret.grantRead(ticker)
     server.grantInvoke(ticker)
     const rule = new aws_events.Rule(scope, 'ScheduledTickRule', {
         description: "Runs the app's scheduled work: SSSB's scheduled tick",
         schedule: aws_events.Schedule.rate(every),
         targets: [new aws_events_targets.LambdaFunction(ticker, { retryAttempts: 0 })],
+    })
+    // A tick that fails (a 401 from a secret that drifted from the server's, a server error) is the only sign that the
+    // app's scheduled work has stopped: alarm on it, as the server's own errors are.
+    new aws_cloudwatch.Alarm(scope, 'ScheduledTickErrorsAlarm', {
+        metric: ticker.metricErrors({ period: cdk.Duration.minutes(15) }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        treatMissingData: aws_cloudwatch.TreatMissingData.NOT_BREACHING,
     })
     return { ticker, rule }
 }

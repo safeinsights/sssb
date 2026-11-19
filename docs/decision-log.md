@@ -6005,6 +6005,29 @@ route from a ticker Lambda instead).
 - **Not verified live** (no AWS calls): that the Lambda Web Adapter answers a direct invocation carrying a Function URL
   event as it answers the URL, and the in-process runner on a deployed server. Both are in the `scheduled-tick` and
   `job-runner` rows' proofs.
+- **From the first review round.** `sssb check-real-env` bundles `adapters/real/index` as CommonJS, and the in-process
+  runner's notification imports had pulled in the adapter registry, whose top-level await esbuild refuses there:
+  `dev:real` failed for every app. The registry now hands `createRealPorts` the notifier
+  (`notifyJobTerminal`), so the real ports never import a module that imports the registry, and
+  `tests/tooling/tools-check-real-env.test.ts` bundles the real framework for both apps (it had bundled only a stub).
+  Rejected: bundling the preflight as ESM, which would leave the next such import to break the Next server instead.
+- **A job the in-process runner loses is failed, twice over.** A handler still running after 20 seconds
+  (`IN_PROCESS_DEADLINE_MS`, under `SssbApp`'s 30) fails its job; and a new optional `JobsPort.sweep(now)`, which the
+  scheduled tick calls before it drains the schedules, fails a job still `running` five minutes after its last status
+  change (the invocation was cut off before it recorded anything). Optional on the port, so every other runner,
+  an adopter's own included, is untouched. The tick's answer keeps its shape (the starter's route test, which adopters
+  copy, pins it exactly): the failed jobs' errors say what the sweep did. Rejected: **a per-tick time budget**, which
+  the runner cannot know (nothing hands it the invocation's remaining time).
+- **The tick's function is not retried by Lambda either** (`configureAsyncInvoke({ retryAttempts: 0 })`: EventBridge's
+  retry policy does not reach Lambda's own two retries of an asynchronous invocation), and an Errors alarm watches it,
+  as the server's errors are watched.
+- **A failed deferred side effect is logged in real mode**, beside its analytics event, which is the no-op one without
+  a PostHog key: an invitation sent with `EMAIL_PROVIDER=none` now leaves a log line saying the port is absent.
+- **Left as they are, with the reason.** `JOBS_RUNNER=none` still commits a submitted or scheduled job's row before
+  `start` throws, leaving it `queued`: `none` declares that the app runs no jobs, so a job reaching the port is the
+  declaration being wrong, and the throw names the switch. And the framework's `digest-email` handler, which the
+  in-process runner can now run in a deployment, picks recipients from the seam's seed people: a real-mode concern of
+  that handler with any runner (CodeBuild would run the same handler), so it is a follow-up, not this change's.
 
 ## 2026-11-18 — `sssb pin`: one command raises the workflow's pin and the marketplace's `ref` (adoption follow-up 7)
 

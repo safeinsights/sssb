@@ -25,12 +25,15 @@ export interface JobRunPorts {
  *
  * Returns false when another runner had already claimed the job (losing that race is benign, not an error), true once
  * this call has recorded the job's terminal status. A handler's error fails the job, never the caller; `notify` runs
- * after a terminal status is recorded, and its own failure is the caller's to contain.
+ * after a terminal status is recorded, and its own failure is the caller's to contain. With `deadlineMs`, a handler
+ * that has not settled by then fails the job ("timed out"); the handler is not stopped, and what it does afterwards
+ * no longer changes the job's status.
  */
 export async function runJobInProcess(
     job: SubmittedJob,
     ports: JobRunPorts,
     notify: (status: 'completed' | 'failed') => Promise<void>,
+    options: { deadlineMs?: number } = {},
 ): Promise<boolean> {
     try {
         await recordJobStatus(ports.db, job.tenantId, job.id, 'running')
@@ -46,12 +49,8 @@ export async function runJobInProcess(
     try {
         const handler = jobHandlers[job.kind]
         if (!handler) throw new Error(`no job handler registered for kind: ${job.kind}`)
-        const { resultKey } = await handler(job.payload, {
-            ...ports,
-            tenantId: job.tenantId,
-            orgId: job.orgId,
-            jobId: job.id,
-        })
+        const run = handler(job.payload, { ...ports, tenantId: job.tenantId, orgId: job.orgId, jobId: job.id })
+        const { resultKey } = await withDeadline(run, options.deadlineMs)
         await recordJobStatus(ports.db, job.tenantId, job.id, 'completed', { resultKey })
         status = 'completed'
     } catch (error) {
@@ -62,4 +61,21 @@ export async function runJobInProcess(
     }
     await notify(status)
     return true
+}
+
+/** `work`, or a rejection once `ms` have passed without it settling. No deadline when `ms` is undefined. */
+async function withDeadline<T>(work: Promise<T>, ms: number | undefined): Promise<T> {
+    if (ms === undefined) return work
+    // A handler abandoned at the deadline may still reject later: handled here, or Node would end the process on an
+    // unhandled rejection.
+    work.catch(() => {})
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const expired = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out after ${ms / 1000} seconds in the in-process runner`)), ms)
+    })
+    try {
+        return await Promise.race([work, expired])
+    } finally {
+        clearTimeout(timer)
+    }
 }
