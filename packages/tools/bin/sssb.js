@@ -63,6 +63,11 @@ const COMMANDS = {
         summary:
             "fail unless the app's SSSB is one copy, on its own seam, in step, and its conformance checks would run",
     },
+    pin: {
+        load: () => import('../src/commands/pin.js'),
+        summary:
+            "raise the workflow's pin and the plugin marketplace's ref to the installed @sssb/kit's release commit",
+    },
     'check-e2e': {
         load: () => import('../src/commands/check-e2e.js'),
         summary: 'fail when a Playwright spec reaches @sssb/kit other than through @sssb/kit/testing/e2e',

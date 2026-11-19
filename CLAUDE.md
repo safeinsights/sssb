@@ -63,7 +63,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   deleting the showcase with a red gate.
-- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 139 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 141 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it). Lint-enforced
   (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
   publish it; add the `exports` line deliberately, and never widen the map to silence the rule.
@@ -112,7 +112,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - **`@sssb/kit` stamps the commit it is packed from** into `dist/release.json` (its `prepack`,
   `packages/kit/scripts/stamp-release.mjs`), refusing shipped sources that differ from it under the same switch.
   `sssb doctor` reports, never fails, a workflow or marketplace pin that is not that commit, or a pinned marketplace no
-  plugin is enabled from; `release.mjs candidate`
+  plugin is enabled from, and `sssb pin` writes both pins from the stamp (it refuses where there is none); `release.mjs candidate`
   refuses a candidate whose kit names another. In-repo there is no stamp: the kit is source.
 - **`@sssb/kit/core` is pure TypeScript** — no framework imports, and no JSX (it compiles to an import of
   `react/jsx-runtime`). Lint-enforced.

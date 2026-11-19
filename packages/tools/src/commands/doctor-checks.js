@@ -1165,8 +1165,17 @@ export function githubRepositoryOf(repository) {
  */
 
 /**
- * Every call of a reusable workflow of `repository` in the workspace's workflow files: `uses: <owner>/<name>/.github/
- * workflows/<file>@<ref>`, the owner and name compared as GitHub compares them, without case.
+ * One `uses:` line that calls a reusable workflow (`uses: <owner>/<name>/.github/workflows/<file>@<ref>`), cut so a
+ * caller can read or rewrite the ref (`sssb pin`): 1 everything up to and including the `@`, 2 the `owner/name`, 3 the
+ * workflow's path, 4 the ref, 5 whatever follows it (a trailing comment, a carriage return). One regex for doctor's
+ * report and the command that fixes what it reports, so they cannot disagree about what a pin is.
+ */
+export const WORKFLOW_USES =
+    /^(\s*(?:-\s+)?uses:\s*['"]?([\w.-]+\/[\w.-]+)\/(\.github\/workflows\/[^@\s'"]+)@)([^\s'"#]+)([\s\S]*)$/
+
+/**
+ * Every call of a reusable workflow of `repository` in the workspace's workflow files, the owner and name compared as
+ * GitHub compares them, without case.
  * @param {string} repository `owner/name`, lowercased
  * @param {{ file: string, text: string }[]} workflows
  * @returns {Pin[]}
@@ -1174,15 +1183,26 @@ export function githubRepositoryOf(repository) {
 function workflowPins(repository, workflows) {
     /** @type {Pin[]} */
     const pins = []
-    const uses = /^\s*(?:-\s+)?uses:\s*['"]?([\w.-]+\/[\w.-]+)\/(\.github\/workflows\/[^@\s'"]+)@([^\s'"#]+)/
     for (const { file, text } of workflows) {
         for (const line of text.split('\n')) {
-            const match = uses.exec(line)
-            if (match?.[1]?.toLowerCase() === repository)
-                pins.push({ where: `${file} (${match[2]})`, ref: /** @type {string} */ (match[3]) })
+            const match = WORKFLOW_USES.exec(line)
+            if (match?.[2]?.toLowerCase() === repository)
+                pins.push({ where: `${file} (${match[3]})`, ref: /** @type {string} */ (match[4]) })
         }
     }
     return pins
+}
+
+/**
+ * The `owner/name` a marketplace's `source` names on GitHub, lowercased: a `github` source's `repo`, or a `git` source's
+ * `url`. Null for any other source.
+ * @param {any} source an `extraKnownMarketplaces.<name>.source` value
+ * @returns {string | null}
+ */
+export function sourceRepository(source) {
+    if (source?.source === 'github' && typeof source.repo === 'string')
+        return source.repo.toLowerCase().replace(/\.git$/, '')
+    return source?.source === 'git' ? githubRepositoryOf(source.url) : null
 }
 
 /**
@@ -1216,13 +1236,7 @@ function marketplacePins(repository, file, text) {
     const marketplaces = settings?.extraKnownMarketplaces
     for (const [name, entry] of Object.entries(typeof marketplaces === 'object' && marketplaces ? marketplaces : {})) {
         const source = entry?.source
-        const repo =
-            source?.source === 'github' && typeof source.repo === 'string'
-                ? source.repo.toLowerCase().replace(/\.git$/, '')
-                : source?.source === 'git'
-                  ? githubRepositoryOf(source.url)
-                  : null
-        if (repo === repository) {
+        if (sourceRepository(source) === repository) {
             names.push(name)
             pins.push({
                 where: `${file} (marketplace ${name})`,
@@ -1254,7 +1268,7 @@ function marketplacePins(repository, file, text) {
  * The commit a kit's release stamp (the text of its dist/release.json) names, or null for none or one unreadable.
  * @param {string | null} stamp
  */
-function stampedCommit(stamp) {
+export function stampedCommit(stamp) {
     try {
         const parsed = stamp === null ? null : JSON.parse(stamp)
         return typeof parsed?.commit === 'string' && COMMIT.test(parsed.commit) ? parsed.commit : null
@@ -1363,7 +1377,7 @@ export function pinReport({ inRepo, version, stamp, repository, workflows, setti
                 : (differing.length > 0
                       ? `${differing.length} pin(s) differ from @sssb/kit ${version}'s release commit ${commit}`
                       : `not every pin is there to compare with @sssb/kit ${version}'s release commit ${commit}`) +
-                  " (reported, not failed: the pins are in this workspace's own files; raise them to the release commit when you upgrade)"),
+                  " (reported, not failed: the pins are in this workspace's own files; `pnpm exec sssb pin` raises both to the release commit)"),
         lines,
     }
 }
