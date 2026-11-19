@@ -112,6 +112,70 @@ describe('real-auth-provider', () => {
         })
     })
 
+    it('does not count an import or export whose every name is a type', () => {
+        const appDir = app({
+            'layout.tsx': `import { type RealAuthProviders } from '@sssb/kit/adapters/real/providers'\n${PLAIN_LAYOUT}`,
+            '(group)/layout.tsx': `export { type Glue } from '../provider-glue'\n${PLAIN_LAYOUT}`,
+            'provider-glue.tsx': PROVIDER_LAYOUT,
+            '(group)/signin/page.tsx': SIGN_IN_PAGE,
+        })
+        expect(realAuthProviderGaps(appDir).gaps).toEqual(['src/app/(group)/signin/page.tsx'])
+    })
+
+    it('resolves `.`, `.js` written for a `.tsx`, and the seam alias', () => {
+        const appDir = app({
+            'layout.tsx': `import Providers from './providers/index.js'\nexport default Providers\n`,
+            'providers/index.tsx': `export { default } from './mount'\n`,
+            'providers/mount.tsx': `import M from '@sssb/app-config/auth-mount'\nexport default M\n`,
+            'signin/page.tsx': `import Glue from '.'\nexport default Glue\n`,
+            'signin/index.tsx': SIGN_IN_PAGE,
+        })
+        mkdirSync(path.join(appDir, 'src/app-config'), { recursive: true })
+        writeFileSync(path.join(appDir, 'src/app-config/auth-mount.tsx'), PROVIDER_LAYOUT)
+        expect(realAuthProviderGaps(appDir)).toMatchObject({ withForms: ['src/app/signin/page.tsx'], gaps: [] })
+    })
+
+    it("does not let a layout's own template, or a global-error's layouts, cover them", () => {
+        const appDir = app({
+            'layout.tsx': `import F from '@sssb/kit/adapters/real/sign-in-form'\nexport default F\n`,
+            'template.tsx': PROVIDER_LAYOUT,
+            'global-error.tsx': SIGN_IN_PAGE,
+            'signin/page.tsx': SIGN_IN_PAGE,
+        })
+        // The page sits inside the template, which mounts the provider; the layout and global-error do not.
+        expect(realAuthProviderGaps(appDir).gaps).toEqual(['src/app/global-error.tsx', 'src/app/layout.tsx'])
+    })
+
+    it('settles a large app quickly: every module is parsed once, whatever the number of pages', () => {
+        const files: Record<string, string> = { 'layout.tsx': PROVIDER_LAYOUT }
+        const barrel = Array.from({ length: 600 }, (_, i) => `export * from '@/components/c${i}'`).join('\n')
+        for (let i = 0; i < 300; i++) {
+            files[`p${i}/page.tsx`] = `import * as C from '@/components'\nexport default () => C\n`
+            files[`p${i}/loading.tsx`] = `import * as C from '@/components'\nexport default () => C\n`
+        }
+        const appDir = app(files)
+        const components = path.join(appDir, 'src/components')
+        mkdirSync(components, { recursive: true })
+        writeFileSync(path.join(components, 'index.ts'), barrel)
+        for (let i = 0; i < 600; i++) writeFileSync(path.join(components, `c${i}.tsx`), `export const C${i} = ${i}\n`)
+        const started = performance.now()
+        expect(realAuthProviderGaps(appDir).walked).toBe(601)
+        expect(performance.now() - started).toBeLessThan(10_000)
+    })
+
+    it.skipIf(process.getuid?.() === 0)('reports a directory it cannot read, rather than throwing', () => {
+        const appDir = app({ 'layout.tsx': PLAIN_LAYOUT, 'locked/page.tsx': SIGN_IN_PAGE })
+        const locked = path.join(appDir, 'src/app/locked')
+        chmodSync(locked, 0o000)
+        try {
+            expect(realAuthProviderGaps(appDir).unreadable).toEqual([
+                expect.stringMatching(/^src\/app\/locked: .*EACCES/),
+            ])
+        } finally {
+            chmodSync(locked, 0o755)
+        }
+    })
+
     // Root reads a file whatever its mode, so the case cannot be built there.
     it.skipIf(process.getuid?.() === 0)('reports a file it cannot read by its path, rather than throwing', () => {
         const appDir = app({
