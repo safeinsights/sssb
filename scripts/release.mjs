@@ -55,6 +55,7 @@ import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -756,10 +757,15 @@ export function candidateNotes(root, version, repo, sha, assets) {
     if (!RC_VERSION.test(version)) throw new Error(`not a release candidate: '${version}'`)
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`not a repository: '${repo}'`)
     if (!SHA.test(sha)) throw new Error(`not a commit: '${sha}'`)
-    const notes = readFileSync(path.join(root, notesPath(version)), 'utf8')
-    if (!notes.startsWith(`# Release notes: v${version}\n`)) {
+    const committed = readFileSync(path.join(root, notesPath(version)), 'utf8')
+    if (!committed.startsWith(`# Release notes: v${version}\n`)) {
         throw new Error(`${notesPath(version)} is not the release notes of v${version}`)
     }
+    // The file's "Upgrading to this release" cannot name the commit it is part of; here the SHA is in hand, so it is
+    // written in. The module is loaded here, synchronously (Node 24 `require`s an ES module), and not imported at the
+    // top: the push and publish jobs run a lone copy of this file.
+    const { upgradeSection, withUpgradeSection } = createRequire(import.meta.url)('./release-notes.mjs')
+    const notes = withUpgradeSection(committed, upgradeSection({ version, sha, repo }))
     const url = (/** @type {string} */ file) => `https://github.com/${repo}/releases/download/v${version}/${file}`
     // The generator is run, never depended on: it is left out of the dependencies, and said how to run.
     const generator = assets.find((a) => a.name === GENERATOR)

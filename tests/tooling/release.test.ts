@@ -817,6 +817,12 @@ describe('a release candidate, end to end, against a local fake tag', () => {
         expect(notes).toContain(`"@sssb/kit": "${url}"`)
         expect(notes).toContain(`| \`@sssb/kit\` | [\`sssb-kit-0.2.0-rc.0.tgz\`](${url}) | \`${assets[0].sha512}\` |`)
         expect(notes).toContain(`cut from \`${SHA}\``)
+        // the standing section, written into the file's own, names this commit: no tag to resolve, no `<sha>` left
+        expect(notes.match(/^## Upgrading to this release$/gm)).toHaveLength(1)
+        expect(notes).toContain(`safeinsights/sssb/.github/workflows/app-checks.yml@${SHA} # v0.2.0-rc.0`)
+        expect(notes).toContain(`"ref": "${SHA}"`)
+        expect(notes).not.toContain('<sha>')
+        expect(notes).not.toContain('git ls-remote')
         expect(notes).not.toContain('package/bin/create.js')
         // the generator is listed and said how to run, never depended on
         const generator = { name: '@sssb/create', file: 'sssb-create-0.2.0-rc.0.tgz', sha512: 'sha512-AAAA' }

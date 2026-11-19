@@ -48,6 +48,158 @@ const ACTIONS = ['required', 'optional', 'none']
 const BUMPS = ['patch', 'minor']
 const PACKAGE = /^@sssb\/[a-z0-9-]+$/
 
+/** The heading of the standing upgrade section: every release's notes carry it, so `withUpgradeSection` finds it by it. */
+export const UPGRADE_HEADING = 'Upgrading to this release'
+/** The repository whose tag names a release's commit, when `upgradeSection` is not told another. */
+const RELEASE_REPOSITORY = 'safeinsights/sssb'
+const RC_VERSION = /-rc\.\d+$/
+const COMMIT = /^[0-9a-f]{40}$/
+
+/**
+ * The standing "Upgrading to this release" section (`docs/adopting.md`, "Upgrading by release", says why each step is
+ * there): what every release asks of a workspace, whatever its entries say, with the commands and this release's version
+ * filled in. The release commit's SHA is filled in only when the caller has it. The notes are a file IN the release
+ * commit, so `prepare` cannot know it: without a `sha` the section has the one command that reads it off the release's
+ * tag (a lightweight tag on that commit, `git tag "v$VERSION"` in release.yml), and `release.mjs candidate-notes`, which
+ * runs on the tag with the SHA in hand, writes it in. The pin is a SHA, never the tag: `sssb doctor` reports a pin that
+ * is "a branch or tag, not a commit" as differing from the release commit.
+ * @param {{ version: string, sha?: string, repo?: string }} options
+ * @returns {string} markdown, no trailing newline, starting at its `##` heading
+ */
+export function upgradeSection({ version, sha, repo = RELEASE_REPOSITORY }) {
+    if (sha !== undefined && !COMMIT.test(sha)) throw new Error(`not a commit: '${sha}'`)
+    const candidate = RC_VERSION.test(version)
+    const tag = `v${version}`
+    const pin = sha ?? '<sha>'
+    const move = candidate
+        ? [
+              `**1. Move every \`@sssb/*\` package to this candidate, together.** A candidate is a GitHub prerelease and nothing`,
+              `is on npm: in the root \`package.json\`, each \`apps/<app>/package.json\` and \`apps/<app>/infra/package.json\`, and any`,
+              `package of your own that depends on one, point each \`@sssb/*\` dependency at its tarball URL (the prerelease's notes`,
+              `list them, under "Installing this release candidate") and install. First make any "Scaffold changes to apply by hand" entry below that touches how packages`,
+              `install, or the install keeps the old release. Commit the lockfile.`,
+              '',
+              '```sh',
+              'pnpm install',
+              '```',
+          ]
+        : [
+              `**1. Move every \`@sssb/*\` package to ${version}, together.** In the root \`package.json\`, each`,
+              `\`apps/<app>/package.json\` and \`apps/<app>/infra/package.json\`, and any package of your own that depends on one,`,
+              `change each \`@sssb/*\` version, then install and commit the lockfile. First make any "Scaffold changes to apply by`,
+              `hand" entry below that touches how packages install (a workspace that installed a candidate by tarball URL drops`,
+              `its \`overrides\` for them), or the install keeps the old release.`,
+              '',
+              '```json',
+              JSON.stringify(
+                  {
+                      '@sssb/kit': `^${version}`,
+                      '@sssb/tools': `^${version}`,
+                      '@sssb/eslint-plugin': `^${version}`,
+                      '@sssb/cdk': `^${version}`,
+                  },
+                  null,
+                  4,
+              ),
+              '```',
+              '',
+              '```sh',
+              'pnpm install',
+              '```',
+          ]
+    const commit =
+        sha === undefined
+            ? [
+                  `**3. Move both pins to this release's commit.** It is the commit the tag \`${tag}\` names, and the pins take`,
+                  `the commit's SHA, never the tag (\`sssb doctor\` reports a tag as differing). This prints the SHA, as does`,
+                  `\`sssb doctor\` beside any pin that differs; write it where \`<sha>\` stands below:`,
+                  '',
+                  '```sh',
+                  `git ls-remote https://github.com/${repo} 'refs/tags/${tag}' 'refs/tags/${tag}^{}' | tail -n 1 | cut -f 1`,
+                  '```',
+              ]
+            : [
+                  `**3. Move both pins to this release's commit,** \`${sha}\`. The pins take the commit's SHA, never the tag`,
+                  `\`${tag}\` (\`sssb doctor\` reports a tag as differing).`,
+              ]
+    return [
+        `## ${UPGRADE_HEADING}`,
+        '',
+        'Every release asks these of a workspace, whatever its entries say. Make them on a branch, in order, then read the',
+        'entries below.',
+        '',
+        ...move,
+        '',
+        "**2. Refresh the app guide's copy,** the rules every agent in your repository follows. `sssb doctor` fails until the",
+        "copy is the installed kit's; read the diff of `.claude/sssb-guide.md`.",
+        '',
+        '```sh',
+        'pnpm exec sssb guide',
+        '```',
+        '',
+        ...commit,
+        '',
+        'In `.github/workflows/checks.yml`, the `sssb` job:',
+        '',
+        '```yaml',
+        `uses: ${repo}/.github/workflows/app-checks.yml@${pin} # ${tag}`,
+        '```',
+        '',
+        'In `.claude/settings.json`, the `ref` of the `sssb` marketplace:',
+        '',
+        '```json',
+        JSON.stringify({ extraKnownMarketplaces: { sssb: { source: { source: 'github', repo, ref: pin } } } }, null, 4),
+        '```',
+        '',
+        'Then each person updates their installed plugin and restarts Claude Code:',
+        '',
+        '```sh',
+        'claude plugin marketplace update sssb',
+        'claude plugin update sssb@sssb --scope project',
+        '```',
+        '',
+        '**4. Apply each entry below, then drop what it left unused.** Do each "To adopt" and delete what each "Now deletable"',
+        'describes, then run `pnpm knip`. A vendor SDK your app listed only for code you deleted (`@aws-sdk/client-s3` for a',
+        "copy of the kit's S3 storage adapter, say) is now flagged as unused, because the kit's adapter that replaces it",
+        'carries its own copy: remove it from the `package.json` that lists it, unless other code still imports it.',
+        '',
+        '```sh',
+        'pnpm knip',
+        '```',
+        '',
+        '**5. Check, then push.** Read every line `sssb doctor` reports, not just the last: it fails on versions out of step and',
+        'a stale guide copy, and only reports a pin that is not the release commit.',
+        '',
+        '```sh',
+        'pnpm exec sssb doctor',
+        'pnpm verify',
+        '```',
+    ].join('\n')
+}
+
+/**
+ * Markdown notes with their upgrade section replaced by `section` (or, when they have none, with it inserted before the
+ * first `##` heading outside a code block, or appended). A section runs from its heading to the next `##` heading
+ * outside a code block.
+ * @param {string} markdown
+ * @param {string} section from `upgradeSection`
+ */
+export function withUpgradeSection(markdown, section) {
+    const lines = markdown.replace(/\n+$/, '').split('\n')
+    const { inside } = fenceMask(lines)
+    const headings = lines.flatMap((l, i) => (!inside[i] && /^## /.test(l) ? [i] : []))
+    const start = headings.find((i) => lines[i] === `## ${UPGRADE_HEADING}`)
+    const block = section.split('\n')
+    if (start !== undefined) {
+        const end = headings.find((i) => i > start) ?? lines.length
+        lines.splice(start, end - start, ...block, ...(end < lines.length ? [''] : []))
+    } else {
+        const at = headings[0] ?? lines.length
+        lines.splice(at, 0, ...block, ...(at < lines.length ? [''] : []))
+    }
+    return lines.join('\n') + '\n'
+}
+
 /** Whether Changesets (@changesets/read 1.0.1) reads this `.changeset/` file as a changeset. */
 export function isChangesetName(name) {
     return (
@@ -290,6 +442,7 @@ export function assembleNotes(changesets, { version, since, corrections = [], ju
                   .filter(Boolean)
                   .join(' '),
     )
+    if (version) out.push('', upgradeSection({ version }))
     for (const { kind, heading } of SECTIONS) {
         const inSection = entries.filter((e) => e.kind === kind).sort((a, b) => rank(a.action) - rank(b.action))
         // The four named sections are always present, empty or not (ADR-0014 part 10); "Other changes" only when used.
