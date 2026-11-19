@@ -5564,6 +5564,7 @@ judge whether adoption is as simple as it can be (`docs/adoption-review-2026-11.
   section now answers ADR-0007's own "for a product, root is right" with the three-package argument, weighs a fixed
   `apps/web/`, a layout flag and a symlink, and pairs the recommendation with `sssb add-app`. The guide's stamped copy
   stays, on ADR-0014 part 9's trust decision; deriving both pins from the kit on upgrade is a follow-up.
+
 ## Every release's notes carry a standing "Upgrading to this release" section (2026-11-18, `feat/release-notes-upgrade-section`)
 
 Pages, taking v0.2.0-rc.2, hit three steps the notes did not list: `sssb doctor` failed until `sssb guide` was rerun, the

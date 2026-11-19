@@ -649,9 +649,10 @@ ${
 
 ## Upgrading SSSB
 
-The \`@sssb/*\` packages are released together at one version: move them together, apply each release's notes, refresh
-\`.claude/sssb-guide.md\` (\`pnpm exec sssb guide\`), and raise the workflow's pin and
-the plugin marketplace's \`ref\` in \`.claude/settings.json\` to the release's commit. SSSB's guide has the steps:
+The \`@sssb/*\` packages are released together at one version. Each release's notes open with "Upgrading to this
+release", the commands that move them together, refresh \`.claude/sssb-guide.md\` and raise the workflow's pin and
+the plugin marketplace's \`ref\` in \`.claude/settings.json\` to the release's commit. SSSB's guide says why each step is
+there:
 [\`docs/adopting.md\`, "Upgrading by release"](${sssbDoc(c, 'blob', 'docs/adopting.md')}#upgrading-by-release).
 \`pnpm exec sssb doctor\` fails when the installed packages are out of step, and reports a pin that is not the release
 commit the installed \`@sssb/kit\` names.
