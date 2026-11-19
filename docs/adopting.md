@@ -183,7 +183,8 @@ ends as the signal asked.
   the app's `typecheck` covers with `apps/<app>/infra/tsconfig.json`.
 - **The root**: `package.json` (named `<slug>-workspace`; its scripts, `verify` included, and `sssb.apps`),
   `pnpm-workspace.yaml` (each app's seam, `apps/*/src/app-config`, among its packages; SSSB's `allowBuilds`
-  approvals, `dedupePeerDependents: false`, and SSSB's
+  approvals, `dedupePeerDependents: false`, a `peerDependencyRules` entry that silences the eslint 10 warning
+  from `eslint-plugin-react` and `eslint-plugin-jsx-a11y` (delete it when both declare eslint 10), and SSSB's
   `minimumReleaseAge` with `@sssb/*` exempt), the Vitest configs on `@sssb/tools/vitest` (`vitest.config.ts` and
   `vitest.contract.config.ts`), `tsconfig.json`, `eslint.config.mjs` (for the root's own files), knip, jscpd,
   gitleaks, git-ignore and Prettier-ignore configs, and lint-staged's. `.editorconfig`, `.nvmrc`,
@@ -590,10 +591,8 @@ a lint fence enforces the direction. Each module there is the app-side half of o
 | `identity.ts`                                 | `APP_SLUG`, re-exported from the app's app config                                                       | (every app registers it)                   |
 | `seed.ts`                                     | your seed data re-export                                                                                | (every app registers it)                   |
 
-The one place an empty registration is not free: `AppSubjectFields` in `abilities.ts` must be an
-`interface` (the framework's `AbilitySubject` extends it), and an app with no extra subject fields
-therefore declares an empty one and suppresses `@typescript-eslint/no-empty-object-type` on that line.
-`apps/starter` shows the suppression and why.
+An app with no extra subject fields writes `export type AppSubjectFields = Record<never, never>` in `abilities.ts`, as
+`apps/starter` does: the framework's `AbilitySubject` intersects it, so it may be an interface, a type alias or a mapped type.
 
 **To add a feature slice**: run `/sssb:new-slice` (and the per-capability scaffolds `/sssb:new-entity`,
 `/sssb:new-job`, `/sssb:new-actor`, `/sssb:new-notification-kind`, `/sssb:new-webhook-event`, `/sssb:new-tour`,

@@ -56,3 +56,38 @@ test('an item created in one tenant is invisible from the other', async ({ page 
     await signInAs(page, 'person-owner')
     await expect(page.getByTestId('items-list')).toContainText(secret)
 })
+
+test('the items list pages, and the endpoint refuses a cursor it cannot read', async ({ page }) => {
+    await signInAs(page, 'person-owner')
+    await expect(page.getByTestId('items-card')).toBeVisible()
+
+    // The default page is 20, so 22 more items guarantee the list is longer than one page whatever else this
+    // run has already written. Written through the route, the way the card's own add button does.
+    const stamp = Date.now()
+    for (let index = 0; index < 22; index++) {
+        const response = await page.request.post('/api/items', { data: { title: `paged-${stamp}-${index}` } })
+        expect(response.ok()).toBe(true)
+    }
+    await page.reload()
+    const rows = page.getByTestId('item-row')
+    await expect(rows).toHaveCount(20)
+    await expect(page.getByTestId('items-load-more')).toBeVisible()
+
+    // "Show older items" APPENDS: what is on screen stays, in the same order, and the button goes away at
+    // the end of the list.
+    const first = await rows.allTextContents()
+    await page.getByTestId('items-load-more').click()
+    await expect(page.getByTestId('items-load-more')).toHaveCount(0)
+    const all = await rows.allTextContents()
+    expect(all.length).toBeGreaterThan(first.length)
+    expect(all.slice(0, first.length)).toEqual(first)
+    expect(new Set(all).size).toBe(all.length)
+
+    // A malformed cursor is a 400, never a silent first page; the server also caps the page size itself.
+    const bad = await page.request.get('/api/items?cursor=not-a-cursor')
+    expect(bad.status()).toBe(400)
+    expect(await bad.json()).toEqual({ error: 'invalid-cursor' })
+    const greedy = await page.request.get('/api/items?limit=1000000')
+    expect(greedy.status()).toBe(200)
+    expect(((await greedy.json()) as { items: unknown[] }).items.length).toBeLessThanOrEqual(100)
+})
