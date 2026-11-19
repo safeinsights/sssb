@@ -93,9 +93,13 @@ describe('job handlers reach no seed module by a static import', () => {
  * The job handlers are reached from client components too: `@sssb/kit/core/jobs` imports the seam's `jobs` module for
  * its kinds, and a dashboard's client glue imports `core/jobs`. A bundler then puts everything the handlers can
  * import into the client bundle, dynamic imports included, and refuses a module that needs the server
- * (`next/headers`, `server-only`): the showcase's build failed on exactly that once. So nothing a handler reaches, by
+ * (`next/headers`, `server-only`, Node's builtins, a server SDK): the showcase's build failed on `next/headers` once. So nothing a handler reaches, by
  * any import, may be one.
  */
+/** What a client bundle refuses or cannot run: the server's request APIs, Node's builtins, server-side SDKs. */
+const SERVER_ONLY =
+    /^(next\/headers|next\/server|server-only|node:.*|fs|fs\/promises|path|crypto|child_process|pg|@clerk\/nextjs\/server|@aws-sdk\/.*)$/
+
 describe('job handlers reach nothing a client bundle refuses, by any import', () => {
     it.each(SEAMS)(
         'in $name',
@@ -103,7 +107,7 @@ describe('job handlers reach nothing a client bundle refuses, by any import', ()
             const { metafile } = await graphOf(seam, tsconfig)
             const serverOnly = Object.entries(metafile.inputs).flatMap(([file, input]) =>
                 input.imports
-                    .filter((edge) => edge.path === 'next/headers' || edge.path === 'server-only')
+                    .filter((edge) => SERVER_ONLY.test(edge.path))
                     .map((edge) => `${file} imports ${edge.path}`),
             )
             expect(serverOnly).toEqual([])

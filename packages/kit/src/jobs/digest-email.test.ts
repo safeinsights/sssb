@@ -104,14 +104,26 @@ async function depotIds(): Promise<{ tenantId: string; orgId: string }> {
     return { tenantId, orgId }
 }
 
-async function runHandler(tenantId: string, orgId: string, auth?: AuthPort) {
+async function runHandler(
+    tenantId: string,
+    orgId: string,
+    auth?: AuthPort,
+    resolveLocale?: (userId: string) => 'en' | 'es' | undefined,
+) {
     const { fakeDb } = await import('../adapters/fake/db')
     const { fakeStorage } = await import('../adapters/fake/storage')
     const { fakeEmail } = await import('../adapters/fake/email')
     const { fakeLlm } = await import('../adapters/fake/llm')
     const { fakeAuth } = await import('../adapters/fake/auth')
     const { digestEmailHandler } = await import('./digest-email')
-    const ctx = { db: fakeDb, storage: fakeStorage, email: fakeEmail, llm: fakeLlm, auth: auth ?? fakeAuth }
+    const ctx = {
+        db: fakeDb,
+        storage: fakeStorage,
+        email: fakeEmail,
+        llm: fakeLlm,
+        auth: auth ?? fakeAuth,
+        resolveLocale,
+    }
     return digestEmailHandler({}, { ...ctx, tenantId, orgId, jobId: 'digest-test' })
 }
 
@@ -225,5 +237,25 @@ describe('digestEmailHandler', () => {
         ])
         await expect(runReal(tenantId, orgId, auth)).resolves.toEqual({})
         expect(await sentEmails()).toEqual([])
+    })
+
+    it('in a deployment, skips a member whose identifier is not an address (a phone number, a username)', async () => {
+        const { tenantId, orgId } = await depotIds()
+        const { auth } = providerWith([
+            { id: 'u-phone', name: 'Pat', email: '+15550100', role: 'admin', status: 'active' },
+            { id: 'u-member', name: 'Mo', email: 'member@org.test', role: 'member', status: 'active' },
+        ])
+        await runReal(tenantId, orgId, auth)
+        expect((await sentEmails()).map((sent) => sent.to)).toEqual(['member@org.test'])
+    })
+
+    it("asks the runner for the chosen person's locale, where it can say it", async () => {
+        const { tenantId, orgId } = await depotIds()
+        const { auth } = providerWith([
+            { id: 'u-admin', name: 'Ann', email: 'admin@org.test', role: 'admin', status: 'active' },
+        ])
+        const asked: string[] = []
+        await runHandler(tenantId, orgId, auth, (userId) => (asked.push(userId), 'es'))
+        expect(asked).toEqual(['u-admin'])
     })
 })

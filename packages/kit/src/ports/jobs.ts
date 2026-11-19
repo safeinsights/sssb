@@ -1,3 +1,4 @@
+import type { Locale } from '../core/locale'
 import type { AuthPort } from './auth'
 import type { DbPort } from './db'
 import type { EmailPort } from './email'
@@ -34,6 +35,12 @@ interface JobContext {
      * deployment does not have.
      */
     auth: AuthPort
+    /**
+     * A person's own locale, by user id, where the runner knows it: the simulated world's runner does (its people's
+     * profiles); a deployment's does not (the auth port carries none), so it is absent there and copy falls back to
+     * the app's default, as the jobs' notifications do.
+     */
+    resolveLocale?: ((userId: string) => Locale | undefined) | undefined
     tenantId: string
     orgId: string | null
     jobId: string

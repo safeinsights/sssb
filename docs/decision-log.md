@@ -6484,6 +6484,19 @@ Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-r
   graph test can see; the digest's real-mode test throws on any seed read, and the guide's rule covers the rest.
 - **The static demo's digest twin picks from everyone in its world** (the seed and accepted invitees), as the server's
   simulated digest now does through the fake auth adapter, instead of the seed alone.
+- **From the second review round, which revises the first.**
+    - **The locale comes from the runner after all**, as an optional `resolveLocale` in the job context, which the
+      simulated runner fills with the fake auth adapter's `personLocale` (`makeNotifyDeps`'s pattern) and a deployment's
+      leaves out. The seed's people knew neither an accepted invitee's locale nor a changed profile's, so a simulated
+      digest to either went out in the default language while their notifications did not; and the handler now imports
+      no seed at all, so the client-bundle question is gone at its root. This reverses the first round's rejection of a
+      locale hook: the second field earns its place by being right for everyone the world holds.
+    - **Only an address is addressed.** Clerk lists a member's primary identifier, which may be a username or a phone
+      number; the digest skips a member whose identifier holds no `@`, where it would have sent to a non-address and
+      failed the job on every tick.
+    - **The client-bundle guard also refuses Node's builtins, `pg`, Clerk's server module, the AWS SDKs and
+      `next/server`**, not only `next/headers` and `server-only`.
+    - **Phase 1 stops here:** the second round found nothing at MEDIUM or above.
 
 ## No `starter` in a generated app (2026-11-19, `feat/no-starter-in-generated-app`)
 

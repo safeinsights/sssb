@@ -46,22 +46,22 @@ function snippet(body: string): string {
  * member, as the auth port lists them (the identity provider in a deployment, the simulated world's people in a
  * demo). Never the seed: a deployment has none, and its people are the provider's.
  *
- * The locale is the person's own only in a simulated world, where the seed knows it (loaded only there, by a dynamic
- * import: the seed is plain data, which every bundle that reaches this module may carry, where the fake auth adapter
- * reads request cookies and may not be in a client one); the auth port carries none, so a deployment writes in the
- * app's default.
+ * The locale is the person's own where the runner can say it (`resolveLocale`, which the simulated world's runner
+ * supplies); the auth port carries none, so a deployment writes in the app's default. Only an address is addressed:
+ * the identity provider lists a member's primary identifier, which may be a username or a phone number.
  *
  * A team with no active member: in a simulated world, a synthetic per-org address, still visible under Simulator
  * Mail's "all" scope, so the demo never shows an empty digest; in a deployment, nobody (null), and nothing is sent.
  */
-async function digestRecipient(auth: AuthPort, orgSlug: string): Promise<{ to: string; locale: Locale } | null> {
-    const members = (await auth.listMembers(orgSlug)).filter((m) => m.status === 'active' && m.email !== '')
+async function digestRecipient(
+    auth: AuthPort,
+    resolveLocale: ((userId: string) => Locale | undefined) | undefined,
+    orgSlug: string,
+): Promise<{ to: string; locale: Locale } | null> {
+    const members = (await auth.listMembers(orgSlug)).filter((m) => m.status === 'active' && m.email.includes('@'))
     const chosen = members.find((m) => m.role === 'admin') ?? members[0]
     if (!chosen) return isSimulated ? { to: `${orgSlug}@digest.example`, locale: routing.defaultLocale } : null
-    const seedLocale = isSimulated
-        ? (await import('@sssb/app-config/seed')).people.find((person) => person.id === chosen.id)?.locale
-        : undefined
-    return { to: chosen.email, locale: seedLocale ?? routing.defaultLocale }
+    return { to: chosen.email, locale: resolveLocale?.(chosen.id) ?? routing.defaultLocale }
 }
 
 /**
@@ -75,13 +75,13 @@ async function digestRecipient(auth: AuthPort, orgSlug: string): Promise<{ to: s
  * default. Sends nothing to storage: the effect IS the email, so it returns no resultKey.
  */
 export const digestEmailHandler: JobHandler = async (_payload, ctx) => {
-    const { db, email, auth, tenantId, orgId } = ctx
+    const { db, email, auth, resolveLocale, tenantId, orgId } = ctx
     if (orgId === null) return {} // schedules are org-scoped (org_id NOT NULL), so this is unreachable; guard anyway
 
     const org = await orgForId(db, orgId)
     if (!org) return {} // the org is gone: nobody to address, and no team to digest
     const orgName = org.name
-    const recipient = await digestRecipient(auth, org.slug)
+    const recipient = await digestRecipient(auth, resolveLocale, org.slug)
     if (!recipient) return {} // a deployment's team with no active member: nobody to send it to
     const { to, locale } = recipient
 

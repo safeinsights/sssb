@@ -2,6 +2,7 @@ import { jobHandlers } from '@sssb/app-config/jobs'
 import { isJobKind } from '../core/jobs'
 import { InvalidTransitionError } from '../core/state-machine'
 import { recordJobStatus } from '../db/jobs'
+import type { Locale } from '../core/locale'
 import type { AuthPort } from '../ports/auth'
 import type { DbPort } from '../ports/db'
 import type { EmailPort } from '../ports/email'
@@ -16,6 +17,7 @@ export interface JobRunPorts {
     email: EmailPort
     llm: LlmPort
     auth: AuthPort
+    resolveLocale?: ((userId: string) => Locale | undefined) | undefined
 }
 
 /**
