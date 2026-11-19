@@ -93,8 +93,8 @@ root script.
    two minutes. That hermetic boot is the standing acceptance test; if it ever breaks, fix that first.
 2. Run the demo tour ([runbooks/demo.md](runbooks/demo.md)) once, in a checkout of SSSB: it drives the showcase.
    Fifteen minutes here saves days later: every capability you inherit is shown working. Your app has the same
-   Simulator in its static demo (`pnpm build:demo-static`); on its own `pnpm dev` the panel needs route glue that only
-   the showcase carries today.
+   Simulator in its static demo (`pnpm build:demo-static`); on its own `pnpm dev` the panel has People, Mail and Jobs
+   with the world clock so far, served by SSSB through `apps/<app>/src/app/api/simulator/[...path]/route.ts`.
 3. Push, then make the repository settings only you can make: require the check `sssb / all-checks` on your
    default branch (and `workspace-checks` and `secret-scan`, your workflow's own jobs), the setting under "Identity
    and the owner files" below, and, if the repository is private and in an organization, allow public reusable
@@ -410,7 +410,7 @@ rest of this repository's are SSSB's own: the second app's (`dev:starter`, `tick
 
 One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 35 of SSSB's 139 published subpaths from its source (39
+nearly all of it. A one-entity app does not: `apps/starter` imports 37 of SSSB's 141 published subpaths from its source (41
 counting its tests), so the same setting would start demanding you delete the other 104 — capabilities you merely have not
 reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
@@ -507,7 +507,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 139 subpaths your app may
+lists the 141 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 63 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's

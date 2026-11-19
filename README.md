@@ -51,8 +51,9 @@ Here the fakes compose into a world with inhabitants, and a panel called **Simul
 You can hold every job in the world at `queued` and watch the choreography, then let them complete inline
 again. None of this reaches production: real builds ship zero Simulator client code.
 
-In the showcase all of it runs on `pnpm dev`. An app the generator writes has the Simulator in its single-file static
-demo from the start; the panel on its own `pnpm dev` takes route glue that only the showcase carries today
+In the showcase all of it runs on `pnpm dev`. An app the generator writes has the whole Simulator in its single-file
+static demo from the start, and on its own `pnpm dev` the People, Mail and Jobs tabs with the world clock, served by
+SSSB behind one route file; the other tabs, presets and tours follow in stages
 (`.claude/future-tasks/starter-starting-points.md`).
 
 ### 2. The boundaries are enforced by the build, not by documentation
