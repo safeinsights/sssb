@@ -5999,6 +5999,7 @@ have been asked.
   (`ALL_VIEWER_EXCEPT_HOST_HEADER`), so the app builds absolute URLs and redirects on the Function URL's host. Pages sets
   `x-forwarded-host` from the viewer's `Host` in a CloudFront Function of its own; one in `SssbApp` would also decide
   what becomes of a viewer's own `X-Forwarded-Host`.
+
 ## Real-mode sign-in: the kit runs Clerk's middleware around the app's proxy (2026-11-19, `fix/kit-clerk-middleware`)
 
 The first adopter's first real-mode deployment found that SSSB's Clerk adapter (`packages/kit/src/adapters/real/auth.ts`)
