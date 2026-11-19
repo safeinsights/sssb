@@ -35,5 +35,6 @@ test('the Simulator signs you in as anyone, and serves its mail and jobs tabs', 
     await page.getByTestId('simulator-tab-jobs').click()
     await expect(page.getByTestId('simulator-clock-now')).toBeVisible()
     await page.getByTestId('simulator-clock-run-due').click()
-    await expect(page.getByTestId('simulator-notice').first()).toBeVisible()
+    // Its notice, not a new-mail one (which names an address) that happened to arrive at the same moment.
+    await expect(page.getByTestId('simulator-notice').filter({ hasNotText: '@' })).toBeVisible()
 })

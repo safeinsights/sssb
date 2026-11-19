@@ -73,6 +73,9 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     const [notices, setNotices] = useState<SimulatorNotice[]>([])
     const noticeSeq = useRef(0)
     const prevUnread = useRef<Map<string, number> | null>(null)
+    // Mail fetches can overlap when the scope changes (the summary's first answer turns "all" into one person's
+    // inbox); only the latest one's answer is shown.
+    const mailRequest = useRef(0)
 
     const personEmail = summary.people.find((person) => person.key === summary.viewpoint)?.email ?? null
     // Signed out, or no viewpoint yet: there is no one's own inbox to show, so the scope is every inbox.
@@ -100,8 +103,9 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
 
     const refreshMail = useCallback(async () => {
         const query = effectiveMailScope === 'all' ? 'all=1' : `person=${encodeURIComponent(summary.viewpoint ?? '')}`
+        const request = (mailRequest.current += 1)
         const next = await getJson<SimulatorMail>(`mail?${query}`)
-        if (next) setMail(next)
+        if (next && request === mailRequest.current) setMail(next)
     }, [effectiveMailScope, summary.viewpoint])
 
     const refreshJobs = useCallback(async () => {

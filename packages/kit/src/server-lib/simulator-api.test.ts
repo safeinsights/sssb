@@ -126,6 +126,27 @@ describe('people', () => {
     })
 })
 
+describe('an invited person', () => {
+    test('is a People row without an account, and becoming them signs this browser out onto the welcome page', async () => {
+        const { fakeAuth } = await import('../adapters/fake/auth')
+        const { id } = await fakeAuth.createInvite({ email: 'new.hand@example.test', role: 'member', orgSlug: 'wharf' })
+        await call('viewpoint', { json: { person: 'person:fixture-lead', locale: 'en' } })
+
+        const summary = (await (await call('summary')).json()) as SimulatorSummary
+        expect(summary.people.find((person) => person.key === `invited:${id}`)).toMatchObject({
+            name: null,
+            status: 'invited',
+            hasAccount: false,
+            tenantSlug: 'lakeside',
+        })
+
+        const response = await call('viewpoint', { json: { person: `invited:${id}`, locale: 'es' } })
+        expect(await response.json()).toEqual({ redirectTo: '/es' })
+        const after = (await (await call('summary')).json()) as SimulatorSummary
+        expect(after).toMatchObject({ signedIn: false, viewpoint: `invited:${id}` })
+    })
+})
+
 describe('mail', () => {
     test('scopes to one inbox, counts every inbox, and clears', async () => {
         const { fakeEmail } = await import('../adapters/fake/email')
@@ -144,6 +165,8 @@ describe('mail', () => {
         expect((await call('mail/seen', { json: { person: 'person:fixture-lead' } })).status).toBe(200)
         const seen = (await (await call('summary')).json()) as SimulatorSummary
         expect(seen.people.find((person) => person.key === 'person:fixture-lead')?.unreadMail).toBe(0)
+        const adaSeen = (await (await call('mail?person=person:fixture-lead')).json()) as SimulatorMail
+        expect(adaSeen.mailSeenAt).toEqual(expect.any(String))
 
         expect((await call('mail/clear', { json: {} })).status).toBe(204)
         expect(((await (await call('mail?all=1')).json()) as SimulatorMail).emails).toEqual([])
@@ -168,6 +191,11 @@ describe('jobs and the clock', () => {
     test('lists the world, moves the clock within its bound, and resets it', async () => {
         const jobs = await call('jobs')
         expect(await jobs.json()).toMatchObject({ held: false })
+        const { setFlag } = await import('../adapters/fake/analytics')
+        const { JOBS_HELD_FLAG } = await import('../adapters/fake/jobs')
+        setFlag(JOBS_HELD_FLAG, true)
+        expect(await (await call('jobs')).json()).toMatchObject({ held: true })
+        setFlag(JOBS_HELD_FLAG, false)
         expect((await call('jobs/run-pending', { json: {} })).status).toBe(200)
 
         expect((await call('clock', { json: { action: 'advance', deltaMs: 367 * 86_400_000 } })).status).toBe(400)
@@ -177,7 +205,13 @@ describe('jobs and the clock', () => {
 
         const advanced = await call('clock', { json: { action: 'advance', deltaMs: 3_600_000 } })
         expect(advanced.status).toBe(200)
-        expect(await advanced.json()).toMatchObject({ ok: true, clockOffsetMs: 3_600_000 })
+        // Due webhook deliveries run with due schedules, at the world's new "now".
+        expect(await advanced.json()).toMatchObject({
+            ok: true,
+            clockOffsetMs: 3_600_000,
+            spawned: expect.any(Number),
+            deliveries: expect.any(Object),
+        })
         const schedules = (await (await call('schedules')).json()) as SimulatorSchedules
         expect(schedules.clockOffsetMs).toBe(3_600_000)
 
