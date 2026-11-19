@@ -3,7 +3,7 @@ import { keysetPage } from '@sssb/kit/db/keyset'
 import type { DbPort } from '@sssb/kit/ports/db'
 
 /** An item as its owning team sees it in the list. */
-export interface ItemView {
+interface ItemView {
     id: string
     title: string
 }
