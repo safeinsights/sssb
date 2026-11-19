@@ -21,7 +21,7 @@ import { handler as bodyHashHandler } from './assets/body-hash/index.mjs'
 import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
 import { databaseNameFor, SssbApp } from './index.js'
 import { PORT_SWITCHES } from './optional-ports.js'
-import { toolsVersionProblem } from './sssb-app.js'
+import { HSTS_MAX_AGE_SECONDS, toolsVersionProblem } from './sssb-app.js'
 
 /** @typedef {import('@sssb/tools/assembly-checks').Resources} Resources */
 /** @typedef {'pg' | 'data-api'} Transport */
@@ -118,6 +118,64 @@ function viewerProblems(all) {
             problems.push(
                 `${b?.PathPattern ?? 'the default behavior'} runs the forwarded-host function on the viewer request`,
             )
+        }
+    }
+    return problems
+}
+
+/**
+ * What is wrong with the distribution's response headers, or nothing: every behavior carries one response headers
+ * policy, the one `expected` names; and when that is SSSB's own (in this template), it sets HSTS for two years
+ * (includeSubDomains as `includeSubdomains` says, never preload), nosniff, a strict-origin-when-cross-origin referrer
+ * policy and SAMEORIGIN frames, each where the app's response lacks it, and no Content-Security-Policy.
+ * @param {Resources} all
+ * @param {{ ownPolicyId?: string, includeSubdomains?: boolean }} [expected]
+ * @returns {string[]}
+ */
+function securityHeadersProblems(all, { ownPolicyId, includeSubdomains = false } = {}) {
+    /** @type {string[]} */
+    const problems = []
+    const distributions = Object.values(all).filter((r) => r.Type === 'AWS::CloudFront::Distribution')
+    if (distributions.length !== 1) return [`one distribution, not ${distributions.length}`]
+    const config = /** @type {any} */ (distributions[0]?.Properties)?.DistributionConfig
+    const behaviors = [config?.DefaultCacheBehavior, ...(config?.CacheBehaviors ?? [])]
+    const policies = Object.entries(all).filter(([, r]) => r.Type === 'AWS::CloudFront::ResponseHeadersPolicy')
+    /** @type {unknown} */
+    let expectedId
+    if (ownPolicyId === undefined) {
+        if (policies.length !== 1)
+            return [...problems, `SSSB creates one response headers policy, not ${policies.length}`]
+        const [id, policy] = /** @type {[string, any]} */ (policies[0])
+        expectedId = { Ref: id }
+        const security = policy.Properties?.ResponseHeadersPolicyConfig?.SecurityHeadersConfig ?? {}
+        const hsts = security.StrictTransportSecurity
+        if (
+            hsts?.AccessControlMaxAgeSec !== HSTS_MAX_AGE_SECONDS ||
+            hsts?.IncludeSubdomains !== includeSubdomains ||
+            hsts?.Preload !== false
+        ) {
+            problems.push(
+                `HSTS is max-age=${HSTS_MAX_AGE_SECONDS}, includeSubDomains ${includeSubdomains}, no preload ` +
+                    `(got ${JSON.stringify(hsts)})`,
+            )
+        }
+        if (security.ContentTypeOptions === undefined) problems.push('X-Content-Type-Options: nosniff')
+        if (security.ReferrerPolicy?.ReferrerPolicy !== 'strict-origin-when-cross-origin') {
+            problems.push('Referrer-Policy: strict-origin-when-cross-origin')
+        }
+        if (security.FrameOptions?.FrameOption !== 'SAMEORIGIN') problems.push('X-Frame-Options: SAMEORIGIN')
+        if (security.ContentSecurityPolicy !== undefined) problems.push('no Content-Security-Policy')
+        const overriding = Object.entries(security).filter(([, header]) => /** @type {any} */ (header)?.Override)
+        if (overriding.length > 0) {
+            problems.push(`a header the app sets wins (Override false): ${overriding.map(([name]) => name).join(', ')}`)
+        }
+    } else {
+        if (policies.length !== 0) problems.push('SSSB creates no response headers policy beside the adopter’s')
+        expectedId = ownPolicyId
+    }
+    for (const b of behaviors) {
+        if (JSON.stringify(b?.ResponseHeadersPolicyId) !== JSON.stringify(expectedId)) {
+            problems.push(`${b?.PathPattern ?? 'the default behavior'} carries the response headers policy`)
         }
     }
     return problems
@@ -276,6 +334,7 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
             expect(server.env['HOSTNAME']).toBe('0.0.0.0')
             expect(functionUrlOriginProblems(all, assembly)).toEqual([])
             expect(viewerProblems(all)).toEqual([])
+            expect(securityHeadersProblems(all)).toEqual([])
 
             // The production fail-closed guard (packages/kit/src/adapters/index.ts) is irrelevant only while
             // every deployed environment pins APP_MODE=real and sets neither opt-in.
@@ -764,6 +823,7 @@ describe("the server's Function URL behind CloudFront", () => {
             const { all, assembly } = synthesize({ appDir, slug, transport, production, bundle: false })
             expect(functionUrlOriginProblems(all, assembly)).toEqual([])
             expect(viewerProblems(all)).toEqual([])
+            expect(securityHeadersProblems(all)).toEqual([])
             expect(lambdaFunction(all, 'Server').env['HOSTNAME']).toBe('0.0.0.0')
         },
     )
@@ -922,6 +982,58 @@ describe("the server's Function URL behind CloudFront", () => {
     })
 })
 
+describe("the distribution's security headers", () => {
+    const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
+    const slug = /** @type {string} */ (
+        /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+    )
+    /** @param {Partial<import('./index.d.ts').SssbAppProps>} props */
+    const templateWith = (props) => {
+        const app = new cdk.App({ outdir: makeTestTmpDir('sssb-cdk-'), context: { 'aws:cdk:bundling-stacks': [] } })
+        const stack = new cdk.Stack(app, 'Headers')
+        const passesOwn = props.responseHeadersPolicy !== undefined
+        new SssbApp(stack, 'Default', {
+            appDir,
+            slug,
+            params: { database: { transport: 'data-api' } },
+            environment: 'Staging',
+            production: false,
+            ...props,
+            ...(passesOwn
+                ? {
+                      responseHeadersPolicy: cdk.aws_cloudfront.ResponseHeadersPolicy.fromResponseHeadersPolicyId(
+                          stack,
+                          'Own',
+                          'own-policy-id',
+                      ),
+                  }
+                : {}),
+        })
+        return /** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])
+    }
+
+    it('add includeSubDomains to HSTS only when the adopter asks', () => {
+        expect(
+            securityHeadersProblems(templateWith({ hstsIncludeSubdomains: true }), { includeSubdomains: true }),
+        ).toEqual([])
+        expect(securityHeadersProblems(templateWith({ hstsIncludeSubdomains: false }))).toEqual([])
+    })
+
+    it("are the adopter's own policy, on every behavior, when one is passed", () => {
+        const all = templateWith({ responseHeadersPolicy: /** @type {any} */ ({}) })
+        expect(securityHeadersProblems(all, { ownPolicyId: 'own-policy-id' })).toEqual([])
+    })
+
+    it('refuse an includeSubDomains that is not a boolean, or one beside a policy of the adopter’s', () => {
+        expect(() => templateWith({ hstsIncludeSubdomains: /** @type {any} */ ('yes') })).toThrow(
+            /hstsIncludeSubdomains must be true or false/,
+        )
+        expect(() =>
+            templateWith({ hstsIncludeSubdomains: false, responseHeadersPolicy: /** @type {any} */ ({}) }),
+        ).toThrow(/with responseHeadersPolicy, set Strict-Transport-Security in that policy/)
+    })
+})
+
 describe("the forwarded-host function's name", () => {
     const appDir = path.join(REPO, 'apps', /** @type {string} */ (APPS[0]))
     /**
@@ -940,12 +1052,15 @@ describe("the forwarded-host function's name", () => {
             environment: 'Staging',
             production: false,
         })
-        const fns = Object.values(/** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])).filter(
-            (r) => r.Type === 'AWS::CloudFront::Function',
-        )
-        expect(fns).toHaveLength(1)
+        const all = Object.values(/** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources']))
+        const fns = all.filter((r) => r.Type === 'AWS::CloudFront::Function')
+        const policies = all.filter((r) => r.Type === 'AWS::CloudFront::ResponseHeadersPolicy')
+        expect([fns.length, policies.length]).toEqual([1, 1])
+        policyNames.push(/** @type {any} */ (policies[0])?.Properties?.ResponseHeadersPolicyConfig?.Name)
         return /** @type {any} */ (fns[0])?.Properties?.Name
     }
+    /** @type {unknown[]} */
+    const policyNames = []
 
     it("differs between two stack names in one account and region, and stays within CloudFront's 64 characters", () => {
         const slug = /** @type {string} */ (
@@ -954,6 +1069,11 @@ describe("the forwarded-host function's name", () => {
         const staging = nameIn('app-staging', slug)
         const production = nameIn('app-production', slug)
         expect(staging).not.toEqual(production)
+        // The response headers policy's name is account-wide too, and keyed the same way: CDK's default carries the
+        // stack name but not the region, so one stack name deployed to two regions of an account would collide.
+        expect(policyNames).toHaveLength(2)
+        expect(policyNames[0]).not.toEqual(policyNames[1])
+        expect(/** @type {any} */ (policyNames[0])?.['Fn::Join']?.[1]?.[0]).toEqual({ Ref: 'AWS::Region' })
         // The region is a pseudo-parameter until deploy: the rest of the name is literal.
         const [joiner, [region, ...rest]] = staging['Fn::Join']
         expect(region).toEqual({ Ref: 'AWS::Region' })

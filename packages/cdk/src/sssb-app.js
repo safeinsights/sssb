@@ -235,6 +235,9 @@ function stagedBundle(fn) {
 
 export { databaseNameFor } from './database-name.js'
 
+/** HSTS's max-age: two years, the figure browsers' preload lists ask for and MDN recommends. */
+export const HSTS_MAX_AGE_SECONDS = 63_072_000
+
 /** After every tag aspect: CDK's own run at `AspectPriority.MUTATING` (200) or the default (500). */
 const MIRROR_PRIORITY = 900
 
@@ -331,6 +334,19 @@ export class SssbApp extends Construct {
             throw new Error(`SssbApp: production must be true or false (got ${JSON.stringify(props.production)})`)
         }
         const isProd = props.production
+        // HSTS's includeSubDomains binds every subdomain of the adopter's domain to HTTPS for two years, so it is theirs
+        // to switch on, in SSSB's policy; with a policy of their own, HSTS is that policy's.
+        if (props.hstsIncludeSubdomains !== undefined && typeof props.hstsIncludeSubdomains !== 'boolean') {
+            throw new Error(
+                `SssbApp: hstsIncludeSubdomains must be true or false (got ${JSON.stringify(props.hstsIncludeSubdomains)})`,
+            )
+        }
+        if (props.responseHeadersPolicy !== undefined && props.hstsIncludeSubdomains !== undefined) {
+            throw new Error(
+                "SssbApp: hstsIncludeSubdomains configures SSSB's own response headers policy; with " +
+                    'responseHeadersPolicy, set Strict-Transport-Security in that policy instead',
+            )
+        }
         // The optional ports' switches (LLM_PROVIDER, …), from `params.ports`: validated here, before anything is built.
         const portsEnv = portsEnvironment(props.params?.ports)
         const scheduledTick = props.scheduledTick
@@ -606,16 +622,57 @@ export class SssbApp extends Construct {
         // or whatever a viewer sent. This viewer-request function sets it, and its port, from the request CloudFront
         // received (src/forwarded-host.js). A viewer-request CloudFront Function beside an origin-request Lambda@Edge is a
         // combination CloudFront allows on one behavior.
-        // Its name is unique per account across regions, so it is keyed like the deployment: by region, stack name and
-        // construct path (CDK's default leaves the stack name out, and one stack deployed under two names into one
-        // account would collide), and kept within CloudFront's 64 characters.
-        const forwardedHostKey = createHash('sha256').update(`${stack.stackName}/${this.node.path}`).digest('hex')
+        // Its name, like the response headers policy's below, is unique per account across regions, so both are keyed
+        // like the deployment: by region, stack name and construct path. CDK's default leaves the stack name out of the
+        // function's (one stack deployed under two names into one account would collide) and the region out of the
+        // policy's (one stack name deployed to two regions would). The function's stays within CloudFront's 64
+        // characters.
+        const deploymentKey = createHash('sha256')
+            .update(`${stack.stackName}/${this.node.path}`)
+            .digest('hex')
+            .slice(0, 16)
+        /** @param {string[]} suffix */
+        const accountUniqueName = (...suffix) =>
+            cdk.Fn.join('-', [cdk.Aws.REGION, slug.slice(0, 20), deploymentKey, ...suffix])
         const forwardedHost = new aws_cloudfront.Function(this, 'ForwardedHost', {
-            functionName: cdk.Fn.join('-', [cdk.Aws.REGION, slug.slice(0, 20), forwardedHostKey.slice(0, 16)]),
+            functionName: accountUniqueName(),
             runtime: aws_cloudfront.FunctionRuntime.JS_2_0,
             code: aws_cloudfront.FunctionCode.fromInline(FORWARDED_HOST_SOURCE),
             comment: `${slug}: x-forwarded-host and x-forwarded-port from the viewer's request`,
         })
+
+        // ---- the response's security headers (response headers policy) -----------------------
+        // On every behavior, so on the app's pages and the static files alike. Each header is added where the
+        // response lacks it; one the app sets itself wins (`override: false`), so an app that must be framed by
+        // another site says so with its own CSP `frame-ancestors`, which browsers prefer to X-Frame-Options.
+        // - Strict-Transport-Security, two years (`max-age=63072000`), without includeSubDomains unless the adopter
+        //   asks (`hstsIncludeSubdomains`), never `preload` (a submission to browsers' lists is the domain owner's).
+        // - X-Content-Type-Options: nosniff. The deploy pipeline must upload the static files with their real
+        //   Content-Type, or a browser refuses a script served as something else.
+        // - Referrer-Policy: strict-origin-when-cross-origin, browsers' own default, stated.
+        // - X-Frame-Options: SAMEORIGIN, refusing other sites' frames (clickjacking) and keeping the app's own.
+        // No Content-Security-Policy: one that fits every app would allow everything. An adopter's own policy
+        // (`responseHeadersPolicy`, as pages has) replaces this one on every behavior.
+        const responseHeadersPolicy =
+            props.responseHeadersPolicy ??
+            new aws_cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
+                responseHeadersPolicyName: accountUniqueName('headers'),
+                comment: `${slug}: HSTS and safe security headers (SssbApp)`,
+                securityHeadersBehavior: {
+                    strictTransportSecurity: {
+                        accessControlMaxAge: cdk.Duration.seconds(HSTS_MAX_AGE_SECONDS),
+                        includeSubdomains: props.hstsIncludeSubdomains ?? false,
+                        preload: false,
+                        override: false,
+                    },
+                    contentTypeOptions: { override: false },
+                    referrerPolicy: {
+                        referrerPolicy: aws_cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+                        override: false,
+                    },
+                    frameOptions: { frameOption: aws_cloudfront.HeadersFrameOption.SAMEORIGIN, override: false },
+                },
+            })
 
         // ---- cloudfront ---------------------------------------------------------------------
         // First deploys ride *.cloudfront.net; custom domains + certs are cutover row
@@ -629,6 +686,7 @@ export class SssbApp extends Construct {
                 allowedMethods: aws_cloudfront.AllowedMethods.ALLOW_ALL,
                 cachePolicy: aws_cloudfront.CachePolicy.CACHING_DISABLED,
                 originRequestPolicy: aws_cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                responseHeadersPolicy,
                 functionAssociations: [
                     { function: forwardedHost, eventType: aws_cloudfront.FunctionEventType.VIEWER_REQUEST },
                 ],
@@ -645,11 +703,13 @@ export class SssbApp extends Construct {
                     origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
                     viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cachePolicy: aws_cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                    responseHeadersPolicy,
                 },
                 '/assets/*': {
                     origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
                     viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cachePolicy: aws_cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                    responseHeadersPolicy,
                 },
             },
         })
@@ -743,6 +803,7 @@ export class SssbApp extends Construct {
         this.migrator = migrator
         this.distribution = distribution
         this.forwardedHost = forwardedHost
+        this.responseHeadersPolicy = responseHeadersPolicy
         this.assetsBucket = assetsBucket
         this.storageBucket = storageBucket
         this.databaseTransport = transport
