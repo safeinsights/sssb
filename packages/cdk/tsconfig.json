@@ -25,5 +25,5 @@
         "noImplicitOverride": true,
         "noFallthroughCasesInSwitch": true
     },
-    "include": ["src/**/*.js", "src/**/*.d.ts"]
+    "include": ["src/**/*.js", "src/**/*.mjs", "src/**/*.d.ts"]
 }

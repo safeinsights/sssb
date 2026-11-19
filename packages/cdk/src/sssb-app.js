@@ -445,6 +445,14 @@ export class SssbApp extends Construct {
             environment: {
                 AWS_LAMBDA_EXEC_WRAPPER: '/opt/bootstrap',
                 PORT: '3000',
+                // Where Next's standalone server listens (its server.js reads HOSTNAME). Pinned to every interface:
+                // the Web Adapter calls it on 127.0.0.1, an inherited HOSTNAME naming another address would leave
+                // the adapter nothing to call, and with 127.0.0.1 itself Next names itself `localhost` to the proxy
+                // but `127.0.0.1` when it routes, so a rewrite the proxy makes (Clerk's, on every request) looks
+                // external and Next fetches it over the network (pages, 2026-11-18). Every interface is no wider: a
+                // Lambda function takes no inbound connection, in a VPC or outside one, so only the adapter calls it.
+                // A run.sh that exports HOSTNAME overrides this; the deploy pipeline's must not.
+                HOSTNAME: '0.0.0.0',
                 APP_MODE: 'real',
                 NEXT_TELEMETRY_DISABLED: '1',
                 ...databaseEnv,
@@ -490,6 +498,44 @@ export class SssbApp extends Construct {
         })
         grantDatabase(migrator)
 
+        // ---- the request body's hash (Lambda@Edge) ------------------------------------------
+        // Lambda takes no unsigned payload behind origin access control: a request with a body must carry its
+        // SHA-256 in `x-amz-content-sha256`, which CloudFront does not compute, so without this every POST, PUT and
+        // PATCH would answer 403. An origin-request function hashes the body CloudFront hands it (read-only: what is
+        // hashed is what is forwarded), then CloudFront signs the request, header included. CloudFront hands an
+        // origin request at most 1 MB of body; past that the function answers 413 rather than a hash that would not
+        // match. ADR-0001, addendum 2026-11-19, says why this and not a Function URL open to the internet.
+        // Lambda@Edge lives in us-east-1. A stack with an explicit region gets CDK's EdgeFunction, which keeps the
+        // function in the stack in us-east-1 and elsewhere puts it in a us-east-1 stack of its own (that region
+        // bootstrapped too). An environment-agnostic stack (the starter's, until cutover) can only keep it in the
+        // stack, so it deploys to us-east-1 alone: elsewhere CloudFront refuses the association and the deploy rolls
+        // back. Give the stack an explicit `env.region` to deploy anywhere else.
+        const stack = cdk.Stack.of(this)
+        /** @type {cdk.aws_lambda.FunctionProps} */
+        const bodyHashProps = {
+            runtime: aws_lambda.Runtime.NODEJS_22_X,
+            architecture: aws_lambda.Architecture.X86_64,
+            code: aws_lambda.Code.fromAsset(path.join(HERE, 'assets/body-hash')),
+            handler: 'index.handler',
+            memorySize: 128,
+            timeout: cdk.Duration.seconds(5),
+            description: `${slug}: SHA-256 of each request body, for the server's Function URL (Lambda@Edge)`,
+            // Destroyed, not CDK's default of retained: the version's id carries a hash of the code, so a retained
+            // one would pile up with every change and outlive every teardown. CloudFront's replicas keep a version
+            // from being deleted for up to a few hours after the distribution lets go of it, so the cleanup after
+            // an update that replaces the code can fail to delete the old one (a failed cleanup leaves it behind and
+            // fails nothing), and deleting the stack fails until the replicas are gone (docs/runbooks/deploy.md).
+            currentVersionOptions: { removalPolicy: cdk.RemovalPolicy.DESTROY },
+        }
+        /** @type {cdk.aws_lambda.IVersion} */
+        let bodyHash
+        if (cdk.Token.isUnresolved(stack.region)) {
+            // The distribution adds Lambda@Edge to the role's trust, as it does for every function it runs at the edge.
+            bodyHash = new aws_lambda.Function(this, 'BodyHash', bodyHashProps).currentVersion
+        } else {
+            bodyHash = new aws_cloudfront.experimental.EdgeFunction(this, 'BodyHash', bodyHashProps)
+        }
+
         // ---- cloudfront ---------------------------------------------------------------------
         // First deploys ride *.cloudfront.net; custom domains + certs are cutover row
         // `domains-and-certs`.
@@ -502,6 +548,13 @@ export class SssbApp extends Construct {
                 allowedMethods: aws_cloudfront.AllowedMethods.ALLOW_ALL,
                 cachePolicy: aws_cloudfront.CachePolicy.CACHING_DISABLED,
                 originRequestPolicy: aws_cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                edgeLambdas: [
+                    {
+                        functionVersion: bodyHash,
+                        eventType: aws_cloudfront.LambdaEdgeEventType.ORIGIN_REQUEST,
+                        includeBody: true,
+                    },
+                ],
             },
             additionalBehaviors: {
                 '/_next/static/*': {
