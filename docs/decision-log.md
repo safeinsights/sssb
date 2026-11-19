@@ -5149,18 +5149,22 @@ the walk lost a denial.
   its throw never reaches the handler. Rejected: trusting any sync callback to run in place. That passes
   `load().then((row) => authorize(row))`, and an unawaited `db.withTenant(org, () => { authorize(…) })`.
 - **Array iteration methods are known by name, and an `async` callback to one is dropped.** An array iteration method
-  is recognized when its receiver is not an import. An `async` callback to one is dropped, so
-  `await ids.forEach(async (id) => …)` fails: awaiting `forEach`'s `undefined` settles nothing. The eager methods run
-  a sync callback in place: `forEach`, `some`, `every`, `find…` and `reduce…`. So `items.forEach((i) => authorize(…))`
-  still counts as a statement of its own. `map`, `filter` and `flatMap` are trusted only as any other call is,
-  because an iterator runs them lazily (`ids.values().map(…)`).
+  is recognized when its receiver is neither an import nor an object whose code is in this file (whose `forEach` is
+  its own). An `async` callback to one is dropped, so `await ids.forEach(async (id) => …)` fails: awaiting
+  `forEach`'s `undefined` settles nothing. A sync callback runs in place, so `items.forEach((i) => authorize(…))` and
+  `items.map((i) => { authorize(…); return i })` count as statements of their own. A `map`, `filter` or `flatMap` on
+  a receiver that is visibly an iterator (`ids.values()`, `.keys()`, `.entries()`, `Iterator.from(…)`) runs nothing
+  until consumed, so it counts for nothing.
     - Rejected: requiring every callback's call to be awaited, the first draft. That failed the `forEach` idiom.
-    - Rejected: trusting the names on any receiver. That passes Ramda's curried `R.map(() => authorize(…))`, which
+    - Rejected: trusting the names on any receiver. That passes Ramda's curried `R.forEach(() => authorize(…))`, which
       only defines a function.
+    - Rejected: treating `map`, `filter` and `flatMap` as lazy everywhere, the second draft. That failed the
+      per-item `map` on an array, a natural bulk-route shape, to catch a lazy iterator nobody consumes.
 - **A callee whose code is in this file is not trusted the way an imported wrapper is.** `isSameFile` covers:
-    - a function, class or object literal;
+    - a function, class or object literal, or an array literal holding one;
     - a function or class declaration;
-    - a variable holding one of those, or what such a callee returns;
+    - a variable or destructured name holding one of those, or what such a callee returns (also through either arm
+      of a ternary, either side of `&&`, `||`, `??` or a comma);
     - anything the file assigns to.
 
     A function handed to such a callee counts for nothing, and so does one handed to a same-file wrapper handler or to
@@ -5190,6 +5194,7 @@ await p` and `await Promise.all(ids.map(async …))` do carry a rejection. The s
   route, not that it waits.
 - **No route in either app or the fixture changes verdict.** Every one authorizes in its body, or in a wrapper it
   returns. The real trees were scanned after each round.
+
 ## Licence scan: a pnpm-native CI job, not a required check (2026-11-18, `ci/licence-scan`)
 
 The Canopy survey deferred a licence scan ("Trivy or equivalent"), and P14 is about to put SSSB's packages on public

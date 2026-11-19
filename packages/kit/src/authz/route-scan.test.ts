@@ -1347,6 +1347,108 @@ describe("a denial counts only when it reaches the handler's outcome", () => {
             expect: 'open',
         },
         {
+            name: 'a callback to a wrapper destructured from a same-file object',
+            files: post(
+                `await run(async () => { ${CALL} })`,
+                'const { run } = { run: async (fn: Function) => { await fn() } }\n',
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a wrapper destructured from a same-file factory',
+            files: post(
+                `await run(async () => { ${CALL} })`,
+                'function mk() { return { run: async (fn: Function) => { await fn() } } }\nconst { run } = mk()\n',
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a wrapper destructured from a same-file array',
+            files: post(
+                `await run(async () => { ${CALL} })`,
+                'const [run] = [async (fn: Function) => { await fn() }]\n',
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a same-file wrapper chosen by a ternary',
+            files: post(
+                `await (cond ? run : wrap)(async () => { ${CALL} })`,
+                'const run = async (fn: Function) => { await fn() }\ndeclare const wrap: Function\n',
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a same-file wrapper behind a comma',
+            files: post(
+                `await (0, run)(async () => { ${CALL} })`,
+                'const run = async (fn: Function) => { await fn() }\n',
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a variable holding a same-file wrapper or an import',
+            files: post(
+                `await run(async () => { ${CALL} })`,
+                'declare const wrap: Function\nconst run = wrap ?? (async (fn: Function) => { await fn() })\n',
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to a long chain of calls on an import, awaited',
+            files: post(
+                `await client.a().b().c().d().e().f().g().h().i().run(async () => { ${CALL} })`,
+                "import { client } from './client'\n",
+            ),
+            expect: 'authorized',
+        },
+        {
+            name: "a sync callback to a same-file object's own forEach",
+            files: post(`o.forEach(() => ${CALL})`, 'const o = { forEach(f: Function) { setTimeout(f) } }\n'),
+            expect: 'open',
+        },
+        {
+            name: "a sync callback to a same-file class instance's own forEach",
+            files: post(`new Bag().forEach(() => ${CALL})`, 'class Bag { forEach(f: Function) { setTimeout(f) } }\n'),
+            expect: 'open',
+        },
+        {
+            name: 'a sync callback to map on an array, its result kept',
+            files: post(
+                `const rows = ids.map((id) => { ${CALL}; return id })\nreturn Response.json(rows)`,
+                'declare const ids: number[]\n',
+            ),
+            expect: 'authorized',
+        },
+        {
+            name: 'a sync callback to filter on an array',
+            files: post(`ids.filter(() => ${CALL})`, 'declare const ids: number[]\n'),
+            expect: 'authorized',
+        },
+        {
+            name: 'a sync callback to forEach on rows a same-file async function loaded',
+            files: post(
+                `const rows = await load()\nrows.forEach(() => ${CALL})`,
+                'async function load() { return [1] }\n',
+            ),
+            expect: 'authorized',
+        },
+        {
+            name: 'a sync callback to map on an iterator, awaited (nothing consumes it)',
+            files: post(`await ids.values().map(() => { ${CALL}; return 1 })`, 'declare const ids: number[]\n'),
+            expect: 'open',
+        },
+        {
+            name: 'a sync callback to filter on Iterator.from, returned',
+            files: post(`return Iterator.from(ids).filter(() => ${CALL})`, 'declare const ids: number[]\n'),
+            expect: 'open',
+        },
+        {
+            name: 'a sync callback to forEach on an iterator (forEach runs it in place)',
+            files: post(`ids.values().forEach(() => ${CALL})`, 'declare const ids: number[]\n'),
+            expect: 'authorized',
+        },
+        {
             name: 'a callback to a method of a local holding an awaited import',
             files: post(
                 `const client = await connect()\nawait client.run(async () => { ${CALL} })`,
@@ -1355,13 +1457,13 @@ describe("a denial counts only when it reaches the handler's outcome", () => {
             expect: 'authorized',
         },
         {
-            name: 'a sync callback to map whose result is dropped (an iterator runs map lazily)',
+            name: 'a sync callback to map on an iterator (it runs map lazily)',
             files: post(`ids.values().map(() => { ${CALL}; return 1 })`, 'declare const ids: number[]\n'),
             expect: 'open',
         },
         {
-            name: 'a sync callback to an imported namespace map (a library, perhaps curried)',
-            files: post(`R.map(() => ${CALL})`, "import * as R from 'ramda'\n"),
+            name: 'a sync callback to an imported namespace forEach (a library, perhaps curried)',
+            files: post(`R.forEach(() => ${CALL})`, "import * as R from 'ramda'\n"),
             expect: 'open',
         },
         {

@@ -34,10 +34,10 @@ import ts from 'typescript'
  *     on the spot (`settledBy`: `return`, an arrow's expression body; through parentheses, a type assertion, a
  *     ternary arm, the right of `&&`, `||`, `??` or a comma, or the left of `||` or `??`). A statement of its own,
  *     `void`, a variable awaited later, a `.then` or `.catch` chain, an argument, all leave the promise floating;
- *   - an array iteration method (`forEach`, `map`, …, by name, on a receiver that is not an import). It drops an
- *     `async` function's promise, awaited or not. The eager ones (`forEach`, `some`, `every`, `find…`, `reduce…`)
- *     run a sync function in place, so its throw goes up through the call; `map`, `filter` and `flatMap`, which an
- *     iterator runs lazily, are trusted only as any other call is;
+ *   - an array iteration method (`forEach`, `map`, …, by name, on a receiver that is neither an import nor an
+ *     object whose code is in this file). It drops an `async` function's promise, awaited or not, and runs a sync
+ *     one in place, so its throw goes up through the call; but a `map`, `filter` or `flatMap` on a receiver that is
+ *     visibly an iterator (`xs.values()`, `Iterator.from(…)`) runs nothing until consumed;
  *   - a `try` whose `catch` can do anything but rethrow (fall through, `return`, `break` or `continue` out of
  *     itself), or whose `finally` can leave in the throw's place. A promise the `try` returns is not caught.
  *   (The rule is syntactic: a sync function counts as throwing in place, and an `authorize` named by
@@ -566,41 +566,79 @@ class Reach {
     /**
      * A callee whose code is in this file, which the scan could read but does not follow through a parameter, so it
      * is never trusted the way an imported wrapper is. Its head (through `o.run`, `o['run']`, `new C`, `mk()`,
-     * `await`) is a function, class or object literal, or a name declared here as a function or class, as a
-     * variable holding one of those or what such a callee returns, or as anything the file assigns to. A parameter,
-     * an import, a global, a destructured name, and a local holding anything else (`const client = await connect()`)
-     * are not: their code is out of the scan's sight either way.
+     * `await`, either arm of a ternary, either side of `&&`, `||`, `??` or a comma) is a function, class or object
+     * literal, an array literal holding one, or a name declared here as a function or class, as a variable or
+     * destructured name whose initializer is any of those, or as anything the file assigns to. A parameter, an
+     * import, a global, and a local holding anything else (`const client = await connect()`) are not: their code
+     * is out of the scan's sight either way.
      */
-    private isSameFile(callee: ts.Expression, depth = 0): boolean {
-        if (depth > 8) return true
+    private isSameFile(callee: ts.Expression, seen: Set<ts.Node> = new Set()): boolean {
         let e = unwrap(callee)
         while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) e = unwrap(e.expression)
         if (isFunctionLiteral(e) || ts.isClassExpression(e) || ts.isObjectLiteralExpression(e)) return true
-        if (ts.isCallExpression(e) || ts.isNewExpression(e) || ts.isAwaitExpression(e)) {
-            return this.isSameFile(e.expression, depth + 1)
+        if (ts.isArrayLiteralExpression(e)) {
+            return e.elements.some((element) => !ts.isOmittedExpression(element) && this.isSameFile(element, seen))
         }
+        if (ts.isCallExpression(e) || ts.isNewExpression(e) || ts.isAwaitExpression(e) || ts.isSpreadElement(e)) {
+            return this.isSameFile(e.expression, seen)
+        }
+        if (ts.isConditionalExpression(e))
+            return this.isSameFile(e.whenTrue, seen) || this.isSameFile(e.whenFalse, seen)
+        if (ts.isBinaryExpression(e)) return this.isSameFile(e.left, seen) || this.isSameFile(e.right, seen)
+        if (!ts.isIdentifier(e)) return false
+        const symbol = this.src.checker.getSymbolAtLocation(e)
+        if (symbol !== undefined && this.src.reassigned.has(symbol)) return true
+        const decl = declarationOf(this.src, e)
+        if (decl === undefined) return false
+        if (ts.isFunctionDeclaration(decl) || ts.isClassDeclaration(decl)) return true
+        const variable = variableOf(decl)
+        if (variable?.initializer === undefined) return false
+        // A name defined in terms of itself (`const a = b(); const b = a()`) fails closed.
+        if (seen.has(variable)) return true
+        seen.add(variable)
+        return this.isSameFile(variable.initializer, seen)
+    }
+
+    /**
+     * Whether a method's receiver is an object whose code is in this file (an object or class literal, a `new` of a
+     * same-file class, a class, or a variable or destructured name holding one), so that its `forEach` is its own
+     * and not an array's. A call's or an `await`'s result is taken for data, as an array is.
+     */
+    private isSameFileObject(receiver: ts.Expression, seen: Set<ts.Node> = new Set()): boolean {
+        let e = unwrap(receiver)
+        while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) e = unwrap(e.expression)
+        if (ts.isObjectLiteralExpression(e) || ts.isClassExpression(e)) return true
+        if (ts.isNewExpression(e)) return this.isSameFile(e.expression)
+        if (ts.isConditionalExpression(e)) {
+            return this.isSameFileObject(e.whenTrue, seen) || this.isSameFileObject(e.whenFalse, seen)
+        }
+        if (ts.isBinaryExpression(e)) return this.isSameFileObject(e.left, seen) || this.isSameFileObject(e.right, seen)
         if (!ts.isIdentifier(e)) return false
         const decl = declarationOf(this.src, e)
-        if (!decl) return false
-        if (ts.isFunctionDeclaration(decl) || ts.isClassDeclaration(decl)) return true
-        if (!ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name)) return false
-        const symbol = this.src.checker.getSymbolAtLocation(decl.name)
-        if (symbol !== undefined && this.src.reassigned.has(symbol)) return true
-        return decl.initializer !== undefined && this.isSameFile(decl.initializer, depth + 1)
+        if (decl === undefined) return false
+        if (ts.isClassDeclaration(decl)) return true
+        const variable = variableOf(decl)
+        if (variable?.initializer === undefined || seen.has(variable)) return false
+        seen.add(variable)
+        return this.isSameFileObject(variable.initializer, seen)
     }
 
     /**
      * `xs.forEach`, `xs['map']` and the like, by name: an array iteration method, unless the receiver's head is an
-     * import, where the same name is often a library's (Ramda's curried `R.map`, `Effect.map`), deferred or lazy.
+     * import, where the same name is often a library's (Ramda's curried `R.map`, `Effect.map`), deferred or lazy, or
+     * an object whose code is in this file, whose `forEach` is its own. `lazy` is a `map`, `filter` or `flatMap` on
+     * a receiver that is visibly an iterator (`xs.values()`, `.keys()`, `.entries()`, `Iterator.from(…)`), which
+     * runs nothing until something consumes it.
      */
-    private iterationMethod(callee: ts.Expression): string | undefined {
+    private iterationMethod(callee: ts.Expression): { name: string; lazy: boolean } | undefined {
         let name: string | undefined
         if (ts.isPropertyAccessExpression(callee)) name = callee.name.text
         else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
             name = callee.argumentExpression.text
         }
         if (name === undefined || !ARRAY_ITERATION.has(name)) return undefined
-        let head = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
+        const receiver = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
+        let head = receiver
         for (;;) {
             if (ts.isPropertyAccessExpression(head) || ts.isElementAccessExpression(head))
                 head = unwrap(head.expression)
@@ -608,7 +646,8 @@ class Reach {
             else break
         }
         if (ts.isIdentifier(head) && valueImportOf(declarationOf(this.src, head)) !== undefined) return undefined
-        return name
+        if (this.isSameFileObject(receiver)) return undefined
+        return { name, lazy: !EAGER_ITERATION.has(name) && isIterator(receiver) }
     }
 
     private visit(node: ts.Node, outcome: Outcome): void {
@@ -653,14 +692,13 @@ class Reach {
         }
         // A function handed to a call is assumed to be invoked, and its failure to come out of the call's own result:
         // the callee is not read, and may run it now or later (`.then`, a timer, an async wrapper). Two exceptions.
-        // An array's iteration method drops an async function's promise, awaited or not, and the eager ones (not
-        // `map`, `filter`, `flatMap`, which an iterator runs lazily) run a sync one in place, so it throws through
-        // the call. A callee whose code is in this file is not followed through its parameter, so what it is handed
-        // counts for nothing.
+        // An array's iteration method drops an async function's promise, awaited or not, and runs a sync one in
+        // place, so it throws through the call; a lazy one on an iterator runs nothing. A callee whose code is in
+        // this file is not followed through its parameter, so what it is handed counts for nothing.
         const method = this.iterationMethod(callee)
         const handed = (fn: ts.FunctionLikeDeclaration): Outcome => {
-            if (method !== undefined && isAsync(fn)) return LOST
-            if (method !== undefined && EAGER_ITERATION.has(method)) return { thrown: outcome.thrown, returned: false }
+            if (method !== undefined)
+                return isAsync(fn) || method.lazy ? LOST : { thrown: outcome.thrown, returned: false }
             if (this.isSameFile(callee)) return LOST
             return result ? HANDLER_OUTCOME : LOST
         }
@@ -789,8 +827,27 @@ const EAGER_ITERATION: ReadonlySet<string> = new Set([
     'some',
 ])
 
-/** Every array iteration method: the eager ones, and those an iterator runs lazily. */
+/** Every array iteration method: on an array all run in place; on an iterator `filter`, `flatMap`, `map` are lazy. */
 const ARRAY_ITERATION: ReadonlySet<string> = new Set([...EAGER_ITERATION, 'filter', 'flatMap', 'map'])
+
+/** A receiver that is visibly an iterator: `xs.values()`, `xs.keys()`, `xs.entries()` or `Iterator.from(…)`. */
+function isIterator(receiver: ts.Expression): boolean {
+    const e = unwrap(receiver)
+    if (!ts.isCallExpression(e) || !ts.isPropertyAccessExpression(e.expression)) return false
+    const name = e.expression.name.text
+    if (name === 'values' || name === 'keys' || name === 'entries') return true
+    const target = unwrap(e.expression.expression)
+    return name === 'from' && ts.isIdentifier(target) && target.text === 'Iterator'
+}
+
+/** The variable declaration a declared name belongs to, through destructuring; undefined for a parameter. */
+function variableOf(decl: ts.Declaration): ts.VariableDeclaration | undefined {
+    let node: ts.Node = decl
+    while (ts.isBindingElement(node) || ts.isObjectBindingPattern(node) || ts.isArrayBindingPattern(node)) {
+        node = node.parent
+    }
+    return ts.isVariableDeclaration(node) ? node : undefined
+}
 
 /**
  * Whether `block` has a way out of itself other than falling off its end or throwing: a `break` or `continue` whose

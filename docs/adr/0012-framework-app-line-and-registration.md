@@ -976,8 +976,8 @@ to a same-file callee or a same-file wrapper counts for nothing. The decision lo
 **Limits.** These are in addition to the 2026-11-17 list, less its un-awaited item:
 
 - A wrapper or callee imported from another module is trusted to carry the failure of what it is handed, as before.
-  So is a call on a parameter, a global, a destructured name, or a local that holds anything but same-file code.
-- Iteration methods are recognized by name. `map`, `filter` and `flatMap` on an array whose result is awaited or
-  returned are trusted, though an iterator would run them lazily.
+  So is a call on a parameter, a global, or a local that holds anything but same-file code.
+- Iteration methods are recognized by name. A `map`, `filter` or `flatMap` on an iterator held in a variable is taken
+  for an array's, which runs its callback in place, though the iterator runs it only when consumed.
 - An `authorize` named through `authorizeModules` must throw synchronously, as SSSB's does. A floating call to an
   async one would count.
