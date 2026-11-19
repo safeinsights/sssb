@@ -139,10 +139,11 @@ function digestSnippet(body: string): string {
     return oneLine.length > DIGEST_SNIPPET_LENGTH ? `${oneLine.slice(0, DIGEST_SNIPPET_LENGTH - 1)}…` : oneLine
 }
 
-/** A team's digest recipient (twin of the real handler's digestRecipient): its admin, else its first
+/** A team's digest recipient (twin of the server handler's `digestRecipient` in a simulated world): among everyone
+ *  in the world (the seed and accepted invitees, as the fake auth adapter lists members), its admin, else its first
  *  member, else a synthetic per-org address. */
-function digestRecipientEmail(orgSlug: string): string {
-    const members = people.filter((p) => p.memberships.some((m) => m.orgSlug === orgSlug))
+function digestRecipientEmail(orgSlug: string, everyone: readonly SeedPerson[]): string {
+    const members = everyone.filter((p) => p.memberships.some((m) => m.orgSlug === orgSlug))
     const admin = members.find((p) => p.memberships.some((m) => m.orgSlug === orgSlug && m.role === 'admin'))
     return (admin ?? members[0])?.email ?? `${orgSlug}@digest.example`
 }
@@ -727,7 +728,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
             const recent = bodies.slice(0, DIGEST_RECENT_LIMIT).map(digestSnippet)
             newEmails.push({
                 id: `${worldNowMs}-${jobId.slice(0, 8)}`,
-                to: digestRecipientEmail(schedule.orgSlug),
+                to: digestRecipientEmail(schedule.orgSlug, allPeople),
                 subject: tEmail('digestSubject', { org: orgName }),
                 at: iso,
                 html: buildDigestEmailHtml(

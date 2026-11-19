@@ -6471,6 +6471,19 @@ Two follow-ups recorded when the optional real ports landed (`fix/kit-optional-r
 - **Seen, not changed here:** real mode still reads tenants and organizations from the seed for display (the theme's
   `findTenant`, and the showcase's `findTenant` and `findOrg` in its layouts, sign-in, org page and invitations). Those are tenant
   configuration, not people, and moving them to the database is a design of its own.
+- **From the first review round, and CI.** The first version read the simulated locale from the fake auth adapter by a
+  dynamic import, and the showcase stopped building: a client component (the dashboard's glue) imports
+  `@sssb/kit/core/jobs`, which imports the seam's `jobs` module for its kinds, which registers the handlers, so a
+  bundler puts everything a handler can import, dynamic imports included, into the client bundle, and the fake auth
+  adapter reads request cookies (`next/headers`). The locale now comes from the seed's people, dynamically imported
+  behind `isSimulated`: plain data, which the client bundle carried before this change. `tests/tooling/jobs-graph.test.ts`
+  now also fails if anything a handler reaches, by any import, imports `next/headers` or `server-only`. Rejected:
+  **a locale hook in the job context** (the runner passing `personLocale`), a second context field for what only the
+  simulated world has; and **splitting the job kinds out of the handlers' seam module**, a seam change for every app.
+  The cost, recorded: an app's own handler could still import the seed dynamically without `isSimulated`, which no
+  graph test can see; the digest's real-mode test throws on any seed read, and the guide's rule covers the rest.
+- **The static demo's digest twin picks from everyone in its world** (the seed and accepted invitees), as the server's
+  simulated digest now does through the fake auth adapter, instead of the seed alone.
 
 ## No `starter` in a generated app (2026-11-19, `feat/no-starter-in-generated-app`)
 
