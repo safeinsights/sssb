@@ -6676,13 +6676,15 @@ rule for these sessions, several of them changed by its review (an Opus and a Fa
   vendors a protocol already reaches. Both reviewers raised it.
 - **The app supplies only the real adapter; the fake stays SSSB's.** Rejected: app-supplied fakes, because the
   Simulator reads the fakes' state and the hermetic promise would become each app's.
-- **Registration in two seam modules, settings as data and factories handed in by the registry, with the full factory
-  signature settled at once.** Rejected, at first drafted: one module read by `createRealPorts`, which would pull every
+- **Registration in three seam modules (settings as data, factories handed in by the registry, the auth provider's
+  middleware on its own for the request proxy), with the full factory signature settled at once, and a graph check,
+  not a lint rule, keeping app adapters out of the registry's module graph.** Rejected, at first drafted: one module read by `createRealPorts`, which would pull every
   app adapter into `sssb check-real-env`'s CommonJS bundle and could deadlock boot through the registry; and an
   argument-less factory, which a job runner cannot use.
-- **Analytics gets an explicit switch, default `posthog`, `none` a no-op**, filed as the breaking change it is.
-  Rejected: "the same default behaviour", which is the inference the switch rule forbids and, in real mode without a
-  key, serves the fake adapter.
+- **Analytics in two parts: a patch now, so real mode without a key gets a no-op and never the fake (which writes
+  under `.data/`, likely failing on Lambda's read-only directory), then an explicit switch, default `posthog`, filed as
+  the breaking change it is.** Rejected: "the same default behaviour", which is the inference the switch rule forbids;
+  and folding the patch into the switch's step, which would leave a likely live defect waiting on unrelated work.
 - **No `app` for inbound email.** Another provider is the app's route outside `webhooks/` under its own exemption.
   Rejected: an `app` value that changes nothing `none` does not.
 - **libsql and Turso are answered "not an adapter"**, with both tenancy strategies and what each does to ADR-0004; a

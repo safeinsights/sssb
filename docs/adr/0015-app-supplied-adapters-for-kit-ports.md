@@ -96,10 +96,12 @@ That costs one adapter SSSB already proves, and it keeps third parties out of th
 - **Storage: the `s3` choice takes an endpoint.** `createS3Storage` (`@sssb/kit/adapters/real/s3-storage`, published)
   already takes `endpoint`, `credentials` and `forcePathStyle` for "an S3-compatible endpoint other than AWS's". Only
   `createRealStorage` (`packages/kit/src/adapters/real/storage.ts`) drops them, passing the bucket and region alone.
-  The `s3` choice would read `STORAGE_ENDPOINT`, `STORAGE_FORCE_PATH_STYLE` and a key pair from the environment, all
-  optional. The app's `params.ports.storage` would say so as well, so that `SssbApp` builds no S3 bucket nobody uses.
-  What a given store does not implement of
-  the S3 API is that store's gap against the port, as R2's upload target is (section 6).
+  The `s3` choice would read settings of its own, all optional: `STORAGE_ENDPOINT`, `STORAGE_REGION`,
+  `STORAGE_FORCE_PATH_STYLE`, `STORAGE_ACCESS_KEY_ID` and `STORAGE_SECRET_ACCESS_KEY`, handed to `createS3Storage`
+  explicitly. Not `AWS_REGION` and the AWS key pair, which a Lambda reserves for its own role and region; today the
+  region comes from `AWS_REGION`. The app's `params.ports.storage` would say so as well, so that `SssbApp` builds no S3
+  bucket nobody uses. What a given store does not implement of the S3 API is that store's gap against the port, as R2's
+  upload target is (section 6).
 - **Email: an `smtp` choice.** Postmark, Amazon SES, Resend, Mailgun itself and nearly every other transactional
   provider accept SMTP. One SMTP adapter would cover them, behind `EMAIL_PROVIDER=smtp` with a host, port and
   credentials. It needs an SMTP client as a new dependency, and a Lambda opens a connection per cold start, which the
@@ -119,7 +121,7 @@ The port's interface does not bend to the app's vendor. Where a vendor cannot me
 in SSSB, for every app, with a changeset, or the vendor is not eligible for that port. Two cases are found below: the
 storage upload target (R2) and auth's sign-in and sign-out (Auth0).
 
-### 3. The switch gains `app`; the adapter is registered in two seam modules
+### 3. The switch gains `app`; the adapter is registered in three seam modules
 
 **The switch.** The ports with no protocol choice gain the value `app`:
 
@@ -134,13 +136,18 @@ storage upload target (R2) and auth's sign-in and sign-out (Auth0).
 | `inboundEmail` | `INBOUND_EMAIL_PROVIDER`  | unchanged: `mailgun`, `none` (section 5 says why)    |
 | `db` transport | `DATABASE_TRANSPORT`      | unchanged: `pg`, `data-api`; no `app` (section 6)    |
 
-- **Analytics needs a switch first, and it is a breaking change.** Today real mode picks PostHog when `POSTHOG_KEY` is
-  set and otherwise serves the _fake_ (`packages/kit/src/adapters/real/index.ts`), which writes under `.data/`
-  (`packages/kit/src/adapters/fake/analytics.ts`, `packages/kit/src/adapters/fake/data-dir.ts`). That is the inference
-  the switch rule forbids, and in a deployment it is also wrong: real mode should never run a fake. So `none` becomes a
-  no-op adapter (not the fake, and not `AbsentPortError`: a `capture` must never fail a request), and the default is
-  `posthog`, which requires the key. A real deployment without a key then fails at boot until it says `none`: a
-  `minor` change with a "To adopt" line, as every new required setting is (ADR-0014 part 10).
+- **Analytics needs a fix now and a switch later.** Today real mode picks PostHog when `POSTHOG_KEY` is set and
+  otherwise serves the _fake_ (`packages/kit/src/adapters/real/index.ts`). The fake's `capture` and `isFlagEnabled`
+  both create and write a directory under `.data/` in the working directory, unless `APP_DATA_DIR` says otherwise
+  (`packages/kit/src/adapters/fake/analytics.ts`, `packages/kit/src/adapters/fake/data-dir.ts`), and `SssbApp` sets
+  neither `POSTHOG_KEY` nor `APP_DATA_DIR`. On Lambda the server's directory is read-only, so in a keyless deployment
+  both calls most likely throw: sending an invite awaits `capture` without a catch
+  (`packages/kit/src/server-lib/invite.ts`). Not yet observed on a deployment. So, in two parts:
+    - **now, a patch, independent of this ADR:** real mode without a key gets a no-op adapter, never the fake;
+    - **later, with the `app` mechanism:** the explicit switch. `none` is that no-op (not `AbsentPortError`: a
+      `capture` must never fail a request), and the default is `posthog`, which requires the key. A deployment without
+      a key then fails at boot until it says `none`: a `minor` change with a "To adopt" line, as every new required
+      setting is (ADR-0014 part 10).
 - **Auth is required, so it has no `none`**: a real deployment without an identity provider cannot sign anyone in.
 - **Inbound email gets no `app`**: it would do nothing `none` does not (section 5).
 - **`SssbApp` passes `app` through** as the variable's value. The app's adapter's own settings reach the server the way
@@ -184,17 +191,29 @@ break every app adapter (see Consequences), so the first step fixes all of it:
   adapter can keep a cache in the database without importing the registry;
 - the job runner's factory also receives the terminal-status notifier, and is loaded on first use, as the in-process
   runner is (`packages/kit/src/adapters/lazy-jobs.ts`);
-- the auth entry has a second factory, `proxy`, the provider's request middleware, which `withAuthProxy` loads in place
-  of Clerk's (section 6).
+- the auth provider's request middleware is a third seam module, `@sssb/app-config/auth-proxy`, which `withAuthProxy`
+  loads in place of Clerk's (section 6). It cannot be an entry of `appAdapters`: the request proxy would then be
+  compiled with every literal `import()` in that module, every app adapter and its SDK. The vendor ban covers
+  `src/app-config`, so this module, like the factories, reaches its SDK only by `import()` from `src/adapters/real/`.
 
-**What must be true of an app adapter, and is checked:** its module graph never reaches `@sssb/kit/adapters/index` (a
-lint rule over the app's `adapters/real/`, plus a boot test that would deadlock without it); a switch set to `app`
-with no factory, or no `adapter-env` entry, fails at boot naming the port; a factory whose switch is not `app` is
-reported by `sssb doctor`, not failed (a deployment may flip the switch per environment). An app that swaps nothing
-exports two empty objects, the "unused capability = empty registration" rule (ADR-0012), which costs every existing app
-two new files on upgrade, said in the release note's "To adopt". A module-load test like the database transports' in
-`packages/kit/src/adapters/real/index.test.ts` would prove that simulated mode and a deployment without `app` load
-none of it.
+**What must be true of an app adapter, and how it is checked:**
+
+- **Its module graph never reaches `@sssb/kit/adapters/index`.** A lint rule cannot see that: ESLint reads one file at
+  a time, and the graph can reach the registry through a kit module or through the app's own registry, which the
+  app-owned adapter recipe has import SSSB's. And a blanket ban over `adapters/real/` would wrongly forbid the app's
+  own ports' adapters, which run after the registry has finished and may import it. So it is a graph check: esbuild
+  follows the literal `import()`s of `adapters.ts` and `auth-proxy.ts`, as `sssb check-real-env` already bundles with a
+  metafile, and fails when the registry is in either graph. A boot test that would deadlock without the check backs
+  it. The recipe (`docs/recipes/app-owned-adapter.md`) says where each rule applies.
+- **A switch set to `app` with no factory, or no `adapter-env` entry, fails at boot** naming the port.
+- **A factory whose switch is not `app` is a boot-time warning** from the registry: only the deployment's environment
+  knows the switch, and a deployment may flip it per environment.
+
+An app that swaps nothing exports empty objects from all three, the "unused capability = empty registration" rule
+(ADR-0012). The conformance suite's seam-map check imports every seam module the kit names, so each must exist in
+every app: three new files on upgrade, said in the release note's "To adopt". A module-load test like the database
+transports' in `packages/kit/src/adapters/real/index.test.ts` would prove that simulated mode and a deployment without
+`app` load none of it.
 
 ### 4. The port contract suite: `@sssb/kit/testing/ports`
 
@@ -211,9 +230,11 @@ out by name with a reason and guarded against skipping, as the conformance suite
   directory of its own (`tests/ports/`), which an adopter's CI runs with a dev account's secrets, or a person runs at
   cutover. Without credentials it fails unless the app opts out with a reason naming the open cutover row; a suite that
   skips quietly when a secret is missing would be the vacuous gate this repository keeps refusing.
-- **`sssb doctor`** fails when the app registers a factory for a port and no Vitest config runs that port's suite, less
-  named opt-outs. It keys on `appAdapters` and `adapter-env`, not on `params.ports`: `packages/tools` has no reader for
-  `config/params.ts`, and a deployment that does not use `SssbApp` may never read `params.ports`. The conformance
+- **`sssb doctor`** fails when the app declares a port in `adapter-env` and no Vitest config runs that port's suite,
+  less named opt-outs. Doctor evaluates none of an app's TypeScript today (it runs `vitest list` and reads text), so it
+  would read `adapter-env` the way `sssb check-real-env` reads the real registry, bundled through esbuild. It keys on
+  that module and not on `params.ports`: `packages/tools` has no reader for `config/params.ts`, and a deployment that
+  does not use `SssbApp` may never read `params.ports`. The conformance
   register's runners are fixed at `unit` and `contract` today and register a runner's checks in one file, so the
   suites need a runner per port; that is part of the first step's cost.
 - **What a suite can assert depends on the port, and what it cannot stays a cutover row**, as it does for SSSB's own
@@ -229,7 +250,7 @@ out by name with a reason and guarded against skipping, as the conformance suite
 | errors (Sentry) | no       | already the app's                      | already                        | none              | —    |
 | storage         | optional | `s3` with an endpoint                  | yes; R2 needs a port change    | low               | 1    |
 | email, outbound | optional | `smtp`                                 | yes                            | low               | 1    |
-| email, inbound  | optional | the app's own route                    | yes, with an exemption         | very low          | 0    |
+| email, inbound  | optional | the app's own route                    | yes, with an exemption         | very low          | docs |
 | llm             | optional | `app`                                  | yes                            | medium            | 2    |
 | analytics       | optional | `app`, after its switch                | yes                            | low, but breaking | 3    |
 | jobs            | optional | `app`                                  | yes                            | medium            | 3    |
@@ -258,9 +279,10 @@ something a suite can see; deliverability stays the cutover row it is for Mailgu
 in the way: the framework's `webhooks/` exemption from `authorize(...)` admits only a handler wrapped by
 `withWebhookSecret` or `withMailgunSignature`, matched by name (`packages/kit/src/authz/route-policy.ts`), and an app's
 exemption may not overlap a framework prefix. So a Postmark route under `src/app/api/webhooks/` fails the conformance
-suite's `authz-mutations` check. Either the route lives outside `webhooks/` under an exemption of the app's own, gated
-on its verifier, or the framework's gate learns to accept an app-named verifier. The first needs no kit change and
-should be tried first; whether the app's `mustMatch` gate accepts the app's own wrapper is what that step proves. The
+suite's `authz-mutations` check. The route lives outside `webhooks/` instead, under an exemption of the app's own in
+`authz-exemptions.mjs`, gated `wrapped-by` the app's own verifier: the case `packages/kit/src/authz/app-exemptions.ts`
+documents (a `withPartnerSignature` example) and its tests cover. The gate matches the wrapper by name only, so the
+verifier's own test is what proves the signature check. No kit change is needed. The
 switch stays `mailgun` or `none`: with another provider it is `none`, which already requires no Mailgun key.
 
 **LLM.** The framework relies on: model ids being a closed union of Claude ids (`LlmModelId`,
@@ -303,7 +325,7 @@ for a locked one. It cannot run in CI without a live tenant.
 
 #### Cloudflare R2
 
-- **The route: `s3` with an endpoint** (section 1). R2's endpoint, `region: 'auto'` and an R2 access key; no app
+- **The route: `s3` with an endpoint** (section 1). R2's endpoint, `STORAGE_REGION=auto` and an R2 access key; no app
   adapter, no `app` value, no third-party contract.
 - **What R2 does implement.** Cloudflare's S3 compatibility page lists `CopyObject` with `x-amz-copy-source-if-match`,
   `HeadObject`, `ListObjectsV2` and `DeleteObjects` as implemented, so `copy`, `head`, `list` and `delete` keep their
@@ -343,14 +365,15 @@ The port's methods map onto Auth0 with work, and four things do not map without 
 - **The proxy.** Auth0's Next.js SDK (v4) also runs as middleware in the request proxy, where it mounts its `/auth/*`
   routes and keeps the session cookie. `withAuthProxy` would read `AUTH_PROVIDER` and, for `app`, load the `proxy`
   factory, without loading the registry, which the proxy must not (`packages/kit/src/adapters/run-mode.ts` exists for
-  that reason). So the `proxy` factory lives in a module of its own that imports nothing of the app's registry either.
+  that reason). So the middleware comes from a seam module of its own, `@sssb/app-config/auth-proxy` (section 3), whose graph
+  must not reach the registry either.
 - **The rest of the Clerk wiring** (section 5): the static import, the in-process runner's `realAuth`, the
   unconditional `CLERK_*` settings. Each is a kit change.
 - **Costs no suite measures.** `getMember` runs on every request that arrives without a session; on Clerk it is three
   API calls, and an Auth0 adapter would make its calls to the Management API, under that API's rate limits, so it will
   likely need a short cache, and the cutover row has to measure it.
 - **Verdict:** feasible, after two port changes (sign-in as a slot that may redirect, sign-out returning a
-  destination), the proxy factory, the Clerk wiring made conditional, and the ADR-0003 addendum. Build it when an
+  destination), the `auth-proxy` seam module, the Clerk wiring made conditional, and the ADR-0003 addendum. Build it when an
   adopter needs a provider other than Clerk, not before.
 
 #### Another email or LLM provider
@@ -408,7 +431,8 @@ The honest answer is that this is not an adapter, and the reason is the tenancy 
     - the only migration entry point SSSB ships is a Lambda handler that reads its credentials from AWS Secrets
       Manager (`packages/kit/src/adapters/real/migrate-handler.ts`), so a host off AWS needs a migrate command SSSB
       does not have yet;
-    - real mode requires `AWS_REGION` today, and `STORAGE_BUCKET` until the sibling's storage switch lands;
+    - real mode requires `AWS_REGION` today (storage's region and the CodeBuild runner read it), and `STORAGE_BUCKET`
+      until the sibling's storage switch lands;
     - `SssbApp` always builds Aurora, so a non-AWS Postgres is deployed by the adopter's own infrastructure, which
       `databaseNameFor` already allows for;
     - the `pg` adapter itself is `AUTHORED — CUTOVER`, never run against a deployed database, so none of this is proven
@@ -431,25 +455,26 @@ The honest answer is that this is not an adapter, and the reason is the tenancy 
   choice.
 - **ADR-0011:** Mailgun is the default; `smtp` covers other outbound providers; another inbound provider is the app's
   route outside `webhooks/`.
-- **ADR-0012:** the seam gains `@sssb/app-config/adapter-env` and `@sssb/app-config/adapters`. The line does not move:
+- **ADR-0012:** the seam gains `@sssb/app-config/adapter-env`, `@sssb/app-config/adapters` and
+  `@sssb/app-config/auth-proxy`. The line does not move:
   the app's adapter is app code, and the kit reaches it only through the seam.
 - **ADR-0014:** the published surface gains `@sssb/kit/testing/ports` and the adapters type; the required-environment
   snapshot gains the new choices (a `minor` change each).
 
 ### 8. Order
 
-0. **Now, without accepting this ADR:** say in the adopter reference that error tracking is already the app's, and how
-   an inbound route for another provider is exempted, once a route outside `webhooks/` has been proven to pass
-   `authz-mutations`.
+0. **Now, without accepting this ADR:** the analytics patch (real mode without a key gets a no-op, never the fake),
+   checked on a deployment first; and, in the adopter reference, that error tracking is already the app's and how an
+   inbound route for another provider is exempted outside `webhooks/`.
 1. **The protocol choices, each when an adopter asks:** `s3` with an endpoint (and, for R2, the upload target's PUT
    form), and `smtp`. Each with its suite run against the fake and the protocol's stand-in.
-2. **The `app` mechanism, proven on the LLM**, whose suite has substance and whose adapter needs no other port: both
-   seam modules, the full factory signature for every port, the registry's hook, the lint rule and the boot test that
-   keep app adapters out of the registry's graph, the per-port runner, the doctor check, and the LLM suite. A scratch
+2. **The `app` mechanism, proven on the LLM**, whose suite has substance and whose adapter needs no other port: all
+   three seam modules, the full factory signature for every port, the registry's hook, the graph check and the boot
+   test that keep app adapters out of the registry's graph, the per-port runner, the doctor check, and the LLM suite. A scratch
    adapter in a pack-and-consume shape would show an app can register one, as that script already proves an app-owned
    adapter.
 3. **Analytics** (its switch first, a breaking change) **and jobs**, whose suite has to model an asynchronous runner.
-4. **Auth**, when an adopter needs it: the two port changes, the proxy factory, the Clerk wiring made conditional, and
+4. **Auth**, when an adopter needs it: the two port changes, the `auth-proxy` seam module, the Clerk wiring made conditional, and
    the ADR-0003 addendum.
 5. **Never, under this ADR: the database engine.** A migrate command for Postgres hosts off AWS is its own step, when an
    adopter needs one.
@@ -493,7 +518,7 @@ The honest answer is that this is not an adapter, and the reason is the tenancy 
   note's "To adopt" says what each app adapter must add. This is the largest cost, and it is permanent, which is why the
   protocol choices come first and `app` is limited to the ports with no protocol.
 - The fakes get a specification, which they lack today, and SSSB's own real adapters get a suite to run at cutover.
-- Two new seam modules in every app, empty for most.
+- Three new seam modules in every app, empty for most.
 - The database answer is a firm no to a different engine, stated with its reason, and a conditional yes to another
   Postgres host, with its conditions named.
 - Auth stays the hardest swap; the proposal does not pretend otherwise, and ADR-0003 is amended rather than worked
