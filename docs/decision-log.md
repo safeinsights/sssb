@@ -5825,3 +5825,61 @@ public GitHub release of `safeinsights/sssb`, marked Latest while it is the newe
 - **The fake `gh` the prerelease job's test used moved to `tests/support/fake-gh-release.ts`**, shared with the new
   job's test, and reads a boolean flag as gh does (`--x`, `--x=true`, `--x=false`), so `--prerelease=false` and
   `--latest` are told apart.
+
+## Real mode requires only the optional ports an app uses, and jobs can run without CodeBuild (2026-11-19, `fix/kit-optional-real-ports`)
+
+Pages, SSSB's first adopter, prepared its first real-mode deployment and found that real mode refused to start
+without LLM, Mailgun and CodeBuild settings it does not use (it filled them with a placeholder), and that SSSB's only
+real job runner was CodeBuild, so its scheduled maintenance could not run through SSSB's scheduler (it ticks its own
+route from a ticker Lambda instead).
+
+- **The declaration is a switch per optional port, set by the deployment from `params.ports`**, exactly as
+  `DATABASE_TRANSPORT` is set from `params.database.transport`: `LLM_PROVIDER` (`anthropic` | `none`),
+  `EMAIL_PROVIDER` (`mailgun` | `none`), `INBOUND_EMAIL_PROVIDER` (`mailgun` | `none`), `JOBS_RUNNER` (`codebuild` |
+  `in-process` | `none`), in `packages/kit/src/adapters/real/optional-ports.ts`; `SssbApp` sets each one `params.ports`
+  names. Rejected: **a new `@sssb/app-config/*` module** declaring the ports, which every adopter's build would have
+  to add before it compiled again (a seam module cannot be optional), for a choice that is a deployment's as much as
+  the code's (the job runner decides what infrastructure exists); and **deriving it from what the app registers**,
+  which cannot be done: the framework's own invitations and notifications send mail whatever the seam says, and an
+  app's route can import `llm` from the registry with nothing registered.
+- **An unset switch is today's behaviour** (every optional port on, CodeBuild the runner), so a deployment that sets
+  none boots exactly as it did; `required-env.json` keeps the defaults per transport and adds, under `ports`, what each
+  choice requires. Rejected: **defaulting to off**, which would boot an existing deployment with ports it uses absent.
+- **Inbound email is its own switch**, not part of `email`: an app may send mail and receive none (the starter does),
+  and the signing key is a separate cutover row (`email-inbound`). Without the key the inbound route refuses every
+  request, as before, so turning it off fails closed.
+- **`WEBHOOK_SECRET` stays required whatever the switches say.** The cron route and the jobs webhook both verify it,
+  and an app with no jobs may still tick its outbound webhook deliveries. Rejected: tying it to `JOBS_RUNNER`.
+- **An absent port is an object whose every call throws `AbsentPortError`**, naming the port, its switch and its
+  cutover rows (`packages/kit/src/adapters/real/absent.ts`). Rejected: **leaving the registry's export undefined or
+  nullable**, which would change the type of `llm`, `email` and `jobs` for every caller to serve the case that should
+  never be called. `stream` throws when called, before anything is streamed.
+- **The optional adapters are dynamic imports in `createRealPorts`**, as the Data API transport already was, so a port
+  switched off never loads its vendor's SDK; the registry test counts the loads.
+- **The CodeBuild-free runner is `JOBS_RUNNER=in-process`**: `start` runs the job's handler in the server, now, and
+  records its terminal status and notifies before it returns. The executor is shared with the simulated adapter
+  (`packages/kit/src/jobs/run-in-process.ts`), which ran the same steps inline. Rejected: **leaving the job queued for
+  the next tick to drain**, which adds a second queue, a time budget per tick and a wait of up to a tick for a job a
+  user just submitted, for the case (long work) that belongs on CodeBuild anyway. The limit, recorded where it is
+  chosen: a job shares its invocation's time limit (30 seconds on `SssbApp`).
+- **The default runner stays `codebuild`; the starter declares `in-process`**, with `llm: 'none'` and
+  `inboundEmail: 'none'`: it has no jobs webhook route for a build to complete through, no model call and no inbound
+  route, so those are what is true of it. A generated app therefore needs no build project to run its jobs.
+- **The scheduled tick is `SssbApp`'s `scheduledTick: { webhookSecret, every? }`, opt-in.** An EventBridge rule
+  (every five minutes by default) runs a function that reads the secret and invokes the server directly with a Function
+  URL event for `/api/webhooks/cron`, which the Lambda Web Adapter serves like any request; the route stays behind
+  `withWebhookSecret`. Rejected: **POSTing through CloudFront**, which today refuses an unsigned POST (the sibling fix
+  `fix/cdk-function-url-post` addresses it) and would make the tick depend on that; **signing a request to the Function
+  URL**, which needs a SigV4 signer the runtime does not provide as a public module; **an EventBridge API destination
+  and connection**, which needs the secret's value at deploy time; and **on by default with a generated secret**: the
+  construct never puts a secret's value in an environment (pages keeps its secrets by ARN), so the server could not know
+  a secret the construct made, and every tick would be a 401.
+- **The tick's function may read that one secret and invoke the server's function and its versions**, nothing else,
+  runs outside any VPC (it calls AWS APIs only), and is not retried: the next tick runs on schedule, and two ticks never
+  double-spawn a schedule.
+- **The kit's changeset files `minor` with Action `optional`.** The snapshot changed, which the gate requires a minor
+  for, but nothing an existing deployment sets becomes required: Action `required` would tell an adopter something
+  breaks when nothing does.
+- **Not verified live** (no AWS calls): that the Lambda Web Adapter answers a direct invocation carrying a Function URL
+  event as it answers the URL, and the in-process runner on a deployed server. Both are in the `scheduled-tick` and
+  `job-runner` rows' proofs.

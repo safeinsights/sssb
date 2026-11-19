@@ -32,6 +32,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   tests and in the app-root tool configs (Playwright, Vite). Every other module imports the resolved value: deployment
   parameters from `config/params.ts`, the run mode from `isSimulated`.
 - Deployment and service parameters exist only in `config/params.ts`. Secret values never enter the repository.
+- Declare which of SSSB's optional ports the app uses in `config/params.ts`'s `ports` (`llm`, `email`, `inboundEmail`,
+  `jobs`). A port the app does not use is `none`, never configured with placeholder values.
 - `pnpm dev` stays hermetic: no docker, no credentials, no network. Never add `next/font/google`, telemetry, or
   anything that phones home.
 - Anything that needs real credentials, accounts or money is a row in the workspace's cutover checklist, never a
