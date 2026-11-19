@@ -6047,6 +6047,7 @@ standing rule for these sessions says.
 - **Clerk's Frontend API proxy is not provided for** (round-4 review): it would forward the stripped copy, with no body
   and no `Authorization`, but it runs only with `frontendApiProxy` set or a production key on a `.vercel.app` host,
   and SSSB sets neither. Turning it on first needs `withClerk` to leave the proxy path's request whole.
+
 ## One list of apps, and `sssb add-app` (2026-11-19, `feat/one-list-of-apps`)
 
 The adoption review's follow-up 3 (`docs/adoption-review-2026-11.md`, ranked item 3 and "What surprised" item 10):
