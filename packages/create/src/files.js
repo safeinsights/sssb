@@ -608,6 +608,10 @@ how to upgrade:
 The worked example of every capability is SSSB's own reference app:
 [\`apps/showcase\`](${sssbDoc(c, 'tree', 'apps/showcase')}).
 
+The app starts with one worked example, an Items list (a tenant-scoped table with row-level security, a paged route, a
+card and its tests). When you have read it, \`pnpm exec sssb remove-items --app ${app(c)} --drop-migrations\` takes it out in one step
+(\`--dry-run\` says what it will do; the guide, under "To remove the Items slice", says when to leave the flag off).
+
 ## Layout
 
 - \`${app(c)}/\`: the app. Its \`src/app-config/\` is the seam SSSB's framework (\`@sssb/kit\`) reads the app's

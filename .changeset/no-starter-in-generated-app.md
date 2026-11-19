@@ -1,6 +1,7 @@
 ---
 '@sssb/create': patch
 '@sssb/kit': patch
+'@sssb/tools': patch
 ---
 
 ### A generated app's port slot is its own, so it never says `starter`
