@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { orgIdForSlug } from '../db/org-lookup'
+import type { AuthPort, Membership } from '../ports/auth'
 import { tenantIdForSlug } from '../db/tenant-lookup'
 import { makeTestTmpDir } from '../testing/tmp-dir'
 
@@ -41,11 +42,42 @@ vi.mock('next-intl/server', () => ({
  * counting past the recent-items cap, snipping a long body — without giving the fixture a table to read.
  * Every test here therefore runs against this replacement, never the fixture's own registration.
  *
- * Not covered: the recipient's seed locale choosing the copy. The translation stand-in above ignores
- * `locale` and always reads the English catalog, and every recipient these tests reach is English.
+ * Not covered: the recipient's locale choosing the copy. The translation stand-in above ignores `locale` and always
+ * reads the English catalog; the one test that resolves a Spanish locale checks only that the handler asks for it.
  */
 const digest = vi.hoisted(() => ({ bodies: [] as string[] }))
 vi.mock('@sssb/app-config/digest', () => ({ digestBodies: async () => digest.bodies }))
+
+/**
+ * The run mode, switchable per test, and a guard on the seed: while `seedForbidden` is set, reading anything from
+ * `@sssb/app-config/seed` throws. The simulated world still seeds itself from it before a test starts; a deployment
+ * has no seed, so a real-mode digest must never read it.
+ */
+const mode = vi.hoisted(() => ({ simulated: true, seedForbidden: false }))
+vi.mock('../adapters/run-mode', () => ({
+    get isSimulated() {
+        return mode.simulated
+    },
+    get appMode() {
+        return mode.simulated ? 'simulated' : 'real'
+    },
+}))
+vi.mock('@sssb/app-config/seed', async (importOriginal) => {
+    // Every export behind a getter that throws while forbidden. The seeder's optional `appSeedRows` (which the
+    // fixture does not define) is listed too, since a mocked module refuses a name it does not hold.
+    const real = await importOriginal<Record<string, unknown>>()
+    const guarded: Record<string, unknown> = {}
+    for (const key of [...Object.keys(real), 'appSeedRows']) {
+        Object.defineProperty(guarded, key, {
+            enumerable: true,
+            get() {
+                if (mode.seedForbidden) throw new Error(`a real-mode digest read seed.${key}`)
+                return real[key]
+            },
+        })
+    }
+    return guarded
+})
 
 // Fake-adapter state goes to a throwaway dir before anything opens pglite or the email catch-store.
 const tmp = makeTestTmpDir('digest-email-')
@@ -58,6 +90,8 @@ afterAll(() => {
 
 beforeEach(async () => {
     digest.bodies = []
+    mode.simulated = true
+    mode.seedForbidden = false
     const { clearCaughtEmails } = await import('../adapters/fake/email')
     clearCaughtEmails()
 })
@@ -70,16 +104,52 @@ async function depotIds(): Promise<{ tenantId: string; orgId: string }> {
     return { tenantId, orgId }
 }
 
-async function runHandler(tenantId: string, orgId: string) {
+async function runHandler(
+    tenantId: string,
+    orgId: string,
+    auth?: AuthPort,
+    resolveLocale?: (userId: string) => 'en' | 'es' | undefined,
+) {
     const { fakeDb } = await import('../adapters/fake/db')
     const { fakeStorage } = await import('../adapters/fake/storage')
     const { fakeEmail } = await import('../adapters/fake/email')
     const { fakeLlm } = await import('../adapters/fake/llm')
+    const { fakeAuth } = await import('../adapters/fake/auth')
     const { digestEmailHandler } = await import('./digest-email')
-    return digestEmailHandler(
-        {},
-        { db: fakeDb, storage: fakeStorage, email: fakeEmail, llm: fakeLlm, tenantId, orgId, jobId: 'digest-test' },
-    )
+    const ctx = {
+        db: fakeDb,
+        storage: fakeStorage,
+        email: fakeEmail,
+        llm: fakeLlm,
+        auth: auth ?? fakeAuth,
+        resolveLocale,
+    }
+    return digestEmailHandler({}, { ...ctx, tenantId, orgId, jobId: 'digest-test' })
+}
+
+/** An auth port whose only answer is `listMembers`, as an identity provider's would be for `orgSlug`. */
+function providerWith(members: Membership[]): { auth: AuthPort; asked: string[] } {
+    const asked: string[] = []
+    const auth = {
+        listMembers: async (orgSlug: string) => {
+            asked.push(orgSlug)
+            return members
+        },
+    } as unknown as AuthPort
+    return { auth, asked }
+}
+
+/** Runs the handler as a deployment would: real mode, and any read of the seed throws. */
+async function runReal(tenantId: string, orgId: string, auth: AuthPort) {
+    await depotIds() // the simulated world seeds itself first, as a test's setup
+    mode.simulated = false
+    mode.seedForbidden = true
+    try {
+        return await runHandler(tenantId, orgId, auth)
+    } finally {
+        mode.seedForbidden = false
+        mode.simulated = true
+    }
 }
 
 async function sentEmails() {
@@ -133,5 +203,59 @@ describe('digestEmailHandler', () => {
         const [sent] = await sentEmails()
         expect(sent?.to).toBe(`${slug}@digest.example`)
         expect(sent?.subject).toBe('Your Unstaffed Berth digest')
+    })
+
+    it("in a deployment, addresses the provider's first active admin, and never reads the seed", async () => {
+        const { tenantId, orgId } = await depotIds()
+        const { auth, asked } = providerWith([
+            { id: 'u-invited', name: null, email: 'pending@org.test', role: 'admin', status: 'invited' },
+            { id: 'u-member', name: 'Mo', email: 'member@org.test', role: 'member', status: 'active' },
+            { id: 'u-admin', name: 'Ann', email: 'admin@org.test', role: 'admin', status: 'active' },
+        ])
+
+        await runReal(tenantId, orgId, auth)
+
+        expect(asked).toEqual(['depot'])
+        const caught = await sentEmails()
+        expect(caught.map((sent) => sent.to)).toEqual(['admin@org.test'])
+        expect(caught[0]?.subject).toBe('Your Harbor Depot digest')
+    })
+
+    it('in a deployment, falls back to the first active member when the team has no admin', async () => {
+        const { tenantId, orgId } = await depotIds()
+        const { auth } = providerWith([
+            { id: 'u-member', name: 'Mo', email: 'member@org.test', role: 'member', status: 'active' },
+        ])
+        await runReal(tenantId, orgId, auth)
+        expect((await sentEmails()).map((sent) => sent.to)).toEqual(['member@org.test'])
+    })
+
+    it('in a deployment, sends nothing to a team with no active member: never a synthetic address', async () => {
+        const { tenantId, orgId } = await depotIds()
+        const { auth } = providerWith([
+            { id: 'u-invited', name: null, email: 'pending@org.test', role: 'admin', status: 'invited' },
+        ])
+        await expect(runReal(tenantId, orgId, auth)).resolves.toEqual({})
+        expect(await sentEmails()).toEqual([])
+    })
+
+    it('in a deployment, skips a member whose identifier is not an address (a phone number, a username)', async () => {
+        const { tenantId, orgId } = await depotIds()
+        const { auth } = providerWith([
+            { id: 'u-phone', name: 'Pat', email: '+15550100', role: 'admin', status: 'active' },
+            { id: 'u-member', name: 'Mo', email: 'member@org.test', role: 'member', status: 'active' },
+        ])
+        await runReal(tenantId, orgId, auth)
+        expect((await sentEmails()).map((sent) => sent.to)).toEqual(['member@org.test'])
+    })
+
+    it("asks the runner for the chosen person's locale, where it can say it", async () => {
+        const { tenantId, orgId } = await depotIds()
+        const { auth } = providerWith([
+            { id: 'u-admin', name: 'Ann', email: 'admin@org.test', role: 'admin', status: 'active' },
+        ])
+        const asked: string[] = []
+        await runHandler(tenantId, orgId, auth, (userId) => (asked.push(userId), 'es'))
+        expect(asked).toEqual(['u-admin'])
     })
 })
