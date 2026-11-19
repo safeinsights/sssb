@@ -56,16 +56,19 @@ export interface SssbAppProps {
     /** A production deployment: the database keeps a warm writer and the data stores are retained. */
     readonly production: boolean
     /**
-     * Add `includeSubDomains` to SSSB's `Strict-Transport-Security` header (default false). It binds every subdomain
-     * of the host the app is served on to HTTPS for the header's two years, so set it only when all of them serve
-     * HTTPS. Not allowed beside `responseHeadersPolicy`, which sets its own.
+     * Send `Strict-Transport-Security` with `includeSubDomains` (default false). It binds every subdomain of the host
+     * the app is served on to HTTPS for the header's year, so set it only when all of them serve HTTPS. It needs a
+     * custom response headers policy, one of the account's 20, where the default is AWS's managed
+     * SecurityHeadersPolicy, which takes none. Not allowed beside `responseHeadersPolicy`, which sets its own.
      */
     readonly hstsIncludeSubdomains?: boolean
     /**
-     * A response headers policy of your own, used on every behavior of the distribution in place of SSSB's (HSTS for
-     * two years, nosniff, a strict-origin-when-cross-origin referrer policy, SAMEORIGIN frames).
+     * A response headers policy of your own, on the three behaviors this construct builds in place of SSSB's (AWS's
+     * managed SecurityHeadersPolicy). It replaces all of it: HSTS, nosniff, the referrer policy and frame options come
+     * from your policy or not at all. A behavior you add to the distribution yourself gets no policy unless you give
+     * it one: this property, or `responseHeadersPolicy` on the construct.
      */
-    readonly responseHeadersPolicy?: cdk.aws_cloudfront.IResponseHeadersPolicy
+    readonly responseHeadersPolicy?: cdk.interfaces.aws_cloudfront.IResponseHeadersPolicyRef
     /**
      * Run the app's scheduled work: an EventBridge rule that POSTs the app's cron route with the webhook secret, by
      * invoking the server directly. Left out, nothing in the deployment ticks it.
@@ -97,8 +100,12 @@ export declare class SssbApp extends Construct {
      * your own that reaches the server.
      */
     readonly forwardedHost: cdk.aws_cloudfront.Function
-    /** The response headers policy on every behavior: SSSB's, or the one passed as `responseHeadersPolicy`. */
-    readonly responseHeadersPolicy: cdk.aws_cloudfront.IResponseHeadersPolicy
+    /**
+     * The response headers policy on the three behaviors this construct builds: AWS's managed SecurityHeadersPolicy,
+     * the one `hstsIncludeSubdomains` builds, or the one passed as `responseHeadersPolicy`. Give it to any behavior
+     * you add.
+     */
+    readonly responseHeadersPolicy: cdk.interfaces.aws_cloudfront.IResponseHeadersPolicyRef
     readonly assetsBucket: cdk.aws_s3.Bucket
     readonly storageBucket: cdk.aws_s3.Bucket
     readonly databaseTransport: DatabaseTransport

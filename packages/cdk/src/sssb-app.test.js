@@ -21,7 +21,7 @@ import { handler as bodyHashHandler } from './assets/body-hash/index.mjs'
 import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
 import { databaseNameFor, SssbApp } from './index.js'
 import { PORT_SWITCHES } from './optional-ports.js'
-import { HSTS_MAX_AGE_SECONDS, toolsVersionProblem } from './sssb-app.js'
+import { HSTS_MAX_AGE_SECONDS, MANAGED_SECURITY_HEADERS_POLICY_ID, toolsVersionProblem } from './sssb-app.js'
 
 /** @typedef {import('@sssb/tools/assembly-checks').Resources} Resources */
 /** @typedef {'pg' | 'data-api'} Transport */
@@ -124,10 +124,11 @@ function viewerProblems(all) {
 }
 
 /**
- * What is wrong with the distribution's response headers, or nothing: every behavior carries one response headers
- * policy, the one `expected` names; and when that is SSSB's own (in this template), it sets HSTS for two years
- * (includeSubDomains as `includeSubdomains` says, never preload), nosniff, a strict-origin-when-cross-origin referrer
- * policy and SAMEORIGIN frames, each where the app's response lacks it, and no Content-Security-Policy.
+ * What is wrong with the distribution's response headers, or nothing: each of the three behaviors the construct builds
+ * carries the one response headers policy `expected` names. By default that is AWS's managed SecurityHeadersPolicy, and
+ * the template holds no custom policy. With `includeSubdomains`, it is the one custom policy the template holds: the
+ * managed policy's headers (HSTS a year, never preload; nosniff, always sent; strict-origin-when-cross-origin; SAMEORIGIN;
+ * no CSP), with HSTS's includeSubDomains. With `ownPolicyId`, it is the adopter's, and the template holds none.
  * @param {Resources} all
  * @param {{ ownPolicyId?: string, includeSubdomains?: boolean }} [expected]
  * @returns {string[]}
@@ -139,39 +140,42 @@ function securityHeadersProblems(all, { ownPolicyId, includeSubdomains = false }
     if (distributions.length !== 1) return [`one distribution, not ${distributions.length}`]
     const config = /** @type {any} */ (distributions[0]?.Properties)?.DistributionConfig
     const behaviors = [config?.DefaultCacheBehavior, ...(config?.CacheBehaviors ?? [])]
+    if (behaviors.length !== 3) problems.push(`the construct builds three behaviors, not ${behaviors.length}`)
     const policies = Object.entries(all).filter(([, r]) => r.Type === 'AWS::CloudFront::ResponseHeadersPolicy')
     /** @type {unknown} */
     let expectedId
-    if (ownPolicyId === undefined) {
-        if (policies.length !== 1)
-            return [...problems, `SSSB creates one response headers policy, not ${policies.length}`]
+    if (ownPolicyId !== undefined || !includeSubdomains) {
+        if (policies.length !== 0) problems.push(`no custom response headers policy, not ${policies.length}`)
+        expectedId = ownPolicyId ?? MANAGED_SECURITY_HEADERS_POLICY_ID
+    } else {
+        if (policies.length !== 1) return [...problems, `one custom response headers policy, not ${policies.length}`]
         const [id, policy] = /** @type {[string, any]} */ (policies[0])
         expectedId = { Ref: id }
         const security = policy.Properties?.ResponseHeadersPolicyConfig?.SecurityHeadersConfig ?? {}
         const hsts = security.StrictTransportSecurity
         if (
             hsts?.AccessControlMaxAgeSec !== HSTS_MAX_AGE_SECONDS ||
-            hsts?.IncludeSubdomains !== includeSubdomains ||
-            hsts?.Preload !== false
+            hsts?.IncludeSubdomains !== true ||
+            hsts?.Preload !== false ||
+            hsts?.Override !== false
         ) {
             problems.push(
-                `HSTS is max-age=${HSTS_MAX_AGE_SECONDS}, includeSubDomains ${includeSubdomains}, no preload ` +
-                    `(got ${JSON.stringify(hsts)})`,
+                `HSTS max-age=${HSTS_MAX_AGE_SECONDS}; includeSubDomains, no preload, yielding (got ${JSON.stringify(hsts)})`,
             )
         }
-        if (security.ContentTypeOptions === undefined) problems.push('X-Content-Type-Options: nosniff')
-        if (security.ReferrerPolicy?.ReferrerPolicy !== 'strict-origin-when-cross-origin') {
-            problems.push('Referrer-Policy: strict-origin-when-cross-origin')
+        if (security.ContentTypeOptions?.Override !== true)
+            problems.push('X-Content-Type-Options: nosniff, always sent')
+        if (
+            security.ReferrerPolicy?.ReferrerPolicy !== 'strict-origin-when-cross-origin' ||
+            security.ReferrerPolicy?.Override !== false
+        ) {
+            problems.push('Referrer-Policy: strict-origin-when-cross-origin, yielding')
         }
-        if (security.FrameOptions?.FrameOption !== 'SAMEORIGIN') problems.push('X-Frame-Options: SAMEORIGIN')
+        if (security.FrameOptions?.FrameOption !== 'SAMEORIGIN' || security.FrameOptions?.Override !== false) {
+            problems.push('X-Frame-Options: SAMEORIGIN, yielding')
+        }
         if (security.ContentSecurityPolicy !== undefined) problems.push('no Content-Security-Policy')
-        const overriding = Object.entries(security).filter(([, header]) => /** @type {any} */ (header)?.Override)
-        if (overriding.length > 0) {
-            problems.push(`a header the app sets wins (Override false): ${overriding.map(([name]) => name).join(', ')}`)
-        }
-    } else {
-        if (policies.length !== 0) problems.push('SSSB creates no response headers policy beside the adopter’s')
-        expectedId = ownPolicyId
+        if (security.XSSProtection !== undefined) problems.push('no X-XSS-Protection')
     }
     for (const b of behaviors) {
         if (JSON.stringify(b?.ResponseHeadersPolicyId) !== JSON.stringify(expectedId)) {
@@ -987,11 +991,14 @@ describe("the distribution's security headers", () => {
     const slug = /** @type {string} */ (
         /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
     )
-    /** @param {Partial<import('./index.d.ts').SssbAppProps>} props */
-    const templateWith = (props) => {
+    /**
+     * The template of an SssbApp given `props`; `ownPolicy` passes an imported policy of the adopter's.
+     * @param {Partial<import('./index.d.ts').SssbAppProps>} props
+     * @param {boolean} [ownPolicy]
+     */
+    const templateWith = (props, ownPolicy = false) => {
         const app = new cdk.App({ outdir: makeTestTmpDir('sssb-cdk-'), context: { 'aws:cdk:bundling-stacks': [] } })
         const stack = new cdk.Stack(app, 'Headers')
-        const passesOwn = props.responseHeadersPolicy !== undefined
         new SssbApp(stack, 'Default', {
             appDir,
             slug,
@@ -999,7 +1006,7 @@ describe("the distribution's security headers", () => {
             environment: 'Staging',
             production: false,
             ...props,
-            ...(passesOwn
+            ...(ownPolicy
                 ? {
                       responseHeadersPolicy: cdk.aws_cloudfront.ResponseHeadersPolicy.fromResponseHeadersPolicyId(
                           stack,
@@ -1012,25 +1019,35 @@ describe("the distribution's security headers", () => {
         return /** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources'])
     }
 
-    it('add includeSubDomains to HSTS only when the adopter asks', () => {
+    it("are AWS's managed policy by default, a custom one only when the adopter asks for includeSubDomains", () => {
+        expect(securityHeadersProblems(templateWith({}))).toEqual([])
+        expect(securityHeadersProblems(templateWith({ hstsIncludeSubdomains: false }))).toEqual([])
         expect(
             securityHeadersProblems(templateWith({ hstsIncludeSubdomains: true }), { includeSubdomains: true }),
         ).toEqual([])
-        expect(securityHeadersProblems(templateWith({ hstsIncludeSubdomains: false }))).toEqual([])
     })
 
-    it("are the adopter's own policy, on every behavior, when one is passed", () => {
-        const all = templateWith({ responseHeadersPolicy: /** @type {any} */ ({}) })
-        expect(securityHeadersProblems(all, { ownPolicyId: 'own-policy-id' })).toEqual([])
+    it("are the adopter's own policy, on each behavior, when one is passed", () => {
+        expect(securityHeadersProblems(templateWith({}, true), { ownPolicyId: 'own-policy-id' })).toEqual([])
+    })
+
+    it('take a null as left out', () => {
+        const none = /** @type {any} */ (null)
+        expect(
+            securityHeadersProblems(templateWith({ responseHeadersPolicy: none, hstsIncludeSubdomains: none })),
+        ).toEqual([])
+        // A null policy is no policy of the adopter's, so includeSubDomains beside it is SSSB's to build.
+        const all = templateWith({ responseHeadersPolicy: none, hstsIncludeSubdomains: true })
+        expect(securityHeadersProblems(all, { includeSubdomains: true })).toEqual([])
     })
 
     it('refuse an includeSubDomains that is not a boolean, or one beside a policy of the adopter’s', () => {
         expect(() => templateWith({ hstsIncludeSubdomains: /** @type {any} */ ('yes') })).toThrow(
             /hstsIncludeSubdomains must be true or false/,
         )
-        expect(() =>
-            templateWith({ hstsIncludeSubdomains: false, responseHeadersPolicy: /** @type {any} */ ({}) }),
-        ).toThrow(/with responseHeadersPolicy, set Strict-Transport-Security in that policy/)
+        expect(() => templateWith({ hstsIncludeSubdomains: false }, true)).toThrow(
+            /with responseHeadersPolicy, set Strict-Transport-Security in that policy/,
+        )
     })
 })
 
@@ -1051,6 +1068,8 @@ describe("the forwarded-host function's name", () => {
             params: { database: { transport: 'data-api' } },
             environment: 'Staging',
             production: false,
+            // The custom response headers policy, whose name is account-wide too.
+            hstsIncludeSubdomains: true,
         })
         const all = Object.values(/** @type {Resources} */ (Template.fromStack(stack).toJSON()['Resources']))
         const fns = all.filter((r) => r.Type === 'AWS::CloudFront::Function')

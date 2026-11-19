@@ -235,8 +235,14 @@ function stagedBundle(fn) {
 
 export { databaseNameFor } from './database-name.js'
 
-/** HSTS's max-age: two years, the figure browsers' preload lists ask for and MDN recommends. */
-export const HSTS_MAX_AGE_SECONDS = 63_072_000
+/**
+ * HSTS's max-age in the policy `hstsIncludeSubdomains` builds: a year, as AWS's managed SecurityHeadersPolicy sends, so
+ * opting into includeSubDomains changes nothing else.
+ */
+export const HSTS_MAX_AGE_SECONDS = 31_536_000
+
+/** AWS's managed SecurityHeadersPolicy (CloudFront's guide, "Use managed response headers policies"). */
+export const MANAGED_SECURITY_HEADERS_POLICY_ID = '67f7725c-6f97-4210-82d7-5512b31e9d03'
 
 /** After every tag aspect: CDK's own run at `AspectPriority.MUTATING` (200) or the default (500). */
 const MIRROR_PRIORITY = 900
@@ -334,14 +340,16 @@ export class SssbApp extends Construct {
             throw new Error(`SssbApp: production must be true or false (got ${JSON.stringify(props.production)})`)
         }
         const isProd = props.production
-        // HSTS's includeSubDomains binds every subdomain of the adopter's domain to HTTPS for two years, so it is theirs
-        // to switch on, in SSSB's policy; with a policy of their own, HSTS is that policy's.
-        if (props.hstsIncludeSubdomains !== undefined && typeof props.hstsIncludeSubdomains !== 'boolean') {
+        // HSTS's includeSubDomains binds every subdomain of the adopter's domain to HTTPS for the header's year, so it
+        // is theirs to switch on; with a policy of their own, HSTS is that policy's. `null` is taken as left out, as
+        // `??` takes it.
+        const ownResponseHeadersPolicy = props.responseHeadersPolicy ?? undefined
+        if (props.hstsIncludeSubdomains != null && typeof props.hstsIncludeSubdomains !== 'boolean') {
             throw new Error(
                 `SssbApp: hstsIncludeSubdomains must be true or false (got ${JSON.stringify(props.hstsIncludeSubdomains)})`,
             )
         }
-        if (props.responseHeadersPolicy !== undefined && props.hstsIncludeSubdomains !== undefined) {
+        if (ownResponseHeadersPolicy !== undefined && props.hstsIncludeSubdomains != null) {
             throw new Error(
                 "SssbApp: hstsIncludeSubdomains configures SSSB's own response headers policy; with " +
                     'responseHeadersPolicy, set Strict-Transport-Security in that policy instead',
@@ -642,37 +650,40 @@ export class SssbApp extends Construct {
         })
 
         // ---- the response's security headers (response headers policy) -----------------------
-        // On every behavior, so on the app's pages and the static files alike. Each header is added where the
-        // response lacks it; one the app sets itself wins (`override: false`), so an app that must be framed by
-        // another site says so with its own CSP `frame-ancestors`, which browsers prefer to X-Frame-Options.
-        // - Strict-Transport-Security, two years (`max-age=63072000`), without includeSubDomains unless the adopter
-        //   asks (`hstsIncludeSubdomains`), never `preload` (a submission to browsers' lists is the domain owner's).
-        // - X-Content-Type-Options: nosniff. The deploy pipeline must upload the static files with their real
-        //   Content-Type, or a browser refuses a script served as something else.
-        // - Referrer-Policy: strict-origin-when-cross-origin, browsers' own default, stated.
-        // - X-Frame-Options: SAMEORIGIN, refusing other sites' frames (clickjacking) and keeping the app's own.
-        // No Content-Security-Policy: one that fits every app would allow everything. An adopter's own policy
-        // (`responseHeadersPolicy`, as pages has) replaces this one on every behavior.
+        // On the three behaviors this construct builds, so on the app's pages and the static files alike. By default
+        // AWS's managed SecurityHeadersPolicy: it takes none of the account's 20 custom response headers policies, a
+        // quota one per deployment (each preview environment, say) would soon exhaust. It sets HSTS for a year
+        // without includeSubDomains or preload, X-Content-Type-Options: nosniff, Referrer-Policy:
+        // strict-origin-when-cross-origin, X-Frame-Options: SAMEORIGIN and the legacy X-XSS-Protection: 1;
+        // mode=block, each yielding to the app's own header but nosniff, which it always sends (CloudFront's guide,
+        // "Use managed response headers policies"). So an app that must be framed by another site sends its own CSP
+        // `frame-ancestors`, which browsers prefer to X-Frame-Options; and the deploy pipeline must upload the static
+        // files with their real Content-Type, or a browser refuses a script stored as something else.
+        // `hstsIncludeSubdomains: true` needs HSTS the managed policy cannot send: then a custom policy, the same but
+        // for includeSubDomains (and without the legacy header), takes one of those 20. An adopter's own policy
+        // (`responseHeadersPolicy`) replaces both, on these three behaviors.
         const responseHeadersPolicy =
-            props.responseHeadersPolicy ??
-            new aws_cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
-                responseHeadersPolicyName: accountUniqueName('headers'),
-                comment: `${slug}: HSTS and safe security headers (SssbApp)`,
-                securityHeadersBehavior: {
-                    strictTransportSecurity: {
-                        accessControlMaxAge: cdk.Duration.seconds(HSTS_MAX_AGE_SECONDS),
-                        includeSubdomains: props.hstsIncludeSubdomains ?? false,
-                        preload: false,
-                        override: false,
-                    },
-                    contentTypeOptions: { override: false },
-                    referrerPolicy: {
-                        referrerPolicy: aws_cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
-                        override: false,
-                    },
-                    frameOptions: { frameOption: aws_cloudfront.HeadersFrameOption.SAMEORIGIN, override: false },
-                },
-            })
+            ownResponseHeadersPolicy ??
+            (props.hstsIncludeSubdomains === true
+                ? new aws_cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
+                      responseHeadersPolicyName: accountUniqueName('headers'),
+                      comment: `${slug}: SecurityHeadersPolicy's headers, with HSTS includeSubDomains (SssbApp)`,
+                      securityHeadersBehavior: {
+                          strictTransportSecurity: {
+                              accessControlMaxAge: cdk.Duration.seconds(HSTS_MAX_AGE_SECONDS),
+                              includeSubdomains: true,
+                              preload: false,
+                              override: false,
+                          },
+                          contentTypeOptions: { override: true },
+                          referrerPolicy: {
+                              referrerPolicy: aws_cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+                              override: false,
+                          },
+                          frameOptions: { frameOption: aws_cloudfront.HeadersFrameOption.SAMEORIGIN, override: false },
+                      },
+                  })
+                : aws_cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS)
 
         // ---- cloudfront ---------------------------------------------------------------------
         // First deploys ride *.cloudfront.net; custom domains + certs are cutover row
