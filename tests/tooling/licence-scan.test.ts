@@ -87,6 +87,11 @@ describe('evaluate', () => {
         expect(result.violations.map((v) => v.name)).toEqual(['sentry'])
     })
 
+    it('holds an exact exception to the exact name, not a longer one', () => {
+        const result = evaluate({ 'FSL-1.1-Apache-2.0': [{ name: 'sentry-extra', versions: ['1.0.0'] }] }, POLICY)
+        expect(result.violations.map((v) => v.name)).toEqual(['sentry-extra'])
+    })
+
     it('holds a wildcard exception to its prefix', () => {
         const result = evaluate({ 'LGPL-3.0-or-later': [{ name: '@img/other', versions: ['1.0.0'] }] }, POLICY)
         expect(result.violations.map((v) => v.name)).toEqual(['@img/other'])
