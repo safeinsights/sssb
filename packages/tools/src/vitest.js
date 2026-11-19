@@ -1,10 +1,14 @@
 // @ts-check
-// THE VITEST PRESET: one app's test project (ADR-0014 part 3).
+// THE VITEST PRESET: one app's test project (ADR-0014 part 3), and one for every app of the workspace.
 //
 //     // vitest.config.ts, at the workspace root or in the app
 //     import { defineConfig } from 'vitest/config'
 //     import { appTestProject } from '@sssb/tools/vitest'
 //     export default defineConfig({ test: { projects: [await appTestProject({ appDir: 'apps/console' })] } })
+//
+//     // vitest.config.ts, at the workspace root: a project for every app the root's `sssb.apps` names
+//     import { workspaceAppProjects } from '@sssb/tools/vitest'
+//     export default defineConfig(async () => ({ test: { projects: await workspaceAppProjects({ root: '.' }) } }))
 //
 // One project per app, because the seam is a bare specifier: whatever resolves `@sssb/app-config` can name only one
 // app (ADR-0012's reason for a project per app). The project's root is the app, its tests are the app's colocated
@@ -13,6 +17,7 @@
 // plugin and jest-dom are the app's own copies, loaded from the app's directory.
 // A guard plugin (framework-guard.js) fails a test file that loads framework source from any instance but the app's.
 import path from 'node:path'
+import { workspaceApps } from './app.js'
 import { frameworkGuard } from './framework-guard.js'
 import { importFromApp, resolveFromApp } from './kit.js'
 
@@ -52,4 +57,23 @@ export async function appTestProject({ appDir, name, include = [], alias = {}, e
             ...(env === undefined ? {} : { env }),
         },
     }
+}
+
+/** @type {import('./vitest.d.ts').workspaceAppProjects} */
+export async function workspaceAppProjects({ root, options = () => ({}) }) {
+    const workspace = path.resolve(root)
+    // The one list of the workspace's apps, as `sssb doctor`, `sssb ci` and `sssb launch-json` read it: the root
+    // package.json's `sssb.apps`, else every apps/<name> that is a package.
+    const apps = workspaceApps(workspace)
+    if (apps.length === 0) {
+        throw new Error(
+            `@sssb/tools/vitest: ${workspace} names no app (\`sssb.apps\` in its package.json, or apps/<name>): nothing to test`,
+        )
+    }
+    return Promise.all(
+        apps.map((app) => {
+            const appDir = path.join(workspace, app)
+            return appTestProject({ ...options(appDir), appDir })
+        }),
+    )
 }

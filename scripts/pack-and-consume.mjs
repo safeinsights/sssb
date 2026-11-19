@@ -24,10 +24,10 @@
 // link of the app's own `@sssb/app-config` into its own copy of the framework.
 //
 // The pages shape, laid out like the first adopter's (safeinsights/pages). The generator writes the workspace with
-// its first app (`--slug console`); the second app is the generator's app for `--slug ledger`, generated beside it and
-// moved in, with the root's app lists (`sssb.apps`, the two Vitest configs' APPS) extended as an adopter adding an app
-// extends them. Everything else below is the shape's own code and this script's instruments, never a fix to the
-// generator's output:
+// its first app (`--slug console`); the second app is written by `sssb add-app ledger`, as an adopter adds one: the
+// packed @sssb/create's starter, renamed, on a port slot of its own, named in the root's `sssb.apps`, the one list of
+// apps the generated Vitest configs read. Everything else below is the shape's own code and this script's
+// instruments, never a fix to the generator's or the command's output:
 //   apps/console   the full verify: typecheck at the ES2022 floor and with the strict-flag set on, unit
 //                  tests with the conformance suite (@sssb/kit/testing) run from the tarball, its contract
 //                  suite (@sssb/kit/testing/contract) on embedded Postgres, the migrator bundle, `next build`,
@@ -63,7 +63,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-    cpSync,
     existsSync,
     mkdirSync,
     readdirSync,
@@ -167,8 +166,8 @@ const GEN = path.join(BASE, 'generated')
 const TARBALLS = path.join(BASE, 'tarballs')
 /** The packed @sssb/create, extracted: the generator both shapes run. */
 const CREATE = path.join(BASE, 'create')
-/** Where the pages shape's second app is generated before it is moved in. */
-const LEDGER_SOURCE = path.join(BASE, 'ledger-source')
+/** The packed @sssb/tools, extracted: the `sssb add-app` the pages shape runs before its install. */
+const TOOLS = path.join(BASE, 'tools')
 const REPORTS = path.join(BASE, 'reports')
 const LOCK_SEED = path.join(REPO, 'scripts/pack-and-consume/consumer-lock.yaml')
 /**
@@ -631,34 +630,38 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         "import * as m1002 from '@/db/1002_ledger_marker'\nimport * as m1001 from './1001_items'\n",
     )
     replaceOnce(index, "    '1001_items': m1001,\n", "    '1001_items': m1001,\n    '1002_ledger_marker': m1002,\n")
+}
 
-    // A slot of its own, as docs/adopting.md tells a second app to take: both apps are made from the starter, so both
-    // declare `starter` and `sssb doctor` fails the workspace until the ledger leaves it. Its Playwright config reads
-    // the declaration, and its scripts name no slot (the starter's say `starter`, which an app on a slot of its own
-    // may not use: it would tick and test the console's port).
-    const manifestFile = path.join(dir, 'package.json')
-    const manifest = readJson(manifestFile)
-    if (manifest.sssb?.port !== 'starter')
-        fail(`the generated ledger declares port ${JSON.stringify(manifest.sssb?.port)}`)
-    manifest.sssb.port = { name: 'ledger', default: 3700 }
-    for (const [script, from, to] of [
-        ['dev', 'sssb dev-tick starter -- ', 'sssb dev-tick -- '],
-        ['tick', 'sssb tick starter', 'sssb tick'],
-    ]) {
-        if (!manifest.scripts?.[script]?.includes(from))
-            fail(`the generated ledger's ${script} script has no "${from}"`)
-        manifest.scripts[script] = manifest.scripts[script].replace(from, to)
+/**
+ * What `sssb add-app ledger` must have written, which the rest of the run then proves works (its install, typecheck,
+ * unit and contract runs, migrator bundle, lint and `sssb doctor`, which fails two apps on one port slot): the app as
+ * the generator writes one, its own slug, a port slot of its own, with scripts and a Playwright config that name no
+ * other slot (an app on a slot of its own may not use `starter`: it would tick and test the console's port), and its
+ * entry in `sssb.apps`, which the generated Vitest configs read.
+ */
+function checkAddedLedger() {
+    const dir = appDir('ledger')
+    const manifest = readJson(path.join(dir, 'package.json'))
+    if (manifest.name !== 'ledger') fail(`sssb add-app named the ledger's package ${manifest.name}`)
+    if (JSON.stringify(manifest.sssb?.port) !== JSON.stringify({ name: 'ledger', default: 3700 }))
+        fail(`sssb add-app gave the ledger the port slot ${JSON.stringify(manifest.sssb?.port)}`)
+    const starter = Object.entries(manifest.scripts ?? {}).filter(([, text]) => /\bstarter\b/.test(String(text)))
+    if (starter.length > 0)
+        fail(`the ledger's ${starter.map(([name]) => name).join(', ')} script(s) name the starter's slot`)
+    if (!readFileSync(path.join(dir, 'playwright.config.ts'), 'utf8').includes('originForApp(__dirname)'))
+        fail("the ledger's playwright.config.ts does not read its own slot (originForApp(__dirname))")
+    if (!readFileSync(path.join(dir, 'config/app.ts'), 'utf8').includes("export const APP_SLUG = 'ledger'"))
+        fail("the ledger's config/app.ts does not declare APP_SLUG 'ledger'")
+    if (readJson(path.join(dir, 'src/app-config/package.json')).name !== 'ledger-app-config')
+        fail("the ledger's seam package is not ledger-app-config")
+    const root = readJson(path.join(WS, 'package.json'))
+    if (JSON.stringify(root.sssb?.apps) !== JSON.stringify(['apps/console', 'apps/ledger']))
+        fail(`after sssb add-app, the root's sssb.apps is ${JSON.stringify(root.sssb?.apps)}`)
+    for (const config of ['vitest.config.ts', 'vitest.contract.config.ts']) {
+        const text = readFileSync(path.join(WS, config), 'utf8')
+        if (!text.includes('workspaceAppProjects(') || /\bAPPS\b/.test(text))
+            fail(`the generated ${config} keeps a list of apps of its own instead of reading sssb.apps`)
     }
-    writeJson(manifestFile, manifest)
-    // `originForApp(__dirname)` names the app wherever the config is loaded from: `pnpm knip` loads every workspace's
-    // config from the root, where a bare `originFor()` finds no app. Playwright compiles the config to CommonJS.
-    const config = path.join(dir, 'playwright.config.ts')
-    replaceOnce(
-        config,
-        "import { originFor } from '@sssb/tools/ports'",
-        "import { originForApp } from '@sssb/tools/ports'",
-    )
-    replaceOnce(config, "originFor('starter')", 'originForApp(__dirname)')
 }
 
 /**
@@ -668,26 +671,34 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 function scaffold() {
     generate(WS, ['--slug', 'console', '--name', 'Console'])
 
-    // The second app: the generator makes a workspace with one app, so the ledger is the app it generates for
-    // `--slug ledger`, moved in beside the console. The root lists its apps in three places (`sssb.apps`, which
-    // `sssb ci` and `sssb doctor` read, and each Vitest config's APPS), extended as an adopter adding an app extends
-    // them; everything else the generator wrote at the root already covers every apps/* and packages/*.
-    generate(LEDGER_SOURCE, ['--slug', 'ledger', '--name', 'Ledger'])
-    cpSync(path.join(LEDGER_SOURCE, 'apps/ledger'), appDir('ledger'), { recursive: true })
-    rmSync(LEDGER_SOURCE, { recursive: true, force: true })
+    // The second app, as an adopter adds one: `sssb add-app ledger`, the starter of the packed @sssb/create (named by
+    // `--create`: the workspace does not install it) written beside the console and named in the root's `sssb.apps`,
+    // which `sssb ci`, `sssb doctor` and the generated Vitest configs read. Run with the packed @sssb/tools' bin before
+    // the workspace's one install (the seed resolves both apps at once): the file `pnpm exec sssb` runs after it.
+    // Everything else the generator wrote at the root already covers every apps/* and packages/*.
     const root = readJson(path.join(WS, 'package.json'))
     if (JSON.stringify(root.sssb?.apps) !== JSON.stringify(['apps/console']))
         fail(`the generated root's sssb.apps is ${JSON.stringify(root.sssb?.apps)}, not ["apps/console"]`)
-    root.sssb.apps = ['apps/console', 'apps/ledger']
-    writeJson(path.join(WS, 'package.json'), root)
-    for (const config of ['vitest.config.ts', 'vitest.contract.config.ts'])
-        replaceOnce(path.join(WS, config), "const APPS = ['console']", "const APPS = ['console', 'ledger']")
+    run(
+        'node',
+        [
+            path.join(TOOLS, 'package/bin/sssb.js'),
+            'add-app',
+            'ledger',
+            '--name',
+            'Ledger',
+            '--create',
+            path.join(CREATE, 'package'),
+        ],
+        { cwd: WS },
+    )
+    checkAddedLedger()
     // ...and the sibling package's tests join the root's Vitest run, as Pages' packages/gate does.
     replaceOnce(
         path.join(WS, 'vitest.config.ts'),
-        'projects: await Promise.all(APPS.map((app) => appTestProject({ appDir: at(`./apps/${app}`) }))),',
+        "projects: await workspaceAppProjects({ root: at('.') }),",
         `projects: [
-            ...(await Promise.all(APPS.map((app) => appTestProject({ appDir: at(\`./apps/\${app}\`) })))),
+            ...(await workspaceAppProjects({ root: at('.') })),
             { test: { name: 'gate', root: at('./packages/gate'), environment: 'node' } },
         ],`,
     )
@@ -1903,6 +1914,10 @@ step('pack every @sssb package, and extract @sssb/create', () => {
     rmSync(CREATE, { recursive: true, force: true })
     mkdirSync(CREATE, { recursive: true })
     run('tar', ['-xzf', create, '-C', CREATE], { cwd: BASE })
+    // The packed @sssb/tools, extracted too: the pages shape runs its `sssb add-app` before the workspace is installed.
+    rmSync(TOOLS, { recursive: true, force: true })
+    mkdirSync(TOOLS, { recursive: true })
+    run('tar', ['-xzf', tarballs['@sssb/tools'], '-C', TOOLS], { cwd: BASE })
     console.log(
         `${path.basename(create)}: ${createFiles.length} files, ${Math.round(statSync(create).size / 1024)} KB, its template among them; no dependencies; extracted to ${path.relative(BASE, CREATE)}/`,
     )

@@ -1053,6 +1053,47 @@ export function portSlotProblems(root, apps) {
     return { problems, slots }
 }
 
+/** Where knip looks for its JSON config at a workspace root, in its own order. */
+const KNIP_JSON = ['knip.json', 'knip.jsonc', '.knip.json', '.knip.jsonc']
+
+/**
+ * KNIP'S WORKSPACES against the workspace's apps: a generated workspace's knip.json gives each app, and its seam, an
+ * entry of its own (their entry files, and the dependencies SSSB's tools load from the app), so an app it does not name
+ * is read with knip's defaults, which flag the seam's modules (the framework reads them from node_modules, which knip
+ * does not follow) and the presets' dependencies as unused. Reported, never failed: knip's own run is the gate.
+ * Returns null when the root has no knip JSON config, or one with no `workspaces` (one config for every package).
+ * @param {string} root
+ * @param {readonly string[]} apps absolute
+ * @param {readonly string[]} packages the workspace's packages, absolute (workspacePackages)
+ * @returns {{ file: string, missing: string[] } | { file: string, unread: string } | null}
+ */
+export function knipGaps(root, apps, packages) {
+    const file = KNIP_JSON.find((name) => existsSync(path.join(root, name)))
+    if (file === undefined) return null
+    let config
+    try {
+        config = JSON.parse(readFileSync(path.join(root, file), 'utf8'))
+    } catch (error) {
+        return { file, unread: error instanceof Error ? error.message : String(error) }
+    }
+    const workspaces = config?.workspaces
+    if (workspaces === null || typeof workspaces !== 'object') return null
+    const keys = Object.keys(workspaces)
+    const named = (/** @type {string} */ rel) =>
+        keys.some((key) => key === rel || path.posix.matchesGlob(rel, key.replace(/\/+$/, '')))
+    /** @type {string[]} */
+    const missing = []
+    for (const app of apps) {
+        const rel = path.relative(root, app).split(path.sep).join('/')
+        // An app at the root is knip's `.` workspace, which a config with workspaces always has a say over.
+        if (rel !== '' && !named(rel)) missing.push(rel)
+        const seam = path.join(app, 'src', 'app-config')
+        const seamRel = path.relative(root, seam).split(path.sep).join('/')
+        if (packages.includes(seam) && !named(seamRel)) missing.push(seamRel)
+    }
+    return { file, missing }
+}
+
 /** A full commit SHA, the only pin that cannot move. */
 const COMMIT = /^[0-9a-f]{40}$/
 

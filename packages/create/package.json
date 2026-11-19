@@ -12,6 +12,10 @@
     "bin": {
         "sssb-create": "./bin/create.js"
     },
+    "exports": {
+        "./package.json": "./package.json",
+        "./add-app": "./src/add-app.js"
+    },
     "files": [
         "bin",
         "src",
