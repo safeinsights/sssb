@@ -28,8 +28,10 @@ settings) is listed under "What the generator leaves for you" below.
 
 **The command above needs SSSB's first npm release** (ADR-0014's P14). Until then npm holds only placeholders under
 these names (`0.0.0`), so `pnpm create @sssb` cannot fetch the generator, and its default `--sssb` (`^` and the
-generator's own version) has no release to resolve. SSSB's releases so far are **release candidates**: GitHub
-prereleases of `safeinsights/sssb`, each with five tarballs (the four packages and the generator) and notes that say
+generator's own version) has no release to resolve. SSSB's releases so far are **release candidates**, published
+from v0.2.0-rc.1 on as GitHub prereleases of `safeinsights/sssb` (v0.2.0-rc.0 was tagged, and its notes are in the
+repository, but CI failed on its commit and nothing was published), each with five tarballs (the four packages and
+the generator) and notes that say
 how to install them. Generate from one by running its generator against its tarballs, here v0.2.0-rc.2 (take the newest
 on the repository's releases page; `gh` must be signed in, or download the five files from that page by hand):
 
@@ -742,7 +744,8 @@ and its notes are also in SSSB's repository, under `docs/releases/` (`docs/relea
 An upgrade is one change in your repository, made on a branch like any other:
 
 1. **Read the notes of every release after yours, in order.** A release candidate's notes carry only what changed
-   since the previous candidate, so going from v0.2.0-rc.0 to v0.2.0-rc.2 is reading rc.1's and then rc.2's. Every
+   since the previous candidate, so a workspace on v0.2.0-rc.1 that skips a candidate reads the skipped one's notes
+   and then the new one's; rc.1's own notes cover the changes since rc.0. Every
    entry sits in one of four sections, which are always there ("Seam changes", "Framework migrations", "Operator
    actions", "Scaffold changes to apply by hand"), or under "Other changes", and says whether its action is required,
    optional or none, what changed, what to do ("To adopt") and the local code it makes deletable ("Now deletable").
@@ -770,9 +773,8 @@ An upgrade is one change in your repository, made on a branch like any other:
    release candidate's notes name the commit ("cut from"), the installed kit records it as `commit` in its
    `dist/release.json`, and `sssb doctor` names it beside any pin that differs. Your CI and your Claude Code plugin
    are read at that commit, so a pin left behind runs the old release's checks and commands against the new
-   packages. Each person's installed copy of the plugin stays where it was installed until it is updated: run
-   `claude plugin marketplace update sssb`, then `claude plugin update sssb@sssb --scope project`, and restart
-   Claude Code.
+   packages. Then each person updates their installed plugin: `claude plugin marketplace update sssb`, then
+   `claude plugin update sssb@sssb --scope project`, and restart Claude Code (the update applies on restart).
 5. **Apply each entry's "To adopt"**, section by section:
     - **Seam changes**: what your app must say or satisfy to build (next section). `pnpm typecheck` and `pnpm lint`
       point at most of them, the conformance suite and `sssb doctor` at the rest.
@@ -825,7 +827,7 @@ has no port for).
 The docs in your workspace are yours: `README.md`, `CLAUDE.md` (your own rules, below the line that imports SSSB's
 guide), `docs/cutover-checklist.md` and `apps/<app>/DEMO-SIZE.md`. SSSB's doc set (this guide, the ADRs, the recipes,
 the runbooks, and its dated records) stays in SSSB's repository, mapped in [docs/README.md](README.md); the generator
-copies none of it, so read it there, at the release you are on.
+copies none of it but the app guide (`.claude/sssb-guide.md`), so read it there, at the release you are on.
 
 The habits worth taking with you: record unplanned decisions and hard-won lessons as they happen (SSSB keeps
 `docs/decision-log.md` and `docs/build-notes.md`, append-only, and a file of your own does the same job); amend a

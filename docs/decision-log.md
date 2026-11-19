@@ -5138,7 +5138,7 @@ parts; its body is unchanged. ADR-0014 gains a matching addendum.
   release's URLs before the first install.** The guide's pre-npm path used to be packing SSSB's packages from a
   checkout, which pins whatever commit the checkout is at, not a release. Run against a downloaded candidate (the
   generator's own `--sssb .`, as the candidate's notes say), the workspace pins the release commit, and its `file:`
-  paths name the download directory, which CI cannot see; the five dependency lines in three `package.json` files are
+  paths name the download directory, which CI cannot see; the six dependency lines in three `package.json` files are
   changed to the URLs the notes print. Tried on v0.2.0-rc.2: generated, URLs swapped, installed, `sssb doctor` all ok,
   the pins matching the kit's release stamp. **Rejected:** a generator flag taking a release's URLs, which is
   `@sssb/create` work for after P14 shows what the npm path looks like, and teaching the checkout path first. The

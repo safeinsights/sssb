@@ -26,7 +26,7 @@ const sha256 = (text) => createHash('sha256').update(text).digest('hex')
  * The app whose kit's guide is copied. The copy is the workspace's, so the command has to work where people type it,
  * the root, as `sssb doctor` does: with no `--app`, a working directory that resolves `@sssb/kit` is the app, and a
  * workspace root that does not (a generated workspace's root takes no framework) uses the workspace's first app
- * (`sssb.apps`, else `apps/*`). Every app of a workspace is on one kit version, which doctor checks.
+ * (`sssb.apps`, else `apps/*`).
  * @param {string[]} args
  * @param {string} [cwd]
  * @returns {string}

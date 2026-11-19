@@ -189,8 +189,8 @@ would be once Pages had switched (its plan's P15). The Status line above changed
 did.
 
 Both conditions are met. The generator exists: `@sssb/create` (ADR-0014 P12) writes an adopter's workspace, which
-depends on SSSB's packages by version and holds no copy of the framework, the scaffold or the docs, so there is
-nothing to merge. And the fork that fired this ADR's first trigger has switched: Pages took the first release candidate's packages in place of its
+depends on SSSB's packages by version and holds no copy of the framework or of SSSB's docs; the config and CI it writes
+are the adopter's from then on, so there is nothing to merge. And the fork that fired this ADR's first trigger has switched: Pages took a release candidate's packages in place of its
 merged keel (`safeinsights/pages#11`, v0.2.0-rc.1) and then moved to the next candidate by release
 (`safeinsights/pages#14`, v0.2.0-rc.2), both merged into its `integration` branch on 2026-11-18.
 
