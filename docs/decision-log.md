@@ -5188,6 +5188,7 @@ apps/x/…` from the root does; and a test run from `apps/x/tests` read no decla
 Not done: `.claude/future-tasks/neutral-app-port-service.md` (a neutral slot the generator writes in place of
 `starter`) still stands; this makes it buildable without a new built-in. The starter and the showcase keep their string
 declarations, so an app the generator writes is unchanged.
+
 ## The authorization scan counts a denial only where it reaches the handler's outcome (2026-11-18, `fix/authz-scan-unawaited`)
 
 The 2026-11-17 entry on the scan left a known hole to lint. A handler that calls an `async` same-file helper without
