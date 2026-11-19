@@ -20,6 +20,12 @@
 # defines `lint`, `typecheck`, `test:unit` (or `test:coverage`) and `test:contract`; and apps that each have a Playwright config and a `test:e2e` script (and a `chromium` project beside a `destructive` one),
 # and the scripts `build:demo-static`, `check:demo-size` and `e2e:demo-static`. A job
 # that finds nothing to run fails, never passes empty, and so does one that would leave an app out.
+#
+# `docs-only: true` is a fast path a caller opts into for a change it has judged can affect none of the expensive jobs
+# (SSSB's checks.yml passes it for a pull request that changes only documentation, `.github/scripts/docs-only.sh`).
+# `contract`, `e2e`, `demo-static` and `synth` then still run, each reporting under its own name, and each runs only a
+# step saying it skipped; every other job, `all-checks` included, is unchanged. A workflow-level `paths:` filter would
+# do worse: a run it skips reports nothing, and a required check that never reports stays pending.
 name: sssb app checks
 
 on:
@@ -42,6 +48,15 @@ on:
                 description: The file setup-node reads the Node version from.
                 type: string
                 default: .nvmrc
+            docs-only:
+                description: >-
+                    True when the caller has decided that this change can affect none of `contract`, `e2e`,
+                    `demo-static` and `synth`, as SSSB's own checks.yml decides for a pull request that changes only
+                    documentation. Each of those jobs still runs and reports success, but runs only the step that
+                    says it skipped. False, the default, runs everything: a caller that does not set it gets the whole
+                    run, and nothing else in this workflow changes either way.
+                type: boolean
+                default: false
 
 # The ceiling for every job: none needs more than a read of the repository.
 permissions:
@@ -82,7 +97,8 @@ jobs:
             contents: read
         services:
             postgres:
-                image: postgres:16
+                # An empty image starts no service: the docs-only fast path needs no database.
+                image: ${{ !inputs.docs-only && 'postgres:16' || '' }}
                 env:
                     POSTGRES_PASSWORD: postgres
                 ports:
@@ -91,14 +107,22 @@ jobs:
                     --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s
                     --health-retries 10
         steps:
+            - name: Skipped (docs-only change)
+              if: inputs.docs-only
+              run: echo "The change is documentation only (the caller's docs-only input), so this job skips the contract tests."
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              if: ${{ !inputs.docs-only }}
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+              if: ${{ !inputs.docs-only }}
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              if: ${{ !inputs.docs-only }}
               with:
                   node-version-file: ${{ inputs.node-version-file }}
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
+              if: ${{ !inputs.docs-only }}
             - run: pnpm exec sssb ci contract
+              if: ${{ !inputs.docs-only }}
               env:
                   CONTRACT_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
@@ -144,27 +168,36 @@ jobs:
             matrix:
                 shard: ${{ fromJson(needs.discover.outputs.e2e) }}
         steps:
+            - name: Skipped (docs-only change)
+              if: inputs.docs-only
+              run: echo "The change is documentation only (the caller's docs-only input), so this job skips this e2e shard."
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              if: ${{ !inputs.docs-only }}
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+              if: ${{ !inputs.docs-only }}
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              if: ${{ !inputs.docs-only }}
               with:
                   node-version-file: ${{ inputs.node-version-file }}
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
+              if: ${{ !inputs.docs-only }}
             # Keyed on the lockfile, which pins the Playwright version the browser build must match.
             - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              if: ${{ !inputs.docs-only }}
               id: playwright-cache
               with:
                   path: ~/.cache/ms-playwright
                   key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
             - run: pnpm exec playwright install --with-deps chromium
               working-directory: ${{ matrix.shard.app }}
-              if: steps.playwright-cache.outputs.cache-hit != 'true'
+              if: ${{ !inputs.docs-only && steps.playwright-cache.outputs.cache-hit != 'true' }}
             # A cache hit restores the browsers but not the OS packages they link against.
             - run: pnpm exec playwright install-deps chromium
               working-directory: ${{ matrix.shard.app }}
-              if: steps.playwright-cache.outputs.cache-hit == 'true'
+              if: ${{ !inputs.docs-only && steps.playwright-cache.outputs.cache-hit == 'true' }}
             - run: pnpm exec sssb ci e2e --app "$APP" ${PROJECT:+--project "$PROJECT"}
+              if: ${{ !inputs.docs-only }}
               env:
                   APP: ${{ matrix.shard.app }}
                   PROJECT: ${{ matrix.shard.project }}
@@ -174,7 +207,7 @@ jobs:
                   # this is set explicitly.
                   E2E_BUILD: '1'
             - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-              if: failure()
+              if: ${{ !inputs.docs-only && failure() }}
               with:
                   # Per shard, or every shard races for one artifact name and only one survives.
                   name: playwright-report-${{ matrix.shard.name }}
@@ -195,34 +228,44 @@ jobs:
             matrix:
                 demo: ${{ fromJson(needs.discover.outputs.demo-static) }}
         steps:
+            - name: Skipped (docs-only change)
+              if: inputs.docs-only
+              run: echo "The change is documentation only (the caller's docs-only input), so this job skips this app's static demo."
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              if: ${{ !inputs.docs-only }}
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+              if: ${{ !inputs.docs-only }}
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              if: ${{ !inputs.docs-only }}
               with:
                   node-version-file: ${{ inputs.node-version-file }}
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
+              if: ${{ !inputs.docs-only }}
             - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              if: ${{ !inputs.docs-only }}
               id: playwright-cache
               with:
                   path: ~/.cache/ms-playwright
                   key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
             - run: pnpm exec playwright install --with-deps chromium
               working-directory: ${{ matrix.demo.app }}
-              if: steps.playwright-cache.outputs.cache-hit != 'true'
+              if: ${{ !inputs.docs-only && steps.playwright-cache.outputs.cache-hit != 'true' }}
             - run: pnpm exec playwright install-deps chromium
               working-directory: ${{ matrix.demo.app }}
-              if: steps.playwright-cache.outputs.cache-hit == 'true'
+              if: ${{ !inputs.docs-only && steps.playwright-cache.outputs.cache-hit == 'true' }}
             - run: pnpm exec sssb ci demo-static --app "$APP"
+              if: ${{ !inputs.docs-only }}
               env:
                   APP: ${{ matrix.demo.app }}
             - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-              if: failure()
+              if: ${{ !inputs.docs-only && failure() }}
               with:
                   name: playwright-report-demo-static-${{ matrix.demo.name }}
                   path: ${{ matrix.demo.app }}/playwright-report/
                   retention-days: 7
             - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              if: ${{ !inputs.docs-only }}
               with:
                   name: static-demo-${{ matrix.demo.name }}
                   path: ${{ matrix.demo.app }}/dist-demo/index.html
@@ -237,14 +280,22 @@ jobs:
         permissions:
             contents: read
         steps:
+            - name: Skipped (docs-only change)
+              if: inputs.docs-only
+              run: echo "The change is documentation only (the caller's docs-only input), so this job skips the CDK synth."
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              if: ${{ !inputs.docs-only }}
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+              if: ${{ !inputs.docs-only }}
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              if: ${{ !inputs.docs-only }}
               with:
                   node-version-file: ${{ inputs.node-version-file }}
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
+              if: ${{ !inputs.docs-only }}
             - run: pnpm exec sssb ci synth --filter "$SYNTH"
+              if: ${{ !inputs.docs-only }}
               env:
                   SYNTH: ${{ inputs.synth }}
 
