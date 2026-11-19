@@ -188,6 +188,50 @@ function securityHeadersProblems(all, { ownPolicyId, includeSubdomains = false }
     return problems
 }
 
+/**
+ * Who an IAM role's trust policy lets assume it, sorted, failing closed. An `Allow` statement that grants
+ * `sts:AssumeRole` (IAM action names ignore case), with at most `sts:TagSession` and `sts:SetSourceIdentity` beside it,
+ * to an object of principals, gives each `Principal.Service` (a string or a list) as the service's name and any other
+ * kind of principal as `<kind>:<value>`. Any other `Allow` statement (another action such as
+ * `sts:AssumeRoleWithWebIdentity`, a wildcard, `NotAction`, `NotPrincipal`, `Principal: '*'`) is given whole, as
+ * `statement:<json>`, so a test that expects services alone fails on it. `Deny` statements only narrow, and are left out.
+ * @param {any} role a role's `Properties`
+ * @returns {string[]}
+ */
+function rolePrincipals(role) {
+    /** @param {unknown} value @returns {unknown[]} */
+    const asList = (value) => (value === undefined ? [] : Array.isArray(value) ? value : [value])
+    const sessionActions = ['sts:assumerole', 'sts:tagsession', 'sts:setsourceidentity']
+    /** @type {string[]} */
+    const principals = []
+    for (const statement of asList(role?.AssumeRolePolicyDocument?.Statement)) {
+        const s = /** @type {any} */ (statement)
+        if (s?.Effect === 'Deny') continue
+        const actions = asList(s?.Action).map((action) => String(action).toLowerCase())
+        const plainGrant =
+            s?.Effect === 'Allow' &&
+            s.NotAction === undefined &&
+            s.NotPrincipal === undefined &&
+            s.Principal !== null &&
+            typeof s.Principal === 'object' &&
+            !Array.isArray(s.Principal) &&
+            actions.some((action) => action === 'sts:assumerole') &&
+            actions.every((action) => sessionActions.some((allowed) => allowed === action))
+        if (!plainGrant) {
+            principals.push(`statement:${JSON.stringify(s)}`)
+            continue
+        }
+        for (const [kind, value] of Object.entries(s.Principal)) {
+            for (const v of asList(value))
+                principals.push(kind === 'Service' ? String(v) : `${kind}:${JSON.stringify(v)}`)
+        }
+    }
+    return principals.sort()
+}
+
+/** Who may assume a Lambda@Edge function's role: Lambda and Lambda@Edge, both (CloudFront's guide), and nobody else. */
+const EDGE_ROLE_PRINCIPALS = ['edgelambda.amazonaws.com', 'lambda.amazonaws.com']
+
 /** The body-hash function's source, as the construct deploys it. */
 const BODY_HASH_SOURCE = readFileSync(path.join(REPO, 'packages/cdk/src/assets/body-hash/index.mjs'), 'utf8')
 
@@ -256,8 +300,11 @@ function functionUrlOriginProblems(all, assembly) {
         problems.push('the body-hash function is x86_64 on nodejs22.x')
     }
     const role = /** @type {any} */ (all[fn?.Role?.['Fn::GetAtt']?.[0]])?.Properties
-    const trusted = JSON.stringify(role?.AssumeRolePolicyDocument ?? null)
-    if (!trusted.includes('edgelambda.amazonaws.com')) problems.push("Lambda@Edge may assume the function's role")
+    if (JSON.stringify(rolePrincipals(role)) !== JSON.stringify(EDGE_ROLE_PRINCIPALS)) {
+        problems.push(
+            `Lambda and Lambda@Edge, and nobody else, may assume the function's role (${rolePrincipals(role)})`,
+        )
+    }
     if ((fn?.Environment ?? fn?.VpcConfig ?? fn?.Layers) !== undefined) {
         problems.push('the body-hash function has no environment, VPC or layers (Lambda@Edge allows none)')
     }
@@ -835,6 +882,45 @@ describe("the server's Function URL behind CloudFront", () => {
         },
     )
 
+    it('refuses a body-hash role that anyone but Lambda and Lambda@Edge may assume, by any action', () => {
+        /** @param {(role: cdk.aws_iam.Role) => void} widen */
+        const problemsWith = (widen) => {
+            const { all, assembly } = synthesize({
+                appDir,
+                slug,
+                transport: 'data-api',
+                bundle: false,
+                configure: (app) => {
+                    const role = app.node
+                        .findAll()
+                        .find((c) => c instanceof cdk.aws_iam.Role && c.node.path.endsWith('/BodyHash/ServiceRole'))
+                    expect(role).toBeDefined()
+                    widen(/** @type {cdk.aws_iam.Role} */ (role))
+                },
+            })
+            return functionUrlOriginProblems(all, assembly)
+        }
+        /** @param {cdk.aws_iam.PolicyStatementProps} statement */
+        const adding = (statement) => (/** @type {cdk.aws_iam.Role} */ role) =>
+            role.assumeRolePolicy?.addStatements(new cdk.aws_iam.PolicyStatement(statement))
+        const wider = [
+            adding({ actions: ['sts:AssumeRole'], principals: [new cdk.aws_iam.AccountRootPrincipal()] }),
+            // Web-identity (OIDC) trust, as CDK writes it, with another action than sts:AssumeRole.
+            adding({
+                actions: ['sts:AssumeRoleWithWebIdentity'],
+                principals: [new cdk.aws_iam.FederatedPrincipal('arn:aws:iam::123456789012:oidc-provider/example')],
+            }),
+            adding({ actions: ['sts:*'], principals: [new cdk.aws_iam.AnyPrincipal()] }),
+        ]
+        for (const widen of wider) {
+            const problems = problemsWith(widen)
+            expect(problems).toHaveLength(1)
+            expect(
+                problems[0]?.startsWith("Lambda and Lambda@Edge, and nobody else, may assume the function's role"),
+            ).toBe(true)
+        }
+    })
+
     it('refuses a permission that lets anyone else invoke the server', () => {
         const { all, assembly } = synthesize({
             appDir,
@@ -972,9 +1058,9 @@ describe("the server's Function URL behind CloudFront", () => {
         ])
         const versions = Object.values(edgeResources).filter((r) => r.Type === 'AWS::Lambda::Version')
         expect(versions.map((r) => /** @type {any} */ (r).DeletionPolicy)).toEqual(['Delete'])
-        expect(JSON.stringify(Object.values(edgeResources).find((r) => r.Type === 'AWS::IAM::Role'))).toContain(
-            'edgelambda.amazonaws.com',
-        )
+        const edgeRoles = Object.values(edgeResources).filter((r) => r.Type === 'AWS::IAM::Role')
+        expect(edgeRoles).toHaveLength(1)
+        expect(rolePrincipals(edgeRoles[0]?.Properties)).toEqual(EDGE_ROLE_PRINCIPALS)
         const distribution = /** @type {any} */ (
             Object.values(west.all).find((r) => r.Type === 'AWS::CloudFront::Distribution')
         )
