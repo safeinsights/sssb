@@ -163,7 +163,7 @@ is written.
 `APP_SLUG` (in the app's `apps/<app>/config/app.ts`) is the single source of MECHANICAL identity — session and
 viewpoint cookies, the fake-auth JWT issuer, the service-token audience, webhook header names, CDK
 stack/DB/budget/tags all derive from it. Other identifiers are deliberately NEUTRAL and never need
-renaming (`APP_DATA_DIR`, the `app-simulator-*` browser keys, and the dev-server port key — see below). What is left is display copy, package naming, and the owner files.
+renaming (`APP_DATA_DIR` and the `app-simulator-*` browser keys; the dev-server port slot is named for the slug, "Port slots" below). What is left is display copy, package naming, and the owner files.
 
 The owner files route YOUR users — a security report, a code-owner review, a conduct complaint — so they must
 name you, never SSSB's maintainer. The generator writes them from its flags: `--repo` fills the advisory links in
@@ -716,7 +716,7 @@ changes go and a patch is compatible. Each release is published to npm and tagge
 `safeinsights/sssb`, and its notes are in SSSB's repository, under `docs/releases/` (`docs/releases/v0.2.0.md`, say).
 
 An upgrade is one change in your repository, made on a branch like any other. Every release's notes open with the
-section "Upgrading to this release", which carries steps 2, 3, 4 and 6 below as commands, with that release's version
+section "Upgrading to this release", which carries steps 2 to 6 below as commands, with that release's version
 in them. The steps say why each is there:
 
 1. **Read the notes of every release after yours, in order.** Every entry sits in one of four sections, which are always there ("Seam changes", "Framework migrations", "Operator
@@ -825,7 +825,7 @@ node packages/create/bin/create.js ~/acme --sssb ~/sssb-tarballs --name "Acme Re
 ## Keeping the docs honest
 
 The docs in your workspace are yours: `README.md`, `CLAUDE.md` (your own rules, below the line that imports SSSB's
-guide), `docs/cutover-checklist.md` and `apps/<app>/DEMO-SIZE.md`. SSSB's doc set (this guide, the ADRs, the recipes,
+guide), `docs/cutover-checklist.md` and `apps/<app>/DEMO-SIZE.md`. SSSB's doc set (the adoption guide and this reference, the ADRs, the recipes,
 the runbooks, and its dated records) stays in SSSB's repository, mapped in [docs/README.md](README.md); the generator
 copies none of it but the app guide (`.claude/sssb-guide.md`), so read it there, at the release you are on.
 

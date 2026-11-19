@@ -1311,5 +1311,6 @@ Adoption follow-up 1 split the adopter guide in two. `docs/adopting.md` is now a
 acts, and keeps "Upgrading by release" (the heading every generated README links). Everything else is in
 `docs/adopting-reference.md`, so the sections this ADR's body and earlier addenda cite are there: "When a release
 changes what your seam must say" (part 10), "Cutover" (the Postgres floor), "`pnpm create @sssb`" and its
-subsections, and each upgrade step's reason ("Upgrading, step by step"). `docs/decision-log.md` (2026-11-19, "The
+subsections, and each upgrade step's reason ("Upgrading, step by step"). ADR-0004's citation of "Cutover" (the
+Postgres floor) is to the reference too. `docs/decision-log.md` (2026-11-19, "The
 adoption guide is split in two") has the choices and what was rejected.
