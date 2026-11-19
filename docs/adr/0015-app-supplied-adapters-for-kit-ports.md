@@ -40,6 +40,8 @@ stay required but become swappable.
   **A different Postgres host is open, but it is not free:** genuine PostgreSQL 16 or later, an owner that may create
   roles, an application role without `BYPASSRLS`, and a way to run the migrations off AWS, which SSSB does not ship
   yet. None of it is proven on a host other than Aurora's engine.
+- **One thing to fix now, apart from this ADR:** a real deployment without a PostHog key serves the _fake_ analytics
+  adapter, which writes to a directory that is most likely read-only on Lambda (section 3).
 - **Order:** the two protocol choices (storage endpoint, SMTP), each when an adopter asks; then the `app` mechanism,
   with its full shape settled at once and proven on the LLM; then analytics and jobs; then auth, only when an adopter
   needs it. The database engine stays fixed.
