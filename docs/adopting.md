@@ -91,7 +91,8 @@ root script.
 
 1. In the directory the generator wrote, `pnpm install && pnpm dev`: the app must boot seeded and offline in under
    two minutes. That hermetic boot is the standing acceptance test; if it ever breaks, fix that first.
-2. Run the demo tour ([runbooks/demo.md](runbooks/demo.md)) once, in a checkout of SSSB: it drives the showcase.
+2. Run the demo tour ([runbooks/demo.md](runbooks/demo.md)) once, in a checkout of SSSB: it drives the showcase. (To
+   look before cloning, open the showcase's single-file demo that SSSB's README links from its latest release.)
    Fifteen minutes here saves days later: every capability you inherit is shown working. Your app has the same
    Simulator in its static demo (`pnpm build:demo-static`); on its own `pnpm dev` the panel needs route glue that only
    the showcase carries today.
