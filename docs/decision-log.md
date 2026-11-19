@@ -5236,6 +5236,7 @@ either requires a `minor` changeset; its P14 row lands them. Built as two commit
 - **Noticed, not changed:** the cluster's secret (`DbSecret…`) synthesizes with `DeletionPolicy: Delete` even when
   `production` is true, while the cluster, its instance, its subnet group and both buckets are retained. The snapshot
   records it by type, so it is covered either way; whether the secret should be retained is a question for `@sssb/cdk`.
+
 ## The authorization scan counts a denial only where it reaches the handler's outcome (2026-11-18, `fix/authz-scan-unawaited`)
 
 The 2026-11-17 entry on the scan left a known hole to lint. A handler that calls an `async` same-file helper without
