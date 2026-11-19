@@ -5871,3 +5871,55 @@ public GitHub release of `safeinsights/sssb`, marked Latest while it is the newe
 - **The fake `gh` the prerelease job's test used moved to `tests/support/fake-gh-release.ts`**, shared with the new
   job's test, and reads a boolean flag as gh does (`--x`, `--x=true`, `--x=false`), so `--prerelease=false` and
   `--latest` are told apart.
+
+## One command removes the starter's Items slice (2026-11-19, `feat/remove-starter-items`)
+
+Adoption follow-up 2 (`docs/adoption-review-2026-11.md`, ranked item 2; `.claude/future-tasks/resolved/create-blank-option.md`).
+Decided without asking, as JP's standing rule for these sessions says.
+
+- **An `sssb` command, `sssb remove-items [--app <dir>] [--drop-migrations] [--dry-run]`, and no plugin command.** CI can run
+  it, which is what makes "tested once against the starter" true: pack and consume's `generated` shape runs it on the
+  generator's output and then the workspace's own gates (`pnpm verify` and the held unit and contract runs, knip, jscpd).
+  Rejected: a plugin command (`/sssb:strip-starter`), an agent recipe no gate can run; a `--blank` generator flag, a second
+  starter shape the gates would have to keep green (the review's own recommendation); both together, two things to keep true.
+- **It applies two diffs of the starter, exactly** (`packages/tools/src/remove-items/{code,database}.patch`,
+  `exact-patch.js`), not scripted edits of TypeScript. A hunk applies only where every line it names is found once, wherever
+  it has moved to; nothing is fuzzed. A file the adopter edited inside a hunk, deleted, or that is not what the starter wrote
+  is refused, by name, with every edit computed first and **nothing written** (a dry run is the same computation).
+  Rejected: regex or AST surgery on the starter's files (the fragile part of the task, and silently wrong on an edited file);
+  whole-file replacement from a checked-in blank variant (the third app in disguise that the future task warned of, and it
+  overwrites an adopter's unrelated edit to `abilities.ts`); `git apply` (needs a repository, tolerates what it should refuse,
+  and cannot say what it would refuse before touching anything). The starter keeps its one shape; the diffs are kept true by
+  `tests/tooling/remove-items.test.ts`, which fails, naming the file, when a starter change makes one stop applying (probed:
+  a hunk dropped from the patch, and a line appended to the starter's card; both red).
+- **The rule for migrations: never delete one unless told.** A database records each migration it runs, and the migrator
+  refuses to start when a recorded one is missing from the code (the first adopter, pages, may have deployed). Without
+  `--drop-migrations` the command takes out the code and leaves `1001_items`, `1002_items_keyset_index`, `ItemsTable` and the
+  `items` RLS proofs registered, which keeps every gate green. With it, they go too: for a workspace just generated, with the
+  local `.data` deleted and the first table numbered `1001`. The two halves are one choice made once: the second half is
+  not available after the first ran alone, because its diff is made against what the first leaves; `--drop-migrations` after
+  a plain run is refused, with nothing written. Rejected: deleting the migrations by default (a deployed adopter's next
+  deploy fails); detecting a deployment from the repository (nothing in a workspace says whether a database ran a migration);
+  a database-only mode for later (a second command to keep true, for the one case where the adopter should be writing a
+  migration of their own).
+- **The result is the empty registration, proved to compile.** `AppSubjectType = never`; `appAbilityRules` keeps its four
+  parameters (the framework calls it with them) and returns false; `AppTables = Record<never, never>` (an empty interface
+  would trip `no-empty-object-type`, as `AppSubjectFields` did); an empty `appMigrations`; an empty proofs body, so
+  `pnpm test:contract` runs only the framework's half, which the command and the guide say. Typecheck, lint, knip, the conformance suite and the
+  contract runner pass on it. `DashboardScreen`'s `children` became optional for the same reason.
+- **It adds one e2e spec, `tests/e2e/dashboard.spec.ts`** (sign in as `person-owner`, reach the dashboard of `Northwind`),
+  because an app with no spec in its e2e directory fails `sssb check-e2e` and its CI shard. Rejected: leaving the directory
+  empty, and a spec per seed person.
+- **The proof is a leg of the `generated` shape in pack and consume, not a new job.** A new job is a new check name, and the
+  ruleset requires its checks by name (a settings change this work may not make). The leg runs after "every file the
+  generator wrote is unchanged", because removing the slice rewrites those files, and before the partial installs. It deletes the
+  dev database the earlier gates created (`.data` recorded `1001_items`), which is exactly what the command tells an adopter
+  to do. Rejected: a fourth shape (a second install of the same tarballs); running it in the pages shape (its ledger app's own
+  migration `COMMENT`s on `items`, so removing the table would remove its premise).
+- **`@sssb/tools` ships the two `.patch` files.** ADR-0014 part 2 says every package but the kit ships JavaScript; the rule's
+  reason is no build step, which text read at run time does not break. `toolsShippedFileProblems` names exactly these two
+  files and still fails any other. ADR-0014 has the addendum. Rejected: the diffs as JavaScript string constants (the starter's
+  backticks and `${` make that unreadable and unreviewable).
+- **Hunks are not anchored to the ends of a file.** A hunk with fewer than three lines of context sits at a file's start or
+  end, and anchoring it there refused an adopter who had added a comment above the imports. A hunk applies when what it names
+  occurs exactly once, anywhere, and a file deletion needs the file to be exactly what the starter wrote. Rejected: anchoring.

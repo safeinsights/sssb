@@ -17,6 +17,12 @@
 // of `items` stay, registered, which keeps every gate green and every recorded migration in place. Both halves are
 // one choice, made once: the second half is not available after the first ran on its own.
 //
+// KEEPING THE PATCHES TRUE. They are diffs of the starter, so a change to a starter file they touch (or to the Items
+// slice's own) fails tests/tooling/remove-items.test.ts, which names the file. Regenerate on a scratch branch off the change:
+// edit the starter into its Items-less form in two commits (the code half, then the database half), and write
+// `git diff --no-renames -U3 --relative=apps/starter <before> <after> -- apps/starter` for each into code.patch and
+// database.patch. The starter is untouched by the change itself: the scratch branch is thrown away.
+//
 // WHEN IT REFUSES. It computes every edit in memory first and writes only if every one applies. A file the starter wrote
 // and the adopter has not touched inside a hunk applies, wherever the hunk has moved to; one they edited, deleted, or
 // that is not there is named, with what is wrong, and NOTHING is written. Adopter-written code is never deleted silently.
