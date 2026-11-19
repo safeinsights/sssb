@@ -17,8 +17,8 @@ Three kinds of document live in this repo, and the difference matters because it
 A guard enforces the first distinction: `tests/docs/doc-paths.test.ts` fails the build if a doctrine doc
 cites a repo path that does not exist. Records are exempt — rewriting a dated entry to match today's tree
 would be revisionist — so their paths are corrected opportunistically, never gated. Citations of SSSB's two
-reference apps (`apps/showcase`, `apps/starter`) are checked while the app exists and pass in a tree that has
-ejected or renamed it, so a doc merged in from upstream cannot turn an adopter's gate red.
+reference apps (`apps/showcase`, `apps/starter`) are checked while the app exists and pass in a tree without it,
+where they name SSSB's app rather than the reader's (`sssb.docPaths.referenceApps` in the root `package.json`).
 
 ## Read this for X
 
@@ -28,7 +28,7 @@ By task. The list under Doctrine is by document.
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Adding a vendor adapter                           | `docs/development-approach.md`, "What the template ships", then [recipes/app-owned-adapter.md](recipes/app-owned-adapter.md) |
 | Adding a generic UI component                     | the same section's component test, then [recipes/list-kit.md](recipes/list-kit.md) as the worked case                        |
-| Adopting SSSB as a template                       | [adopting.md](adopting.md)                                                                                                   |
+| Adopting SSSB, or upgrading to a new release      | [adopting.md](adopting.md)                                                                                                   |
 | Working out why a design is the way it is         | [adr/](adr/), then [development-approach.md](development-approach.md)                                                        |
 | Adding an auth capability                         | [auth-ui-playbook.md](auth-ui-playbook.md)                                                                                   |
 | Deciding whether the template should ship a thing | [app-coverage-gaps.md](app-coverage-gaps.md)                                                                                 |

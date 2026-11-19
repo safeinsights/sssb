@@ -5237,6 +5237,56 @@ either requires a `minor` changeset; its P14 row lands them. Built as two commit
   `production` is true, while the cluster, its instance, its subnet group and both buckets are retained. The snapshot
   records it by type, so it is covered either way; whether the secret should be retained is a question for `@sssb/cdk`.
 
+## P15: ADR-0013 superseded, and the adopter guide rewritten around the generator and upgrading by release (2026-11-18, `docs/p15-adopting-by-release`)
+
+ADR-0014's P15 row. Its two dependencies are done: the generator (P12) and Pages' switch (P8:
+`safeinsights/pages#11`, v0.2.0-rc.1, and `safeinsights/pages#14`, v0.2.0-rc.2, both merged into Pages'
+`integration`). ADR-0013's Status line now says Superseded, with a dated addendum saying what replaces each of its
+parts; its body is unchanged. ADR-0014 gains a matching addendum.
+
+- **Chosen: supersede ADR-0013 now, not at the first npm release (P14).** The plan row depends on P8 and P12 only, and
+  what ADR-0013 decided (fork and merge as the way updates arrive) stopped being true for the one adopter at P8. P14
+  changes where the tarballs come from, not whether there is a merge.
+- **Chosen: before npm, generate from a release candidate's tarballs, then point the `file:` dependencies at the
+  release's URLs before the first install.** The guide's pre-npm path used to be packing SSSB's packages from a
+  checkout, which pins whatever commit the checkout is at, not a release. Run against a downloaded candidate (the
+  generator's own `--sssb .`, as the candidate's notes say), the workspace pins the release commit, and its `file:`
+  paths name the download directory, which CI cannot see; the six dependency lines in three `package.json` files are
+  changed to the URLs the notes print. Tried on v0.2.0-rc.2: generated, URLs swapped, installed, `sssb doctor` all ok,
+  the pins matching the kit's release stamp. **Rejected:** a generator flag taking a release's URLs, which is
+  `@sssb/create` work for after P14 shows what the npm path looks like, and teaching the checkout path first. The
+  checkout path stays, as a subsection for trying an unreleased commit.
+- **Chosen: the upgrade's version step says "change each version" in each `package.json`, not `pnpm up`.** The old
+  text said `pnpm up`; a URL dependency has no range for it to move, and with nothing on npm yet the npm form cannot be
+  tried. Listing the three files and the packages each declares is true for both and checkable. The generated
+  `README.md`'s shorter "Upgrading SSSB" section is left as it is: it says nothing false.
+- **Chosen: fix `sssb guide` rather than teach `--app`.** Writing the upgrade steps against a generated workspace found
+  that `pnpm exec sssb guide`, which the generated `README.md` and `CLAUDE.md` tell people to run, failed at the
+  workspace root ("does not resolve @sssb/kit"), the bug `fix/doctor-from-root` fixed for doctor. It now starts from
+  the workspace's first app the same way, saying so; an explicit `--app` is never replaced. **Rejected:** writing
+  `--app apps/<app>` into the guide alone, for the reason that entry gives, and because the shipped text would stay
+  wrong. The guide says releases up to v0.2.0-rc.2 need `--app` at the root. A changeset (`@sssb/tools`, none).
+  Seen red: the new test fails with `run` calling `takeAppDir` again, and passes with the fix.
+- **Retired from `docs/adopting.md`**: taking updates by `git merge`; "add the line upstream and take it back by
+  merge" for an `exports` entry; "don't edit SSSB's `eslint.config.mjs` … every later SSSB update would conflict";
+  "if you keep the showcase around"; the layout's `packages/kit/src` and `packages/kit/test-fixture` lines; the stale
+  claims that `next.config.ts` points next-intl at `packages/kit/src/i18n/request.ts` and that nothing typechecks an
+  app's `infra/`; and the advice on SSSB's dated records ("truncate them at the date you forked"), which the generator
+  never copies. New sections: "Upgrading by release", "Changing SSSB itself".
+- **The same fork-era advice outside the guide went too**, as doctrine must stay true: `README.md`, `CONTRIBUTING.md`
+  ("sending a fix upstream" from a fork), `docs/README.md` and `CLAUDE.md` (the doc gate's rule for reference-app
+  citations no longer argued from merged-in docs), `docs/development-approach.md`, and the two recipes that pointed at
+  ADR-0013 (`app-owned-adapter.md`, `workspace-coder.md`). `CLAUDE.md`'s "Follow the Accepted ones (0001–0014)" now
+  names 0013 as Superseded.
+- **Walked as an adopter, twice.** A workspace generated from v0.2.0-rc.2's tarballs and one generated at rc.1 and
+  upgraded to rc.2 by the new section's steps (`sssb doctor` ok, `pnpm typecheck` and `pnpm lint` green after). The
+  upgrade found the one trap the steps had in the wrong order: a workspace generated before rc.2 carries an
+  `overrides` block mapping the `@sssb/*` packages to the old tarballs, so changing the `package.json` URLs and
+  installing kept rc.1, with doctor still ok at rc.1. rc.2's notes remove the block, but as a scaffold change, which
+  step 5 applied after step 2's install. Step 2 now says to make an install-affecting scaffold change first, and to
+  check what the lockfile resolves. **Rejected:** having `sssb doctor` fail an `overrides` block for `@sssb/*`, a
+  `@sssb/tools` change worth considering separately, since an override is the adopter's own setting.
+
 ## The authorization scan counts a denial only where it reaches the handler's outcome (2026-11-18, `fix/authz-scan-unawaited`)
 
 The 2026-11-17 entry on the scan left a known hole to lint. A handler that calls an `async` same-file helper without
