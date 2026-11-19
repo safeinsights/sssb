@@ -122,9 +122,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   layout renders it, both in simulated mode only. Each handler in that route file opens with the simulated-mode 404 and
   imports SSSB's handler after it; that first line is what exempts the route from `authorize(...)`.
 - In a linked git worktree the app's ports are derived per checkout, so parallel sessions never adopt each other's dev
-  server; `pnpm exec sssb port`, run from the app, prints its port. An app declares its port slot in its package.json
-  (`"sssb": { "port": "starter" }`), and every app of a workspace needs a slot of its own: a second app declares
-  `"sssb": { "port": { "name": "ledger", "default": 3700 } }`, which `sssb doctor` checks, and reads its override from
-  `LEDGER_PORT`.
+  server; `pnpm exec sssb port`, run from the app, prints its port. An app declares its port slot in its package.json,
+  `"sssb": { "port": { "name": "ledger", "default": 3800 } }`, and reads its override from `LEDGER_PORT`; its scripts and
+  Playwright config name no slot (`sssb tick`, `sssb dev-tick`, `originForApp(__dirname)`), so they read it. Every app of
+  a workspace needs a slot of its own, which `sssb doctor` checks: `pnpm exec sssb add-app <slug>` gives a new app one.
 - Before finishing a change, run `pnpm verify` from the workspace root. Format with `pnpm lint:fix`, never by hand.
   Commit messages are conventional commits; the commit-msg hook runs commitlint.

@@ -429,13 +429,16 @@ describe('the e2e servers are started with the ticker blanked', () => {
     it.each(APP_DIRS)('apps/%s `dev` goes through the wrapper and has a `tick` script', (app) => {
         const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, 'apps', app, 'package.json'), 'utf8'))
         const scripts = manifest.scripts
-        // the PORT key (`showcase` or `starter`), a slot, not the app's name, so it survives a rename of the app
-        const key = /\bsssb dev-tick (showcase|starter) -- next dev --port/.exec(scripts.dev)?.[1]
-        expect(key, scripts.dev).toBeDefined()
+        // The ticker either names no slot, and reads the app's declaration as `sssb port` does (the starter, so that the
+        // app the generator writes from it names its slot in its package.json alone), or names the declared one.
+        const match = /\bsssb dev-tick (?:(\S+) )?-- next dev --port/.exec(scripts.dev)
+        expect(match, scripts.dev).not.toBeNull()
+        const key = match?.[1]
         // the server binds the app's declared port service (`sssb port`), which must be the one the ticker is told
         expect(scripts.dev).toContain('--port "$(sssb port)"')
-        expect(manifest.sssb?.port).toBe(key)
-        expect(scripts.tick).toBe(`sssb tick ${key}`)
+        if (key !== undefined) expect(manifest.sssb?.port).toBe(key)
+        expect(scripts.tick).toBe(key === undefined ? 'sssb tick' : `sssb tick ${key}`)
+        if (app === 'starter') expect(key).toBeUndefined()
     })
 })
 

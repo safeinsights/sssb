@@ -331,7 +331,7 @@ export async function run(args) {
 
     const left = [...added.notes, ...leftToDo(root, { slug, appDir, like })]
     console.log(`
-Added ${added.name} in ${entry}/: ${added.files.length} files, from the starter of @sssb/create ${TOOLS_VERSION}.
+Added ${added.name} in ${entry}/: ${added.files.length} files, from @sssb/create ${TOOLS_VERSION}'s template.
 Its port slot is "${portSlot.name}": port ${portSlot.default} in a main checkout, ${portSlot.name
         .toUpperCase()
         .replaceAll('-', '_')}_PORT overrides it.${listed ? ` The root's sssb.apps names it.` : ''}

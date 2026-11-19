@@ -246,42 +246,40 @@ itself Northwind Support. Nothing failed, because a default that resolves looks 
 that is right — and `sssb/no-jsx-literals`, the one rule that would have caught a raw string, cannot see
 a translated key that is merely the wrong one.
 
-**The port key keeps its old name, on purpose.** In the app the generator writes, the app's
-`package.json` still declares `"sssb": { "port": "starter" }`, its `playwright.config.ts` still calls
-`originFor('starter')`, and the override is still `STARTER_PORT`. That reads oddly and is correct: the
-keys in `@sssb/tools/ports` name a dev-server SLOT, not an app, and the app declares its slot in its own
-`package.json` (its scripts call `sssb port`, which reads the declaration), which the generator keeps when it renames the
-app: it renames only the identity listed under "What it writes", so the app's scripts also still say
-`sssb tick starter` and `sssb dev-tick starter --`. A neutral slot name in `@sssb/tools`, so that a generated app
-never says `starter`, is `.claude/future-tasks/neutral-app-port-service.md`.
-The declaration and the Playwright config that points at the server agree only because both spell the same literal. A
-per-adopter rename would add two more files to the rewrite surface for no functional gain, and a
-half-applied one produces two servers on two ports — silent wrong-app adoption, the exact failure that
-whole module exists to prevent. Read `starter` as "the second slot", or set `STARTER_PORT` and forget it.
-
-**A workspace with two apps gives each its own slot.** Both made from the starter would declare `starter` and bind one
-port: the second dev server fails to start, or, worse, the second app's e2e run adopts the first app's server. The
-second app declares a slot of its own in its `package.json`, in place of the string:
+**Your app's port slot is its own.** The keys in `@sssb/tools/ports` name a dev-server SLOT (a port in a main
+checkout, a band a linked worktree derives from), and the app declares its slot in its own `package.json`. The
+generator gives the app a slot named for its slug, at port 3700:
 
 ```json
-"sssb": { "port": { "name": "ledger", "default": 3700 } }
+"sssb": { "port": { "name": "acme", "default": 3700 } }
 ```
 
-and its `playwright.config.ts` calls `originForApp(__dirname)` (from `@sssb/tools/ports`; Playwright compiles the config to
-CommonJS) in place of `originFor('starter')`, which reads that declaration wherever the config is loaded from (`pnpm knip`
-loads it from the workspace root). `sssb port`, `sssb tick` and `sssb dev-tick` read it the same way when given no
-app argument: in the second app's scripts drop the `starter` from `sssb dev-tick starter -- next dev …` and
-`sssb tick starter` (left in, `sssb tick`, `sssb port` and `portFor('starter')` refuse: it is the first app's slot, and using it would tick and test the first app's port), or name the slot, `sssb tick ledger`. The
-override is `LEDGER_PORT` (`<NAME>_PORT`, with `-` as `_`), and a linked worktree derives the port from 20000-29999,
-keyed on the name as well as the checkout. The name is lowercase words joined by `-`; the default is an integer from 1024 to 49151
-outside the ports SSSB's own services use (3000, 3100, 3200-3599, 5439-5639, 20000-29999, 61000-61199).
-`sssb doctor` fails two apps that declare one slot, or two slots with one default, and a declaration that is not valid.
+Its override is `ACME_PORT` (`<NAME>_PORT`, with `-` as `_`), and a linked worktree derives its port from 20000-29999,
+keyed on the name as well as the checkout. A slug a slot cannot be named for (longer than 32 characters, with a doubled
+or trailing `-`, or reading a variable of SSSB's own, as `showcase` would) gives the slot `sssb-app` (`SSSB_APP_PORT`). Nothing
+else in the app names the slot: its scripts call `sssb dev-tick` and `sssb tick` with no slot, its `playwright.config.ts`
+calls `originForApp(__dirname)` (from `@sssb/tools/ports`; Playwright compiles the config to CommonJS, and the
+directory finds the app wherever the config is loaded from, the workspace root included when `pnpm knip` loads it),
+and each reads the declaration, as `sssb port` does. So renaming the slot is one edit, in `package.json`. The name is
+lowercase words joined by `-`; the default is an integer from 1024 to 49151 outside the ports SSSB's own services use
+(3000, 3100, 3200-3599, 5439-5639, 20000-29999, 61000-61199).
+
+A workspace generated before this declares SSSB's built-in slot instead, `"sssb": { "port": "starter" }` (port 3100,
+`STARTER_PORT`), and its scripts and Playwright config may still name it (`sssb tick starter`, `sssb dev-tick starter
+--`, `originFor('starter')`). That keeps working. To give the app a slot of its own, change the declaration, drop
+`starter` from those scripts, and call `originForApp(__dirname)` in place of `originFor('starter')`: an app on a slot of
+its own that still names `starter` is refused by `sssb tick`, `sssb port` and `portFor`, since it would tick and test
+another app's port.
+
+**A workspace with two apps gives each its own slot.** Two apps on one slot would bind one port: the second dev server
+fails to start, or, worse, the second app's e2e run adopts the first app's server. `sssb doctor` fails two apps that
+declare one slot, or two slots with one default, and a declaration that is not valid.
 
 **`pnpm exec sssb add-app <slug>` writes the second app** (`--name "<Name>"`, `--slot <name>` and `--port <port>` are
 optional). It takes the starter from the `@sssb/create` installed at the workspace root, at your SSSB version
 (`pnpm add -D -w @sssb/create@<version>`; the command prints the line when it is missing), renames it as the generator
 renamed your first app, and writes it under `apps/<slug>/`, taking each `@sssb` package as your first app takes it, on
-a slot of its own (named for the slug, its default the first free one from 3700 up) with the edits above made, and
+a slot of its own (named for the slug, its default the first free one from 3700 up: 3800 beside a generated app), and
 names it in the root's `sssb.apps`. Then `pnpm install` and `pnpm exec sssb doctor`, which names what the workspace
 still needs: a root Vitest config that keeps a list of apps of its own (one written before `@sssb/tools/vitest`'s
 `workspaceAppProjects`), and, as a report, a `knip.json` with no workspace for the new app and its seam (copy the first
