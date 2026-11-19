@@ -5653,7 +5653,7 @@ Closes the "Noticed, not changed" bullet in the snapshot entry above (the cluste
       and the gitleaks version from this repository when it is packed (`TemplateMeta` in
       `packages/create/src/template.js`); `.changeset/README.md` and `require-changeset.sh`'s header now say so.
 
-## Dependabot alert 82 (`minimatch`) closed by taking `typescript-eslint` 8.73 (2026-11-19, `deps/minimatch-alert-82`)
+## Dependabot alert 82 (`minimatch`) closed by taking `typescript-eslint` 8.73 (2026-11-18, `deps/minimatch-alert-82`)
 
 The 2026-11-17 dependency audit accepted GHSA-g3hv-75wg-m249 until the next `typescript-eslint` refresh ("Accepted:
 GHSA-g3hv-75wg-m249" above), because 8.73.0, published 2026-11-16, was inside the two-day release-age window. It is
@@ -5668,11 +5668,20 @@ outside it now, so this is that refresh.
 - **Fixed by raising both `typescript-eslint` ranges from `^8.72.0` to `^8.73.0`** and refreshing the lockfile
   (`pnpm update typescript-eslint -r`). 8.73.0's estree takes `minimatch` `^11.0.1`, and the lockfile no longer holds
   10.2.6 (11.0.8 and 3.1.5 remain, neither affected). No override: the fix is the parent's own range.
-- **The floor in `packages/eslint-plugin` moves too, so a changeset (patch, Kind `none`).** Leaving it at `^8.72.0` would
-  fix SSSB's lockfile only: an adopter whose lockfile holds 8.72 would stay on `minimatch` 10 until it chose to update
-  `typescript-eslint` itself. Raising a dependency's floor within the same major breaks no one.
-  `scripts/pack-and-consume/consumer-lock.yaml` was refreshed (`pnpm pack-and-consume --update-lockfile`) because the root's
-  range is part of what the generator copies into a workspace.
+- **The floor in `packages/eslint-plugin` moves too, so a changeset (patch, Kind `none`, Action `optional`).** The floor
+  alone does not fix an adopter: `@sssb/create` also writes `typescript-eslint` into the workspace root's
+  `devDependencies` at this repository's root range (`ROOT_DEV_DEPENDENCIES` in `packages/create/src/template.js`), so a
+  workspace generated at 0.2.0 or earlier holds 8.72 and `minimatch` 10 through its own range, and on upgrading the plugin
+  would gain a second, fixed copy beside it. The changeset therefore tells that adopter to raise its root range in the same
+  change. The floor still earns its place: a workspace that lists no `typescript-eslint` of its own, and every one
+  generated from now on (the generator reads the root's range), takes 8.73 or later. Raising a dependency's floor within
+  the same major breaks no one.
+- **`scripts/pack-and-consume/consumer-lock.yaml` was refreshed** (`pnpm pack-and-consume --update-lockfile`) because the
+  root's range is part of what the generator copies into a workspace. The refresh re-resolved more than that range, all
+  inside existing ranges: `@clerk/*` patch and minor releases, `minimatch` 11.0.8 → 11.0.9, two browser-data packages, and
+  `@sssb/cdk`'s peer `@sssb/tools` 0.2.0-rc.1 → 0.2.0, stale since the release commit.
+- **Checked against 8.73:** `docs/build-notes.md` warns to re-check the `TSImportType` `node.source` shape on a
+  `typescript-eslint` other than 8.72; `tests/lint` and `packages/eslint-plugin`'s suites pass on 8.73.0.
 - **Rejected: a `pnpm.overrides` entry forcing `minimatch` 11 onto 8.72's estree.** It forces a new major onto a
   parent that declared `^10.2.2`, on the strength of nothing but the advisory, and would have to be removed later; the
   parent's own release does the same without one. (The 2026-11-17 entry rejected it for the same reason.)
