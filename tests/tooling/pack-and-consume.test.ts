@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
@@ -1022,5 +1023,147 @@ describe('cdkPackProblems', () => {
         expect(cdkPackProblems(manifest({ peerDependencies: plugin }), FILES)).toEqual([
             "peerDependencies names @sssb/eslint-plugin: @sssb/cdk's one SSSB peer is @sssb/tools",
         ])
+    })
+})
+
+/**
+ * The registry recipe's pure helpers live in the script itself, which runs a whole job when imported: the text between
+ * its two markers is loaded as a module of its own.
+ */
+const registryHelpers = await (async () => {
+    const source = readFileSync(path.resolve(import.meta.dirname, '../../scripts/pack-and-consume.mjs'), 'utf8')
+    const block = /\/\/ registry-helpers:start\n([\s\S]*?)\/\/ registry-helpers:end/.exec(source)?.[1]
+    if (!block) throw new Error('scripts/pack-and-consume.mjs lost its registry-helpers markers')
+    const code = `import { createHash } from 'node:crypto'\n${block}\nexport { registryPackument, generatedSssbSpecs, registryLockProblems }`
+    return (await import(/* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)) as {
+        registryPackument: (
+            manifest: { name: string; version: string },
+            bytes: Buffer,
+            registry: string,
+        ) => {
+            name: string
+            'dist-tags': { latest: string }
+            versions: Record<
+                string,
+                { dist: { tarball: string; integrity: string; shasum: string } } & Record<string, unknown>
+            >
+            time: Record<string, string>
+        }
+        generatedSssbSpecs: (manifests: Array<Record<string, unknown>>) => {
+            specs: Record<string, string>
+            problems: string[]
+        }
+        registryLockProblems: (
+            lockfile: string,
+            expected: Record<string, { version: string; integrity: string }>,
+        ) => string[]
+    }
+})()
+
+describe('registryPackument', () => {
+    const bytes = Buffer.from('a tarball')
+    const manifest = { name: '@sssb/kit', version: '0.2.0-rc.2', peerDependencies: { react: '^19' } }
+    const packument = registryHelpers.registryPackument(manifest, bytes, 'http://127.0.0.1:9/')
+    it("carries the tarball's own manifest, its dist-tag and an npm-shaped tarball URL", () => {
+        expect(packument.name).toBe('@sssb/kit')
+        expect(packument['dist-tags']).toEqual({ latest: '0.2.0-rc.2' })
+        const version = packument.versions['0.2.0-rc.2']
+        expect(version?.peerDependencies).toEqual({ react: '^19' })
+        expect(version?.dist.tarball).toBe('http://127.0.0.1:9/@sssb/kit/-/kit-0.2.0-rc.2.tgz')
+        expect(packument.time['0.2.0-rc.2']).toBeDefined()
+    })
+    it("takes integrity and shasum from the tarball's bytes", () => {
+        const dist = packument.versions['0.2.0-rc.2']?.dist
+        expect(dist?.integrity).toBe(`sha512-${createHash('sha512').update(bytes).digest('base64')}`)
+        expect(dist?.shasum).toBe(createHash('sha1').update(bytes).digest('hex'))
+        const other = registryHelpers.registryPackument(manifest, Buffer.from('another'), 'http://127.0.0.1:9/')
+        expect(other.versions['0.2.0-rc.2']?.dist.integrity).not.toBe(dist?.integrity)
+    })
+})
+
+describe('generatedSssbSpecs', () => {
+    it("collects each @sssb package's specifier and ignores workspace links and other packages", () => {
+        expect(
+            registryHelpers.generatedSssbSpecs([
+                { devDependencies: { '@sssb/tools': '^0.2.0-rc.2', vitest: '^3' } },
+                { dependencies: { '@sssb/kit': '^0.2.0-rc.2', '@sssb/app-config': 'workspace:*' } },
+                { dependencies: { '@sssb/tools': '^0.2.0-rc.2' } },
+            ]),
+        ).toEqual({ specs: { '@sssb/tools': '^0.2.0-rc.2', '@sssb/kit': '^0.2.0-rc.2' }, problems: [] })
+    })
+    it('names a package two manifests give different specifiers', () => {
+        expect(
+            registryHelpers.generatedSssbSpecs([
+                { dependencies: { '@sssb/kit': '^0.2.0' } },
+                { dependencies: { '@sssb/kit': 'file:/x/kit.tgz' } },
+            ]).problems,
+        ).toEqual(['@sssb/kit is ^0.2.0 in one manifest and file:/x/kit.tgz in another'])
+    })
+})
+
+describe('registryLockProblems', () => {
+    const expected = {
+        '@sssb/kit': { version: '0.2.0-rc.2', integrity: 'sha512-kit' },
+        '@sssb/tools': { version: '0.2.0-rc.2', integrity: 'sha512-tools' },
+    }
+    const lock = (kit: string, tools = 'resolution: {integrity: sha512-tools}') => `lockfileVersion: '9.0'
+
+importers:
+
+  infra:
+    dependencies:
+      '@sssb/kit':
+        specifier: ^0.2.0-rc.2
+        version: 0.2.0-rc.2
+
+packages:
+
+  '@sssb/kit@0.2.0-rc.2':
+    ${kit}
+
+  '@sssb/tools@0.2.0-rc.2':
+    ${tools}
+
+  react@19.0.0:
+    resolution: {integrity: sha512-react}
+
+snapshots:
+
+  '@sssb/kit@0.2.0-rc.2': {}
+`
+    it('passes each package at its packed version with the tarball integrity alone', () => {
+        expect(registryHelpers.registryLockProblems(lock('resolution: {integrity: sha512-kit}'), expected)).toEqual([])
+    })
+    it('fails another integrity, a tarball URL, a file: resolution and a version that is not the packed one', () => {
+        expect(registryHelpers.registryLockProblems(lock('resolution: {integrity: sha512-bad}'), expected)).toEqual([
+            "@sssb/kit@0.2.0-rc.2: integrity is not the tarball's (resolution: {integrity: sha512-bad})",
+        ])
+        expect(
+            registryHelpers.registryLockProblems(
+                lock('resolution: {integrity: sha512-kit, tarball: http://elsewhere/kit.tgz}'),
+                expected,
+            ),
+        ).toHaveLength(1)
+        expect(
+            registryHelpers.registryLockProblems(lock('resolution: {tarball: file:/tmp/sssb-kit.tgz}'), expected),
+        ).toHaveLength(1)
+        expect(
+            registryHelpers.registryLockProblems(lock('resolution: {integrity: sha512-kit}'), {
+                ...expected,
+                '@sssb/kit': { version: '0.3.0', integrity: 'sha512-kit' },
+            }),
+        ).toEqual(['@sssb/kit@0.2.0-rc.2: resolved at 0.2.0-rc.2, not the packed 0.3.0'])
+    })
+    it('fails an @sssb package it did not expect, and one that is missing', () => {
+        const onlyKit = { '@sssb/kit': expected['@sssb/kit'] }
+        expect(registryHelpers.registryLockProblems(lock('resolution: {integrity: sha512-kit}'), onlyKit)).toEqual([
+            '@sssb/tools@0.2.0-rc.2: not a package this run packed',
+        ])
+        expect(
+            registryHelpers.registryLockProblems(lock('resolution: {integrity: sha512-kit}'), {
+                ...expected,
+                '@sssb/cdk': { version: '0.2.0-rc.2', integrity: 'sha512-cdk' },
+            }),
+        ).toEqual(['@sssb/cdk: no registry resolution in the lockfile'])
     })
 })

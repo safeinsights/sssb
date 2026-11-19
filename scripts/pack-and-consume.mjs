@@ -1253,11 +1253,14 @@ http.createServer((request, response) => {
 }).listen(Number(port), '127.0.0.1', () => fs.writeFileSync(ready, ''))
 `
 
-/** Serves TARBALLS on 127.0.0.1:`port` until the returned function stops it (or this process exits). */
-function serveTarballs(port) {
+/**
+ * Serves TARBALLS on 127.0.0.1:`port` until the returned function stops it (or this process exits). With `script` and
+ * `directory`, runs that child script instead, given `directory` as its first argument (the registry's routes file).
+ */
+function serveTarballs(port, script = SERVE_DIRECTORY, directory = TARBALLS) {
     const ready = path.join(BASE, 'tarball-server.ready')
     rmSync(ready, { force: true })
-    const server = spawn(process.execPath, ['-e', SERVE_DIRECTORY, TARBALLS, String(port), ready], { stdio: 'ignore' })
+    const server = spawn(process.execPath, ['-e', script, directory, String(port), ready], { stdio: 'ignore' })
     const stop = () => server.kill()
     process.once('exit', stop)
     const until = Date.now() + 10_000
@@ -1271,6 +1274,214 @@ function serveTarballs(port) {
     return stop
 }
 
+// ---- registry recipe: pure helpers ----------------------------------------------------------------
+// Pure, and tested by tests/tooling/pack-and-consume.test.ts, which loads exactly the text between these two markers
+// (this script runs a whole job when imported, so it cannot be imported).
+// registry-helpers:start
+
+/**
+ * The packument a registry serves for one packed package: its own `package/package.json` as the version's entry, plus
+ * the `dist` an install reads (`integrity` and `shasum`, from the tarball's bytes) and the tarball's URL in the shape
+ * npm's own registry uses (`<registry><name>/-/<unscoped name>-<version>.tgz`), which pnpm leaves out of the lockfile
+ * as it does for npm's. `latest` is the version itself: a caret range on a prerelease matches it.
+ * @param {{ name: string, version: string }} manifest
+ * @param {Buffer} bytes the tarball
+ * @param {string} registry the registry's URL, ending in a slash
+ */
+function registryPackument(manifest, bytes, registry) {
+    const unscoped = manifest.name.replace(/^@[^/]+\//, '')
+    const old = '2020-01-01T00:00:00.000Z' // long past any `minimumReleaseAge`
+    return {
+        name: manifest.name,
+        'dist-tags': { latest: manifest.version },
+        versions: {
+            [manifest.version]: {
+                ...manifest,
+                dist: {
+                    tarball: `${registry}${manifest.name}/-/${unscoped}-${manifest.version}.tgz`,
+                    integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+                    shasum: createHash('sha1').update(bytes).digest('hex'),
+                },
+            },
+        },
+        time: { created: old, modified: old, [manifest.version]: old },
+    }
+}
+
+/**
+ * The `@sssb/*` specifiers a generated workspace's manifests (read) carry: one per package, and a problem for each
+ * package two manifests disagree about.
+ * @param {Array<Record<string, any>>} manifests
+ * @returns {{ specs: Record<string, string>, problems: string[] }}
+ */
+function generatedSssbSpecs(manifests) {
+    /** @type {Record<string, string>} */
+    const specs = {}
+    /** @type {string[]} */
+    const problems = []
+    for (const manifest of manifests) {
+        for (const field of ['dependencies', 'devDependencies', 'peerDependencies']) {
+            for (const [name, spec] of Object.entries(/** @type {Record<string, string>} */ (manifest[field] ?? {}))) {
+                if (!name.startsWith('@sssb/') || spec.startsWith('workspace:')) continue
+                if (specs[name] !== undefined && specs[name] !== spec)
+                    problems.push(`${name} is ${specs[name]} in one manifest and ${spec} in another`)
+                specs[name] = spec
+            }
+        }
+    }
+    return { specs, problems }
+}
+
+/**
+ * What an install from a registry must have written for the `@sssb/*` packages: in the lockfile's `packages:` section,
+ * each expected one resolved at exactly its packed version, with the tarball's own integrity and nothing else in its
+ * resolution (a `tarball:` URL or `file:` is not a registry's), and no other `@sssb/` package there at all.
+ * @param {string} lockfile
+ * @param {Record<string, { version: string, integrity: string }>} expected by package name
+ */
+function registryLockProblems(lockfile, expected) {
+    const lines = lockfile.split('\n')
+    /** @type {string[]} */
+    const problems = []
+    /** @type {Set<string>} */
+    const seen = new Set()
+    let section = ''
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? ''
+        if (/^[A-Za-z]+:/.test(line)) section = line.slice(0, line.indexOf(':'))
+        if (section !== 'packages' || !/^ {2}'?@sssb\//.test(line)) continue
+        const key = line.trim().replace(/:$/, '').replace(/^'|'$/g, '')
+        const name = key.slice(0, key.lastIndexOf('@'))
+        const version = key.slice(key.lastIndexOf('@') + 1)
+        const resolution = (lines[i + 1] ?? '').trim()
+        const want = expected[name]
+        seen.add(name)
+        if (!want) problems.push(`${key}: not a package this run packed`)
+        else if (version !== want.version)
+            problems.push(`${key}: resolved at ${version}, not the packed ${want.version}`)
+        else if (!/^resolution: \{integrity: sha512-[^,}\s]+\}$/.test(resolution))
+            problems.push(`${key}: not a plain registry resolution (${resolution})`)
+        else if (resolution !== `resolution: {integrity: ${want.integrity}}`)
+            problems.push(`${key}: integrity is not the tarball's (${resolution})`)
+    }
+    for (const name of Object.keys(expected))
+        if (!seen.has(name)) problems.push(`${name}: no registry resolution in the lockfile`)
+    return problems
+}
+// registry-helpers:end
+
+/**
+ * A minimal npm registry (argv: routes file, port, ready file), run as a child. The routes file is JSON,
+ * `{ packuments: { "/@sssb/kit": {...} }, files: { "/@sssb/kit/-/kit-1.0.0.tgz": "/abs/sssb-kit-1.0.0.tgz" } }`;
+ * pnpm asks for `/@sssb%2fkit`, which decodes to the first path. Anything else is a 404.
+ */
+const SERVE_REGISTRY = `
+const http = require('node:http')
+const fs = require('node:fs')
+const [routes, port, ready] = process.argv.slice(1)
+const { packuments, files } = JSON.parse(fs.readFileSync(routes, 'utf8'))
+http.createServer((request, response) => {
+    const pathname = decodeURIComponent(new URL(request.url, 'http://x').pathname)
+    if (request.method === 'GET' && Object.hasOwn(packuments, pathname)) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify(packuments[pathname]))
+    } else if (request.method === 'GET' && Object.hasOwn(files, pathname)) {
+        fs.readFile(files[pathname], (error, body) => {
+            if (error) { response.writeHead(404); response.end(); return }
+            response.writeHead(200, { 'content-type': 'application/octet-stream' })
+            response.end(body)
+        })
+    } else { response.writeHead(404); response.end() }
+}).listen(Number(port), '127.0.0.1', () => fs.writeFileSync(ready, ''))
+`
+
+/**
+ * THE PLAIN RELEASE'S INSTALL, as an adopter does it: `@sssb/*` by VERSION from a registry, in the specifier the packed
+ * generator writes when run without `--sssb` (`^<its version>`), the scope pointed at a local registry serving these
+ * tarballs (an `.npmrc` for `@sssb:` alone, so everything else comes from the real registry). It runs for every
+ * version, a release candidate's included: a caret range on a prerelease matches that prerelease. The specifier is read
+ * from the manifests of a workspace the packed generator writes with no `--sssb`, never written here: the generator is
+ * what is under proof, and reading its output needs no second copy of its rule. Same workspace shape as `notesRecipe`:
+ * the generated supply-chain guard (which exempts `@sssb/*` from `minimumReleaseAge`), `infra`'s dependencies. Each
+ * package must resolve at the packed version with the tarball's sha512 and no URL or `file:` (the lockfile), and
+ * `@sssb/cdk`'s peer must be the package's own `@sssb/tools`.
+ */
+function registryRecipe() {
+    const registry = `http://127.0.0.1:${registryPort}/`
+    /** @type {Record<string, unknown>} */
+    const packuments = {}
+    /** @type {Record<string, string>} */
+    const files = {}
+    /** @type {Record<string, { version: string, integrity: string }>} */
+    const expected = {}
+    for (const file of readdirSync(TARBALLS).filter((name) => name.endsWith('.tgz'))) {
+        const manifest = packedManifest(path.join(TARBALLS, file))
+        const packument = registryPackument(manifest, readFileSync(path.join(TARBALLS, file)), registry)
+        const dist = packument.versions[manifest.version].dist
+        packuments[`/${manifest.name}`] = packument
+        files[new URL(dist.tarball).pathname] = path.join(TARBALLS, file)
+        expected[manifest.name] = { version: manifest.version, integrity: dist.integrity }
+    }
+    const plain = path.join(BASE, 'registry-generated')
+    rmSync(plain, { recursive: true, force: true })
+    run('node', [path.join(CREATE, 'package/bin/create.js'), plain, '--yes'], { cwd: BASE })
+    const { specs, problems } = generatedSssbSpecs(
+        [
+            path.join(plain, 'package.json'),
+            ...readdirSync(path.join(plain, 'apps')).flatMap((app) => [
+                path.join(plain, 'apps', app, 'package.json'),
+                path.join(plain, 'apps', app, 'infra', 'package.json'),
+            ]),
+        ]
+            .filter((file) => existsSync(file))
+            .map(readJson),
+    )
+    if (problems.length > 0) fail(`the generator's own @sssb specifiers disagree:\n  ${problems.join('\n  ')}`)
+    const wanted = Object.keys(expected).filter((name) => name !== '@sssb/create')
+    const missing = wanted.filter((name) => specs[name] === undefined)
+    if (missing.length > 0) fail(`a workspace generated with no --sssb does not name ${missing.join(', ')}`)
+    const routes = path.join(BASE, 'registry-routes.json')
+    writeFileSync(routes, JSON.stringify({ packuments, files }))
+    const stop = serveTarballs(registryPort, SERVE_REGISTRY, routes)
+    try {
+        const dir = path.join(BASE, 'registry-recipe')
+        rmSync(dir, { recursive: true, force: true })
+        const guard = /\nminimumReleaseAge: .*\nminimumReleaseAgeExclude:\n(?: {4}.*\n)+/.exec(
+            readFileSync(path.join(WS, 'pnpm-workspace.yaml'), 'utf8'),
+        )
+        if (!guard) fail('the generated pnpm-workspace.yaml has no minimumReleaseAge guard to keep')
+        write(path.join(dir, 'pnpm-workspace.yaml'), `packages:\n    - infra\n${guard[0]}`)
+        write(path.join(dir, '.npmrc'), `@sssb:registry=${registry}\n`)
+        write(
+            path.join(dir, 'package.json'),
+            `${JSON.stringify({ name: 'registry-recipe', private: true, packageManager: readJson(path.join(REPO, 'package.json')).packageManager }, null, 4)}\n`,
+        )
+        const infra = readJson(path.join(appDir('console'), 'infra', 'package.json')).dependencies
+        const sssb = Object.fromEntries(wanted.map((name) => [name, specs[name]]))
+        write(
+            path.join(dir, 'infra', 'package.json'),
+            `${JSON.stringify({ name: 'infra', private: true, dependencies: { ...sssb, 'aws-cdk-lib': infra['aws-cdk-lib'], constructs: infra.constructs } }, null, 4)}\n`,
+        )
+        run('pnpm', ['install', '--ignore-scripts'], { cwd: dir })
+        const at = (/** @type {string} */ name) => realpathSync(path.join(dir, 'infra', 'node_modules', '@sssb', name))
+        const peer = realpathSync(path.join(path.dirname(at('cdk')), 'tools'))
+        if (peer !== at('tools')) fail(`@sssb/cdk's peer @sssb/tools is ${peer}, not the package's own ${at('tools')}`)
+        const lockProblems = registryLockProblems(
+            readFileSync(path.join(dir, 'pnpm-lock.yaml'), 'utf8'),
+            Object.fromEntries(
+                wanted.map((name) => [name, /** @type {{ version: string, integrity: string }} */ (expected[name])]),
+            ),
+        )
+        if (lockProblems.length > 0)
+            fail(`@sssb packages did not install from the registry:\n  ${lockProblems.join('\n  ')}`)
+        console.log(
+            `${wanted.length} packages installed by version from a registry as ${[...new Set(Object.values(sssb))].join(', ')}, each at the packed version with the tarball's integrity; @sssb/cdk's peer is the package's own @sssb/tools`,
+        )
+    } finally {
+        stop()
+    }
+}
+
 /**
  * THE RELEASE NOTES' INSTALL RECIPE, as an adopter follows it: the notes a release candidate's prerelease carries
  * (release.mjs `candidateNotes`, for these very tarballs), their JSON of `@sssb/*` packages by URL taken verbatim into
@@ -1279,7 +1490,8 @@ function serveTarballs(port) {
  * another SSSB package by version would fail here, looked for in the registry or, overridden to a URL, refused as an
  * exotic subdependency (pages' finding on v0.2.0-rc.1). The workspace keeps the generated one's supply-chain guard
  * (`minimumReleaseAge`); `@sssb/cdk`'s peer must resolve to the package's own `@sssb/tools`. Only a release candidate
- * has these notes (`candidateNotes` refuses any other version), so past pre mode (P14) the step says it is skipped.
+ * has these notes (`candidateNotes` refuses any other version), so past pre mode (P14) the step says it is skipped;
+ * a plain release's install lines (from npm, by version) are `registryRecipe`'s proof.
  */
 function notesRecipe() {
     if (!/-rc\.\d+$/.test(PACKED_VERSION)) {
@@ -1636,6 +1848,8 @@ const contractPort = await freePort()
 const generatedPort = await freePort()
 // The local server the release notes' install recipe takes the tarballs from.
 const notesPort = await freePort()
+// The local registry the by-version install recipe resolves `@sssb/*` from.
+const registryPort = await freePort()
 const generatedContractPort = await freePort()
 console.log(
     `pack and consume (${[RUN_PAGES && 'pages', RUN_GENERATED && 'generated'].filter(Boolean).join(' and ')}): ${BASE}`,
@@ -1799,6 +2013,7 @@ if (RUN_PAGES) {
     })
     step('pages: layout: seam links, one instance per app', checkLayout)
     step("pages: the release notes' install recipe, by URL, with no overrides and blockExoticSubdeps on", notesRecipe)
+    step('pages: a release installed by version from a registry, as the generator writes it', registryRecipe)
     step('pages: the packed package ships and imports only what it declares', checkDeclaredImports)
     step('pages: typecheck at the ES2022 floor', typecheck)
     step('pages: typecheck with the strict-flag set', typecheckStrict)

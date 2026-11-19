@@ -5164,3 +5164,21 @@ npm@11.21.2 publish --provenance --dry-run`. Measured: npm 11.21.2 accepts `--pr
 - **Not changed: `pack` still packs again on the tag** rather than publishing the tarballs `checks`' pack-and-consume
   job tested on the release commit, as a candidate's tag does. Out of this task's scope; the rehearsal packs as `pack`
   does.
+## Pack and consume proves the by-version install against a local registry (2026-11-18, `release/p14-first-npm-release`)
+
+`registryRecipe` (pages shape) installs the packed `@sssb/*` by version, as `@sssb/create` writes them without
+`--sssb`, from a minimal npm registry on 127.0.0.1 that serves the TARBALLS directory (`.npmrc` `@sssb:registry=`, so
+only the scope is local). It runs for every packed version: a caret range on a prerelease matches it.
+
+- **The specifier is read from the packed generator's own output**: the step runs `create.js <dir> --yes` with no
+  `--sssb` and collects the `@sssb/*` specifiers from the generated manifests, rather than hard-coding `^` or importing
+  `generate.js` out of the tarball. The generator is what is under proof, so a hard-coded rule would pass a generator
+  that stopped writing it. Rejected: importing `resolveSssb` (not exported, and a second path to the same rule).
+- **The tarball URL in the packument has npm's own shape** (`/<name>/-/<unscoped>-<version>.tgz`), so pnpm records
+  an integrity alone in the lockfile; the lockfile check then refuses any `tarball:` or `file:` outright, which a
+  free-form URL would have made impossible to tell from a mis-resolution. Rejected: reusing `SERVE_DIRECTORY` with
+  flat file URLs.
+- **The pure helpers sit in `scripts/pack-and-consume.mjs`, between `registry-helpers` markers, and the test loads that
+  text as a module.** The usual home, `scripts/pack-and-consume/checks.mjs`, was outside the files this change was
+  allowed to touch (another session edits the release scripts in parallel), and the script cannot be imported (it runs
+  the job). Move them into `checks.mjs` when that is open: the test's loader then becomes an import.
