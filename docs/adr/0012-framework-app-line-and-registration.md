@@ -950,3 +950,35 @@ stack bundling the migrator from a file path in `packages/kit`, is gone: the con
 (`--alias:@sssb/app-config=<app>/src/app-config`), and fails `cdk synth` unless the bundle carries the app's own
 migrations. Each app's `infra/` is a CDK project, not app source: the app's vendor fence does not reach it
 (`APP_INFRA_GLOB` in `eslint.config.mjs`), and nothing typechecks it but its synth.
+
+## Addendum (2026-11-18): a denial counts only where it reaches the handler's outcome
+
+The 2026-11-17 addendum's limits said that an `async` same-file helper that calls `authorize` counts whether or not the
+handler awaits it. That is no longer so. The scan (`packages/kit/src/authz/route-scan.ts`) credits `authorize` only
+where its denial reaches what Next awaits. `authorize` throws synchronously, so the denial goes up through any
+synchronous frame. It is lost in three places:
+
+- **An async boundary nobody awaits.** A call into an `async` function, or a call a function is handed to (a
+  wrapper, `.then`, a timer), carries the denial only when that call's result is `await`ed or returned on the spot.
+  Unawaited, behind `void`, chained, stored in a variable or passed on, the promise floats, and nothing inside it
+  counts.
+- **An array iteration method.** It drops an `async` callback's promise. It runs a sync callback in place, except a
+  `map`, `filter` or `flatMap` on a receiver that is visibly an iterator (`ids.values()`), which runs nothing until
+  consumed.
+- **A `try` whose `catch` can do anything but rethrow, or whose `finally` can leave in the throw's place.**
+
+A function handed to a call is still assumed to be invoked. It is now also assumed to carry its failure in the call's
+result, which is why that result must be awaited or returned. The wrapper a handler IS
+(`export const POST = withX(fn)`) is what Next calls, and stays trusted when it is imported. A callee whose code is in
+the route's own file is not trusted: the scan does not follow a function through a parameter, so a function handed
+to a same-file callee or a same-file wrapper counts for nothing. The decision log has the rejected alternative
+(type-aware lint) and the shapes that newly fail.
+
+**Limits.** These are in addition to the 2026-11-17 list, less its un-awaited item:
+
+- A wrapper or callee imported from another module is trusted to carry the failure of what it is handed, as before.
+  So is a call on a parameter, a global, or a local that holds anything but same-file code.
+- Iteration methods are recognized by name. A `map`, `filter` or `flatMap` on an iterator held in a variable is taken
+  for an array's, which runs its callback in place, though the iterator runs it only when consumed.
+- An `authorize` named through `authorizeModules` must throw synchronously, as SSSB's does. A floating call to an
+  async one would count.
