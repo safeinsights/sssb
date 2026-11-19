@@ -235,8 +235,8 @@ export { databaseNameFor } from './database-name.js'
 const MIRROR_PRIORITY = 900
 
 /**
- * Makes `manager` hold exactly `wanted`, over any tag an aspect set or will set (a tag's priority is CDK's 100 at most,
- * and a higher one wins).
+ * Makes `manager` hold exactly `wanted`, over any tag an aspect set or will set: a higher priority wins, and CDK's
+ * `Tags.of(...).add` and `.remove` default to 100 and 200 (a caller who passes more than 10 000 is not followed).
  * @param {cdk.TagManager} manager
  * @param {Record<string, string>} wanted
  */
@@ -465,13 +465,13 @@ export class SssbApp extends Construct {
             environment: {
                 AWS_LAMBDA_EXEC_WRAPPER: '/opt/bootstrap',
                 PORT: '3000',
-                // Where Next's standalone server listens (its server.js reads HOSTNAME). Pinned to every interface:
-                // the Web Adapter calls it on 127.0.0.1, an inherited HOSTNAME naming another address would leave
-                // the adapter nothing to call, and with 127.0.0.1 itself Next names itself `localhost` to the proxy
-                // but `127.0.0.1` when it routes, so a rewrite the proxy makes (Clerk's, on every request) looks
-                // external and Next fetches it over the network (pages, 2026-11-18). Every interface is no wider: a
-                // Lambda function takes no inbound connection, in a VPC or outside one, so only the adapter calls it.
-                // A run.sh that exports HOSTNAME overrides this; the deploy pipeline's must not.
+                // Where Next's standalone server listens: its server.js takes HOSTNAME, or 0.0.0.0 when it is unset
+                // (next/dist/build/utils.js). Pinned to that default: the Web Adapter calls the server on 127.0.0.1,
+                // so an inherited HOSTNAME naming another address would leave it nothing to call, and with 127.0.0.1
+                // itself Next names itself `localhost` to the proxy but `127.0.0.1` when it routes, so a rewrite the
+                // proxy makes (Clerk's, on every request) looks external and Next fetches it over the network (pages,
+                // 2026-11-18). No wider than that: on pg the server's security group admits nothing, and on data-api
+                // it is in no VPC. A run.sh that exports HOSTNAME overrides this; the deploy pipeline's must not.
                 HOSTNAME: '0.0.0.0',
                 APP_MODE: 'real',
                 NEXT_TELEMETRY_DISABLED: '1',
@@ -525,11 +525,11 @@ export class SssbApp extends Construct {
         // hashed is what is forwarded), then CloudFront signs the request, header included. CloudFront hands an
         // origin request at most 1 MB of body; past that the function answers 413 rather than a hash that would not
         // match. ADR-0001, addendum 2026-11-19, says why this and not a Function URL open to the internet.
-        // Lambda@Edge lives in us-east-1. A stack with an explicit region gets CDK's EdgeFunction, which keeps the
-        // function in the stack in us-east-1 and elsewhere puts it in a us-east-1 stack of its own (that region
-        // bootstrapped too). An environment-agnostic stack (the starter's, until cutover) can only keep it in the
-        // stack, so it deploys to us-east-1 alone: elsewhere CloudFront refuses the association and the deploy rolls
-        // back. Give the stack an explicit `env.region` to deploy anywhere else.
+        // Lambda@Edge lives in us-east-1. A stack whose region is us-east-1, or unknown until deploy (an
+        // environment-agnostic stack, as the starter's is until cutover), keeps the function in the stack; so the
+        // latter deploys to us-east-1 alone: elsewhere CloudFront refuses the association and the deploy rolls back,
+        // after the database is created. A stack with an explicit region elsewhere gets CDK's EdgeFunction, which puts
+        // the function in a us-east-1 stack of its own (that region bootstrapped too).
         const stack = cdk.Stack.of(this)
         /** @type {cdk.aws_lambda.FunctionProps} */
         const bodyHashProps = {

@@ -43,7 +43,9 @@
 Deleting a stack can fail on `SssbApp`'s Lambda@Edge function (the origin request's body hash): a function CloudFront
 has replicated cannot be deleted until CloudFront drops the replicas, up to a few hours after the distribution goes.
 Delete the stack again then. A stack with an explicit region outside us-east-1 keeps that function in a us-east-1
-stack of its own (`edge-lambda-stack-…`): delete that one after the app's stack.
+stack of its own (`edge-<region>-…`): delete that one after the app's stack, which depends on it. Deploying such a
+stack, name it (`cdk deploy <stack>` deploys the us-east-1 one first) or pass `--all`; `--exclusively` skips the
+us-east-1 stack, and a first deploy then fails reading its function's ARN.
 
 ## Rollback
 

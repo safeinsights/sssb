@@ -20,8 +20,10 @@ its own there.
   (environment-agnostic stack, no lookups). CI runs it for every app.
 - **Region.** The distribution runs a Lambda@Edge function on each request to the server (it adds the body's hash a
   `POST` needs to reach the Function URL), and Lambda@Edge lives in us-east-1. While the stack is
-  environment-agnostic it deploys to us-east-1 only. Give the stack an explicit `env` (account and region) to deploy
-  anywhere else: the construct then puts that function in a us-east-1 stack of its own, so bootstrap us-east-1 too.
+  environment-agnostic it deploys to us-east-1 only: elsewhere the deploy fails after the database is created, and a
+  production stack's retained database and buckets may outlive the rollback. Give the stack an explicit `env` (account
+  and region) before deploying anywhere else: the construct then puts that function in a us-east-1 stack of its own,
+  with this stack's tags, so bootstrap us-east-1 too and deploy by naming this stack (or with `--all`).
 - **Nothing here deploys until** (see `docs/cutover-checklist.md`): `cloud-accounts` fills
   `../config/params.ts` · `recurring-cost` — Aurora, the NAT gateway (on the `pg` shape), and CloudFront need
   explicit approval. Not a checklist row, but do it first: if your organisation ships its own CDK construct

@@ -155,16 +155,18 @@ of part of the body would be refused anyway, with a less useful 403.
 
 **Costs, accepted.** Lambda@Edge runs on every request to the server (not on `/_next/static/*` or `/assets/*`, which
 S3 serves): a request charge and a few milliseconds at 128 MB, and a cold start of its own when a regional edge cache
-has no warm instance. A request body is capped at 1 MB. Lambda@Edge exists only in us-east-1: a stack with an explicit
-region gets CDK's `EdgeFunction`, which outside us-east-1 puts the function in a us-east-1 stack of its own (that region
-must be bootstrapped); an environment-agnostic stack, as the starter's is until cutover, deploys to us-east-1 only, and
-CloudFront refuses the association elsewhere. A replicated function cannot be deleted until CloudFront drops its
+has no warm instance. A request body is capped at 1 MB. Lambda@Edge exists only in us-east-1: a stack whose region is
+us-east-1, or unknown until deploy, keeps the function in the stack, so an environment-agnostic stack, as the
+starter's is until cutover, deploys to us-east-1 only (elsewhere CloudFront refuses the association, after the
+database is created); a stack with an explicit region elsewhere gets CDK's `EdgeFunction`, which puts the function in
+a us-east-1 stack of its own (that region must be bootstrapped), one per `SssbApp` and region, carrying the app's
+tags. A replicated function cannot be deleted until CloudFront drops its
 replicas, up to a few hours after the distribution goes, so a teardown can fail and must be retried
-(`deploy-pipeline`). The live proof is the `origin-not-publicly-reachable` row.
+(`deploy-pipeline`). The live proof is still owed: the `origin-not-publicly-reachable` cutover row, open.
 
 **`HOSTNAME`, in the same change.** The server's environment sets `HOSTNAME=0.0.0.0`, which Next's standalone server
 reads as the address to listen on. With `127.0.0.1`, Next names itself `localhost` to the proxy but `127.0.0.1` when
 it routes, so a rewrite Clerk's proxy makes on every request looked external and Next fetched it over the network
-(pages, locally); any other inherited value leaves the Web Adapter, which calls `127.0.0.1`, nothing to call. Every
-interface is no wider: a Lambda function takes no inbound connection. A packaged `run.sh` that sets `HOSTNAME`
-overrides it.
+(pages, locally); any other inherited value leaves the Web Adapter, which calls `127.0.0.1`, nothing to call.
+`0.0.0.0` is what Next uses when `HOSTNAME` is unset, and no wider here: on `pg` the server's security group admits
+nothing, and on `data-api` it is in no VPC. A packaged `run.sh` that sets `HOSTNAME` overrides it.
