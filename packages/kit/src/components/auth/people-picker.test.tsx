@@ -15,7 +15,7 @@ afterEach(() => {
 
 const people = [{ id: 'p1', name: 'Pat', role: 'owner', tenantName: 'Harbor' }]
 
-async function pick(onPick: () => Promise<boolean>): Promise<HTMLButtonElement> {
+async function pick(onPick: () => Promise<boolean | void>): Promise<HTMLButtonElement> {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     const container = document.createElement('div')
     document.body.append(container)
@@ -50,5 +50,22 @@ describe('PeoplePicker', () => {
 
     it('keeps the spinner while a successful sign-in navigates', async () => {
         expect(loading(await pick(() => Promise.resolve(true)))).toBe(true)
+    })
+
+    it('keeps the spinner for a handler that resolves nothing, as an async handler does', async () => {
+        expect(loading(await pick(async () => {}))).toBe(true)
+    })
+
+    it('takes the handlers an adopter already writes (a type-level check)', () => {
+        type OnPick = Parameters<typeof PeoplePicker>[0]['onPick']
+        const handlers: OnPick[] = [
+            () => {},
+            async (id) => {
+                await Promise.resolve(id)
+            },
+            (id) => fetch(id).then(() => {}),
+            (id) => Promise.resolve(id.length > 0),
+        ]
+        expect(handlers).toHaveLength(4)
     })
 })
