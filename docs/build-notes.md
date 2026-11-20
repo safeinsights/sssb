@@ -2380,3 +2380,11 @@ deleted file has to be checked as a whole, not as a hunk: a patch that deletes `
 that also has a line the adopter appended would otherwise remove the matched lines, keep the adopter's, and then delete the
 file with it, so the applier requires nothing to remain after the removal. The test that holds this (`tests/tooling/remove-items.test.ts`) runs the real CLI over an app
 the generator wrote, which is also what catches a starter change that makes a hunk stop applying.
+
+## An `import()` inside Vitest is not how Node loads a module (2026-11-20)
+
+The Migrator's ESM bundle threw `Dynamic require of "events" is not supported` in Lambda, and the first version of the
+test that loads it (`packages/cdk/src/sssb-app.test.js`, "every Node.js Lambda SssbApp builds loads in Node") passed
+against that very bundle: Vitest runs an `import()` through its own module runner, which supplies a `require` that
+plain Node does not. Loading in a child `node` (`spawnSync(process.execPath, ['--input-type=module', '-e', …])`) went
+red at once. A test that claims "it loads in Node" has to load it in Node.
