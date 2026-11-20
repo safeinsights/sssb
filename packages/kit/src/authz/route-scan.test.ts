@@ -2462,3 +2462,18 @@ describe("the fix review's verdict (X1, X2, X5-X8)", () => {
         expectVerdicts(verdicts(files), { POST: expected })
     })
 })
+
+describe("the fix review's second verdict (Y3, Y5)", () => {
+    it('Y3: an async callback returned from a try whose catch swallows still reaches (it cannot throw synchronously)', () => {
+        const files = post(
+            `try { return withPortErrors(async () => { ${CALL}; return new Response('ok') }) } catch { return new Response('', { status: 500 }) }`,
+            "import { withPortErrors } from './respond'\n",
+        )
+        expectVerdicts(verdicts(files), { POST: 'authorized' })
+    })
+
+    it("Y5: the simulated-404 gate's description says what it refuses", () => {
+        expect(describeGate({ kind: 'opens-with-simulated-404' })).toMatch(/notFound\(\)/)
+        expect(describeGate({ kind: 'opens-with-simulated-404' })).toMatch(/new Response\(null, NOT_FOUND\)/)
+    })
+})

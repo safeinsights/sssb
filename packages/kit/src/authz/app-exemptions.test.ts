@@ -316,3 +316,63 @@ describe("the fix review's verdict (X3, X9, X10, X11)", () => {
         expect(scan.failures).toEqual([])
     })
 })
+
+describe("the fix review's second verdict (Y1, Y2, Y5)", () => {
+    function appWith(files: Record<string, string>, links: Record<string, string> = {}): string {
+        const dir = path.join(makeTestTmpDir('authz-app-'), 'acme')
+        mkdirSync(path.join(dir, 'src/app/api/dockets'), { recursive: true })
+        writeFileSync(path.join(dir, 'src/app/api/dockets/route.ts'), AUTHORIZED_POST)
+        for (const [rel, src] of Object.entries(files)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            writeFileSync(path.join(dir, rel), src)
+        }
+        for (const [rel, target] of Object.entries(links)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            symlinkSync(path.join(dir, target), path.join(dir, rel))
+        }
+        return dir
+    }
+
+    it('Y1: colocated test artefacts named route.* are not routes; other extensions still fail', async () => {
+        const scan = await scanApp(
+            appWith({
+                'src/app/api/x/__snapshots__/route.test.ts.snap': '',
+                'src/app/api/x/route.integration.test.ts': 'export {}\n',
+                'src/app/api/x/route.contract.test.ts': 'export {}\n',
+                'src/app/api/x/route.test-d.ts': 'export {}\n',
+                'src/app/api/x/route.bench.ts': 'export {}\n',
+                'src/app/api/y/route.api.ts': OPEN_POST,
+            }),
+        )
+        expect(scan.failures).toEqual([expect.stringMatching(/src\/app\/api\/y\/route\.api\.ts is named like a route/)])
+    })
+
+    // One real directory, outside src/app, holding a handler that passes only under the framework's `webhooks/`
+    // exemption, linked twice under src/app/api. Next serves it at both paths; the verdict must not depend on which
+    // link the walk meets first.
+    const HOOK =
+        "import { withWebhookSecret } from './respond'\nexport const POST = withWebhookSecret(async () => new Response('ok'))\n"
+    it.each([
+        ['webhooks/hook', 'zadmin/hook', 'zadmin/hook/route.ts'],
+        ['admin/hook', 'webhooks/hook', 'admin/hook/route.ts'],
+    ])('Y2: a directory linked at %s and %s is judged at both paths', async (first, second, failing) => {
+        const scan = await scanApp(
+            appWith(
+                {
+                    'shared/hook/route.ts': HOOK,
+                    'shared/hook/respond.ts': 'export const withWebhookSecret = (f: unknown) => f\n',
+                },
+                { [`src/app/api/${first}`]: 'shared/hook', [`src/app/api/${second}`]: 'shared/hook' },
+            ),
+        )
+        expect(scan.routes.map((route) => route.rel).sort()).toEqual(
+            ['dockets/route.ts', `${first}/route.ts`, `${second}/route.ts`].sort(),
+        )
+        expect(scan.failures).toEqual([expect.stringContaining(failing)])
+    })
+
+    it('Y5: a root-level FILE named app is not a root App Router directory', async () => {
+        const scan = await scanApp(appWith({ app: 'not a directory\n' }))
+        expect(scan.failures).toEqual([])
+    })
+})

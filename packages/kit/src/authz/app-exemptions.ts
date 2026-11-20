@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { FRAMEWORK_POLICY, isGate } from './route-policy'
@@ -203,6 +203,15 @@ export interface AppScan {
     exemptionProblems: string[]
 }
 
+/** Whether `file` is a directory (through a link); false when it is missing or a file. */
+function isDirectory(file: string): boolean {
+    try {
+        return statSync(file).isDirectory()
+    } catch {
+        return false
+    }
+}
+
 /** Where Next looks for Pages Router API routes: `pages/api` beside `src`, or inside it. */
 const PAGES_API_DIRS = ['pages/api', 'src/pages/api']
 
@@ -235,7 +244,7 @@ export async function scanApp(appDir: string): Promise<AppScan> {
     const failures = [
         ...mutating.flatMap((route) => route.handlers.flatMap((handler) => judge(route, handler, policy) ?? [])),
         ...actions.flatMap((action) => judgeServerAction(action) ?? []),
-        ...(existsSync(path.join(appDir, 'app'))
+        ...(isDirectory(path.join(appDir, 'app'))
             ? [
                   `${name}: app/ is a root-level App Router directory. Next serves it and ignores src/app when both ` +
                       `exist, and the authorization scan reads only src/app, so no route in app/ is checked. Keep the ` +

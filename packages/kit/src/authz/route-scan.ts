@@ -207,15 +207,17 @@ function routeFiles(dir: string): string[] {
 /**
  * Files under `dir` named `route.<something>` that the scan does not read as a route (`route.mts`, `route.api.ts`):
  * Next serves `route.<ext>` for every extension its `pageExtensions` names, which the scan does not read, so such a
- * file may be a route nobody checked. A colocated test or story (`route.test.ts`, `route.spec.tsx`,
- * `route.stories.tsx`) and a declaration file are not routes.
+ * file may be a route nobody checked. A colocated test artefact (`route.test.ts`, `route.integration.test.ts`,
+ * `route.spec.tsx`, `route.stories.tsx`, `route.bench.ts`, `route.test-d.ts`, a `.snap`) and a declaration file are
+ * not routes.
  */
 export function unreadRouteFiles(dir: string): string[] {
     const named = (name: string) =>
         /^route\./.test(name) &&
         !ROUTE_FILE.test(name) &&
-        !/^route\.(?:test|spec|stories)\.[cm]?[jt]sx?$/.test(name) &&
-        !/\.d\.[cm]?ts$/.test(name)
+        !/^route\.(?:[\w-]+\.)*(?:test|spec|stories|bench|test-d)\.[cm]?[jt]sx?$/.test(name) &&
+        !/\.d\.[cm]?ts$/.test(name) &&
+        !name.endsWith('.snap')
     return walkFiles(dir, named, () => true)
 }
 
@@ -231,25 +233,33 @@ function walkFiles(
     accept: (name: string) => boolean,
     descend: (name: string) => boolean,
     ancestors: ReadonlySet<string> = new Set(),
-    linkedVisited: Set<string> = new Set(),
+    walked: Map<string, { base: string; files: string[] }> = new Map(),
 ): string[] {
     const real = realpathSync(dir)
     if (ancestors.has(real)) return []
     const inside = new Set(ancestors).add(real)
     const out: string[] = []
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    // Sorted, so what the walk finds never depends on the filesystem's entry order.
+    const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+        a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    )
+    for (const entry of entries) {
         const full = path.join(dir, entry.name)
         const linked = entry.isSymbolicLink() && isDirectoryTarget(full)
         if (entry.isDirectory() || linked) {
             if (!descend(entry.name)) continue
-            // A directory reached through a link is walked once, at the first link's path: two links per level would
-            // otherwise make the walk exponential in the depth. A real directory is always walked at its own path.
-            if (linked) {
-                const target = realpathSync(full)
-                if (linkedVisited.has(target)) continue
-                linkedVisited.add(target)
+            // A directory reached through a link that was already walked is not walked again (two links per level would
+            // make the walk exponential in the depth), but every file found there is reported again at THIS path too:
+            // Next serves it at both, and an exemption is judged by path.
+            const target = linked ? realpathSync(full) : undefined
+            const prior = target === undefined || inside.has(target) ? undefined : walked.get(target)
+            if (prior) {
+                out.push(...prior.files.map((file) => path.join(full, path.relative(prior.base, file))))
+                continue
             }
-            out.push(...walkFiles(full, accept, descend, inside, linkedVisited))
+            const files = walkFiles(full, accept, descend, inside, walked)
+            walked.set(realpathSync(full), { base: full, files })
+            out.push(...files)
         } else if (accept(entry.name)) out.push(full)
     }
     return out.sort()
@@ -425,7 +435,10 @@ export function describeGate(gate: Gate): string {
             return (
                 'the handler takes no parameter that runs code (a default) and opens with ' +
                 '`if (!isSimulated) return new Response(null, { status: 404 })` (an imported ' +
-                '`isSimulated`, and a branch that only returns or throws a response built from inert values)'
+                '`isSimulated`, and a branch that only returns or throws a response built from inert values: ' +
+                '`new Response(…)` or `Response.json(…)` with literal arguments, or `throw new NotFoundError(…)` imported ' +
+                "from @sssb/kit/ports/errors. Next's `notFound()` (next/navigation) and an options object held in a " +
+                'variable, `new Response(null, NOT_FOUND)`, are refused: the scan cannot see that either runs nothing)'
             )
     }
 }
@@ -934,7 +947,10 @@ class Reach {
         // AsyncLocalStorage.run), so its denial may come out as a throw from the call rather than as a rejection of
         // what the call returns. A returned call carries it only where a throw at the call also reaches the outcome:
         // not inside a `try` whose `catch` swallows, where `return wrap(() => authorize(…))` passed before.
-        const handedResult = settled === 'return' ? result && outcome.thrown : result
+        // An async function literal cannot throw synchronously out of the call (its denial rejects its promise), so the
+        // condition applies only to a sync one.
+        const handedResult = (fn: ts.FunctionLikeDeclaration): boolean =>
+            settled === 'return' && !isAsync(fn) ? result && outcome.thrown : result
         // Called directly, a sync function throws into this point; an async one only rejects its promise.
         const direct = (fn: ts.FunctionLikeDeclaration): Outcome =>
             isAsync(fn)
@@ -975,13 +991,13 @@ class Reach {
                 // A sync callback runs in place on an array. On a receiver whose head is an import, the same name may
                 // be a library's (a curried `R.forEach`, a query builder's `map`) that runs it later or not at all,
                 // so it is trusted no further than any imported callee: only when the call's result is settled.
-                if (method.imported && !handedResult) return dropped(outcome)
+                if (method.imported && !handedResult(fn)) return dropped(outcome)
                 return { thrown: outcome.thrown, returned: false, runs: outcome.runs }
             }
             // `.then(onFulfilled, onRejected)`: the second runs only on a rejection, as a `.catch` handler does.
             if (index === 1 && memberName(callee) === 'then') return NEVER
             if (this.isSameFile(callee) || neverCarriesFailure(this.src, callee)) return NEVER
-            return handedResult ? { ...HANDLER_OUTCOME, runs: outcome.runs } : dropped(outcome)
+            return handedResult(fn) ? { ...HANDLER_OUTCOME, runs: outcome.runs } : dropped(outcome)
         }
         node.arguments?.forEach((argument, index) => {
             const a = unwrap(argument)
