@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import sssb from '@sssb/eslint-plugin'
@@ -24,6 +24,12 @@ const APPS = readdirSync(path.join(repoRoot, 'apps'), { withFileTypes: true })
     .sort()
 
 describe("this repo's apps keep every fence through the repo's config", () => {
+    // The cases below are one per app found under apps/, so an empty list (a moved directory, a broken filter) would
+    // pass with nothing checked.
+    it('finds the apps it checks', () => {
+        expect(APPS.length).toBeGreaterThan(0)
+    })
+
     it.each(APPS)(
         'apps/%s',
         async (app) => {
@@ -238,6 +244,12 @@ describe("an app's own vendors (package.json sssb.vendors)", () => {
         })
     const lintIn = async (appDir: string, file: string, code: string) => {
         const [result] = await new ESLint({ cwd: appDir }).lintText(code, { filePath: path.join(appDir, file) })
+        // A parse failure, or the warning for a file the config ignores, carries no rule id, and would make every
+        // "nothing fired" expectation below pass with nothing linted.
+        expect(
+            result.messages.filter((m) => !m.ruleId),
+            `${file} was not actually linted`,
+        ).toEqual([])
         return result.messages.map((m) => m.ruleId)
     }
     const STRIPE = ['stripe', 'stripe/*']
@@ -283,6 +295,68 @@ describe("an app's own vendors (package.json sssb.vendors)", () => {
         expect(await problemsOf(withVendors(STRIPE, after))).toContain(
             'src/lib/format.ts: sssb/no-vendor-import runs with options the preset does not set',
         )
+    })
+
+    // The dynamic half (import(), require(), a type import('…')) reads a package name, one followed by `/*`, and a
+    // whole scope; the declaration half reads any gitignore pattern. Each entry below banned a declaration and let
+    // import() through (or, `stripe/`, banned nothing), so the list refuses it, in package.json and in the option alike.
+    const UNREADABLE = [
+        '@stripe/**',
+        'stripe-*',
+        'stripe*',
+        'stripe/**',
+        '/stripe',
+        'Stripe',
+        'stripe/',
+        '@stripe',
+        'firebase/App',
+        'firebase/app/compat/x',
+    ]
+    it.each(UNREADABLE)('refuses %j, which import() would get past', async (entry) => {
+        await expect(sssb.configs.app({ root: withVendors(['stripe', entry]) })).rejects.toThrow(
+            `sssb.vendors holds ${JSON.stringify(entry)}: each entry is "name", "@scope/name", either with one subpath ("name/sub"), each optionally followed by "/*", or "@scope/*"`,
+        )
+        const appDir = scratchApp(
+            `{ rules: { 'sssb/no-dynamic-vendor-import': ['error', { vendors: [${JSON.stringify(entry)}] }] } }`,
+        )
+        await expect(
+            new ESLint({ cwd: appDir }).lintText('export {}\n', { filePath: path.join(appDir, 'src/domain/x.ts') }),
+        ).rejects.toThrow(/sssb\/no-dynamic-vendor-import[\s\S]*should match pattern/)
+    })
+
+    it('bans every shape it accepts both ways, and probes each entry through the composed config', async () => {
+        const vendors = ['stripe', 'stripe/*', '@stripe/*', '@paypal/sdk', '@paypal/sdk/*']
+        const appDir = withVendors(vendors)
+        for (const specifier of ['stripe', 'stripe/lib/x', '@stripe/stripe-js', '@paypal/sdk', '@paypal/sdk/x']) {
+            const code = `import * as v from '${specifier}'\nexport { v }\nexport const load = () => import('${specifier}')\n`
+            const fired = await lintIn(appDir, 'src/domain/billing.ts', code)
+            expect(fired.filter((rule) => rule === 'sssb/no-vendor-import')).toHaveLength(1)
+            expect(fired.filter((rule) => rule === 'sssb/no-dynamic-vendor-import')).toHaveLength(1)
+        }
+        const [withList, without] = await Promise.all([
+            checkFences({ appDir, ESLint }),
+            checkFences({ appDir: withVendors([]), ESLint }),
+        ])
+        expect(withList.problems).toEqual([])
+        expect(withList.probes - without.probes).toBe(vendors.length)
+    })
+
+    // One subpath of a package bans itself and what is under it, in both halves alike, and nothing beside it.
+    it('bans one subpath of a package both ways, and nothing beside it', async () => {
+        const appDir = withVendors(['firebase/app', '@acme/sdk/admin/*'])
+        const fired = async (specifier: string) => {
+            const code = `import * as v from '${specifier}'\nexport { v }\nexport const load = () => import('${specifier}')\n`
+            const rules = await lintIn(appDir, 'src/domain/billing.ts', code)
+            return [
+                rules.filter((rule) => rule === 'sssb/no-vendor-import').length,
+                rules.filter((rule) => rule === 'sssb/no-dynamic-vendor-import').length,
+            ]
+        }
+        for (const banned of ['firebase/app', 'firebase/app/x', '@acme/sdk/admin/users'])
+            expect(await fired(banned), banned).toEqual([1, 1])
+        for (const free of ['firebase/apple', 'firebase/auth', 'firebase', '@acme/sdk/admin', '@acme/sdk/public'])
+            expect(await fired(free), free).toEqual([0, 0])
+        expect((await checkFences({ appDir, ESLint })).problems).toEqual([])
     })
 
     it('refuses anything but a list of package patterns, and the old option', async () => {
@@ -418,10 +492,16 @@ describe('the fences as the app lints them, whatever its config or its lint comm
     })
 
     it('leaves an app alone whose own typescript-eslint parser is another version', async () => {
+        // The scratch app cannot resolve typescript-eslint by name, so its config loads this repository's copy by a
+        // file: URL through node_modules, which sssb/no-path-into-kit reports as a finding in the app's own files (step
+        // 4). Held in a variable, the URL is not a specifier the fence reads; an adopter's config imports it by name.
         const after =
-            `{ languageOptions: { parser: { ...(await import('${TS_ESLINT}')).default.parser, ` +
+            `{ languageOptions: { parser: { ...(await import(tsEslint)).default.parser, ` +
             "meta: { name: 'typescript-eslint/parser', version: '99.0.0' } } } }"
-        expect(await problemsOf(scratchApp(after))).toEqual([])
+        const appDir = scratchApp(after)
+        const config = path.join(appDir, 'eslint.config.mjs')
+        writeFileSync(config, `const tsEslint = '${TS_ESLINT}'\n${readFileSync(config, 'utf8')}`)
+        expect(await problemsOf(appDir)).toEqual([])
     })
 
     it('fences a directory deeper in the app that has a build output’s name', async () => {

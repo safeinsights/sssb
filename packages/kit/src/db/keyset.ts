@@ -101,15 +101,17 @@ export interface KeysetPage<TRow> {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
- * `parseKeysetCursor` plus the one constraint only this layer knows about: the id half is bound to a
- * `uuid`, so an id that is not one can never be a real row here and is rejected at the boundary
- * rather than becoming a cast error (a 500, and a probe signal) inside the query. Routes over SQL
- * tables should use THIS, not the core parser; an in-memory twin uses the core one, whose row handles
- * are not uuids.
+ * `parseKeysetCursor` plus the constraints only this layer knows about, each a cast error (a 500, and a
+ * probe signal) inside the query if it were let through: the id half is bound to a `uuid`, so an id
+ * that is not one can never be a real row here; and the `at` half is bound to a `timestamptz`, which
+ * has no year 0000 (JavaScript's calendar does, so the core parser accepts it). Both are rejected at
+ * the boundary. Routes over SQL tables should use THIS, not the core parser; an in-memory twin uses
+ * the core one, whose row handles are not uuids.
  */
 export function parseDbKeysetCursor(raw: string | null | undefined): KeysetCursorParse {
     const parsed = parseKeysetCursor(raw)
-    if (parsed.kind === 'after' && !UUID_PATTERN.test(parsed.position.id)) return { kind: 'invalid' }
+    if (parsed.kind !== 'after') return parsed
+    if (!UUID_PATTERN.test(parsed.position.id) || parsed.position.at.startsWith('0000-')) return { kind: 'invalid' }
     return parsed
 }
 

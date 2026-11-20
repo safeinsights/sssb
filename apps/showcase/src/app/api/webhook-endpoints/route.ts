@@ -5,7 +5,7 @@ import { isWebhookEventKind, type WebhookEventKind } from '@sssb/kit/core/webhoo
 import { recordAuditEvent } from '@sssb/kit/db/audit'
 import { createEndpoint, listEndpointsForOrg } from '@sssb/kit/db/webhooks'
 import { resolveOrgContext } from '../org-context'
-import { withPortErrors } from '../respond'
+import { readJsonObject, withPortErrors } from '../respond'
 
 /**
  * Outbound webhook endpoints for the active org, managed by an org admin. Every mutation is
@@ -30,7 +30,7 @@ export async function GET(): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {
         const user = await auth.requireUser()
-        const { url, eventKinds } = (await request.json()) as { url?: string; eventKinds?: unknown }
+        const { url, eventKinds } = await readJsonObject(request)
 
         // Validate the URL is a real http(s) endpoint, and the kinds are a non-empty subset of the registry.
         if (typeof url !== 'string' || !isHttpUrl(url)) {

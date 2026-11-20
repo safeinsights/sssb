@@ -14,6 +14,7 @@
         "hint": "Items belong to the team you're working in — and never leave your tenant.",
         "empty": "No items in this team yet.",
         "addLabel": "New item",
+        "addError": "That item could not be added. Your text is still here: try again.",
         "addButton": "Add item",
         "readOnlyHint": "You have read-only access to items in this team.",
         "loadMore": "Show older items"

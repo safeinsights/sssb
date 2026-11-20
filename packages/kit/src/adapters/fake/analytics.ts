@@ -64,7 +64,7 @@ export const fakeAnalytics: AnalyticsPort = {
     },
     async isFlagEnabled(flag, defaultValue = false) {
         const flags = readFlags()
-        return flag in flags ? flags[flag]! : defaultValue
+        return Object.hasOwn(flags, flag) ? flags[flag]! : defaultValue
     },
 }
 

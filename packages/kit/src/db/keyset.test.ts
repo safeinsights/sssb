@@ -1,5 +1,6 @@
-import { describe, expectTypeOf, it } from 'vitest'
-import { keysetPage, type KeysetOrderColumn } from './keyset'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import { encodeKeysetCursor } from '../core/keyset'
+import { keysetPage, parseDbKeysetCursor, type KeysetOrderColumn } from './keyset'
 
 // Compile-time only: `tsc` (the root program covers this file) is the assertion, and nothing here
 // touches a database. The SQL behaviour of `orderBy` is proven where a real engine is — the app half
@@ -20,5 +21,24 @@ describe('KeysetOrderColumn', () => {
         expectTypeOf(keysetPage<'dockets', { id: string }>)
             .parameter(3)
             .toEqualTypeOf<KeysetOrderColumn<'dockets'> | undefined>()
+    })
+})
+
+describe('parseDbKeysetCursor', () => {
+    const id = '00000000-0000-4000-8000-000000000000'
+
+    it('accepts a cursor whose instant Postgres can hold', () => {
+        expect(parseDbKeysetCursor(encodeKeysetCursor({ at: '2026-01-01T00:00:00Z', id })).kind).toBe('after')
+        expect(parseDbKeysetCursor(encodeKeysetCursor({ at: '0001-01-01T00:00:00Z', id })).kind).toBe('after')
+    })
+
+    it('refuses year 0000, which timestamptz has no value for (it was a 500 inside the query)', () => {
+        expect(parseDbKeysetCursor(encodeKeysetCursor({ at: '0000-01-01T00:00:00Z', id }))).toEqual({ kind: 'invalid' })
+    })
+
+    it('refuses an id that is not a uuid', () => {
+        expect(parseDbKeysetCursor(encodeKeysetCursor({ at: '2026-01-01T00:00:00Z', id: 'not-a-uuid' }))).toEqual({
+            kind: 'invalid',
+        })
     })
 })

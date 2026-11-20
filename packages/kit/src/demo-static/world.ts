@@ -70,7 +70,7 @@ import type {
     StaticPresetOperationContext,
     StaticPresetOperationHandler,
 } from './contracts'
-import { buildDigestEmailHtml, buildInviteEmailHtml } from './email-html'
+import { buildDigestEmailHtml, buildInviteEmailHtml, buildNotificationEmailHtml } from './email-html'
 import { go, useHashRoute } from './hash-route'
 import type {
     DemoAcceptance,
@@ -181,12 +181,13 @@ function makeSeedAcceptances(): DemoAcceptance[] {
  * meant the `file://` demo silently showed a different schedule list from `pnpm dev` the moment the
  * app seeded a second one.
  */
-function makeSeedSchedules(): ScheduleRowLike[] {
+/** The seeded schedules, each due at its first boundary after `worldNow` (the world clock's now, not real now). */
+function makeSeedSchedules(worldNow: Date): ScheduleRowLike[] {
     return seedJobSchedules.map((schedule, index) => ({
         id: `seed-schedule-${index}`,
         kind: schedule.kind,
         spec: schedule.spec,
-        nextRunAt: computeNextRunAt(schedule.spec, new Date()).toISOString(),
+        nextRunAt: computeNextRunAt(schedule.spec, worldNow).toISOString(),
         enabled: true,
         tenantSlug: schedule.tenantSlug,
         orgSlug: schedule.orgSlug,
@@ -276,7 +277,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
     const [smsMessages, setSmsMessages] = useState<SmsMessageRow[]>([])
     const [notifPrefs, setNotifPrefs] = useState<Record<string, NotificationPrefRow[]>>({})
     // Twin of the job_schedules table — seeded with the weekly research digest.
-    const [schedules, setSchedules] = useState<ScheduleRowLike[]>(() => makeSeedSchedules())
+    const [schedules, setSchedules] = useState<ScheduleRowLike[]>(() => makeSeedSchedules(new Date()))
     // Twins of the agreements + agreement_acceptances tables — the access-gate worked example.
     const [agreements, setAgreements] = useState<DemoAgreement[]>(() => makeSeedAgreements())
     const [acceptances, setAcceptances] = useState<DemoAcceptance[]>(() => makeSeedAcceptances())
@@ -439,10 +440,11 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
             const c = (key: string, values?: Record<string, string>) =>
                 tRoot(`${copy.namespace ?? FRAMEWORK_NOTIFICATION_NAMESPACE}.${key}`, values)
             if (channels.includes('email')) {
-                const html =
-                    `<h2>${c(copy.titleKey, copy.values)}</h2>` +
-                    `<p>${c(copy.bodyKey, copy.values)}</p>` +
-                    `<p>${tNotifications('emailFooter')}</p>`
+                const html = buildNotificationEmailHtml({
+                    title: c(copy.titleKey, copy.values),
+                    body: c(copy.bodyKey, copy.values),
+                    footer: tNotifications('emailFooter'),
+                })
                 setEmails((prev) => [
                     {
                         id: `email-${prev.length}`,
@@ -536,12 +538,19 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
     // ── Outbound webhooks ─────────────────────────────────────────────────────────────────────────
 
     /** Twin of enqueueWebhookEvent: fan an event to a pending delivery per matching enabled endpoint in
-     *  the ACTIVE org (endpoints are org-scoped). next_attempt is world-now, so a drain fires it at once. */
-    function enqueueWebhook(kind: WebhookEventKind, payload: WebhookEventPayload) {
+     *  `scope`'s org (endpoints are org-scoped). next_attempt is world-now, so a drain fires it at once. */
+    function enqueueWebhookFor(
+        scope: { tenantSlug: string; orgSlug: string },
+        kind: WebhookEventKind,
+        payload: WebhookEventPayload,
+    ) {
         const worldNowMs = mountedAtMs + clockOffsetMs
         const matching = endpoints.filter(
             (e) =>
-                e.tenantSlug === tenant.slug && e.orgSlug === activeOrgSlug && e.enabled && e.eventKinds.includes(kind),
+                e.tenantSlug === scope.tenantSlug &&
+                e.orgSlug === scope.orgSlug &&
+                e.enabled &&
+                e.eventKinds.includes(kind),
         )
         if (matching.length === 0) return
         const created: DemoDelivery[] = matching.map((endpoint) => ({
@@ -561,6 +570,35 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
             body: null,
         }))
         setDeliveries((prev) => [...created, ...prev])
+    }
+
+    /** An app's own mutation emits for the org it is acting in: the active one, as the real routes' session is. */
+    function enqueueWebhook(kind: WebhookEventKind, payload: WebhookEventPayload) {
+        enqueueWebhookFor({ tenantSlug: tenant.slug, orgSlug: activeOrgSlug }, kind, payload)
+    }
+
+    /**
+     * The webhook half of a job's terminal hop, the twin of what the server's recordJobStatus emits: the
+     * job.status_changed webhook to the JOB's org (not the viewer's); an org-less job emits none. A service actor's
+     * completion takes only this half, as its server route calls recordJobStatus alone.
+     */
+    function emitJobWebhook(job: { id: string; kind: string; tenantSlug: string; orgSlug: string | null }) {
+        if (job.orgSlug === null) return
+        enqueueWebhookFor({ tenantSlug: job.tenantSlug, orgSlug: job.orgSlug }, 'job.status_changed', {
+            jobId: job.id,
+            jobKind: job.kind,
+            status: 'completed',
+            orgId: job.orgSlug,
+        })
+    }
+
+    /**
+     * A job's whole terminal hop: the webhook, then the admin notification, as the in-process runner, the fake jobs
+     * adapter and the builder's completion webhook do. startJob, Run pending and the builder actor take it.
+     */
+    function emitJobTerminal(job: { id: string; kind: string; tenantSlug: string; orgSlug: string | null }) {
+        emitJobWebhook(job)
+        notifyJobTerminal(job)
     }
 
     /** Twin of runDueDeliveries: attempt each due pending/failed delivery, signing the envelope with the
@@ -651,15 +689,9 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
               }
         setJobs((prev) => [job, ...prev])
         // Held jobs stay queued (no terminal transition), so they emit later — from the Run-pending
-        // step below, or from an actor claiming them.
+        // step below, or from an actor completing them.
         if (held) return
-        enqueueWebhook('job.status_changed', {
-            jobId: base.id,
-            jobKind: kind,
-            status: 'completed',
-            orgId: activeOrgSlug,
-        })
-        notifyJobTerminal(job)
+        emitJobTerminal(job)
     }
 
     /**
@@ -684,20 +716,8 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
                 }
             }),
         )
-        for (const job of completing) {
-            // The same terminal hop startJob's non-held branch takes, so it emits the same pair the
-            // server's recordJobStatus does: the webhook first, then the admin notification (both
-            // skip an org-less job, as notifyJobTerminal already does).
-            if (job.orgSlug !== null) {
-                enqueueWebhook('job.status_changed', {
-                    jobId: job.id,
-                    jobKind: job.kind,
-                    status: 'completed',
-                    orgId: job.orgSlug,
-                })
-            }
-            notifyJobTerminal(job)
-        }
+        // The same terminal hop startJob's non-held branch takes, for each job's own org.
+        for (const job of completing) emitJobTerminal(job)
         pushNotice(tSimulator('noticeJobsRan', { count: completing.length }))
     }
 
@@ -795,13 +815,27 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
 
     // The actor drivers read/write jobs through the stable ref + setter, so these factories never need
     // to change identity — an actor's tick closure can be rebuilt freely without restarting its loop.
+    // A completed job's terminal hop reads the CURRENT endpoints and preferences, so the drivers reach it through a
+    // ref that every render points at this render's emitters.
+    const jobCompletedRef = useRef({ webhook: emitJobWebhook, terminal: emitJobTerminal })
+    useEffect(() => {
+        jobCompletedRef.current = { webhook: emitJobWebhook, terminal: emitJobTerminal }
+    })
     const serviceDriver = useCallback(
-        (scope: DemoServiceScope, log: ActorLog) => createDemoServiceDriver({ jobsRef, setJobs, log }, scope),
+        (scope: DemoServiceScope, log: ActorLog) =>
+            // The service route (POST /api/service/jobs/[id]/status) emits the webhook and notifies no one.
+            createDemoServiceDriver(
+                { jobsRef, setJobs, log, onCompleted: (job) => jobCompletedRef.current.webhook(job) },
+                scope,
+            ),
         [],
     )
     const builderDriver = useCallback(
         (serviceManagedOrgSlugs: readonly string[], log: ActorLog) =>
-            createDemoBuilderDriver({ jobsRef, setJobs, log }, serviceManagedOrgSlugs),
+            createDemoBuilderDriver(
+                { jobsRef, setJobs, log, onCompleted: (job) => jobCompletedRef.current.terminal(job) },
+                serviceManagedOrgSlugs,
+            ),
         [],
     )
 
@@ -1122,7 +1156,10 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
 
     function markMailSeen() {
         if (!viewpoint) return
-        setMailSeenAt((prev) => ({ ...prev, [viewpoint]: new Date().toISOString() }))
+        // World time, never behind real time: a digest the clock's Advance made is dated ahead, and an email stamped
+        // with real now must still count as seen after the clock is reset.
+        const seenAt = new Date(Date.now() + Math.max(0, clockOffsetMs)).toISOString()
+        setMailSeenAt((prev) => ({ ...prev, [viewpoint]: seenAt }))
     }
 
     function openMailLink(href: string) {
@@ -1176,7 +1213,9 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
         setNotifications([])
         setSmsMessages([])
         setNotifPrefs({})
-        setSchedules(makeSeedSchedules())
+        // The clock goes back to its mount time below, so the schedules are reseeded from there: from real now, a
+        // boundary between mount and reset would be skipped by the next Advance.
+        setSchedules(makeSeedSchedules(new Date(mountedAtMs)))
         setAgreements(makeSeedAgreements())
         setAcceptances(makeSeedAcceptances())
         setClockOffsetMs(0)

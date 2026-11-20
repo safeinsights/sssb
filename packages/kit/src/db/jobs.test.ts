@@ -88,6 +88,43 @@ describe('recordJobStatus', () => {
     })
 })
 
+describe('recordJobStatus: the after-commit webhook enqueue', () => {
+    test('a failing enqueue does not fail the caller of a status write that committed', async () => {
+        const { vi } = await import('vitest')
+        const { fakeDb } = await import('../adapters/fake/db')
+        const { submitJob, recordJobStatus, listJobs } = await import('./jobs')
+        const { tenantId, orgId } = await ids('harbor', 'depot')
+        const { id } = await submitJob(fakeDb, stubJobs().port, {
+            tenantId,
+            orgId,
+            kind: 'export-dockets',
+            payload: {},
+        })
+
+        // The status transaction is the first withTenant; the enqueue (its own transaction) is the second.
+        let calls = 0
+        const failingEnqueue: typeof fakeDb = Object.create(fakeDb, {
+            withTenant: {
+                value: (tenant: string, fn: Parameters<typeof fakeDb.withTenant>[1]) => {
+                    calls += 1
+                    if (calls === 2) return Promise.reject(new Error('enqueue failed'))
+                    return fakeDb.withTenant(tenant, fn)
+                },
+            },
+        })
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+            await expect(recordJobStatus(failingEnqueue, tenantId, id, 'running')).resolves.toBeUndefined()
+            expect(calls).toBe(2)
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining('enqueue failed'))
+        } finally {
+            warn.mockRestore()
+        }
+        const view = (await listJobs(fakeDb, tenantId, orgId)).find((job) => job.id === id)
+        expect(view?.status).toBe('running')
+    })
+})
+
 describe('listJobs', () => {
     test('filters by org, orders newest-first, and embeds each timeline', async () => {
         const { fakeDb } = await import('../adapters/fake/db')

@@ -1014,6 +1014,43 @@ describe('the plugin: every reference resolves in a generated workspace', () => 
     })
 })
 
+// The starter's own `pnpm dev` has SSSB's Simulator host (People, Mail, Jobs): a plugin file that says a generated app
+// has no Simulator or panel there sends an agent to port a second one. Only the false forms: a narrower true sentence
+// ("no Snapshots tab") passes.
+const NO_DEV_SIMULATOR = [
+    /no Simulator on `pnpm dev`/i,
+    /`pnpm dev` has no (?:Simulator|panel)/i,
+    /no `\/api\/simulator\/\*` routes/i,
+    /\bonly Simulator(?: panel)? is the static demo's/i,
+    /Simulator panel ONLY in its static demo/i,
+]
+
+function noDevSimulatorProblems(text: string): string[] {
+    const flat = text.replace(/\s+/g, ' ')
+    return NO_DEV_SIMULATOR.filter((form) => form.test(flat)).map(String)
+}
+
+describe('the plugin: a generated app has the Simulator on `pnpm dev`', () => {
+    const files = pluginDirs.flatMap((dir) => componentFiles(dir).map(({ file }) => path.relative(REPO, file)))
+
+    it('the starter mounts the Simulator host and its route', () => {
+        expect(existsSync(path.join(REPO, 'apps/starter/src/app/api/simulator/[...path]/route.ts'))).toBe(true)
+        expect(readFileSync(path.join(REPO, 'apps/starter/src/app/[locale]/layout.tsx'), 'utf8')).toContain(
+            'SimulatorHost',
+        )
+    })
+
+    it.each(files)('%s says nothing else', (file) => {
+        expect(noDevSimulatorProblems(readFileSync(path.join(REPO, file), 'utf8'))).toEqual([])
+    })
+
+    it('catches the false forms across a line break, and passes a narrower true one', () => {
+        expect(noDevSimulatorProblems('`pnpm dev` has no\nSimulator at all')).toHaveLength(1)
+        expect(noDevSimulatorProblems('a generated app has no Simulator on `pnpm dev`')).toHaveLength(1)
+        expect(noDevSimulatorProblems('its `pnpm dev` panel has no Snapshots tab')).toEqual([])
+    })
+})
+
 describe('claude plugin validate --strict', () => {
     const claude = spawnSync('sh', ['-c', 'command -v claude'], { encoding: 'utf8' }).stdout.trim()
 

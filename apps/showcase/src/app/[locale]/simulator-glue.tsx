@@ -24,6 +24,11 @@ import { useTours } from '@sssb/kit/demo-static/tour/use-tours'
 import { actors } from '@sssb/app-config/actors'
 import { presets } from '@sssb/app-config/presets'
 import { tabs as appSimulatorTabs } from '@sssb/app-config/simulator'
+import { mailLinkTarget } from './mail-link'
+import { serverRedirectPath } from './server-redirect'
+
+/** A body-less Simulator POST: the simulated-only routes take JSON only, as the kit's own host sends every POST. */
+const JSON_POST: RequestInit = { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }
 
 interface Summary {
     viewpoint: string | null
@@ -411,9 +416,10 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             body: JSON.stringify({ person, locale }),
         }).then(async (response) => {
             if (!response.ok) return
-            const json = (await response.json()) as { redirectTo: string }
-            // A full reload is required anyway: theme + header are per-user RSC output.
-            window.location.assign(json.redirectTo)
+            // A full reload is required anyway: theme + header are per-user RSC output. Only to a path on this
+            // origin (./server-redirect); anything else stays put.
+            const path = serverRedirectPath(await response.json())
+            if (path) window.location.assign(path)
         })
     }
 
@@ -434,26 +440,11 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     function handleOpenMailLink(href: string) {
-        // Same-origin only (design invariant) — but never silently: a link this glue won't follow
-        // gets a notice saying why. A relative path covers twin-style links; real emails (e.g. the
-        // invite accept link) carry a fully-qualified URL since they're read from an arbitrary
-        // mail client, so a matching-origin absolute URL is allowed too. `//host/path` is
-        // protocol-relative (cross-origin despite the leading slash) — it falls through to the
-        // URL branch below, where the origin check judges it honestly.
-        if (href.startsWith('/') && !href.startsWith('//')) {
-            window.location.assign(href)
-            return
-        }
-        try {
-            const url = new URL(href)
-            if (url.origin === window.location.origin) {
-                window.location.assign(href)
-                return
-            }
-            pushNotice(t('noticeLinkOrigin', { origin: url.origin }))
-        } catch {
-            pushNotice(t('noticeLinkUnusable', { href }))
-        }
+        // Same origin only, never silently: `mailLinkTarget` (./mail-link) says where to go or why not.
+        const target = mailLinkTarget(href, window.location.href)
+        if ('path' in target) window.location.assign(target.path)
+        else if (target.refused === 'origin') pushNotice(t('noticeLinkOrigin', { origin: target.origin }))
+        else pushNotice(t('noticeLinkUnusable', { href }))
     }
 
     function handleCopyLink(href: string) {
@@ -464,7 +455,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     function handleClearMail() {
-        void fetch('/api/simulator/mail/clear', { method: 'POST' }).then((response) => {
+        void fetch('/api/simulator/mail/clear', JSON_POST).then((response) => {
             if (!response.ok) return
             void refreshMail()
             void refresh()
@@ -506,7 +497,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     function handleRunPending() {
-        void fetch('/api/simulator/jobs/run-pending', { method: 'POST' }).then(async (response) => {
+        void fetch('/api/simulator/jobs/run-pending', JSON_POST).then(async (response) => {
             if (!response.ok) return
             const { ran } = (await response.json()) as { ran: number }
             await refreshJobs()
@@ -547,7 +538,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     async function handleRunDue() {
-        const response = await fetch('/api/simulator/schedules/run-due', { method: 'POST' })
+        const response = await fetch('/api/simulator/schedules/run-due', JSON_POST)
         if (!response.ok) return
         const { spawned } = (await response.json()) as { spawned: number }
         await afterSchedulesChanged(spawned, null)
@@ -605,7 +596,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     async function handleRunDueDeliveries() {
-        const response = await fetch('/api/simulator/webhooks/run-due', { method: 'POST' })
+        const response = await fetch('/api/simulator/webhooks/run-due', JSON_POST)
         if (!response.ok) return
         const { deliveries } = (await response.json()) as { deliveries: { delivered: number } }
         await refreshHooks()
@@ -628,7 +619,11 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     // replaced — a Next pressed in that window would be lost to the reload.
     function handleReset(): Promise<boolean> {
         setSnapshotsBusy(true)
-        return fetch('/api/simulator/reset', { method: 'POST' }).then((response) => {
+        const failed = () => {
+            setSnapshotsBusy(false)
+            return false
+        }
+        return fetch('/api/simulator/reset', JSON_POST).then((response) => {
             if (response.ok) {
                 window.sessionStorage.setItem(POST_NOTICE_KEY, JSON.stringify({ kind: 'reset' }))
                 // Hard reload of a wiped world (per design invariant) — no point resetting
@@ -636,9 +631,8 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
                 window.location.assign(`/${locale}`)
                 return untilReload()
             }
-            setSnapshotsBusy(false)
-            return false
-        })
+            return failed()
+        }, failed)
     }
 
     function handleSaveSnapshot(name: string) {
@@ -647,17 +641,24 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ name }),
-        }).then((response) => {
-            setSnapshotsBusy(false)
-            if (response.ok) {
-                pushNotice(t('noticeSnapshotSaved', { name }))
-                void refreshSnapshots()
-            }
         })
+            .then((response) => {
+                if (response.ok) {
+                    pushNotice(t('noticeSnapshotSaved', { name }))
+                    void refreshSnapshots()
+                }
+            })
+            // A rejected fetch (the dev server stopped) must not leave the controls disabled until a reload.
+            .catch(() => undefined)
+            .finally(() => setSnapshotsBusy(false))
     }
 
     function handleRestoreSnapshot(name: string): Promise<boolean> {
         setBusySnapshot(name)
+        const failed = () => {
+            setBusySnapshot(null)
+            return false
+        }
         return fetch('/api/simulator/snapshots/restore', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -668,9 +669,8 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
                 window.location.assign(`/${locale}`)
                 return untilReload()
             }
-            setBusySnapshot(null)
-            return false
-        })
+            return failed()
+        }, failed)
     }
 
     // Load a demo preset: the server resets the world, replays the preset and signs THIS browser in as
@@ -684,10 +684,12 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             body: JSON.stringify({ name: id, locale }),
         }).then(
             async (response) => {
-                if (response.ok) {
-                    const { redirectTo } = (await response.json()) as { redirectTo: string }
+                // A redirect off this origin is not followed: the load is reported as failed, which says the world may
+                // have changed underneath the page.
+                const path = response.ok ? serverRedirectPath(await response.json()) : null
+                if (path) {
                     window.sessionStorage.setItem(POST_NOTICE_KEY, JSON.stringify({ kind: 'preset', name: id }))
-                    window.location.assign(redirectTo)
+                    window.location.assign(path)
                     return untilReload()
                 }
                 return presetFailed(id)
@@ -713,13 +715,15 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ name }),
-        }).then((response) => {
-            setBusySnapshot(null)
-            if (response.ok) {
-                pushNotice(t('noticeSnapshotDeleted', { name }))
-                void refreshSnapshots()
-            }
         })
+            .then((response) => {
+                if (response.ok) {
+                    pushNotice(t('noticeSnapshotDeleted', { name }))
+                    void refreshSnapshots()
+                }
+            })
+            .catch(() => undefined)
+            .finally(() => setBusySnapshot(null))
     }
 
     // Bump one agreement's version — the access-gate demo story. Re-arms the gate for everyone
@@ -730,13 +734,15 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ agreementId: id }),
-        }).then(async (response) => {
-            setBusyAgreement(null)
-            if (!response.ok) return
-            const { version } = (await response.json()) as { version: number }
-            pushNotice(t('noticeAgreementBumped', { version }))
-            void refreshAgreements()
         })
+            .then(async (response) => {
+                if (!response.ok) return
+                const { version } = (await response.json()) as { version: number }
+                pushNotice(t('noticeAgreementBumped', { version }))
+                void refreshAgreements()
+            })
+            .catch(() => undefined)
+            .finally(() => setBusyAgreement(null))
     }
 
     // The actor frames are our own same-origin pages (src/app/[locale]/simulator/actors/[actor]) —

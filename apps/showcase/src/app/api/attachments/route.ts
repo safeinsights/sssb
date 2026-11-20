@@ -4,7 +4,7 @@ import { ATTACHMENT_MAX_BYTES, isAttachmentKind, sanitizeFilename } from '@/doma
 import { recordAuditEvent } from '@sssb/kit/db/audit'
 import { createAttachment, listAttachments } from '@/domain/db/attachments'
 import { resolveOrgContext } from '../org-context'
-import { withPortErrors } from '../respond'
+import { readJsonObject, withPortErrors } from '../respond'
 
 /**
  * Typed attachments: browser-uploaded files, tenant-scoped by RLS AND filtered to the active
@@ -38,19 +38,15 @@ export async function GET(): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {
         const user = await auth.requireUser()
-        const {
-            filename,
-            contentType,
-            kind = 'attachment',
-            sizeBytes,
-        } = (await request.json()) as {
-            filename?: string
-            contentType?: string
-            kind?: string
-            sizeBytes?: number
+        const { filename, contentType, kind = 'attachment', sizeBytes } = await readJsonObject(request)
+        if (typeof filename !== 'string' || !filename.trim()) {
+            return Response.json({ error: 'missing-filename' }, { status: 400 })
         }
-        if (!filename?.trim()) return Response.json({ error: 'missing-filename' }, { status: 400 })
-        if (!isAttachmentKind(kind)) return Response.json({ error: 'unknown-kind' }, { status: 400 })
+        if (contentType !== undefined && typeof contentType !== 'string') {
+            return Response.json({ error: 'invalid-content-type' }, { status: 400 })
+        }
+        if (typeof kind !== 'string' || !isAttachmentKind(kind))
+            return Response.json({ error: 'unknown-kind' }, { status: 400 })
         // Fail fast when the client already knows the file is over the ceiling (the upload target
         // enforces it for real — this just avoids minting a doomed pending row).
         if (typeof sizeBytes === 'number' && sizeBytes > ATTACHMENT_MAX_BYTES) {

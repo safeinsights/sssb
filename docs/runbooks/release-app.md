@@ -38,7 +38,8 @@ version on npm. Each run is in GitHub's Actions tab, workflow `release`.
 The push to `main` also runs `plan` again, on the release commit, which finds nothing pending and stops. If any step
 fails, nothing later runs: a failed `push` leaves no tag (the push is atomic) and the next merge cuts the release; a
 failed tag run is re-run from the Actions tab ("Re-run failed jobs"). CI's `release-dry-run` job runs the same
-commands on every PR, with nothing that can write, and its summary says what a merge would publish.
+commands on every PR that changes more than documentation and merges cleanly with `main`, with nothing that can
+write, and its summary says what a merge would publish.
 
 Until P14 a release was a release candidate (`0.x.y-rc.N`): its tag ran **`candidate`** (the CI gate, then the
 `sssb-tarballs` artifact its pack-and-consume job left, checked by `release.mjs candidate`), **`attest`** (one
@@ -85,8 +86,9 @@ in rulesets the App does not bypass. The org's `require-pr` also forbids both, b
 
 - You are an **owner of the safeinsights organisation** and an **admin of `safeinsights/sssb`**, and `gh` is
   signed in as you (`gh auth status`).
-- The `release` environment exists, deploys from `main` only, and does not exempt administrators. It does
-  (made 2026-11-17); the script checks again and stops if not.
+- The `release` environment exists, deploys from `main` only, and does not exempt administrators, and the
+  `npm-publish` environment exists, deploys from `v*` tags only, and does not exempt administrators. The script
+  checks both and stops if not.
 - A browser on this machine, signed in to GitHub as you. An embedded or app-internal browser that is not
   signed in appears to do nothing when you click Create.
 
@@ -146,7 +148,8 @@ in rulesets the App does not bypass. The org's `require-pr` also forbids both, b
     pnpm release-app verify --app-id <id>
     ```
 
-    It checks the environment (main only, admins not exempt, key and client id present), that the id is the
+    It checks the environments (`release`: main only, admins not exempt, key and client id present; `npm-publish`:
+    `v*` tags only, admins not exempt), that the id is the
     release app (as in step 4), and every ruleset the release's push meets, the organisation's included. A
     stored secret cannot be read back, so it does not read the App back as the App unless you hand it a key on
     standard input (`--key-stdin`); step 4 already did that once.

@@ -2,7 +2,10 @@ import { db, isSimulated } from '@sssb/kit/adapters/index'
 import { acceptInvite } from '@sssb/kit/adapters/fake/auth'
 import { listAgreementsForTenant, recordAcceptance } from '@sssb/kit/db/agreements'
 import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
-import { withPortErrors } from '../../respond'
+import { readJsonObject, refuseNonJson, withPortErrors } from '../../respond'
+
+/** The auth port's display-name limit. */
+const MAX_NAME_LENGTH = 256
 
 /**
  * The accept-invitation product surface's simulated-mode entrypoint (Bob's lifecycle). Same 404 gate
@@ -10,15 +13,22 @@ import { withPortErrors } from '../../respond'
  * against the fake auth adapter; real mode ships Clerk's own ticket-strategy sign-up instead
  * (packages/kit/src/adapters/real/accept-invite-form.tsx).
  */
+
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
+    const refused = refuseNonJson(request)
+    if (refused) return refused
     return withPortErrors(async () => {
-        const { inviteId, name, locale } = (await request.json()) as {
-            inviteId?: string
-            name?: string
-            locale?: string
-        }
-        if (typeof inviteId !== 'string' || typeof name !== 'string') {
+        const { inviteId, name, locale } = await readJsonObject(request)
+        // The name is stored and shown to every member of the org: the auth port's limit, a non-blank string of at
+        // most 256 characters, as the profile route holds it.
+        if (
+            typeof inviteId !== 'string' ||
+            typeof name !== 'string' ||
+            name.trim() === '' ||
+            name.length > MAX_NAME_LENGTH ||
+            (locale !== undefined && typeof locale !== 'string')
+        ) {
             return Response.json({ error: 'invalid request' }, { status: 400 })
         }
         const joined = await acceptInvite(inviteId, { name, locale })

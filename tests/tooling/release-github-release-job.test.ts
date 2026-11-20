@@ -97,11 +97,12 @@ describe("release.yml's github-release job", () => {
 
     it('leaves a draft unpublished when it holds a stray file, and fails', () => {
         const { temp } = runner()
-        const { status, state } = run(temp, {
+        const { status, stdout, state } = run(temp, {
             ...fresh(),
             release: existing(temp, { [DEMO]: BODY, 'extra.tgz': 'x' }, true),
         })
         expect(status).toBe(1)
+        expect(stdout).toMatch(/::error::v0\.3\.0 holds other files than the demo/)
         expect(state.release!.draft).toBe(true)
     })
 
@@ -164,6 +165,7 @@ describe("release.yml's github-release job", () => {
         expect(candidate.state.calls).toEqual([])
         const untagged = run(temp, { ...fresh(), tags: [] })
         expect(untagged.status).toBe(1)
+        expect(untagged.stderr).toMatch(/tag v0\.3\.0 does not exist/)
         expect(untagged.state.release).toBeNull()
     })
 })

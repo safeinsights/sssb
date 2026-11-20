@@ -292,6 +292,15 @@ function runGate(pr: Pr) {
     return { status: r.status, out: r.stdout + r.stderr }
 }
 
+const NO_CHANGESET = 'adds no changeset'
+const SNAPSHOT_REFUSAL = 'changes a release snapshot'
+
+/** The gate's own refusal: exit 1 AND its message, so a crash under `set -euo pipefail` (also exit 1) is not one. */
+function expectRefusal(r: ReturnType<typeof runGate>, message = NO_CHANGESET) {
+    expect(r.status, r.out).toBe(1)
+    expect(r.out).toContain(message)
+}
+
 const CS = { '.changeset/a-change.md': GOOD }
 const KIT_SRC = { 'packages/kit/src/core/x.ts': 'a' }
 
@@ -318,7 +327,7 @@ describe('require-changeset gate', () => {
     it('covers every @sssb/* package under packages/, not only the kit', () => {
         const pkg = (name: string) => JSON.stringify({ name })
         const tools = { 'packages/tools/package.json': pkg('@sssb/tools') }
-        expect(runGate({ baseFiles: tools, files: { 'packages/tools/bin/sssb.js': 'a' } }).status).toBe(1)
+        expectRefusal(runGate({ baseFiles: tools, files: { 'packages/tools/bin/sssb.js': 'a' } }))
         expect(runGate({ baseFiles: tools, files: { 'packages/tools/src/x.test.js': 'a' } }).status).toBe(0)
         expect(runGate({ baseFiles: tools, files: { 'packages/tools/test-fixture/x.js': 'a' } }).status).toBe(0)
         // a package that is not @sssb/* (the showcase's seed world) is not shipped
@@ -329,7 +338,7 @@ describe('require-changeset gate', () => {
             baseFiles: { ...tools, 'packages/tools/src/x.js': 'a' },
             files: { 'packages/tools/package.json': null, 'packages/tools/src/x.js': null },
         })
-        expect(gone.status, gone.out).toBe(1)
+        expectRefusal(gone)
     })
 
     it('fails a file moved out of the kit', () => {
@@ -382,7 +391,7 @@ describe('require-changeset gate', () => {
             '.changeset/pre/x.md',
         ]) {
             const r = runGate({ files: { ...KIT_SRC, [f]: GOOD } })
-            expect(r.status, `${f}: ${r.out}`).toBe(1)
+            expectRefusal(r)
         }
         // Changesets' agent-file rule is exact-case, so `claude.md` IS a changeset
         expect(runGate({ files: { ...KIT_SRC, '.changeset/claude.md': GOOD } }).status).toBe(0)
@@ -393,8 +402,8 @@ describe('require-changeset gate', () => {
             baseFiles: { '.changeset/old.md': GOOD },
             files: { ...KIT_SRC, '.changeset/old.md': GOOD + '\nmore\n' },
         })
-        expect(r.status, r.out).toBe(1)
-        expect(runGate({ baseFiles: { '.changeset/old.md': GOOD }, files: KIT_SRC }).status).toBe(1)
+        expectRefusal(r)
+        expectRefusal(runGate({ baseFiles: { '.changeset/old.md': GOOD }, files: KIT_SRC }))
     })
 
     it('counts a new changeset even when it replaces a similar one (git would pair them as a rename)', () => {
@@ -410,7 +419,7 @@ describe('require-changeset gate', () => {
         const r = runGate({ files: { 'docs/x.md': 'a' }, baseAdvance: { 'packages/kit/src/core/new.ts': 'a' } })
         expect(r.status, r.out).toBe(0)
         // ...but the PR's own change still counts
-        expect(runGate({ files: KIT_SRC, baseAdvance: { 'docs/other.md': 'a' } }).status).toBe(1)
+        expectRefusal(runGate({ files: KIT_SRC, baseAdvance: { 'docs/other.md': 'a' } }))
     })
 
     it('does not charge a PR for what it merged in from main', () => {
@@ -418,7 +427,7 @@ describe('require-changeset gate', () => {
         const r = runGate({ files: { 'docs/x.md': 'a' }, mergedFromMain: fromMain })
         expect(r.status, r.out).toBe(0)
         // the PR's own kit change alongside the merge still needs one
-        expect(runGate({ files: KIT_SRC, mergedFromMain: fromMain }).status).toBe(1)
+        expectRefusal(runGate({ files: KIT_SRC, mergedFromMain: fromMain }))
     })
 
     it("lets the release commit come back from main: its version bumps and the changesets it moved to pre/ are not the PR's", () => {
@@ -435,13 +444,13 @@ describe('require-changeset gate', () => {
         expect(r.status, r.out).toBe(0)
         // a file moved into pre/ is Changesets' own record: it is never the changeset a shipped change must add
         const added = runGate({ files: { ...KIT_SRC, '.changeset/pre/a-change.md': GOOD } })
-        expect(added.status, added.out).toBe(1)
+        expectRefusal(added)
     })
 
     it('does not exempt a hand-applied copy of a main change the PR never merged', () => {
         const hotfix = { 'packages/kit/src/core/hotfix.ts': 'fix' }
         const r = runGate({ files: hotfix, mainOnly: hotfix })
-        expect(r.status, r.out).toBe(1)
+        expectRefusal(r)
     })
 
     it('still exempts what the PR merged from main after main moves on again', () => {
@@ -463,27 +472,27 @@ describe('require-changeset gate', () => {
                 baseFiles: foo,
                 files: { 'packages/foo/package.json': pkg('@app/foo'), 'packages/foo/src/a.ts': 'a' },
             })
-            expect(renamed.status, renamed.out).toBe(1)
+            expectRefusal(renamed)
             const broken = runGate({
                 files: { 'packages/kit/package.json': '{"name":"@sssb/kit",}', 'packages/kit/src/a.ts': 'a' },
             })
-            expect(broken.status, broken.out).toBe(1)
+            expectRefusal(broken)
             // a new package whose manifest does not parse has no base manifest to fall back on
             const added = runGate({ files: { 'packages/new/package.json': '{bad', 'packages/new/src/a.ts': 'a' } })
-            expect(added.status, added.out).toBe(1)
+            expectRefusal(added)
         })
 
         it('a package directory with a space in its name does not hide the kit', () => {
             const r = runGate({ files: { 'packages/a kit/notes.txt': 'a', ...KIT_SRC } })
-            expect(r.status, r.out).toBe(1)
+            expectRefusal(r)
         })
 
         it('a file name holding a newline cannot pass as a test file', () => {
             const foo = { 'packages/foo/package.json': pkg('@sssb/foo') }
             const r = runGate({ baseFiles: foo, files: { 'packages/foo/src/x.test.ts\nb.ts': 'a' } })
-            expect(r.status, r.out).toBe(1)
+            expectRefusal(r)
             const kit = runGate({ files: { 'packages/kit/src/x.test.ts\nb.ts': 'a' } })
-            expect(kit.status, kit.out).toBe(1)
+            expectRefusal(kit)
         })
     })
 
@@ -524,7 +533,7 @@ describe('require-changeset gate', () => {
             ],
         ])('fails %s', (_name, files) => {
             const r = runGate({ baseFiles: SNAPSHOTS, files })
-            expect(r.status, r.out).toBe(1)
+            expectRefusal(r, SNAPSHOT_REFUSAL)
             expect(r.out).toContain("adds no changeset that files 'minor'")
         })
 
@@ -556,7 +565,7 @@ describe('require-changeset gate', () => {
                 baseFiles: { ...SNAPSHOTS, '.changeset/old.md': PATCH },
                 files: { ...changed(KIT_SNAPSHOT), '.changeset/old.md': GOOD },
             })
-            expect(r.status, r.out).toBe(1)
+            expectRefusal(r, SNAPSHOT_REFUSAL)
         })
 
         it("asks nothing of a snapshot's first commit, which changes nothing it records", () => {
@@ -565,13 +574,13 @@ describe('require-changeset gate', () => {
             })
             expect(r.status, r.out).toBe(0)
             // ...and the same files on a base that has them are changes
-            expect(runGate({ baseFiles: SNAPSHOTS, files: changed(KIT_SNAPSHOT) }).status).toBe(1)
+            expectRefusal(runGate({ baseFiles: SNAPSHOTS, files: changed(KIT_SNAPSHOT) }), SNAPSHOT_REFUSAL)
         })
 
         it('holds a Dependabot branch to it, which a person updates when a bump moves a snapshot', () => {
             const bump = { 'pnpm-lock.yaml': 'a', ...changed(CDK_SNAPSHOT) }
             const r = runGate({ baseFiles: SNAPSHOTS, files: bump, actor: 'dependabot[bot]' })
-            expect(r.status, r.out).toBe(1)
+            expectRefusal(r, SNAPSHOT_REFUSAL)
             expect(runGate({ baseFiles: SNAPSHOTS, files: { ...bump, ...CS }, actor: 'dependabot[bot]' }).status).toBe(
                 0,
             )
@@ -582,7 +591,7 @@ describe('require-changeset gate', () => {
             const r = runGate({ ...fromMain, files: { 'docs/x.md': 'a' } })
             expect(r.status, r.out).toBe(0)
             // the PR's own change to the other snapshot beside the merge still needs one
-            expect(runGate({ ...fromMain, files: changed(CDK_SNAPSHOT) }).status).toBe(1)
+            expectRefusal(runGate({ ...fromMain, files: changed(CDK_SNAPSHOT) }), SNAPSHOT_REFUSAL)
             const release = runGate({
                 baseFiles: SNAPSHOTS,
                 files: changed(KIT_SNAPSHOT),
@@ -600,12 +609,12 @@ describe('require-changeset gate', () => {
             expect(same.out).toContain('Release merge')
             // a fork's branch of that name
             const fork = runGate({ files: KIT_SRC, headRef: 'integration', baseRef: 'main', headRepo: 'fork/repo' })
-            expect(fork.status).toBe(1)
+            expectRefusal(fork)
             // into any other base
-            expect(runGate({ files: KIT_SRC, headRef: 'integration', baseRef: 'integration' }).status).toBe(1)
+            expectRefusal(runGate({ files: KIT_SRC, headRef: 'integration', baseRef: 'integration' }))
             // an environment that does not say which repository it is
             const unknown = { files: KIT_SRC, headRef: 'integration', baseRef: 'main', repo: '', headRepo: '' }
-            expect(runGate(unknown).status).toBe(1)
+            expectRefusal(runGate(unknown))
         })
 
         it('exempts dependabot unless it changes the kit peer floor', () => {
@@ -614,7 +623,7 @@ describe('require-changeset gate', () => {
             expect(r.status, r.out).toBe(0)
             const peers = JSON.stringify({ name: '@sssb/kit', peerDependencies: { react: '^20' } })
             const raised = runGate({ files: { 'packages/kit/package.json': peers }, actor: 'dependabot[bot]' })
-            expect(raised.status, raised.out).toBe(1)
+            expectRefusal(raised)
             // a dependency bump that leaves the peers alone is exempt
             const deps = JSON.stringify({
                 name: '@sssb/kit',
@@ -623,7 +632,7 @@ describe('require-changeset gate', () => {
             })
             expect(runGate({ files: { 'packages/kit/package.json': deps }, actor: 'dependabot[bot]' }).status).toBe(0)
             // and a human changing the same file is not exempt
-            expect(runGate({ files: { 'packages/kit/package.json': peers } }).status).toBe(1)
+            expectRefusal(runGate({ files: { 'packages/kit/package.json': peers } }))
         })
 
         it('does not check a base that lacks the gate', () => {
@@ -632,13 +641,13 @@ describe('require-changeset gate', () => {
 
         it('does not check a PR opened before the gate, and does check one opened at that instant', () => {
             expect(runGate({ files: KIT_SRC, createdAt: '2026-01-09T00:00:00Z' }).out).toContain('Opened before')
-            expect(runGate({ files: KIT_SRC, createdAt: GATE_DATE }).status).toBe(1)
+            expectRefusal(runGate({ files: KIT_SRC, createdAt: GATE_DATE }))
         })
 
         it('takes the cutover from the commit that ADDED the gate, not its latest edit', () => {
             // Edited on 2026-03-01; a PR opened 2026-02-01 is after the cutover (2026-01-10), so it is checked.
             const r = runGate({ files: KIT_SRC, gateEditedAt: '2026-03-01T00:00:00Z' })
-            expect(r.status, r.out).toBe(1)
+            expectRefusal(r)
         })
 
         it('takes the cutover from the first-parent history: the merge that brought the gate in', () => {
@@ -646,7 +655,7 @@ describe('require-changeset gate', () => {
             // predates the base's requirement.
             const r = runGate({ files: KIT_SRC, gateViaMerge: true, createdAt: '2026-01-07T00:00:00Z' })
             expect(r.out).toContain('Opened before')
-            expect(runGate({ files: KIT_SRC, gateViaMerge: true }).status).toBe(1)
+            expectRefusal(runGate({ files: KIT_SRC, gateViaMerge: true }))
         })
     })
 })

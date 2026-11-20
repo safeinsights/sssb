@@ -4,7 +4,7 @@ import { isJobKind } from '@sssb/kit/core/jobs'
 import { recordAuditEvent } from '@sssb/kit/db/audit'
 import { listJobs, submitJob } from '@sssb/kit/db/jobs'
 import { resolveOrgContext } from '../org-context'
-import { withPortErrors } from '../respond'
+import { readJsonObject, withPortErrors } from '../respond'
 
 /**
  * Jobs are tenant-scoped by RLS AND filtered to the active org — the same two boundaries as the
@@ -39,8 +39,9 @@ export async function GET(): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {
         const user = await auth.requireUser()
-        const { kind, payload } = (await request.json()) as { kind: string; payload?: unknown }
-        if (!isJobKind(kind)) return Response.json({ error: 'unknown job kind' }, { status: 400 })
+        const { kind, payload } = await readJsonObject(request)
+        if (typeof kind !== 'string' || !isJobKind(kind))
+            return Response.json({ error: 'unknown job kind' }, { status: 400 })
         // The payload is a jsonb blob the HANDLER interprets, so the route validates only its SHAPE
         // (a plain object) and leaves meaning to the handler — which must then treat it as untrusted
         // input, exactly as analyze-bundle does when it resolves the named attachment org-scoped.

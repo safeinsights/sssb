@@ -1,6 +1,6 @@
 import { isSimulated } from '@sssb/kit/adapters/index'
 import { bumpWorldAgreement } from '@sssb/kit/adapters/fake/agreements'
-import { withPortErrors } from '../../../respond'
+import { refuseNonJson, withPortErrors } from '../../../respond'
 
 /**
  * Bump one agreement's version (the demo story: re-arms the gate for everyone with a stale acceptance).
@@ -10,6 +10,8 @@ import { withPortErrors } from '../../../respond'
  */
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
+    const refused = refuseNonJson(request)
+    if (refused) return refused
     return withPortErrors(async () => {
         const { agreementId } = (await request.json()) as { agreementId?: unknown }
         if (typeof agreementId !== 'string' || !agreementId) {

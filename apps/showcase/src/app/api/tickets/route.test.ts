@@ -151,3 +151,17 @@ describe('GET /api/tickets (queue)', () => {
         expect(h.listTickets).not.toHaveBeenCalled()
     })
 })
+
+describe('POST /api/tickets: a malformed body is a 400, never a 500', () => {
+    test.each([['{'], ['null'], ['[]'], ['"text"']])('body %s', async (body) => {
+        const response = await POST(new Request('http://localhost/api/tickets', { method: 'POST', body }))
+        expect(response.status).toBe(400)
+        expect(h.createTicket).not.toHaveBeenCalled()
+    })
+
+    test('a subject or body that is not a string', async () => {
+        expect((await post({ subject: 5 })).status).toBe(400)
+        expect((await post({ subject: 'Blank labels', body: { a: 1 } })).status).toBe(400)
+        expect(h.createTicket).not.toHaveBeenCalled()
+    })
+})

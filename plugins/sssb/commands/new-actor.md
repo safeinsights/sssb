@@ -14,13 +14,14 @@ Actors are simulated external counterparties for dev and the demo: each is a tic
 Actors tab. The runtime (`ActorShell`, `ActorsApp`, and the job-runner shapes `builderTick` and `serviceTick`; step 3 names
 each one's subpath) is the framework's; each actor is app content.
 
-**What a generated app has.** A workspace `pnpm create @sssb` generated has a Simulator panel ONLY in its static
-demo: `src/demo-static/app.tsx` hands the framework's `DemoShell` an empty `extraTabs`, so that panel shows SSSB's
-own tabs and no Actors tab. `pnpm dev` has no Simulator at all (no panel in the layout, no `/api/simulator/*`
-routes), and `src/app-config/actors.ts` registers no actor, typed so that it cannot (`ActorId` is `never`, the list
-`readonly { id: string }[]`). So steps 1 to 5 add the actor where the app has a panel, the static demo. The server
-host is the last section, and it applies only once the app has the server Simulator, which is SSSB's reference
-app's and not part of a generated app.
+**What a generated app has.** A workspace `pnpm create @sssb` generated has two Simulator panels. On `pnpm dev` its
+locale layout mounts SSSB's `SimulatorHost` (`@sssb/kit/components/simulator/simulator-host`), served by its
+`src/app/api/simulator/[...path]/route.ts`: People, Mail, and Jobs with the world clock, and no Actors tab (the host
+takes no app-registered tab). Its static demo's `src/demo-static/app.tsx` hands the framework's `DemoShell` an empty
+`extraTabs`, so that panel shows SSSB's own tabs and no Actors tab either. And `src/app-config/actors.ts` registers no
+actor, typed so that it cannot (`ActorId` is `never`, the list `readonly { id: string }[]`). So steps 1 to 5 add the
+actor where a panel takes an app's tab, the static demo. The server host is the last section, and it applies only once
+the app's `pnpm dev` panel takes app tabs, which SSSB's host does not yet: the reference app has its own glue for it.
 
 1. **Register** in `src/app-config/actors.ts`. The generated list's type has no room for an actor's copy, and the
    kit exports no actor-definition type, so replace both declarations with the reference app's shape
@@ -68,15 +69,17 @@ app's and not part of a generated app.
    in the card). Run it with `pnpm build:demo-static && pnpm e2e:demo-static`. The runtime adds to the single-file
    demo, so run `pnpm check:demo-size` too, then finish with `pnpm verify`.
 
-**The server host, only once the app has the server Simulator.** On `pnpm dev` an actor runs in a page the server
-panel embeds, driving the app's real HTTP surfaces. A generated app has none of what that needs. The reference app's
-server Simulator is its panel glue
+**The server host, only once the app's `pnpm dev` panel takes app tabs.** On `pnpm dev` an actor runs in a page the
+server panel embeds, driving the app's real HTTP surfaces. A generated app's `SimulatorHost` has no Actors tab and no
+actor routes. The reference app's server Simulator is its own panel glue
 (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/[locale]/simulator-glue.tsx`, mounted from
-its locale layout), the `/api/simulator/*` routes the panel and the actor pages call
+its locale layout in place of `SimulatorHost`), the `/api/simulator/*` routes the panel and the actor pages call
 (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app/api/simulator`) and, for a service-shaped
 actor, the `/api/service/*` routes
 (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app/api/service`). Adding it means porting that
-glue and every route it calls, which is its own piece of work and not this command's. Once the app has it:
+glue, which replaces the layout's `SimulatorHost` mount, and each route it calls that SSSB's catch-all
+`src/app/api/simulator/[...path]/route.ts` does not answer (a route file of the app's own beside the catch-all wins for
+its path). That is its own piece of work and not this command's. Once the app has it:
 
 - **The actor page**: create `src/app/[locale]/simulator/actors/[actor]/` from the reference's
   (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app/[locale]/simulator/actors/[actor]`: a page,

@@ -520,6 +520,46 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         expect(withoutKey(fromPg[0]!)).toEqual(withoutKey(fromPg[1]!))
     })
 
+    test('an instant before year 1 or after year 9999 is stored, as node-postgres stores it, not refused', async () => {
+        // Compared with the instant itself, not with the pg transport's read: node-postgres sends a Date in the
+        // process's local time, and for an ancient date a local zone's mean-time offset (Denver's is -06:59:56) is not
+        // a whole number of minutes, so pg itself shifts it outside UTC. Lambda runs in UTC, where the two agree.
+        for (const year of [-43, 0, 10000]) {
+            const at = new Date(Date.UTC(2000, 2, 15, 12, 0, 0))
+            at.setUTCFullYear(year)
+            const { rows } = await sql<{ at: Date; bc: boolean }>`
+                select ${at}::timestamptz as at, (${at}::timestamptz)::text like '% BC' as bc`.execute(dataApi.getDb())
+            expect(rows[0]?.at.getTime(), String(year)).toBe(at.getTime())
+            expect(rows[0]?.bc, String(year)).toBe(year < 1)
+        }
+    })
+
+    test('an array of a type node-postgres does not parse (an enum created after the emulator first read pg_type) reads as on pg', async () => {
+        await sql`drop table if exists data_api_moods`.execute(viaPg.getDb())
+        await sql`drop type if exists data_api_mood`.execute(viaPg.getDb())
+        await sql`create type data_api_mood as enum ('happy', 'sad', 'with space')`.execute(viaPg.getDb())
+        await sql`create table data_api_moods (k int primary key, one data_api_mood, many data_api_mood[])`.execute(
+            viaPg.getDb(),
+        )
+        await sql`insert into data_api_moods values (1, 'sad', '{happy,sad,"with space",NULL}')`.execute(viaPg.getDb())
+        const read = (port: DbPort) => sql`select one, many from data_api_moods`.execute(port.getDb())
+        const [fromDataApi] = (await read(dataApi)).rows
+        const [fromPg] = (await read(viaPg)).rows
+        expect(fromPg).toEqual({ one: 'sad', many: '{happy,sad,"with space",NULL}' })
+        expect(fromDataApi).toEqual(fromPg)
+        // The emulator names the new type as PgJDBC would, rather than `unknown` from a pg_type read before it existed.
+        const answer = (await emulator.send(
+            new ExecuteStatementCommand({
+                resourceArn: RESOURCE_ARN,
+                secretArn: SECRET_ARN,
+                database: DATABASE,
+                sql: 'select many from data_api_moods',
+                includeResultMetadata: true,
+            }),
+        )) as { columnMetadata?: { typeName?: string }[] }
+        expect(answer.columnMetadata?.[0]?.typeName).toBe('_data_api_mood')
+    })
+
     test('a value too long for a domain is refused on both transports, never truncated', async () => {
         // data_api_parity and its domains exist: the parity test above created them.
         for (const [label, port] of [

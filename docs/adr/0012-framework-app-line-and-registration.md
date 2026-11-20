@@ -991,3 +991,39 @@ app with no extra fields declares an empty one and suppresses `@typescript-eslin
 holds: an app with none writes `export type AppSubjectFields = Record<never, never>`, and an app with fields may
 declare an interface, a type alias or a mapped type. `appNotificationCopy` is the one seam module left that an empty
 registration does not fully switch off.
+
+## Addendum (2026-11-20): what the authorization scan reads, and what it does not prove
+
+A baseline review of 0.4.0 found shapes the scan passed that authorize nothing, and code Next serves that the scan
+never read. The scan now refuses the first and reads or refuses the second. The rules are below.
+
+**What it reads now.** Besides every `route.*` handler under `src/app`:
+
+- A directory under `src/app` reached through a symbolic link, at the path Next serves it.
+- Server Actions: every export of a file that opens with `'use server'` and every function whose body opens with it,
+  anywhere under the app's `src`. Each is judged as a POST handler and can match no exemption.
+- It fails an app outright for what it cannot read: a `pages/api` or `src/pages/api` directory, a root-level `app/`
+  directory, a file under `src/app` named `route.<ext>` that is not one of the extensions it parses (tests, stories and
+  declarations excepted), and a `'use server'` file in the app outside `src`.
+
+**What a denial must do.** The 2026-11-18 rule stands: a denial counts only where it reaches the handler's outcome.
+It no longer counts in a callback that never carries its failure, whatever is awaited: a timer, `queueMicrotask`,
+`process.nextTick`, `Promise.resolve`, `after()` from `next/server`, a `.catch`, `.finally` or listener callback, the
+second argument of `.then`, an async callback to an iteration method, `Promise.allSettled`, `any` or `race`. An
+awaited or returned `Promise.all` over a map whose callback is async, or returns the promise, does count.
+
+**An exemption's `calls` gate** counts a call that runs on the handler's path, whatever a `try` does with its failure,
+and no longer one that never runs (handed to a same-file function, in a lazy iterator, in a detached callback). It
+proves the route is the kind that makes that port call, never that it does nothing else: the limit this ADR already
+states.
+
+**Limits.** In addition to the earlier lists:
+
+- The scan proves a handler MAY reach `authorize`, not that every path does, nor that the call comes before the
+  mutation. An early return, a non-constant condition, an authorize after the write and an empty loop all pass. The app guide says to call it before the mutation and before any `try`, on a path every request takes.
+- `Promise.all(...).then(f)` is not followed through the `.then`, and a sync `forEach` on a receiver whose head is an
+  import is trusted only when awaited or returned. Both refuse correct code, and the message does not name the shape; the app guide says what to write instead.
+- A Server Action a workspace package exports is not read, and a re-export resolved through a package's `exports`
+  conditions (`react-server` against `default`) is read as TypeScript resolves it, which may not be what Next serves.
+- The simulated-mode opening accepts only a `Response`, `NextResponse` or a thrown global error (any global `...Error`) or an error from `@sssb/kit/ports/errors`, in a file that assigns to none of those globals. Tampering through
+  `Object.defineProperty(globalThis, ...)` is not seen.

@@ -123,15 +123,21 @@ export function createTicker({
             return { ...state }
         },
 
-        /** Stops it, cancels a tick in flight, and resolves once the loop has ended. Safe to call when not running. */
+        /**
+         * Stops it, cancels a tick in flight, and resolves to the status once the loop has ended. Safe to call when not
+         * running.
+         *
+         * @returns {Promise<TickerStatus>}
+         */
         async stop() {
             const stopping = controller
             controller = null
-            if (!stopping) return
+            if (!stopping) return { ...state }
             stopping.abort()
             if (markerFile) removeTickerMarker(markerFile)
             state = { ...state, running: false }
             await loop
+            return { ...state }
         },
 
         /** @returns {TickerStatus} */

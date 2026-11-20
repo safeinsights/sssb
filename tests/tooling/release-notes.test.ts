@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { check as prettierCheck, resolveConfig } from 'prettier'
 import { changesetReleases, isChangesetName as releaseIsChangesetName } from '../../scripts/release.mjs'
 import {
@@ -266,16 +266,38 @@ describe('assembleNotes', () => {
     })
 })
 
+/** Every changeset under `root` assembles, lands in a section and is blamed for nothing; how many there were. */
+function assemblesEveryOne(root: string): number {
+    expect(lintChangesets(root)).toEqual([])
+    const changesets = readChangesets(root)
+    const { markdown, entries, empty } = releaseNotes(root)
+    expect(entries + empty).toBe(changesets.length)
+    for (const { text } of changesets) {
+        const title = /^### (.+)$/m.exec(text.split('---').slice(2).join('---'))?.[1]
+        if (title) expect(markdown).toContain(`### ${title}`)
+    }
+    return changesets.length
+}
+
 describe("this repository's own changesets", () => {
+    // Right after a release `.changeset/` holds none, and this case then checks nothing; the next one holds the same
+    // check to a tree that always has some.
     it('assemble, every one of them lands in a section, and none is blamed', () => {
-        expect(lintChangesets(ROOT)).toEqual([])
-        const changesets = readChangesets(ROOT)
-        const { markdown, entries, empty } = releaseNotes(ROOT)
-        expect(entries + empty).toBe(changesets.length)
-        for (const { text } of changesets) {
-            const title = /^### (.+)$/m.exec(text.split('---').slice(2).join('---'))?.[1]
-            if (title) expect(markdown).toContain(`### ${title}`)
+        assemblesEveryOne(ROOT)
+    })
+
+    it('the same check, over a .changeset/ that is never empty', () => {
+        const root = makeTestTmpDir('sssb-notes-own-')
+        mkdirSync(path.join(root, '.changeset'))
+        for (const name of ['README.md', 'config.json']) {
+            copyFileSync(path.join(ROOT, '.changeset', name), path.join(root, '.changeset', name))
         }
+        writeFileSync(
+            path.join(root, '.changeset/a-seam.md'),
+            changeset({ kind: 'seam', action: 'required', title: 'A seam gains a hook' }),
+        )
+        writeFileSync(path.join(root, '.changeset/b-nothing.md'), EMPTY)
+        expect(assemblesEveryOne(root)).toBe(2)
     })
 
     it('reads the same names as release.mjs does: what Changesets itself reads as a changeset', () => {
@@ -434,11 +456,16 @@ describe('the command line', () => {
 
     it('exits 1 on an unknown argument or a flag with no value, and an unreadable ref', () => {
         const { run } = layout({ 'a.md': SEAM('A') })
-        expect(run('--nope').status).toBe(1)
-        expect(run('--version').status).toBe(1)
-        expect(run('--since').status).toBe(1)
+        const refused = (args: string[], message: RegExp) => {
+            const result = run(...args)
+            expect(result.status, args.join(' ')).toBe(1)
+            expect(result.stderr, args.join(' ')).toMatch(message)
+        }
+        refused(['--nope'], /^unknown argument --nope$/m)
+        refused(['--version'], /^--version needs a value$/m)
+        refused(['--since'], /^--since needs a value$/m)
         // not a git repository at all
-        expect(run('--since', 'v1').status).toBe(1)
+        refused(['--since', 'v1'], /^git ls-tree failed: fatal: not a git repository/m)
     })
 
     it('main takes the root, so the real repository can be judged in-process too', () => {
@@ -533,10 +560,24 @@ describe('what the lint accepts must read the same in the notes', () => {
         const r = repo({ 'a.md': SEAM('A') })
         expect(() => readChangesets(r.dir, { since: '-R' })).toThrow(/not a revision: -R/)
         expect(() => readChangesets(r.dir, { at: '-r' })).toThrow(/not a revision: -r/)
-        expect(main(['--since', '-R'], r.dir)).toBe(1)
-        // and a value that is a flag is a missing value, whatever the flag
-        expect(main(['--version', '-v1'], r.dir)).toBe(1)
-        expect(main(['--out', '-x'], r.dir)).toBe(1)
+        // main reads a value that starts with `-` as a missing one, whatever the flag, before any revision is read
+        const said = vi.spyOn(console, 'error').mockImplementation(() => {})
+        try {
+            for (const [flag, value] of [
+                ['--since', '-R'],
+                ['--version', '-v1'],
+                ['--out', '-x'],
+            ]) {
+                said.mockClear()
+                expect(main([flag, value], r.dir), flag).toBe(1)
+                expect(
+                    said.mock.calls.map((call) => String(call[0])),
+                    flag,
+                ).toEqual([`${flag} needs a value`])
+            }
+        } finally {
+            said.mockRestore()
+        }
     })
 
     it('says what git said when a revision does not exist', () => {

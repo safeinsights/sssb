@@ -3,7 +3,7 @@ import { authorize } from '@sssb/kit/authz/authorize'
 import { recordAuditEvent } from '@sssb/kit/db/audit'
 import { attachmentForOrg, confirmAttachment } from '@/domain/db/attachments'
 import { resolveOrgContext } from '../../../org-context'
-import { withPortErrors } from '../../../respond'
+import { requireUuidParam, withPortErrors } from '../../../respond'
 
 /**
  * The CONFIRM step of a two-step upload. After the browser has POSTed the file to the mint
@@ -19,6 +19,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     return withPortErrors(async () => {
         const { id } = await context.params
         const user = await auth.requireUser()
+        requireUuidParam(id)
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved

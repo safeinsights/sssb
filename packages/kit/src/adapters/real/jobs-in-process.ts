@@ -36,6 +36,15 @@ export const IN_PROCESS_LOST_AFTER_MS = 5 * 60_000
  * another runner holds `running` (a service caller's, through its status route, or one the jobs webhook is walking
  * to its end) is left to it.
  *
+ * The sweep also fails a job still `queued` after `IN_PROCESS_LOST_AFTER_MS`: its row committed but `start` never
+ * claimed it (the invocation ended between the two, the runner failed to load, the request's `start` threw). A queued
+ * job carries no claim, so age alone decides, and that is sound for this runner only: with `JOBS_RUNNER=in-process`
+ * every job is this runner's, and `start` claims it in the invocation that committed it, within that invocation's
+ * 30-second limit, so a job queued for minutes will never start. It is failed, never run: a handler is written to run
+ * at most once, and the request or tick that submitted it may have reported it already. The CodeBuild runner has no
+ * sweep (a build may wait in CodeBuild's own queue), and neither does the simulated world, whose held jobs stay
+ * `queued` on purpose.
+ *
  * A terminal status notifies the job's org admins as the jobs webhook route does, through `notify`, which the adapter
  * registry passes in (the notification modules import the registry). Best effort: `notifyJobTerminal` swallows its
  * own failures, and anything else `notify` throws is logged; neither fails a job that already finished.
@@ -68,22 +77,28 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                 return 0
             }
             for (const tenant of tenants) {
-                let lost: { id: string }[]
+                let lost: { id: string; status: string }[]
                 try {
                     lost = await ports.db.withTenant(tenant.id, (trx) =>
                         trx
                             .selectFrom('jobs')
-                            .select('jobs.id')
-                            .where('jobs.status', '=', 'running')
+                            .select(['jobs.id', 'jobs.status'])
                             .where('jobs.updated_at', '<', before)
-                            .where(({ exists, selectFrom }) =>
-                                exists(
-                                    selectFrom('job_status_changes')
-                                        .select('job_status_changes.id')
-                                        .whereRef('job_status_changes.job_id', '=', 'jobs.id')
-                                        .where('job_status_changes.status', '=', 'running')
-                                        .where('job_status_changes.message', '=', IN_PROCESS_CLAIM),
-                                ),
+                            .where((eb) =>
+                                eb.or([
+                                    eb('jobs.status', '=', 'queued'),
+                                    eb.and([
+                                        eb('jobs.status', '=', 'running'),
+                                        eb.exists(
+                                            eb
+                                                .selectFrom('job_status_changes')
+                                                .select('job_status_changes.id')
+                                                .whereRef('job_status_changes.job_id', '=', 'jobs.id')
+                                                .where('job_status_changes.status', '=', 'running')
+                                                .where('job_status_changes.message', '=', IN_PROCESS_CLAIM),
+                                        ),
+                                    ]),
+                                ]),
                             )
                             .execute(),
                     )
@@ -91,10 +106,13 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                     console.warn(`SSSB jobs: the in-process sweep skipped tenant ${tenant.id}: ${messageOf(error)}`)
                     continue
                 }
-                for (const { id } of lost) {
+                for (const { id, status } of lost) {
                     try {
                         await recordJobStatus(ports.db, tenant.id, id, 'failed', {
-                            error: 'lost: the server stopped before the in-process runner recorded an outcome',
+                            error:
+                                status === 'queued'
+                                    ? 'lost: never started; the in-process runner did not claim it'
+                                    : 'lost: the server stopped before the in-process runner recorded an outcome',
                         })
                     } catch (error) {
                         if (!(error instanceof InvalidTransitionError)) {
@@ -102,7 +120,7 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                                 `SSSB jobs: the in-process sweep could not fail job ${id}: ${messageOf(error)}`,
                             )
                         }
-                        continue // InvalidTransitionError: it finished, or another sweep failed it, meanwhile
+                        continue // InvalidTransitionError: it started or finished, or another sweep failed it, meanwhile
                     }
                     failed += 1
                     await notifyBestEffort(tenant.id, id, 'failed')

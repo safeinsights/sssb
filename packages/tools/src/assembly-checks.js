@@ -78,20 +78,61 @@ export function failClosedEnvironmentProblems(env) {
     return problems
 }
 
+// THE IAM TYPES THE CHECKS READ, and the ones that grant nothing. A grant is read from a policy resource's own
+// document (a policy, a managed policy, a role's, user's or group's policy), from a principal's inline policies, and,
+// for an AWS-managed policy a principal attaches, judged by name (unreadablePolicies). Any other `AWS::IAM::*` type
+// fails closed (unreadTypes): one this file does not know could carry a grant it cannot see.
+const POLICY_TYPES = new Set([
+    'AWS::IAM::Policy',
+    'AWS::IAM::ManagedPolicy',
+    'AWS::IAM::RolePolicy',
+    'AWS::IAM::UserPolicy',
+    'AWS::IAM::GroupPolicy',
+])
+const PRINCIPAL_TYPES = new Set(['AWS::IAM::Role', 'AWS::IAM::User', 'AWS::IAM::Group'])
+// Each grants nothing of its own: a role's carrier for EC2, identity providers, a service-linked role (whose policy
+// is the service's, fixed by AWS), credentials and certificates, and a user put in a group (the group's grants are
+// read where the group is).
+const GRANTS_NOTHING = new Set([
+    'AWS::IAM::InstanceProfile',
+    'AWS::IAM::OIDCProvider',
+    'AWS::IAM::SAMLProvider',
+    'AWS::IAM::ServiceLinkedRole',
+    'AWS::IAM::ServerCertificate',
+    'AWS::IAM::VirtualMFADevice',
+    'AWS::IAM::AccessKey',
+    'AWS::IAM::UserToGroupAddition',
+])
+
 /**
- * The permission documents a resource carries: a policy's, a managed policy's, or a role's inline ones.
+ * The permission documents a resource carries: a policy resource's own, or a role's, user's or group's inline ones.
  * @param {Resource} resource
  * @returns {unknown[]}
  */
 function policyDocuments(resource) {
-    if (resource.Type === 'AWS::IAM::Policy' || resource.Type === 'AWS::IAM::ManagedPolicy') {
-        return [resource.Properties?.PolicyDocument]
-    }
-    if (resource.Type === 'AWS::IAM::Role') {
+    if (POLICY_TYPES.has(resource.Type)) return [resource.Properties?.PolicyDocument]
+    if (PRINCIPAL_TYPES.has(resource.Type)) {
         const inline = /** @type {{ PolicyDocument?: unknown }[] | undefined} */ (resource.Properties?.Policies) ?? []
         return inline.map((policy) => policy.PolicyDocument)
     }
     return []
+}
+
+/**
+ * Each `AWS::IAM::*` resource of a type the checks neither read nor know to grant nothing, as `<id> (<type>)`.
+ * @param {Resources} all
+ * @returns {string[]}
+ */
+function unreadTypes(all) {
+    return Object.entries(all)
+        .filter(
+            ([, r]) =>
+                r.Type.startsWith('AWS::IAM::') &&
+                !POLICY_TYPES.has(r.Type) &&
+                !PRINCIPAL_TYPES.has(r.Type) &&
+                !GRANTS_NOTHING.has(r.Type),
+        )
+        .map(([id, r]) => `${id} (${r.Type})`)
 }
 
 /**
@@ -110,7 +151,7 @@ function reaches(action, service) {
 }
 
 /**
- * Every Allow statement in the stack's IAM policies, managed policies and roles' inline policies that can
+ * Every Allow statement in the stack's IAM policy resources and its roles', users' and groups' inline policies that can
  * grant one of `service`'s actions (`rds-data`, `secretsmanager`): by naming one, by a wildcard that
  * reaches one (`*` reaches every service), or by `NotAction`, which grants everything it does not name.
  * Roles' trust policies grant nothing and are not read.
@@ -153,7 +194,7 @@ function unreadablePolicies(all) {
             .map(([id]) => id),
     )
     return Object.entries(all)
-        .filter(([, r]) => r.Type === 'AWS::IAM::Role')
+        .filter(([, r]) => PRINCIPAL_TYPES.has(r.Type))
         .flatMap(([id, r]) =>
             /** @type {unknown[] | undefined} */ (r.Properties?.ManagedPolicyArns ?? [])
                 .filter((arn) => {
@@ -188,7 +229,80 @@ function databaseSecretIds(all, clusterId) {
 }
 
 /**
- * Whether every resource `statement` grants refers to one of `ids`, and none is a wildcard.
+ * The roles the stack's Lambda functions run as, by logical id: the only principals a resource policy on the cluster's
+ * secret may name (the server's and the migrator's are among them).
+ * @param {Resources} all
+ * @returns {Set<string>}
+ */
+function functionRoles(all) {
+    return new Set(
+        Object.values(all)
+            .filter((r) => r.Type === 'AWS::Lambda::Function')
+            .map((r) => /** @type {{ 'Fn::GetAtt'?: unknown[] } | undefined} */ (r.Properties?.Role)?.['Fn::GetAtt'])
+            .filter((att) => Array.isArray(att) && att[1] === 'Arn' && typeof att[0] === 'string')
+            .map((att) => /** @type {string} */ (/** @type {unknown[]} */ (att)[0]))
+            .filter((id) => all[id]?.Type === 'AWS::IAM::Role'),
+    )
+}
+
+/**
+ * Each resource policy on the cluster's secret that lets in a principal other than a role one of the stack's own
+ * functions runs as, as `<id>`. A resource policy grants with no IAM resource at all (`Principal: "*"` and
+ * `GetSecretValue` is the secret for anyone), so it is read here. Fails closed: a policy whose secret is not a `Ref` to
+ * another secret of the stack counts as on the cluster's, and a principal that is not exactly
+ * `{ AWS: { Fn::GetAtt: [<role>, Arn] } }` (or a list of those), a `NotPrincipal`, or a document the check cannot
+ * read, is a problem.
+ * @param {Resources} all
+ * @param {readonly string[]} secretIds
+ * @returns {string[]}
+ */
+function secretResourcePolicies(all, secretIds) {
+    const roles = functionRoles(all)
+    /** @param {unknown} principal */
+    const isOwnRole = (principal) => {
+        if (principal === null || typeof principal !== 'object' || Object.keys(principal).length !== 1) return false
+        const att = /** @type {{ 'Fn::GetAtt'?: unknown[] }} */ (principal)['Fn::GetAtt']
+        return (
+            Array.isArray(att) &&
+            att.length === 2 &&
+            att[1] === 'Arn' &&
+            typeof att[0] === 'string' &&
+            roles.has(att[0])
+        )
+    }
+    /** @param {unknown} principal */
+    const onlyOwnRoles = (principal) => {
+        if (principal === null || typeof principal !== 'object' || Array.isArray(principal)) return false
+        const keys = Object.keys(principal)
+        if (keys.length !== 1 || keys[0] !== 'AWS') return false
+        const aws = /** @type {{ AWS: unknown }} */ (principal).AWS
+        const list = Array.isArray(aws) ? aws : [aws]
+        return list.length > 0 && list.every(isOwnRole)
+    }
+    return Object.entries(all)
+        .filter(([, r]) => r.Type === 'AWS::SecretsManager::ResourcePolicy')
+        .filter(([, r]) => {
+            const ref = /** @type {{ Ref?: unknown } | undefined} */ (r.Properties?.SecretId)?.Ref
+            const another =
+                typeof ref === 'string' && !secretIds.includes(ref) && all[ref]?.Type === 'AWS::SecretsManager::Secret'
+            return !another
+        })
+        .filter(([, r]) => {
+            const statements = /** @type {{ Statement?: unknown } | undefined} */ (r.Properties?.ResourcePolicy)
+                ?.Statement
+            if (!Array.isArray(statements)) return true
+            return statements.some((statement) => {
+                const st = /** @type {Statement & { Principal?: unknown, NotPrincipal?: unknown }} */ (statement)
+                if (st.Effect === 'Deny') return false
+                return st.NotPrincipal !== undefined || !onlyOwnRoles(st.Principal)
+            })
+        })
+        .map(([id]) => id)
+}
+
+/**
+ * Whether every resource `statement` grants refers to one of `ids`, and none is a wildcard (`*` or `?`, which IAM
+ * matches anywhere in a resource).
  * @param {Statement} statement
  * @param {readonly string[]} ids
  */
@@ -196,7 +310,7 @@ function namesOnly(statement, ids) {
     const granted = Array.isArray(statement.Resource) ? statement.Resource : [statement.Resource ?? '*']
     return granted.every((resource) => {
         const text = JSON.stringify(resource)
-        return !text.includes('*') && ids.some((id) => text.includes(`"Ref":"${id}"`))
+        return !/[*?]/.test(text) && ids.some((id) => text.includes(`"Ref":"${id}"`))
     })
 }
 
@@ -225,7 +339,19 @@ export function secretGrantProblems(resources) {
     }
     const unreadable = unreadablePolicies(resources)
     if (unreadable.length > 0) {
-        problems.push(`no role attaches an AWS-managed policy the check cannot read: ${unreadable.join('; ')}`)
+        problems.push(
+            `no role, user or group attaches an AWS-managed policy the check cannot read: ${unreadable.join('; ')}`,
+        )
+    }
+    const open = secretResourcePolicies(resources, secretIds)
+    if (open.length > 0) {
+        problems.push(
+            `no resource policy on the cluster’s secret lets in any principal but the stack’s own functions’ roles: ${open.join('; ')}`,
+        )
+    }
+    const unread = unreadTypes(resources)
+    if (unread.length > 0) {
+        problems.push(`no IAM resource is of a type this check does not read: ${unread.join('; ')}`)
     }
     return problems
 }

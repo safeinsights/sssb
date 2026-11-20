@@ -4,7 +4,7 @@ import { recordAuditEvent } from '@sssb/kit/db/audit'
 import { escalationForActiveOrg, transitionEscalation } from '@/domain/db/escalations'
 import { enqueueWebhookEvent } from '@sssb/kit/db/webhooks'
 import { resolveOrgContext } from '../../../org-context'
-import { withPortErrors } from '../../../respond'
+import { readJsonObject, requireUuidParam, withPortErrors } from '../../../respond'
 
 /**
  * The receiving team decides an escalation (accept/reject). The request must have the active org
@@ -17,7 +17,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return withPortErrors(async () => {
         const user = await auth.requireUser()
         const { id } = await context.params
-        const { decision } = (await request.json()) as { decision?: string }
+        requireUuidParam(id)
+        const { decision } = await readJsonObject(request)
         if (decision !== 'accept' && decision !== 'reject') {
             return Response.json({ error: 'invalid-decision' }, { status: 400 })
         }

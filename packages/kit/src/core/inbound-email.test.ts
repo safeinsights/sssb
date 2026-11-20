@@ -12,6 +12,21 @@ describe('normalizeEmailAddress', () => {
         expect(normalizeEmailAddress('Sam <sam@x.test>')).toBe('sam@x.test')
     })
 
+    it('ignores a quoted display name, so it cannot supply the address', () => {
+        expect(normalizeEmailAddress('"<victim@org.test>" <attacker@evil.test>')).toBe('attacker@evil.test')
+        expect(normalizeEmailAddress('"Ada \\"<victim@org.test>\\"" <ada@x.test>')).toBe('ada@x.test')
+    })
+
+    it('fails closed on an address it cannot read one way only', () => {
+        // A comment after the address, two addresses, and text after the brackets: each names a second address.
+        expect(normalizeEmailAddress('Mallory <attacker@evil.test> (<victim@org.test>)')).toBe('')
+        expect(normalizeEmailAddress('<attacker@evil.test>, <victim@org.test>')).toBe('')
+        expect(normalizeEmailAddress('<victim@org.test> <attacker@evil.test>')).toBe('')
+        expect(normalizeEmailAddress('x<victim@org.test>y@evil.test')).toBe('')
+        expect(normalizeEmailAddress('Ada <ada@x.test')).toBe('')
+        expect(normalizeEmailAddress('ada@x.test>')).toBe('')
+    })
+
     it('passes a bare address through, trimmed and lowercased', () => {
         expect(normalizeEmailAddress('  Foo@Bar.TEST ')).toBe('foo@bar.test')
     })
@@ -102,4 +117,12 @@ describe('normalizeInboundBody', () => {
         const body = 'On Mon, someone wrote:\n> only quoted content'
         expect(normalizeInboundBody(body)).toBe(body.trim())
     })
+})
+
+it('a long run of escaped quotes that never closes is read in linear time', () => {
+    const hostile = `"${'\\"'.repeat(200_000)}`
+    const started = performance.now()
+    expect(normalizeEmailAddress(hostile)).toBe('')
+    expect(normalizeEmailAddress(`${'"'.repeat(200_001)} <ada@x.test>`)).toBe('ada@x.test')
+    expect(performance.now() - started).toBeLessThan(1000)
 })

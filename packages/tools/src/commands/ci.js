@@ -278,7 +278,11 @@ export async function run(args) {
         // checks under the config a bare `vitest` loads for each app. It runs for the first app, not the root, because
         // an adopter's root need not resolve @sssb/kit. Then, in each app, no e2e spec reaching the kit other than
         // through @sssb/kit/testing/e2e.
-        const { run: doctor } = await import('./doctor.js')
+        // The walk is held to every app the job fans out over, as a bare `sssb doctor` at the root holds it to every app
+        // the workspace names: an app the workspace's packages do not reach fails here, with doctor's own line.
+        const { doctorFor } = await import('./doctor.js')
+        const named = apps.map((app) => path.join(root, app))
+        const doctor = async () => doctorFor({ dir: path.join(root, apps[0] ?? '.'), defaulted: false, named })
         checks.push(['doctor', doctor, ['--app', path.join(root, apps[0] ?? '.')]])
         const { run: checkE2e } = await import('./check-e2e.js')
         for (const app of apps) checks.push(['check-e2e', checkE2e, ['--app', path.join(root, app)]])

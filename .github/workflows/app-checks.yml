@@ -74,6 +74,8 @@ jobs:
             contents: read
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
@@ -112,6 +114,8 @@ jobs:
               run: echo "The change is documentation only (the caller's docs-only input), so this job skips the contract tests."
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               if: ${{ !inputs.docs-only }}
+              with:
+                  persist-credentials: false
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
               if: ${{ !inputs.docs-only }}
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -140,6 +144,8 @@ jobs:
             demo-static: ${{ steps.matrix.outputs.demo-static }}
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
@@ -173,6 +179,8 @@ jobs:
               run: echo "The change is documentation only (the caller's docs-only input), so this job skips this e2e shard."
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               if: ${{ !inputs.docs-only }}
+              with:
+                  persist-credentials: false
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
               if: ${{ !inputs.docs-only }}
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -233,6 +241,8 @@ jobs:
               run: echo "The change is documentation only (the caller's docs-only input), so this job skips this app's static demo."
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               if: ${{ !inputs.docs-only }}
+              with:
+                  persist-credentials: false
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
               if: ${{ !inputs.docs-only }}
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -285,6 +295,8 @@ jobs:
               run: echo "The change is documentation only (the caller's docs-only input), so this job skips the CDK synth."
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               if: ${{ !inputs.docs-only }}
+              with:
+                  persist-credentials: false
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
               if: ${{ !inputs.docs-only }}
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

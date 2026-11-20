@@ -7187,3 +7187,50 @@ rejected alternative.
 - **Adopter names that the first single mode's records carried are taken out of the records it added**, which have not
   reached `main`, as well as out of the changesets, the future task and the ADR addendum: the dependency runs from an
   adopter to SSSB, never back.
+
+## Baseline review of 0.4.0 (2026-11-20, `fix/post-0.4.0-baseline-review`)
+
+Five reviewers read the whole repository at 4dc9a89, the commit 0.4.0 was cut from (its release commit is dfc5cdd), one area each; five workers fixed
+what was confirmed, and each reviewer then read its area's fix diff. JP was away, so these were decided without him.
+
+- **`@sssb/kit/core/same-origin-path` is published.** The starter's sign-in page guarded `returnTo` with a prefix test
+  a browser does not share (`/\\host`, a tab). The kit already had the right function, and the starter may import only
+  published subpaths. Rejected: an inline check in each app, which is the copy that went wrong.
+- **The authorization scan is stricter, and reads Server Actions.** ADR-0012's 2026-11-20 addendum has the rules.
+  Rejected: documenting the floating-denial shapes as a "trusted callee" limit, since the scan's header already
+  claimed them; a lint rule for `'use server'`, which would not read what the action does. A Server Action can match
+  no exemption, as a mutating route outside `src/app/api` cannot. This can fail an adopter's conformance run on
+  upgrade: the changeset names every newly refused shape.
+- **A job left `queued` is failed by the in-process sweep, never run.** A job whose `start()` failed or never ran
+  stayed queued for ever, and the schedule that spawned it had already advanced. After `IN_PROCESS_LOST_AFTER_MS` the
+  sweep fails it ("lost: never started") and notifies. Age alone is enough because the sweep exists only with
+  `JOBS_RUNNER=in-process`, where every job is that runner's. Rejected: putting `next_run_at` back when `start()`
+  throws, which makes scheduled work at-least-once and cannot be done for an invocation that died. Known edge: a
+  deployment switched from `codebuild` to `in-process` with builds in flight sees those jobs failed after five
+  minutes; drain them first.
+- **The email port takes exactly one address**, in the real adapter and the fake alike, so a test on the simulated
+  world catches a list in `to`. `sendTemplate` collapses line breaks in a composed subject; the port refuses them
+  from a direct caller.
+- **A simulated-only POST answers 415 unless it is JSON**, in both apps, body-less ones included, as the kit's own
+  simulator API already did: a cross-origin "simple" POST could sign in as a seeded person or wipe the world on a
+  developer's machine. The one exception, which the test names, is the showcase's fake storage upload target: it takes a multipart POST under its signed policy.
+- **The contract runner connects through the real `pg` adapter.** It built a bare pool, so an app's contract pass
+  proved a driver configuration it does not deploy (a `date` column came back as a `Date`).
+- **The proxy matcher's excluded prefixes end at a slash** (`api(?:/|$)`, `_next/`, `_vercel/`), and the proxy's API
+  branch matches `/api` or `/api/...`. `/apiary` is a page and reaches the auth provider's middleware. The earlier
+  entry kept the prefix match only to preserve behaviour.
+- **`sssb.vendors` entries are a package name, one subpath of it, either followed by `/*`, or a whole scope.** The
+  declaration half read gitignore patterns and the `import()` half did not, so most other patterns banned one form
+  and passed the other. Rejected: matching the dynamic half with the same matcher, which changes SSSB's own list.
+- **A linked git worktree anywhere derives its ports**, by a `.git` file that points into `worktrees/`, not only
+  under `.claude/worktrees/`: the guide already promised it. A submodule keeps the defaults.
+- **`sssb/no-path-into-kit` is a new app-side fence.** `sssb/public-surface` judged only `@sssb/kit/...` specifiers,
+  and the kit ships its source, so a relative path through `node_modules` reached any internal. With it, the
+  conformance suite's check that `appDir` is the suite file's own package cannot be stepped round without a lint
+  failure; that check's exemption is internal to the kit.
+- **CI checkouts keep no credentials** (`persist-credentials: false` in `checks.yml`, the reusable `app-checks.yml`
+  and the generated workflow), and the secret scan checks gitleaks' tarball against the sha256 its release publishes.
+  A gitleaks version bump changes the URL and the digest together.
+- **`release-app verify` holds the `npm-publish` environment to tag `v*`**, and `planBypass` holds the main ruleset
+  to main alone: the tool's own claims, which it did not check.
+- **Deferred, each needing a design decision**: `.claude/future-tasks/baseline-review-0-4-0-deferred.md`.

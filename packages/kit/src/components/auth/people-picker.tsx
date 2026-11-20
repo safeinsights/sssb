@@ -14,8 +14,18 @@ export interface PickerPerson {
 /**
  * Simulated-mode sign-in: the same card layout the real credential form uses, listing seeded
  * people. One auth UI in every mode (ADR-0003).
+ *
+ * `onPick` may answer a promise: one that resolves `false` or rejects (the sign-in was refused, the dev server is
+ * down) clears the spinner so the person can pick again; anything else (`true`, or nothing, as an `async` handler
+ * that returns no value resolves) keeps it while the page navigates.
  */
-export function PeoplePicker({ people, onPick }: { people: PickerPerson[]; onPick: (id: string) => void }) {
+export function PeoplePicker({
+    people,
+    onPick,
+}: {
+    people: PickerPerson[]
+    onPick: (id: string) => void | Promise<boolean | void>
+}) {
     const t = useTranslations('auth')
     const [busy, setBusy] = useState<string | null>(null)
 
@@ -39,7 +49,15 @@ export function PeoplePicker({ people, onPick }: { people: PickerPerson[]; onPic
                     }
                     onClick={() => {
                         setBusy(person.id)
-                        onPick(person.id)
+                        const result = onPick(person.id)
+                        if (result) {
+                            result.then(
+                                (outcome) => {
+                                    if (outcome === false) setBusy(null)
+                                },
+                                () => setBusy(null),
+                            )
+                        }
                     }}
                 >
                     {person.name}

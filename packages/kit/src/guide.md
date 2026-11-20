@@ -10,8 +10,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - The app extends the framework only through the `@sssb/app-config/*` seam, the modules in `src/app-config/`.
   Register new subjects, jobs, event kinds, tables and migrations there. Never edit or patch a framework base union or
   registry.
-- Import `@sssb/kit` only by a published subpath, a key of its `exports` map. Everything else in the package is
-  internal.
+- Import `@sssb/kit` only by a published subpath, a key of its `exports` map, never by a path into the package
+  (`sssb/no-path-into-kit`). Everything else in the package is internal.
 
 ## Vendors, environment and parameters
 
@@ -102,8 +102,17 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   release). The conformance suite's `authz-mutations` check reads each handler: a string, a
   comment, a dead branch or a helper in another module does not count. Neither does a call whose denial cannot stop
   the handler: in an `async` helper or a callback whose promise the handler neither awaits nor returns, in a callback
-  handed to a function the route file defines, or in a `try` whose `catch` does not rethrow. `await` the helper that
-  authorizes, and let `withPortErrors` answer the 403.
+  handed to a function the route file defines, in a callback a timer, a listener, `after()` or a `.catch`/`.finally`
+  runs, or in a `try` whose `catch` does not rethrow. `await` the helper that authorizes, and let `withPortErrors`
+  answer the 403. Over many items, `await Promise.all(items.map(...))`; `Promise.allSettled` does not count, and
+  neither does a `.then(...)` chained after it.
+- The check proves that a handler can reach `authorize(...)`, not that every path through it does, nor that it
+  comes before the mutation. Call it before the mutation and before any `try`, on a path every request takes: after
+  `auth.requireUser()` and the lookups that give it the org, never inside a condition or a loop.
+- A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
+  with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
+  app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named
+  `route.<ext>` the check does not read (`route.mts`, a custom `pageExtensions`) fails it.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
   `src/app/api`), with a reason and a `mustMatch` gate. A mutating route outside `src/app/api` can match no
   exemption.
@@ -128,7 +137,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 
 - Keep `src/sssb.conformance.test.ts` (SSSB's conformance suite) and `tests/contract/rls-contract.test.ts` (the
   contract runner on real Postgres). Leave a check out only by a named opt-out with its reason,
-  `optOut: { '<check id>': '<why>' }`. `sssb doctor` fails when the Vitest config does not run them.
+  `optOut: { '<check id>': '<why>' }`. `sssb doctor` fails when the Vitest config does not run them. The suite's
+  `appDir` is the app's own directory: it refuses, while the file is collected, one that is not the package the suite
+  file sits in.
 - A test that needs a scratch directory calls `makeTestTmpDir()` or `makeTestTmpDirAsync()` from
   `@sssb/tools/testing/tmp-dir`, never `mkdtemp` directly. A script that runs Vitest as a gate goes through
   `sssb check-tmpdir-leak`.
@@ -144,7 +155,10 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   bypass for the ticker.
 - The Simulator panel on `pnpm dev` is SSSB's: `src/app/api/simulator/[...path]/route.ts` serves it and the locale
   layout renders it, both in simulated mode only. Each handler in that route file opens with the simulated-mode 404 and
-  imports SSSB's handler after it; that first line is what exempts the route from `authorize(...)`.
+  imports SSSB's handler after it; that first line is what exempts the route from `authorize(...)`. A simulated-only
+  POST route of your own (a dev sign-in, a Simulator route you add) also refuses a request that is not
+  `application/json`, right after that first line, as SSSB's handler does: a page on another site can send a form or
+  plain-text POST to a developer's machine without a preflight.
 - In a linked git worktree the app's ports are derived per checkout, so parallel sessions never adopt each other's dev
   server; `pnpm exec sssb port`, run from the app, prints its port. An app declares its port slot in its package.json,
   `"sssb": { "port": { "name": "ledger", "default": 3800 } }`, and reads its override from `LEDGER_PORT`; its scripts and

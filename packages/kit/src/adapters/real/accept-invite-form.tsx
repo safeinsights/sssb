@@ -4,6 +4,8 @@ import { useAuth, useSignIn, useSignUp } from '@clerk/nextjs'
 import { Stack, Text } from '@mantine/core'
 import { useEffect, useRef, useState } from 'react'
 
+import { sameOriginPath } from '../../core/same-origin-path'
+
 /**
  * Clerk ticket-strategy acceptance (ADR-0003): the invitation mail carries Clerk's invitation URL (./auth.ts
  * `createInvite`), and Clerk sends the invitee on to this page with `__clerk_ticket` and `__clerk_status` query
@@ -17,6 +19,9 @@ import { useEffect, useRef, useState } from 'react'
  * AUTHORED — CUTOVER (`auth-dev`): never run against a real Clerk instance. Verify the full
  * ticket round-trip once a dev Clerk instance issues real invitation tickets (see
  * docs/cutover-checklist.md, `auth-dev` row).
+ *
+ * `redirectTo` is followed only when `sameOriginPath` accepts it, and `/` otherwise, as RealSignInForm does with its
+ * `returnTo`: the form trusts no caller to have checked it.
  *
  * Lives in packages/kit/src/adapters because it imports the vendor SDK; the AcceptInviteShell renders it as a
  * slot, and all copy arrives via `labels` from the page's next-intl lookup (same contract as
@@ -65,7 +70,7 @@ export function RealAcceptInviteForm({
         void (async () => {
             if (plan === 'accepted') {
                 setAccepted(true)
-                window.location.assign(redirectTo)
+                window.location.assign(sameOriginPath(redirectTo) ?? '/')
                 return
             }
             if (plan === 'unknown' || !ticket) {
@@ -74,21 +79,30 @@ export function RealAcceptInviteForm({
             }
             const { signIn: currentSignIn, signUp: currentSignUp } = flows.current
             const flow = plan === 'sign-in' ? currentSignIn : currentSignUp
-            const { error: ticketError } =
-                plan === 'sign-in' ? await currentSignIn.ticket({ ticket }) : await currentSignUp.ticket({ ticket })
-            if (ticketError) {
-                setError(labels.genericError)
-                return
-            }
-            if (flow.status === 'complete') {
-                const finalized = await flow.finalize()
-                if (finalized.error) {
+            setError(null) // a retry after a thrown call starts with no error on screen
+            try {
+                const { error: ticketError } =
+                    plan === 'sign-in' ? await currentSignIn.ticket({ ticket }) : await currentSignUp.ticket({ ticket })
+                if (ticketError) {
                     setError(labels.genericError)
                     return
                 }
-                setAccepted(true)
-                window.location.assign(redirectTo)
-            } else {
+                if (flow.status === 'complete') {
+                    const finalized = await flow.finalize()
+                    if (finalized.error) {
+                        setError(labels.genericError)
+                        return
+                    }
+                    setAccepted(true)
+                    window.location.assign(sameOriginPath(redirectTo) ?? '/')
+                } else {
+                    setError(labels.genericError)
+                }
+            } catch {
+                // A call that THREW (the network) is not Clerk refusing the ticket: show the error, and forget that this
+                // ticket was started, so the effect's next run (Clerk reloading, the page remounting) submits it again.
+                // A refusal above is not retried: Clerk has answered, and a ticket is single-use.
+                started.current = null
                 setError(labels.genericError)
             }
         })()
@@ -101,7 +115,11 @@ export function RealAcceptInviteForm({
             {!accepted && !error ? (
                 <Text c="gray.7">{fetchStatus === 'fetching' ? labels.accepting : labels.oneMoment}</Text>
             ) : null}
-            {error ? <Text c="red.8">{error}</Text> : null}
+            {error ? (
+                <Text c="red.8" role="alert">
+                    {error}
+                </Text>
+            ) : null}
         </Stack>
     )
 }

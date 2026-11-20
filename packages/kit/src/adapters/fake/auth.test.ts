@@ -77,6 +77,20 @@ describe('acceptInvite — Simulator dynamic people (Bob lifecycle)', () => {
         await expect(acceptInvite(membership.id, { name: '   ' })).rejects.toThrow(/name is required/)
     })
 
+    test.each(['x'.repeat(257), { a: 1 }, 42])('refuses the name %j and leaves the invite pending', async (name) => {
+        const { fakeAuth, acceptInvite } = await import('./auth')
+        const membership = await fakeAuth.createInvite({
+            email: 'bad-name@example.test',
+            role: 'member',
+            orgSlug: 'depot',
+            acceptPageUrl: 'http://localhost:3000/en/accept-invite',
+        })
+        const profile = { name } as unknown as { name: string }
+        await expect(acceptInvite(membership.id, profile)).rejects.toThrow('invalid name')
+        const invited = (await fakeAuth.listMembers('depot')).filter((m) => m.id === membership.id)
+        expect(invited.map((m) => m.status)).toEqual(['invited'])
+    })
+
     test('creates a person, removes the invite, signs them in, and sets the viewpoint cookie', async () => {
         const { fakeAuth, acceptInvite, findInvite, listAllPeople } = await import('./auth')
         const membership = await fakeAuth.createInvite({
@@ -147,5 +161,32 @@ describe("getMember — a person's standing, for a caller who is not them", () =
         expect(await fakeAuth.getMember('wharf', 'fixture-hand')).toBeNull()
         expect(await fakeAuth.getMember('depot', 'nobody-at-all')).toBeNull()
         expect(await fakeAuth.getMember('no-such-org', 'fixture-lead')).toBeNull()
+    })
+})
+
+describe('updateProfile', () => {
+    const bad = [{ a: 1 }, '', '   ', 'x'.repeat(257), 42, null]
+    test.each(bad)('refuses the name %j and stores nothing', async (name) => {
+        const { devSignIn, fakeAuth } = await import('./auth')
+        await devSignIn('fixture-crew')
+        const before = await fakeAuth.getCurrentUser()
+        const update = { name } as unknown as Parameters<typeof fakeAuth.updateProfile>[0]
+        await expect(fakeAuth.updateProfile(update)).rejects.toThrow('invalid name')
+        expect((await fakeAuth.getCurrentUser())?.name).toBe(before?.name)
+    })
+
+    test('refuses an empty locale, and stores only the fields the port names', async () => {
+        const { devSignIn, fakeAuth } = await import('./auth')
+        await devSignIn('fixture-crew')
+        const empty = { locale: '' } as unknown as Parameters<typeof fakeAuth.updateProfile>[0]
+        await expect(fakeAuth.updateProfile(empty)).rejects.toThrow('unknown locale')
+        const extra = { name: 'Renamed Crew', role: 'admin' } as unknown as Parameters<typeof fakeAuth.updateProfile>[0]
+        const user = await fakeAuth.updateProfile(extra)
+        expect(user.name).toBe('Renamed Crew')
+        expect(user.role).not.toBe('admin')
+        const { readFileSync } = await import('node:fs')
+        const { dataDir } = await import('./data-dir')
+        const stored = JSON.parse(readFileSync(`${dataDir('auth')}/profile-overrides.json`, 'utf8'))
+        expect(Object.values(stored)).toContainEqual({ name: 'Renamed Crew' })
     })
 })

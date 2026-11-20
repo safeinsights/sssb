@@ -3,7 +3,10 @@ import { analytics, auth, db, llm } from '@sssb/kit/adapters/index'
 import { authorize } from '@sssb/kit/authz/authorize'
 import { assistantExecutor } from '@sssb/kit/server-lib/assistant'
 import { resolveOrgContext } from '../org-context'
-import { withPortErrors } from '../respond'
+import { readJsonObject, withPortErrors } from '../respond'
+
+/** The longest question the route sends on: every character goes to a paid model, twice (gather, then compose). */
+const MAX_QUESTION_LENGTH = 2000
 
 /**
  * The desk assistant, in two passes and streamed.
@@ -36,7 +39,11 @@ export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {
         const user = await auth.requireUser()
         if (user.restricted) return Response.json({ error: 'forbidden' }, { status: 403 })
-        const { question } = (await request.json()) as { question: string }
+        // Sent on as typed (the gathering pass hash-matches a recorded conversation, so it is not rewritten).
+        const { question } = await readJsonObject(request)
+        if (typeof question !== 'string' || !question.trim() || question.length > MAX_QUESTION_LENGTH) {
+            return Response.json({ error: 'invalid-question' }, { status: 400 })
+        }
 
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
@@ -88,8 +95,12 @@ export async function POST(request: Request): Promise<Response> {
                 } catch (error) {
                     // The stream has already started, so there is no status code left to fail with —
                     // say so in-band and close cleanly rather than truncating and looking like a hang.
-                    const message = error instanceof Error ? error.message : 'stream failed'
-                    controller.enqueue(encoder.encode(`${JSON.stringify({ error: message })}\n`))
+                    // The client gets a generic line: the vendor's message can carry request ids, model
+                    // names or account detail, so it stays in the server log (console.warn reaches
+                    // CloudWatch in Lambda).
+                    const detail = error instanceof Error ? error.message : String(error)
+                    console.warn(`assistant: the compose stream failed: ${detail}`)
+                    controller.enqueue(encoder.encode(`${JSON.stringify({ error: 'stream failed' })}\n`))
                 }
                 controller.close()
             },

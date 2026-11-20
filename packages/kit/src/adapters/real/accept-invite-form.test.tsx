@@ -56,13 +56,13 @@ afterEach(() => {
     vi.unstubAllGlobals()
 })
 
-async function render(props: { ticket: string | null; status?: string | null }): Promise<void> {
+async function render(props: { ticket: string | null; status?: string | null; redirectTo?: string }): Promise<void> {
     const { RealAcceptInviteForm } = await import('./accept-invite-form')
     await act(async () => {
         root.render(
             <StrictMode>
                 <MantineProvider>
-                    <RealAcceptInviteForm {...props} redirectTo="/en/dashboard" labels={LABELS} />
+                    <RealAcceptInviteForm redirectTo="/en/dashboard" {...props} labels={LABELS} />
                 </MantineProvider>
             </StrictMode>,
         )
@@ -115,5 +115,51 @@ describe('RealAcceptInviteForm', () => {
         expect(h.signUp.ticket).not.toHaveBeenCalled()
         expect(h.signIn.ticket).not.toHaveBeenCalled()
         expect(container.textContent).toContain('error')
+    })
+    it('shows the error as an alert, and submits the ticket again once Clerk reloads, when a ticket call throws', async () => {
+        const failing = h.signUp
+        failing.ticket.mockImplementationOnce(async () => {
+            throw new Error('network down')
+        })
+        await render({ ticket: 't-6', status: 'sign_up' })
+        expect(failing.ticket).toHaveBeenCalledTimes(1)
+        expect(container.querySelector('[role="alert"]')?.textContent).toBe('error')
+        expect(assign).not.toHaveBeenCalled()
+
+        h.isLoaded = false
+        await render({ ticket: 't-6', status: 'sign_up' })
+        h.isLoaded = true
+        await render({ ticket: 't-6', status: 'sign_up' })
+        expect(failing.ticket).toHaveBeenCalledTimes(2)
+        expect(assign).toHaveBeenCalledWith('/en/dashboard')
+        expect(container.querySelector('[role="alert"]')).toBeNull()
+    })
+
+    it('shows the error as an alert when finalizing throws', async () => {
+        h.signIn.finalize.mockImplementationOnce(async () => {
+            throw new Error('network down')
+        })
+        await render({ ticket: 't-7', status: 'sign_in' })
+        expect(container.querySelector('[role="alert"]')?.textContent).toBe('error')
+        expect(assign).not.toHaveBeenCalled()
+    })
+    const HOSTILE = [
+        '/\\evil.example/x',
+        '/\t/evil.example/x',
+        '//evil.example',
+        'https://evil.example',
+        'javascript:alert(1)',
+    ]
+
+    it.each(HOSTILE)('goes to / instead of %j once the ticket is accepted', async (redirectTo) => {
+        await render({ ticket: 't-8', status: 'sign_up', redirectTo })
+        expect(assign).toHaveBeenCalledWith('/')
+        expect(assign).toHaveBeenCalledTimes(1)
+    })
+
+    it.each(HOSTILE)('goes to / instead of %j when Clerk had already accepted', async (redirectTo) => {
+        await render({ ticket: null, status: 'complete', redirectTo })
+        expect(assign).toHaveBeenCalledWith('/')
+        expect(assign).toHaveBeenCalledTimes(1)
     })
 })

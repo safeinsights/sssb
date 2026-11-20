@@ -20,7 +20,7 @@ const BASE_URL = originForApp(__dirname)
 export default defineConfig({
     testDir: './tests/e2e',
     fullyParallel: true,
-    // This app's whole suite is two short specs, so the first always starts against a cold dev server and pays a
+    // This app's whole suite is a few short specs, so the first always starts against a cold dev server and pays a
     // full Next compile on every route it touches — sign-in, dashboard, the items route, the Simulator's. The default
     // 30s is marginal for that (it timed out on the first run and passed on retry), and there is no
     // warm-up pass to inherit, so the budget is raised rather than left to flake.
@@ -28,7 +28,7 @@ export default defineConfig({
     expect: { timeout: 15_000 },
     forbidOnly: !!process.env['CI'],
     retries: process.env['CI'] ? 2 : 1,
-    // One worker, on CI too — this app's whole suite is two short specs, so parallelism buys little here,
+    // One worker, on CI too — this app's whole suite is a few short specs, so parallelism buys little here,
     // and more workers against one shared world (one `.data` behind one dev server) cost reliability rather than
     // saving time.
     workers: 1,

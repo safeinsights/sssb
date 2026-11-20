@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AttachmentsCard, type AttachmentItem } from '@/components/attachments-card'
 import { DashboardScreen, type DashboardUser } from '@/components/dashboard-screen'
 import { EscalationsCard, type EscalationItem, type EscalationTarget } from '@/components/escalations-card'
@@ -8,6 +8,7 @@ import { ExportCard, type ExportJob } from '@/components/export-card'
 import { TicketsCard, type TicketAssignee, type TicketItem } from '@/components/tickets-card'
 import type { AttachmentKind } from '@/domain/attachments'
 import { type JobStatus, jobStatusMachine } from '@sssb/kit/core/jobs'
+import { askAssistant } from './ask-assistant'
 
 interface EscalationLists {
     sent: EscalationItem[]
@@ -48,11 +49,16 @@ export function DashboardGlue({
      * Reads one page of the queue. `cursor === null` means the first page and REPLACES the list;
      * a cursor APPENDS, so "load more" grows what the reader is already looking at.
      */
+    // Bumped by every first-page load: a page answered for an older list (a "Show more" in flight when a mutation
+    // re-anchored the queue, or an older refresh) is dropped rather than appended to, or replacing, the newer one.
+    const ticketListSeq = useRef(0)
     const loadTickets = useCallback(async (cursor: string | null) => {
+        const seq = cursor === null ? ++ticketListSeq.current : ticketListSeq.current
         const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`
         const response = await fetch(`/api/tickets${query}`)
         if (!response.ok) return
         const data = (await response.json()) as { tickets: TicketItem[]; nextCursor: string | null }
+        if (seq !== ticketListSeq.current) return
         setTickets((previous) => (cursor === null ? data.tickets : [...previous, ...data.tickets]))
         setTicketCursor(data.nextCursor)
     }, [])
@@ -126,8 +132,8 @@ export function DashboardGlue({
     useEffect(() => {
         // These refreshers set state only once their responses land — the legitimate "sync with an
         // external system" case the rule guards (same as the simulator glue).
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         void refreshTickets()
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         void refreshJobs()
         void refreshEscalations()
         void refreshAttachments()
@@ -143,52 +149,7 @@ export function DashboardGlue({
     }, [jobs, refreshJobs])
 
     return (
-        <DashboardScreen
-            user={user}
-            onAsk={async (question, onDelta) => {
-                const response = await fetch('/api/assistant', {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ question }),
-                })
-                if (!response.ok || !response.body) {
-                    const data = (await response.json().catch(() => ({}))) as { error?: string }
-                    onDelta(data.error ?? '')
-                    return { sources: [] }
-                }
-                // NDJSON: one JSON object per line. The first carries the sources (pass 1 has already
-                // finished by the time a byte is written); every line after it is a text delta. Buffer
-                // across chunk boundaries — a network read can split a line anywhere.
-                const reader = response.body.getReader()
-                const decoder = new TextDecoder()
-                let buffer = ''
-                let sources: string[] = []
-                const consume = (line: string) => {
-                    if (!line.trim()) return
-                    let event: { sources?: string[]; delta?: string; error?: string }
-                    try {
-                        event = JSON.parse(line) as { sources?: string[]; delta?: string; error?: string }
-                    } catch {
-                        // A dropped connection can truncate the final line mid-object — skip it
-                        // rather than throwing out of the whole ask.
-                        return
-                    }
-                    if (event.sources) sources = event.sources
-                    if (event.delta) onDelta(event.delta)
-                    if (event.error) onDelta(event.error)
-                }
-                for (;;) {
-                    const { done, value } = await reader.read()
-                    if (done) break
-                    buffer += decoder.decode(value, { stream: true })
-                    const lines = buffer.split('\n')
-                    buffer = lines.pop() ?? ''
-                    for (const line of lines) consume(line)
-                }
-                consume(buffer)
-                return { sources }
-            }}
-        >
+        <DashboardScreen user={user} onAsk={askAssistant}>
             {/* Same <main> landmark as the rest of the dashboard (axe: region) */}
             <TicketsCard
                 tickets={tickets}
@@ -203,7 +164,10 @@ export function DashboardGlue({
                         headers: { 'content-type': 'application/json' },
                         body: JSON.stringify(input),
                     })
-                    if (response.ok) await refreshTickets()
+                    // A refusal rejects, so the card keeps the draft and shows its error.
+                    if (!response.ok) throw new Error(`POST /api/tickets answered ${response.status}`)
+                    // Created: a failed refresh must not read as a failed create.
+                    await refreshTickets().catch(() => undefined)
                 }}
                 onUpdate={async (id, changes) => {
                     const response = await fetch(`/api/tickets/${id}`, {
@@ -244,7 +208,8 @@ export function DashboardGlue({
                         headers: { 'content-type': 'application/json' },
                         body: JSON.stringify(input),
                     })
-                    if (response.ok) await refreshEscalations()
+                    if (!response.ok) throw new Error(`POST /api/escalations answered ${response.status}`)
+                    await refreshEscalations().catch(() => undefined)
                 }}
                 onRespond={async (id, decision) => {
                     const response = await fetch(`/api/escalations/${id}/respond`, {
