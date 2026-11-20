@@ -2,6 +2,7 @@ import { computeNextRunAt, parseScheduleSpec, type ScheduleSpec } from '../core/
 import type { DbPort } from '../ports/db'
 import type { JobsPort } from '../ports/jobs'
 import { recordAuditEvent } from './audit'
+import { family } from './family'
 import { toIso } from './jobs'
 
 /** Opaque actor id for the system-initiated scheduler in the audit trail (no user drives a tick). */
@@ -87,7 +88,7 @@ async function drainOne(
             .selectFrom('job_schedules')
             .select(['enabled', 'spec', 'kind', 'org_id', 'next_run_at'])
             .where('id', '=', schedule.id)
-            .forUpdate()
+            .$call(family.lockRow)
             .executeTakeFirst()
         // Re-check under the lock: enabled may have flipped, or a concurrent tick may have already
         // advanced next_run_at past `now` — either way this tick does nothing for the row.

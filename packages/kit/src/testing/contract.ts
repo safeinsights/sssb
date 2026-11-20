@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import { afterAll, beforeAll, expect } from 'vitest'
 import { startContractServer, type ContractServer } from '../adapters/real/contract-postgres'
+import { family } from '../db/family'
 import { checkOptOut, registerChecks, runsAny } from './conformance/register'
 import type { CheckImpl } from './conformance/types'
 import { registerTestTmpDirCleanup } from './tmp-dir'
@@ -77,10 +78,11 @@ interface ContractContext {
     database(): string
 }
 
-// Everything that composes the framework's migrations with the app's reaches the seam, so it is imported when a test
-// runs, not when the file is collected: `contractDatabaseName` stays importable with no seam at all.
-const migrate = () => import('../db/migrate')
-const proofs = () => import('../db/rls-proof-runner')
+// Everything that composes the framework's migrations with the app's reaches the seam, so the database family hands
+// it over as loaders (../db/family.ts), run when a test runs, not when the file is collected: `contractDatabaseName`
+// stays importable with no seam at all.
+const migrate = () => family.migrator()
+const proofs = () => family.proofs()
 const dataApi = () => import('../adapters/real/contract-data-api')
 
 const TIMEOUT_MS = 120_000

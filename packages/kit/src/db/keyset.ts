@@ -1,4 +1,4 @@
-import { sql, type SelectQueryBuilder, type SqlBool, type Transaction } from 'kysely'
+import type { SelectQueryBuilder, Transaction } from 'kysely'
 import {
     type KeysetCursorParse,
     type KeysetPosition,
@@ -7,6 +7,7 @@ import {
     parseKeysetCursor,
 } from '../core/keyset'
 import type { DbPort } from '../ports/db'
+import { family } from './family'
 import type { DB } from './schema'
 
 /**
@@ -81,7 +82,8 @@ export type KeysetTableName = {
  * What the types cannot say is that the column is a `timestamptz`: the schema has no nominal
  * timestamp type, so `created_at: Generated<string>` is the same TypeScript type as a text column
  * such as `JobsTable.status`, and this type admits both. That half is enforced at the SQL boundary
- * instead. The column goes in through `sql.ref` — a quoted identifier, never an interpolated string —
+ * instead, the family's (`keysetSlice`, ./family.ts). In Postgres the column goes in through `sql.ref` — a quoted
+ * identifier, never an interpolated string —
  * and is then fed to `to_char(… at time zone 'UTC', …)` and compared against a `::timestamptz`
  * parameter, so naming a non-timestamp column fails with a Postgres type error on the first page.
  * It is loud, not a silently wrong order.
@@ -146,29 +148,15 @@ export async function keysetPage<TB extends KeysetTableName, O extends { id: str
 ): Promise<KeysetPage<O>> {
     const limit = clampKeysetLimit(request.limit)
     const after = request.after
-    // ONE reference to the ordering column, used by the comparison, the cursor rendering and the
-    // ORDER BY below. `sql.ref` quotes it as an identifier; the type already restricted it to a real
-    // column of `TB`, and nothing from a request ever reaches it.
+    // The type already restricted the ordering column to a real column of `TB`, and nothing from a request ever
+    // reaches it. The family writes the ordering, the cursor comparison and the cursor's rendering (./family.ts).
     const orderColumn = (orderBy ?? 'created_at') as KeysetOrderColumn<TB>
-    const orderRef = sql.ref(orderColumn)
     return db.withTenant(request.tenantId, async (trx) => {
-        // The caller's scope, applied on EVERY page — this is the query, not a first-page-only one.
-        const scoped = build(trx)
-        // The cursor can only ADD a conjunct to it. Both halves are bound parameters, and both were
-        // pattern-checked before they got here (parseDbKeysetCursor).
-        const windowed = after
-            ? scoped.where(sql<SqlBool>`(${orderRef}, id) < (${after.at}::timestamptz, ${after.id}::uuid)`)
-            : scoped
-        // One extra row is the "is there a next page" probe — cheaper and race-free compared with a
-        // COUNT(*), which would be a second query against a moving table.
-        const probed = await windowed
-            .select(
-                sql<string>`to_char(${orderRef} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as('keyset_at'),
-            )
-            .orderBy(orderRef, 'desc')
-            .orderBy(sql`id`, 'desc')
-            .limit(limit + 1)
-            .execute()
+        // The caller's scope, applied on EVERY page — this is the query, not a first-page-only one. The cursor can
+        // only ADD a conjunct to it, and both its halves are bound parameters, pattern-checked before they got here
+        // (parseDbKeysetCursor). One extra row is the "is there a next page" probe — cheaper and race-free compared
+        // with a COUNT(*), which would be a second query against a moving table.
+        const probed = await family.keysetSlice(build(trx), { orderColumn, after, take: limit + 1 }).execute()
         const rows = probed.slice(0, limit)
         const last = rows.at(-1)
         return {

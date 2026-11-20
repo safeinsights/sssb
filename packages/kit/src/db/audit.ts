@@ -1,7 +1,7 @@
 import type { AppAuditAction } from '@sssb/app-config/audit'
 import { type Actor, type Credential, principalIdOf, type SubjectType } from '../core/abilities'
 import type { DbPort } from '../ports/db'
-import { jsonb } from './jsonb'
+import { family } from './family'
 
 /**
  * The FRAMEWORK's audit-action vocabulary. The app's own verbs register through the seam
@@ -338,7 +338,7 @@ export async function recordAuditEvent(db: DbPort, input: AuditEventInput): Prom
                 credential_id: input.credential?.id ?? null,
                 // Undefined means the column default, the database's `now()`: what a real adapter gets.
                 at: db.now?.().toISOString(),
-                detail: detail === null ? null : jsonb(detail),
+                detail: detail === null ? null : family.json(detail),
             })
             .execute(),
     )

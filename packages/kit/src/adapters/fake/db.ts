@@ -3,7 +3,7 @@ import { Kysely, type Transaction } from 'kysely'
 import { migrateToLatest } from '../../db/migrate'
 import type { DB } from '../../db/schema'
 import { seedDb } from '../../db/seed'
-import { runWithTenant } from '../../db/with-tenant'
+import { postgresFamily } from '../../db/family'
 import type { DbPort } from '../../ports/db'
 import { worldNow } from './clock'
 import { dataDir } from './data-dir'
@@ -53,6 +53,8 @@ export async function closeFakeDb(): Promise<void> {
 }
 
 export const fakeDb: DbPort = {
+    // pglite is a Postgres transport: the family's isolation and the family's tenant scope.
+    isolation: postgresFamily.isolation,
     getDb() {
         return instance().db
     },
@@ -62,7 +64,7 @@ export const fakeDb: DbPort = {
     async withTenant<T>(tenantId: string, fn: (trx: Transaction<DB>) => Promise<T>): Promise<T> {
         const { db, ready } = instance()
         await ready
-        return runWithTenant(db, tenantId, fn)
+        return postgresFamily.runWithTenant(db, tenantId, fn)
     },
     async migrateToLatest() {
         await instance().ready
