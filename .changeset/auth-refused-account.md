@@ -8,7 +8,8 @@
 
 **Action.** optional
 
-**What changed.** Under a single tenancy, a person whose identity-provider account names another tenant is refused.
+**What changed.** Under a single tenancy, a person whose identity-provider account names another tenant (or holds a
+tenant claim that is not a slug) is refused.
 Before, they saw the sign-in form again while still signed in to the provider, with nothing saying why.
 
 - The auth port gains an optional `refusal()`, which answers `{ reason: 'other-tenant' }` for such a person, and null

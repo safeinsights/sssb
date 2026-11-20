@@ -188,7 +188,7 @@ export function configuredAuth(
         },
 
         async refusal(): Promise<AuthRefusal | null> {
-            // Read only on the sign-in page, never per request: the guard's own reason, from the same identity read.
+            // The guard's own reason, from the same identity read. Its callers are the sign-in pages, not every request.
             const identity = await source.current()
             return identity && !admitted(identity.tenantClaim) ? { reason: 'other-tenant' } : null
         },

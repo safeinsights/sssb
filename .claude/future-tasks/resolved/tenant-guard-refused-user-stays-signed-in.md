@@ -41,6 +41,7 @@ already (`getCurrentUser` answers null), so that is where they land.
 - **Both reference apps' sign-in pages** check `auth.refusal?.()` after `getCurrentUser` and show the screen instead of
   the sign-in form or the picker. This also covers simulated mode: under a single tenancy the picker can sign in a
   seeded person of another tenant, who now sees the same screen and signs out through the fake.
-- **Never automatic**: the sign-out is the person's click, through the route that already ends a session. Rejected:
+- **Never automatic**: the sign-out is the person's click, through Clerk's client in real mode and the app's sign-out
+  route in simulated mode. Rejected:
   signing out from `getCurrentUser` (a cookie change during render, which Next refuses), and a page of its own reached
   from the protected layout, which would need the layout to read the refusal on every request.

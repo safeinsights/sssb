@@ -7260,10 +7260,10 @@ addendum of this date records the design; these are the calls, each with the rej
   is `none` (or `restricted`), so an app rule that denies on `restricted` before anything else locks out everyone,
   the app's own admins included. The fix is the order of the app's own checks: grant from the app's own data first,
   then deny on `restricted`. The guide, the adopter reference and the release note say so, and
-  `packages/kit/src/core/abilities-fixed-grants.test.ts` pins both orders and that `none` is still restricted.
+  `packages/kit/src/core/abilities-fixed-grants.test.ts` pins the grant-first order and that `none` is still restricted.
   Rejected: **`none` no longer implying `restricted`**. SSSB's own rules would grant nothing more (each also needs
   `sameOrg` or the person themself), but every person on a shared identity-provider instance would turn unrestricted
-  in 0.7.0. Any app code that gates on `!restricted` alone (a rule against the guide, a route's `if (user.restricted)`,
+  in the next release. Any app code that gates on `!restricted` alone (a rule against the guide, a route's `if (user.restricted)`,
   a screen hiding a feature) would open to them, including code written against 0.6.0. Fail-closed is kept: the
   lockout is visible at once and the app fixes it in its own rule; the opening would be silent. Rejected: **a seam
   hook that lifts a person's role from the app's data**. It is a second way to raise people that the auth port would
@@ -7271,7 +7271,8 @@ addendum of this date records the design; these are the calls, each with the rej
 - **A refused person is told why on the sign-in page, and signs out only by choosing to.** The auth port gains an
   optional `refusal()`, answered by the configured port from the same identity read as its guard, and read on the
   sign-in page only. The framework's `AccountRefused` says the account belongs to another site, warns before the click
-  that signing out reaches other sites sharing the sign-in, and posts to the app's existing sign-out route. Rejected: a
+  that signing out reaches other sites sharing the sign-in, and signs out on the click: in simulated mode through the
+  app's sign-out route, in real mode through Clerk's client (below). Rejected: a
   separate refusal page reached from the protected layout, as the future task sketched, which reads the refusal on
   every protected request when every refused person already lands on the sign-in page; a distinct return value from
   `getCurrentUser`, which every caller would have to tell apart from null; and signing out automatically.

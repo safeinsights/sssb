@@ -7,7 +7,7 @@ import enFramework from '../../i18n/messages/en.json'
 
 /**
  * The real refused-account screen with Clerk's hooks replaced: it signs out through Clerk's client, this session only,
- * and only on the click, then reloads. Never run against a real Clerk instance (cutover row `auth-tenancy`).
+ * and only on the click, then returns through Clerk's `redirectUrl`. Never run against a real Clerk instance (cutover row `auth-tenancy`).
  */
 const clerk = vi.hoisted(() => ({
     signOut: vi.fn(async () => {}),

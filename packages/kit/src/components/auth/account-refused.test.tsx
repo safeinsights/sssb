@@ -46,7 +46,7 @@ describe('AccountRefused', () => {
         expect(onSignOut).not.toHaveBeenCalled()
     })
 
-    it('signs out only when the person clicks, and keeps the spinner while the page reloads', async () => {
+    it('signs out only when the person clicks, and keeps the spinner while the page navigates', async () => {
         const onSignOut = vi.fn(async () => true)
         const container = await render(onSignOut)
         await act(async () => {

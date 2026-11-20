@@ -81,7 +81,8 @@ export interface CreatedInvite extends Membership {
 
 /**
  * Why a person the identity provider has signed in is not a user here. `other-tenant`: their account names another
- * tenant under the deployment's metadata key (a single tenancy's guard), so it belongs to another site.
+ * tenant under the deployment's metadata key, or holds there something that is not a slug (a single tenancy's guard),
+ * so it is taken to belong to another site.
  */
 export interface AuthRefusal {
     reason: 'other-tenant'
