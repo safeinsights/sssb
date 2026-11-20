@@ -20,7 +20,7 @@ import { kitDirOf } from '@sssb/tools/kit'
 import { handler as bodyHashHandler } from './assets/body-hash/index.mjs'
 import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
 import { databaseNameFor, SssbApp } from './index.js'
-import { AUTH_TENANCY_CHOICES } from './auth-tenancy.js'
+import { AUTH_ORG_SOURCE_CHOICES, AUTH_TENANCY_CHOICES, FIXED_ORG_ROLES } from './auth-tenancy.js'
 import { PORT_SWITCHES } from './optional-ports.js'
 import { HSTS_MAX_AGE_SECONDS, MANAGED_SECURITY_HEADERS_POLICY_ID, toolsVersionProblem } from './sssb-app.js'
 
@@ -340,19 +340,33 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
     it("sets the auth tenancy its params declare, with the framework's choices", async () => {
         const { APP_SLUG } = await import(pathToFileURL(path.join(appDir, 'config/app.ts')).href)
         const kitTenancy = path.join(kitDirOf(appDir), 'src/adapters/auth-tenancy.ts')
-        expect((await import(pathToFileURL(kitTenancy).href)).AUTH_TENANCY_CHOICES).toEqual(AUTH_TENANCY_CHOICES)
+        const kit = await import(pathToFileURL(kitTenancy).href)
+        expect(kit.AUTH_TENANCY_CHOICES).toEqual(AUTH_TENANCY_CHOICES)
+        expect(kit.AUTH_ORG_SOURCE_CHOICES).toEqual(AUTH_ORG_SOURCE_CHOICES)
+        expect(kit.FIXED_ORG_ROLES).toEqual(FIXED_ORG_ROLES)
         const auth = /** @type {const} */ ({
             tenancy: 'single',
             tenantSlug: 'harbor',
-            homeOrgSlug: 'depot',
             tenantMetadataKey: 'siteSlug',
+            orgSource: 'fixed',
+            homeOrgSlug: 'depot',
+            defaultRole: 'restricted',
         })
         const { all } = synthesize({ appDir, slug: APP_SLUG, transport: 'pg', bundle: false, auth })
-        expect(lambdaFunction(all, 'Server').env).toMatchObject({
+        const env = {
             AUTH_TENANCY: 'single',
             AUTH_TENANT_SLUG: 'harbor',
-            AUTH_HOME_ORG_SLUG: 'depot',
             AUTH_TENANT_METADATA_KEY: 'siteSlug',
+            AUTH_ORG_SOURCE: 'fixed',
+            AUTH_HOME_ORG_SLUG: 'depot',
+            AUTH_DEFAULT_ROLE: 'restricted',
+        }
+        expect(lambdaFunction(all, 'Server').env).toMatchObject(env)
+        // What the server is handed, the framework reads as given.
+        expect(kit.authSettings(env)).toEqual({
+            tenancy: { kind: 'single', tenantSlug: 'harbor' },
+            orgSource: { kind: 'fixed', homeOrgSlug: 'depot', role: 'restricted' },
+            tenantMetadataKey: 'siteSlug',
         })
         // Left out, it sets nothing: the framework's default, multi-tenant auth.
         const plain = synthesize({ appDir, slug: APP_SLUG, transport: 'pg', bundle: false })
@@ -676,14 +690,28 @@ describe('the synth assertions fail', () => {
         const withAuth = (auth) =>
             construct({ params: { database: { transport: 'pg' }, auth: /** @type {any} */ (auth) } })
         expect(withAuth({ tenancy: 'one' })).toThrow(/params\.auth\.tenancy must be multi or single/)
-        expect(withAuth({ tenancy: 'single', tenantSlug: 'harbor' })).toThrow(/needs params\.auth\.homeOrgSlug/)
-        expect(withAuth({ tenancy: 'single', tenantSlug: 'Harbor', homeOrgSlug: 'depot' })).toThrow(
-            /needs params\.auth\.tenantSlug, a slug/,
+        expect(withAuth({ orgSource: 'none' })).toThrow(/params\.auth\.orgSource must be provider or fixed/)
+        expect(withAuth({ tenancy: 'single' })).toThrow(/needs params\.auth\.tenantSlug, a slug/)
+        expect(withAuth({ tenancy: 'single', tenantSlug: 'Harbor' })).toThrow(/needs params\.auth\.tenantSlug, a slug/)
+        const single = /** @type {const} */ ({ tenancy: 'single', tenantSlug: 'harbor' })
+        expect(withAuth({ ...single, orgSource: 'fixed' })).toThrow(/needs params\.auth\.homeOrgSlug, a slug/)
+        expect(withAuth({ orgSource: 'fixed', homeOrgSlug: 'depot' })).toThrow(
+            /orgSource 'fixed' needs tenancy 'single'/,
         )
         expect(withAuth({ tenantSlug: 'harbor' })).toThrow(/need tenancy 'single'/)
+        expect(withAuth({ homeOrgSlug: 'depot' })).toThrow(/need orgSource 'fixed'/)
+        // The single mode first written set the home org with the tenancy; it now names the org source too.
+        expect(withAuth({ tenancy: 'single', tenantSlug: 'harbor', homeOrgSlug: 'depot' })).toThrow(
+            /need orgSource 'fixed'/,
+        )
+        expect(withAuth({ defaultRole: 'none' })).toThrow(/need orgSource 'fixed'/)
+        expect(withAuth({ ...single, orgSource: 'fixed', homeOrgSlug: 'depot', defaultRole: 'member' })).toThrow(
+            /defaultRole must be none or restricted/,
+        )
         expect(withAuth({ tennancy: 'single' })).toThrow(/params\.auth has no tennancy/)
         expect(withAuth({ tenantMetadataKey: 'a.b' })).toThrow(/plain identifier/)
-        expect(withAuth({ tenancy: 'single', tenantSlug: 'harbor', homeOrgSlug: 'depot' })).not.toThrow()
+        expect(withAuth({ tenancy: 'single', tenantSlug: 'harbor' })).not.toThrow()
+        expect(withAuth({ ...single, orgSource: 'fixed', homeOrgSlug: 'depot' })).not.toThrow()
     })
 
     it('when the scheduled tick is given no secret, or a rate EventBridge cannot run', () => {

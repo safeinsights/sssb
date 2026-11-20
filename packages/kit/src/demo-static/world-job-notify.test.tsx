@@ -69,4 +69,17 @@ describe('demo startJob and jobNotify', () => {
 
         expect(world.current.notifications.length).toBeGreaterThan(before)
     })
+
+    // `wharf`, in the fixture's seed, has no admin: its one member is restricted. The server tells the person who
+    // started the job when the team has no admin to tell (server-lib/notify-requester.test.ts); so does the twin.
+    it('tells the person who started it when the team has no admin', async () => {
+        const world = await renderWorld({})
+        act(() => world.current.signIn('fixture-limited'))
+        const before = world.current.notifications.length
+
+        act(() => world.current.startJob('export-dockets'))
+
+        const added = world.current.notifications.slice(0, world.current.notifications.length - before)
+        expect(added.map((n) => n.recipientPersonId)).toEqual(['fixture-limited'])
+    })
 })

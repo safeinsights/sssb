@@ -23,7 +23,8 @@ are the framework's). You register the app side, and never edit a framework unio
    Every kind notifies its team's admins when it ends, completed or failed. A routine or frequent kind says otherwise in
    the optional `jobNotify` export of the same file (`'failure'` or `'never'`; the guide's jobs rule has the shape).
 3. **Submit path**: a route creates the job with `submitJob` (`@sssb/kit/db/jobs`) over the jobs port, after
-   `authorize(user, orgId, 'create', { type: 'Job', orgId })`. A generated app has no jobs route: create
+   `authorize(user, orgId, 'create', { type: 'Job', orgId })`, passing `requestedBy: user.id`: when the team has no
+   admin to tell, the job's end reaches the person who started it. A generated app has no jobs route: create
    `src/app/api/jobs/route.ts`, resolving the tenant and team the way `src/app/api/items/route.ts` does. The reference
    app's (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/api/jobs/route.ts`, with its
    dashboard glue for the submit and timeline pattern) is the fuller example; its `resolveOrgContext` is a helper of

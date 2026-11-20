@@ -3,9 +3,9 @@ import { type AbilityActor, defineAbilitiesFor } from './abilities'
 import type { Role } from './roles'
 
 /**
- * The `none` role: a signed-in person with no standing in the org they are placed in. Single-tenant auth gives it to
- * every user of the deployment's identity provider, which on a shared instance means another product's users too,
- * so it must grant nothing a role or a membership would: no org-scoped read or write, framework or app (the fixture's
+ * The `none` role: a signed-in person with no standing in the org they are placed in. A fixed org source gives it to
+ * every user of the deployment's identity provider by default, which on a shared instance means another product's
+ * users too, so it must grant nothing a role or a membership would: no org-scoped read or write, framework or app (the fixture's
  * `Docket`, whose rules lean on `sameOrg`), and never the staff org's manage-all.
  */
 

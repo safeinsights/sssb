@@ -18,7 +18,7 @@ import type {
     ProfileUpdate,
 } from '../../ports/auth'
 import { AuthRequiredError, ForbiddenError } from '../../ports/errors'
-import type { ProviderIdentitySource } from '../single-tenant-auth'
+import type { ProviderIdentitySource } from '../configured-auth'
 import { writeFileAtomicSync, writeJsonAtomic } from './atomic-write'
 import { readSimulatorState, updatePersonState, writeViewpointCookie } from './simulator'
 import { dataDir } from './data-dir'
@@ -281,7 +281,12 @@ export const fakeAuth: AuthPort = {
         const person = findPerson(userId)
         const membership = person?.memberships.find((m) => m.orgSlug === orgSlug)
         if (!person || !membership) return null
-        return { role: membership.role, restricted: isRestricted(person.restricted, membership.role) }
+        return {
+            role: membership.role,
+            restricted: isRestricted(person.restricted, membership.role),
+            name: readOverrides()[person.id]?.name ?? person.name,
+            email: person.email,
+        }
     },
 
     async createInvite(invite: InviteInput): Promise<CreatedInvite> {
@@ -325,9 +330,10 @@ export const fakeAuth: AuthPort = {
 }
 
 /**
- * The simulated world's people as single-tenant auth sees them (../single-tenant-auth.ts): who is signed in and
- * whether an account exists, with no org or role in it. A person's seeded tenant is their tenant claim, so a world
- * run in single mode must seed its people in the configured tenant, as a deployment's accounts must not claim another.
+ * The simulated world's people as the auth settings see them (../configured-auth.ts): who is signed in and whether an
+ * account exists, with no org or role in it. A person's seeded tenant is their tenant claim, so a world run in single
+ * tenancy must seed its people in the configured tenant, as a deployment's accounts must not claim another. The
+ * simulated sign-in resolves a membership, so a world run with a fixed org source still seeds each person one.
  */
 export const fakeIdentitySource: ProviderIdentitySource = {
     async current() {
@@ -339,11 +345,14 @@ export const fakeIdentitySource: ProviderIdentitySource = {
             name: user.name,
             email: user.email,
             locale: user.locale,
-            tenantClaim: session.person.tenantSlug,
+            // An empty claim is no claim, as Clerk's adapter reads it.
+            tenantClaim: session.person.tenantSlug || undefined,
         }
     },
     async account(userId) {
         const person = findPerson(userId)
-        return person ? { tenantClaim: person.tenantSlug } : null
+        if (!person) return null
+        const name = readOverrides()[person.id]?.name ?? person.name
+        return { tenantClaim: person.tenantSlug || undefined, name, email: person.email }
     },
 }

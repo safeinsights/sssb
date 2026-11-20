@@ -33,16 +33,24 @@ export function toIso(value: unknown): string {
  * Submits a job: one tenant-scoped transaction persists the `jobs` row and its opening 'queued'
  * timeline entry together, THEN — only once that has committed — hands off to the execution seam
  * so the handler (fake: in-process; real: CodeBuild) can never observe a job that isn't durable yet.
+ * `requestedBy` is the user id of the person submitting it, when a person is: their job's end reaches them when
+ * the org has no admin to tell (../server-lib/notify.ts `notifyJobTerminal`).
  */
 export async function submitJob(
     db: DbPort,
     jobs: JobsPort,
-    input: { tenantId: string; orgId: string | null; kind: string; payload: unknown },
+    input: { tenantId: string; orgId: string | null; kind: string; payload: unknown; requestedBy?: string | null },
 ): Promise<{ id: string }> {
     const { id } = await db.withTenant(input.tenantId, async (trx) => {
         const job = await trx
             .insertInto('jobs')
-            .values({ tenant_id: input.tenantId, org_id: input.orgId, kind: input.kind, payload: input.payload })
+            .values({
+                tenant_id: input.tenantId,
+                org_id: input.orgId,
+                kind: input.kind,
+                payload: input.payload,
+                requested_by: input.requestedBy ?? null,
+            })
             .returning('id')
             .executeTakeFirstOrThrow()
         await trx
@@ -270,10 +278,14 @@ export async function jobKindAndOrg(
     db: DbPort,
     tenantId: string,
     jobId: string,
-): Promise<{ kind: string; orgId: string | null } | null> {
+): Promise<{ kind: string; orgId: string | null; requestedBy: string | null } | null> {
     return db.withTenant(tenantId, async (trx) => {
-        const row = await trx.selectFrom('jobs').select(['kind', 'org_id']).where('id', '=', jobId).executeTakeFirst()
-        return row ? { kind: row.kind, orgId: row.org_id } : null
+        const row = await trx
+            .selectFrom('jobs')
+            .select(['kind', 'org_id', 'requested_by'])
+            .where('id', '=', jobId)
+            .executeTakeFirst()
+        return row ? { kind: row.kind, orgId: row.org_id, requestedBy: row.requested_by } : null
     })
 }
 

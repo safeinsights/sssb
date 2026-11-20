@@ -52,7 +52,14 @@ export async function POST(request: Request): Promise<Response> {
         const { tenantId, orgId } = resolved
         // Authorization choke point: restricted members may read jobs but not submit them.
         authorize(user, orgId, 'create', { type: 'Job', orgId })
-        const { id } = await submitJob(db, jobs, { tenantId, orgId, kind, payload: payload ?? {} })
+        // The submitter is recorded, so the job's end reaches them when the org has no admin to tell.
+        const { id } = await submitJob(db, jobs, {
+            tenantId,
+            orgId,
+            kind,
+            payload: payload ?? {},
+            requestedBy: user.id,
+        })
         // Audit trail: record the submission immediately after the authorized write.
         await recordAuditEvent(db, {
             tenantId,
