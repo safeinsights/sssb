@@ -12,7 +12,7 @@ Three kinds of document live in this repo, and the difference matters because it
 - **Records** — dated, append-only logs of decisions and lessons. Entries were true when written and are
   never rewritten; later entries supersede earlier ones. Useful; not authoritative about the present.
 - **Backlog** — designed-but-unbuilt work, as [GitHub issues](https://github.com/safeinsights/sssb/issues), ranked
-  on the org's "SSSB backlog" Project. `.claude/future-tasks/` is the archive from before the move.
+  on the [SSSB backlog Project](https://github.com/orgs/safeinsights/projects/6). `.claude/future-tasks/` is the archive from before the move.
 
 A guard enforces the first distinction: `tests/docs/doc-paths.test.ts` fails the build if a doctrine doc
 cites a repo path that does not exist. Records are exempt — rewriting a dated entry to match today's tree

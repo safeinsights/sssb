@@ -285,7 +285,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - Record important lessons in `docs/build-notes.md`; unplanned decisions in `docs/decision-log.md`;
   designed-but-unbuilt work as a GitHub issue (below). Amend an ADR by appending a dated addendum — never by editing
   what its body said.
-- **The backlog is this repository's GitHub issues**, ranked on the org's "SSSB backlog" Project: its **Do next**
+- **The backlog is this repository's GitHub issues**, ranked on the [SSSB backlog Project](https://github.com/orgs/safeinsights/projects/6): its **Do next**
   status, in row order, is what to work on now. Anything found and not done in a session (a review aside, a deferred
   fix, a design sketched but unbuilt) is filed before the session ends: `gh issue create --type Bug|Feature|Task` with a
   `P0`–`P3` label, one or two `area:*` labels (`kit`, `simulator`, `tooling`, `ci`, `infra`, `docs`), and

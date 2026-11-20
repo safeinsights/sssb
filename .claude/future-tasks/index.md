@@ -1,7 +1,7 @@
 # Future tasks (archive)
 
 Until 2026-11-20 SSSB's backlog was a file per task in this directory. **The backlog is now this repository's GitHub
-issues**, ranked on the org's "SSSB backlog" Project; `CLAUDE.md` ("The backlog is this repository's GitHub issues")
+issues**, ranked on the [SSSB backlog Project](https://github.com/orgs/safeinsights/projects/6); `CLAUDE.md` ("The backlog is this repository's GitHub issues")
 has the rules for filing one. Add nothing here.
 
 What stays is a frozen record:
