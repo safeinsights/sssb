@@ -840,7 +840,9 @@ Left out, it is multi-tenant, as every deployment was before the setting existed
   rules see it as active in no org (`sameOrg` is false, and its active org matches none). What a signed-in person may
   do beyond their own profile, notifications and agreements is your rules' to grant. In this mode the members list is
   empty, invitations are refused (anyone the provider signs in is already placed in the org), and the home org is the
-  only org. A user whose metadata names a different tenant under the key, or holds there something that is not a
+  only org. So the notifications SSSB addresses through the members list (an org's admins, a job's end) reach no one;
+  turn off a job kind's end notifications with `jobNotify` (`apps/<app>/src/app-config/jobs.ts`) to skip the lookup. A user
+  whose metadata names a different tenant under the key, or holds there something that is not a
   slug, is refused, so this mode switched on for a multi-tenant instance by mistake does not merge its
   tenants. That guard reads the metadata key: a multi-tenant deployment that used `tenantMetadataKey` keeps it when
   it switches. Real mode seeds nothing: create the tenant and org rows the two slugs name (cutover row

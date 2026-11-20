@@ -7062,6 +7062,7 @@ design; these are the calls made building it, each with the rejected alternative
   authorization scan still exempts GET handlers. Both are recorded for a later change.
 - **Single mode's seeded people keep a membership in the home org**, documented, rather than making the fake's session
   code work without one: the simulated sign-in resolves a membership, and a dev-only edge is not worth reworking it.
+
 ## A job kind says when its end is notified (2026-11-19, `feat/job-notify-on`)
 
 The first adopter runs its maintenance as an hourly in-process job, each run idempotent and time-budgeted so that a
