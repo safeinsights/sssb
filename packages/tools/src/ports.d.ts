@@ -32,10 +32,11 @@ export declare function readPortDeclaration(appDir: string): PortDeclaration | u
 
 /**
  * What port a checkout at `root` should use for a service, given an environment: the service's env var
- * (`STARTER_PORT`, `LEDGER_PORT`) when set, a port derived from the path in a linked worktree
- * (`.claude/worktrees/`), and the documented default otherwise. A built-in's derived port is keyed on the checkout
- * alone; a custom slot's also on its name, so two slots of one worktree differ, and comes from a band no built-in
- * uses (20000-29999). Pure, so it can be tested against checkouts that do not exist.
+ * (`STARTER_PORT`, `LEDGER_PORT`) when set, a port derived from the path in a linked git worktree (a checkout whose
+ * `.git` is a file pointing into a repository's `.git/worktrees/`, or any path under `.claude/worktrees/`), and the
+ * documented default otherwise. A built-in's derived port is keyed on the checkout alone; a custom slot's also on its
+ * name, so two slots of one worktree differ, and comes from a band no built-in uses (20000-29999). It reads nothing but
+ * that `.git`, so it can be tested against checkouts that do not exist.
  */
 export declare function portForRoot(
     root: string,

@@ -491,12 +491,14 @@ describe('release-app create', () => {
     it('refuses without a terminal', async () => {
         const h = harness({ tty: false })
         expect(await createCommand(h.deps, { applyBypass: false })).toBe(1)
+        expect(h.text()).toContain('needs an interactive terminal')
         expect(h.gh.calls).toEqual([])
     })
 
     it('refuses a name GitHub would refuse, before anything else', async () => {
         const h = harness()
         expect(await createCommand(h.deps, { name: 'x'.repeat(35), applyBypass: false })).toBe(1)
+        expect(h.text()).toContain("The App's name is 35 characters; GitHub refuses more than 34")
         expect(h.gh.calls).toEqual([])
     })
 
@@ -537,6 +539,8 @@ describe('release-app create', () => {
         })
         const h = harness({ fetch: elsewhere })
         expect(await createCommand(h.deps, { applyBypass: false })).toBe(1)
+        expect(h.text()).toContain('its key was NOT stored')
+        expect(h.text()).toContain('the App is owned by "jpslav", not safeinsights')
         expect(h.gh.calls.some((c) => c.args[0] === 'secret')).toBe(false)
     })
 
@@ -595,6 +599,7 @@ describe('release-app verify and bypass', () => {
         const gh = fakeGh({ secret: true, variable: CLIENT_ID })
         const apply = harness({ gh, answers: ['apply'] })
         expect(await bypassCommand(apply.deps, { appId: APP_ID, apply: true })).toBe(1) // the org step is still by hand
+        expect(apply.text()).toContain('Organisation rulesets the App must bypass')
         const org = gh.state.rulesets.get(7484436)
         if (org) org.bypass_actors = [{ actor_id: APP_ID, actor_type: 'Integration', bypass_mode: 'always' }]
 
@@ -744,6 +749,7 @@ describe('release-app verify and bypass', () => {
     it('bypass --apply needs a terminal', async () => {
         const h = harness({ tty: false })
         expect(await bypassCommand(h.deps, { appId: APP_ID, apply: true })).toBe(1)
+        expect(h.text()).toContain('needs an interactive terminal')
     })
 })
 

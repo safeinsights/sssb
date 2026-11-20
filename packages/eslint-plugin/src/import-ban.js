@@ -16,7 +16,8 @@
 // computed specifier (`import(name)`), and a require not called by that name (`createRequire(…)(…)`,
 // `module.require(…)`).
 //
-// Both halves report EVERY pattern a specifier matches, one finding each, with that pattern's message, as
+// Both halves match a specifier as written and cut at a resource query or hash (`pg?raw`), and report EVERY pattern
+// either reading matches, one finding each, with that pattern's message, as
 // no-restricted-imports did. Neither factory takes options. The two vendor rules wrap them and take `{ vendors }`
 // (./rules.js), which a later block could replace; `sssb check-fences` compares those options exactly with the
 // preset's, and every other import fence takes none.
@@ -35,6 +36,18 @@ export const matchesPatterns = (patterns) => {
     const matchers = patterns.map((pattern) => ({ test: patternMatcher(pattern), message: pattern.message }))
     return (specifier) => matchers.filter(({ test }) => test(specifier)).map(({ message }) => message)
 }
+
+// A bundler's resource query or hash (`pg?raw`, `@aws-sdk/client-s3#x`) names the package all the same, so a specifier
+// is matched both as written and cut at its first `?` or `#` (by index, never a regex retried from every `?`). A
+// leading one (index 0) is not a query, and leaves the specifier as written.
+const readingsOf = (specifier) => {
+    const cut = specifier.search(/[?#]/)
+    return cut > 0 ? [specifier, specifier.slice(0, cut)] : [specifier]
+}
+/** What `matches` returns for any reading of the specifier, each once. */
+const matchesAnyReading = (matches, specifier) => [
+    ...new Set(readingsOf(specifier).flatMap((reading) => matches(reading))),
+]
 
 /** The specifier a node holds: a string literal, or a template literal with no expressions; else undefined. */
 export const literalSpecifier = (node) =>
@@ -92,7 +105,7 @@ export const declarationImportBan = ({ description, patterns, allowTypeOnly = fa
                 if (allowTypeOnly && isTypeOnly(node)) return
                 const specifier = literalSpecifier(source)
                 if (typeof specifier !== 'string') return
-                for (const rule of matches(specifier.trim())) {
+                for (const rule of matchesAnyReading(matches, specifier.trim())) {
                     context.report({ node, messageId: 'banned', data: { specifier: specifier.trim(), rule } })
                 }
             })
@@ -120,7 +133,7 @@ export const declarationlessImportBan = ({ description, what, matches }) => ({
         return declarationlessVisitors((node) => {
             const specifier = literalSpecifier(node)
             if (typeof specifier !== 'string') return
-            for (const rule of matches(specifier.trim())) {
+            for (const rule of matchesAnyReading(matches, specifier.trim())) {
                 context.report({ node, messageId: 'banned', data: { specifier, rule } })
             }
         })

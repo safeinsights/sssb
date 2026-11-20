@@ -96,6 +96,170 @@ describe('dataApiShapeProblems', () => {
     })
 })
 
+// A grant can sit in any IAM resource that carries a policy, not only the AWS::IAM::Policy SSSB's construct emits: an
+// adopter's CfnRolePolicy, or a user or a group beside the app's stack, is the wider grant the check exists to catch.
+describe('a grant carried by another IAM resource type', () => {
+    const doc = (statement: Statement) => ({ Statement: [statement] })
+    const carriers = (statement: Statement): [string, Resources][] => [
+        [
+            'a RolePolicy',
+            {
+                Bad: {
+                    Type: 'AWS::IAM::RolePolicy',
+                    Properties: { RoleName: 'r', PolicyName: 'p', PolicyDocument: doc(statement) },
+                },
+            },
+        ],
+        [
+            'a UserPolicy',
+            {
+                Bad: {
+                    Type: 'AWS::IAM::UserPolicy',
+                    Properties: { UserName: 'u', PolicyName: 'p', PolicyDocument: doc(statement) },
+                },
+            },
+        ],
+        [
+            'a GroupPolicy',
+            {
+                Bad: {
+                    Type: 'AWS::IAM::GroupPolicy',
+                    Properties: { GroupName: 'g', PolicyName: 'p', PolicyDocument: doc(statement) },
+                },
+            },
+        ],
+        [
+            'a User inline policy',
+            {
+                Bad: {
+                    Type: 'AWS::IAM::User',
+                    Properties: { Policies: [{ PolicyName: 'p', PolicyDocument: doc(statement) }] },
+                },
+            },
+        ],
+        [
+            'a Group inline policy',
+            {
+                Bad: {
+                    Type: 'AWS::IAM::Group',
+                    Properties: { Policies: [{ PolicyName: 'p', PolicyDocument: doc(statement) }] },
+                },
+            },
+        ],
+    ]
+
+    it.each(carriers({ Effect: 'Allow', Action: 'secretsmanager:*', Resource: '*' }))(
+        'is read in %s, for Secrets Manager',
+        (_, extra) => {
+            expect(secretGrantProblems(template(goodStatements, extra))).toEqual([
+                'every Secrets Manager grant names the cluster’s own secret alone',
+            ])
+        },
+    )
+
+    it.each(carriers({ Effect: 'Allow', Action: 'rds-data:*', Resource: '*' }))(
+        'is read in %s, for the Data API',
+        (_, extra) => {
+            expect(dataApiShapeProblems(template(goodStatements, extra))).toEqual([
+                'every rds-data grant is scoped to this cluster alone',
+            ])
+        },
+    )
+
+    it.each(['AWS::IAM::User', 'AWS::IAM::Group'])('a %s attaching an AWS-managed policy is unreadable', (type) => {
+        const t = template(goodStatements, {
+            Bad: { Type: type, Properties: { ManagedPolicyArns: ['arn:aws:iam::aws:policy/AdministratorAccess'] } },
+        })
+        expect(secretGrantProblems(t)).toEqual([
+            'no role, user or group attaches an AWS-managed policy the check cannot read: Bad: "arn:aws:iam::aws:policy/AdministratorAccess"',
+        ])
+    })
+
+    it('fails closed on an IAM type it does not read', () => {
+        const t = template(goodStatements, { Odd: { Type: 'AWS::IAM::SomethingNew', Properties: {} } })
+        expect(secretGrantProblems(t)).toEqual([
+            'no IAM resource is of a type this check does not read: Odd (AWS::IAM::SomethingNew)',
+        ])
+    })
+
+    it.each([
+        'AWS::IAM::InstanceProfile',
+        'AWS::IAM::OIDCProvider',
+        'AWS::IAM::SAMLProvider',
+        'AWS::IAM::ServiceLinkedRole',
+        'AWS::IAM::ServerCertificate',
+        'AWS::IAM::VirtualMFADevice',
+        'AWS::IAM::AccessKey',
+        'AWS::IAM::UserToGroupAddition',
+    ])('lets %s through: it grants nothing', (type) => {
+        expect(dataApiShapeProblems(template(goodStatements, { Quiet: { Type: type, Properties: {} } }))).toEqual([])
+    })
+
+    it('reads a ? in a granted resource as the wildcard IAM reads it', () => {
+        // the secret's own ARN with a `?` after it matches a secret named one character longer
+        const widened = { 'Fn::Join': ['', [ref('Secret'), '?']] }
+        const statement = { Effect: 'Allow', Action: 'secretsmanager:GetSecretValue', Resource: widened }
+        expect(secretGrantProblems(template([goodStatements[0]!, statement]))).toEqual([
+            'every Secrets Manager grant names the cluster’s own secret alone',
+        ])
+    })
+})
+
+// A resource policy on the secret grants with no IAM resource at all: `Principal: "*"` with GetSecretValue is the
+// database's credentials for anyone. Only the roles the stack's own functions run as may be named there.
+describe("a resource policy on the cluster's secret", () => {
+    const PROBLEM =
+        'no resource policy on the cluster’s secret lets in any principal but the stack’s own functions’ roles: Open'
+    const fn: Resources = {
+        Server: { Type: 'AWS::Lambda::Function', Properties: { Role: { 'Fn::GetAtt': ['Role', 'Arn'] } } },
+        Stray: { Type: 'AWS::IAM::Role', Properties: {} },
+        Other: { Type: 'AWS::SecretsManager::Secret' },
+    }
+    const open = (principal: Record<string, unknown>, secret: unknown = ref('Secret'), effect = 'Allow') =>
+        template(goodStatements, {
+            ...fn,
+            Open: {
+                Type: 'AWS::SecretsManager::ResourcePolicy',
+                Properties: {
+                    SecretId: secret,
+                    ResourcePolicy: {
+                        Statement: [
+                            { Effect: effect, Action: 'secretsmanager:GetSecretValue', Resource: '*', ...principal },
+                        ],
+                    },
+                },
+            },
+        })
+    const own = { 'Fn::GetAtt': ['Role', 'Arn'] }
+
+    it.each([
+        ['anyone', { Principal: '*' }],
+        ['any AWS principal', { Principal: { AWS: '*' } }],
+        ['an account', { Principal: { AWS: 'arn:aws:iam::111122223333:root' } }],
+        ['a service', { Principal: { Service: 'lambda.amazonaws.com' } }],
+        ['everyone but a role', { NotPrincipal: { AWS: own } }],
+        ['a role no function runs as', { Principal: { AWS: { 'Fn::GetAtt': ['Stray', 'Arn'] } } }],
+        ['an own role beside anyone', { Principal: { AWS: [own, '*'] } }],
+    ])('fails one that lets in %s', (_, principal) => {
+        expect(secretGrantProblems(open(principal))).toEqual([PROBLEM])
+    })
+
+    it('fails one on a secret it cannot tell is another, by ARN', () => {
+        const arn = 'arn:aws:secretsmanager:us-east-1:111122223333:secret:db-AbCdEf'
+        expect(secretGrantProblems(open({ Principal: '*' }, arn))).toEqual([PROBLEM])
+    })
+
+    it("passes one that names only a role the stack's own functions run as, and a Deny", () => {
+        expect(secretGrantProblems(open({ Principal: { AWS: own } }))).toEqual([])
+        expect(secretGrantProblems(open({ Principal: { AWS: [own] } }))).toEqual([])
+        expect(secretGrantProblems(open({ Principal: '*' }, ref('Secret'), 'Deny'))).toEqual([])
+    })
+
+    it("leaves a resource policy on another secret of the stack to that secret's owner", () => {
+        expect(secretGrantProblems(open({ Principal: '*' }, ref('Other')))).toEqual([])
+    })
+})
+
 describe('secretGrantProblems', () => {
     it('passes grants naming the cluster’s own secret, or its attachment', () => {
         expect(secretGrantProblems(template(goodStatements))).toEqual([])
@@ -122,7 +286,9 @@ describe('secretGrantProblems', () => {
 
     it('fails an AWS-managed policy the check cannot read', () => {
         const t = template(goodStatements, {}, ['arn:aws:iam::aws:policy/AdministratorAccess'])
-        expect(secretGrantProblems(t)[0]).toContain('no role attaches an AWS-managed policy the check cannot read')
+        expect(secretGrantProblems(t)[0]).toContain(
+            'no role, user or group attaches an AWS-managed policy the check cannot read',
+        )
     })
 
     it('allows a managed policy defined in the stack, and reads its grants', () => {

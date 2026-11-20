@@ -24,6 +24,12 @@ function lintFromRoot(file: string) {
 }
 
 describe("Next's root dir", () => {
+    // The cases below are one per app found under apps/, so an empty list (a moved directory, a broken filter) would
+    // pass with nothing checked.
+    it('finds the apps it checks', () => {
+        expect(APPS.length).toBeGreaterThan(0)
+    })
+
     it.each(APPS)(
         'lints %s from the workspace root without "Pages directory cannot be found"',
         (app) => {

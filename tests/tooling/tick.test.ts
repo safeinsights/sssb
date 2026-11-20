@@ -17,7 +17,12 @@ import {
     tickOnce,
 } from '../../packages/tools/src/tick/tick.js'
 import { parseDevArgs, resolveDevTick } from '../../packages/tools/src/tick/dev-tick.js'
-import { MAX_INTERVAL_SECONDS, createTicker, intervalProblem } from '../../packages/tools/src/tick/ticker.js'
+import {
+    MAX_INTERVAL_SECONDS,
+    abortableSleep,
+    createTicker,
+    intervalProblem,
+} from '../../packages/tools/src/tick/ticker.js'
 import {
     assertNoLiveDevTicker,
     liveTickerMarker,
@@ -534,6 +539,25 @@ describe('createTicker: one object owns start, stop, the interval and whether it
         }
         expect(ticker.status().running).toBe(false)
         expect(intervalProblem(30)).toBeNull()
+    })
+
+    // ticker.d.ts has always promised stop() a TickerStatus; an adopter's `(await ticker.stop()).running` threw.
+    it('stop resolves to the status, running or never started', async () => {
+        const { ticker, step } = scripted([idle])
+        const never = await ticker.stop()
+        expect(never).toEqual({ running: false, seconds: null, ticks: 0, lastTickAt: null, lastError: null })
+        ticker.start(5)
+        await step()
+        const stopped = await ticker.stop()
+        expect(stopped).toEqual(ticker.status())
+        expect(stopped).toMatchObject({ running: false, seconds: 5, ticks: 1 })
+    })
+
+    it('abortableSleep ends when its signal aborts, long before its time', async () => {
+        const controller = new AbortController()
+        const sleeping = abortableSleep(60_000, controller.signal)
+        controller.abort()
+        await expect(sleeping).resolves.toBeUndefined()
     })
 
     it('can be stopped and started again, and stopping when stopped is harmless', async () => {

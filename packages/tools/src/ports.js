@@ -15,7 +15,11 @@
 //   * STABLE ACROSS PROCESSES. The package script that starts the server and the Playwright config that points
 //     at it compute it independently: they agree only because neither one guesses.
 //   * NOT applied to a main checkout. It keeps the documented defaults, so every runbook that names :3000 or
-//     :3100 stays true for the person reading it. Only linked worktrees under .claude/worktrees/ derive.
+//     :3100 stays true for the person reading it. Only a linked git worktree derives: one whose `.git` (at the
+//     checkout's root or the nearest above it) is a FILE pointing into the main repository's `.git/worktrees/`,
+//     which is what `git worktree add` writes wherever the worktree is, and, read from the path alone, any checkout
+//     under `.claude/worktrees/` (Claude Code's own, and a checkout that does not exist yet). A submodule's `.git` is
+//     a file too, pointing into `.git/modules/`, and keeps the defaults.
 //
 // An explicit env var always wins, which is what makes an isolated one-off run possible without editing
 // anything: `SHOWCASE_PORT=3210 pnpm dev`.
@@ -33,7 +37,7 @@
 // repository this package is a workspace link, so its real path is outside node_modules and Playwright compiles
 // it. Walking up from the working directory is the portable option.
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -68,7 +72,7 @@ const SLOTS = 200
 const SERVICES = {
     showcase: { env: 'SHOWCASE_PORT', fallback: 3000, derive: (slot) => 3200 + slot * 2 },
     starter: { env: 'STARTER_PORT', fallback: 3100, derive: (slot) => 3201 + slot * 2 },
-    ladle: { env: 'LADLE_PORT', fallback: 61000, derive: (slot) => 61000 + slot },
+    ladle: { env: 'LADLE_PORT', fallback: 61000, derive: (slot) => 61001 + slot },
     contractPg: { env: 'CONTRACT_PG_PORT', fallback: 5439, derive: (slot) => 5440 + slot },
 }
 
@@ -91,7 +95,7 @@ const slotFor = (root) => hashOf(root) % SLOTS
 /**
  * The band a custom slot's derived port comes from in a linked worktree: 10000 ports, so two custom slots of one
  * worktree collide about once in ten thousand (a loud EADDRINUSE, never a silent adoption). Clear of every built-in
- * default and derived band (3000, 3100, 3200-3599, 5439-5639, 61000-61199), and below Linux's ephemeral range (32768)
+ * default and derived band (3000, 3100, 3200-3599, 5439-5639, 61000-61200), and below Linux's ephemeral range (32768)
  * and macOS's (49152), so the OS never hands one of these to an outbound connection.
  */
 const CUSTOM_BAND = { start: 20000, size: 10000 }
@@ -221,8 +225,35 @@ export function portForRoot(root, service, env = process.env) {
         return parsed
     }
 
-    const linked = root.includes(`${path.sep}.claude${path.sep}worktrees${path.sep}`)
-    return linked ? spec.derive(root) : spec.fallback
+    return isLinkedWorktree(root) ? spec.derive(root) : spec.fallback
+}
+
+// The `gitdir:` line `git worktree add` writes into a linked worktree's `.git` file: a directory under the main
+// repository's `.git/worktrees/`.
+const LINKED_GITDIR = /^gitdir:\s*(.+?)\s*$/m
+const WORKTREES_ENTRY = /[\\/]worktrees[\\/][^\\/]+[\\/]?$/
+
+/**
+ * Whether `root` is a linked git worktree: under `.claude/worktrees/` by its path alone, or with a `.git` FILE at it or
+ * the nearest above it that points into a repository's `.git/worktrees/`. A main checkout's `.git` is a directory; a
+ * submodule's is a file pointing into `.git/modules/`.
+ * @param {string} root
+ */
+function isLinkedWorktree(root) {
+    if (root.includes(`${path.sep}.claude${path.sep}worktrees${path.sep}`)) return true
+    for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
+        const git = path.join(dir, '.git')
+        if (existsSync(git)) {
+            if (!statSync(git).isFile()) return false
+            try {
+                const gitdir = LINKED_GITDIR.exec(readFileSync(git, 'utf8'))?.[1]
+                return gitdir !== undefined && WORKTREES_ENTRY.test(gitdir)
+            } catch {
+                return false
+            }
+        }
+        if (path.dirname(dir) === dir) return false
+    }
 }
 
 /**

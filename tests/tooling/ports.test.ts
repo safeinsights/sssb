@@ -53,6 +53,23 @@ describe('portForRoot', () => {
         }
     })
 
+    // Every built-in's derived band, slot by slot, is clear of every built-in's default: Ladle's used to start AT its
+    // own default, so one worktree in 200 shared :61000 with the main checkout's workshop.
+    it("keeps every built-in's derived ports, in every slot, off every built-in's default", () => {
+        const services = ['showcase', 'starter', 'ladle', 'contractPg'] as const
+        const defaults = new Set(services.map((service) => portForRoot(MAIN, service, {})))
+        const derived = new Map<string, Set<number>>(services.map((service) => [service, new Set()]))
+        for (let i = 0; i < 5000; i++) {
+            const root = path.join('/repos', 'sssb', '.claude', 'worktrees', `w${i}`)
+            for (const service of services) derived.get(service)?.add(portForRoot(root, service, {}))
+        }
+        for (const service of services) {
+            const ports = derived.get(service) ?? new Set()
+            expect(ports.size, service).toBe(200) // every slot reached, so the check below is over all of them
+            for (const port of ports) expect(defaults.has(port), `${service} derives ${port}`).toBe(false)
+        }
+    })
+
     it('lets an explicit env var win, which is the one-off isolated-run escape hatch', () => {
         expect(portForRoot(MAIN, 'showcase', { SHOWCASE_PORT: '3210' })).toBe(3210)
         expect(portForRoot(WORKTREE, 'showcase', { SHOWCASE_PORT: '3210' })).toBe(3210)
@@ -68,6 +85,43 @@ describe('portForRoot', () => {
     it('rejects an unknown service name', () => {
         // @ts-expect-error -- deliberately outside the known set
         expect(() => portForRoot(MAIN, 'nope', {})).toThrow(/unknown service/)
+    })
+})
+
+// `git worktree add ../wt2` puts a linked worktree anywhere, and it shared the main checkout's :3000 (Playwright then
+// adopted the other checkout's dev server). What marks one is its `.git`: a FILE pointing into the main repository's
+// `.git/worktrees/`, where a main checkout has a directory and a submodule a file pointing into `.git/modules/`.
+describe('a linked git worktree outside .claude/worktrees/', () => {
+    const checkout = (git: 'directory' | string) => {
+        const root = realpathSync(makeTestTmpDir('sssb-ports-git-'))
+        if (git === 'directory') mkdirSync(path.join(root, '.git'))
+        else writeFileSync(path.join(root, '.git'), git)
+        return root
+    }
+    const services = ['showcase', 'starter', 'ladle', 'contractPg'] as const
+    const defaults = services.map((service) => portForRoot(MAIN, service, {}))
+    const portsOf = (root: string) => services.map((service) => portForRoot(root, service, {}))
+
+    it('derives its ports when its .git is a file pointing into .git/worktrees/', () => {
+        const root = checkout('gitdir: /repos/sssb/.git/worktrees/wt2\n')
+        const ports = portsOf(root)
+        ports.forEach((port, i) => expect(port, services[i]).not.toBe(defaults[i]))
+        // ...from the root and from a directory inside it with no .git of its own
+        mkdirSync(path.join(root, 'apps', 'web'), { recursive: true })
+        expect(portsOf(path.join(root, 'apps', 'web'))).not.toEqual(defaults)
+        expect(portsOf(root)).toEqual(ports)
+    })
+
+    it('keeps the defaults in a main checkout, whose .git is a directory', () => {
+        expect(portsOf(checkout('directory'))).toEqual(defaults)
+    })
+
+    it('keeps the defaults in a submodule, whose .git file points into .git/modules/', () => {
+        expect(portsOf(checkout('gitdir: ../.git/modules/vendored\n'))).toEqual(defaults)
+    })
+
+    it('keeps the defaults when the .git file says nothing it can read', () => {
+        expect(portsOf(checkout('not a gitdir line\n'))).toEqual(defaults)
     })
 })
 
@@ -333,12 +387,18 @@ describe('the declaration an app makes in its package.json', () => {
         const refused = printed(own, "portFor('starter')")
         expect(refused.status).not.toBe(0)
         expect(refused.stderr).toMatch(/"starter" is another app's port slot, and this app declares its own, "ledger"/)
-        expect(printed(own, "portFor('showcase')").status).not.toBe(0)
+        const showcase = printed(own, "portFor('showcase')")
+        expect(showcase.status).not.toBe(0)
+        expect(showcase.stderr).toMatch(
+            /"showcase" is another app's port slot, and this app declares its own, "ledger"/,
+        )
         // A package nested in the app (its infra/) does not hide the app's slot, from a directory with none of its own.
         mkdirSync(path.join(own, 'infra'), { recursive: true })
         writeFileSync(path.join(own, 'pnpm-workspace.yaml'), 'packages:\n  - infra\n') // the checkout's root
         writeFileSync(path.join(own, 'infra', 'package.json'), JSON.stringify({ name: 'infra' }))
-        expect(printed(path.join(own, 'infra'), "portFor('starter')").status).not.toBe(0)
+        const nested = printed(path.join(own, 'infra'), "portFor('starter')")
+        expect(nested.status).not.toBe(0)
+        expect(nested.stderr).toMatch(/"starter" is another app's port slot, and this app declares its own, "ledger"/)
         expect(printed(path.join(own, 'infra'), "portFor('ladle')").stdout.trim()).toBe('61000')
         expect(printed(own, "portFor('ladle')").stdout.trim()).toBe('61000')
         expect(printed(own, "portFor('contractPg')").stdout.trim()).toBe('5439')
