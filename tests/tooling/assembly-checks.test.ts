@@ -205,6 +205,61 @@ describe('a grant carried by another IAM resource type', () => {
     })
 })
 
+// A resource policy on the secret grants with no IAM resource at all: `Principal: "*"` with GetSecretValue is the
+// database's credentials for anyone. Only the roles the stack's own functions run as may be named there.
+describe("a resource policy on the cluster's secret", () => {
+    const PROBLEM =
+        'no resource policy on the cluster’s secret lets in any principal but the stack’s own functions’ roles: Open'
+    const fn: Resources = {
+        Server: { Type: 'AWS::Lambda::Function', Properties: { Role: { 'Fn::GetAtt': ['Role', 'Arn'] } } },
+        Stray: { Type: 'AWS::IAM::Role', Properties: {} },
+        Other: { Type: 'AWS::SecretsManager::Secret' },
+    }
+    const open = (principal: Record<string, unknown>, secret: unknown = ref('Secret'), effect = 'Allow') =>
+        template(goodStatements, {
+            ...fn,
+            Open: {
+                Type: 'AWS::SecretsManager::ResourcePolicy',
+                Properties: {
+                    SecretId: secret,
+                    ResourcePolicy: {
+                        Statement: [
+                            { Effect: effect, Action: 'secretsmanager:GetSecretValue', Resource: '*', ...principal },
+                        ],
+                    },
+                },
+            },
+        })
+    const own = { 'Fn::GetAtt': ['Role', 'Arn'] }
+
+    it.each([
+        ['anyone', { Principal: '*' }],
+        ['any AWS principal', { Principal: { AWS: '*' } }],
+        ['an account', { Principal: { AWS: 'arn:aws:iam::111122223333:root' } }],
+        ['a service', { Principal: { Service: 'lambda.amazonaws.com' } }],
+        ['everyone but a role', { NotPrincipal: { AWS: own } }],
+        ['a role no function runs as', { Principal: { AWS: { 'Fn::GetAtt': ['Stray', 'Arn'] } } }],
+        ['an own role beside anyone', { Principal: { AWS: [own, '*'] } }],
+    ])('fails one that lets in %s', (_, principal) => {
+        expect(secretGrantProblems(open(principal))).toEqual([PROBLEM])
+    })
+
+    it('fails one on a secret it cannot tell is another, by ARN', () => {
+        const arn = 'arn:aws:secretsmanager:us-east-1:111122223333:secret:db-AbCdEf'
+        expect(secretGrantProblems(open({ Principal: '*' }, arn))).toEqual([PROBLEM])
+    })
+
+    it("passes one that names only a role the stack's own functions run as, and a Deny", () => {
+        expect(secretGrantProblems(open({ Principal: { AWS: own } }))).toEqual([])
+        expect(secretGrantProblems(open({ Principal: { AWS: [own] } }))).toEqual([])
+        expect(secretGrantProblems(open({ Principal: '*' }, ref('Secret'), 'Deny'))).toEqual([])
+    })
+
+    it("leaves a resource policy on another secret of the stack to that secret's owner", () => {
+        expect(secretGrantProblems(open({ Principal: '*' }, ref('Other')))).toEqual([])
+    })
+})
+
 describe('secretGrantProblems', () => {
     it('passes grants naming the cluster’s own secret, or its attachment', () => {
         expect(secretGrantProblems(template(goodStatements))).toEqual([])

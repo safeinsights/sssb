@@ -229,6 +229,77 @@ function databaseSecretIds(all, clusterId) {
 }
 
 /**
+ * The roles the stack's Lambda functions run as, by logical id: the only principals a resource policy on the cluster's
+ * secret may name (the server's and the migrator's are among them).
+ * @param {Resources} all
+ * @returns {Set<string>}
+ */
+function functionRoles(all) {
+    return new Set(
+        Object.values(all)
+            .filter((r) => r.Type === 'AWS::Lambda::Function')
+            .map((r) => /** @type {{ 'Fn::GetAtt'?: unknown[] } | undefined} */ (r.Properties?.Role)?.['Fn::GetAtt'])
+            .filter((att) => Array.isArray(att) && att[1] === 'Arn' && typeof att[0] === 'string')
+            .map((att) => /** @type {string} */ (/** @type {unknown[]} */ (att)[0]))
+            .filter((id) => all[id]?.Type === 'AWS::IAM::Role'),
+    )
+}
+
+/**
+ * Each resource policy on the cluster's secret that lets in a principal other than a role one of the stack's own
+ * functions runs as, as `<id>`. A resource policy grants with no IAM resource at all (`Principal: "*"` and
+ * `GetSecretValue` is the secret for anyone), so it is read here. Fails closed: a policy whose secret is not a `Ref` to
+ * another secret of the stack counts as on the cluster's, and a principal that is not exactly
+ * `{ AWS: { Fn::GetAtt: [<role>, Arn] } }` (or a list of those), a `NotPrincipal`, or a document the check cannot
+ * read, is a problem.
+ * @param {Resources} all
+ * @param {readonly string[]} secretIds
+ * @returns {string[]}
+ */
+function secretResourcePolicies(all, secretIds) {
+    const roles = functionRoles(all)
+    /** @param {unknown} principal */
+    const isOwnRole = (principal) => {
+        const att = /** @type {{ 'Fn::GetAtt'?: unknown[] } | null} */ (principal)?.['Fn::GetAtt']
+        return (
+            Array.isArray(att) &&
+            att.length === 2 &&
+            att[1] === 'Arn' &&
+            typeof att[0] === 'string' &&
+            roles.has(att[0])
+        )
+    }
+    /** @param {unknown} principal */
+    const onlyOwnRoles = (principal) => {
+        if (principal === null || typeof principal !== 'object' || Array.isArray(principal)) return false
+        const keys = Object.keys(principal)
+        if (keys.length !== 1 || keys[0] !== 'AWS') return false
+        const aws = /** @type {{ AWS: unknown }} */ (principal).AWS
+        const list = Array.isArray(aws) ? aws : [aws]
+        return list.length > 0 && list.every(isOwnRole)
+    }
+    return Object.entries(all)
+        .filter(([, r]) => r.Type === 'AWS::SecretsManager::ResourcePolicy')
+        .filter(([, r]) => {
+            const ref = /** @type {{ Ref?: unknown } | undefined} */ (r.Properties?.SecretId)?.Ref
+            const another =
+                typeof ref === 'string' && !secretIds.includes(ref) && all[ref]?.Type === 'AWS::SecretsManager::Secret'
+            return !another
+        })
+        .filter(([, r]) => {
+            const statements = /** @type {{ Statement?: unknown } | undefined} */ (r.Properties?.ResourcePolicy)
+                ?.Statement
+            if (!Array.isArray(statements)) return true
+            return statements.some((statement) => {
+                const st = /** @type {Statement & { Principal?: unknown, NotPrincipal?: unknown }} */ (statement)
+                if (st.Effect === 'Deny') return false
+                return st.NotPrincipal !== undefined || !onlyOwnRoles(st.Principal)
+            })
+        })
+        .map(([id]) => id)
+}
+
+/**
  * Whether every resource `statement` grants refers to one of `ids`, and none is a wildcard (`*` or `?`, which IAM
  * matches anywhere in a resource).
  * @param {Statement} statement
@@ -269,6 +340,12 @@ export function secretGrantProblems(resources) {
     if (unreadable.length > 0) {
         problems.push(
             `no role, user or group attaches an AWS-managed policy the check cannot read: ${unreadable.join('; ')}`,
+        )
+    }
+    const open = secretResourcePolicies(resources, secretIds)
+    if (open.length > 0) {
+        problems.push(
+            `no resource policy on the cluster’s secret lets in any principal but the stack’s own functions’ roles: ${open.join('; ')}`,
         )
     }
     const unread = unreadTypes(resources)

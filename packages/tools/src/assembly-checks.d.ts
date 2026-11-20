@@ -49,7 +49,11 @@ export declare function failClosedEnvironmentProblems(env: Record<string, unknow
  * `ManagedPolicy`, `RolePolicy`, `UserPolicy` and `GroupPolicy`, and from a `Role`'s, `User`'s or `Group`'s inline
  * `Policies`; the IAM types that grant nothing (an instance profile, an identity provider, a service-linked role,
  * an access key, a certificate, an MFA device, a user-to-group addition) pass. A `*` or `?` in a granted resource
- * is a wildcard. Needs the one `AWS::RDS::DBCluster` in the template; runs on every database shape.
+ * is a wildcard. An `AWS::SecretsManager::ResourcePolicy` on the cluster's secret (or on a secret the check cannot
+ * tell is another) may let in only the roles the stack's own Lambda functions run as, each named as
+ * `{ AWS: { Fn::GetAtt: [<role>, Arn] } }`: any other principal (`*`, an account, a service, a `NotPrincipal`), or a
+ * policy the check cannot read, is a problem. Needs the one `AWS::RDS::DBCluster` in the template; runs on every
+ * database shape.
  */
 export declare function secretGrantProblems(resources: Resources): string[]
 
