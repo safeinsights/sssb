@@ -24,7 +24,7 @@ export async function withPortErrors(fn: () => Promise<Response>): Promise<Respo
 }
 
 /** A request body that is not what the route reads: answered 400 `{ error: 'invalid-payload' }` by withPortErrors. */
-export class InvalidPayloadError extends Error {
+class InvalidPayloadError extends Error {
     constructor() {
         super('invalid-payload')
         this.name = 'InvalidPayloadError'
