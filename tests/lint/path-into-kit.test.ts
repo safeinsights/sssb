@@ -161,7 +161,7 @@ describe('sssb/no-path-out-of-package follows an extensionless file symlink too'
                 {
                     files: ['**/*.ts'],
                     languageOptions: { parser: tseslint.parser },
-                    plugins: { sssb },
+                    plugins: { sssb: sssb as unknown as ESLint.Plugin },
                     rules: { 'sssb/no-path-out-of-package': ['error', { root }] },
                 },
             ],
