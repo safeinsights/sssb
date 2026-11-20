@@ -18,3 +18,14 @@ test('a relative APP_DATA_DIR is read against the working directory, and fake st
     const got = await fakeStorage.get('a/b.txt')
     expect(got).not.toBeNull()
 })
+
+test('the data root is a normalised absolute path, however APP_DATA_DIR is written', () => {
+    previous = setDataRoot('./zz-a/../zz-b/./c/')
+    expect(dataRoot()).toBe(path.resolve('zz-b/c'))
+    setDataRoot(path.join(process.cwd(), 'zz-d', '..', 'zz-e'))
+    expect(dataRoot()).toBe(path.resolve('zz-e'))
+    setDataRoot(`${path.sep}..${path.sep}..`)
+    expect(dataRoot()).toBe(path.resolve(path.sep))
+    setDataRoot(undefined)
+    expect(dataRoot()).toBe(path.resolve('.data'))
+})
