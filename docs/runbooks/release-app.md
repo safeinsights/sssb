@@ -140,7 +140,7 @@ in rulesets the App does not bypass. The org's `require-pr` also forbids both, b
    repositories, not suspended), and as a ✗ once it does not. Which repositories are selected the tool cannot
    see, so that part is the vouch: vouch only for what you know, and update or remove the entry when it stops
    being true. An entry matches only that App on that ruleset. Today `require-pr` also lists the App with id
-   4038189, canopycms-release-bot, which is installed on `safeinsights/canopycms` only (JP vouched,
+   4038189, a release bot of another repository, which is installed on that one repository only (JP vouched,
    2026-11-18).
 7. Check it all, changing nothing:
 

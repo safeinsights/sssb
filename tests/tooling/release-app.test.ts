@@ -610,9 +610,10 @@ describe('release-app verify and bypass', () => {
         expect(h.text()).toContain('All checks passed')
     })
 
-    // The live organisation ruleset also lists canopycms-release-bot. It cannot reach this repository (JP vouched, in
-    // VOUCHED_ORG_BYPASSES), so it passes and is reported with its reason while the installation list agrees; an actor
-    // nobody vouched for still fails, and so does the vouched one once its installation widens.
+    // The live organisation ruleset also lists a release bot of another repository. It cannot reach this repository (JP
+    // vouched, in VOUCHED_ORG_BYPASSES), so it passes and is reported with its reason while the
+    // installation list agrees; an actor nobody vouched for still fails, and so does the vouched one once its
+    // installation widens.
     const BOT = { actor_id: 4038189, actor_type: 'Integration', bypass_mode: 'always' }
     const withOrgActors = async (
         others: { actor_id: number; actor_type: string; bypass_mode: string }[],
@@ -628,8 +629,8 @@ describe('release-app verify and bypass', () => {
     }
     const VOUCHED_LINE =
         '✓ Integration 4038189 (always) on organisation ruleset "require-pr" (7484436): vouched for as unable to reach ' +
-        'safeinsights/sssb: canopycms-release-bot, installed on safeinsights/canopycms only, so it cannot push to ' +
-        'safeinsights/sssb (JP, 2026-11-18)'
+        'safeinsights/sssb: a release bot of another repository, installed on one other repository only, so it ' +
+        'cannot push to safeinsights/sssb (JP, 2026-11-18)'
 
     it('verify passes beside an organisation bypass actor someone vouched for, and says who and why', async () => {
         const { code, text } = await withOrgActors([BOT])

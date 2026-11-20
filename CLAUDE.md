@@ -116,7 +116,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   unreleased commit of SSSB"). **`sssb add-app`**
   (`@sssb/tools`) writes a further app into an existing workspace with the same code (`writeApp` in `generate.js`),
   importing `@sssb/create/add-app` from the `@sssb/create` the workspace installs (never a dependency of `@sssb/tools`: no SSSB
-  package depends on another); pack and consume's pages shape adds its ledger with it.
+  package depends on another); pack and consume's multi-app shape adds its ledger with it.
 - **`@sssb/kit` stamps the commit it is packed from** into `dist/release.json` (its `prepack`,
   `packages/kit/scripts/stamp-release.mjs`), refusing shipped sources that differ from it under the same switch.
   `sssb doctor` reports, never fails, a workflow or marketplace pin that is not that commit, or a pinned marketplace no
@@ -151,10 +151,10 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   (`.github/workflows/app-checks.yml`, ADR-0014 P10): `checks.yml`'s `sssb` job calls it (by its local path), so
   its checks are named `sssb / <job>` (`sssb / all-checks` fails unless every one ran and passed), and each job's
   work is one `pnpm exec sssb ci <job>`. A job renamed or added there changes a required check's name: the rulesets
-  on `main` and `integration` require them by name, and `tests/tooling/app-checks-workflow.test.ts` pins the names. **Pack and consume** (`pnpm pack-and-consume [--shape pages|generated]`, ADR-0014 P2 and
+  on `main` and `integration` require them by name, and `tests/tooling/app-checks-workflow.test.ts` pins the names. **Pack and consume** (`pnpm pack-and-consume [--shape multi-app|generated]`, ADR-0014 P2 and
   P12) packs every `@sssb` package flat into one directory, generates workspaces outside this repo with the PACKED
-  `@sssb/create` against those tarballs, and checks them: `pages` (CI's `pack-and-consume` job) shapes the generated
-  workspace like the first adopter's (a second generated app, an adapter, a sibling package, a seamless negative
+  `@sssb/create` against those tarballs, and checks them: `multi-app` (CI's `pack-and-consume` job) shapes the generated
+  workspace like a typical adopter's (a second generated app, an adapter, a sibling package, a seamless negative
   fixture) and runs the script's own checks; `generated` (CI's `adoption-probe` job) changes not one file and runs
   the workspace's own gates (`pnpm verify`, the unit and contract runs held to the conformance suite,
   `sssb ci lint-typecheck-unit`, `sssb ci synth`, `pnpm knip`, `pnpm jscpd`), then proves its workflow pin, its plugin

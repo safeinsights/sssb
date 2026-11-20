@@ -261,7 +261,7 @@ describe('check-e2e against an installed kit (the entry is compiled)', () => {
     link(path.join(home, '@sssb', 'app-config'), path.join(app, 'src', 'app-config'))
     link(path.join(app, 'node_modules', '@sssb', 'kit'), kit)
 
-    // A sibling workspace package, as Pages' packages/gate is, with ITS OWN copy of the kit (pnpm gives each importer
+    // A sibling workspace package, as an adopter's `packages/gate` might be, with ITS OWN copy of the kit (pnpm gives each importer
     // that links a different seam its own instance). Playwright transforms its TypeScript like the app's.
     const shared = path.join(ws, 'packages', 'shared')
     write(

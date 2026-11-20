@@ -375,7 +375,7 @@ describe('the docs-only fast path', () => {
 // Pack and consume's two jobs (ADR-0014 P2, P12): each packs every @sssb package before its shape runs, without
 // installing the whole repository, and the pack-and-consume job hands its tarballs to a release candidate (P7).
 describe("checks.yml's pack and consume jobs", () => {
-    const JOBS = { 'adoption-probe': 'generated', 'pack-and-consume': 'pages' } as const
+    const JOBS = { 'adoption-probe': 'generated', 'pack-and-consume': 'multi-app' } as const
     const stepsOf = (job: string) =>
         (checks.jobs[job]!.steps ?? []) as (Step & { name?: string; with?: Record<string, string> })[]
 

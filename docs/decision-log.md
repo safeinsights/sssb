@@ -7234,3 +7234,19 @@ what was confirmed, and each reviewer then read its area's fix diff. JP was away
 - **`release-app verify` holds the `npm-publish` environment to tag `v*`**, and `planBypass` holds the main ruleset
   to main alone: the tool's own claims, which it did not check.
 - **Deferred, each needing a design decision**: `.claude/future-tasks/baseline-review-0-4-0-deferred.md`.
+
+### Adopter names out of SSSB's live files (2026-11-20)
+
+JP's rule: SSSB's code, docs and tasks do not talk about a specific adopter, because the dependency arrow runs from
+the adopter to SSSB. The sweep rewrote every live mention in general terms and left the dated records (this log, the
+build notes, ADR bodies, release notes, changelogs, resolved tasks, the adoption review) as they are.
+
+- **Pack and consume's `pages` shape is now `multi-app`** (`--shape multi-app|generated`, the step names, `checks.yml`,
+  `CLAUDE.md`). The job name `pack-and-consume` is unchanged, so no required check changes.
+- **Credits to a sibling project's code ("borrowed from", "modeled on") stay.** They record where code came from, not
+  who adopts SSSB. Rejected: rewriting them to "an upstream project", which loses the pointer to the source.
+- **The vouched org-ruleset bypass entry** names its bot generically in the report text; its App id, the part that
+  matches, is unchanged.
+- **No automated gate.** A check that fails on a named adopter must contain the name, which is the mention it forbids,
+  and the bare word "pages" is also Next's term, paging and web pages, so a precise pattern does not exist. The house
+  rule and review carry it.

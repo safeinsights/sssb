@@ -12,7 +12,7 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  * `sssb add-app <slug>` (@sssb/tools' packages/tools/src/commands/add-app.js), writing a second app into a workspace
  * the generator wrote, from an @sssb/create laid out as a packed one is (its bin, src and package.json, and the
  * template its prepack builds, here from THIS repository's live tree). Run as a child process, as a person runs it.
- * That the app it writes installs and passes the workspace's gates is pack and consume's pages shape (its ledger).
+ * That the app it writes installs and passes the workspace's gates is pack and consume's multi-app shape (its ledger).
  */
 const REPO = path.resolve(__dirname, '../..')
 const SSSB = path.join(REPO, 'packages/tools/bin/sssb.js')
@@ -168,9 +168,9 @@ describe('sssb add-app', () => {
             const appTs = read(ws, 'apps/console/config/app.ts')
             writeFileSync(
                 path.join(ws, 'apps/console/config/app.ts'),
-                appTs.replace("APP_SLUG = 'console'", "APP_SLUG = 'pages'"),
+                appTs.replace("APP_SLUG = 'console'", "APP_SLUG = 'portal'"),
             )
-            refused(['pages'], /apps\/console is the app "pages" \(its config\/app.ts APP_SLUG\)/)
+            refused(['portal'], /apps\/console is the app "portal" \(its config\/app.ts APP_SLUG\)/)
             writeFileSync(path.join(ws, 'apps/console/config/app.ts'), appTs)
             refused(['ledger', '--slot', 'console'], /apps\/console already declares the port slot "console"/)
             refused(['ledger', '--port', '3700'], /apps\/console binds port 3700 in a main checkout already/)

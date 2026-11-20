@@ -9,7 +9,7 @@ SSSB can now AUTHORIZE a person who holds a personal API token:
 - the token's kind registers as an `AppPersonCredentialKind`;
 - the audit trail records `credential_kind` and `credential_id`.
 
-What SSSB does not have is the token itself. The first adopter (the sharing site's console) built
+What SSSB does not have is the token itself. An adopter built
 issuance, storage, verification and revocation in its own app. It looks like a capability most
 products of this kind need: a CLI, a script or an agent acting as a signed-in person. That is the
 universality test in `docs/development-approach.md`, and it plausibly passes.

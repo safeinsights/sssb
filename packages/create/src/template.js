@@ -356,7 +356,7 @@ function actionPins(workflow) {
 
 /**
  * The resolution of a workspace shaped as the generator writes one: pack and consume's lockfile seed, which its
- * generated shape installs from (a superset of the generated workspace's: the seed also holds the pages shape's second
+ * generated shape installs from (a superset of the generated workspace's: the seed also holds the multi-app shape's second
  * app and sibling package). Not this repository's own pnpm-lock.yaml, which holds this repository's own tooling too
  * (`events`, `history`, `open` and `cookies` among it), none of which a generated workspace installs.
  */
