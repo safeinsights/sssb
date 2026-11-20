@@ -387,12 +387,18 @@ describe('the declaration an app makes in its package.json', () => {
         const refused = printed(own, "portFor('starter')")
         expect(refused.status).not.toBe(0)
         expect(refused.stderr).toMatch(/"starter" is another app's port slot, and this app declares its own, "ledger"/)
-        expect(printed(own, "portFor('showcase')").status).not.toBe(0)
+        const showcase = printed(own, "portFor('showcase')")
+        expect(showcase.status).not.toBe(0)
+        expect(showcase.stderr).toMatch(
+            /"showcase" is another app's port slot, and this app declares its own, "ledger"/,
+        )
         // A package nested in the app (its infra/) does not hide the app's slot, from a directory with none of its own.
         mkdirSync(path.join(own, 'infra'), { recursive: true })
         writeFileSync(path.join(own, 'pnpm-workspace.yaml'), 'packages:\n  - infra\n') // the checkout's root
         writeFileSync(path.join(own, 'infra', 'package.json'), JSON.stringify({ name: 'infra' }))
-        expect(printed(path.join(own, 'infra'), "portFor('starter')").status).not.toBe(0)
+        const nested = printed(path.join(own, 'infra'), "portFor('starter')")
+        expect(nested.status).not.toBe(0)
+        expect(nested.stderr).toMatch(/"starter" is another app's port slot, and this app declares its own, "ledger"/)
         expect(printed(path.join(own, 'infra'), "portFor('ladle')").stdout.trim()).toBe('61000')
         expect(printed(own, "portFor('ladle')").stdout.trim()).toBe('61000')
         expect(printed(own, "portFor('contractPg')").stdout.trim()).toBe('5439')
