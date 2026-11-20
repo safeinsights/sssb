@@ -48,7 +48,7 @@ test('static shell walkthrough from file://', async ({ page }) => {
     // the 'es' label inside it
     await page.getByTestId('nav-dashboard').click()
     await page.getByTestId('simulator-locale').getByText('es', { exact: true }).click()
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('Mesa')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(appMessage('es', 'dashboard.title'))
 })
 
 test('simulator panel switches people and restores the last hash route (static demo twin)', async ({ page }) => {

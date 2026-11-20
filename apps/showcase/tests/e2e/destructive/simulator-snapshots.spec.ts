@@ -66,7 +66,7 @@ test('snapshots: save, mutate, restore, then reset returns to the seed baseline'
     await expect(page.getByTestId('mail-list')).toContainText(firstInvite)
     await expect(page.getByTestId('mail-list')).not.toContainText(secondInvite)
 
-    // Reset: back to the five-seed-person baseline, empty mail, and the app still works — the
+    // Reset: back to the six-seed-person baseline, empty mail, and the app still works — the
     // seed person's session survives because the dev-secret is preserved across a reset.
     await page.getByTestId('simulator-tab-snapshots').click()
     // resetWorld's window.location.assign lands on the SAME "/en" we're already sitting on (a

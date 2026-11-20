@@ -139,7 +139,8 @@ test('register endpoints, deliver + sign, then fail → retry → recover', asyn
         .filter({ hasText: 'failed' })
         .first()
     await expect(failedRow).toBeVisible()
-    await expect(failedRow.locator('[data-testid^="simulator-hook-delivery-attempts-"]')).toContainText('1')
+    // The count alone: `toContainText('1')` would also pass on 10 or 12. The label holds no other digit.
+    await expect(failedRow.locator('[data-testid^="simulator-hook-delivery-attempts-"]')).toHaveText(/^\D*1\D*$/)
 
     // Pin the rest of the test to this exact delivery (see deliveryIdOf) rather than re-filtering the
     // list, which a clock advance can grow with unrelated rows for the same endpoint.
@@ -152,7 +153,7 @@ test('register endpoints, deliver + sign, then fail → retry → recover', asyn
     await page.getByTestId('simulator-tab-hooks').click()
     await expect(
         trackedDelivery.locator(`[data-testid="simulator-hook-delivery-attempts-${failedDeliveryId}"]`),
-    ).toContainText('2', { timeout: 15_000 })
+    ).toHaveText(/^\D*2\D*$/, { timeout: 15_000 })
 
     // --- Recover: toggle failure off, advance again → the delivery now succeeds (durable outcome). ---
     const recoverRow = page.locator('[data-testid^="simulator-hook-endpoint-"]').filter({ hasText: URL_FAIL })
