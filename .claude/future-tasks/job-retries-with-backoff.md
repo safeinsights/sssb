@@ -28,11 +28,12 @@ whatever SSSB does.
 
 1. **Is a retry the same job or a new one?** The same row keeps one timeline and one id for whoever is watching
    (`job_status_changes`, the dashboard's timeline, a result key under `exports/<tenant>/<org>/<job id>.csv`), but
-   `failed` is terminal by design: `recordWebhookCompletion` (`packages/kit/src/db/jobs.ts`) relies on it to answer a
-   vendor's redelivery with `idempotent`, and `recordJobStatus` refuses every hop out of it. Allowing `failed -> queued`
+   `failed` is terminal by design: `recordJobStatus` refuses every hop out of it, and `recordWebhookCompletion`
+   (`packages/kit/src/db/jobs.ts:248-249`) answers a redelivery of the same status with `idempotent` and refuses a
+   conflicting one on a terminal job. Allowing `failed -> queued`
    (or a new `retrying` status) loosens a rule the webhook's idempotency stands on. A new row per attempt, linked to the
    first by a `retry_of` column, keeps terminal states terminal and gives each attempt its own timeline, at the cost of
-   a job list that shows several rows for one piece of work. Sketch the second first; it breaks no existing proof.
+   a job list that shows several rows for one piece of work. Sketch the second first: it leaves terminal states terminal.
 2. **Opt-in per kind, default none.** A kind says how many attempts it allows and the delays between them, in the seam
    beside `jobNotify` (`@sssb/app-config/jobs`, optional as an export and an entry, as `jobNotify` is, so no adopter
    is made to change). A kind that says nothing runs once, as every kind does today. Reuse the webhook deliveries'

@@ -7017,7 +7017,7 @@ It asked for a kind to opt out, or to notify only on failure, and for job retrie
 - **It is optional as an export, read through the namespace**, as `db/seed.ts` reads `appSeedRows`:
   `import * as jobsSeam` and `jobsSeam['jobNotify']`. The earlier decision (2026-11-19, optional real ports) rejected "a
   new seam module" because a seam module cannot be optional; an optional export of an existing module can be, and this
-  is the second one. Rejected: **a required export**, which would fail the typecheck of every adopter that has not
+  is what `appSeedRows` already is (`packages/kit/src/db/seed.ts:23`). Rejected: **a required export**, which would fail the typecheck of every adopter that has not
   added it, a `required` seam change for a setting whose default is the old behaviour.
 - **The check is in `notifyJobTerminal`, before the org is read**, so a refused run costs no `listMembers` call, no in-app
   row and no email attempt. That function is the one hop every runner already ends in: the simulated runner, the
@@ -7034,7 +7034,7 @@ It asked for a kind to opt out, or to notify only on failure, and for job retrie
   for another kind.
 - **The static demo takes the map as a `useDemoWorld` option, `jobNotify`**, and its twin skips a notification for
   `failure` and `never`, since the twin only ever completes a job. It cannot read the seam: the `jobs` seam module imports
-  every server handler, and the twin deliberately does not (`world.ts`). The twin imports the type only. Rejected:
+  every server handler, and the twin deliberately does not (`world.ts`). `contracts.ts` imports the type only, and `world.ts` imports nothing new. Rejected:
   **calling the server's `notifiesOn` in the twin**, a value import of `core/jobs`, which reaches the seam. The showcase
   sets no `jobNotify`, so it passes none; an adopter that sets one and starts the kind in its demo passes the same map.
 - **The fixture has a kind for each mode** (`export-dockets` says nothing, `sweep-dockets` is `failure`, `quiet-dockets`

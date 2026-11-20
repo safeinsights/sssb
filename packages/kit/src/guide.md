@@ -39,7 +39,7 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - A job kind's completion notifies its team's admins, whoever runs it and whatever it ends as. A routine kind, one a
   schedule runs every hour, says otherwise in the seam's optional `jobNotify` export in `src/app-config/jobs.ts`:
   `export const jobNotify: Partial<Record<AppJobKind, JobNotify>> = { 'sweep-items': 'failure' }`, with `JobNotify` from
-  `@sssb/kit/core/jobs`. `'failure'` notifies only a failed job (a lost one included) and `'never'` nothing; a kind not
+  `@sssb/kit/core/jobs`. `'failure'` notifies only a failed job (one the in-process runner's sweep fails as lost included) and `'never'` nothing; a kind not
   named, and an app with no export, is `'always'`, and the framework's own kinds never notify. A refused run makes no
   `listMembers` call. If the static demo starts the kind, pass the same map as `useDemoWorld`'s `jobNotify`.
 - `pnpm dev` stays hermetic: no docker, no credentials, no network. Never add `next/font/google`, telemetry, or
