@@ -5,6 +5,8 @@ import { Button, PasswordInput, Stack, Text, TextInput } from '@mantine/core'
 import { useForm } from '@mantine/form'
 import { useState } from 'react'
 
+import { sameOriginPath } from '../../core/same-origin-path'
+
 /**
  * Clerk-headless credential form (ADR-0003) using @clerk/nextjs v7's signals API
  * (signIn.password → status → finalize). MFA verification (status 'needs_second_factor') is a
@@ -12,6 +14,10 @@ import { useState } from 'react'
  *
  * AUTHORED — CUTOVER (`auth-dev`): never run against a real Clerk instance.
  * Lives in packages/kit/src/adapters because it imports the vendor SDK; the SignInScreen renders it as a slot.
+ *
+ * `returnTo` usually comes from the URL, so the form goes there only when `sameOriginPath` accepts it, and to `/`
+ * otherwise: a page that forgot to check it must not turn sign-in into an open redirect (`/\evil.example` and
+ * `/<tab>/evil.example` pass a `startsWith('/')` check and leave the origin).
  */
 export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; returnTo: string }) {
     const { signIn, fetchStatus } = useSignIn()
@@ -28,7 +34,7 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
         if (signIn.status === 'complete') {
             const finalized = await signIn.finalize()
             if (finalized.error) setFormError(labels.genericError)
-            else window.location.assign(returnTo)
+            else window.location.assign(sameOriginPath(returnTo) ?? '/')
         } else if (signIn.status === 'needs_second_factor') {
             setFormError(labels.mfaNotImplemented)
         } else {
