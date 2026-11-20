@@ -24,6 +24,7 @@ import { useTours } from '@sssb/kit/demo-static/tour/use-tours'
 import { actors } from '@sssb/app-config/actors'
 import { presets } from '@sssb/app-config/presets'
 import { tabs as appSimulatorTabs } from '@sssb/app-config/simulator'
+import { mailLinkTarget } from './mail-link'
 
 interface Summary {
     viewpoint: string | null
@@ -434,26 +435,11 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     function handleOpenMailLink(href: string) {
-        // Same-origin only (design invariant) — but never silently: a link this glue won't follow
-        // gets a notice saying why. A relative path covers twin-style links; real emails (e.g. the
-        // invite accept link) carry a fully-qualified URL since they're read from an arbitrary
-        // mail client, so a matching-origin absolute URL is allowed too. `//host/path` is
-        // protocol-relative (cross-origin despite the leading slash) — it falls through to the
-        // URL branch below, where the origin check judges it honestly.
-        if (href.startsWith('/') && !href.startsWith('//')) {
-            window.location.assign(href)
-            return
-        }
-        try {
-            const url = new URL(href)
-            if (url.origin === window.location.origin) {
-                window.location.assign(href)
-                return
-            }
-            pushNotice(t('noticeLinkOrigin', { origin: url.origin }))
-        } catch {
-            pushNotice(t('noticeLinkUnusable', { href }))
-        }
+        // Same origin only, never silently: `mailLinkTarget` (./mail-link) says where to go or why not.
+        const target = mailLinkTarget(href, window.location.href)
+        if ('path' in target) window.location.assign(target.path)
+        else if (target.refused === 'origin') pushNotice(t('noticeLinkOrigin', { origin: target.origin }))
+        else pushNotice(t('noticeLinkUnusable', { href }))
     }
 
     function handleCopyLink(href: string) {
