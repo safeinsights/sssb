@@ -18,7 +18,7 @@ test.afterAll(async ({ browser, baseURL }) => {
     // config, so an isolated-port run resets the server it actually drove.
     const context = await browser.newContext({ baseURL })
     try {
-        await context.request.post('/api/simulator/reset')
+        await context.request.post('/api/simulator/reset', { data: {} })
     } finally {
         await context.close()
     }
@@ -28,7 +28,7 @@ test('bump ToS → interstitial → accept → audit + profile; advisory banner 
     // Baseline: reset to seed (Northwind ToS v1, everyone pre-accepted). The seed person session survives
     // the reset (the dev-secret is preserved), so we stay signed in.
     await signInAs(page, 'person-admin')
-    const reset = await page.request.post('/api/simulator/reset')
+    const reset = await page.request.post('/api/simulator/reset', { data: {} })
     expect(reset.ok()).toBeTruthy()
 
     // Pre-accepted ⇒ the dashboard loads with no gate.

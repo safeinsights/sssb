@@ -82,7 +82,7 @@ test('register endpoints, deliver + sign, then fail → retry → recover', asyn
     await signInAs(page, 'person-admin')
 
     // Fresh world so no stray endpoints/deliveries from earlier runs.
-    const reset = await page.request.post('/api/simulator/reset')
+    const reset = await page.request.post('/api/simulator/reset', { data: {} })
     expect(reset.ok()).toBeTruthy()
 
     // --- Register two endpoints via the org-admin card; capture each once-shown secret. ---

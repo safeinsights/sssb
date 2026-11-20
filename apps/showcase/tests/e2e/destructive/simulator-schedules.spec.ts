@@ -48,7 +48,7 @@ test('advancing the world clock past a schedule fires its digest job and lands t
     // Reset the world so the seeded schedule's next_run_at is freshly computed to within a week, making
     // the +1w advance below cross it deterministically regardless of what earlier runs left behind. The
     // seed person session survives the reset (dev-secret is preserved), so we stay signed in.
-    const reset = await page.request.post('/api/simulator/reset')
+    const reset = await page.request.post('/api/simulator/reset', { data: {} })
     expect(reset.ok()).toBeTruthy()
     await page.goto('/en/dashboard')
     await expect(page.getByTestId('tickets-card')).toBeVisible()

@@ -155,6 +155,6 @@ test('presets: loading one replays it on the server, signs this browser in, and 
     await expect(analyzer, 'the bundle analyzer keeps running').not.toHaveAttribute('data-state', 'held')
 
     // Leave the seed baseline behind for the rest of the destructive project.
-    const reset = await page.request.post('/api/simulator/reset')
+    const reset = await page.request.post('/api/simulator/reset', { data: {} })
     expect(reset.ok()).toBe(true)
 })
