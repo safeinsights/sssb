@@ -58,7 +58,9 @@ function packageDirOf(file: string): string | null {
 
 const realOrNull = (dir: string) => {
     try {
-        return realpathSync(dir)
+        // The native call: on a case-insensitive file system it answers the name as stored, where the JS one keeps
+        // the caller's casing, so `/apps/Starter` and `/apps/starter` would compare unequal.
+        return realpathSync.native(dir)
     } catch {
         return null
     }
@@ -66,8 +68,8 @@ const realOrNull = (dir: string) => {
 
 /**
  * Why `appDir` is not the app whose suite file `testPath` is, or null when it is. The app is the nearest directory at
- * or above the test file that holds a package.json; both sides are compared by real path, so `..` and symbolic links
- * do not matter. A suite file in one app pointed at another would otherwise run every file-reading check over the
+ * or above the test file that holds a package.json; both sides are compared by native real path, so `..`, symbolic
+ * links and (on a case-insensitive file system) letter case do not matter. A suite file in one app pointed at another would otherwise run every file-reading check over the
  * other app's files and pass.
  */
 export function appDirMismatch(appDir: string, testPath: string): string | null {
