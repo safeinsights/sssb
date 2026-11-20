@@ -642,6 +642,81 @@ const pathOutOfPackage = {
     },
 }
 
+// THE KIT BY PATH (an app-side fence; `sssb/public-surface` judges `@sssb/kit/…` specifiers only). @sssb/kit ships
+// its source, so `../node_modules/@sssb/kit/src/testing/conformance/suite` from an adopter's app, or
+// `../../../packages/kit/src/…` in SSSB's own repository, reaches any internal of the framework past its exports map,
+// and compiles and runs. A relative or absolute path, or a `file:` URL, is judged where it really lands (symlinks
+// resolved, both readings of a `?`/`#` specifier): inside the package whose nearest package.json names `@sssb/kit` it
+// is a finding, unless the importing file is inside that package too (the kit's own files and its fixture). Any
+// specifier with a `node_modules` segment is a finding of its own, wherever it lands: a package is imported by its
+// name. One finding per node.
+const NODE_MODULES_SEGMENT = /(^|[\\/])node_modules([\\/]|$)/i
+/** @type {import('eslint').Rule.RuleModule} */
+const pathIntoKit = {
+    meta: {
+        type: 'problem',
+        docs: { description: '@sssb/kit is imported by a published subpath, never by a path into the package.' },
+        schema: [],
+        messages: {
+            kit:
+                '`{{specifier}}` is a path into @sssb/kit ({{landing}}), past its exports map. Import `@sssb/kit` by ' +
+                'a published subpath (its package.json `exports`) instead.',
+            nodeModules:
+                '`{{specifier}}` is a path through node_modules. Import a package by its name, and `@sssb/kit` by a ' +
+                'published subpath (its package.json `exports`).',
+        },
+    },
+    create(context) {
+        /** @type {Map<string, string | null>} the kit package's root a directory is inside, or null */
+        const kitRootOf = new Map()
+        /** @param {string} dir */
+        const kitRootAbove = (dir) => {
+            if (kitRootOf.has(dir)) return kitRootOf.get(dir) ?? null
+            const manifest = join(dir, 'package.json')
+            let found = null
+            if (existsSync(manifest)) {
+                let name
+                try {
+                    name = readJson(manifest)?.name
+                } catch {
+                    name = undefined // a manifest that does not parse names no package
+                }
+                found = name === '@sssb/kit' ? dir : null
+            } else if (dirname(dir) !== dir) {
+                found = kitRootAbove(dirname(dir))
+            }
+            kitRootOf.set(dir, found)
+            return found
+        }
+        const importer = realPathOf(resolve(context.filename))
+        const isUnderDir = (file, dir) => file === dir || file.startsWith(`${dir}/`) || file.startsWith(`${dir}\\`)
+        const finding = (specifier) => {
+            if (NODE_MODULES_SEGMENT.test(specifier)) return { messageId: 'nodeModules', landing: '' }
+            for (const reading of readingsOf(specifier)) {
+                const target = pathTarget(context.filename, reading)
+                if (!target) continue
+                const landing = realPathOf(target)
+                const kitRoot = kitRootAbove(dirname(landing))
+                if (kitRoot && !isUnderDir(importer, kitRoot)) return { messageId: 'kit', landing }
+            }
+            return undefined
+        }
+        const check = (node) => {
+            const specifier = literalSpecifier(node)?.trim()
+            if (typeof specifier !== 'string') return
+            const found = finding(specifier)
+            if (found) context.report({ node, messageId: found.messageId, data: { specifier, landing: found.landing } })
+        }
+        return {
+            ...declarationVisitors((_declaration, source) => check(source)),
+            ...declarationlessVisitors(check),
+            // vitest/jest mock a module by specifier, which resolves exactly like an import.
+            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
+                check(node.arguments[0]),
+        }
+    },
+}
+
 /** Every sssb/* rule, by its id without the prefix. */
 export const rules = {
     // app-side: the preset enables these (./app-config.js)
@@ -658,6 +733,7 @@ export const rules = {
     'no-jsx-literals': jsxLiterals,
     'no-raw-db-handle': rawDbHandle,
     'no-direct-mkdtemp': directMkdtemp,
+    'no-path-into-kit': pathIntoKit,
     // SSSB-internal: SSSB's own repository enables these over packages/kit
     'no-app-import': appImport,
     'no-dynamic-app-import': appImportDynamic,

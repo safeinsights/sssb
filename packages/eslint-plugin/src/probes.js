@@ -30,8 +30,10 @@ export const PROBES = [
         code:
             `${IMPORTS_VENDOR}${LOADS_VENDOR}${READS_ENV}${TAKES_RAW_DB}${IMPORTS_KIT_REAL}` +
             "import { kv } from '@/adapters/real/kv'\nexport { kv }\n" +
-            "import { Inter } from 'next/font/google'\nexport const font = Inter\n",
+            "import { Inter } from 'next/font/google'\nexport const font = Inter\n" +
+            "export const suite = () => import('../../node_modules/@sssb/kit/src/testing/conformance/suite')\n",
         fires: [
+            'sssb/no-path-into-kit',
             'sssb/no-vendor-import',
             'sssb/no-dynamic-vendor-import',
             'sssb/no-process-env',

@@ -398,6 +398,14 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             plugins: sssb,
             rules: { 'sssb/no-dynamic-real-adapter-import': 'error' },
         }),
+        // @sssb/kit ships its source, so a path into the package (`../node_modules/@sssb/kit/src/…`) reaches any of its
+        // internals past the exports map, and so does any path through node_modules. Every file of the app: a test or a
+        // script is as able to reach one as a route.
+        at('no-path-into-kit', {
+            files: files(''),
+            plugins: sssb,
+            rules: { 'sssb/no-path-into-kit': 'error' },
+        }),
         // No raw mkdtemp in tests: every unit test, and everything under tests/ (Playwright's default testMatch picks
         // up `.spec.mjs` and `.test.js`, and a support helper can be either).
         at('no-direct-mkdtemp', {
