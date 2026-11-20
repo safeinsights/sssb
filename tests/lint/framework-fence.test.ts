@@ -359,18 +359,20 @@ describe('a path into app code crosses the framework/app fence too', () => {
     // A specifier with a `?` or `#` has two readings, as written (the compiler's) and cut at it (Vite's and Vitest's),
     // and both path rules judge both: the package-edge rule cuts the query and leaves a landing in app code to this
     // rule, so this rule has to see where the cut reading lands, and the other rule where the written one does.
+    /** `value` as a single-quoted string literal of source text. */
+    const quoted = (value: string): string => `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
     describe.each(['?', '#'])('a specifier with a %s has two readings', (mark) => {
         const file = KIT[0] as string
         it('cut, it lands in an app (as written, back inside the package): the app fence reports it', async () => {
             const intoApp = pathFrom(file, 'apps/showcase/src/domain/tickets')
             const back = '../'.repeat(intoApp.split('/').length - 1)
             const written = `${intoApp}${mark}/${back}${pathFrom(file, 'packages/kit/src/core/index')}`
-            const findings = await lint(file, `export const load = () => import(${JSON.stringify(written)})\n`)
+            const findings = await lint(file, `export const load = () => import(${quoted(written)})\n`)
             expect(fired(findings, APP_CODE_PATH), written).toBe(1)
         })
         it('as written, it lands out of the package (cut, inside): the package-edge rule reports it', async () => {
             const out = `../core${mark}/../../../../../scripts/release.mjs`
-            const findings = await lint(file, `export const load = () => import(${JSON.stringify(out)})\n`)
+            const findings = await lint(file, `export const load = () => import(${quoted(out)})\n`)
             expect(fired(findings, OUT_OF_PACKAGE_PATH), out).toBe(1)
         })
     })

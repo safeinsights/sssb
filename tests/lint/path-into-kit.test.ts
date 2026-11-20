@@ -14,6 +14,8 @@ import { APP, lint } from './lint-text'
  * included, are inside the package and import each other freely.
  */
 const RULE = 'sssb/no-path-into-kit'
+/** `value` as a single-quoted string literal of source text. */
+const quoted = (value: string): string => `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
 const forms = (to: string): [string, string][] => [
     ['an import declaration', `import { x } from ${to}\nexport { x }\n`],
     ['a re-export', `export { x } from ${to}\n`],
@@ -31,8 +33,8 @@ describe('sssb/no-path-into-kit', () => {
     const SUITE = 'packages/kit/src/testing/conformance/suite'
     for (const file of [`${APP}/src/zz.test.ts`, `${APP}/src/lib/x.ts`, 'scripts/zz.ts', 'tests/tooling/zz.test.ts']) {
         describe(file, () => {
-            const intoKit = JSON.stringify(from(file, SUITE))
-            const throughNodeModules = JSON.stringify(
+            const intoKit = quoted(from(file, SUITE))
+            const throughNodeModules = quoted(
                 from(file, path.join(path.dirname(file), '../node_modules/@sssb/kit/src/testing/conformance/suite')),
             )
             it.each(forms(intoKit))('refuses a path into packages/kit by %s', async (_, code) => {
@@ -49,10 +51,10 @@ describe('sssb/no-path-into-kit', () => {
                 const absolute = path.join(process.cwd(), SUITE)
                 for (const to of [
                     `\`${from(file, SUITE)}\``,
-                    JSON.stringify(`${from(file, SUITE)}?raw`),
-                    JSON.stringify(`${from(file, SUITE)}#x`),
-                    JSON.stringify(absolute),
-                    JSON.stringify(pathToFileURL(absolute).href),
+                    quoted(`${from(file, SUITE)}?raw`),
+                    quoted(`${from(file, SUITE)}#x`),
+                    quoted(absolute),
+                    quoted(pathToFileURL(absolute).href),
                 ]) {
                     expect(await fired(file, `export const load = () => import(${to})\n`), to).toHaveLength(1)
                 }
@@ -65,7 +67,7 @@ describe('sssb/no-path-into-kit', () => {
         const code = [
             "import { a } from './a'",
             "import { b } from '../domain/b'",
-            `import { c } from ${JSON.stringify(from(file, 'packages/tools/src/ports.js'))}`,
+            `import { c } from ${quoted(from(file, 'packages/tools/src/ports.js'))}`,
             "import { d } from '@sssb/kit/authz/authorize'",
             'export { a, b, c, d }',
         ].join('\n')

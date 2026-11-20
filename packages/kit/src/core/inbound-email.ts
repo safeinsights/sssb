@@ -42,6 +42,28 @@ export interface InboundRecipient {
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 /**
+ * `raw` with each double-quoted string taken out, a backslash escaping the character after it. A quote that never
+ * closes is left where it is, with everything after it. One pass by hand: the regular expression for this
+ * (`"(?:[^"\\]|\\.)*"`) rescans from every opening quote, which is quadratic on a header an attacker writes.
+ */
+function withoutQuotedStrings(raw: string): string {
+    let out = ''
+    let at = 0
+    while (at < raw.length) {
+        if (raw[at] !== '"') {
+            out += raw[at]
+            at += 1
+            continue
+        }
+        let end = at + 1
+        while (end < raw.length && raw[end] !== '"') end += raw[end] === '\\' ? 2 : 1
+        if (end >= raw.length) return out + raw.slice(at)
+        at = end + 1
+    }
+    return out
+}
+
+/**
  * Pull the bare addr-spec out of a possibly-decorated address: `"Ada Keeper" <ada@x.test>` → `ada@x.test`, a bare
  * `ada@x.test` → itself. Lowercased and trimmed (email domains are case-insensitive, and local parts are
  * case-insensitive in every practical mail system — we normalize so a sender/member match is not defeated by case).
@@ -53,7 +75,7 @@ const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
  * (`x<b@y>a@x`) each name another address, so they return ''. Returns '' for anything without an addr-spec too.
  */
 export function normalizeEmailAddress(raw: string): string {
-    const unquoted = raw.replace(/"(?:[^"\\]|\\.)*"/g, '')
+    const unquoted = withoutQuotedStrings(raw)
     let candidate: string
     if (/[<>]/.test(unquoted)) {
         const only = /^[^<>]*<([^<>]*)>\s*$/.exec(unquoted)

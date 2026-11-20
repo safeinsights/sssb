@@ -118,3 +118,11 @@ describe('normalizeInboundBody', () => {
         expect(normalizeInboundBody(body)).toBe(body.trim())
     })
 })
+
+it('a long run of escaped quotes that never closes is read in linear time', () => {
+    const hostile = `"${'\\"'.repeat(200_000)}`
+    const started = performance.now()
+    expect(normalizeEmailAddress(hostile)).toBe('')
+    expect(normalizeEmailAddress(`${'"'.repeat(200_001)} <ada@x.test>`)).toBe('ada@x.test')
+    expect(performance.now() - started).toBeLessThan(1000)
+})
