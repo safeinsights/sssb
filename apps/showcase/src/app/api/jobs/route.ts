@@ -18,6 +18,9 @@ export async function GET(): Promise<Response> {
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
+        // A read is authorized as a write is: being placed in an org is not membership of it (a signed-in person
+        // with the role `none` has no standing there), so the session's org alone never decides what it may read.
+        authorize(user, orgId, 'read', { type: 'Job', orgId })
         const views = await listJobs(db, tenantId, orgId, { limit: 10 })
         // A completed job's result lives in storage; hand the browser a time-limited URL to fetch it.
         const withUrls = await Promise.all(

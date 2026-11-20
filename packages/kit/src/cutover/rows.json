@@ -5,6 +5,10 @@
             "what": "Managed-auth **development** instance + keys"
         },
         {
+            "id": "auth-tenancy",
+            "what": "Auth tenancy: multi, or single with its tenant and home org"
+        },
+        {
             "id": "auth-prod",
             "what": "Managed-auth **production** instance (typically one per tenant site)"
         },

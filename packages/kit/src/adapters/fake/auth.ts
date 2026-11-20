@@ -18,6 +18,7 @@ import type {
     ProfileUpdate,
 } from '../../ports/auth'
 import { AuthRequiredError, ForbiddenError } from '../../ports/errors'
+import type { ProviderIdentitySource } from '../single-tenant-auth'
 import { writeFileAtomicSync, writeJsonAtomic } from './atomic-write'
 import { readSimulatorState, updatePersonState, writeViewpointCookie } from './simulator'
 import { dataDir } from './data-dir'
@@ -320,5 +321,29 @@ export const fakeAuth: AuthPort = {
         }
         await writeSession(session.person.id, orgSlug)
         updatePersonState(`person:${session.person.id}`, { activeOrgSlug: orgSlug })
+    },
+}
+
+/**
+ * The simulated world's people as single-tenant auth sees them (../single-tenant-auth.ts): who is signed in and
+ * whether an account exists, with no org or role in it. A person's seeded tenant is their tenant claim, so a world
+ * run in single mode must seed its people in the configured tenant, as a deployment's accounts must not claim another.
+ */
+export const fakeIdentitySource: ProviderIdentitySource = {
+    async current() {
+        const session = await readSession()
+        if (!session) return null
+        const user = toUser(session.person, session.orgSlug)
+        return {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            locale: user.locale,
+            tenantClaim: session.person.tenantSlug,
+        }
+    },
+    async account(userId) {
+        const person = findPerson(userId)
+        return person ? { tenantClaim: person.tenantSlug } : null
     },
 }

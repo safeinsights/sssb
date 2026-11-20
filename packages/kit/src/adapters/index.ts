@@ -9,7 +9,7 @@ import type { LlmPort } from '../ports/llm'
 import type { StoragePort } from '../ports/storage'
 import { simulatedDevServer } from './dev-server'
 import { fakeAnalytics } from './fake/analytics'
-import { fakeAuth } from './fake/auth'
+import { simulatedAuth } from './fake/simulated-auth'
 import { fakeDb } from './fake/db'
 import { fakeEmail } from './fake/email'
 import { fakeJobs } from './fake/jobs'
@@ -109,7 +109,8 @@ const real =
         ? await (await import('./real/index')).createRealPorts({ inProcessJobs: buildInProcessJobs })
         : null
 
-export const auth: AuthPort = real?.auth ?? fakeAuth
+// The simulated world runs the deployment's auth tenancy when its environment sets one (./fake/simulated-auth.ts).
+export const auth: AuthPort = real?.auth ?? simulatedAuth()
 export const db: DbPort = real?.db ?? fakeDb
 export const storage: StoragePort = real?.storage ?? fakeStorage
 export const llm: LlmPort = real?.llm ?? fakeLlm

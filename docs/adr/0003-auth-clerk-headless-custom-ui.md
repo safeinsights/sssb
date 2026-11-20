@@ -136,3 +136,47 @@ seed sets both. Like the rest of that adapter, it is unverified against a real C
 
 "Machine callers are a sibling seam, not this port" still holds. `ServiceIdentity` and `AuthUser`
 remain different types. The two kinds of caller meet in `authorize()`'s actor, not in this port.
+
+## Addendum (2026-11-19): a single-tenant mode, and a configurable tenant metadata key
+
+The Decision places the tenant in the user's metadata and the org and role in the provider's organizations, with one
+provider instance per tenant. That costs an app with one tenant per deployment (SSSB's first adopter) a tenant claim on
+every account and an organization nobody uses, and it cannot work on a provider instance that the app shares with
+another product. JP decided (2026-11-19) to add a mode for it, and to make the metadata key configurable.
+
+**`AUTH_TENANCY`, an explicit switch** (`multi`, the default, or `single`), set by `SssbApp` from the app's
+`params.auth` (`packages/kit/src/adapters/auth-tenancy.ts`, `packages/cdk/src/auth-tenancy.js`).
+
+- **multi** is the Decision as it was, with the tenant read under `AUTH_TENANT_METADATA_KEY` (`tenantSlug` by default).
+- **single** fixes the tenant and the home org by setting (`AUTH_TENANT_SLUG`, `AUTH_HOME_ORG_SLUG`) and places every
+  user the provider signs in there, with the new role `none`. One module, `packages/kit/src/adapters/single-tenant-auth.ts`,
+  wraps either adapter, the fake or Clerk, so the mode means the same in a simulated world as in a deployment.
+
+**`none` is a role of its own because no existing role grants nothing.** The framework's rules let every member of an
+org read its jobs, members and org record, `restricted` included, and the staff org's manage-all followed the active
+org whatever the role. So `none` has no standing (`hasStanding` in `packages/kit/src/core/roles.ts`): the ability layer
+puts it in no org for any rule, the framework's or the app's (the app's rules are handed a `sameOrg` that is false for
+it, and an active org that matches none, so a rule comparing org ids itself cannot grant it either), and neither
+`abilityActorFromUser` nor `defineAbilitiesFor` lets it wield manage-all, which matters because a single-tenant app's
+home org may be its staff org.
+
+**The ability layer is only half of it: reads must ask it.** ADR-0004 lets a route scope a read by the session's org,
+because in multi mode that org is always a real membership. In single mode it is where a person is placed, not a
+membership, so a route that lists an org's data by `user.orgSlug` alone would show it to every user the provider signs
+in. The reference apps' org-scoped reads now authorize (`authorize(user, orgId, 'read', …)`), the guide makes it a
+rule, and the adopter reference tells an app to check its own before switching the mode on. The authorization scan
+still exempts GET handlers, so nothing enforces this for an app's own routes; that gap is named, not closed.
+
+**What the port means in single mode**, each with its reason in the module's header: the current user is the
+configured tenant and org with role `none`; `getMember` answers the same for an account the provider still has (so a
+credential is judged as a session); `listMembers` is empty, since listing the provider's users would enumerate another
+product's users on a shared instance; `createInvite` is refused, since membership is implicit; the home org is the only
+org. A user whose metadata claims a different tenant under the key, or holds there something that is not a slug, is
+refused, so the mode switched on for a multi-tenant instance by mistake cannot merge its tenants. The
+fake runs the same wrapper wherever the simulated world reaches people (`packages/kit/src/adapters/fake/simulated-auth.ts`:
+the registry, the fake job runner, the conformance suite's preset replay).
+
+**What it costs.** On a shared provider instance, every user of the other product is a signed-in person of this app.
+SSSB grants them nothing, but whatever the app shows any signed-in person, they see; the adopter reference says so in
+as many words. Membership-driven features (an org's admins, invitations, the member list) have nothing to work with in
+this mode, by design.

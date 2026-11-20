@@ -29,6 +29,21 @@ export interface OptionalPorts {
     readonly storage?: 's3' | 's3-compatible' | 'none'
 }
 
+/**
+ * How the auth adapter places a signed-in person: the app's `params.auth`. The construct sets `AUTH_TENANCY` and the
+ * settings each tenancy reads; left out, the framework takes multi-tenant auth with the `tenantSlug` metadata key.
+ * `single` places every user the identity provider signs in in `tenantSlug` and `homeOrgSlug`, with role `none`, which
+ * grants nothing a membership would; on a provider instance shared with another product, its users all sign in.
+ */
+export type AuthTenancyParams =
+    | { readonly tenancy?: 'multi'; readonly tenantMetadataKey?: string }
+    | {
+          readonly tenancy: 'single'
+          readonly tenantSlug: string
+          readonly homeOrgSlug: string
+          readonly tenantMetadataKey?: string
+      }
+
 /** The scheduled tick: what runs the app's scheduled work (its cron route) in the deployment. */
 export interface ScheduledTickProps {
     /**
@@ -53,7 +68,11 @@ export interface SssbAppProps {
      */
     readonly slug: string
     /** The app's deployment params (`config/params.ts`); the construct reads `database.transport` and `ports`. */
-    readonly params: { readonly database: { readonly transport: DatabaseTransport }; readonly ports?: OptionalPorts }
+    readonly params: {
+        readonly database: { readonly transport: DatabaseTransport }
+        readonly ports?: OptionalPorts
+        readonly auth?: AuthTenancyParams
+    }
     /** The deployment's name, as the app's own policy spells it (`Staging`, `Production`). */
     readonly environment: string
     /** A production deployment: the database keeps a warm writer and the data stores are retained. */

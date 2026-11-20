@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeTestTmpDir } from '../../testing/tmp-dir'
+import { AUTH_TENANCY_CHOICES } from '../auth-tenancy'
 import { DATABASE_TRANSPORTS } from './database-transport'
 import { OPTIONAL_PORTS } from './optional-ports'
 
@@ -27,7 +28,7 @@ const loaded = vi.hoisted(() => ({
     storage: 0,
 }))
 
-vi.mock('./auth', () => ({ realAuth: {} }))
+vi.mock('./auth', () => ({ realAuth: { kind: 'clerk' }, clerkIdentitySource: {} }))
 vi.mock('./analytics', () => ({ createRealAnalytics: () => ({ kind: 'posthog' }) }))
 
 const COMMON_ENV = {
@@ -97,6 +98,12 @@ beforeEach(() => {
     stubEnv({ ...COMMON_ENV, DATABASE_TRANSPORT: undefined, DATABASE_URL: undefined })
     stubEnv(Object.fromEntries(Object.keys(DATA_API_ENV).map((name) => [name, undefined])))
     stubEnv(Object.fromEntries(Object.values(OPTIONAL_PORTS).map(({ variable }) => [variable, undefined])))
+    stubEnv({
+        AUTH_TENANCY: undefined,
+        AUTH_TENANT_SLUG: undefined,
+        AUTH_HOME_ORG_SLUG: undefined,
+        AUTH_TENANT_METADATA_KEY: undefined,
+    })
 })
 
 afterEach(() => {
@@ -150,6 +157,50 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
         expect(() => assertRealEnv()).toThrow(/cloud-accounts.*Missing env: AWS_REGION\. /s)
         stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
         expect(() => assertRealEnv()).not.toThrow()
+    })
+})
+
+describe('the auth tenancy (AUTH_TENANCY)', () => {
+    const PG = { DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' }
+    const IN_PROCESS = { JOBS_RUNNER: 'in-process' }
+
+    it('unset, is Clerk as it was, handed to the ports and the in-process runner alike', async () => {
+        stubEnv({ ...PG, ...IN_PROCESS })
+        const { createRealPorts } = await import('./index')
+        const ports = await createRealPorts(HOOKS)
+        expect(ports.auth).toEqual({ kind: 'clerk' })
+        expect((ports.jobs as unknown as { ports: { auth: unknown } }).ports.auth).toBe(ports.auth)
+        await ports.db.getDb().destroy()
+    })
+
+    it('single, without its slugs, fails at boot naming them and its cutover row', async () => {
+        stubEnv({ ...PG, AUTH_TENANCY: 'single' })
+        const { createRealPorts } = await import('./index')
+        await expect(createRealPorts(HOOKS)).rejects.toThrow(
+            /auth-tenancy.*AUTH_TENANT_SLUG|AUTH_TENANT_SLUG.*auth-tenancy/s,
+        )
+    })
+
+    it('single, is single-tenant auth over Clerk, handed to the ports and the in-process runner alike', async () => {
+        stubEnv({
+            ...PG,
+            ...IN_PROCESS,
+            AUTH_TENANCY: 'single',
+            AUTH_TENANT_SLUG: 'harbor',
+            AUTH_HOME_ORG_SLUG: 'depot',
+        })
+        const { createRealPorts } = await import('./index')
+        const ports = await createRealPorts(HOOKS)
+        expect(ports.auth).not.toEqual({ kind: 'clerk' })
+        expect(await ports.auth.listMembers('depot')).toEqual([])
+        expect((ports.jobs as unknown as { ports: { auth: unknown } }).ports.auth).toBe(ports.auth)
+        await ports.db.getDb().destroy()
+    })
+
+    it('a single-mode setting left on a multi deployment fails at boot rather than being ignored', async () => {
+        stubEnv({ ...PG, AUTH_HOME_ORG_SLUG: 'depot' })
+        const { assertRealEnv } = await import('./index')
+        expect(() => assertRealEnv()).toThrow(/AUTH_TENANCY is multi/)
     })
 })
 
@@ -371,7 +422,8 @@ describe('the required environment', () => {
     )
     const COMMENT =
         'The environment variables a real deployment must set (assertRealEnv), per DATABASE_TRANSPORT with every ' +
-        "optional port at its default, and under 'ports' what each choice of an optional port's switch requires, from " +
+        "optional port at its default, under 'ports' what each choice of an optional port's switch requires, and under " +
+        "'auth' what each AUTH_TENANCY choice requires, from " +
         "packages/kit/src/adapters/real/index.test.ts. A new one breaks every deployment that lacks it: change this file only with a 'minor' " +
         'changeset (ADR-0014 part 10; .github/scripts/require-changeset.sh).'
 
@@ -408,10 +460,21 @@ describe('the required environment', () => {
         return result
     }
 
+    /** What each auth tenancy requires beyond a deployment on the default, multi-tenant auth. */
+    async function requiredByTenancy(): Promise<Record<string, Record<string, string[]>>> {
+        const baseline = new Set(await requiredOn('pg'))
+        const result: Record<string, string[]> = {}
+        for (const choice of AUTH_TENANCY_CHOICES) {
+            result[choice] = (await requiredOn('pg', { AUTH_TENANCY: choice })).filter((name) => !baseline.has(name))
+        }
+        return { AUTH_TENANCY: result }
+    }
+
     it('is the committed snapshot: a change is a minor changeset', async () => {
         const actual: Record<string, unknown> = { $comment: COMMENT }
         for (const transport of DATABASE_TRANSPORTS) actual[transport] = await requiredOn(transport)
         actual['ports'] = await requiredByPorts()
+        actual['auth'] = await requiredByTenancy()
         const committed: unknown = JSON.parse(readFileSync(SNAPSHOT, 'utf8'))
         expect(
             actual,

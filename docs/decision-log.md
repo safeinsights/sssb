@@ -6997,6 +6997,72 @@ left to the builder:
   conformance suite holds that declaration to the port's `isolation`, so doctor never boots the adapter registry.
   Rejected: printing `rls` today, which reads as a choice the app made.
 
+## Single-tenant sign-in, and a configurable tenant metadata key (2026-11-19, `feat/auth-single-tenant`)
+
+JP decided (relayed by pages' design manager): "yes I think we want such a mode so we don't have to set up a useless
+tenantSlug. Separately, I hope the tenantSlug name is configurable." ADR-0003's addendum of this date records the
+design; these are the calls made building it, each with the rejected alternative.
+
+- **A new role, `none`, with no standing**, rather than mapping single-tenant users to `restricted`. The framework's
+  rules let any member read its org's jobs, members and org record (`restricted` included), and on a shared Clerk
+  instance that would be every user of the other product. Rejected as well: placing users in no org at all, which
+  leaves the protected layout, data scoping and the app's own rules without the home org.
+- **No standing means no `sameOrg`, in the framework's rules and in the predicate handed to the app's**, and no
+  manage-all, refused both where the actor is built and in `defineAbilitiesFor`. The starter's one team is its staff
+  org, so a generated app turned single-tenant would otherwise hand every user manage-all. Rejected: gating only the
+  framework's rules, which leaves an app's `sameOrg`-based rules granting `none`.
+- **One wrapper for both adapters** (`packages/kit/src/adapters/single-tenant-auth.ts`), fed by a small identity
+  source each adapter supplies, so the mode's meaning is written and tested once. Clerk's source makes no
+  organization call per request. Rejected: a branch inside each adapter.
+- **The fake runs the mode when its environment sets it**, so a single-tenant app's `pnpm dev` places people as its
+  deployment does. Rejected: leaving the fake multi-tenant, where seeded roles would grant what deployed users never
+  have.
+- **Per method:**
+    - `listMembers` is empty: listing a shared instance's users would enumerate the other product's.
+    - `createInvite` is refused: membership is implicit.
+    - `getMember` answers `none` for an account Clerk still has, so a credential is judged as a session.
+    - The home org is the only org, named by its slug, since the adapter reads no database.
+- **A user whose metadata names a different tenant is refused**, so the mode switched on for a multi-tenant instance by
+  mistake cannot merge its tenants. Users with no claim, a shared instance's other users, are admitted with `none`.
+  Rejected: ignoring the claim, which would make that mistake a cross-tenant exposure.
+- **An explicit switch, `AUTH_TENANCY`, set from `params.auth` and validated at synth and at boot**, refusing a
+  single-mode slug left on a multi deployment. Rejected: inferring single mode from the slugs being set.
+- **`sssb doctor` and the conformance suite gain nothing.** Doctor reads no deployment settings, and the conformance
+  suite cannot tell an app rule that grants by its own list from one that grants by mistake. The kit's tests prove
+  `none` gets nothing from the framework's rules and a false `sameOrg` in the app's, and the guide says how app rules
+  must grant. Rejected: a conformance check running every app subject past a `none` actor, which would fail apps that
+  rightly grant a person their own records.
+- **Org-scoped reads authorize**, after the security review found that the reference apps' GET routes scope by the
+  session's org after `requireUser()` alone, which in single mode would show the home org's items, tickets, jobs,
+  attachments, escalations and webhook endpoints to every user of a shared Clerk instance. The starter's items GET and
+  the showcase's org-scoped GETs now call `authorize(user, orgId, 'read', …)`, and the guide makes it a rule.
+  Rejected: refusing a person without standing in the showcase's `resolveOrgContext`, which self-only routes share
+  (accepting the terms among them), so a `none` user could not get past the agreement gate; and taking the home org
+  off the session, which leaves the app's UI and its token credentials with no org. Not closed: the authorization scan
+  still exempts GET handlers, so an app's own reads are held to this by the guide alone.
+- **The app's rules see a person without standing as active in no org** (a sentinel no org id equals), so a rule that
+  compares org ids itself, as the showcase's two-sided `Escalation` does, cannot grant `none`. Rejected: fixing only
+  the showcase's rule, which leaves the pattern open to every app that copies it.
+- **The simulated auth is one memoized function** (`packages/kit/src/adapters/fake/simulated-auth.ts`) shared by the
+  registry, the fake job runner and the conformance replay, after review found job handlers and notifications in
+  simulated single mode still on the bare fake. It is read on first use, so real mode, which imports the fakes too,
+  reports a misconfigured switch through the boot check.
+- **An unreadable tenant claim is refused.** Absent, null or empty is no claim. A non-string is not a slug, and
+  admitting it would let a malformed claim through the tenant guard.
+- **A refused person is not signed out**, reversing a first fix. Signing them out inside `getCurrentUser` changed a
+  cookie while server components render, which Next refuses (every page failed in simulated single mode), and on
+  Clerk it revoked the shared session on every call, so a link to this app would have ended the person's session in
+  the other product. Rejected: that sign-out, and a refusal page with its own sign-out, left as a follow-up for a
+  state a correct deployment does not reach.
+- **The conformance preset replay runs the simulated auth, single mode included**: a preset that invites someone or
+  signs in a person of another tenant describes a world single-tenant auth cannot reach, and that check exists to
+  say so. Rejected: replaying on the bare fake, which would pass presets the deployment cannot replay.
+- **Known and left open, from the security review's second round:** the showcase's `[id]` routes read a row before
+  they authorize, so a `none` user can tell an existing id from a missing one (no data returned, ids opaque); and the
+  authorization scan still exempts GET handlers. Both are recorded for a later change.
+- **Single mode's seeded people keep a membership in the home org**, documented, rather than making the fake's session
+  code work without one: the simulated sign-in resolves a membership, and a dev-only edge is not worth reworking it.
+
 ## A job kind says when its end is notified (2026-11-19, `feat/job-notify-on`)
 
 The first adopter runs its maintenance as an hourly in-process job, each run idempotent and time-budgeted so that a

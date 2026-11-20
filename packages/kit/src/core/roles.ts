@@ -1,5 +1,20 @@
-export const ROLES = ['admin', 'staff', 'member', 'guest', 'restricted'] as const
+/**
+ * `none` is the lowest: a signed-in person with no standing in the org they are placed in. Single-tenant auth gives it
+ * to every user of the deployment's identity provider (`@sssb/kit/adapters/auth-tenancy`), and it grants nothing a
+ * membership would: no org-scoped access in the framework's rules or the app's, and never manage-all (`hasStanding`).
+ * It is not grantable by invite.
+ */
+export const ROLES = ['admin', 'staff', 'member', 'guest', 'restricted', 'none'] as const
 export type Role = (typeof ROLES)[number]
+
+/**
+ * Whether a role carries standing in the org its holder is placed in: every role but `none`. The ability layer
+ * treats a holder without standing as outside every org (`sameOrg` is false, framework rules and app rules alike) and
+ * never lets it wield the staff org's manage-all.
+ */
+export function hasStanding(role: Role): boolean {
+    return role !== 'none'
+}
 
 // The designated staff/operator org slug is an app/deployment choice, so it lives on the
 // seam as `staffOrgSlug` (src/app-config/abilities.ts) — NOT here. DISAMBIGUATION: the operator ORG is
@@ -43,5 +58,5 @@ export function canManageOrg(role: Role): boolean {
  * adapters derive `AuthUser.restricted` and `getMember`'s standing through this one function.
  */
 export function isRestricted(flag: boolean | undefined, role: Role): boolean {
-    return flag === true || role === 'restricted'
+    return flag === true || role === 'restricted' || role === 'none'
 }
