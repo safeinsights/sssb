@@ -443,8 +443,8 @@ demonstrate and future riders (ADR 0003's deferrals, billing entitlements) plug 
 
 **Principle.** One command — `pnpm verify` — blocks every change: typecheck, lint, unit, hermetic E2E
 (including tenant isolation), and the demo build. Quality gates ride the pipeline _per change_ rather than
-a batched freeze week. Every PR also uploads a static-demo build of that change, so a human can click
-through the change in isolation before merge and by the time code reaches staging it has passed
+a batched freeze week. Every PR that changes more than documentation also uploads a static-demo build of that
+change, so a human can click through the change in isolation before merge and by the time code reaches staging it has passed
 everything a freeze week would check.
 
 **🧭 The eval harness** is the same idea for AI behavior, and is _intended, not yet built here_: a versioned
@@ -481,8 +481,8 @@ The intended topology (local pieces exist today; the full cloud shape is each `a
 | Production           | The real thing, isolated AWS account | Real users, production services   | 🧭     |
 
 **No standing QA environment, on purpose.** QA rides the pipeline: `pnpm verify` and (later) the eval
-harness block every PR, and the clickable build is the `static-demo` artifact CI attaches to each run —
-download `index.html`, open it, click. It is a downloadable file today, not a URL: hosting it per PR is
+harness block every PR, and the clickable build is the `static-demo-<app>` artifact (`static-demo-showcase`,
+`static-demo-starter`) CI attaches to each run that changes more than documentation — download `index.html`, open it, click. It is a downloadable file today, not a URL: hosting it per PR is
 the `deploy-pipeline` cutover row, and nothing here pretends otherwise. When someone genuinely needs a
 QA-style environment — exploratory testing, a walkthrough of unmerged work — an _ephemeral_ preview is that
 environment, created on demand and destroyed at merge. Ephemeral beats standing: a standing QA box
