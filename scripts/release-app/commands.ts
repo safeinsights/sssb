@@ -43,7 +43,7 @@ import {
     type InstallationSummary,
 } from './manifest'
 import { describeChange, externalGates, planBypass, type ActiveRule, type Ruleset } from './rulesets'
-import { appJwt, errorMessage, ghJson, githubRequest, redact, type FetchFn, type GhRunner } from './github'
+import { appJwt, errorMessage, ghJson, ghList, githubRequest, redact, type FetchFn, type GhRunner } from './github'
 
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
 const REPO = `${RELEASE_REPO.owner}/${RELEASE_REPO.repo}`
@@ -210,11 +210,12 @@ async function environmentFindings(gh: GhRunner, rule: (typeof ENVIRONMENT_RULES
     if (!policy || policy.custom_branch_policies !== true || policy.protected_branches !== false) {
         findings.push('it does not restrict deployments to selected branches and tags')
     } else {
-        const branches = await ghJson<{ branch_policies?: { name?: string; type?: string }[] }>(
+        const branches = await ghList<{ name?: string; type?: string }>(
             gh,
-            `${base}/deployment-branch-policies?per_page=100`,
+            `${base}/deployment-branch-policies`,
+            'branch_policies',
         )
-        const listed = (branches.value?.branch_policies ?? []).map((p) => `${p.type ?? 'branch'}:${p.name}`)
+        const listed = (branches.value ?? []).map((p) => `${p.type ?? 'branch'}:${p.name}`)
         if (!branches.value) findings.push(`could not read its deployment branches: ${branches.error}`)
         else if (listed.length !== 1 || listed[0] !== rule.ref)
             findings.push(`its deployment refs are ${JSON.stringify(listed)}; expected only ${rule.described}`)
@@ -234,17 +235,15 @@ type Credentials = { secret: boolean; variable: string | null; error: string }
 /** Whether the environment holds the App's key (a name only: secrets cannot be read back) and client id. */
 async function readCredentials(gh: GhRunner): Promise<Credentials> {
     const base = `repos/${REPO}/environments/${RELEASE_ENVIRONMENT}`
-    const secrets = await ghJson<{ secrets?: { name?: string }[] }>(gh, `${base}/secrets?per_page=100`)
-    const variables = await ghJson<{ variables?: { name?: string; value?: string }[] }>(
-        gh,
-        `${base}/variables?per_page=30`,
-    )
+    const secrets = await ghList<{ name?: string }>(gh, `${base}/secrets`, 'secrets')
+    // Thirty is the most the variables endpoint answers in a page.
+    const variables = await ghList<{ name?: string; value?: string }>(gh, `${base}/variables`, 'variables', 30)
     if (!secrets.value || !variables.value) {
         return { secret: false, variable: null, error: secrets.error || variables.error }
     }
-    const variable = (variables.value.variables ?? []).find((v) => v.name === CLIENT_ID_VARIABLE)
+    const variable = variables.value.find((v) => v.name === CLIENT_ID_VARIABLE)
     return {
-        secret: (secrets.value.secrets ?? []).some((s) => s.name === KEY_SECRET),
+        secret: secrets.value.some((s) => s.name === KEY_SECRET),
         variable: typeof variable?.value === 'string' ? variable.value : null,
         error: '',
     }
@@ -429,7 +428,7 @@ function report(io: Io, findings: string[]): void {
 
 /** Every ruleset that applies to the repository, the organisation's included, each read in full. */
 async function readRulesets(gh: GhRunner): Promise<{ rulesets: Ruleset[] | null; error: string }> {
-    const list = await ghJson<{ id: number }[]>(gh, `repos/${REPO}/rulesets?per_page=100&includes_parents=true`)
+    const list = await ghList<{ id: number }>(gh, `repos/${REPO}/rulesets?includes_parents=true`)
     if (!list.value) return { rulesets: null, error: list.error }
     const rulesets: Ruleset[] = []
     for (const entry of list.value) {
@@ -474,12 +473,9 @@ function vouchProblem(appId: number, installations: OrgInstallation[]): string |
  * another App's id must not become the bypass on main.
  */
 async function identifyApp(gh: GhRunner, appId: number, clientId: string | null): Promise<string[]> {
-    const listed = await ghJson<{ installations?: OrgInstallation[] }>(
-        gh,
-        `orgs/${RELEASE_REPO.owner}/installations?per_page=100`,
-    )
+    const listed = await ghList<OrgInstallation>(gh, `orgs/${RELEASE_REPO.owner}/installations`, 'installations')
     if (!listed.value) return [`could not list ${RELEASE_REPO.owner}'s App installations: ${listed.error}`]
-    const mine = (listed.value.installations ?? []).filter((installation) => installation.app_id === appId)
+    const mine = listed.value.filter((installation) => installation.app_id === appId)
     if (mine.length !== 1) {
         return [
             `App ${appId} has ${mine.length} installations in ${RELEASE_REPO.owner}; the release app has exactly one`,
@@ -553,7 +549,7 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
 
     // Everything else the push meets, read after any change above.
     const rulesets = (await readRulesets(gh)).rulesets
-    const active = await ghJson<ActiveRule[]>(gh, `repos/${REPO}/rules/branches/main?per_page=100`)
+    const active = await ghList<ActiveRule>(gh, `repos/${REPO}/rules/branches/main`)
     if (!rulesets || !active.value) {
         io.err(`\nCould not read the rules that apply to main: ${active.error || 'rulesets unreadable'}`)
         return false
@@ -586,14 +582,11 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
     const vouchedActors = gates.org.flatMap((gate) => gate.vouched.map((entry) => ({ gate, ...entry })))
     let vouchesHold = true
     if (vouchedActors.length > 0) {
-        const listed = await ghJson<{ installations?: OrgInstallation[] }>(
-            gh,
-            `orgs/${RELEASE_REPO.owner}/installations?per_page=100`,
-        )
+        const listed = await ghList<OrgInstallation>(gh, `orgs/${RELEASE_REPO.owner}/installations`, 'installations')
         for (const { gate, actor, vouch } of vouchedActors) {
             const who = `${actor.actor_type} ${actor.actor_id} (${actor.bypass_mode}) on organisation ruleset "${gate.name}" (${gate.id})`
             const problem = listed.value
-                ? vouchProblem(vouch.actorId, listed.value.installations ?? [])
+                ? vouchProblem(vouch.actorId, listed.value)
                 : `could not list ${RELEASE_REPO.owner}'s App installations: ${listed.error}`
             if (problem === null) {
                 io.out(

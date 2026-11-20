@@ -133,3 +133,33 @@ export async function ghJson<T>(gh: GhRunner, apiPath: string): Promise<{ value:
         return { value: null, error: `gh api ${apiPath} did not answer JSON` }
     }
 }
+
+/** The most entries GitHub's list endpoints answer in one page. */
+export const PER_PAGE = 100
+
+/**
+ * A list endpoint through `gh api`, read as ONE page of `perPage`, with the reason instead of a list when that page
+ * comes back full: an entry on a later page (a ruleset, an installation, a deployment ref, a secret) could change any
+ * verdict this tool reaches, so a list that may be cut off is never judged. `key` names the array inside an object
+ * answer (`{ secrets: [...] }`); without it the answer is the array.
+ */
+export async function ghList<T>(
+    gh: GhRunner,
+    apiPath: string,
+    key?: string,
+    perPage = PER_PAGE,
+): Promise<{ value: T[] | null; error: string }> {
+    const paged = `${apiPath}${apiPath.includes('?') ? '&' : '?'}per_page=${perPage}`
+    const answer = await ghJson<unknown>(gh, paged)
+    if (answer.value === null) return { value: null, error: answer.error }
+    const list = key === undefined ? answer.value : (answer.value as Record<string, unknown>)[key]
+    if (list === undefined && key !== undefined) return { value: [], error: '' }
+    if (!Array.isArray(list)) return { value: null, error: `gh api ${paged} did not answer a list` }
+    if (list.length >= perPage) {
+        return {
+            value: null,
+            error: `gh api ${paged} answered a full page of ${list.length}, so the list may go on; this tool reads one page and judges no partial list`,
+        }
+    }
+    return { value: list as T[], error: '' }
+}

@@ -16,7 +16,7 @@ import {
     verifyCommand,
     type Deps,
 } from '../../scripts/release-app/commands'
-import { appJwt, redact, type GhResult } from '../../scripts/release-app/github'
+import { appJwt, ghList, redact, type GhResult, type GhRunner } from '../../scripts/release-app/github'
 import {
     RELEASE_APP_PERMISSIONS,
     appManifest,
@@ -744,6 +744,58 @@ describe('release-app verify and bypass', () => {
     it('bypass --apply needs a terminal', async () => {
         const h = harness({ tty: false })
         expect(await bypassCommand(h.deps, { appId: APP_ID, apply: true })).toBe(1)
+    })
+})
+
+describe('one-page lists', () => {
+    const answering = (value: unknown) => {
+        const paths: string[] = []
+        const gh: GhRunner = async (args) => {
+            paths.push(args[1])
+            return { code: 0, stdout: JSON.stringify(value), stderr: '' }
+        }
+        return { gh, paths }
+    }
+    const many = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i + 1 }))
+
+    it('reads an array, or the array under a key, a page at a time', async () => {
+        const plain = answering(many(3))
+        expect(await ghList(plain.gh, 'repos/o/r/rulesets?includes_parents=true')).toEqual({
+            value: many(3),
+            error: '',
+        })
+        expect(plain.paths).toEqual(['repos/o/r/rulesets?includes_parents=true&per_page=100'])
+        const keyed = answering({ total_count: 2, secrets: many(2) })
+        expect(await ghList(keyed.gh, 'repos/o/r/secrets', 'secrets')).toEqual({ value: many(2), error: '' })
+        expect(keyed.paths).toEqual(['repos/o/r/secrets?per_page=100'])
+        expect((await ghList(answering({ total_count: 0 }).gh, 'x', 'secrets')).value).toEqual([])
+    })
+
+    it('refuses a full page, which may be cut off, rather than judge part of a list', async () => {
+        const full = await ghList(answering(many(100)).gh, 'repos/o/r/rulesets')
+        expect(full.value).toBeNull()
+        expect(full.error).toMatch(/full page of 100/)
+        const variables = await ghList(answering({ variables: many(30) }).gh, 'v', 'variables', 30)
+        expect(variables.value).toBeNull()
+        expect((await ghList(answering(many(99)).gh, 'repos/o/r/rulesets')).value).toHaveLength(99)
+    })
+
+    it.each([
+        [`${REPO}/rulesets`, () => many(100)],
+        ['orgs/safeinsights/installations', () => ({ total_count: 100, installations: many(100) })],
+        [`${REPO}/environments/npm-publish/deployment-branch-policies`, () => ({ branch_policies: many(100) })],
+    ])('verify fails, never passes, when %s comes back a full page', async (listPath, answer) => {
+        const inner = fakeGh({ secret: true, variable: CLIENT_ID })
+        const gh = {
+            ...inner,
+            gh: async (args: string[], input?: string): Promise<GhResult> =>
+                args[0] === 'api' && args[1]?.split('?')[0] === listPath
+                    ? { code: 0, stdout: JSON.stringify(answer()), stderr: '' }
+                    : inner.gh(args, input),
+        }
+        const h = harness({ gh })
+        expect(await verifyCommand(h.deps, { appId: APP_ID })).toBe(1)
+        expect(h.text()).toMatch(/full page of 100/)
     })
 })
 
