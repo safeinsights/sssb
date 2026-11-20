@@ -10,7 +10,10 @@ vi.mock('@aws-sdk/client-codebuild', () => ({
         send = send
     },
     StartBuildCommand: class {
-        constructor(public input: unknown) {}
+        input: unknown
+        constructor(input: unknown) {
+            this.input = input
+        }
     },
 }))
 
