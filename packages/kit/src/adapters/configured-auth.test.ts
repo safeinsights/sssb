@@ -230,6 +230,13 @@ describe('a fixed org source: everyone in the home org, with the configured role
         await expect(auth.setActiveOrg('annex')).rejects.toBeInstanceOf(ForbiddenError)
     })
 
+    it('names the home org by its slug when the lookup fails: a display name never takes the page down', async () => {
+        const failing = async () => Promise.reject(new Error('pool exhausted'))
+        expect(await setup(settings, NOBODY_SPECIAL, {}, failing).auth.listMyOrgs()).toEqual([
+            { slug: 'depot', name: 'depot', role: 'none' },
+        ])
+    })
+
     it('names the home org by its slug when its row is missing, or no lookup is given', async () => {
         expect(await setup(settings, NOBODY_SPECIAL, {}, async () => null).auth.listMyOrgs()).toEqual([
             { slug: 'depot', name: 'depot', role: 'none' },

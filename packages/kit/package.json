@@ -40,6 +40,7 @@
         "./adapters/index": "./src/adapters/index.ts",
         "./adapters/proxy": "./src/adapters/proxy.ts",
         "./adapters/real/accept-invite-form": "./src/adapters/real/accept-invite-form.tsx",
+        "./adapters/real/account-refused-form": "./src/adapters/real/account-refused-form.tsx",
         "./adapters/real/index": "./src/adapters/real/index.ts",
         "./adapters/real/llm": "./src/adapters/real/llm.ts",
         "./adapters/real/migrate-handler": "./src/adapters/real/migrate-handler.ts",

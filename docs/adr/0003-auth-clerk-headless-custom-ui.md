@@ -219,8 +219,9 @@ First use of a single tenancy with a fixed org source found three gaps, closed o
 
 - **The port reports a refusal.** `AuthPort` gains an optional `refusal()`, answered by the configured port
   (`packages/kit/src/adapters/configured-auth.ts`) for an account its tenant guard refuses. The sign-in page reads it and
-  shows the framework's `AccountRefused`, with an explicit sign-out. Optional, because only a port that refuses people
-  has one; `getCurrentUser` still answers null for a refused person, so nothing else changes.
+  shows the framework's `AccountRefused`, with an explicit sign-out (in real mode through Clerk's client,
+  `RealAccountRefused`). Optional, because only a port that refuses people has one; `getCurrentUser` still answers
+  null for a refused person, so nothing else changes.
 - **`none` stays restricted.** A fixed org source's people are all restricted, so an app distinguishes its own admins
   by its own data, before any denial on `restricted` (the guide's Authorization section). Rationale in the decision log.
 - **The home org is named by its org row.** The configured port is handed a lookup by its builder

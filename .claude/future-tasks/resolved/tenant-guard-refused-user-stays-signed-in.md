@@ -34,8 +34,10 @@ already (`getCurrentUser` answers null), so that is where they land.
   for a signed-in account its guard refuses, and null otherwise. It is read on the sign-in page only, not per request.
 - **The framework's screen** `AccountRefused` (`@sssb/kit/components/auth/account-refused`) says the account belongs
   to another site, says before anyone clicks that signing out also signs them out of other sites sharing the sign-in,
-  and offers one sign-out button. Router-agnostic: the app's glue posts to its own sign-out route and reloads. Its copy
-  is in both locales of the framework's catalog; a story sits with the other auth stories.
+  and offers one sign-out button. Router-agnostic: in simulated mode the app's glue posts JSON to its own sign-out route
+  and reloads; in real mode `RealAccountRefused` (`@sssb/kit/adapters/real/account-refused-form`) signs out through
+  Clerk's client, since the server-side revocation alone leaves the browser's short-lived session token. Its copy is
+  in both locales of the framework's catalog; a story sits with the other auth stories.
 - **Both reference apps' sign-in pages** check `auth.refusal?.()` after `getCurrentUser` and show the screen instead of
   the sign-in form or the picker. This also covers simulated mode: under a single tenancy the picker can sign in a
   seeded person of another tenant, who now sees the same screen and signs out through the fake.

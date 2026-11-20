@@ -16,8 +16,13 @@ Before, they saw the sign-in form again while still signed in to the provider, w
 - A new framework screen, `AccountRefused` (`@sssb/kit/components/auth/account-refused`), says the account belongs
   to another site. It offers one sign-out button, and says first that signing out also signs the person out of other
   sites that share the sign-in. Nothing signs them out on its own.
+- Its real-mode form, `RealAccountRefused` (`@sssb/kit/adapters/real/account-refused-form`), signs out through Clerk's
+  client. Without that, the browser's short-lived session token would bring the same screen back.
 
-**To adopt.** In your sign-in page, after the `getCurrentUser` redirect, add
-`if (await auth.refusal?.()) return <SignInScreen body={<RefusedGlue />} />`. Here `RefusedGlue` is a small client
-component that renders `AccountRefused` and posts to your sign-out route; the starter's
-`src/app/[locale]/signin/refused-glue.tsx` is one to copy.
+**To adopt.** In your sign-in page, after the `getCurrentUser` redirect, check `await auth.refusal?.()`. When it
+answers, show the screen instead of the sign-in form:
+
+- in real mode, `RealAccountRefused`, loaded with `import()`;
+- in simulated mode, a small client glue that renders `AccountRefused` and posts JSON to your sign-out route.
+
+The starter's `src/app/[locale]/signin/page.tsx` and `refused-glue.tsx` show both.

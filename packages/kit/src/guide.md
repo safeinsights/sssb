@@ -127,9 +127,11 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   are restricted (`AuthUser.restricted` and the actor's `restricted`), so `restricted` cannot tell your own admins from
   anyone else. Grant your own people from your own data (a field on the subject, such as its publishers; your own table
   in a route or screen) BEFORE any denial on `restricted`, in `appAbilityRules` and wherever a route or screen reads
-  `user.restricted`: a check that denies on `restricted` first locks out everyone, your own admins included. Your rules
-  see `none` in no org (`sameOrg` is false), so a grant that must be scoped to the home org needs
-  `defaultRole: 'restricted'`.
+  `user.restricted`: a check that denies on `restricted` first locks out everyone, your own admins included. Key that
+  grant on `actor.userId`, never an email, which another product on a shared instance may let anyone claim. Every
+  person credential reaches your rules (a token, an inbound email: the same `userId`), so a grant meant for the person
+  at the keyboard also checks `actor.credential?.kind === 'session'`. Your rules see `none` in no org (`sameOrg` is
+  false), so a grant that must be scoped to the home org needs `defaultRole: 'restricted'`.
 
 ## UI
 

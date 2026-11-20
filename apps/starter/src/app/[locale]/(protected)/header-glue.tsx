@@ -47,7 +47,10 @@ export function HeaderGlue({
                     <UserMenu
                         user={user}
                         onSignOut={() => {
-                            void fetch('/api/auth/signout', { method: 'POST' }).then((response) => {
+                            void fetch('/api/auth/signout', {
+                                method: 'POST',
+                                headers: { 'content-type': 'application/json' },
+                            }).then((response) => {
                                 if (response.ok) window.location.assign(`/${locale}`)
                             })
                         }}

@@ -179,7 +179,9 @@ export function configuredAuth(
             if (fixed) {
                 // The org row's name, read per call (a rename shows at once); the slug when the row is missing,
                 // which the cutover row `auth-tenancy` says to create.
-                const name = (await orgName?.(user.tenantSlug, fixed.homeOrgSlug)) ?? fixed.homeOrgSlug
+                // A failed read falls back too: a display name never takes the page down.
+                const name =
+                    (await orgName?.(user.tenantSlug, fixed.homeOrgSlug).catch(() => null)) ?? fixed.homeOrgSlug
                 return [{ slug: fixed.homeOrgSlug, name, role: fixed.role }]
             }
             return base.listMyOrgs()

@@ -26,7 +26,13 @@ export default async function SignInPage({
     if (await auth.getCurrentUser()) redirect(target)
     // Signed in to the identity provider but refused here (an account of another tenant): say why, and let the person
     // choose to sign out, rather than show a sign-in form they are already past.
-    if (await auth.refusal?.()) return <SignInScreen body={<RefusedGlue />} />
+    if (await auth.refusal?.()) {
+        // Real mode signs out through the provider's client, which also clears the session token the page would
+        // otherwise still see; simulated mode through the app's sign-out route.
+        if (isSimulated) return <SignInScreen body={<RefusedGlue />} />
+        const { RealAccountRefused } = await import('@sssb/kit/adapters/real/account-refused-form')
+        return <SignInScreen body={<RealAccountRefused />} />
+    }
 
     if (!isSimulated) {
         const [{ RealSignInForm }, t] = await Promise.all([

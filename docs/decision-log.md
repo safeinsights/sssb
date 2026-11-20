@@ -7283,3 +7283,19 @@ addendum of this date records the design; these are the calls, each with the rej
   `listMyOrgs` call, so a rename shows at once; the slug stands in when the row is missing. Rejected: a
   `homeOrgName` setting, a second copy of the name that drifts from the row; reading the database inside
   `configured-auth.ts`; and caching the name for the process.
+- **The app's own grant is keyed on `userId` and, for what only the person at the keyboard may do, on a session**,
+  after the round-one Fable reviewer found that every person credential reaches an app's rules. Under a fixed org source
+  `getMember` gives an admin's API token or inbound email the same `userId`, so a grant made before the restricted
+  denial would reach them too. The guide, the adopter reference and the test say so. Rejected: having the framework
+  restrict app rules to sessions, which would break an app's token and email paths that are meant to act.
+- **Real mode signs out through Clerk's client** (`RealAccountRefused`, `packages/kit/src/adapters/real/account-refused-form.tsx`),
+  after both round-one reviewers found that the server-side revocation alone leaves the browser's short-lived session
+  token, so the reload would land on the same refused screen. It ends this one session (`sessionId`). Rejected: making
+  the server's sign-out tolerate a second, already-revoked call, which hides the symptom.
+- **The sign-out route takes JSON only**, in both reference apps (`refuseNonJson`), and its callers send it. The route
+  is older than this change, but a page on a sibling subdomain, the topology of a shared instance, could post a plain
+  form to it with the session cookie and sign a person out of both products with no click. A JSON post from another
+  origin needs a preflight, which fails. Rejected: an `Origin` check, which needs the app's public origin, which the
+  server does not reliably know behind `SssbApp`.
+- **A failed home-org name lookup falls back to the slug.** The lookup now runs on every protected page, and a display
+  name must not turn a database hiccup into a failed page.
