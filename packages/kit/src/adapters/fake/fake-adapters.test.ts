@@ -629,6 +629,14 @@ describe('fake analytics', () => {
         setFlag('demo-banner', true)
         expect(await fakeAnalytics.isFlagEnabled('demo-banner')).toBe(true)
     })
+
+    test("a flag named after an Object.prototype member answers its default, never the prototype's value", async () => {
+        const { fakeAnalytics } = await import('./analytics')
+        for (const flag of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+            expect(await fakeAnalytics.isFlagEnabled(flag, false)).toBe(false)
+            expect(await fakeAnalytics.isFlagEnabled(flag, true)).toBe(true)
+        }
+    })
 })
 
 describe('fake llm', () => {
