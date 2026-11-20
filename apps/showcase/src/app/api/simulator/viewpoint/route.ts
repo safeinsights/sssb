@@ -2,6 +2,7 @@ import { auth, isSimulated } from '@sssb/kit/adapters/index'
 import { devSignIn, findInvite } from '@sssb/kit/adapters/fake/auth'
 import { readSimulatorState, writeViewpointCookie, type PersonKey } from '@sssb/kit/adapters/fake/simulator'
 import { LOCALES } from '@sssb/kit/core/locale'
+import { sameOriginPath } from '@sssb/kit/core/same-origin-path'
 import { refuseNonJson, withPortErrors } from '../../respond'
 
 /** Same simulated-mode-only gate as /api/simulator/summary; no auth required to call this. */
@@ -37,8 +38,9 @@ export async function POST(request: Request): Promise<Response> {
         // devSignIn restores the person's remembered tenant and writes the viewpoint cookie.
         await devSignIn(personId)
 
-        const state = readSimulatorState()
-        const lastPath = state.people[person]?.lastPath
+        // `lastPath` is recorded from a page-view beacon's body, so it is caller data, and the client navigates to it:
+        // only a same-origin path is handed back, as the kit's own handler does, else the person's dashboard.
+        const lastPath = sameOriginPath(readSimulatorState().people[person as PersonKey]?.lastPath)
         return Response.json({ redirectTo: lastPath ?? `/${locale}/dashboard` })
     })
 }

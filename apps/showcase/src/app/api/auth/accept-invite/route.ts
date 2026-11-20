@@ -4,21 +4,29 @@ import { listAgreementsForTenant, recordAcceptance } from '@sssb/kit/db/agreemen
 import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 import { readJsonObject, refuseNonJson, withPortErrors } from '../../respond'
 
+/** The auth port's display-name limit. */
+const MAX_NAME_LENGTH = 256
+
 /**
  * The accept-invitation product surface's simulated-mode entrypoint (Bob's lifecycle). Same 404 gate
  * as /api/auth/dev-signin, first line — this is a real product feature, but only meaningful
  * against the fake auth adapter; real mode ships Clerk's own ticket-strategy sign-up instead
  * (packages/kit/src/adapters/real/accept-invite-form.tsx).
  */
+
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
     const refused = refuseNonJson(request)
     if (refused) return refused
     return withPortErrors(async () => {
         const { inviteId, name, locale } = await readJsonObject(request)
+        // The name is stored and shown to every member of the org: the auth port's limit, a non-blank string of at
+        // most 256 characters, as the profile route holds it.
         if (
             typeof inviteId !== 'string' ||
             typeof name !== 'string' ||
+            name.trim() === '' ||
+            name.length > MAX_NAME_LENGTH ||
             (locale !== undefined && typeof locale !== 'string')
         ) {
             return Response.json({ error: 'invalid request' }, { status: 400 })

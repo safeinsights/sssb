@@ -41,3 +41,18 @@ describe('POST /api/simulator/mail/seen writes only a key for someone in the wor
         },
     )
 })
+
+describe('POST /api/simulator/mail/seen, a JSON request with a bad body', () => {
+    test.each([['{'], ['null']])('400, never a 500, for %s', async (body) => {
+        const { POST } = await import('./route')
+        const response = await POST(
+            new Request('http://localhost/api/simulator/mail/seen', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body,
+            }),
+        )
+        expect(response.status).toBe(400)
+        expect(h.update).not.toHaveBeenCalled()
+    })
+})

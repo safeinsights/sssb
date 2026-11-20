@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 
@@ -187,21 +187,39 @@ export function scanRoutes(roots: readonly ScanRoot[], options: ScanOptions = {}
     const authorizeModules = options.authorizeModules ?? ['@sssb/kit/authz/authorize']
     return roots.flatMap((root) => {
         const scanner = new RootScanner(root, authorizeModules)
-        return routeFiles(root.dir).map((file) => ({
+        const unreadable = new Map<string, string>()
+        const routes: ScannedRoute[] = routeFiles(root.dir, unreadable).map((file) => ({
             root: root.label,
             rel: path.relative(root.exemptDir, file).split(path.sep).join('/'),
             file,
             handlers: scanner.handlers(file),
         }))
+        for (const [dir, code] of unreadable) {
+            routes.push({
+                root: root.label,
+                rel: path.relative(root.exemptDir, dir).split(path.sep).join('/'),
+                file: dir,
+                handlers: [{ verb: '*', refusal: unreadableRefusal(code) }],
+            })
+        }
+        return routes
     })
 }
 
-function routeFiles(dir: string): string[] {
+function routeFiles(dir: string, unreadable: Map<string, string>): string[] {
     return walkFiles(
         dir,
         (name) => ROUTE_FILE.test(name),
         () => true,
+        new Set(),
+        new Map(),
+        unreadable,
     )
+}
+
+/** The refusal for a directory the walk could not read: a failure, since a route or an action may be in it. */
+function unreadableRefusal(code: string): string {
+    return `the directory could not be read (${code}), so a route or Server Action in it would go unchecked`
 }
 
 /**
@@ -234,15 +252,24 @@ function walkFiles(
     descend: (name: string) => boolean,
     ancestors: ReadonlySet<string> = new Set(),
     walked: Map<string, { base: string; files: string[] }> = new Map(),
+    unreadable: Map<string, string> = new Map(),
 ): string[] {
-    const real = realpathSync(dir)
-    if (ancestors.has(real)) return []
+    // A directory the walk cannot read (EACCES, or removed mid-walk: ENOENT) may hold a route: it is recorded in
+    // `unreadable` with the error's code, for the caller to report as a failure, never skipped in silence.
+    let real: string
+    let listed: Dirent[]
+    try {
+        real = realpathSync(dir)
+        if (ancestors.has(real)) return []
+        listed = readdirSync(dir, { withFileTypes: true })
+    } catch (error) {
+        unreadable.set(dir, (error as NodeJS.ErrnoException).code ?? 'unknown error')
+        return []
+    }
     const inside = new Set(ancestors).add(real)
     const out: string[] = []
     // Sorted, so what the walk finds never depends on the filesystem's entry order.
-    const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-        a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
-    )
+    const entries = listed.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     for (const entry of entries) {
         const full = path.join(dir, entry.name)
         const linked = entry.isSymbolicLink() && isDirectoryTarget(full)
@@ -251,18 +278,28 @@ function walkFiles(
             // A directory reached through a link that was already walked is not walked again (two links per level would
             // make the walk exponential in the depth), but every file found there is reported again at THIS path too:
             // Next serves it at both, and an exemption is judged by path.
-            const target = linked ? realpathSync(full) : undefined
+            const target = linked ? realpathOrUndefined(full) : undefined
             const prior = target === undefined || inside.has(target) ? undefined : walked.get(target)
             if (prior) {
                 out.push(...prior.files.map((file) => path.join(full, path.relative(prior.base, file))))
                 continue
             }
-            const files = walkFiles(full, accept, descend, inside, walked)
-            walked.set(realpathSync(full), { base: full, files })
+            const files = walkFiles(full, accept, descend, inside, walked, unreadable)
+            const walkedReal = realpathOrUndefined(full)
+            if (walkedReal !== undefined) walked.set(walkedReal, { base: full, files })
             out.push(...files)
         } else if (accept(entry.name)) out.push(full)
     }
     return out.sort()
+}
+
+/** A path's real path, or undefined when it cannot be resolved (the walk reports such a directory itself). */
+function realpathOrUndefined(file: string): string | undefined {
+    try {
+        return realpathSync(file)
+    } catch {
+        return undefined
+    }
 }
 
 /** Whether a symbolic link leads to a directory; false for a dangling one. */
@@ -330,8 +367,16 @@ export interface ScannedAction {
 export function scanServerActions(root: ScanRoot, options: ScanOptions = {}): ScannedAction[] {
     const authorizeModules = options.authorizeModules ?? ['@sssb/kit/authz/authorize']
     const scanner = new RootScanner(root, authorizeModules)
-    const files = walkFiles(root.dir, isSourceFile, (name) => name !== 'node_modules').filter(declaresServerActions)
-    return files.flatMap((file) =>
+    const unreadable = new Map<string, string>()
+    const files = walkFiles(
+        root.dir,
+        isSourceFile,
+        (name) => name !== 'node_modules',
+        new Set(),
+        new Map(),
+        unreadable,
+    ).filter(declaresServerActions)
+    const actions: ScannedAction[] = files.flatMap((file) =>
         scanner.actions(file).map(({ name, handler }) => ({
             root: root.label,
             rel: path.relative(root.dir, file).split(path.sep).join('/'),
@@ -340,21 +385,56 @@ export function scanServerActions(root: ScanRoot, options: ScanOptions = {}): Sc
             handler,
         })),
     )
+    for (const [dir, code] of unreadable) {
+        actions.push({
+            root: root.label,
+            rel: path.relative(root.dir, dir).split(path.sep).join('/'),
+            file: dir,
+            name: '*',
+            handler: { verb: 'action', refusal: unreadableRefusal(code) },
+        })
+    }
+    return actions
 }
 
 /**
- * Files in `appDir` but outside its `src` (and outside `node_modules` and dot-directories, a build's `.next` among
- * them) that declare Server Actions. The scan judges actions only under `src`, so one elsewhere would go unchecked.
+ * Build and test output a generated workspace's `.gitignore` names, at any depth. A bundler can keep a `'use server'`
+ * directive as the first statement of what it writes there, which is not the app's source: judging it would make the
+ * check's verdict depend on whether a build had run.
  */
-export function serverActionFilesOutsideSrc(appDir: string): string[] {
-    const keep = (name: string) => name !== 'node_modules' && !name.startsWith('.')
+const BUILD_OUTPUT_DIRS: ReadonlySet<string> = new Set([
+    'build',
+    'cdk.out',
+    'coverage',
+    'dist',
+    'dist-demo',
+    'out',
+    'playwright-report',
+    'storybook-static',
+    'test-results',
+])
+
+/**
+ * Files in `appDir` but outside its `src` (and outside `node_modules`, dot-directories such as a build's `.next`, and
+ * BUILD_OUTPUT_DIRS) that declare Server Actions. The scan judges actions only under `src`, so one elsewhere would go
+ * unchecked. A directory it cannot read goes in `unreadable`, with its error code.
+ */
+export function serverActionFilesOutsideSrc(appDir: string, unreadable: Map<string, string> = new Map()): string[] {
+    const keep = (name: string) => name !== 'node_modules' && !name.startsWith('.') && !BUILD_OUTPUT_DIRS.has(name)
     if (!existsSync(appDir)) return []
-    return readdirSync(appDir, { withFileTypes: true })
+    let entries: Dirent[]
+    try {
+        entries = readdirSync(appDir, { withFileTypes: true })
+    } catch (error) {
+        unreadable.set(appDir, (error as NodeJS.ErrnoException).code ?? 'unknown error')
+        return []
+    }
+    return entries
         .flatMap((entry) => {
             const full = path.join(appDir, entry.name)
             if (entry.name === 'src' || !keep(entry.name)) return []
             if (entry.isDirectory() || (entry.isSymbolicLink() && isDirectoryTarget(full))) {
-                return walkFiles(full, isSourceFile, keep)
+                return walkFiles(full, isSourceFile, keep, new Set(), new Map(), unreadable)
             }
             return isSourceFile(entry.name) ? [full] : []
         })

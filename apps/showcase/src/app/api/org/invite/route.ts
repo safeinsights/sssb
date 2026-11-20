@@ -25,9 +25,11 @@ export async function POST(request: Request): Promise<Response> {
         }
         // The API must not trust the UI (mirrors the role allowlist above). ONE address: no whitespace,
         // comma or semicolon anywhere and exactly one @, because a mail vendor's `to` takes a list, so
-        // "a@x.test, b@y.test" would be one invitation sent to two people.
+        // "a@x.test, b@y.test" would be one invitation sent to two people; and no <, >, " or parentheses, because the
+        // vendor reads `a<b@c.d>` as a display name and mails b@c.d while the row stores the literal string, which
+        // gets past the one-row-per-address check below.
         const inviteEmail = typeof body.email === 'string' ? body.email.trim() : ''
-        if (!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(inviteEmail)) {
+        if (!/^[^\s@,;<>"()]+@[^\s@,;<>"()]+\.[^\s@,;<>"()]+$/.test(inviteEmail)) {
             return Response.json({ error: 'invalid email' }, { status: 400 })
         }
         // One row per address: a second invite (or an invite to an existing member) would create
