@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * The Clerk adapter's invitation, with Clerk's server SDK replaced: what it asks Clerk for and what it hands back. The
- * adapter has never run against a real Clerk instance (cutover row `auth-dev`), so this pins its side of the contract:
- * Clerk is told to send the invitee to the app's accept page, and the link returned for the invitation mail is
- * Clerk's own invitation URL, which carries the ticket that page reads.
+ * The Clerk adapter with Clerk's server SDK replaced: what it asks Clerk for and what it hands back. The adapter has
+ * never run against a real Clerk instance (cutover row `auth-dev`), so this pins its side of the contract: Clerk is told
+ * to send an invitee to the app's accept page, and the link returned for the invitation mail is Clerk's own invitation
+ * URL, which carries the ticket that page reads; every list is read past Clerk's page size; a membership with no role
+ * is a guest; and a refused profile update writes nothing.
  */
 const h = vi.hoisted(() => ({
     created: [] as Record<string, unknown>[],
