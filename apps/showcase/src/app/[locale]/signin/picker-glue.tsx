@@ -7,15 +7,18 @@ export function PickerGlue({ people, returnTo }: { people: PickerPerson[]; retur
     return (
         <PeoplePicker
             people={people}
-            onPick={(personId) => {
-                void fetch('/api/auth/dev-signin', {
+            onPick={(personId) =>
+                // `false` (or a rejection) tells the picker the sign-in failed, so its spinner clears.
+                fetch('/api/auth/dev-signin', {
                     method: 'POST',
                     headers: { 'content-type': 'application/json' },
                     body: JSON.stringify({ personId }),
                 }).then((response) => {
-                    if (response.ok) window.location.assign(sameOriginPath(returnTo) ?? '/')
+                    if (!response.ok) return false
+                    window.location.assign(sameOriginPath(returnTo) ?? '/')
+                    return true
                 })
-            }}
+            }
         />
     )
 }

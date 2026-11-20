@@ -614,6 +614,10 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     // replaced — a Next pressed in that window would be lost to the reload.
     function handleReset(): Promise<boolean> {
         setSnapshotsBusy(true)
+        const failed = () => {
+            setSnapshotsBusy(false)
+            return false
+        }
         return fetch('/api/simulator/reset', { method: 'POST' }).then((response) => {
             if (response.ok) {
                 window.sessionStorage.setItem(POST_NOTICE_KEY, JSON.stringify({ kind: 'reset' }))
@@ -622,9 +626,8 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
                 window.location.assign(`/${locale}`)
                 return untilReload()
             }
-            setSnapshotsBusy(false)
-            return false
-        })
+            return failed()
+        }, failed)
     }
 
     function handleSaveSnapshot(name: string) {
@@ -633,17 +636,24 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ name }),
-        }).then((response) => {
-            setSnapshotsBusy(false)
-            if (response.ok) {
-                pushNotice(t('noticeSnapshotSaved', { name }))
-                void refreshSnapshots()
-            }
         })
+            .then((response) => {
+                if (response.ok) {
+                    pushNotice(t('noticeSnapshotSaved', { name }))
+                    void refreshSnapshots()
+                }
+            })
+            // A rejected fetch (the dev server stopped) must not leave the controls disabled until a reload.
+            .catch(() => undefined)
+            .finally(() => setSnapshotsBusy(false))
     }
 
     function handleRestoreSnapshot(name: string): Promise<boolean> {
         setBusySnapshot(name)
+        const failed = () => {
+            setBusySnapshot(null)
+            return false
+        }
         return fetch('/api/simulator/snapshots/restore', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -654,9 +664,8 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
                 window.location.assign(`/${locale}`)
                 return untilReload()
             }
-            setBusySnapshot(null)
-            return false
-        })
+            return failed()
+        }, failed)
     }
 
     // Load a demo preset: the server resets the world, replays the preset and signs THIS browser in as
@@ -699,13 +708,15 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ name }),
-        }).then((response) => {
-            setBusySnapshot(null)
-            if (response.ok) {
-                pushNotice(t('noticeSnapshotDeleted', { name }))
-                void refreshSnapshots()
-            }
         })
+            .then((response) => {
+                if (response.ok) {
+                    pushNotice(t('noticeSnapshotDeleted', { name }))
+                    void refreshSnapshots()
+                }
+            })
+            .catch(() => undefined)
+            .finally(() => setBusySnapshot(null))
     }
 
     // Bump one agreement's version — the access-gate demo story. Re-arms the gate for everyone
@@ -716,13 +727,15 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ agreementId: id }),
-        }).then(async (response) => {
-            setBusyAgreement(null)
-            if (!response.ok) return
-            const { version } = (await response.json()) as { version: number }
-            pushNotice(t('noticeAgreementBumped', { version }))
-            void refreshAgreements()
         })
+            .then(async (response) => {
+                if (!response.ok) return
+                const { version } = (await response.json()) as { version: number }
+                pushNotice(t('noticeAgreementBumped', { version }))
+                void refreshAgreements()
+            })
+            .catch(() => undefined)
+            .finally(() => setBusyAgreement(null))
     }
 
     // The actor frames are our own same-origin pages (src/app/[locale]/simulator/actors/[actor]) —
