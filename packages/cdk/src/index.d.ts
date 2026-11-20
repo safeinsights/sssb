@@ -14,16 +14,19 @@ export type DatabaseTransport = 'pg' | 'data-api'
 
 /**
  * Which of SSSB's optional ports the app uses: the app's `params.ports`. The construct sets each one given as the
- * server's switch (`LLM_PROVIDER`, `EMAIL_PROVIDER`, `INBOUND_EMAIL_PROVIDER`, `JOBS_RUNNER`); a port left out keeps
- * the framework's default (the first choice of each). `none` makes the port absent: its settings are not required, and
- * a call through it fails naming the switch. `jobs: 'in-process'` runs each job's handler in the server, with no
- * CodeBuild project.
+ * server's switch (`LLM_PROVIDER`, `EMAIL_PROVIDER`, `INBOUND_EMAIL_PROVIDER`, `JOBS_RUNNER`, `STORAGE_PROVIDER`); a
+ * port left out keeps the framework's default (the first choice of each). `none` makes the port absent: its settings
+ * are not required, and a call through it fails naming the switch. `jobs: 'in-process'` runs each job's handler in the
+ * server, with no CodeBuild project. `storage: 's3'` (or left out) builds the storage bucket; `'s3-compatible'` (Cloudflare R2,
+ * MinIO, Backblaze B2) and `'none'` build none and grant no S3 access: the deployment sets the compatible store's
+ * `STORAGE_*` settings on the server itself (`app.server`).
  */
 export interface OptionalPorts {
     readonly llm?: 'anthropic' | 'none'
     readonly email?: 'mailgun' | 'none'
     readonly inboundEmail?: 'mailgun' | 'none'
     readonly jobs?: 'codebuild' | 'in-process' | 'none'
+    readonly storage?: 's3' | 's3-compatible' | 'none'
 }
 
 /** The scheduled tick: what runs the app's scheduled work (its cron route) in the deployment. */
@@ -107,7 +110,8 @@ export declare class SssbApp extends Construct {
      */
     readonly responseHeadersPolicy: cdk.interfaces.aws_cloudfront.IResponseHeadersPolicyRef
     readonly assetsBucket: cdk.aws_s3.Bucket
-    readonly storageBucket: cdk.aws_s3.Bucket
+    /** The app's object storage, the `storage` port's bucket: none unless `params.ports.storage` is `s3` or left out. */
+    readonly storageBucket: cdk.aws_s3.Bucket | undefined
     readonly databaseTransport: DatabaseTransport
     /** The scheduled tick's function, when `scheduledTick` is given. */
     readonly scheduledTick: cdk.aws_lambda.Function | undefined

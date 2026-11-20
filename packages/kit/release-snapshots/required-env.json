@@ -40,12 +40,24 @@
             "none": []
         },
         "JOBS_RUNNER": {
-            "codebuild": ["JOBS_CODEBUILD_PROJECT"],
+            "codebuild": ["AWS_REGION", "JOBS_CODEBUILD_PROJECT"],
             "in-process": [],
             "none": []
         },
         "LLM_PROVIDER": {
             "anthropic": ["ANTHROPIC_API_KEY"],
+            "none": []
+        },
+        "STORAGE_PROVIDER": {
+            "s3": ["AWS_REGION", "STORAGE_BUCKET"],
+            "s3-compatible": [
+                "STORAGE_ACCESS_KEY_ID",
+                "STORAGE_BUCKET",
+                "STORAGE_ENDPOINT",
+                "STORAGE_REGION",
+                "STORAGE_SECRET_ACCESS_KEY",
+                "STORAGE_UPLOAD_TARGET"
+            ],
             "none": []
         }
     }

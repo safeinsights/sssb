@@ -11,6 +11,7 @@ export const PORT_SWITCHES = {
     email: { variable: 'EMAIL_PROVIDER', choices: ['mailgun', 'none'] },
     inboundEmail: { variable: 'INBOUND_EMAIL_PROVIDER', choices: ['mailgun', 'none'] },
     jobs: { variable: 'JOBS_RUNNER', choices: ['codebuild', 'in-process', 'none'] },
+    storage: { variable: 'STORAGE_PROVIDER', choices: ['s3', 's3-compatible', 'none'] },
 }
 
 /**

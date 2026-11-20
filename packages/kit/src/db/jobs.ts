@@ -1,9 +1,10 @@
-import { sql, type Kysely, type Transaction } from 'kysely'
+import type { Kysely, Transaction } from 'kysely'
 import { exportKeyPrefix, type JobStatus, jobStatusMachine } from '../core/jobs'
 import { InvalidTransitionError } from '../core/state-machine'
 import type { DbPort } from '../ports/db'
 import { NotFoundError } from '../ports/errors'
 import type { JobsPort } from '../ports/jobs'
+import { family } from './family'
 import type { DB } from './schema'
 import { enqueueWebhookEvent } from './webhooks'
 
@@ -74,14 +75,14 @@ export async function recordJobStatus(
             .selectFrom('jobs')
             .select(['status', 'org_id', 'kind'])
             .where('id', '=', jobId)
-            .forUpdate()
+            .$call(family.lockRow)
             .executeTakeFirstOrThrow()
         jobStatusMachine.assertTransition(current.status as JobStatus, next)
         await trx
             .updateTable('jobs')
             .set({
                 status: next,
-                updated_at: sql`now()`,
+                updated_at: family.currentTime(),
                 ...(extra?.resultKey !== undefined ? { result_key: extra.resultKey } : {}),
                 ...(extra?.error !== undefined ? { error: extra.error } : {}),
             })

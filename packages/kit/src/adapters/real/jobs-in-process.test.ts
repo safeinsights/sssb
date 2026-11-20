@@ -87,6 +87,14 @@ describe('the in-process jobs runner', () => {
         expect(notified).toEqual([{ tenantId, jobId: view.id, status: 'failed' }])
     })
 
+    test('a handler that stores, on a deployment without storage, fails the job naming the switch', async () => {
+        const { ports, notify, createInProcessJobs, submit } = await harness()
+        const { absentStorage } = await import('./absent')
+        const view = await submit(createInProcessJobs({ ...ports, storage: absentStorage }, notify))
+        expect(view.status).toBe('failed')
+        expect(view.error).toMatch(/the storage port is absent: this deployment sets STORAGE_PROVIDER=none/)
+    })
+
     test('a failed notification is logged and never fails a finished job', async () => {
         const { ports, createInProcessJobs, submit } = await harness()
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})

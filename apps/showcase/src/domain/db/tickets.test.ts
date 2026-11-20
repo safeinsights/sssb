@@ -109,6 +109,7 @@ describe('createTicket + listTickets', () => {
         const { createTicket } = await import('./tickets')
         let attempts = 0
         const collidingOnce: DbPort = {
+            isolation: 'rls',
             getDb: () => {
                 throw new Error('not used')
             },
@@ -160,6 +161,7 @@ describe('createTicket + listTickets', () => {
         const { createTicket } = await import('./tickets')
         let attempts = 0
         const alwaysBroken: DbPort = {
+            isolation: 'rls',
             getDb: () => {
                 throw new Error('not used')
             },

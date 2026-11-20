@@ -30,7 +30,7 @@
         },
         {
             "id": "db-role-not-superuser",
-            "what": "The role in `DATABASE_URL` holds neither `SUPERUSER` nor `BYPASSRLS`"
+            "what": "The role the app connects as (the one in `DATABASE_URL` on `pg`, the one the secret at `DATABASE_SECRET_ARN` holds on `data-api`) holds neither `SUPERUSER` nor `BYPASSRLS`"
         },
         {
             "id": "origin-not-publicly-reachable",
@@ -63,6 +63,18 @@
         {
             "id": "storage-head",
             "what": "The storage port's `head`, and `copy`'s `ifMatch`, against the real bucket"
+        },
+        {
+            "id": "storage-compatible-store",
+            "what": "An S3-compatible store's bucket, endpoint, region and upload-target setting (`params.ports.storage: 's3-compatible'`, so `STORAGE_PROVIDER=s3-compatible`: Cloudflare R2, MinIO, Backblaze B2)"
+        },
+        {
+            "id": "storage-compatible-credentials",
+            "what": "The access key pair for an S3-compatible store (`STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`), in the deployment's secret store and never in the repository"
+        },
+        {
+            "id": "storage-compatible-live",
+            "what": "The storage port's methods against a real bucket on the S3-compatible store the app chose (for R2: a real R2 bucket)"
         },
         {
             "id": "job-runner",

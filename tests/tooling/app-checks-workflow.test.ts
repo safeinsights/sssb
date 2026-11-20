@@ -11,7 +11,7 @@ import { parse } from 'yaml'
  * `checks` workflow's conclusion alone. These cases hold the shape that keeps every check running.
  */
 const ROOT = path.resolve(__dirname, '../..')
-type Step = { run?: string; uses?: string; if?: string; env?: Record<string, string> }
+type Step = { name?: string; run?: string; uses?: string; if?: string; env?: Record<string, string> }
 type Job = {
     name?: string
     if?: string
@@ -34,12 +34,18 @@ const read = (file: string) => parse(readFileSync(path.join(ROOT, '.github/workf
 const reusable = read('app-checks.yml')
 const checks = read('checks.yml')
 
+/** The reusable workflow's jobs with a docs-only fast path, and the step each runs instead of its work. */
+const FAST = ['contract', 'e2e', 'demo-static', 'synth']
+const SKIPPED = 'Skipped (docs-only change)'
+const isSkipStep = (step: Step) => step.name === SKIPPED
+
 describe('app-checks.yml, the reusable workflow', () => {
     it('is called, never triggered, and takes no secrets', () => {
         expect(Object.keys(reusable.on)).toEqual(['workflow_call'])
         expect(reusable.on.workflow_call?.secrets).toBeUndefined()
         expect(Object.keys(reusable.on.workflow_call?.inputs ?? {}).sort()).toEqual([
             'apps',
+            'docs-only',
             'node-version-file',
             'synth',
         ])
@@ -136,7 +142,7 @@ describe('app-checks.yml, the reusable workflow', () => {
             const work: Step[] = []
             for (const step of job.steps ?? []) {
                 expect((step as Record<string, unknown>)['continue-on-error'], id).toBeUndefined()
-                if (step.run === undefined) continue
+                if (step.run === undefined || isSkipStep(step)) continue
                 expect(step.run, `${id}: ${step.run}`).not.toMatch(/\$\{\{/)
                 const command = step.run.trim()
                 if (SETUP.some((pattern) => pattern.test(command))) continue
@@ -151,7 +157,8 @@ describe('app-checks.yml, the reusable workflow', () => {
                 work.map((step) => step.run!.trim()),
                 id,
             ).toEqual([WORK[id]])
-            expect(work[0]!.if, id).toBeUndefined()
+            // The fast path's gate, exactly, and nothing else: the docs-only fast path describe below says why.
+            expect(work[0]!.if, id).toBe(FAST.includes(id) ? '${{ !inputs.docs-only }}' : undefined)
         }
     })
 
@@ -186,7 +193,7 @@ describe('app-checks.yml, the reusable workflow', () => {
             if (id === 'all-checks') continue
             expect(work.length, id).toBe(1)
             const keys = Object.keys(work[0]!).filter((key) => key !== 'id')
-            expect(keys.sort(), id).toEqual(['env', 'run'])
+            expect(keys.sort(), id).toEqual(FAST.includes(id) ? ['env', 'if', 'run'] : ['env', 'run'])
             expect(work[0]!.env, id).toEqual(ENV[id])
         }
         const judge = reusable.jobs['all-checks']!.steps!
@@ -211,9 +218,12 @@ describe('app-checks.yml, the reusable workflow', () => {
 describe("checks.yml's call to it", () => {
     const sssb = checks.jobs['sssb']!
 
+    // It waits for `changes`, for the docs-only input, but runs whatever `changes` did: skipped, the call would never
+    // report `sssb / all-checks`.
     it('calls it by its local path, always, with no secrets and only a read', () => {
         expect(sssb.uses).toBe('./.github/workflows/app-checks.yml')
-        expect(sssb.if).toBeUndefined()
+        expect(sssb.needs).toBe('changes')
+        expect(sssb.if).toBe('${{ !cancelled() }}')
         expect(sssb.secrets).toBeUndefined()
         expect(sssb.permissions).toEqual({ contents: 'read' })
     })
@@ -221,7 +231,7 @@ describe("checks.yml's call to it", () => {
     // No `apps`: the workspace's apps are discovered, so adding, renaming or removing an app needs no edit here, and no
     // app can be left out by a list that went stale.
     it('covers every app, and synthesizes every app’s infra', () => {
-        expect(Object.keys(sssb.with ?? {})).toEqual(['synth'])
+        expect(Object.keys(sssb.with ?? {}).sort()).toEqual(['docs-only', 'synth'])
         const infra = readdirSync(path.join(ROOT, 'apps'))
             .filter((app) => existsSync(path.join(ROOT, 'apps', app, 'infra', 'package.json')))
             .map((app) => `apps/${app}/infra`)
@@ -251,6 +261,110 @@ describe("checks.yml's call to it", () => {
         expect(readFileSync(path.join(ROOT, 'scripts/release.mjs'), 'utf8')).toContain(
             'actions/workflows/checks.yml/runs',
         )
+    })
+})
+
+// The docs-only fast path (.github/scripts/docs-only.sh; docs/decision-log.md, "A fast path for docs-only pull
+// requests"). Each job with one still RUNS, so every check reports under its own name, and gates every step but the one
+// that says it skipped; a job without one never reads the answer. Every way of getting this wrong leaves the checks
+// green: a step left ungated runs on the fast path (only slower), but a step gated by the wrong expression, or a job
+// that waits on `changes`, can skip real work on a change that is not documentation, or report success unrun.
+describe('the docs-only fast path', () => {
+    // Exactly the gate, or the gate AND one further condition that cannot run the step on its own: no `||` (which
+    // binds looser than `&&`), and no status function but `failure()`.
+    const gated = (step: Step, gate: string) => {
+        const cond = step.if ?? ''
+        if (cond === gate || cond === `\${{ ${gate} }}`) return true
+        const tail = new RegExp(`^\\$\\{\\{ ${gate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} && (.+) \\}\\}$`).exec(
+            cond,
+        )?.[1]
+        return tail !== undefined && !tail.includes('||') && !/\b(always|success|cancelled)\(\)/.test(tail)
+    }
+
+    it('defaults to the full run for a caller that does not set it', () => {
+        expect(reusable.on.workflow_call?.inputs?.['docs-only']).toMatchObject({ type: 'boolean', default: false })
+    })
+
+    it.each(FAST)('%s runs one skip step on the fast path, and gates every other step', (id) => {
+        const job = reusable.jobs[id]!
+        const [skip, ...rest] = job.steps ?? []
+        expect(skip?.name).toBe(SKIPPED)
+        expect(skip?.if).toBe('inputs.docs-only')
+        expect(skip?.run).toMatch(/^echo "/)
+        expect(rest.length).toBeGreaterThan(0)
+        for (const step of rest) expect(gated(step, '!inputs.docs-only'), `${id}: ${step.run ?? step.uses}`).toBe(true)
+    })
+
+    it('starts no database on the fast path, and Postgres 16 otherwise', () => {
+        const services = (reusable.jobs['contract'] as Record<string, unknown>)['services'] as Record<
+            string,
+            { image: string }
+        >
+        expect(services['postgres']?.image).toBe("${{ !inputs.docs-only && 'postgres:16' || '' }}")
+    })
+
+    it('leaves every other job of the reusable workflow as it was', () => {
+        for (const [id, job] of Object.entries(reusable.jobs)) {
+            if (FAST.includes(id)) continue
+            expect(JSON.stringify(job), id).not.toContain('docs-only')
+        }
+    })
+
+    // checks.yml's own jobs decide with the script themselves, straight after their checkout, and never wait on
+    // `changes`: a job that needs a failed job is skipped, and a skipped job reports as a passing check.
+    const OWN_FAST = ['adoption-probe', 'licence-scan', 'pack-and-consume', 'release-dry-run', 'repo-checks']
+    const ALWAYS_RUN_STEPS = ['bash .github/scripts/check-bidi.sh']
+
+    it("sends the reusable workflow the answer, true only when `changes` said exactly 'true'", () => {
+        expect(checks.jobs['sssb']!.with?.['docs-only']).toBe("${{ needs.changes.outputs.docs-only == 'true' }}")
+        const changes = checks.jobs['changes'] as Job & { outputs?: Record<string, string> }
+        expect(changes.outputs).toEqual({ 'docs-only': '${{ steps.docs.outputs.docs-only }}' })
+        expect(changes.if).toBeUndefined()
+        const decide = changes.steps?.find((step) => step.run?.includes('docs-only.sh'))
+        // A script that fails leaves the job green with an empty answer, the full run, rather than failing the job.
+        expect(decide).toMatchObject({
+            id: 'docs',
+            run: 'bash .github/scripts/docs-only.sh',
+            env: { EVENT_NAME: '${{ github.event_name }}' },
+            'continue-on-error': true,
+        })
+    })
+
+    it.each(OWN_FAST)('%s decides after its checkout, runs one skip step, and gates the rest', (id) => {
+        const job = checks.jobs[id]!
+        expect(job.needs, id).toBeUndefined()
+        expect(job.if, id).toBeUndefined()
+        const steps = (job.steps ?? []) as (Step & { id?: string; with?: Record<string, unknown> })[]
+        const [checkout, decide, skip, ...rest] = steps
+        expect(checkout?.uses).toMatch(/^actions\/checkout@/)
+        // The merge commit and its first parent: depth 2, or the whole history.
+        expect([0, 2]).toContain(checkout?.with?.['fetch-depth'])
+        expect(decide).toMatchObject({
+            id: 'docs',
+            run: 'bash .github/scripts/docs-only.sh',
+            env: { EVENT_NAME: '${{ github.event_name }}' },
+        })
+        expect(skip?.name).toBe(SKIPPED)
+        expect(skip?.if).toBe("steps.docs.outputs.docs-only == 'true'")
+        expect(
+            rest.some((step) => !ALWAYS_RUN_STEPS.includes(step.run ?? '')),
+            `${id} has work behind the gate`,
+        ).toBe(true)
+        for (const step of rest) {
+            if (ALWAYS_RUN_STEPS.includes(step.run ?? '')) {
+                expect(step.if, step.run).toBeUndefined()
+                continue
+            }
+            expect(gated(step, "steps.docs.outputs.docs-only != 'true'"), `${id}: ${step.run ?? step.uses}`).toBe(true)
+        }
+    })
+
+    it('leaves every other job of checks.yml without a fast path', () => {
+        for (const [id, job] of Object.entries(checks.jobs)) {
+            if (OWN_FAST.includes(id) || id === 'sssb' || id === 'changes') continue
+            expect(JSON.stringify(job), id).not.toContain('docs-only')
+            expect(job.needs, id).toBeUndefined()
+        }
     })
 })
 
@@ -337,7 +451,9 @@ describe('the check names the rulesets require', () => {
     // green on a PR and holds a release back through `checks`' conclusion, but blocks no merge. `licence-scan`:
     // docs/decision-log.md, "Licence scan". `release-dry-run`: the release rehearsed through release.yml's commands,
     // publishing nothing (ADR-0014 P14). Adding a name to the rulesets moves it into FIXED.
-    const ADVISORY = ['licence-scan', 'release-dry-run']
+    // `changes`: whether a pull request changes only documentation, for the reusable workflow's input; nothing is
+    // judged by it, and a `changes` that fails leaves every job its full run.
+    const ADVISORY = ['changes', 'licence-scan', 'release-dry-run']
     // One per e2e shard and one per static demo, named from the tree's own apps, so this holds whichever apps the tree
     // holds. In SSSB's own tree they are
     // `sssb / e2e (showcase)`, `sssb / e2e (showcase-destructive)`, `sssb / e2e (starter)`,

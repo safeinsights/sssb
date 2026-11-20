@@ -6660,3 +6660,339 @@ verify` after it, `pnpm knip` and `pnpm lint:fix`. Not run: `pnpm create @sssb` 
 - **Citations of moved sections are repointed in place** (code comments, `CLAUDE.md`, `CONTRIBUTING.md`, the
   release-notes script, `sssb remove-items`' refusal, open future tasks), and ADR-0014 gets an addendum naming where
   its cited sections live; dated records and ADR bodies are left as they were.
+
+## ADR-0015 is Proposed: swappable kit ports (2026-11-19, `docs/swappable-ports`)
+
+JP asked whether an adopter could use libsql or Turso, Cloudflare R2, Auth0 or other optional providers, and whether
+the spine could stay required but swappable. The answer is a Proposed ADR
+(`docs/adr/0015-app-supplied-adapters-for-kit-ports.md`), no code. Decisions taken in writing it, under the standing
+rule for these sessions, several of them changed by its review (an Opus and a Fable reviewer):
+
+- **The study ends in a recommendation, not a menu.** Rejected: each port's options unranked, which hands the approver
+  the analysis instead of a decision.
+- **Protocol choices before app adapters.** Storage's `s3` choice takes an endpoint (R2, MinIO, B2), and email gains an
+  `smtp` choice; the `app` value is limited to the ports no protocol covers (LLM, analytics, jobs, auth). Rejected, at
+  first drafted: R2 and other providers as app adapters too, which puts a third-party contract on storage and email for
+  vendors a protocol already reaches. Both reviewers raised it.
+- **The app supplies only the real adapter; the fake stays SSSB's.** Rejected: app-supplied fakes, because the
+  Simulator reads the fakes' state and the hermetic promise would become each app's.
+- **Registration in three seam modules (settings as data, factories handed in by the registry, the auth provider's
+  middleware on its own for the request proxy), with the full factory signature settled at once, and a graph check,
+  not a lint rule, keeping app adapters out of the registry's module graph.** Rejected, at first drafted: one module read by `createRealPorts`, which would pull every
+  app adapter into `sssb check-real-env`'s CommonJS bundle and could deadlock boot through the registry; and an
+  argument-less factory, which a job runner cannot use.
+- **Analytics in two parts: a patch now, so real mode without a key gets a no-op and never the fake (which writes
+  under `.data/`, likely failing on Lambda's read-only directory), then an explicit switch, default `posthog`, filed as
+  the breaking change it is.** Rejected: "the same default behaviour", which is the inference the switch rule forbids;
+  and folding the patch into the switch's step, which would leave a likely live defect waiting on unrelated work.
+- **No `app` for inbound email.** Another provider is the app's route outside `webhooks/` under its own exemption.
+  Rejected: an `app` value that changes nothing `none` does not.
+- **libsql and Turso are answered "not an adapter"**, with both tenancy strategies and what each does to ADR-0004; a
+  different Postgres host is a conditional yes, its conditions named (genuine PostgreSQL 16+, an owner that may create
+  roles, no `BYPASSRLS`, a migrate entry point off AWS). Rejected: "any Postgres works today", which overstated it.
+- **Vendor suites run apart from the hermetic contract run**, in `tests/ports/` with a runner of their own. Rejected:
+  putting credentials into the contract run.
+- **Build on first real demand.** Rejected: building every port's swap now, ahead of any adopter asking.
+- **`docs/adr/README.md` lists 0015 as Proposed** and its count sentence says fifteen. `CLAUDE.md`'s list of Accepted
+  ADRs is unchanged until JP decides.
+
+## Storage is an optional port: a deployment needs no S3 bucket (2026-11-19, `feat/storage-optional`)
+
+JP, 2026-11-19: an SSSB deployment must not require an S3 bucket. Storage gets the treatment the 2026-11-19 entry
+"Real mode requires only the optional ports an app uses" gave LLM, email and jobs. JP's standing rule for these
+sessions: decide, and record the rejected alternative.
+
+- **A switch, `STORAGE_PROVIDER` (`s3` | `none`), set by `SssbApp` from `params.ports.storage`**, in the optional
+  ports' one table (`packages/kit/src/adapters/real/optional-ports.ts`, `packages/cdk/src/optional-ports.js`). Unset is
+  `s3`, so a deployment that sets nothing requires what it did. A string with named choices, not a boolean, so a later
+  choice can name another provider (the sibling study `docs/swappable-ports`, an app's own adapter for a kit port, would
+  be one more value). Rejected: inferring storage from whether `STORAGE_BUCKET` is set, which the `DATABASE_TRANSPORT`
+  rule already refuses (a half-configured port must fail at boot, not quietly vanish).
+- **`none` is the absent port (`absentStorage`)**: every method throws `AbsentPortError` naming the switch, and the S3
+  adapter is a dynamic import, so the SDK never loads. Rejected: a no-op or in-memory storage, which would accept a
+  `put` and lose it.
+- **What in the framework uses storage, and what each does without it.** The kit stores nothing of its own: its
+  inbound email handling keeps no attachments and its digest job sends mail only. The job handler context carries the
+  port, and gets the absent one, so a handler that stores fails its job with the switch named (proven for the
+  in-process runner). The seed and the Simulator use the fake storage, in simulated mode only, which ignores the
+  switch as it ignores the other ports'. Exports, attachments and uploads are the app's (the showcase's), so they
+  require the port, and the showcase declares `s3`.
+- **`AWS_REGION` is required only by what calls AWS**: storage on `s3`, `JOBS_RUNNER=codebuild` (both in the ports'
+  table) and the Data API transport (`DATA_API_REGION_ENV` in `adapters/real/index.ts`). A `pg` deployment with
+  `storage: 'none'` and in-process jobs calls no AWS API, so requiring a region there would be a placeholder.
+  Rejected: adding it to `DATABASE_ENV['data-api']`, whose every variable `SssbApp`'s test expects on the server, where
+  Lambda reserves `AWS_REGION` and sets it itself.
+- **`SssbApp` with `none` builds no storage bucket, sets no `STORAGE_BUCKET` and grants no S3**; with `s3` the bucket's
+  construct id, and so its logical id, is unchanged, and the stateful-ids snapshot (synthesized with `ports` left out)
+  is unchanged. `storageBucket` becomes `Bucket | undefined`, filed with the required-env snapshot's `minor`.
+  Rejected: adding `storage: 'none'` shapes to the snapshot, which would change it for nothing that is replaced; a
+  test in `sssb-app.test.js` proves every other stateful id stays put on `none`.
+- **Switching a deployed stack from `s3` to `none` is documented, not refused.** The bucket leaves the stack: in
+  production its removal policy (`Retain`) keeps it, orphaned with its objects; elsewhere `autoDeleteObjects` empties it
+  and it is deleted, as on the stack's own deletion. Rejected: refusing the switch (synth cannot see what is deployed)
+  and keeping the bucket on `none` (then every deployment still has one, which is what JP ruled out).
+- **The starter declares `storage: 'none'`**: it stores no files, so a generated app deploys without a bucket, with a
+  comment saying to set `s3` when it starts storing (cutover row `cloud-accounts`, which now says the storage checks
+  do not apply with `none`). Rejected: `s3`, a bucket every generated app would carry and cut over before it needs one.
+
+## Two real-mode fixes: keyless analytics, and the starter's auth provider (2026-11-19, `fix/realmode-analytics-and-clerk-provider`)
+
+The two follow-ups ADR-0015's study found, each verified from the code first; neither was observed on a deployment, and
+pages' sandbox branch has both (its locale layout mounts no provider while its sign-in page loads SSSB's real form, and
+its deployment sets no `POSTHOG_KEY` or `APP_DATA_DIR`). JP's standing rule for these sessions: decide, and record the
+rejected alternative.
+
+- **Real mode without `POSTHOG_KEY` gets a no-op adapter** (`packages/kit/src/adapters/real/no-analytics.ts`), never
+  the fake, whose `capture` and `isFlagEnabled` create and write `.data/analytics` in the working directory, the
+  read-only deployment package on Lambda. Rejected: pointing `APP_DATA_DIR` at `/tmp` in `SssbApp`, which would keep a
+  simulated-world store, per instance and lost on recycle, behind a real deployment; and an `AbsentPortError`, which
+  would fail every invite.
+- **A flag answers the default its caller passes**, as the PostHog adapter does when PostHog cannot be reached.
+  Rejected: `false` for every flag, which would override a caller that declared `true` as the safe default.
+- **The real ports reach no fake adapter at all**: the bundle test now fails one. Rejected: checking the analytics
+  module alone, when the import of any fake into the real registry is the class of mistake.
+- **This is the patch ADR-0015 proposed, not its analytics switch**, which stays proposed.
+- **The starter's locale layout mounts `RealAuthProviders` in real mode**, as the showcase's does: `@clerk/react`
+  6.18.8's `useSignIn` calls `useAssertWrappedByClerkProvider`, which throws outside `ClerkProvider`, and the starter's
+  real-mode sign-in page renders SSSB's form that calls it.
+- **A conformance check, `real-auth-provider`, holds every app to it**: from each of Next's rendering files under
+  `src/app` it follows the app's own imports (relative, `@/`, `@sssb/app-config/`; type-only ones skipped) with
+  TypeScript's parser, and a file that reaches SSSB's real sign-in or invite form needs a layout or template wrapping
+  it that reaches the provider. Rejected: a test of the starter alone, which would not have caught pages, the first
+  adopter, which has the same gap; a render test of the layout in real mode, which needs the real registry to boot;
+  and, as first written, judging only a layout's own imports and a module's own directory, which review showed failing
+  correct apps (a provider behind a wrapper module, a form in a shared folder) that could only opt out. Its limits are
+  in its header: it reads imports, not whether they run, and no alias but those two. SSSB's fixture opts out (no
+  `src/app`); scratch apps test the check itself.
+- **The check ships as `@sssb/kit` minor**, though the brief said patch: an adopter whose layout lacks the provider sees
+  its suite go red on upgrade, and the release notes call an action-required change a minor. The analytics fix is a
+  patch, and the starter's change a patch of `@sssb/create`.
+
+## A fast path for docs-only pull requests (2026-11-19, `ci/docs-only-fast-path`)
+
+JP, 2026-11-19, on safeinsights/sssb#78 (three markdown files, every job run): "Is there an optimization here? See
+CanopyCMS". CanopyCMS's `ci.yml` (`dual-build`, `standalone-image`, `release-dry-run`) runs every job so each reports a
+conclusion, and gates its expensive steps per step. SSSB copies that. JP's standing rule for these sessions: decide,
+and record the rejected alternative.
+
+- **Docs-only is narrow: every changed path under `docs/` (but `docs/releases/`) or `.claude/future-tasks/`**
+  (`.github/scripts/docs-only.sh`). Docs are not inert here, so the jobs that read them keep no fast path:
+  `lint-typecheck-unit` runs Prettier, the doc-path gate, and the plugin, generator and release-notes tests. The jobs
+  that do take one read no doc: e2e, the static demos, the contract tests and synth build and test the apps; both pack
+  and consume shapes pack the packages and generate from the starter, and the generated README links SSSB's docs by
+  URL without reading them (`packages/create/src/files.js`). `docs/releases/` is excluded because `scripts/release.mjs`
+  writes a release's notes there and the release rehearsal runs it. Rejected: root markdown (`CLAUDE.md`,
+  `README.md`) and `.changeset/`, for want of evidence that no fast-path job reads them (the release jobs read
+  `.changeset/`); a path joins the list only with that evidence.
+- **Which jobs take it.** The reusable workflow's `contract`, `e2e`, `demo-static` and `synth`, and checks.yml's
+  `adoption-probe`, `pack-and-consume`, `release-dry-run`, `licence-scan` and `repo-checks`' knip, jscpd and spike suite.
+  Always in full: `lint-typecheck-unit` (it reads the docs), `discover` (cheap, and the matrices keep every shard's
+  check under its own name), `release-plan` (half a minute), `changeset-required`, `secret-scan` (a doc can leak a
+  secret) and `repo-checks`' bidi scan (a doc can carry bidi characters). Every push to `main` runs everything.
+- **Each job still runs and reports; only its steps are gated**, behind a visible "Skipped (docs-only change)" step.
+  Rejected: a `paths:` filter on the trigger, which leaves a required check that never reports pending forever
+  (CanopyCMS's `dual-build` comment); and job-level `if:` skips, under which a matrix never expands, so no shard
+  reports under its own name, and which would make `all-checks` accept skips, weakening the one check an adopter
+  requires.
+- **The reusable workflow takes the answer as an input, `docs-only`, false by default**, so an adopter who sets
+  nothing runs exactly what it did, and `all-checks` is unchanged: a job that ran its fast path concluded success.
+  The contract job's Postgres service gets an empty image on the fast path, which starts none. Rejected: a pathspec
+  input the reusable workflow evaluates itself, which would put diff logic in the file adopters pin, for a docs set
+  that is theirs to decide.
+- **Plain git, not `dorny/paths-filter`.** The script diffs the pull request's merge commit (two parents, as
+  actions/checkout leaves it) against its first parent, the base as it is when the run starts, with `--no-renames`
+  so a file moved out of code counts. Anything else answers false: another event, a HEAD that is not a merge commit,
+  an empty diff, a path git quotes. Rejected: the action, a third-party dependency with the repository's checkout in
+  reach, which lists a pull request's files through the API (`pull-requests: read`, a permission no job here has).
+  The rulesets require the branch up to date, and bringing it up to date makes a new merge commit and a new run, so a
+  fast path decided on an old base is never the one a merge goes on.
+- **checks.yml's own jobs each run the script themselves; only the `sssb` call waits on a `changes` job**, because
+  a reusable workflow's input must be known when the call starts. Rejected: every job `needs: changes`. A job whose
+  dependency failed is skipped, and a skipped job reports as a passing check, so a failed `changes` would have turned
+  `repo-checks`, `adoption-probe` and `pack-and-consume` green unrun. The `sssb` call runs `if: ${{ !cancelled() }}`
+  and passes `docs-only` only when the output is exactly `true`. The script's step in `changes` is
+  `continue-on-error`, so a script that fails leaves no answer and a green `changes`, and everything runs. A `changes`
+  that fails outright (its checkout) never reads as the fast path either: should GitHub skip the called jobs for the
+  failed dependency, `all-checks` fails. Either way the check is red or does the work, never green unrun.
+- **What the fast path trusts, and what still catches a mistake in it.** That no job with a fast path reads a path
+  the script counts as documentation: true when it was written (the readers of `docs/` outside `docs/releases/` are
+  the unit tests and `sssb doctor`, all in `lint-typecheck-unit`), held only by review for a script added later, and
+  by a test for a tracked symlink into those directories (`tests/tooling/docs-only.test.ts`). The push run on `main`
+  is always the full one, and the release gate reads only push runs (`wait-for-checks`, `scripts/release.mjs`), so a
+  mistake can reach `main` but never a release. And a docs-only pull request no longer notices a base that is already
+  red: its own checks pass on the base's tested tree, as they would have on the same tree before.
+- **What it saves, measured.** #78's full run (2026-11-19): 32 runner-minutes, 5m36s end to end. The probe,
+  safeinsights/sssb#79 (one line of `docs/README.md`, closed unmerged): 8 runner-minutes, 5m57s end to end, every check
+  green, each fast-path job done in 2 to 8 seconds with only its skip step run, and `contract` starting no database.
+  So a docs-only pull request costs a quarter of the runner time, and the wall clock does not move:
+  `lint-typecheck-unit` (5m41s on the probe) is the critical path and runs in full. Recorded as a future task
+  (`.claude/future-tasks/docs-only-lint-typecheck-unit.md`): a docs-only mode for that job that runs only what reads
+  the docs.
+
+## The invitation mail carries the auth adapter's link (2026-11-19, `fix/realmode-invite-link`)
+
+Found by ADR-0015's addendum review: SSSB mailed `/<locale>/accept-invite?invite=<id>`, the fake's link, in every mode,
+while the real accept page reads Clerk's `__clerk_ticket`, so a real invitation could not be accepted from SSSB's mail.
+JP asked for the fix. Decisions, with the rejected alternative:
+
+- **The adapter builds the link**: `createInvite` takes `acceptPageUrl` and returns `CreatedInvite.acceptUrl`. The fake
+  appends `?invite=<id>`; Clerk gets the page as `redirectUrl` and its invitation's `url` is returned. Rejected: the
+  framework appending a provider-specific query itself, which would put Clerk's ticket format in shared code; and
+  sending no SSSB mail in real mode, which gives up the app's own, translated invitation (ADR-0003's one UI, ADR-0008).
+- **No link, no mail**: Clerk types `url` as nullable, and a mail with no working link is worse than none. Rejected:
+  throwing, which would fail an invitation that Clerk may well have delivered itself.
+- **The link never goes back to the inviter**: `sendOrgInvite` strips it from what it returns, because the route answers
+  the inviter with it and the link is the invitee's credential.
+- **A port change, filed `minor`**: an app that calls `createInvite` itself must pass `acceptPageUrl`.
+- **Clerk gets the accept page as a path**, which its `redirectUrl` accepts ("The full URL or path"): the absolute URL
+  is built from the request's URL, which names the server's own `localhost` behind `SssbApp`
+  (`.claude/future-tasks/request-url-is-not-the-public-url.md`). Rejected: the absolute URL, which review showed would
+  send every invitee, Clerk's own mail included, to `localhost`; and building a public origin from the forwarded
+  headers here, which is that future task's whole job.
+- **An existing user's invitation is handled**: setting `redirectUrl` sends every invitee to the accept form, and Clerk
+  marks one who already has an account `__clerk_status=sign_in`, which takes `signIn.ticket()` (Clerk's guide to
+  accepting organization invitations). The form takes the status as an optional prop, and `complete` (Clerk accepted it
+  already) only redirects. Rejected: leaving it for later, which this change would have made a regression, since
+  without `redirectUrl` Clerk's own flow handled it.
+- **The form submits a ticket once, after Clerk has loaded**, reading Clerk's resources through a ref. Review found the
+  sign-up path already submitting twice under StrictMode and again as clerk-js loaded and the resources changed
+  identity; a ticket is single-use, so the second submission could report an error for an accepted invitation.
+  Rejected: depending on the resources in the effect, which is what re-ran it.
+- **Two invitation mails stay possible**: Clerk can deliver its own, and no API call turns that off per invitation, so
+  the `auth-dev` row asks for the instance to be set so an invitee gets one.
+
+## ADR-0015 addendum: auth as a provider bundle, datastores in tiers (2026-11-19, `docs/adr-0015-addendum`)
+
+JP asked, after reading ADR-0015, why real auth is tied to Clerk when the fake works as an adapter, and whether an app
+could forgo the tenancy promise or keep its data in another store (DynamoDB, say). He framed SSSB as separating an app's
+logic, its simulated world and its tours from the vendors underneath, while staying honest about what each arrangement
+can guarantee, and asked for this addendum. Decisions taken in writing it, several changed by its Opus review:
+
+- **The unit of an auth swap is a bundle, and it owns the invitation link**; kit entry points that dispatch on
+  `AUTH_PROVIDER` choose it. Rejected: `auth: 'app'` as a port alone, which leaves every other piece naming Clerk; and,
+  as first drafted, a bundle with no way of being chosen, the app's route files still loading Clerk's modules by path.
+- **Datastores in three tiers, each stating its guarantee.** Rejected: the body's "the engine stays fixed", which
+  answered "can it be done" where the honest answer is "here is what each choice promises"; and other stores offered
+  without a stated guarantee.
+- **DynamoDB's `LeadingKeys` isolation is comparable to row-level security, not stronger**: whatever mints the
+  per-tenant session holds the boundary, as `set_config` does, and the proof runs against AWS only. Rejected, as first
+  drafted: "enforced by the database's access control" without those limits.
+- **A single-tenant declaration means the deployment is the boundary, checked by boot refusing a second tenant**; on
+  another store it replaces the per-table policies and two-tenant proofs. Rejected, as first drafted: tying it to the
+  query-layer filter, which is several tenants in one store.
+- **Auth as a bundle comes after the `app` mechanism, when an adopter needs another provider.** Rejected, as first
+  drafted: ahead of the mechanism, which would build it on the hardest port or deliver a refactor no provider can use.
+- **The invitation link is a separate fix, now**: the framework mails `/accept-invite?invite=<id>` in every mode, which
+  Clerk's accept form, reading `__clerk_ticket`, cannot use.
+
+## ADR-0015 accepted in part (2026-11-19, `docs/adr-0015-decision`)
+
+JP agreed four points in chat ("Agree all four"), recorded as ADR-0015's second addendum, which sets its status to
+Accepted in part; the work it starts is seven briefs under `.claude/future-tasks/`. Decisions taken in writing it:
+
+- **Each work item is a future task**, the repository's home for designed-but-unbuilt work, linked from the addendum.
+  Rejected: briefs inside the ADR, which is a dated record a builder should not have to edit as work lands.
+- **The S3-compatible store is a storage choice of its own** (`s3-compatible`), not the `s3` choice reading an endpoint
+  when one is set. The switch rule forbids choosing behaviour from which settings happen to be set. Rejected: the
+  body's "the `s3` choice takes an endpoint", read literally.
+- **The Postgres groundwork references today's modules rather than moving them**, so the doc-path gate's citations of
+  `packages/kit/src/db/migrations/` stay true. Rejected: a tidy move into a family directory, which buys nothing a
+  family object does not.
+- **`CLAUDE.md` names ADR-0015 among those to follow, in the parts its second addendum accepts.** Rejected: leaving it
+  out until every part is built, which would leave the accepted principles unstated where sessions read them first.
+- **The addendum records the four agreed points and nothing more; every further detail is a brief's proposal** for
+  its builder to decide and record (the registration's shapes, reserved names, how `SssbApp` learns names, the
+  isolation values, the drift test, port versioning). Review found the first draft presenting those as decided.
+  Rejected: settling them in the addendum, which would put words in the approver's mouth.
+- **On an S3-compatible store the upload target is explicit**, a setting saying whether the store accepts presigned
+  POST (MinIO does, R2 does not), never guessed from the endpoint. Rejected: refusing it always, which would take
+  browser upload from stores that support it.
+
+## `s3-compatible` storage choice (2026-11-19, `feat/storage-s3-compatible`)
+
+Built from `.claude/future-tasks/resolved/storage-s3-compatible-choice.md` (ADR-0015, second addendum). Decisions taken
+in building it:
+
+- **`STORAGE_UPLOAD_TARGET` is a required setting of the choice, `post` or `none`.** The brief proposed the setting and
+  left its default open. Either default is a guess that fails only when a browser first uploads: `post` on R2 fails at
+  the first upload, `none` on MinIO silently drops a feature it has. Requiring it makes it the sixth variable of the
+  choice, which costs nobody anything: the choice is new. Rejected: optional with a default of either.
+- **A new `createCompatibleStorage` beside `createRealStorage`, which is unchanged.** The `s3` choice takes the bucket
+  and the AWS region and must keep doing so. Rejected: widening `createRealStorage`'s parameters, which would make one
+  function behave differently by which of them is set (the switch rule again).
+- **Values that choose behaviour are checked where the adapter is built, and a wrong one fails at boot naming its
+  variable**: `STORAGE_UPLOAD_TARGET` outside `post` and `none`, `STORAGE_FORCE_PATH_STYLE` outside `true` and `false`
+  (an empty value is unset), `STORAGE_ENDPOINT` that is not an http(s) URL. Rejected: coercing (`TRUE`, `1`), which turns a
+  typo into the other behaviour. `assertRealEnv` runs the same checks (below), after it has reported what is missing.
+- **`STORAGE_FORCE_PATH_STYLE` unset leaves the SDK's own addressing**, never derived from the endpoint or the provider.
+  MinIO needs `true`, and the adopter reference says so.
+- **With `none`, `createUploadTarget` throws a plain `Error` naming `STORAGE_UPLOAD_TARGET`**, as the absent port
+  throws, so a route that reaches it answers 500 and the log says which setting to change. Rejected: a port error class
+  `withPortErrors` maps, since a deployment's declaration is a misconfiguration to the route that hits it, not a request
+  the client can fix.
+- **`SssbApp` sets only the switch for `s3-compatible`.** The endpoint, region and keys are the deployment's to add to
+  `app.server`, and the construct never handles a secret. Rejected: new
+  `SssbApp` props for the store's settings, which would put the key in a stack's template.
+- **Three cutover rows**, two for the groups of settings the choice's `env` map names (`storage-compatible-store`,
+  `storage-compatible-credentials`) and one for the live check (`storage-compatible-live`), which asks a round trip of
+  every other port method against a real bucket on the chosen store. Rejected: one row for all six variables, which
+  would make a missing key and a missing endpoint the same row, and reusing `cloud-accounts`, which says AWS.
+- **The PUT form of the upload target is its own future task**, `storage-upload-target-put-form.md`, with `put` named as
+  a third value of the same setting.
+- **The compatible client sets `requestChecksumCalculation` and `responseChecksumValidation` to `WHEN_REQUIRED`; the
+  `s3` choice keeps the SDK's default.** The default (since SDK v3.729) puts CRC32 on every PutObject, and Cloudflare tells
+  R2 users to turn it down. It is not a full answer: DeleteObjects requires a checksum, so it still sends CRC32 and no
+  Content-MD5 (measured against the installed SDK), which a store that insists on MD5 would refuse. Rejected: a
+  middleware that adds Content-MD5 to DeleteObjects, a guess about stores nothing here can call; the live cutover row
+  runs `delete` against the real store and says what to look for. `S3StorageOptions` gains the two settings, optional.
+- **The values that choose behaviour are checked in `storage-settings.ts`, which loads no SDK, by the adapter and by
+  `assertRealEnv`**, so `sssb check-real-env` refuses what the server would refuse at boot, as a `CutoverPendingError`
+  naming `storage-compatible-store`. Rejected: checking only in the adapter, which let the preflight say "complete"
+  for a value that stops the server. An endpoint carrying a user or password is refused and its error never repeats it;
+  the upload-target and path-style errors do repeat their values, which are not secrets.
+- **The apps' `params.ports.storage` type is widened to include `s3-compatible`**, the starter's too, so an adopter's
+  generated app accepts the choice without editing the cast.
+
+## The Postgres family's groundwork (2026-11-19, `feat/db-postgres-family`)
+
+ADR-0015's second addendum, point 3, built from `db-postgres-family-groundwork.md`. Decisions its "proposed" details
+left to the builder:
+
+- **The family is two internal modules, split by who imports them.** The runtime half,
+  `packages/kit/src/db/family.ts` (`DbFamily`, exported as `family`): the dialect helpers (`json`, `lockRow`,
+  `currentTime`, `keysetSlice`), the `isolation` and the tenant scope (`runWithTenant`), which the data modules and the
+  transports import on the request path. The suite half, `packages/kit/src/db/family-suite.ts` (`DbFamilySuite`,
+  `familySuite`): loaders for the migrations, the migrator and the proof runner, imported only by the conformance
+  suite and the contract runner. Both reference today's modules where they stand. Rejected: the loaders on the runtime
+  object, as first built: a bundler follows a literal `import()`, so a server build took in the proof suite and the
+  app's own `rls-proofs.ts`, which review measured on the starter's module graph. Neither is in `exports`. Rejected: a
+  published subpath, which no adopter needs before a second family, and adding one is a deliberate act
+  (`sssb/public-surface`).
+- **The data modules reach the family through a module-level `family`, which is Postgres.** Rejected: a `family`
+  member on `DbPort` now, a second break for every double before a second family exists to need it. Choosing the
+  family from the app's declaration arrives with the second family, which may move it onto the port.
+- **The keyset helper takes the whole slice** (cursor window, ordering, the `keyset_at` rendering and the limit), and
+  `keyset.ts` keeps the paging (the clamp, the probe row, the cursor). Rejected: one helper per SQL fragment, which
+  would still leave a raw `id` ordering and the `sql.ref` in the generic module.
+- **`DbPort.isolation` is required.** The three Postgres transports and the proof runner's port declare the family's
+  `'rls'`; the doubles in the showcase and the kit say `'rls'`; the changeset files `minor`, Kind seam, Action
+  required. Rejected: optional, with an absent declaration meaning `'rls'`, which is an implied guarantee, the thing
+  the addendum says SSSB never leaves.
+- **`DbIsolation` is `'rls'` alone.** Rejected: the four candidate arrangements as values now, which would let a port
+  declare a guarantee with no mechanism or proof behind it.
+- **The fence is a repository test, `tests/lint/db-family-fence.test.ts`**, reading every module `@sssb/kit` ships
+  with the TypeScript parser: a raw `sql` (by any name, re-export, namespace or dynamic import of `kysely`),
+  `CompiledQuery`, a row lock (called, destructured or named), the jsonb module. Exempt by exact path, each with its
+  reason; a stale exemption fails. It also holds the runtime half's import closure to Kysely, `jsonb.ts` and
+  `with-tenant.ts` (a computed `import()` fails it), and the suite half to its two importers. Tests and stories are out
+  of scope: they do not ship, and a test of the family's SQL has to write it. Rejected: a
+  `sssb/*` rule in `@sssb/eslint-plugin`, which ships to every adopter for a fence that holds only this repository's
+  framework tree.
+- **The SQL is shown unchanged two ways**: `packages/kit/src/db/family.test.ts` compiles each helper's query beside
+  the inline form its call site wrote and compares text and parameters; and the 407 distinct statements pglite
+  received across the kit's db tests, the conformance suites and both apps' route and domain tests were recorded
+  before the change and at its final commit, and were identical.
+- **`sssb doctor` does not print the isolation yet.** With one family it is a constant. Proposed for the second family:
+  the app declares its family in its `package.json`'s `sssb` block, which doctor already reads (the port slot), and the
+  conformance suite holds that declaration to the port's `isolation`, so doctor never boots the adapter registry.
+  Rejected: printing `rls` today, which reads as a choice the app made.

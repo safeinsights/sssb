@@ -7,7 +7,7 @@ import {
     isNotificationKind,
 } from '../core/notifications'
 import type { DbPort } from '../ports/db'
-import { jsonb } from './jsonb'
+import { family } from './family'
 import { toIso } from './jobs'
 
 /**
@@ -45,7 +45,7 @@ export async function insertNotification(
                 org_id: input.orgId,
                 recipient_user_id: input.recipientUserId,
                 kind: input.kind,
-                payload: jsonb(input.payload),
+                payload: family.json(input.payload),
             })
             .returning('id')
             .executeTakeFirstOrThrow(),

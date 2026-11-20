@@ -40,9 +40,9 @@ export const params = {
     },
     ports: {
         // Which of SSSB's optional ports this app uses in a deployment; infra/ (SssbApp) sets LLM_PROVIDER,
-        // EMAIL_PROVIDER, INBOUND_EMAIL_PROVIDER and JOBS_RUNNER from it. `none` leaves the port absent: real mode
-        // requires none of its settings (and its cutover row does not apply), and a call through it fails naming the
-        // switch. Never fill an unused port's settings with placeholder values instead.
+        // EMAIL_PROVIDER, INBOUND_EMAIL_PROVIDER, JOBS_RUNNER and STORAGE_PROVIDER from it. `none` leaves the port
+        // absent: real mode requires none of its settings (and its cutover row does not apply), and a call through it
+        // fails naming the switch. Never fill an unused port's settings with placeholder values instead.
         // cutover: llm-key — the assistant
         llm: 'anthropic' as 'anthropic' | 'none',
         // cutover: email-outbound — invitations, notifications, digests
@@ -52,6 +52,8 @@ export const params = {
         // cutover: job-runner — 'codebuild' (a build per job, completed through /api/webhooks/jobs), 'in-process'
         // (the job's handler runs in the server, within its time limit), or 'none'
         jobs: 'codebuild' as 'codebuild' | 'in-process' | 'none',
+        // cutover: cloud-accounts — attachments, uploads, the ticket export's artifacts
+        storage: 's3' as 's3' | 's3-compatible' | 'none',
     },
     clerk: {
         // cutover: auth-dev (development instance), auth-prod (production instance)

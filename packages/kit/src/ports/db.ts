@@ -2,12 +2,31 @@ import type { Kysely, Transaction } from 'kysely'
 import type { DB } from '../db/schema'
 
 /**
+ * How a database adapter keeps one tenant's rows from another's (ADR-0015, second addendum, point 3).
+ *
+ * - `'rls'`: row-level security. Every tenant table's policy compares `tenant_id` with the tenant `withTenant` set for
+ *   the transaction, under a role that cannot bypass it, proven by the isolation proof suite on pglite and on real
+ *   Postgres (ADR-0004). Every transport SSSB ships declares it.
+ *
+ * Other arrangements (a database per tenant, a single-tenant deployment, an unenforced filter chosen by name) join this
+ * union with the database family that has the mechanism and the proofs for them, never before: a declared guarantee
+ * with nothing behind it is not allowed.
+ */
+export type DbIsolation = 'rls'
+
+/**
  * Database port (ADR-0002, ADR-0004). All tenant-scoped access goes through withTenant, which
  * runs fn inside a transaction whose first statements set the app_user role and tenant context —
  * RLS does the enforcement, not query discipline. The raw db handle is for tenant-less tables
  * and infrastructure work only.
  */
 export interface DbPort {
+    /**
+     * The tenant isolation this adapter gives, declared rather than implied. Required: an adapter that does not say
+     * how it isolates tenants is not one SSSB can make a promise about. A test double states the guarantee of the
+     * adapter it stands in for (`'rls'` for any of SSSB's).
+     */
+    readonly isolation: DbIsolation
     getDb(): Kysely<DB>
     withTenant<T>(tenantId: string, fn: (trx: Transaction<DB>) => Promise<T>): Promise<T>
     /** Resolves once the database is usable (fake: migrated + seeded). Await before raw getDb reads. */

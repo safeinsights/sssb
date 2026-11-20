@@ -10,6 +10,7 @@ import { isRestricted, isRole, type Role } from '../../core/roles'
 import type {
     AuthPort,
     AuthUser,
+    CreatedInvite,
     InviteInput,
     Membership,
     MemberStanding,
@@ -282,7 +283,7 @@ export const fakeAuth: AuthPort = {
         return { role: membership.role, restricted: isRestricted(person.restricted, membership.role) }
     },
 
-    async createInvite(invite: InviteInput): Promise<Membership> {
+    async createInvite(invite: InviteInput): Promise<CreatedInvite> {
         if (!isRole(invite.role)) throw new ForbiddenError('unknown role')
         const stored: StoredInvite = {
             id: crypto.randomUUID(),
@@ -292,7 +293,17 @@ export const fakeAuth: AuthPort = {
             invitedAt: new Date().toISOString(),
         }
         await writeJsonAtomic(invitesFile(), [...readInvites(), stored])
-        return { id: stored.id, name: null, email: stored.email, role: stored.role, status: 'invited' }
+        // The accept page finds the invitation by its id (`findInvite`).
+        const acceptUrl = new URL(invite.acceptPageUrl)
+        acceptUrl.searchParams.set('invite', stored.id)
+        return {
+            id: stored.id,
+            name: null,
+            email: stored.email,
+            role: stored.role,
+            status: 'invited',
+            acceptUrl: acceptUrl.toString(),
+        }
     },
 
     async listMyOrgs(): Promise<OrgRef[]> {

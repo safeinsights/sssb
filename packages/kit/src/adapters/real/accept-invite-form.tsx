@@ -1,15 +1,18 @@
 'use client'
 
-import { useSignUp } from '@clerk/nextjs'
+import { useAuth, useSignIn, useSignUp } from '@clerk/nextjs'
 import { Stack, Text } from '@mantine/core'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /**
- * Clerk ticket-strategy sign-up (ADR-0003): at cutover, Clerk organization invitations carry a
- * `__clerk_ticket` query param onto this page's URL instead of the fake email's plain
- * `/accept-invite?invite=<id>` link. sign-in-form.tsx is the reference for the v7 signals API
- * (signIn.password() → status → finalize()) — the sign-up equivalent used here is
- * signUp.ticket() → status → finalize(), per @clerk/shared's SignUpFutureResource.
+ * Clerk ticket-strategy acceptance (ADR-0003): the invitation mail carries Clerk's invitation URL (./auth.ts
+ * `createInvite`), and Clerk sends the invitee on to this page with `__clerk_ticket` and `__clerk_status` query
+ * params, where the fake's link carries `?invite=<id>`. Clerk's guide to accepting organization invitations: a status
+ * of `sign_in` means the invitee already has an account, and takes a ticket sign-in; `sign_up` (or none), a ticket
+ * sign-up; `complete`, that Clerk accepted it already, so the form only redirects; any other is shown as the error.
+ * sign-in-form.tsx is the reference for the v7 signals API (signIn.password() → status → finalize()); here it is
+ * signIn.ticket() or signUp.ticket() → status → finalize(), per @clerk/shared's SignInFutureResource and
+ * SignUpFutureResource.
  *
  * AUTHORED — CUTOVER (`auth-dev`): never run against a real Clerk instance. Verify the full
  * ticket round-trip once a dev Clerk instance issues real invitation tickets (see
@@ -21,30 +24,64 @@ import { useEffect, useState } from 'react'
  */
 export function RealAcceptInviteForm({
     ticket,
+    status = null,
     redirectTo,
     labels,
 }: {
     ticket: string | null
+    /**
+     * Clerk's `__clerk_status` from the page's URL: `sign_in` for an invitee who already has an account, `sign_up` for
+     * one who has none, `complete` when Clerk accepted the invitation itself (the invitee was already signed in).
+     */
+    status?: string | null
     redirectTo: string
     labels: AcceptInviteTicketLabels
 }) {
-    const { signUp, fetchStatus } = useSignUp()
+    const { isLoaded } = useAuth()
+    const { signUp, fetchStatus: signUpFetch } = useSignUp()
+    const { signIn, fetchStatus: signInFetch } = useSignIn()
     const [error, setError] = useState<string | null>(null)
     const [accepted, setAccepted] = useState(false)
+    const plan = planFor(status)
+    const fetchStatus = plan === 'sign-in' ? signInFetch : signUpFetch
+
+    // A ticket is single-use, so it is submitted once. The resources change identity as Clerk loads, so the effect
+    // reads the current ones through a ref rather than depending on them (a dependency would run it again), starts
+    // only once Clerk has loaded, and remembers what it started.
+    const flows = useRef({ signIn, signUp })
+    useEffect(() => {
+        flows.current = { signIn, signUp }
+    })
+    const started = useRef<string | null>(null)
 
     useEffect(() => {
-        if (!ticket) return
-        // Driving an external SDK call on mount (Clerk's ticket-strategy sign-up) is the
+        if (!isLoaded || (plan !== 'accepted' && !ticket)) return
+        const key = `${plan}:${ticket ?? ''}`
+        if (started.current === key) return
+        started.current = key
+        // Driving an external SDK call on mount (Clerk's ticket strategy) is the
         // legitimate "sync with an external system" case the set-state-in-effect rule guards —
         // same as the Simulator glue's fetch-on-mount effects.
         void (async () => {
-            const { error: ticketError } = await signUp.ticket({ ticket })
+            if (plan === 'accepted') {
+                setAccepted(true)
+                window.location.assign(redirectTo)
+                return
+            }
+            if (plan === 'unknown' || !ticket) {
+                setError(labels.genericError)
+                return
+            }
+            const { signIn: currentSignIn, signUp: currentSignUp } = flows.current
+            const flow = plan === 'sign-in' ? currentSignIn : currentSignUp
+            const { error: ticketError } =
+                plan === 'sign-in' ? await currentSignIn.ticket({ ticket }) : await currentSignUp.ticket({ ticket })
             if (ticketError) {
                 setError(labels.genericError)
                 return
             }
-            if (signUp.status === 'complete') {
-                const finalized = await signUp.finalize()
+            if (flow.status === 'complete') {
+                const finalized = await flow.finalize()
                 if (finalized.error) {
                     setError(labels.genericError)
                     return
@@ -55,9 +92,9 @@ export function RealAcceptInviteForm({
                 setError(labels.genericError)
             }
         })()
-    }, [ticket, signUp, redirectTo, labels.genericError])
+    }, [isLoaded, plan, ticket, redirectTo, labels.genericError])
 
-    if (!ticket) return <Text c="gray.7">{labels.missingTicket}</Text>
+    if (!ticket && plan !== 'accepted') return <Text c="gray.7">{labels.missingTicket}</Text>
 
     return (
         <Stack gap="sm">
@@ -67,6 +104,16 @@ export function RealAcceptInviteForm({
             {error ? <Text c="red.8">{error}</Text> : null}
         </Stack>
     )
+}
+
+type Plan = 'sign-in' | 'sign-up' | 'accepted' | 'unknown'
+
+/** What Clerk's `__clerk_status` asks of the form. A missing status is a sign-up, as before the status was read. */
+function planFor(status: string | null): Plan {
+    if (status === 'complete') return 'accepted'
+    if (status === 'sign_in') return 'sign-in'
+    if (status === null || status === 'sign_up') return 'sign-up'
+    return 'unknown'
 }
 
 export interface AcceptInviteTicketLabels {

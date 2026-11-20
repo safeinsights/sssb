@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeTestTmpDir } from '../../testing/tmp-dir'
 import { DATABASE_TRANSPORTS } from './database-transport'
 import { OPTIONAL_PORTS } from './optional-ports'
 
@@ -16,11 +17,18 @@ import { OPTIONAL_PORTS } from './optional-ports'
  * reach for vendor SDKs this test has no reason to load. `./db` is the real one (a pg Pool connects
  * lazily, so building it is offline).
  */
-const loaded = vi.hoisted(() => ({ rdsDataSdk: 0, dataApiTransport: 0, llm: 0, email: 0, codebuild: 0, inProcess: 0 }))
+const loaded = vi.hoisted(() => ({
+    rdsDataSdk: 0,
+    dataApiTransport: 0,
+    llm: 0,
+    email: 0,
+    codebuild: 0,
+    inProcess: 0,
+    storage: 0,
+}))
 
 vi.mock('./auth', () => ({ realAuth: {} }))
-vi.mock('./storage', () => ({ createRealStorage: () => ({}) }))
-vi.mock('./analytics', () => ({ createRealAnalytics: () => ({}) }))
+vi.mock('./analytics', () => ({ createRealAnalytics: () => ({ kind: 'posthog' }) }))
 
 const COMMON_ENV = {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'pk',
@@ -73,6 +81,13 @@ beforeEach(() => {
     vi.doMock('./jobs', () => {
         loaded.codebuild += 1
         return { createRealJobs: () => ({ kind: 'codebuild' }) }
+    })
+    vi.doMock('./storage', () => {
+        loaded.storage += 1
+        return {
+            createRealStorage: () => ({ kind: 's3' }),
+            createCompatibleStorage: (settings: object) => ({ kind: 's3-compatible', settings }),
+        }
     })
     // The registry builds the in-process runner; this module must never load it (a counter that stays 0).
     vi.doMock('./jobs-in-process', () => {
@@ -127,23 +142,39 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
         stubEnv({ DATABASE_TRANSPORT: 'pg' })
         expect(() => assertRealEnv()).toThrow(/cloud-accounts.*DATABASE_URL/s)
     })
+
+    it('the Data API transport requires AWS_REGION even when no optional port calls AWS; pg does not', async () => {
+        const { assertRealEnv } = await import('./index')
+        const awsFree = { JOBS_RUNNER: 'in-process', STORAGE_PROVIDER: 'none', AWS_REGION: undefined }
+        stubEnv({ DATABASE_TRANSPORT: 'data-api', ...DATA_API_ENV, ...awsFree })
+        expect(() => assertRealEnv()).toThrow(/cloud-accounts.*Missing env: AWS_REGION\. /s)
+        stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
+        expect(() => assertRealEnv()).not.toThrow()
+    })
 })
 
 describe('the optional ports follow their switches, and a port switched off is absent', () => {
     const PG = { DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' }
     const ALL_OFF = Object.fromEntries(Object.values(OPTIONAL_PORTS).map(({ variable }) => [variable, 'none']))
     const OPTIONAL_SETTINGS = ['ANTHROPIC_API_KEY', 'MAILGUN_DOMAIN', 'MAILGUN_API_KEY', 'EMAIL_FROM']
-    const OPTIONAL_SETTINGS_ALL = [...OPTIONAL_SETTINGS, 'MAILGUN_WEBHOOK_SIGNING_KEY', 'JOBS_CODEBUILD_PROJECT']
+    const OPTIONAL_SETTINGS_ALL = [
+        ...OPTIONAL_SETTINGS,
+        'MAILGUN_WEBHOOK_SIGNING_KEY',
+        'JOBS_CODEBUILD_PROJECT',
+        'STORAGE_BUCKET',
+        'AWS_REGION',
+    ]
 
     it('unset switches are the defaults: every optional port is on, as before the switches', async () => {
         stubEnv(PG)
         const { createRealPorts } = await import('./index')
         const ports = await createRealPorts(HOOKS)
-        expect(loaded).toMatchObject({ llm: 1, email: 1, codebuild: 1, inProcess: 0 })
-        expect([ports.llm, ports.email, ports.jobs]).toEqual([
+        expect(loaded).toMatchObject({ llm: 1, email: 1, codebuild: 1, inProcess: 0, storage: 1 })
+        expect([ports.llm, ports.email, ports.jobs, ports.storage]).toEqual([
             { kind: 'anthropic' },
             { kind: 'mailgun' },
             { kind: 'codebuild' },
+            { kind: 's3' },
         ])
         await ports.db.getDb().destroy()
     })
@@ -154,7 +185,7 @@ describe('the optional ports follow their switches, and a port switched off is a
         const { createRealPorts } = await import('./index')
         const { AbsentPortError } = await import('./absent')
         const ports = await createRealPorts(HOOKS)
-        expect(loaded).toMatchObject({ llm: 0, email: 0, codebuild: 0, inProcess: 0 })
+        expect(loaded).toMatchObject({ llm: 0, email: 0, codebuild: 0, inProcess: 0, storage: 0 })
         const job = { id: 'j', kind: 'k', tenantId: 't', orgId: null, payload: {} }
         const message = { to: 'a@example.com', subject: 's', html: 'h', text: 't' }
         await expect(ports.llm.complete({ messages: [] } as never)).rejects.toThrow(AbsentPortError)
@@ -163,7 +194,109 @@ describe('the optional ports follow their switches, and a port switched off is a
         await expect(ports.llm.runToolLoop({} as never)).rejects.toThrow(/LLM_PROVIDER=none/)
         await expect(ports.email.send(message)).rejects.toThrow(/the email port is absent.*EMAIL_PROVIDER=none/)
         await expect(ports.jobs.start(job)).rejects.toThrow(/the jobs port is absent.*JOBS_RUNNER=none.*job-runner/)
+        // Every storage method, each named so a missing one is the failure's own line.
+        const storageCalls: Record<keyof typeof ports.storage, () => Promise<unknown>> = {
+            put: () => ports.storage.put('k', 'body', 'text/plain'),
+            get: () => ports.storage.get('k'),
+            getSignedDownloadUrl: () => ports.storage.getSignedDownloadUrl('k'),
+            createUploadTarget: () => ports.storage.createUploadTarget('k', { contentType: 'text/plain', maxBytes: 1 }),
+            list: () => ports.storage.list(''),
+            delete: () => ports.storage.delete(['k']),
+            copy: () => ports.storage.copy('a', 'b'),
+            head: () => ports.storage.head('k'),
+        }
+        for (const [method, call] of Object.entries(storageCalls)) {
+            await expect(call(), method).rejects.toThrow(AbsentPortError)
+            await expect(call(), method).rejects.toThrow(/the storage port is absent.*STORAGE_PROVIDER=none/)
+        }
         await ports.db.getDb().destroy()
+    })
+
+    describe('STORAGE_PROVIDER=s3-compatible', () => {
+        const COMPATIBLE = {
+            ...PG,
+            STORAGE_PROVIDER: 's3-compatible',
+            JOBS_RUNNER: 'in-process',
+            STORAGE_BUCKET: 'media',
+            STORAGE_ENDPOINT: 'https://acct123.r2.example.com',
+            STORAGE_REGION: 'auto',
+            STORAGE_ACCESS_KEY_ID: 'key-id',
+            STORAGE_SECRET_ACCESS_KEY: 'key-secret',
+            STORAGE_UPLOAD_TARGET: 'none',
+            // What `s3` would read, and what Lambda reserves: neither is used, nor required.
+            AWS_REGION: undefined,
+            STORAGE_FORCE_PATH_STYLE: undefined,
+        }
+
+        it('builds the adapter on the store’s own settings, never on AWS_REGION or the AWS key pair', async () => {
+            stubEnv({ ...COMPATIBLE, STORAGE_FORCE_PATH_STYLE: 'true', AWS_ACCESS_KEY_ID: 'lambda-role-key' })
+            const { createRealPorts } = await import('./index')
+            const ports = await createRealPorts(HOOKS)
+            expect(loaded.storage).toBe(1)
+            expect(ports.storage).toEqual({
+                kind: 's3-compatible',
+                settings: {
+                    bucket: 'media',
+                    endpoint: 'https://acct123.r2.example.com',
+                    region: 'auto',
+                    accessKeyId: 'key-id',
+                    secretAccessKey: 'key-secret',
+                    uploadTarget: 'none',
+                    forcePathStyle: 'true',
+                },
+            })
+            await ports.db.getDb().destroy()
+        })
+
+        it('fails at boot without its settings, naming each missing one and the rows that hold them', async () => {
+            const { assertRealEnv } = await import('./index')
+            stubEnv({ ...COMPATIBLE, STORAGE_ENDPOINT: undefined, STORAGE_SECRET_ACCESS_KEY: undefined })
+            expect(() => assertRealEnv()).toThrow(
+                /storage-compatible-store, storage-compatible-credentials.*Missing env: STORAGE_ENDPOINT, STORAGE_SECRET_ACCESS_KEY\. /s,
+            )
+            for (const name of [
+                'STORAGE_BUCKET',
+                'STORAGE_ENDPOINT',
+                'STORAGE_REGION',
+                'STORAGE_ACCESS_KEY_ID',
+                'STORAGE_SECRET_ACCESS_KEY',
+                'STORAGE_UPLOAD_TARGET',
+            ]) {
+                stubEnv({ ...COMPATIBLE, [name]: undefined })
+                expect(() => assertRealEnv(), name).toThrow(new RegExp(`Missing env: ${name}\\. `))
+            }
+        })
+
+        it('leaves STORAGE_FORCE_PATH_STYLE optional, and the upload target explicit rather than defaulted', async () => {
+            const { assertRealEnv } = await import('./index')
+            stubEnv({ ...COMPATIBLE, STORAGE_FORCE_PATH_STYLE: undefined })
+            expect(() => assertRealEnv()).not.toThrow()
+            stubEnv({ STORAGE_UPLOAD_TARGET: '' })
+            expect(() => assertRealEnv()).toThrow(/Missing env: STORAGE_UPLOAD_TARGET\. /)
+        })
+
+        it('refuses at preflight what the adapter would refuse at boot: a present value is not enough', async () => {
+            const { assertRealEnv } = await import('./index')
+            stubEnv(COMPATIBLE)
+            expect(() => assertRealEnv()).not.toThrow()
+            for (const [name, value, message] of [
+                ['STORAGE_UPLOAD_TARGET', 'POST', /STORAGE_UPLOAD_TARGET must be post or none/],
+                ['STORAGE_FORCE_PATH_STYLE', '1', /STORAGE_FORCE_PATH_STYLE must be true or false/],
+                ['STORAGE_ENDPOINT', 'acct.r2.example.com', /STORAGE_ENDPOINT must be an http\(s\) URL/],
+            ] as const) {
+                stubEnv({ ...COMPATIBLE, [name]: value })
+                expect(() => assertRealEnv(), name).toThrow(message)
+                // The form check-real-env prints, with the row that holds the setting.
+                expect(() => assertRealEnv(), name).toThrow(/open cutover items: storage-compatible-store\./)
+            }
+        })
+
+        it('is its own choice: the `s3` settings do not select it, nor its settings select it', async () => {
+            const { assertRealEnv } = await import('./index')
+            // Every store setting present, switch unset: still `s3`, which wants AWS_REGION.
+            stubEnv({ ...COMPATIBLE, STORAGE_PROVIDER: undefined })
+            expect(() => assertRealEnv()).toThrow(/Missing env: AWS_REGION\. /)
+        })
     })
 
     it('JOBS_RUNNER=in-process needs no CodeBuild project and never loads the CodeBuild runner', async () => {
@@ -203,6 +336,7 @@ describe('the optional ports follow their switches, and a port switched off is a
             ['EMAIL_PROVIDER', 'off'],
             ['INBOUND_EMAIL_PROVIDER', 'ses'],
             ['JOBS_RUNNER', 'lambda'],
+            ['STORAGE_PROVIDER', 'gcs'],
         ] as const) {
             stubEnv({ ...PG, [variable]: value })
             expect(() => assertRealEnv(), variable).toThrow(
@@ -216,6 +350,8 @@ describe('the optional ports follow their switches, and a port switched off is a
         const { assertRealEnv } = await import('./index')
         stubEnv({ ...PG, ...ALL_OFF, EMAIL_PROVIDER: 'mailgun', MAILGUN_API_KEY: undefined })
         expect(() => assertRealEnv()).toThrow(/email-outbound.*Missing env: MAILGUN_API_KEY\. /s)
+        stubEnv({ EMAIL_PROVIDER: 'none', STORAGE_PROVIDER: 's3', STORAGE_BUCKET: undefined, AWS_REGION: undefined })
+        expect(() => assertRealEnv()).toThrow(/cloud-accounts.*Missing env: STORAGE_BUCKET, AWS_REGION\. /s)
     })
 })
 
@@ -294,7 +430,44 @@ describe('the required environment', () => {
         expect(source).not.toMatch(/\bneed\(\s*[^'\s)]/) // a name not written as a literal could not be checked here
         const required = new Set<string>()
         for (const transport of DATABASE_TRANSPORTS) for (const name of await requiredOn(transport)) required.add(name)
+        // Variables only a non-default choice reads (`s3-compatible`'s) count too.
+        for (const choices of Object.values(await requiredByPorts()))
+            for (const names of Object.values(choices)) for (const name of names) required.add(name)
         expect(needed.filter((name) => !required.has(name))).toEqual([])
+    })
+})
+
+/**
+ * Analytics in a real deployment without `POSTHOG_KEY`. It used to be the simulated world's fake, which writes every
+ * capture and reads every flag under `.data/` in the working directory: on Lambda that is inside the deployment
+ * package (Next's standalone server changes to its own directory), which is read-only, so sending an invite (which
+ * awaits a capture) would most likely fail in any deployment without a key. It is now a no-op
+ * that touches no file. The data directory here cannot be created (its parent is a file), as `.data` cannot be in a
+ * read-only directory, so a single filesystem write fails the test.
+ */
+describe('analytics in real mode', () => {
+    const PG = { DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' }
+
+    it('without a key captures nothing, answers every flag with its default, and touches no file', async () => {
+        const dir = makeTestTmpDir('real-analytics-')
+        const blocker = path.join(dir, 'a-file')
+        writeFileSync(blocker, '')
+        stubEnv({ ...PG, POSTHOG_KEY: undefined, APP_DATA_DIR: path.join(blocker, 'data') })
+        const { createRealPorts } = await import('./index')
+        const ports = await createRealPorts(HOOKS)
+        await expect(ports.analytics.capture('org_invite_sent', { role: 'member' }, 'user-1')).resolves.toBeUndefined()
+        await expect(ports.analytics.isFlagEnabled('demo-banner')).resolves.toBe(false)
+        await expect(ports.analytics.isFlagEnabled('demo-banner', true)).resolves.toBe(true)
+        expect(readdirSync(dir)).toEqual(['a-file'])
+        await ports.db.getDb().destroy()
+    })
+
+    it('with a key is the PostHog adapter', async () => {
+        stubEnv({ ...PG, POSTHOG_KEY: 'phc_test' })
+        const { createRealPorts } = await import('./index')
+        const ports = await createRealPorts(HOOKS)
+        expect(ports.analytics).toEqual({ kind: 'posthog' })
+        await ports.db.getDb().destroy()
     })
 })
 
@@ -327,6 +500,8 @@ describe('the real ports, as the dev:real preflight bundles them', () => {
         expect(
             reached.filter((file) => /adapters[\\/]index\.ts$|server-lib[\\/]|app-config[\\/]jobs/.test(file)),
         ).toEqual([])
+        // Nor a fake adapter: a real deployment never serves one (the keyless analytics case above is why).
+        expect(reached.filter((file) => /adapters[\\/]fake[\\/]/.test(file))).toEqual([])
     })
 })
 
@@ -334,7 +509,7 @@ describe('the real ports, as the dev:real preflight bundles them', () => {
  * What a deployment loads as the real ports load, before it has chosen anything: the vendor SDKs `adapters/real/index`
  * reaches by static imports alone. None of the SDKs a choice brings (a database transport's, PostHog's, an optional
  * port's, named in `CHOSEN`) may be among them; Clerk's must be, which shows the walk saw the auth adapter. Those
- * load only when chosen (dynamic imports); auth (Clerk) and storage (S3) serve every deployment.
+ * load only when chosen (dynamic imports), storage's S3 SDK among them; auth (Clerk) serves every deployment.
  * And the Data API transport, once chosen, loads no `pg`. Read from esbuild's account of the bundle, following static
  * edges only.
  */
@@ -375,7 +550,7 @@ describe('the vendor SDKs the real ports load before anything is chosen', () => 
 
     // The SDK of each choice a deployment makes: never loaded until it makes it.
     const CHOSEN =
-        /^(pg|posthog-node|@aws-sdk\/client-rds-data|@anthropic-ai\/sdk|mailgun\.js|@aws-sdk\/client-codebuild)(\/|$)/
+        /^(pg|posthog-node|@aws-sdk\/client-rds-data|@anthropic-ai\/sdk|mailgun\.js|@aws-sdk\/client-codebuild|@aws-sdk\/client-s3|@aws-sdk\/s3-request-presigner|@aws-sdk\/s3-presigned-post)(\/|$)/
 
     it('include none that a choice brings', async () => {
         const packages = await staticPackages('index.ts')

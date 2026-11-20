@@ -33,7 +33,7 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   parameters from `config/params.ts`, the run mode from `isSimulated`.
 - Deployment and service parameters exist only in `config/params.ts`. Secret values never enter the repository.
 - Declare which of SSSB's optional ports the app uses in `config/params.ts`'s `ports` (`llm`, `email`, `inboundEmail`,
-  `jobs`). A port the app does not use is `none`, never configured with placeholder values.
+  `jobs`, `storage`). A port the app does not use is `none`, never configured with placeholder values.
 - A job handler never reads the seed (`@sssb/app-config/seed`), which a deployment does not have: it finds people with
   `ctx.auth.listMembers(orgSlug)`, and a person's locale with `ctx.resolveLocale`, where the runner provides one.
 - `pnpm dev` stays hermetic: no docker, no credentials, no network. Never add `next/font/google`, telemetry, or
@@ -47,6 +47,11 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   matcher leaves those out, as static files), and Next buffers at most `proxyClientMaxBodySize` (10MB by default) of a
   body the proxy sees, so an upload limit above it raises
   `experimental.proxyClientMaxBodySize` in `next.config.ts` too.
+- The locale layout (`src/app/[locale]/layout.tsx`) mounts `RealAuthProviders` from
+  `@sssb/kit/adapters/real/providers` in real mode, loaded with `import()` when `!isSimulated`: SSSB's real
+  sign-in and invite forms call the auth provider's client hooks, which throw outside it. The conformance suite's
+  `real-auth-provider` check fails a page that reaches one of those forms through its imports unless a layout or
+  template wrapping it reaches the provider.
 
 ## Data
 

@@ -28,8 +28,14 @@ it writes by hand, a URL it stores. Relative URLs, and Next's own `redirect('/pa
 - `packages/kit/src/adapters/real/clerk-proxy.ts` builds a `NextRequest` from `request.url` to hand to Clerk's
   middleware. Clerk derives its own URL from the forwarded headers it is also given; whether anything in that path
   still uses the URL's host should be checked when this task is picked up.
-- Nothing in the kit or the starter builds an absolute public URL today (searched: `request.url`, `nextUrl.origin`,
-  `headers.get('host')`).
+- `packages/kit/src/server-lib/invite.ts` builds the accept page's absolute URL from the `baseUrl` its caller passes,
+  which the showcase's invite route takes from `request.url`. In real mode nothing public is built from it: the Clerk
+  adapter hands Clerk only its path (`packages/kit/src/adapters/real/auth.ts`, `createInvite`), and the mail carries
+  Clerk's own invitation URL. The fake's link is built from it, which is right only because the simulated world runs
+  on the URL it is served from. (Corrected 2026-11-19, `fix/realmode-invite-link`: this line used to say nothing in
+  the kit built an absolute public URL, which `invite.ts` already did.)
+- Nothing else in the kit or the starter builds an absolute public URL today (searched: `request.url`,
+  `nextUrl.origin`, `headers.get('host')`).
 
 ## The fix, sketched
 
