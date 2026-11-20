@@ -7340,16 +7340,25 @@ passed.
   which ties the fix to that query's node shape. Rejected: a migration provider or a Migrator that skips
   introspection, which Kysely's Migrator does not offer (it always checks for its tables). Rejected: casting in the
   driver, which cannot know a column's type before the Data API has refused it.
-- **The emulator refuses a result whose columns include `"char"` or `char(n)`**, whole, with or without rows, with the
-  Data API's exception and message (`REFUSED_RESULT_TYPES`). AWS documents no list ("The Data API doesn't support all
-  data types", its troubleshooting page), so the map is evidence: `"char"` was refused live, for a result of no rows;
-  `char(n)` is the same JDBC type (`CHAR`) in PgJDBC, on which the Data API is built, and is refused by inference. A
-  type found refused live joins it. Rejected: refusing only `"char"`, which would let a `char(n)` column pass the
-  contract run and fail live on the same evidence. Rejected: guessing further types (`name`, `void`), which the
-  contract run reads through the Data API and nothing has seen refused.
+- **The emulator refuses a result whose columns include `"char"`, `char(n)` or an array of either**, whole, with or
+  without rows, with the exception and message the Data API gave for `"char"` (`REFUSED_RESULT_TYPES`). AWS documents
+  no list ("The Data API doesn't support all data types", its troubleshooting page), so the map is evidence, read
+  strictly: `"char"` was refused live, for a result of no rows; `char(n)` is the same JDBC type (`CHAR`) in PgJDBC, on
+  which the Data API is built, and the arrays carry those elements, so both are refused by inference (wrong if the
+  error's "CHAR" is the type's own name upper-cased). The runbook's step 3 records what AWS does with each, and the map
+  follows it. Rejected: refusing only `"char"`, which would let a `char(n)` column pass the contract run and fail live
+  on the worse reading of the same evidence. Rejected: guessing further types (`name`, `void`), which the contract run
+  reads through the Data API and nothing has seen refused. The emulator refuses after the statement has run, so a
+  refused `RETURNING` keeps its write; whether AWS does is also step 3's to record.
 - **Every result type the contract run reads through the Data API was listed**: `text`, `uuid`, `_text`,
   `timestamptz`, `name`, `bool`, `jsonb`, `int4`, `varchar`, `void`, `date`, `_date`, `int8`, `_int4`, `numeric`,
   `float8`, `bytea`, `bit`, `_uuid`, an enum and its array, and `bpchar` and `_bpchar` in the parity test only. SSSB's
   own catalog reads already cast (`rls-coverage.ts` reads `relkind::text`); the conformance suite's run on pglite only.
+- **A known limit, Kysely's and now visible**: the Migrator's introspection returns one row per column of every table
+  the role can see, three or four times a run, and on the Data API a response over 1 MiB is refused. Far beyond SSSB's
+  apps (a few thousand columns, estimated), so recorded, not worked around.
+- **The gate covers what the contract run sends**: the migrations, the isolation proofs and the owner pass, through the
+  Data API. The framework's runtime queries return only its tables' columns, none of them `char`, and an app's own
+  queries are the app's, which the changeset tells adopters.
 - **The live proof is the `data-api` cutover row's smoke run**: the Migrator on an empty database, and the runbook's
   reads of the refused types (`docs/runbooks/data-api.md`, step 3).

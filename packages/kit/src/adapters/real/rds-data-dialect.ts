@@ -16,6 +16,7 @@ import {
     PostgresIntrospector,
     PostgresQueryCompiler,
     type DatabaseConnection,
+    type ColumnMetadata,
     type DatabaseIntrospector,
     type DatabaseMetadataOptions,
     type Dialect,
@@ -181,15 +182,17 @@ export class RdsDataIntrospector implements DatabaseIntrospector {
                 tables.push(table)
             }
             table.columns.push(
+                // `comment` present and undefined on an uncommented column, as Kysely's is: the cast is
+                // exactOptionalPropertyTypes', which Kysely's own type does not satisfy either.
                 Object.freeze({
-                    ...(column.column_description === null ? {} : { comment: column.column_description }),
+                    comment: column.column_description ?? undefined,
                     dataType: column.type,
                     dataTypeSchema: column.type_schema,
                     hasDefaultValue: column.has_default,
                     isAutoIncrementing: column.auto_incrementing !== null,
                     isNullable: !column.not_null,
                     name: column.column,
-                }),
+                } as ColumnMetadata),
             )
         }
         return tables

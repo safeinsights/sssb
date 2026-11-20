@@ -504,11 +504,12 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         await insert(dataApi, 'written-via-data-api')
         await insert(viaPg, 'written-via-pg')
 
-        // A `char(n)` column comes back as text: the Data API refuses a result with one (the test after this one), so
-        // what is compared for `ch` and `dc` is what was stored, and the write path is what they exercise.
+        // A `char(n)` column, or an array of them, comes back as text: the emulator refuses a result with one, as the
+        // Data API refuses a `"char"` and, by inference, these (the test after this one). So what is compared for `ch`,
+        // `cha` and `dc` is what was stored, and the write path is what they exercise.
         const read = (port: DbPort) =>
             sql<Record<string, unknown>>`
-                select k, u, t, j, ja, ts, d, da, ta, ua, i, big, n, f, b, by, nothing, ch::text as ch, bi, cha,
+                select k, u, t, j, ja, ts, d, da, ta, ua, i, big, n, f, b, by, nothing, ch::text as ch, bi, cha::text[] as cha,
                     dc::text as dc, ds, (select count(*) from data_api_parity) as total
                 from data_api_parity where u = ${values.u} and t = any(${[values.t, 'other']}) and ch = ${values.ch}
                 order by k`.execute(port.getDb())
@@ -524,11 +525,13 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         expect(withoutKey(fromPg[0]!)).toEqual(withoutKey(fromPg[1]!))
     })
 
-    test('a result with a column the Data API cannot return is refused whole, rows or none, and a text cast reads', async () => {
-        // The emulator's REFUSED_RESULT_TYPES: `"char"` (refused live) and `char(n)` (the same JDBC type, CHAR).
+    test('a result with a CHAR column ("char", char(n), their arrays) is refused whole, rows or none, and a text cast reads', async () => {
+        // The emulator's REFUSED_RESULT_TYPES: `"char"` (refused live), and `char(n)` and the arrays of both (inferred).
         for (const query of [
             sql`select 'r'::"char" as kind`,
             sql`select 'abc'::char(3) as code`,
+            sql`select array['ab']::char(3)[] as codes`,
+            sql`select array_agg(relkind) as kinds from pg_class`,
             sql`select relkind from pg_class where false`,
             sql`select ch from data_api_parity`,
         ]) {
@@ -552,9 +555,9 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         for (const options of [undefined, { withInternalKyselyTables: true }]) {
             const viaDataApi = await db().introspection.getTables(options)
             expect(viaDataApi.length, 'tables to compare').toBeGreaterThan(0)
-            expect(viaDataApi).toEqual(await new PostgresIntrospector(viaPg.getDb()).getTables(options))
+            expect(viaDataApi).toStrictEqual(await new PostgresIntrospector(viaPg.getDb()).getTables(options))
         }
-        expect(await db().introspection.getSchemas()).toEqual(await viaPg.getDb().introspection.getSchemas())
+        expect(await db().introspection.getSchemas()).toStrictEqual(await viaPg.getDb().introspection.getSchemas())
     })
 
     test('an instant before year 1 or after year 9999 is stored, as node-postgres stores it, not refused', async () => {

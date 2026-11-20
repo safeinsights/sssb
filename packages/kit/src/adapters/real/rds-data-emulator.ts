@@ -31,8 +31,9 @@ import type { RdsDataClientLike, RdsDataCommand } from './rds-data-dialect'
  * - a response over 1 MiB is refused, and an unknown transaction id is TransactionNotFoundException;
  * - database errors come back as a message only, WITHOUT a SQLSTATE — the least the Data API is
  *   reported to give, so what is proven is that SSSB's error handling survives the worst case;
- * - a result with a column of a type the Data API cannot return is refused whole, rows or none, with its
- *   `UnsupportedResultException` (REFUSED_RESULT_TYPES says which, and on what evidence).
+ * - a result with a column of a type the Data API refuses is refused whole, rows or none, with its
+ *   `UnsupportedResultException`, after the statement has run (REFUSED_RESULT_TYPES says which types, and on what
+ *   evidence, some of it inferred).
  *
  * What it cannot know is AWS's exact wire format (column `typeName`s, timestamp strings, error wording).
  * It follows PgJDBC's conventions, which the Data API is built on; the `data-api` cutover row is the live
@@ -47,7 +48,7 @@ export interface EmulatedCall {
 const RESPONSE_LIMIT_BYTES = 1024 * 1024
 
 /**
- * Result column types the Data API refuses, by `pg_type.typname`, with the name its error gives them. AWS lists none:
+ * Result column types the Data API refuses, seen or inferred, by `pg_type.typname`, with the name its error gives them. AWS lists none:
  * "The Data API doesn't support all data types", and the fix it gives is a cast to TEXT (the Aurora User Guide's
  * "Troubleshooting Amazon RDS Data API", "Unsupported result exception"). What is here is evidence:
  *
@@ -55,13 +56,19 @@ const RESPONSE_LIMIT_BYTES = 1024 * 1024
  *   `UnsupportedResultException: The result contains the unsupported data type "CHAR"`, for a result of no rows (Kysely's
  *   introspector, on a database with no tables yet), so the refusal reads the columns, not the values;
  * - `bpchar`, `char(n)`: the same JDBC type, `CHAR`, in PgJDBC's type map, on which the Data API is built, so the same
- *   error; inferred, not observed.
+ *   error, if the error's "CHAR" is that JDBC type and not the type's own name upper-cased; inferred, not observed;
+ * - `_char` and `_bpchar`, arrays of the two, whose elements the Data API would have to return as the same type;
+ *   inferred, not observed.
  *
- * A type found refused live joins this map, and the `data-api` cutover row's smoke run is where one would be found.
+ * Strict where unobserved, so a query passes here only if it passes on the evidence's worst reading; a cast to text
+ * costs nothing. The `data-api` cutover row's smoke run (`docs/runbooks/data-api.md`, step 3) records what AWS does
+ * with each, and a type it answers leaves this map, as one it refuses joins it.
  */
 const REFUSED_RESULT_TYPES: ReadonlyMap<string, string> = new Map([
     ['char', 'CHAR'],
     ['bpchar', 'CHAR'],
+    ['_char', 'CHAR'],
+    ['_bpchar', 'CHAR'],
 ])
 
 export class RdsDataEmulator implements RdsDataClientLike {
