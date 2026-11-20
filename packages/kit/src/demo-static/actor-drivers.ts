@@ -32,6 +32,9 @@ interface DemoDriverDeps {
     jobsRef: RefObject<DemoJob[]>
     setJobs: Dispatch<SetStateAction<DemoJob[]>>
     log: ActorLog
+    /** The world's terminal hop (the job.status_changed webhook and the admin notification), called once a job
+     *  this driver completed is completed, as the server's recordJobStatus emits them. */
+    onCompleted: (job: DemoJob) => void
 }
 
 /** The one team a service actor is scoped to — the twin of its minted token's tenant/org claims. */
@@ -41,7 +44,7 @@ export interface DemoServiceScope {
 }
 
 export function createDemoServiceDriver(
-    { jobsRef, setJobs, log }: DemoDriverDeps,
+    { jobsRef, setJobs, log, onCompleted }: DemoDriverDeps,
     scope: DemoServiceScope,
 ): ServiceDriver {
     return {
@@ -95,13 +98,14 @@ export function createDemoServiceDriver(
                         : j,
                 ),
             )
+            onCompleted(job)
             return 'applied'
         },
     }
 }
 
 export function createDemoBuilderDriver(
-    { jobsRef, setJobs, log }: DemoDriverDeps,
+    { jobsRef, setJobs, log, onCompleted }: DemoDriverDeps,
     /** Teams already served by a dedicated service actor (@sssb/app-config/jobs' serviceManagedOrgSlugs) —
      *  excluded so the two actors' job pools stay disjoint, exactly like listPendingBuilds. */
     serviceManagedOrgSlugs: readonly string[],
@@ -155,6 +159,7 @@ export function createDemoBuilderDriver(
                     return { ...j, status: 'completed', timeline }
                 }),
             )
+            onCompleted(job)
             return 'applied'
         },
     }

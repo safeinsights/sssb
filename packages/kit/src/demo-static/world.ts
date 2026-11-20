@@ -520,12 +520,19 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
     // ── Outbound webhooks ─────────────────────────────────────────────────────────────────────────
 
     /** Twin of enqueueWebhookEvent: fan an event to a pending delivery per matching enabled endpoint in
-     *  the ACTIVE org (endpoints are org-scoped). next_attempt is world-now, so a drain fires it at once. */
-    function enqueueWebhook(kind: WebhookEventKind, payload: WebhookEventPayload) {
+     *  `scope`'s org (endpoints are org-scoped). next_attempt is world-now, so a drain fires it at once. */
+    function enqueueWebhookFor(
+        scope: { tenantSlug: string; orgSlug: string },
+        kind: WebhookEventKind,
+        payload: WebhookEventPayload,
+    ) {
         const worldNowMs = mountedAtMs + clockOffsetMs
         const matching = endpoints.filter(
             (e) =>
-                e.tenantSlug === tenant.slug && e.orgSlug === activeOrgSlug && e.enabled && e.eventKinds.includes(kind),
+                e.tenantSlug === scope.tenantSlug &&
+                e.orgSlug === scope.orgSlug &&
+                e.enabled &&
+                e.eventKinds.includes(kind),
         )
         if (matching.length === 0) return
         const created: DemoDelivery[] = matching.map((endpoint) => ({
@@ -545,6 +552,28 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
             body: null,
         }))
         setDeliveries((prev) => [...created, ...prev])
+    }
+
+    /** An app's own mutation emits for the org it is acting in: the active one, as the real routes' session is. */
+    function enqueueWebhook(kind: WebhookEventKind, payload: WebhookEventPayload) {
+        enqueueWebhookFor({ tenantSlug: tenant.slug, orgSlug: activeOrgSlug }, kind, payload)
+    }
+
+    /**
+     * A job's terminal hop, the twin of what the server's recordJobStatus emits: the job.status_changed webhook to
+     * the JOB's org (not the viewer's), then the admin notification; both skip an org-less job. Every path that
+     * completes a job takes it: startJob, Run pending, and the actor drivers (through `jobCompletedRef`).
+     */
+    function emitJobTerminal(job: { id: string; kind: string; tenantSlug: string; orgSlug: string | null }) {
+        if (job.orgSlug !== null) {
+            enqueueWebhookFor({ tenantSlug: job.tenantSlug, orgSlug: job.orgSlug }, 'job.status_changed', {
+                jobId: job.id,
+                jobKind: job.kind,
+                status: 'completed',
+                orgId: job.orgSlug,
+            })
+        }
+        notifyJobTerminal(job)
     }
 
     /** Twin of runDueDeliveries: attempt each due pending/failed delivery, signing the envelope with the
@@ -634,15 +663,9 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
               }
         setJobs((prev) => [job, ...prev])
         // Held jobs stay queued (no terminal transition), so they emit later — from the Run-pending
-        // step below, or from an actor claiming them.
+        // step below, or from an actor completing them.
         if (held) return
-        enqueueWebhook('job.status_changed', {
-            jobId: base.id,
-            jobKind: kind,
-            status: 'completed',
-            orgId: activeOrgSlug,
-        })
-        notifyJobTerminal(job)
+        emitJobTerminal(job)
     }
 
     /**
@@ -667,20 +690,8 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
                 }
             }),
         )
-        for (const job of completing) {
-            // The same terminal hop startJob's non-held branch takes, so it emits the same pair the
-            // server's recordJobStatus does: the webhook first, then the admin notification (both
-            // skip an org-less job, as notifyJobTerminal already does).
-            if (job.orgSlug !== null) {
-                enqueueWebhook('job.status_changed', {
-                    jobId: job.id,
-                    jobKind: job.kind,
-                    status: 'completed',
-                    orgId: job.orgSlug,
-                })
-            }
-            notifyJobTerminal(job)
-        }
+        // The same terminal hop startJob's non-held branch takes, for each job's own org.
+        for (const job of completing) emitJobTerminal(job)
         pushNotice(tSimulator('noticeJobsRan', { count: completing.length }))
     }
 
@@ -778,13 +789,26 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
 
     // The actor drivers read/write jobs through the stable ref + setter, so these factories never need
     // to change identity — an actor's tick closure can be rebuilt freely without restarting its loop.
+    // A completed job's terminal hop reads the CURRENT endpoints and preferences, so the drivers reach it through a
+    // ref that every render points at this render's `emitJobTerminal`.
+    const jobCompletedRef = useRef(emitJobTerminal)
+    useEffect(() => {
+        jobCompletedRef.current = emitJobTerminal
+    })
     const serviceDriver = useCallback(
-        (scope: DemoServiceScope, log: ActorLog) => createDemoServiceDriver({ jobsRef, setJobs, log }, scope),
+        (scope: DemoServiceScope, log: ActorLog) =>
+            createDemoServiceDriver(
+                { jobsRef, setJobs, log, onCompleted: (job) => jobCompletedRef.current(job) },
+                scope,
+            ),
         [],
     )
     const builderDriver = useCallback(
         (serviceManagedOrgSlugs: readonly string[], log: ActorLog) =>
-            createDemoBuilderDriver({ jobsRef, setJobs, log }, serviceManagedOrgSlugs),
+            createDemoBuilderDriver(
+                { jobsRef, setJobs, log, onCompleted: (job) => jobCompletedRef.current(job) },
+                serviceManagedOrgSlugs,
+            ),
         [],
     )
 
