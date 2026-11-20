@@ -135,7 +135,7 @@ export async function ghJson<T>(gh: GhRunner, apiPath: string): Promise<{ value:
 }
 
 /** The most entries GitHub's list endpoints answer in one page. */
-export const PER_PAGE = 100
+const PER_PAGE = 100
 
 /**
  * A list endpoint through `gh api`, read as ONE page of `perPage`, with the reason instead of a list when that page
