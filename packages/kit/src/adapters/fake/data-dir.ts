@@ -7,7 +7,10 @@ import path from 'node:path'
  * directory by comparing resolved paths. Creates nothing.
  */
 export function dataRoot(): string {
-    return path.resolve(process.env['APP_DATA_DIR'] ?? path.join(process.cwd(), '.data'))
+    // Never `path.resolve(<a value>)` here: Next's file tracer reads that call as an asset reference it cannot bound,
+    // and copies this whole directory's TypeScript source into the standalone server (pack and consume fails on it).
+    const dir = process.env['APP_DATA_DIR'] ?? '.data'
+    return path.isAbsolute(dir) ? path.normalize(dir) : path.join(process.cwd(), dir)
 }
 
 /** A directory under the fake adapters' data root, created if missing. Tests point APP_DATA_DIR at a tmp dir. */
