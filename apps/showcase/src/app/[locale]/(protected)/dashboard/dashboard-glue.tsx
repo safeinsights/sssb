@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AttachmentsCard, type AttachmentItem } from '@/components/attachments-card'
 import { DashboardScreen, type DashboardUser } from '@/components/dashboard-screen'
 import { EscalationsCard, type EscalationItem, type EscalationTarget } from '@/components/escalations-card'
@@ -49,11 +49,16 @@ export function DashboardGlue({
      * Reads one page of the queue. `cursor === null` means the first page and REPLACES the list;
      * a cursor APPENDS, so "load more" grows what the reader is already looking at.
      */
+    // Bumped by every first-page load: a page answered for an older list (a "Show more" in flight when a mutation
+    // re-anchored the queue, or an older refresh) is dropped rather than appended to, or replacing, the newer one.
+    const ticketListSeq = useRef(0)
     const loadTickets = useCallback(async (cursor: string | null) => {
+        const seq = cursor === null ? ++ticketListSeq.current : ticketListSeq.current
         const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`
         const response = await fetch(`/api/tickets${query}`)
         if (!response.ok) return
         const data = (await response.json()) as { tickets: TicketItem[]; nextCursor: string | null }
+        if (seq !== ticketListSeq.current) return
         setTickets((previous) => (cursor === null ? data.tickets : [...previous, ...data.tickets]))
         setTicketCursor(data.nextCursor)
     }, [])
@@ -127,8 +132,8 @@ export function DashboardGlue({
     useEffect(() => {
         // These refreshers set state only once their responses land — the legitimate "sync with an
         // external system" case the rule guards (same as the simulator glue).
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         void refreshTickets()
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         void refreshJobs()
         void refreshEscalations()
         void refreshAttachments()
