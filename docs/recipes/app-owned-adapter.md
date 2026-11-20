@@ -94,7 +94,9 @@ header:
   clear it and a snapshot does not capture it. That is fine for state the app can rebuild, such as a
   key-value store it republishes from its own tables.
 - **In your own tables**, through `db.withTenant`. A Simulator reset and snapshots then cover it, because
-  they cover the database.
+  they cover the database. When the real store is not Postgres, the RLS proofs then report the fake's tables
+  isolated while the real store promises nothing of the kind; the adopter reference's "Where your data lives" says
+  what to do (`docs/adopting-reference.md`).
 - **Not under `.data/`.** SSSB's fakes persist there through `dataDir()`, which SSSB does not publish.
   Snapshots also reset and capture only the directories SSSB lists, so a directory of yours would survive
   a reset that the rest of the world does not.
