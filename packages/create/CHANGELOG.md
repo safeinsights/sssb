@@ -1,5 +1,54 @@
 # @sssb/create
 
+## 0.5.0
+
+### Patch Changes
+
+- 9d56c29: ### The plugin's commands describe the Simulator a generated app has
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** The plugin's commands no longer say a generated app has no Simulator on `pnpm dev`. Since 0.3.0 it
+    has SSSB's host there, with the People, Mail and Jobs tabs; it has no Hooks, Snapshots or Tours tab and takes no
+    app-registered tab (Actors), which remain the static demo's or a reference-style glue of your own. Raise the plugin
+    pin with the release.
+
+- 9d56c29: ### Starter and generated-workflow fixes to apply by hand
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** A workspace generated from this release has these; an existing one applies them by hand, reading
+    each file in SSSB's repository at this release (`apps/starter`).
+
+    - `src/app/[locale]/signin/page.tsx` and `signin/picker-glue.tsx` take their `returnTo` through `sameOriginPath`
+      (the entry "`sameOriginPath` is published"): the old check was an open redirect. The picker glue's `onPick` also
+      returns its fetch and resolves `false` on a refusal, which needs this release's `PeoplePicker`.
+    - `src/proxy.ts`: the matcher's excluded prefixes end at a slash (`api(?:/|$)`, `_next/`, `_vercel/`) and the API
+      branch matches `/api` or `/api/...`, so a page named like `/apiary` reaches the proxy and the auth provider's
+      middleware.
+    - `src/app/api/respond.ts` gains `readJsonObject` and `refuseNonJson`. `POST /api/items` and `POST /api/auth/org`
+      answer 400, not 500, on a body that is not a JSON object or a field of the wrong type, and `POST /api/auth/org`
+      answers 401 to a signed-out caller before it reads the body. `POST /api/auth/dev-signin` (simulated mode only)
+      answers 415 to a request that is not `application/json`, so another site's page cannot sign a developer in, and
+      400 to a body that is not a JSON object or whose `personId` is not a non-empty string.
+    - The Items card keeps the typed title and shows `items.addError` (new, in both catalogs) when a create fails. It
+      takes three files: `src/components/items-card.tsx`, the message key, and
+      `src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx`, whose `onAdd` must reject on a response that is not
+      ok; without that the card still clears the draft.
+    - `playwright.demo.config.ts` forbids `test.only` on CI.
+    - The generated `.github/workflows/checks.yml`: its secret-scan job checks the gitleaks download's sha256 before
+      running it, and its own checkouts set `persist-credentials: false`. SSSB's reusable workflow (`app-checks.yml`)
+      does the same on every job, which reaches a workspace when it raises its workflow pin; its jobs take no steps of
+      yours, so nothing of yours loses the token.
+
+    **To adopt.** Copy the changed lines from the named files. For the secret scan, copy the download, `sha256sum -c -`
+    and `tar -xzf` lines from SSSB's `.github/workflows/checks.yml`. `sssb remove-items` still takes the Items slice out
+    of an app generated from this release.
+
 ## 0.4.0
 
 ### Patch Changes
