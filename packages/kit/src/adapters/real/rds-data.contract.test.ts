@@ -1,5 +1,5 @@
 import { CommitTransactionCommand, ExecuteStatementCommand } from '@aws-sdk/client-rds-data'
-import { AbortedTransactionError, sql, type Kysely } from 'kysely'
+import { AbortedTransactionError, PostgresIntrospector, sql, type Kysely } from 'kysely'
 import { Migrator } from 'kysely/migration'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { runRlsProofs } from '../../db/rls-proof-runner'
@@ -10,6 +10,7 @@ import { startContractServer, type ContractServer } from './contract-postgres'
 import { createRealDb } from './db'
 import { createRealDataApiDb } from './db-data-api'
 import { RdsDataDatabaseError, RdsDataUnsupportedError } from './rds-data-codec'
+import { RdsDataIntrospector } from './rds-data-dialect'
 import { RdsDataEmulator, type EmulatedCall } from './rds-data-emulator'
 
 /**
@@ -503,9 +504,13 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         await insert(dataApi, 'written-via-data-api')
         await insert(viaPg, 'written-via-pg')
 
+        // A `char(n)` column, or an array of them, comes back as text: the emulator refuses a result with one, as the
+        // Data API refuses a `"char"` and, by inference, these (the test after this one). So what is compared for `ch`,
+        // `cha` and `dc` is what was stored, and the write path is what they exercise.
         const read = (port: DbPort) =>
             sql<Record<string, unknown>>`
-                select *, (select count(*) from data_api_parity) as total
+                select k, u, t, j, ja, ts, d, da, ta, ua, i, big, n, f, b, by, nothing, ch::text as ch, bi, cha::text[] as cha,
+                    dc::text as dc, ds, (select count(*) from data_api_parity) as total
                 from data_api_parity where u = ${values.u} and t = any(${[values.t, 'other']}) and ch = ${values.ch}
                 order by k`.execute(port.getDb())
         const fromDataApi = (await read(dataApi)).rows
@@ -518,6 +523,41 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         const withoutKey = (row: Record<string, unknown>) =>
             Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'k'))
         expect(withoutKey(fromPg[0]!)).toEqual(withoutKey(fromPg[1]!))
+    })
+
+    test('a result with a CHAR column ("char", char(n), their arrays) is refused whole, rows or none, and a text cast reads', async () => {
+        // The emulator's REFUSED_RESULT_TYPES: `"char"` (refused live), and `char(n)` and the arrays of both (inferred).
+        for (const query of [
+            sql`select 'r'::"char" as kind`,
+            sql`select 'abc'::char(3) as code`,
+            sql`select array['ab']::char(3)[] as codes`,
+            sql`select array_agg(relkind) as kinds from pg_class`,
+            sql`select relkind from pg_class where false`,
+            sql`select ch from data_api_parity`,
+        ]) {
+            await expect(query.execute(db())).rejects.toMatchObject({
+                name: 'UnsupportedResultException',
+                message: 'The result contains the unsupported data type "CHAR"',
+            })
+        }
+        const { rows } = await sql<{ kind: string; code: string }>`
+            select 'r'::"char"::text as kind, 'abc'::char(3)::text as code`.execute(db())
+        expect(rows).toEqual([{ kind: 'r', code: 'abc' }])
+    })
+
+    test("the Data API's introspector reads what Kysely's reads on pg, without a column the Data API refuses", async () => {
+        // Kysely's own Postgres introspector over the Data API is refused (pg_class.relkind is a "char"), and its
+        // Migrator introspects before anything else: the dialect's introspector is the one it gets.
+        await expect(new PostgresIntrospector(db()).getTables()).rejects.toMatchObject({
+            name: 'UnsupportedResultException',
+        })
+        expect(db().introspection).toBeInstanceOf(RdsDataIntrospector)
+        for (const options of [undefined, { withInternalKyselyTables: true }]) {
+            const viaDataApi = await db().introspection.getTables(options)
+            expect(viaDataApi.length, 'tables to compare').toBeGreaterThan(0)
+            expect(viaDataApi).toStrictEqual(await new PostgresIntrospector(viaPg.getDb()).getTables(options))
+        }
+        expect(await db().introspection.getSchemas()).toStrictEqual(await viaPg.getDb().introspection.getSchemas())
     })
 
     test('an instant before year 1 or after year 9999 is stored, as node-postgres stores it, not refused', async () => {

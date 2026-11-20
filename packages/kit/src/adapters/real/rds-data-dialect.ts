@@ -16,12 +16,18 @@ import {
     PostgresIntrospector,
     PostgresQueryCompiler,
     type DatabaseConnection,
+    type ColumnMetadata,
+    type DatabaseIntrospector,
+    type DatabaseMetadataOptions,
     type Dialect,
     type Driver,
     type Kysely,
     type QueryResult,
+    type SchemaMetadata,
+    type TableMetadata,
     type TransactionSettings,
 } from 'kysely'
+import { DEFAULT_MIGRATION_LOCK_TABLE, DEFAULT_MIGRATION_TABLE } from 'kysely/migration'
 import {
     castPlaceholder,
     commitOutcome,
@@ -91,8 +97,119 @@ export class RdsDataDialect implements Dialect {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- kysely's Dialect interface signature
     createIntrospector(db: Kysely<any>) {
-        return new PostgresIntrospector(db)
+        return new RdsDataIntrospector(db)
     }
+}
+
+/**
+ * Kysely's Postgres introspector, with the one column the Data API cannot return cast to text. Kysely's `getTables`
+ * selects `pg_class.relkind`, a one-byte `"char"`, which the Data API refuses whole ("The result contains the
+ * unsupported data type "CHAR"", ./rds-data-emulator.ts's `REFUSED_RESULT_TYPES`), and its Migrator calls it before
+ * anything else, to see whether its own tables exist. So this is Kysely 0.29's query and its reading of the rows, with
+ * `relkind::text` for `relkind`; `getSchemas` reads only `nspname`, a `name`, and is Kysely's own. The contract suite
+ * (./rds-data.contract.test.ts) holds it to Kysely's introspector on the same database, so an upgrade of Kysely that
+ * changes what `getTables` returns fails there.
+ */
+export class RdsDataIntrospector implements DatabaseIntrospector {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- kysely's Dialect interface signature
+    readonly #db: Kysely<any>
+    readonly #postgres: PostgresIntrospector
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- kysely's Dialect interface signature
+    constructor(db: Kysely<any>) {
+        this.#db = db
+        this.#postgres = new PostgresIntrospector(db)
+    }
+
+    getSchemas(): Promise<SchemaMetadata[]> {
+        return this.#postgres.getSchemas()
+    }
+
+    async getTables(options: DatabaseMetadataOptions = { withInternalKyselyTables: false }): Promise<TableMetadata[]> {
+        let query = this.#db
+            .selectFrom('pg_catalog.pg_attribute as a')
+            .innerJoin('pg_catalog.pg_class as c', 'a.attrelid', 'c.oid')
+            .innerJoin('pg_catalog.pg_namespace as ns', 'c.relnamespace', 'ns.oid')
+            .innerJoin('pg_catalog.pg_type as typ', 'a.atttypid', 'typ.oid')
+            .innerJoin('pg_catalog.pg_namespace as dtns', 'typ.typnamespace', 'dtns.oid')
+            .select([
+                'a.attname as column',
+                'a.attnotnull as not_null',
+                'a.atthasdef as has_default',
+                'c.relname as table',
+                sql<string>`c.relkind::text`.as('table_type'),
+                'ns.nspname as schema',
+                'typ.typname as type',
+                'dtns.nspname as type_schema',
+                sql<string | null>`col_description(a.attrelid, a.attnum)`.as('column_description'),
+                sql<
+                    string | null
+                >`pg_get_serial_sequence(quote_ident(ns.nspname) || '.' || quote_ident(c.relname), a.attname)`.as(
+                    'auto_incrementing',
+                ),
+            ])
+            .where('c.relkind', 'in', ['r', 'v', 'p', 'f'])
+            .where('ns.nspname', '!~', '^pg_')
+            .where('ns.nspname', '!=', 'information_schema')
+            .where('ns.nspname', '!=', 'crdb_internal')
+            .where(sql<boolean>`has_schema_privilege(ns.nspname, 'USAGE')`)
+            .where('a.attnum', '>=', 0)
+            .where('a.attisdropped', '!=', true)
+            .orderBy('ns.nspname')
+            .orderBy('c.relname')
+            .orderBy('a.attnum')
+            .$castTo<IntrospectedColumn>()
+        if (!options.withInternalKyselyTables) {
+            query = query
+                .where('c.relname', '!=', DEFAULT_MIGRATION_TABLE)
+                .where('c.relname', '!=', DEFAULT_MIGRATION_LOCK_TABLE)
+        }
+        const tables: TableMetadata[] = []
+        const bySchema = new Map<string, Map<string, TableMetadata>>()
+        for (const column of await query.execute()) {
+            let schema = bySchema.get(column.schema)
+            if (!schema) bySchema.set(column.schema, (schema = new Map()))
+            let table = schema.get(column.table)
+            if (!table) {
+                table = Object.freeze({
+                    columns: [],
+                    isForeign: column.table_type === 'f',
+                    isView: column.table_type === 'v',
+                    name: column.table,
+                    schema: column.schema,
+                })
+                schema.set(column.table, table)
+                tables.push(table)
+            }
+            table.columns.push(
+                // `comment` present and undefined on an uncommented column, as Kysely's is: the cast is
+                // exactOptionalPropertyTypes', which Kysely's own type does not satisfy either.
+                Object.freeze({
+                    comment: column.column_description ?? undefined,
+                    dataType: column.type,
+                    dataTypeSchema: column.type_schema,
+                    hasDefaultValue: column.has_default,
+                    isAutoIncrementing: column.auto_incrementing !== null,
+                    isNullable: !column.not_null,
+                    name: column.column,
+                } as ColumnMetadata),
+            )
+        }
+        return tables
+    }
+}
+
+interface IntrospectedColumn {
+    column: string
+    not_null: boolean
+    has_default: boolean
+    table: string
+    table_type: string
+    schema: string
+    type: string
+    type_schema: string
+    column_description: string | null
+    auto_incrementing: string | null
 }
 
 /** Kysely's own Postgres migration-lock id, so a `pg` migrator and a Data API one exclude each other. */
