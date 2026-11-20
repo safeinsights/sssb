@@ -10,6 +10,7 @@ import type { MailItem } from '../components/simulator/mail-app'
 import type { SmsMessageRow } from '../components/simulator/messages-app'
 import type { FeatureFlag } from '../components/simulator/snapshots-app'
 import type { PendingAgreement } from '../core/agreements'
+import type { JobNotify } from '../core/jobs'
 import type {
     NotificationChannel,
     NotificationKind,
@@ -125,6 +126,14 @@ export interface DemoWorldOptions {
     initialMail?: { to: string; subject: string; html: string }[]
     /** Clears the composition root's OWN rows when the world resets — the twin of wiping `.data/`. */
     onReset?: () => void
+    /**
+     * Twin of the seam's optional `jobNotify` export (`@sssb/app-config/jobs`): when each app job kind's terminal
+     * state notifies its team's admins. Supplied here, as `inboundHandlers` are, because the seam module imports
+     * every server handler, which the static bundle cannot carry: an app that sets `jobNotify` passes the same map
+     * from a module of its own that both import. A world only ever completes a job, so `failure` and `never` both
+     * mean "no notification"; a kind the map leaves out is `always`.
+     */
+    jobNotify?: Record<string, JobNotify>
     /**
      * Static halves of the app's demo-preset operation kinds, keyed by kind — the twins of its server
      * halves (`@sssb/app-config/preset-operations`), supplied here for the same reason `inboundHandlers` are:
