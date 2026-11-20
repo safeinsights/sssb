@@ -244,6 +244,12 @@ describe("an app's own vendors (package.json sssb.vendors)", () => {
         })
     const lintIn = async (appDir: string, file: string, code: string) => {
         const [result] = await new ESLint({ cwd: appDir }).lintText(code, { filePath: path.join(appDir, file) })
+        // A parse failure, or the warning for a file the config ignores, carries no rule id, and would make every
+        // "nothing fired" expectation below pass with nothing linted.
+        expect(
+            result.messages.filter((m) => !m.ruleId),
+            `${file} was not actually linted`,
+        ).toEqual([])
         return result.messages.map((m) => m.ruleId)
     }
     const STRIPE = ['stripe', 'stripe/*']

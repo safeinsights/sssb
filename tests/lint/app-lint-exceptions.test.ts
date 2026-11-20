@@ -63,6 +63,8 @@ describe('an app lists its own exceptions, by path relative to the app', () => {
         })
         const listed = await eslint.calculateConfigForFile(path.join(appDir, file))
         const sibling = await eslint.calculateConfigForFile(path.join(appDir, 'src/app/[locale]/admin/other.ts'))
+        // linted, with the app's other fences, so the missing ban is the exception and not a file the config ignores
+        expect(listed?.rules?.['sssb/no-process-env']).toBeDefined()
         expect(listed?.rules?.[RAW_DB]).toBeUndefined()
         expect(sibling?.rules?.[RAW_DB]).toBeDefined()
     })
