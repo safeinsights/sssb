@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { check as prettierCheck, resolveConfig } from 'prettier'
 import { changesetReleases, isChangesetName as releaseIsChangesetName } from '../../scripts/release.mjs'
 import {
@@ -456,11 +456,16 @@ describe('the command line', () => {
 
     it('exits 1 on an unknown argument or a flag with no value, and an unreadable ref', () => {
         const { run } = layout({ 'a.md': SEAM('A') })
-        expect(run('--nope').status).toBe(1)
-        expect(run('--version').status).toBe(1)
-        expect(run('--since').status).toBe(1)
+        const refused = (args: string[], message: RegExp) => {
+            const result = run(...args)
+            expect(result.status, args.join(' ')).toBe(1)
+            expect(result.stderr, args.join(' ')).toMatch(message)
+        }
+        refused(['--nope'], /^unknown argument --nope$/m)
+        refused(['--version'], /^--version needs a value$/m)
+        refused(['--since'], /^--since needs a value$/m)
         // not a git repository at all
-        expect(run('--since', 'v1').status).toBe(1)
+        refused(['--since', 'v1'], /^git ls-tree failed: fatal: not a git repository/m)
     })
 
     it('main takes the root, so the real repository can be judged in-process too', () => {
@@ -555,10 +560,24 @@ describe('what the lint accepts must read the same in the notes', () => {
         const r = repo({ 'a.md': SEAM('A') })
         expect(() => readChangesets(r.dir, { since: '-R' })).toThrow(/not a revision: -R/)
         expect(() => readChangesets(r.dir, { at: '-r' })).toThrow(/not a revision: -r/)
-        expect(main(['--since', '-R'], r.dir)).toBe(1)
-        // and a value that is a flag is a missing value, whatever the flag
-        expect(main(['--version', '-v1'], r.dir)).toBe(1)
-        expect(main(['--out', '-x'], r.dir)).toBe(1)
+        // main reads a value that starts with `-` as a missing one, whatever the flag, before any revision is read
+        const said = vi.spyOn(console, 'error').mockImplementation(() => {})
+        try {
+            for (const [flag, value] of [
+                ['--since', '-R'],
+                ['--version', '-v1'],
+                ['--out', '-x'],
+            ]) {
+                said.mockClear()
+                expect(main([flag, value], r.dir), flag).toBe(1)
+                expect(
+                    said.mock.calls.map((call) => String(call[0])),
+                    flag,
+                ).toEqual([`${flag} needs a value`])
+            }
+        } finally {
+            said.mockRestore()
+        }
     })
 
     it('says what git said when a revision does not exist', () => {
