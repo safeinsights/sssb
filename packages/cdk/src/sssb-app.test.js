@@ -5,6 +5,7 @@
 // each synth assertion the construct makes, seen to FAIL on the thing it guards. Offline, like synth: nothing
 // is deployed and no credentials are read.
 import { Buffer } from 'node:buffer'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -1560,5 +1561,96 @@ describe('the database name', () => {
         const cluster = Object.values(all).find((r) => r.Type === 'AWS::RDS::DBCluster')
         expect(cluster?.Properties?.['DatabaseName']).toBe(databaseNameFor(slug))
         if (!slug.includes('-')) expect(cluster?.Properties?.['DatabaseName']).toBe(slug)
+    })
+})
+
+/**
+ * Each Node.js Lambda this synth staged, loaded as Lambda loads it: the handler's module, imported fresh by Node, must
+ * evaluate and export its handler. A module that throws as it loads fails every invocation, and nothing else here runs
+ * a bundle: the Migrator's once threw `Dynamic require of "events" is not supported` on every deploy, from the `pg`
+ * esbuild inlined into its ESM bundle. Lambda's Node runtime provides the AWS SDK v3, which the bundles leave external;
+ * here the kit's installed copy stands in for it, linked beside each staged copy. Nothing is invoked.
+ * @param {Resources} all
+ * @param {string} assembly
+ * @param {string} sdkDir the directory holding `@aws-sdk/*` packages
+ * @returns {{ loaded: string[], problems: string[] }}
+ */
+function lambdaLoadProblems(all, assembly, sdkDir) {
+    /** @type {string[]} */
+    const loaded = []
+    /** @type {string[]} */
+    const problems = []
+    for (const [id, r] of Object.entries(all)) {
+        const props = /** @type {any} */ (r.Properties ?? {})
+        if (r.Type !== 'AWS::Lambda::Function' || !String(props.Runtime ?? '').startsWith('nodejs')) continue
+        const key = props.Code?.S3Key
+        const [file, exported] = String(props.Handler ?? '').split('.')
+        if (typeof key !== 'string' || file === undefined || exported === undefined) continue
+        const staged = path.join(assembly, `asset.${key.replace(/\.zip$/, '')}`)
+        const entry = ['.mjs', '.js', '.cjs']
+            .map((ext) => `${file}${ext}`)
+            .find((name) => existsSync(path.join(staged, name)))
+        // A handler that is no module of the asset (the server's, run by the Web Adapter's run.sh) is not Node's to load.
+        if (entry === undefined) continue
+        const copy = makeTestTmpDir('sssb-lambda-load-')
+        cpSync(staged, copy, { recursive: true })
+        mkdirSync(path.join(copy, 'node_modules'), { recursive: true })
+        symlinkSync(sdkDir, path.join(copy, 'node_modules/@aws-sdk'), 'dir')
+        // In a child `node`, never this process: Vitest runs an `import()` through its own module runner, which
+        // supplies a `require` that Lambda's Node does not, and the Migrator's crash loaded cleanly under it.
+        const url = pathToFileURL(path.join(copy, entry)).href
+        // As Lambda's Node runtime loads a handler: by import an `.mjs`, or a `.js` beside a package.json whose type is
+        // `module`; by require any other.
+        const manifest = path.join(copy, 'package.json')
+        const esm =
+            entry.endsWith('.mjs') ||
+            (entry.endsWith('.js') &&
+                existsSync(manifest) &&
+                JSON.parse(readFileSync(manifest, 'utf8')).type === 'module')
+        const load = esm
+            ? `await import(${JSON.stringify(url)})`
+            : `(await import('node:module')).createRequire(${JSON.stringify(url)})(${JSON.stringify(path.join(copy, entry))})`
+        const script =
+            `const m = ${load};` +
+            `if (typeof m[${JSON.stringify(exported)}] !== 'function') { console.error('exports no function'); process.exit(3) }`
+        const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: {} })
+        if (run.status === 0) loaded.push(id)
+        else {
+            const reason = run.stderr.split('\n').find((line) => /Error|exports no function/.test(line)) ?? run.stderr
+            problems.push(`${id}: ${entry} does not load: ${reason.trim()}`)
+        }
+    }
+    return { loaded, problems }
+}
+
+describe('every Node.js Lambda SssbApp builds loads in Node', () => {
+    describe.each(APPS)('%s', (name) => {
+        const appDir = path.join(REPO, 'apps', name)
+        const slug = /** @type {string} */ (
+            /export const APP_SLUG = '([^']+)'/.exec(readFileSync(path.join(appDir, 'config/app.ts'), 'utf8'))?.[1]
+        )
+        const sdkDir = path.join(kitDirOf(appDir), 'node_modules/@aws-sdk')
+
+        it.each(/** @type {Transport[]} */ (['pg', 'data-api']))(
+            'on the %s shape',
+            async (transport) => {
+                const { all, assembly } = synthesize({
+                    appDir,
+                    slug,
+                    transport,
+                    scheduledTick: (stack) => ({ webhookSecret: new cdk.aws_secretsmanager.Secret(stack, 'Tick') }),
+                })
+                const { loaded, problems } = lambdaLoadProblems(all, assembly, sdkDir)
+                expect(problems).toEqual([])
+                // Each Node.js function SssbApp builds was found and loaded, not skipped.
+                for (const prefix of ['Migrator', 'BodyHash', 'ScheduledTick']) {
+                    expect(
+                        loaded.some((id) => id.startsWith(prefix)),
+                        `${prefix} loaded`,
+                    ).toBe(true)
+                }
+            },
+            120_000,
+        )
     })
 })
