@@ -7304,3 +7304,24 @@ addendum of this date records the design; these are the calls, each with the rej
   server does not reliably know behind `SssbApp`.
 - **A failed home-org name lookup falls back to the slug.** The lookup now runs on every protected page, and a display
   name must not turn a database hiccup into a failed page.
+
+## The Migrator's ESM bundle defines `require` (2026-11-20, `fix/cdk-migrator-bundle`)
+
+`SssbApp`'s Migrator crashed on load in Lambda with `Dynamic require of "events" is not supported`: esbuild inlines
+`pg` (CommonJS) into the handler's ESM bundle, and its `require('events')` runs as the handler module loads, on either
+transport, because the handler imports the `pg` transport statically.
+
+- **A `createRequire` banner on the Migrator's bundle**, under its own import name (`__sssbCreateRequire`) so it cannot
+  collide with a bundled module's. Rejected: `format: CJS`, which changes the deployed artifact's format for no gain
+  today and would fail on any ES-module-only code the kit adds (top-level `await`, `import.meta`). Rejected: keeping
+  `pg` out of the Data API path's bundle, which leaves the `pg` transport, `SssbApp`'s default, crashing; and esbuild
+  without code splitting inlines a dynamic `import()` anyway, so a lazy import alone would only defer the crash to the
+  first `pg` migrate.
+- **The test loads every Node.js Lambda the synth staged in a child `node` process**, as Lambda's runtime loads it (an
+  `.mjs` by import, a CommonJS `.js` by require), with the kit's installed AWS SDK v3 standing in for the runtime's.
+  Rejected: `import()` inside Vitest, whose module runner supplies a `require`: the crashing bundle loaded cleanly
+  under it.
+- **Only the Migrator is a `NodejsFunction`.** The body-hash Lambda@Edge and the scheduled tick are plain ES modules
+  shipped as written (`Code.fromAsset`), and the server is the deploy pipeline's zip; the test loads the first two as
+  well, and CDK's own auto-delete provider.
+- **A live first migrate is the only full proof**, a step in the `deploy-pipeline` cutover row.
