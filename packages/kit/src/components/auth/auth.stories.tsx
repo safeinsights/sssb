@@ -1,5 +1,6 @@
 import { Group } from '@mantine/core'
 import { OrgScreen } from '../org-screen'
+import { AccountRefused } from './account-refused'
 import { OrgSwitcher } from './org-switcher'
 import { PeoplePicker } from './people-picker'
 import { PreviewRow } from './preview-row'
@@ -12,6 +13,9 @@ const people = [
 ]
 
 export const SignIn = () => <SignInScreen body={<PeoplePicker people={people} onPick={() => {}} />} />
+
+/** A person the provider signed in whose account names another tenant: why, and an explicit sign-out. */
+export const SignInRefused = () => <SignInScreen body={<AccountRefused onSignOut={() => {}} />} />
 
 /** The shared identity row behind the switcher and the user menu — org (squared) and user (round). */
 export const IdentityRows = () => (

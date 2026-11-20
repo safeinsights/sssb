@@ -212,3 +212,18 @@ org has no active admin to tell: the `jobs` table records them (`requested_by`, 
 auth port's `getMember` now says how to reach a person (`name`, `email`). The provider's organizations are unchanged
 wherever an org has an admin. One module, `packages/kit/src/adapters/configured-auth.ts`, applies both settings over
 either adapter, and on the defaults it is the adapter itself.
+
+## Addendum (2026-11-20): the refusal is reported, and a fixed source's people stay restricted
+
+First use of a single tenancy with a fixed org source found three gaps, closed or settled here.
+
+- **The port reports a refusal.** `AuthPort` gains an optional `refusal()`, answered by the configured port
+  (`packages/kit/src/adapters/configured-auth.ts`) for an account its tenant guard refuses. The sign-in page reads it and
+  shows the framework's `AccountRefused`, with an explicit sign-out (in real mode through Clerk's client,
+  `RealAccountRefused`). Optional, because only a port that refuses people has one; `getCurrentUser` still answers
+  null for a refused person, so nothing else changes.
+- **`none` stays restricted.** A fixed org source's people are all restricted, so an app distinguishes its own admins
+  by its own data, before any denial on `restricted` (the guide's Authorization section). Rationale in the decision log.
+- **The home org is named by its org row.** The configured port is handed a lookup by its builder
+  (`packages/kit/src/adapters/real/index.ts`, `packages/kit/src/adapters/fake/simulated-auth.ts`), so the module itself
+  still reads no database.

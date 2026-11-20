@@ -10,6 +10,7 @@ import type { StoragePort } from '../../ports/storage'
 import { absentEmail, absentJobs, absentLlm, absentStorage } from './absent'
 import { authRequiredEnv, authSettings, fixedOrgProblem } from '../auth-tenancy'
 import { configuredAuth } from '../configured-auth'
+import { orgNameForSlugs } from '../../db/org-lookup'
 import { clerkIdentitySource, realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { noAnalytics } from './no-analytics'
@@ -108,9 +109,6 @@ interface RealPortsHooks {
 export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealPorts> {
     assertRealEnv()
     const env = process.env
-    // Clerk, placed as the auth settings say (../auth-tenancy.ts), and Clerk itself on the defaults. Every port that
-    // reaches the people (the in-process runner's job context included) is handed this one.
-    const auth: AuthPort = configuredAuth(realAuth, authSettings(), clerkIdentitySource, staffOrgSlug)
     // assertRealEnv above already proved every required variable is set; this narrows the type.
     const need = (name: string): string => {
         const value = env[name]
@@ -130,6 +128,12 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
                   region: need('AWS_REGION'),
               })
             : (await import('./db')).createRealDb(need('DATABASE_URL'))
+    // Clerk, placed as the auth settings say (../auth-tenancy.ts), and Clerk itself on the defaults. Every port that
+    // reaches the people (the in-process runner's job context included) is handed this one. A fixed org source names
+    // its home org from the database's org row.
+    const auth: AuthPort = configuredAuth(realAuth, authSettings(), clerkIdentitySource, staffOrgSlug, (tenant, org) =>
+        orgNameForSlugs(db, tenant, org),
+    )
     const storageChoice = portChoice('storage')
     const storage =
         storageChoice === 's3'

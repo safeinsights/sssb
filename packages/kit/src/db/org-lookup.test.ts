@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
-import { orgIdentityForSlug, orgIdForSlug } from './org-lookup'
+import { orgIdentityForSlug, orgIdForSlug, orgNameForSlugs } from './org-lookup'
 import { tenantIdForSlug } from './tenant-lookup'
 
 // Fixture seed (SSSB's own seam): `depot` is an org of tenant `harbor`; `wharf` belongs to `lakeside`.
@@ -25,5 +25,14 @@ describe('orgIdentityForSlug', () => {
         const harbor = (await tenantIdForSlug(fakeDb, 'harbor'))!
         expect(await orgIdentityForSlug(fakeDb, harbor, 'wharf')).toBeNull()
         expect(await orgIdentityForSlug(fakeDb, harbor, 'no-such-org')).toBeNull()
+    })
+})
+
+describe('orgNameForSlugs', () => {
+    test("returns the org row's name, within the named tenant only", async () => {
+        const { fakeDb } = await import('../adapters/fake/db')
+        expect(await orgNameForSlugs(fakeDb, 'harbor', 'depot')).toBe('Harbor Depot')
+        expect(await orgNameForSlugs(fakeDb, 'lakeside', 'depot')).toBeNull()
+        expect(await orgNameForSlugs(fakeDb, 'harbor', 'no-such-org')).toBeNull()
     })
 })

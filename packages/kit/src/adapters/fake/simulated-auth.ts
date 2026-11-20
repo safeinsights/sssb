@@ -1,8 +1,10 @@
 import { staffOrgSlug } from '@sssb/app-config/abilities'
 import type { AuthPort } from '../../ports/auth'
 import { authSettings } from '../auth-tenancy'
+import { orgNameForSlugs } from '../../db/org-lookup'
 import { configuredAuth } from '../configured-auth'
 import { fakeAuth, fakeIdentitySource } from './auth'
+import { fakeDb } from './db'
 
 let cached: AuthPort | undefined
 
@@ -19,6 +21,10 @@ let cached: AuthPort | undefined
  * reach, and the replay says so.
  */
 export function simulatedAuth(): AuthPort {
-    if (cached === undefined) cached = configuredAuth(fakeAuth, authSettings(), fakeIdentitySource, staffOrgSlug)
+    if (cached === undefined) {
+        cached = configuredAuth(fakeAuth, authSettings(), fakeIdentitySource, staffOrgSlug, (tenant, org) =>
+            orgNameForSlugs(fakeDb, tenant, org),
+        )
+    }
     return cached
 }

@@ -79,6 +79,14 @@ describe('real-auth-provider', () => {
         expect(realAuthProviderGaps(appDir).gaps).toEqual(['src/app/invite/page.tsx'])
     })
 
+    it('sees the refused-account form', () => {
+        const appDir = app({
+            'layout.tsx': PLAIN_LAYOUT,
+            'refused/page.tsx': `const { RealAccountRefused } = await import('@sssb/kit/adapters/real/account-refused-form')\nexport default RealAccountRefused\n`,
+        })
+        expect(realAuthProviderGaps(appDir).gaps).toEqual(['src/app/refused/page.tsx'])
+    })
+
     it('sees a form loaded with require() or import = require(), and a provider loaded either way', () => {
         const appDir = app({
             'layout.tsx': PLAIN_LAYOUT,
