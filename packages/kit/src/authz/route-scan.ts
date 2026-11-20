@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 
@@ -8,7 +8,9 @@ import ts from 'typescript'
  * ./route-policy.ts and an app's own) is input rather than something this module knows. It reads route
  * files with the TypeScript compiler's parser and binder, never a regex over their text, and judges EACH
  * exported mutating handler on its own: a string, a comment, a call in another handler or a call in
- * statically dead code proves nothing about the handler in front of it.
+ * statically dead code proves nothing about the handler in front of it. Server Actions (`scanServerActions`) are
+ * judged by the same rules as a POST, each export of a `'use server'` file and each function whose body opens with
+ * `'use server'`; no exemption applies to one. The walks follow a symbolic link to a directory, as Next does.
  *
  * WHAT "REACHES" MEANS. A call counts for a handler when it sits on that handler's own path:
  *
@@ -186,13 +188,124 @@ export function scanRoutes(roots: readonly ScanRoot[], options: ScanOptions = {}
 }
 
 function routeFiles(dir: string): string[] {
+    return walkFiles(
+        dir,
+        (name) => ROUTE_FILE.test(name),
+        () => true,
+    )
+}
+
+/**
+ * Every file under `dir` whose name `accept`s, descending into each directory `descend` allows. A symbolic link to
+ * a directory is followed as Next's own walk follows it (a `Dirent` reports the link, not a directory, so a walk
+ * that asked only `isDirectory()` skipped every route behind one), and a link back to a directory the walk is
+ * already inside is not, so a cycle ends. A file's path is the one the walk reached it by, link included: that is
+ * the path Next serves it at.
+ */
+function walkFiles(
+    dir: string,
+    accept: (name: string) => boolean,
+    descend: (name: string) => boolean,
+    ancestors: ReadonlySet<string> = new Set(),
+): string[] {
+    const real = realpathSync(dir)
+    if (ancestors.has(real)) return []
+    const inside = new Set(ancestors).add(real)
     const out: string[] = []
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name)
-        if (entry.isDirectory()) out.push(...routeFiles(full))
-        else if (ROUTE_FILE.test(entry.name)) out.push(full)
+        const isDirectory = entry.isDirectory() || (entry.isSymbolicLink() && isDirectoryTarget(full))
+        if (isDirectory) {
+            if (descend(entry.name)) out.push(...walkFiles(full, accept, descend, inside))
+        } else if (accept(entry.name)) out.push(full)
     }
     return out.sort()
+}
+
+/** Whether a symbolic link leads to a directory; false for a dangling one. */
+function isDirectoryTarget(link: string): boolean {
+    try {
+        return statSync(link).isDirectory()
+    } catch {
+        return false
+    }
+}
+
+/** A source file Next could compile into the app, by extension. Declaration files hold no code. */
+function isSourceFile(name: string): boolean {
+    return /\.(?:[cm]?[jt]sx?)$/.test(name) && !/\.d\.[cm]?ts$/.test(name)
+}
+
+/** Whether `statements` opens with a `'use server'` directive (a string-literal statement in the prologue). */
+function hasUseServer(statements: readonly ts.Statement[]): boolean {
+    for (const statement of statements) {
+        if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) return false
+        if (statement.expression.text === 'use server') return true
+    }
+    return false
+}
+
+/** Whether the file declares any Server Action: a file-level `'use server'`, or one opening a function's body. */
+function declaresServerActions(file: string): boolean {
+    const text = readFileSync(file, 'utf8')
+    if (!text.includes('use server')) return false
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, false)
+    let found = hasUseServer(sf.statements)
+    const visit = (node: ts.Node): void => {
+        if (found) return
+        if (ts.isFunctionLike(node) && 'body' in node && node.body && ts.isBlock(node.body)) {
+            if (hasUseServer(node.body.statements)) found = true
+        }
+        ts.forEachChild(node, visit)
+    }
+    if (!found) visit(sf)
+    return found
+}
+
+export interface ScannedAction {
+    root: string
+    /** Path relative to the root's `dir`, `/`-separated. */
+    rel: string
+    file: string
+    /** The action's name: its export name, or `<function name or "inline"> (line N)` for an inline one. */
+    name: string
+    handler: Handler
+}
+
+/**
+ * Every Server Action under `root.dir`, each analysed as a mutating handler (verb `action`). A Server Action is
+ * a POST endpoint Next exposes for the function, so it must reach `authorize` by the same rules as a route's
+ * POST, and no exemption applies to one (the exemption map names route paths). Two kinds: every export of a file
+ * that opens with `'use server'`, and every function whose own body opens with it. `node_modules` is not walked.
+ */
+export function scanServerActions(root: ScanRoot, options: ScanOptions = {}): ScannedAction[] {
+    const authorizeModules = options.authorizeModules ?? ['@sssb/kit/authz/authorize']
+    const scanner = new RootScanner(root, authorizeModules)
+    const files = walkFiles(root.dir, isSourceFile, (name) => name !== 'node_modules').filter(declaresServerActions)
+    return files.flatMap((file) =>
+        scanner.actions(file).map(({ name, handler }) => ({
+            root: root.label,
+            rel: path.relative(root.dir, file).split(path.sep).join('/'),
+            file,
+            name,
+            handler,
+        })),
+    )
+}
+
+/** Why a Server Action fails the scan, or undefined if it passes. No exemption applies to one. */
+export function judgeServerAction(action: ScannedAction): string | undefined {
+    const where = `${action.root}: ${action.rel} Server Action \`${action.name}\``
+    if (action.handler.refusal !== undefined) {
+        return `${where} cannot be checked: ${action.handler.refusal}. The scan fails a handler it cannot follow rather than pass it.`
+    }
+    if (action.handler.facts.reachesAuthorize) return undefined
+    return (
+        `${where} does not reach authorize(...) on its own path. A Server Action is a POST endpoint Next exposes ` +
+        `for the function, whoever renders the form that calls it, so it is judged as a route's POST is, and no ` +
+        `exemption applies to it. Call authorize(...) in it (or in a function in this file that it calls, awaiting ` +
+        `it if it is async).`
+    )
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -350,6 +463,46 @@ class RootScanner {
             const node = this.handlerOf(binding, new Set())
             return 'reason' in node ? { verb, refusal: node.reason } : { verb, facts: this.facts(node) }
         })
+    }
+
+    /** Every Server Action `file` declares, with its facts or why it could not be read. */
+    actions(file: string): Array<{ name: string; handler: Handler }> {
+        const src = this.load(file)
+        if (typeof src === 'string') return [{ name: '*', handler: { verb: 'action', refusal: src } }]
+        const out: Array<{ name: string; handler: Handler }> = []
+        if (hasUseServer(src.sf.statements)) {
+            const { named, stars } = exportsOf(src)
+            for (const [name, binding] of named) {
+                const node = this.handlerOf(binding, new Set())
+                out.push({
+                    name,
+                    handler:
+                        'reason' in node
+                            ? { verb: 'action', refusal: node.reason }
+                            : { verb: 'action', facts: this.facts(node) },
+                })
+            }
+            for (const specifier of stars) {
+                const refusal = `\`export * from '${specifier}'\` in a 'use server' file is not followed; export each action by name`
+                out.push({ name: '*', handler: { verb: 'action', refusal } })
+            }
+        }
+        const visit = (node: ts.Node): void => {
+            if (ts.isFunctionLike(node) && 'body' in node && node.body && ts.isBlock(node.body)) {
+                if (hasUseServer(node.body.statements)) {
+                    const fn = node as ts.FunctionLikeDeclaration
+                    const line = src.sf.getLineAndCharacterOfPosition(fn.getStart(src.sf)).line + 1
+                    const label = fn.name && ts.isIdentifier(fn.name) ? fn.name.text : 'inline'
+                    out.push({
+                        name: `${label} (line ${line})`,
+                        handler: { verb: 'action', facts: this.facts({ src, fn }) },
+                    })
+                }
+            }
+            ts.forEachChild(node, visit)
+        }
+        visit(src.sf)
+        return out
     }
 
     private load(fileName: string): Source | string {

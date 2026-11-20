@@ -1,5 +1,5 @@
 import { makeTestTmpDir } from '../testing/tmp-dir'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -2165,5 +2165,21 @@ describe('denials that float, and gate calls that never run (baseline review of 
             `${PORT}export async function POST() {\nawait auth.updateProfile()\nreturn new Response('ok')\n}\n`,
         )
         expect(facts.calls).toContain('auth.updateProfile')
+    })
+})
+
+describe('the walk through symbolic links (baseline review of 0.4.0)', () => {
+    it('scans a route behind a symlinked directory at the path Next serves it from, and ends a cycle', () => {
+        const dir = path.join(SCRATCH, `case-${++caseNumber}`)
+        mkdirSync(path.join(dir, 'real'), { recursive: true })
+        writeFileSync(
+            path.join(dir, 'real/route.ts'),
+            "export async function POST() { return new Response('mutated') }\n",
+        )
+        symlinkSync(path.join(dir, 'real'), path.join(dir, 'linked'), 'dir')
+        symlinkSync(dir, path.join(dir, 'real/loop'), 'dir')
+        const routes = scanRoutes([{ label: 'case', dir, exemptDir: dir }])
+        expect(routes.map((route) => route.rel)).toEqual(['linked/route.ts', 'real/route.ts'])
+        expect(routes.every((route) => route.handlers[0]?.facts?.reachesAuthorize === false)).toBe(true)
     })
 })

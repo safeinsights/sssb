@@ -2,7 +2,17 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { FRAMEWORK_POLICY, isGate } from './route-policy'
-import { type Exemption, type ScannedRoute, type ScanRoot, type ScanPolicy, judge, scanRoutes } from './route-scan'
+import {
+    type Exemption,
+    type ScannedAction,
+    type ScannedRoute,
+    type ScanRoot,
+    type ScanPolicy,
+    judge,
+    judgeServerAction,
+    scanRoutes,
+    scanServerActions,
+} from './route-scan'
 
 /**
  * AN APP'S OWN AUTHORIZATION EXEMPTIONS, and the per-app authorization scan that applies them (the conformance
@@ -180,17 +190,28 @@ export interface AppScan {
     root: ScanRoot
     /** Every route file under the app's `src/app`, mutating or not. Empty when there is no `src/app`. */
     routes: ScannedRoute[]
-    /** One message per mutating handler that fails, `<root>: <rel> <VERB> …why`. */
+    /** Every Server Action under the app's `src`. */
+    actions: ScannedAction[]
+    /**
+     * One message per mutating handler or Server Action that fails (`<root>: <rel> <VERB> …why`), and one for each
+     * Pages Router API directory the app has, which the scan cannot read.
+     */
     failures: string[]
     /** The app's exemptions file: malformed, colliding or stale entries. */
     exemptionProblems: string[]
 }
 
+/** Where Next looks for Pages Router API routes: `pages/api` beside `src`, or inside it. */
+const PAGES_API_DIRS = ['pages/api', 'src/pages/api']
+
 /**
  * The authorization scan over ONE app: every `route.*` under `<appDir>/src/app` (Next serves one from anywhere
- * there, so not only `api/`), judged against the framework's policy plus the app's own exemptions, which are
- * measured from `<appDir>/src/app/api` (so a mutating route outside `api/` can match no exemption and must call
- * `authorize(...)` itself). Re-exported handlers are followed with the app's `tsconfig.json` (or `jsconfig.json`).
+ * there, so not only `api/`, and through a symbolic link too), judged against the framework's policy plus the app's
+ * own exemptions, which are measured from `<appDir>/src/app/api` (so a mutating route outside `api/` can match no
+ * exemption and must call `authorize(...)` itself). Every Server Action under `<appDir>/src` (a `'use server'` file's
+ * exports, and each function whose body opens with `'use server'`) is judged as a POST is, and can match no
+ * exemption. A Pages Router API directory fails outright: SSSB apps are App Router, and the scan reads no
+ * `pages/api` handler. Re-exported handlers are followed with the app's `tsconfig.json` (or `jsconfig.json`).
  */
 export async function scanApp(appDir: string): Promise<AppScan> {
     const name = path.basename(appDir)
@@ -206,13 +227,23 @@ export async function scanApp(appDir: string): Promise<AppScan> {
     const routes = existsSync(root.dir) ? scanRoutes([root]) : []
     const mutating = routes.filter((route) => route.handlers.length > 0)
     const policy = policyWithApp(exemptions)
-    const failures = mutating.flatMap((route) =>
-        route.handlers.flatMap((handler) => judge(route, handler, policy) ?? []),
-    )
+    const srcDir = path.join(appDir, 'src')
+    const actions = existsSync(srcDir) ? scanServerActions({ ...root, dir: srcDir, exemptDir: srcDir }) : []
+    const failures = [
+        ...mutating.flatMap((route) => route.handlers.flatMap((handler) => judge(route, handler, policy) ?? [])),
+        ...actions.flatMap((action) => judgeServerAction(action) ?? []),
+        ...PAGES_API_DIRS.filter((dir) => existsSync(path.join(appDir, dir))).map(
+            (dir) =>
+                `${name}: ${dir} is a Pages Router API directory. SSSB apps are App Router, and the authorization scan ` +
+                `reads only route handlers under src/app and Server Actions, so nothing in ${dir} is checked. Move ` +
+                `each handler to a route.ts under src/app/api.`,
+        ),
+    ]
     const label = `${name}/${APP_EXEMPTIONS_FILE}`
     return {
         root,
         routes,
+        actions,
         failures,
         exemptionProblems: [
             ...problems,

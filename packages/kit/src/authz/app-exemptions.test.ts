@@ -172,3 +172,63 @@ describe("an app's own exemptions", () => {
         ])
     })
 })
+
+describe('what the scan reaches beyond src/app route files (baseline review of 0.4.0)', () => {
+    /** A scratch app with files by path under the app's directory itself (not src/app). */
+    function appWith(files: Record<string, string>): string {
+        const dir = path.join(makeTestTmpDir('authz-app-'), 'acme')
+        mkdirSync(path.join(dir, 'src/app/api/dockets'), { recursive: true })
+        writeFileSync(path.join(dir, 'src/app/api/dockets/route.ts'), AUTHORIZED_POST)
+        for (const [rel, src] of Object.entries(files)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            writeFileSync(path.join(dir, rel), src)
+        }
+        return dir
+    }
+
+    it.each(['src/pages/api/wipe.ts', 'pages/api/wipe.ts'])(
+        'fails a Pages Router API directory (%s) outright',
+        async (file) => {
+            const scan = await scanApp(appWith({ [file]: 'export default function handler() {}\n' }))
+            expect(scan.failures).toEqual([expect.stringMatching(/pages\/api is a Pages Router API directory/)])
+        },
+    )
+
+    it("fails every export of a 'use server' file that does not reach authorize, and passes one that does", async () => {
+        const scan = await scanApp(
+            appWith({
+                'src/actions/dockets.ts':
+                    `'use server'\n${AUTHORIZE}` +
+                    "export async function wipe() { return 'wiped' }\n" +
+                    "export async function file() { authorize(user, 'depot', 'create', { type: 'Docket', orgId: 'depot' }) }\n",
+            }),
+        )
+        expect(scan.actions.map((action) => action.name)).toEqual(['wipe', 'file'])
+        expect(scan.failures).toEqual([
+            expect.stringMatching(/^acme: actions\/dockets\.ts Server Action `wipe` does not reach authorize/),
+        ])
+    })
+
+    it("fails an inline 'use server' function, anywhere under src", async () => {
+        const scan = await scanApp(
+            appWith({
+                'src/components/wipe-form.tsx':
+                    "export function WipeForm() {\n  async function wipe() {\n    'use server'\n    return 'wiped'\n  }\n  return wipe\n}\n",
+            }),
+        )
+        expect(scan.failures).toEqual([
+            expect.stringMatching(/components\/wipe-form\.tsx Server Action `wipe \(line 2\)` does not reach/),
+        ])
+    })
+
+    it("does not take a 'use server' string that is not a directive for one", async () => {
+        const scan = await scanApp(
+            appWith({
+                'src/lib/notes.ts':
+                    "export const note = 'use server'\nexport function f() { const x = 'use server'; return x }\n",
+            }),
+        )
+        expect(scan.actions).toEqual([])
+        expect(scan.failures).toEqual([])
+    })
+})
