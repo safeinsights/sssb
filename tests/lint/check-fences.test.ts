@@ -285,6 +285,39 @@ describe("an app's own vendors (package.json sssb.vendors)", () => {
         )
     })
 
+    // The dynamic half (import(), require(), a type import('…')) reads a package name, one followed by `/*`, and a
+    // whole scope; the declaration half reads any gitignore pattern. Each entry below banned a declaration and let
+    // import() through (or, `stripe/`, banned nothing), so the list refuses it, in package.json and in the option alike.
+    const UNREADABLE = ['@stripe/**', 'stripe-*', 'stripe*', 'stripe/**', '/stripe', 'Stripe', 'stripe/', '@stripe']
+    it.each(UNREADABLE)('refuses %j, which import() would get past', async (entry) => {
+        await expect(sssb.configs.app({ root: withVendors(['stripe', entry]) })).rejects.toThrow(
+            `sssb.vendors holds ${JSON.stringify(entry)}: each entry is "name", "@scope/name", either followed by "/*", or "@scope/*"`,
+        )
+        const appDir = scratchApp(
+            `{ rules: { 'sssb/no-dynamic-vendor-import': ['error', { vendors: [${JSON.stringify(entry)}] }] } }`,
+        )
+        await expect(
+            new ESLint({ cwd: appDir }).lintText('export {}\n', { filePath: path.join(appDir, 'src/domain/x.ts') }),
+        ).rejects.toThrow(/sssb\/no-dynamic-vendor-import[\s\S]*should match pattern/)
+    })
+
+    it('bans every shape it accepts both ways, and probes each entry through the composed config', async () => {
+        const vendors = ['stripe', 'stripe/*', '@stripe/*', '@paypal/sdk', '@paypal/sdk/*']
+        const appDir = withVendors(vendors)
+        for (const specifier of ['stripe', 'stripe/lib/x', '@stripe/stripe-js', '@paypal/sdk', '@paypal/sdk/x']) {
+            const code = `import * as v from '${specifier}'\nexport { v }\nexport const load = () => import('${specifier}')\n`
+            const fired = await lintIn(appDir, 'src/domain/billing.ts', code)
+            expect(fired.filter((rule) => rule === 'sssb/no-vendor-import')).toHaveLength(1)
+            expect(fired.filter((rule) => rule === 'sssb/no-dynamic-vendor-import')).toHaveLength(1)
+        }
+        const [withList, without] = await Promise.all([
+            checkFences({ appDir, ESLint }),
+            checkFences({ appDir: withVendors([]), ESLint }),
+        ])
+        expect(withList.problems).toEqual([])
+        expect(withList.probes - without.probes).toBe(vendors.length)
+    })
+
     it('refuses anything but a list of package patterns, and the old option', async () => {
         await expect(sssb.configs.app({ root: withVendors('stripe') })).rejects.toThrow(/must be a list/)
         // @ts-expect-error the option moved to the app's package.json

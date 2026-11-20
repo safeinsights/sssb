@@ -36,6 +36,7 @@ import {
     processEnvSelector,
     runModeEnvDestructureSelector,
     runModeEnvSelector,
+    vendorEntrySource,
     vendorSdkPattern,
 } from './patterns.js'
 
@@ -44,13 +45,13 @@ import {
 // ADR-0014's P6, and is now a rule of its own, so a later block that sets either core rule cannot drop it.
 
 // The vendor list is SSSB's, and an app adds its own adapters' SDKs to it in its package.json (`sssb.vendors`), which
-// the preset passes to both halves as this option. SSSB's list is always part of the group, and the schema refuses a
-// leading `!` (a gitignore negation), so the option adds patterns and cannot remove one of SSSB's. `sssb check-fences`
-// still compares it exactly with the app's package.json, so a later block cannot swap the app's list for another.
+// the preset passes to both halves as this option. SSSB's list is always part of the group, and the schema admits only
+// the shapes both halves read alike (vendorEntrySource, the same test loadAppVendors makes), which leaves out a leading
+// `!` (a gitignore negation), so the option adds patterns and cannot remove one of SSSB's. `sssb check-fences` still
+// compares it exactly with the app's package.json, so a later block cannot swap the app's list for another.
 const vendorsOption = {
     type: 'object',
-    // A leading `!` is a gitignore negation: it would take a vendor OFF the list, so the schema refuses it.
-    properties: { vendors: { type: 'array', items: { type: 'string', minLength: 1, pattern: '^[^!\\s]' } } },
+    properties: { vendors: { type: 'array', items: { type: 'string', pattern: vendorEntrySource } } },
     additionalProperties: false,
 }
 const vendorGroupOf = (context) => [...vendorSdkPattern.group, ...(context.options[0]?.vendors ?? [])]

@@ -7,7 +7,8 @@
 //     `calculateConfigForFile` through the app's config with the same call through the preset alone. A later block
 //     that turns a rule off or down, swaps the app's vendor list, adds a processor or a parser for one directory, a
 //     later `ignores`, a global ignore, a nested config file that takes over a directory: each shows up here.
-//  2. Does every fence still REPORT? The probes (./probes.js) are linted as virtual files at paths in the app.
+//  2. Does every fence still REPORT? The probes (./probes.js) are linted as virtual files at paths in the app, one
+//     pair per entry of the app's own vendor list among them.
 //  3. Does each `lint-exceptions.mjs` entry exempt exactly the file it names? The named file must pass the tenancy
 //     ban and a sibling beside it must not.
 //  4. Does a fence's finding in the app's own files get through? The app's files are linted twice through its
@@ -29,9 +30,9 @@ import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { pathToFileURL } from 'node:url'
-import { loadAppLintExceptions } from './app-config.js'
+import { loadAppLintExceptions, loadAppVendors } from './app-config.js'
 import plugin from './index.js'
-import { EXCEPTION_PROBE_CODE, PROBE, PROBES } from './probes.js'
+import { EXCEPTION_PROBE_CODE, PROBE, PROBES, vendorProbes } from './probes.js'
 
 const LINTED = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
 // Never walked, anywhere: where a package manager or git puts files.
@@ -238,7 +239,8 @@ export async function checkFences({ appDir: given, ESLint: passed }) {
         }
         return new Set(result.messages.map((m) => m.ruleId))
     }
-    for (const probe of PROBES) {
+    const probes = [...PROBES, ...vendorProbes(loadAppVendors(appDir))]
+    for (const probe of probes) {
         const fired = await lint(probe.path, probe.code)
         if (!fired) continue
         for (const rule of probe.fires) {
@@ -265,5 +267,5 @@ export async function checkFences({ appDir: given, ESLint: passed }) {
         }
     }
 
-    return { problems, files: fenced.size, probes: PROBES.length + exceptionProbes }
+    return { problems, files: fenced.size, probes: probes.length + exceptionProbes }
 }

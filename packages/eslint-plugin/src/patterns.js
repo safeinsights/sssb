@@ -43,6 +43,16 @@ export const vendorSdkPattern = {
         'Code against the port instead (see CONTRIBUTING.md).',
 }
 
+// THE SHAPES AN APP'S OWN VENDOR ENTRY MAY TAKE (`sssb.vendors`, and the vendor rules' `vendors` option): a package
+// name (`stripe`, `@stripe/stripe-js`), one followed by `/*` (its subpaths), or a whole scope (`@stripe/*`). These are
+// exactly what BOTH halves of the ban read alike: the declaration half reads gitignore patterns, the dynamic half
+// (import(), require(), a type import('…')) only these shapes, so any other gitignore pattern (`@stripe/**`,
+// `stripe-*`, `stripe/`) banned a declaration and let import() through. Lowercase, as npm names are: the dynamic half
+// is case-sensitive. A leading `!` (a gitignore negation) is refused with the rest.
+const PACKAGE_NAME = '[a-z0-9~-][a-z0-9._~-]*'
+export const vendorEntrySource = `^(?:@${PACKAGE_NAME}/\\*|(?:@${PACKAGE_NAME}/)?${PACKAGE_NAME}(?:/\\*)?)$`
+export const vendorEntryShapes = '"name", "@scope/name", either followed by "/*", or "@scope/*"'
+
 // An app's real adapter is reached through the app's adapter registry (src/adapters/index.ts), the module that
 // picks the fake in simulated mode — the role SSSB's exports map plays for SSSB's own real adapters. Matches
 // `@/…/adapters/real` and its ordinary relative spellings (`../adapters/real`, `../../adapters/real`), and
