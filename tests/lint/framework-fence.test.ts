@@ -605,3 +605,28 @@ describe('a vendor SDK reached by import = require() is one finding, from the de
         expect(fired(findings, VENDOR_STATIC) + fired(findings, VENDOR_DYNAMIC)).toBe(0)
     })
 })
+
+// A bundler's resource query or hash names the package all the same: both halves of a fence match the specifier as
+// written and cut at its first `?` or `#`, one finding per pattern either way.
+describe('a bare specifier with a resource query or hash is still that package', () => {
+    const file = `${APP}/src/domain/kv.ts`
+
+    it.each(['pg?raw', '@aws-sdk/client-s3?url', 'pg/lib/client#x', 'pg?'])('%s is a vendor, both ways', async (to) => {
+        const findings = await lint(
+            file,
+            `import * as v from '${to}'\nexport { v }\nexport const load = () => import('${to}')\n`,
+        )
+        expect(fired(findings, VENDOR_STATIC)).toBe(1)
+        expect(fired(findings, VENDOR_DYNAMIC)).toBe(1)
+    })
+
+    it('in core, a framework by import() too', async () => {
+        const code = "export const load = () => import('react?url')\n"
+        expect(fired(await lint('packages/kit/src/core/kv.ts', code), CORE_DYNAMIC)).toBe(1)
+    })
+
+    it.each(['./kv?raw', '?raw', 'zod?raw'])('%s is not a vendor', async (to) => {
+        const findings = await lint(file, `export const load = () => import('${to}')\n`)
+        expect(fired(findings, VENDOR_STATIC) + fired(findings, VENDOR_DYNAMIC)).toBe(0)
+    })
+})
