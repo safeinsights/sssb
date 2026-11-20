@@ -12,8 +12,8 @@ checks its paths against `apps/starter`.
 
 Multi-tenant web app foundation, built to be adopted: `docs/adopting.md` is the adopter guide, a newcomer's path in
 the order they act, and `docs/adopting-reference.md` holds the rest; keep both truthful, and keep the guide short.
-Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0012 and 0014) and don't
-relitigate them; 0013 (fork and merge) is Superseded by 0014, so nothing here tells an adopter to fork, merge or
+Architecture decisions are recorded in `docs/adr/`. Follow the Accepted ones (0001–0012 and 0014, and 0015 in the
+parts its second addendum accepts) and don't relitigate them; 0013 (fork and merge) is Superseded by 0014, so nothing here tells an adopter to fork, merge or
 send a change "upstream" from a fork. 0014 is a plan carried out in steps (its implementation plan), so until a step
 lands, the tree and the docs describe what is built, not what 0014 will build.
 The philosophy behind these rules — thin slices, ports/adapters, hermetic dev, demo mode, one-app default —

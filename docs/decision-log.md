@@ -6884,3 +6884,26 @@ can guarantee, and asked for this addendum. Decisions taken in writing it, sever
   drafted: ahead of the mechanism, which would build it on the hardest port or deliver a refactor no provider can use.
 - **The invitation link is a separate fix, now**: the framework mails `/accept-invite?invite=<id>` in every mode, which
   Clerk's accept form, reading `__clerk_ticket`, cannot use.
+
+## ADR-0015 accepted in part (2026-11-19, `docs/adr-0015-decision`)
+
+JP agreed four points in chat ("Agree all four"), recorded as ADR-0015's second addendum, which sets its status to
+Accepted in part; the work it starts is seven briefs under `.claude/future-tasks/`. Decisions taken in writing it:
+
+- **Each work item is a future task**, the repository's home for designed-but-unbuilt work, linked from the addendum.
+  Rejected: briefs inside the ADR, which is a dated record a builder should not have to edit as work lands.
+- **The S3-compatible store is a storage choice of its own** (`s3-compatible`), not the `s3` choice reading an endpoint
+  when one is set. The switch rule forbids choosing behaviour from which settings happen to be set. Rejected: the
+  body's "the `s3` choice takes an endpoint", read literally.
+- **The Postgres groundwork references today's modules rather than moving them**, so the doc-path gate's citations of
+  `packages/kit/src/db/migrations/` stay true. Rejected: a tidy move into a family directory, which buys nothing a
+  family object does not.
+- **`CLAUDE.md` names ADR-0015 among those to follow, in the parts its second addendum accepts.** Rejected: leaving it
+  out until every part is built, which would leave the accepted principles unstated where sessions read them first.
+- **The addendum records the four agreed points and nothing more; every further detail is a brief's proposal** for
+  its builder to decide and record (the registration's shapes, reserved names, how `SssbApp` learns names, the
+  isolation values, the drift test, port versioning). Review found the first draft presenting those as decided.
+  Rejected: settling them in the addendum, which would put words in the approver's mouth.
+- **On an S3-compatible store the upload target is explicit**, a setting saying whether the store accepts presigned
+  POST (MinIO does, R2 does not), never guessed from the endpoint. Rejected: refusing it always, which would take
+  browser upload from stores that support it.

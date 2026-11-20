@@ -1,7 +1,7 @@
 # ADR-0015 — Swappable kit ports: protocol choices first, then app-supplied adapters
 
-- Status: Proposed
-- Approver: JP Slavinsky (to accept or reject)
+- Status: Accepted in part (2026-11-19): the second addendum says which parts
+- Approver: JP Slavinsky
 - Date: 2026-11-19
 - Amends, if accepted (each by a dated addendum): [ADR-0002](0002-data-layer-kysely-pglite.md),
   [ADR-0003](0003-auth-clerk-headless-custom-ui.md), [ADR-0004](0004-tenancy-rls.md),
@@ -680,3 +680,85 @@ has, and the adopter guide says what each promises. Nothing about tenancy is lef
 - Tier 1 loses nothing: its proofs, its default, and its place as the only tier that covers the app's own tables.
 - Section 6's libsql verdict stands for tier 1, and becomes tier 3's "a database per tenant" entry, with its cost
   named.
+
+## Addendum (2026-11-19, later): the decision, accepted in part
+
+JP read the study and both addenda, asked how far SSSB's logic can stay generic over its vendors, and agreed four
+points (in chat, 2026-11-19: "Agree all four"). This addendum records those four points and nothing more; where it
+differs from the body or the first addendum, it wins. The work they start is written as future tasks, each a brief a
+session can build from without this conversation (listed at the end). A detail a brief proposes is the builder's to
+decide and record, not decided here.
+
+**Status.** Accepted in part. Accepted now: the principles below, the second datastore tier written down for adopters,
+an S3-compatible storage choice, and the Postgres family's groundwork. Recorded as design and built when an adopter
+needs it: named adapters, the auth bundle, `smtp`, and a second database family.
+
+**The principles accepted** are the body's and the addenda's: a protocol choice in the kit before an adapter an app
+writes; SSSB's fakes stay SSSB's whatever an app plugs in for real mode; every arrangement states the guarantee it makes
+and proves it; and the three points below.
+
+### 1. Named adapters replace `app`
+
+The body's `app` value is replaced by a name the app chooses. The app writes its adapter, registers it under that name,
+and a deployment selects it by that name as it selects one of SSSB's (`LLM_PROVIDER=openai`). An adapter written this
+way has the shape of SSSB's own, which makes contributing it to SSSB a matter of moving it into the kit, subject as
+ever to "What SSSB ships". The registration's details (where the names are declared, how `SssbApp` learns them, what a
+name may not be) are `named-adapters.md`'s to settle.
+
+### 2. Ports are designed for future adapters
+
+Each port is shaped against at least two real implementations: SSSB's current one and a plausible second (auth: Clerk
+and an OIDC provider; storage: S3 and Cloudflare R2; email: Mailgun and SMTP; LLM: Anthropic and an OpenAI-compatible
+API; the database: Postgres and SQLite). Where the two differ, the port names the generic capability rather than one
+vendor's form of it: sign-in is a step that may redirect, an upload target may be a POST or a PUT, the database adapter
+declares how it isolates tenants. A port's contract suite is written against the port, never against a vendor.
+
+### 3. The database is a family of adapters
+
+This replaces the body's "the database engine, no". SSSB's logic stays generic over the database, and what is specific
+to one engine belongs to that engine's family: its transports, its framework migrations, its tenancy mechanism (behind
+`withTenant`, already a port method each adapter implements), its isolation proofs, and the few dialect helpers the
+framework's logic needs.
+
+- **Postgres is the first family**, with three transports: pglite (the hermetic dev and test database), node-postgres
+  and the RDS Data API. Measured on 2026-11-19, the framework's runtime data logic has about ten engine-specific spots
+  (four `jsonb()` encodings, three `forUpdate()` row locks, one raw `now()`, a keyset ordering, and `withTenant`'s
+  `set_config`); the rest is in the 13 framework migrations, the isolation proofs (the framework's half and each app's
+  half), and tooling that reads Postgres's own catalogs. `db-postgres-family-groundwork.md` has the full inventory.
+- **Each database adapter declares how it isolates tenants**, the guarantee is stated where the adopter reads it, and
+  the conformance suite runs that family's proofs. The first addendum's arrangements are the candidates: row-level
+  security, a database per tenant, a single-tenant deployment, and, chosen by name, an unenforced filter. Declaring a
+  guarantee with no mechanism behind it is not allowed.
+- **A second family (libsql) is a contained addition once the groundwork is in.** It replaces the first addendum's tier
+  3 design for libsql: the framework keeps `Kysely<DB>` and its logic, with the family's dialect helpers, rather than
+  moving every framework store behind repository ports. The first addendum's other costs for it stand: a control
+  database for the reads made before a tenant is known, and migrations that fan out across every tenant's database.
+
+### Decided in writing this
+
+Under the standing rule for these sessions, one call is mine, recorded in `docs/decision-log.md`: the S3-compatible store
+is a storage choice of its own (`s3-compatible`), not the `s3` choice reading an endpoint when one is set as the body
+and section 1 describe it, because the switch rule forbids choosing behaviour from which settings happen to be set. R2's
+missing presigned POST stays its own step.
+
+### A correction to the first addendum
+
+Its "How a bundle is chosen" describes the invitation link as broken in real mode. safeinsights/sssb#83 fixed it:
+`createInvite` now returns the link to mail, and the Clerk adapter returns Clerk's invitation URL.
+
+### Work items
+
+Built now:
+
+- `db-postgres-family-groundwork.md`
+- `storage-s3-compatible-choice.md`
+- `adopter-reference-data-tiers.md`
+
+Built when an adopter needs them:
+
+- `named-adapters.md`
+- `auth-provider-bundle.md`
+- `email-smtp-choice.md`
+- `db-libsql-family.md`
+
+All seven are under `.claude/future-tasks/`.
