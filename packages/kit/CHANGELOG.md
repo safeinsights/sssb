@@ -1,5 +1,123 @@
 # @sssb/kit
 
+## 0.6.0
+
+### Minor Changes
+
+- 91ecfc0: ### A `none` role, and reads that authorize
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.**
+
+    - **A new role, `none`**, the lowest, with no standing in the org its holder is placed in. SSSB's rules let it read or
+      write nothing org-scoped, never let it wield the staff org's manage-all, and hand an app's `appAbilityRules` a
+      `sameOrg` that is false for it and an active org that matches none. `Role` gains `'none'`, and `hasStanding(role)` is
+      exported from `@sssb/kit/core/roles`. A fixed org source (the entry "Two auth settings: where the tenant comes from,
+      and where orgs come from") gives it to everyone by default. A provider membership whose role is the string `'none'`
+      is now read as `none`, where it used to fall back to `guest`; SSSB never writes it, and an invitation cannot grant it.
+    - **`MemberStanding`**, what the auth port's `getMember` returns, gains optional `name` and `email`, which SSSB's
+      adapters always fill, so a notification can reach one known person.
+
+    **To adopt.**
+
+    - Code that branches on `Role` must handle `'none'`.
+    - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never because a role is not some
+      other role, which would grant `none` too.
+    - Authorize org-scoped reads, as the starter's items GET now does (`authorize(user, orgId, 'read', …)`): a route that
+      lists an org's data by the session's org alone shows it to anyone placed there.
+
+    An app on the default auth settings sees no `none` user unless an operator writes that role on a membership.
+
+    **Now deletable.** An app-side override that forced every user's role down to deny-by-default.
+
+- 91ecfc0: ### Two auth settings: where the tenant comes from, and where orgs come from
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** The auth adapters, the fake and Clerk, read two settings, each validated at boot. Left
+    unset, both keep today's behaviour.
+
+    - **`AUTH_TENANCY`**: `multi` (the default) reads each user's tenant from their public metadata under
+      `AUTH_TENANT_METADATA_KEY` (`tenantSlug` when unset). `single`, with `AUTH_TENANT_SLUG`, fixes the tenant for the
+      deployment and changes nothing else: orgs, roles, members, invitations and notifications are the org source's. A user
+      whose metadata names a different tenant is refused.
+    - **`AUTH_ORG_SOURCE`**: `provider` (the default) is the identity provider's organizations and per-membership roles.
+      `fixed`, with `AUTH_HOME_ORG_SLUG`, is for an app that uses the provider without its organizations, and needs a
+      single tenancy. Every user the
+      provider signs in is placed in that org with `AUTH_DEFAULT_ROLE`: `none` (the default) or `restricted`, and no role
+      that writes. In this mode:
+        - the members list is empty;
+        - invitations are refused;
+        - the home org is the only org;
+        - a home org that is the app's staff org, with the role `restricted`, is refused at boot.
+
+        On a provider instance shared with another product, every user of that product is placed in the home org.
+
+    The required-environment snapshot's `auth` section says what each choice requires: `single` needs `AUTH_TENANT_SLUG`,
+    and `fixed` needs `AUTH_HOME_ORG_SLUG`. The simulated world runs the same settings when its environment sets them.
+
+    **To adopt.** Nothing, to keep today's sign-in. For one tenant per deployment, set `params.auth.tenancy` to `'single'`
+    with `tenantSlug`, and insert that tenant's row. For an identity provider used without organizations, also set
+    `params.auth.orgSource` to `'fixed'` with `homeOrgSlug` (and `defaultRole` if not `none`), and insert that org's row.
+    Before you do, authorize every org-scoped read (the entry "A `none` role, and reads that authorize"), and grant your
+    people what they need through your own rules. With a fixed org source, pass `requestedBy` when you submit a job (the
+    entry "A job records who started it").
+
+    **Now deletable.**
+
+    - A placeholder tenant claim written into every user's identity-provider metadata.
+    - An identity-provider organization created only so sign-in would place people in an org.
+
+- a92c52a: ### A job kind can opt out of completion notifications
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** Every app job kind notified its team's admins when a job ended, on every runner (the simulated one, the in-process one and its sweep, and the CodeBuild webhook), which for a kind a schedule runs every hour is a notification, a `listMembers` call and an email attempt a day for nothing. The seam's `jobs` module may now export `jobNotify`, saying per kind when its end is notified: `'always'` (today's behaviour, and the default), `'failure'` (only a failed job, a lost one the sweep fails included) or `'never'`. A run a kind refuses makes no `listMembers` call, no in-app notification and no email attempt, on every runner. The static demo's `useDemoWorld` takes the same map as its `jobNotify` option. `JobNotify` is a type of `@sssb/kit/core/jobs`. The app guide and `/sssb:new-job` say so.
+
+    **To adopt.** Nothing, unless you want it: an app with no `jobNotify` export behaves as before. To silence a routine kind, export the map from `src/app-config/jobs.ts`:
+
+    ```ts
+    import type { JobNotify } from '@sssb/kit/core/jobs'
+
+    export const jobNotify: Partial<Record<AppJobKind, JobNotify>> = {
+        'sweep-items': 'failure',
+    }
+    ```
+
+    If the static demo starts that kind, pass the same map to `useDemoWorld({ jobNotify })`, from a module both import (the seam's `jobs` module imports every server handler, which the demo's bundle cannot carry).
+
+    **Now deletable.** A local patch or filter that keeps a routine job's end from notifying (an edited kind allowlist, a wrapper around `notifyJobTerminal`).
+
+- 91ecfc0: ### A job records who started it, and its end reaches them when the team has no admin
+
+    **Kind.** migration
+
+    **Action.** optional
+
+    **What changed.** Framework migration `0017_job_requester` adds a nullable `requested_by` column to `jobs`.
+    `submitJob` (`@sssb/kit/db/jobs`) takes an optional `requestedBy`, the submitting person's user id. A job's end still
+    notifies its team's active admins; when the team has none, it now notifies the person who submitted it, while the auth
+    port still gives them standing in the org. A fixed org source (`AUTH_ORG_SOURCE=fixed`) lists no members, so there a
+    job's end reaches only its requester. SSSB's rules let neither of that source's roles submit a `Job`, so such a job is
+    one the app's own rules let the person start. A job submitted without `requestedBy`, a scheduled run among them, still
+    reaches no one when the team has no admin.
+
+    The app guide and `/sssb:new-job` say so.
+
+    **To adopt.** Run your migrations, as every release asks. Pass `requestedBy: user.id` to `submitJob` wherever a person
+    submits a job:
+
+    ```ts
+    await submitJob(db, jobs, { tenantId, orgId, kind, payload, requestedBy: user.id })
+    ```
+
 ## 0.5.0
 
 ### Minor Changes

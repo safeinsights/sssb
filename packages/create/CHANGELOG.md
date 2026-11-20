@@ -1,5 +1,82 @@
 # @sssb/create
 
+## 0.6.0
+
+### Minor Changes
+
+- a92c52a: ### A job kind can opt out of completion notifications
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** Every app job kind notified its team's admins when a job ended, on every runner (the simulated one, the in-process one and its sweep, and the CodeBuild webhook), which for a kind a schedule runs every hour is a notification, a `listMembers` call and an email attempt a day for nothing. The seam's `jobs` module may now export `jobNotify`, saying per kind when its end is notified: `'always'` (today's behaviour, and the default), `'failure'` (only a failed job, a lost one the sweep fails included) or `'never'`. A run a kind refuses makes no `listMembers` call, no in-app notification and no email attempt, on every runner. The static demo's `useDemoWorld` takes the same map as its `jobNotify` option. `JobNotify` is a type of `@sssb/kit/core/jobs`. The app guide and `/sssb:new-job` say so.
+
+    **To adopt.** Nothing, unless you want it: an app with no `jobNotify` export behaves as before. To silence a routine kind, export the map from `src/app-config/jobs.ts`:
+
+    ```ts
+    import type { JobNotify } from '@sssb/kit/core/jobs'
+
+    export const jobNotify: Partial<Record<AppJobKind, JobNotify>> = {
+        'sweep-items': 'failure',
+    }
+    ```
+
+    If the static demo starts that kind, pass the same map to `useDemoWorld({ jobNotify })`, from a module both import (the seam's `jobs` module imports every server handler, which the demo's bundle cannot carry).
+
+    **Now deletable.** A local patch or filter that keeps a routine job's end from notifying (an edited kind allowlist, a wrapper around `notifyJobTerminal`).
+
+- 91ecfc0: ### A job records who started it, and its end reaches them when the team has no admin
+
+    **Kind.** migration
+
+    **Action.** optional
+
+    **What changed.** Framework migration `0017_job_requester` adds a nullable `requested_by` column to `jobs`.
+    `submitJob` (`@sssb/kit/db/jobs`) takes an optional `requestedBy`, the submitting person's user id. A job's end still
+    notifies its team's active admins; when the team has none, it now notifies the person who submitted it, while the auth
+    port still gives them standing in the org. A fixed org source (`AUTH_ORG_SOURCE=fixed`) lists no members, so there a
+    job's end reaches only its requester. SSSB's rules let neither of that source's roles submit a `Job`, so such a job is
+    one the app's own rules let the person start. A job submitted without `requestedBy`, a scheduled run among them, still
+    reaches no one when the team has no admin.
+
+    The app guide and `/sssb:new-job` say so.
+
+    **To adopt.** Run your migrations, as every release asks. Pass `requestedBy: user.id` to `submitJob` wherever a person
+    submits a job:
+
+    ```ts
+    await submitJob(db, jobs, { tenantId, orgId, kind, payload, requestedBy: user.id })
+    ```
+
+### Patch Changes
+
+- e93d7ed: ### Shipped comments describe no particular adopter
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** Two comments in shipped source, one in the CDK construct and one in the generator's template, now speak of adopters in general. No behaviour changes.
+
+- dd8e783: ### The starter declares its auth settings, and authorizes its reads
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.**
+
+    - The starter's `config/params.ts` has an `auth` entry, `tenancy: 'multi'` and `orgSource: 'provider'`. Its comment
+      says what `'single'` and `'fixed'` do, and what a shared identity provider means for them.
+    - Its items GET (`src/app/api/items/route.ts`) now authorizes the read, with `authorize(…, 'read', …)` on the `Item`
+      subject, as its writes always did. So a person placed in the org without standing (the role `none`) reads nothing
+      there. `src/app/api/items/route.test.ts` pins it: a restricted member reads, and `none` is refused.
+
+    **To adopt.** Add the same `auth` entry to your own `config/params.ts` if you want the choices written down; leaving it
+    out keeps the defaults. Add the same `authorize(…, 'read', …)` call to each of your own org-scoped reads. That matters
+    before you turn a fixed org source on: the entry "A `none` role, and reads that authorize" says why.
+
 ## 0.5.0
 
 ### Patch Changes
