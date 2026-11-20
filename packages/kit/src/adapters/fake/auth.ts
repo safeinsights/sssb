@@ -331,7 +331,7 @@ export const fakeAuth: AuthPort = {
     },
 }
 
-/** A display name the auth port accepts: a string with something in it, at most 256 characters (Clerk's own limit). */
+/** A display name the auth port accepts: a string with something in it, at most 256 characters (SSSB's limit). */
 function isProfileName(name: unknown): name is string {
     return typeof name === 'string' && name.trim() !== '' && name.length <= 256
 }

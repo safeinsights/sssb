@@ -74,7 +74,7 @@ async function allPages<T>(
     throw new Error(`a Clerk list ran past ${MAX_PAGES} pages without reaching its count`)
 }
 
-/** A display name the auth port accepts: a string with something in it, at most 256 characters (Clerk's own limit). */
+/** A display name the auth port accepts: a string with something in it, at most 256 characters (SSSB's limit). */
 function isProfileName(name: unknown): name is string {
     return typeof name === 'string' && name.trim() !== '' && name.length <= 256
 }
