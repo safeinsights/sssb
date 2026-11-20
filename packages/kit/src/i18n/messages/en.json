@@ -15,7 +15,11 @@
         "mfaNotImplemented": "This account requires MFA, which arrives with a later slice.",
         "userMenuLabel": "{name}, account menu",
         "profileLink": "Profile",
-        "signOut": "Sign out"
+        "signOut": "Sign out",
+        "refusedTitle": "This account belongs to another site",
+        "refusedBody": "You are signed in, but your account is registered with another site that uses the same sign-in, so it cannot be used here.",
+        "refusedSignOutNote": "Signing out here also signs you out of any other site that shares this sign-in.",
+        "refusedSignOutError": "You could not be signed out. Try again."
     },
     "profile": {
         "title": "Your profile",

@@ -126,6 +126,18 @@ describe('a single tenancy over the provider organizations: only the tenant chan
         expect(base.setActiveOrg).not.toHaveBeenCalled()
     })
 
+    it('says why it refuses, to the sign-in page: another tenant, and nobody refused otherwise', async () => {
+        expect(await setup(settings, { ...NOBODY_SPECIAL, tenantClaim: 'lakeside' }).auth.refusal?.()).toEqual({
+            reason: 'other-tenant',
+        })
+        expect(await setup(settings, { ...NOBODY_SPECIAL, tenantClaim: null }).auth.refusal?.()).toEqual({
+            reason: 'other-tenant',
+        })
+        expect(await setup(settings).auth.refusal?.()).toBeNull()
+        expect(await setup(settings, { ...NOBODY_SPECIAL, tenantClaim: 'harbor' }).auth.refusal?.()).toBeNull()
+        expect(await setup(settings, null).auth.refusal?.()).toBeNull()
+    })
+
     it('refuses an account whose claim is not a slug at all, in session and as a credential', async () => {
         const { auth } = setup(settings, { ...NOBODY_SPECIAL, tenantClaim: null }, { user_odd: null })
         expect(await auth.getCurrentUser()).toBeNull()

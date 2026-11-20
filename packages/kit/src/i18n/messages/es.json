@@ -15,7 +15,11 @@
         "mfaNotImplemented": "Esta cuenta requiere MFA, que llegará en una fase posterior.",
         "userMenuLabel": "{name}, menú de la cuenta",
         "profileLink": "Perfil",
-        "signOut": "Cerrar sesión"
+        "signOut": "Cerrar sesión",
+        "refusedTitle": "Esta cuenta pertenece a otro sitio",
+        "refusedBody": "Has iniciado sesión, pero tu cuenta está registrada en otro sitio que usa el mismo inicio de sesión, así que no se puede usar aquí.",
+        "refusedSignOutNote": "Al cerrar sesión aquí también la cierras en cualquier otro sitio que comparta este inicio de sesión.",
+        "refusedSignOutError": "No se pudo cerrar la sesión. Inténtalo de nuevo."
     },
     "profile": {
         "title": "Tu perfil",

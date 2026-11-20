@@ -1,6 +1,6 @@
 import { isRestricted } from '../core/roles'
 import type { Locale } from '../core/locale'
-import type { AuthPort, AuthUser, CreatedInvite, MemberStanding, Membership, OrgRef } from '../ports/auth'
+import type { AuthPort, AuthRefusal, AuthUser, CreatedInvite, MemberStanding, Membership, OrgRef } from '../ports/auth'
 import { AuthRequiredError, ForbiddenError } from '../ports/errors'
 import { type AuthSettings, fixedOrgProblem } from './auth-tenancy'
 
@@ -42,7 +42,8 @@ export interface ProviderIdentitySource {
  * slug, is no user at all, and has no standing anywhere as a credential (`getMember`): that is a multi-tenant instance
  * switched to this mode by mistake, and admitting them would put another tenant's people in this one. Refused without
  * signing out: this runs while server components render, where a session cookie cannot be changed, and on a shared
- * instance it would end their session in the other product. Over the provider's organizations, every method is
+ * instance it would end their session in the other product. `refusal` says why to the sign-in page, which offers the
+ * person an explicit sign-out (`@sssb/kit/components/auth/account-refused`). Over the provider's organizations, every method is
  * otherwise the adapter's, with its organizations, roles, members and invitations; the ones that act for the signed-in
  * person (`updateProfile`, `createInvite`, `listMyOrgs`, `setActiveOrg`) run the tenant guard first, and `getMember`
  * runs it after the provider's membership.
@@ -182,6 +183,12 @@ export function configuredAuth(
                 return [{ slug: fixed.homeOrgSlug, name, role: fixed.role }]
             }
             return base.listMyOrgs()
+        },
+
+        async refusal(): Promise<AuthRefusal | null> {
+            // Read only on the sign-in page, never per request: the guard's own reason, from the same identity read.
+            const identity = await source.current()
+            return identity && !admitted(identity.tenantClaim) ? { reason: 'other-tenant' } : null
         },
 
         async setActiveOrg(orgSlug: string): Promise<void> {
