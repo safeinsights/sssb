@@ -2,6 +2,7 @@ import { auth, db } from '@sssb/kit/adapters/index'
 import { recordWebhookCompletion } from '@sssb/kit/db/jobs'
 import { notifyJobTerminal } from '@sssb/kit/server-lib/notify'
 import { makeNotifyDeps } from '@sssb/kit/server-lib/notify-deps'
+import { isUuid, readJsonObject } from '../../respond'
 import { withWebhookSecret } from '../respond'
 
 /**
@@ -13,10 +14,7 @@ import { withWebhookSecret } from '../respond'
  */
 export const POST = withWebhookSecret(async ({ request }) => {
     const invalid = () => Response.json({ error: 'invalid-payload' }, { status: 400 })
-    const body = (await request.json()) as Record<string, unknown> | null
-    if (typeof body !== 'object' || body === null) return invalid()
-
-    const { jobId, tenantId, status, resultKey, error } = body
+    const { jobId, tenantId, status, resultKey, error } = await readJsonObject(request)
     if (typeof jobId !== 'string' || typeof tenantId !== 'string') return invalid()
     if (status !== 'completed' && status !== 'failed') return invalid()
     if (resultKey !== undefined && typeof resultKey !== 'string') return invalid()
@@ -24,6 +22,10 @@ export const POST = withWebhookSecret(async ({ request }) => {
     // Cheap pre-DB reject: a resultKey must at least sit in the named tenant's namespace. The org
     // half of the check lives in recordWebhookCompletion, where the job row is the authority.
     if (resultKey !== undefined && !resultKey.startsWith(`exports/${tenantId}/`)) return invalid()
+
+    // An id that cannot be a row names no job: the 404 the sender reads as "unknown job" and does not
+    // retry, where the uuid cast inside the query was a 500 it would retry.
+    if (!isUuid(jobId) || !isUuid(tenantId)) return Response.json({ error: 'not found' }, { status: 404 })
 
     const outcome = await recordWebhookCompletion(db, { tenantId, jobId, status, resultKey, error })
     if (outcome === 'invalid-result-key') return invalid()

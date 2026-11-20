@@ -5,7 +5,7 @@ import { deleteTicket, ticketForOrg } from '@/domain/db/tickets'
 import { applyTicketChanges, type TicketChanges } from '@/domain/ticket-changes'
 import { isTicketStatus } from '@/domain/tickets'
 import { resolveOrgContext } from '../../org-context'
-import { withPortErrors } from '../../respond'
+import { readJsonObject, requireUuidParam, withPortErrors } from '../../respond'
 
 /**
  * Editing and closing a ticket — the two routes the ability model has always described and nothing
@@ -25,7 +25,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return withPortErrors(async () => {
         const { id } = await context.params
         const user = await auth.requireUser()
-        const payload = (await request.json()) as { status?: unknown; assigneeUserId?: unknown }
+        requireUuidParam(id)
+        const payload = await readJsonObject(request)
 
         // Validate at the boundary, explicitly, before anything is resolved: an unknown status is a
         // 400, not a state machine surprise later.
@@ -75,6 +76,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     return withPortErrors(async () => {
         const { id } = await context.params
         const user = await auth.requireUser()
+        requireUuidParam(id)
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved

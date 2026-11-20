@@ -35,7 +35,7 @@ function user(overrides: Partial<AuthUser> = {}): AuthUser {
     }
 }
 
-function confirm(id = 'art-1'): Promise<Response> {
+function confirm(id = 'a0000000-0000-4000-8000-000000000001'): Promise<Response> {
     return POST(new Request(`http://localhost/api/attachments/${id}/confirm`, { method: 'POST' }), {
         params: Promise.resolve({ id }),
     })
@@ -47,7 +47,7 @@ beforeEach(() => {
     h.tenantIdForSlug.mockResolvedValue('tenant-northwind')
     h.orgIdForSlug.mockResolvedValue('org-frontline')
     h.attachmentForOrg.mockResolvedValue({
-        id: 'art-1',
+        id: 'a0000000-0000-4000-8000-000000000001',
         storageKey: 'attachments/tenant-northwind/uuid/a.txt',
         status: 'pending',
     })
@@ -59,9 +59,15 @@ describe('POST /api/attachments/[id]/confirm', () => {
     test("200 records the object's true size and finalizes the row", async () => {
         const response = await confirm()
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({ attachmentId: 'art-1' })
+        expect(await response.json()).toEqual({ attachmentId: 'a0000000-0000-4000-8000-000000000001' })
         // Size comes from the STORED bytes (4), never the client.
-        expect(h.confirmAttachment).toHaveBeenCalledWith({}, 'tenant-northwind', 'org-frontline', 'art-1', 4)
+        expect(h.confirmAttachment).toHaveBeenCalledWith(
+            {},
+            'tenant-northwind',
+            'org-frontline',
+            'a0000000-0000-4000-8000-000000000001',
+            4,
+        )
         expect(h.recordAuditEvent).toHaveBeenCalledTimes(1)
     })
 
@@ -69,7 +75,10 @@ describe('POST /api/attachments/[id]/confirm', () => {
         h.confirmAttachment.mockResolvedValue(0)
         const response = await confirm()
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({ attachmentId: 'art-1', idempotent: true })
+        expect(await response.json()).toEqual({
+            attachmentId: 'a0000000-0000-4000-8000-000000000001',
+            idempotent: true,
+        })
         // The audit trail says only what actually happened — nothing did.
         expect(h.recordAuditEvent).not.toHaveBeenCalled()
     })
@@ -96,5 +105,12 @@ describe('POST /api/attachments/[id]/confirm', () => {
         const { AuthRequiredError } = await import('@sssb/kit/ports/errors')
         h.requireUser.mockRejectedValue(new AuthRequiredError())
         expect((await confirm()).status).toBe(401)
+    })
+})
+
+describe('a path id that cannot be an attachment', () => {
+    test('is a 404, without touching the data module', async () => {
+        expect((await confirm('nope')).status).toBe(404)
+        expect(h.attachmentForOrg).not.toHaveBeenCalled()
     })
 })

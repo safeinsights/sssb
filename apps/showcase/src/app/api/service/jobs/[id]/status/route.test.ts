@@ -31,7 +31,7 @@ const identity: ServiceIdentity = {
     orgSlug: 'frontline',
 }
 
-function post(body: unknown, id = 'job-1'): Promise<Response> {
+function post(body: unknown, id = 'd0000000-0000-4000-8000-000000000001'): Promise<Response> {
     const request = new Request(`http://localhost/api/service/jobs/${id}/status`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -85,7 +85,7 @@ describe('POST /api/service/jobs/[id]/status', () => {
         expect((await post({ status: 'completed', resultKey: 'secrets/anything' })).status).toBe(400)
         expect(h.record).not.toHaveBeenCalled()
 
-        h.jobForOrg.mockResolvedValue({ id: 'job-1', status: 'running' })
+        h.jobForOrg.mockResolvedValue({ id: 'd0000000-0000-4000-8000-000000000001', status: 'running' })
         const ok = await post({ status: 'completed', resultKey: 'exports/t1/o1/job-1.csv' })
         expect(ok.status).toBe(200)
     })
@@ -101,7 +101,7 @@ describe('POST /api/service/jobs/[id]/status', () => {
     })
 
     test('409 with from/to on an illegal transition', async () => {
-        h.jobForOrg.mockResolvedValue({ id: 'job-1', status: 'completed' })
+        h.jobForOrg.mockResolvedValue({ id: 'd0000000-0000-4000-8000-000000000001', status: 'completed' })
         h.record.mockRejectedValue(new InvalidTransitionError('completed', 'failed'))
 
         const response = await post({ status: 'failed' })
@@ -111,7 +111,7 @@ describe('POST /api/service/jobs/[id]/status', () => {
     })
 
     test('authorizes the caller as a MACHINE (update Job in its own org); the 403 case pins that it precedes the write', async () => {
-        h.jobForOrg.mockResolvedValue({ id: 'job-1', status: 'running' })
+        h.jobForOrg.mockResolvedValue({ id: 'd0000000-0000-4000-8000-000000000001', status: 'running' })
         h.record.mockResolvedValue(undefined)
 
         expect((await post({ status: 'completed' })).status).toBe(200)
@@ -128,7 +128,7 @@ describe('POST /api/service/jobs/[id]/status', () => {
     })
 
     test('403 and nothing recorded when the machine is denied', async () => {
-        h.jobForOrg.mockResolvedValue({ id: 'job-1', status: 'running' })
+        h.jobForOrg.mockResolvedValue({ id: 'd0000000-0000-4000-8000-000000000001', status: 'running' })
         h.authorize.mockImplementation(() => {
             throw new ForbiddenError('cannot update Job')
         })
@@ -140,17 +140,32 @@ describe('POST /api/service/jobs/[id]/status', () => {
     })
 
     test('200 records the transition with its optional fields', async () => {
-        h.jobForOrg.mockResolvedValue({ id: 'job-1', status: 'running' })
+        h.jobForOrg.mockResolvedValue({ id: 'd0000000-0000-4000-8000-000000000001', status: 'running' })
         h.record.mockResolvedValue(undefined)
 
         const response = await post({ status: 'completed', resultKey: 'exports/t1/o1/x.csv', message: 'done' })
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ ok: true })
-        expect(h.record).toHaveBeenCalledWith({}, 't1', 'job-1', 'completed', {
+        expect(h.record).toHaveBeenCalledWith({}, 't1', 'd0000000-0000-4000-8000-000000000001', 'completed', {
             resultKey: 'exports/t1/o1/x.csv',
             error: undefined,
             message: 'done',
         })
+    })
+})
+
+describe('a path id that cannot be a job, or a malformed body', () => {
+    test('a non-uuid id is a 404, a body that does not parse a 400', async () => {
+        expect((await post({ status: 'running' }, 'nope')).status).toBe(404)
+        const id = 'd0000000-0000-4000-8000-000000000001'
+        const response = await POST(
+            new Request(`http://localhost/api/service/jobs/${id}/status`, { method: 'POST', body: '{' }),
+            {
+                params: Promise.resolve({ id }),
+            },
+        )
+        expect(response.status).toBe(400)
+        expect(h.jobForOrg).not.toHaveBeenCalled()
     })
 })

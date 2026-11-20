@@ -22,7 +22,11 @@ function post(body: unknown): Promise<Response> {
     return POST(request, { params: Promise.resolve<Record<string, string>>({}) })
 }
 
-const valid = { jobId: 'job-1', tenantId: 't1', status: 'completed' as const }
+const valid = {
+    jobId: 'd0000000-0000-4000-8000-000000000001',
+    tenantId: 'e0000000-0000-4000-8000-000000000001',
+    status: 'completed' as const,
+}
 
 beforeEach(() => {
     h.verify.mockReset()
@@ -47,9 +51,26 @@ describe('POST /api/webhooks/jobs', () => {
     })
 
     test('400 on a malformed payload', async () => {
-        expect((await post({ tenantId: 't1', status: 'completed' })).status).toBe(400) // no jobId
-        expect((await post({ jobId: 'j', tenantId: 't1', status: 'weird' })).status).toBe(400) // bad status
-        expect((await post({ jobId: 'j', tenantId: 't1', status: 'completed', resultKey: 5 })).status).toBe(400)
+        expect((await post({ tenantId: 'e0000000-0000-4000-8000-000000000001', status: 'completed' })).status).toBe(400) // no jobId
+        expect(
+            (
+                await post({
+                    jobId: 'd0000000-0000-4000-8000-000000000001',
+                    tenantId: 'e0000000-0000-4000-8000-000000000001',
+                    status: 'weird',
+                })
+            ).status,
+        ).toBe(400) // bad status
+        expect(
+            (
+                await post({
+                    jobId: 'd0000000-0000-4000-8000-000000000001',
+                    tenantId: 'e0000000-0000-4000-8000-000000000001',
+                    status: 'completed',
+                    resultKey: 5,
+                })
+            ).status,
+        ).toBe(400)
         expect(h.record).not.toHaveBeenCalled()
     })
 
@@ -62,13 +83,19 @@ describe('POST /api/webhooks/jobs', () => {
     test('200 { idempotent: false } when the completion is newly applied', async () => {
         h.record.mockResolvedValue('applied')
 
-        const response = await post({ ...valid, resultKey: 'exports/t1/x.csv' })
+        const response = await post({ ...valid, resultKey: 'exports/e0000000-0000-4000-8000-000000000001/x.csv' })
 
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ ok: true, idempotent: false })
         expect(h.record).toHaveBeenCalledWith(
             {},
-            { tenantId: 't1', jobId: 'job-1', status: 'completed', resultKey: 'exports/t1/x.csv', error: undefined },
+            {
+                tenantId: 'e0000000-0000-4000-8000-000000000001',
+                jobId: 'd0000000-0000-4000-8000-000000000001',
+                status: 'completed',
+                resultKey: 'exports/e0000000-0000-4000-8000-000000000001/x.csv',
+                error: undefined,
+            },
         )
     })
 
@@ -93,5 +120,18 @@ describe('POST /api/webhooks/jobs', () => {
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({ error: 'invalid-transition', from: 'completed', to: 'failed' })
+    })
+})
+
+describe('ids that cannot be rows, or a malformed body', () => {
+    test('a body that does not parse is a 400', async () => {
+        const request = new Request('http://localhost/api/webhooks/jobs', { method: 'POST', body: '{' })
+        expect((await POST(request, { params: Promise.resolve<Record<string, string>>({}) })).status).toBe(400)
+    })
+
+    test('a job id or tenant id that is not a uuid is the documented 404 for an unknown job, never a 500', async () => {
+        expect((await post({ ...valid, jobId: 'x' })).status).toBe(404)
+        expect((await post({ ...valid, tenantId: 'y', resultKey: undefined })).status).toBe(404)
+        expect(h.record).not.toHaveBeenCalled()
     })
 })

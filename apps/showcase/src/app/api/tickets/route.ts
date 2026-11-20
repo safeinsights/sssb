@@ -6,7 +6,7 @@ import { parseDbKeysetCursor } from '@sssb/kit/db/keyset'
 import { createTicket, listTickets } from '@/domain/db/tickets'
 import { TICKET_PAGE_SIZE } from '@/domain/tickets'
 import { resolveOrgContext } from '../org-context'
-import { withPortErrors } from '../respond'
+import { readJsonObject, withPortErrors } from '../respond'
 
 /**
  * The desk's queue. Tickets are tenant-scoped by RLS (the hostile-isolation boundary) AND filtered to
@@ -53,8 +53,12 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {
         const user = await auth.requireUser()
-        const { subject, body } = (await request.json()) as { subject?: string; body?: string }
-        if (!subject?.trim()) return Response.json({ error: 'missing-subject' }, { status: 400 })
+        const { subject, body } = await readJsonObject(request)
+        if (typeof subject !== 'string' || !subject.trim()) {
+            return Response.json({ error: 'missing-subject' }, { status: 400 })
+        }
+        if (body !== undefined && typeof body !== 'string')
+            return Response.json({ error: 'invalid-payload' }, { status: 400 })
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
