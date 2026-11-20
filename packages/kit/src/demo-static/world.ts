@@ -181,12 +181,13 @@ function makeSeedAcceptances(): DemoAcceptance[] {
  * meant the `file://` demo silently showed a different schedule list from `pnpm dev` the moment the
  * app seeded a second one.
  */
-function makeSeedSchedules(): ScheduleRowLike[] {
+/** The seeded schedules, each due at its first boundary after `worldNow` (the world clock's now, not real now). */
+function makeSeedSchedules(worldNow: Date): ScheduleRowLike[] {
     return seedJobSchedules.map((schedule, index) => ({
         id: `seed-schedule-${index}`,
         kind: schedule.kind,
         spec: schedule.spec,
-        nextRunAt: computeNextRunAt(schedule.spec, new Date()).toISOString(),
+        nextRunAt: computeNextRunAt(schedule.spec, worldNow).toISOString(),
         enabled: true,
         tenantSlug: schedule.tenantSlug,
         orgSlug: schedule.orgSlug,
@@ -270,7 +271,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
     const [smsMessages, setSmsMessages] = useState<SmsMessageRow[]>([])
     const [notifPrefs, setNotifPrefs] = useState<Record<string, NotificationPrefRow[]>>({})
     // Twin of the job_schedules table — seeded with the weekly research digest.
-    const [schedules, setSchedules] = useState<ScheduleRowLike[]>(() => makeSeedSchedules())
+    const [schedules, setSchedules] = useState<ScheduleRowLike[]>(() => makeSeedSchedules(new Date()))
     // Twins of the agreements + agreement_acceptances tables — the access-gate worked example.
     const [agreements, setAgreements] = useState<DemoAgreement[]>(() => makeSeedAgreements())
     const [acceptances, setAcceptances] = useState<DemoAcceptance[]>(() => makeSeedAcceptances())
@@ -1186,7 +1187,9 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
         setNotifications([])
         setSmsMessages([])
         setNotifPrefs({})
-        setSchedules(makeSeedSchedules())
+        // The clock goes back to its mount time below, so the schedules are reseeded from there: from real now, a
+        // boundary between mount and reset would be skipped by the next Advance.
+        setSchedules(makeSeedSchedules(new Date(mountedAtMs)))
         setAgreements(makeSeedAgreements())
         setAcceptances(makeSeedAcceptances())
         setClockOffsetMs(0)

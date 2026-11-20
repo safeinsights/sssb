@@ -8,9 +8,8 @@ import { mergeMessages } from '../i18n/messages'
 import { useDemoWorld } from './world'
 
 /**
- * A digest made by advancing the demo clock is dated in world time, so marking mail seen must use world time too:
- * stamped with real now, the digest stays newer than "seen" and the unread badge never clears. The fixture seeds no
- * schedule, so this file gives it one: a daily digest for depot, whose admin is Ada.
+ * The demo's seeded schedule against its world clock. The fixture seeds no schedule, so this file gives it one: a
+ * daily digest for depot (02:00 UTC), whose admin is Ada.
  */
 
 vi.mock('@sssb/app-config/seed', async (importOriginal) => ({
@@ -68,5 +67,19 @@ describe('the demo twin marks mail seen at its world clock', () => {
         expect(unread()).toBeGreaterThan(0)
         act(() => world.current.mail.markSeen())
         expect(unread()).toBe(0)
+    })
+})
+
+describe('the demo twin reseeds its schedules at its world clock', () => {
+    it('computes the next run after a reset from world now, not from real now', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] })
+        const mountedAt = new Date('2026-11-17T12:00:00.000Z').getTime()
+        vi.setSystemTime(mountedAt)
+        const world = await renderWorld()
+        // A real day passes, crossing 02:00 on the 18th; the reset puts the world clock back at its mount time.
+        vi.setSystemTime(mountedAt + DAY_MS)
+        act(() => world.current.resetWorld())
+        expect(world.current.clock.worldNowIso).toBe('2026-11-17T12:00:00.000Z')
+        expect(world.current.schedules[0]!.nextRunAt).toBe('2026-11-18T02:00:00.000Z')
     })
 })
