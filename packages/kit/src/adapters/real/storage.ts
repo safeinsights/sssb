@@ -1,5 +1,6 @@
 import type { StoragePort } from '../../ports/storage'
 import { createS3Storage } from './s3-storage'
+import { assertEndpoint, parseForcePathStyle, parseUploadTarget } from './storage-settings'
 
 /**
  * The storage the real-mode registry builds (`./index.ts`): the published S3 adapter (`./s3-storage.ts`,
@@ -42,11 +43,9 @@ export interface CompatibleStorageSettings {
  */
 export function createCompatibleStorage(settings: CompatibleStorageSettings): StoragePort {
     const { bucket, endpoint, region, accessKeyId, secretAccessKey, uploadTarget } = settings
-    if (uploadTarget !== 'post' && uploadTarget !== 'none') {
-        throw new Error(`STORAGE_UPLOAD_TARGET must be post or none (got "${uploadTarget}")`)
-    }
+    const target = parseUploadTarget(uploadTarget)
     const forcePathStyle = parseForcePathStyle(settings.forcePathStyle)
-    assertHttpUrl(endpoint)
+    assertEndpoint(endpoint)
 
     const s3 = createS3Storage({
         bucket,
@@ -54,8 +53,13 @@ export function createCompatibleStorage(settings: CompatibleStorageSettings): St
         endpoint,
         credentials: { accessKeyId, secretAccessKey },
         forcePathStyle,
+        // The SDK's default (since v3.729) adds CRC32 checksum headers to PutObject and drops Content-MD5 from
+        // DeleteObjects, which several S3-compatible stores reject: Cloudflare tells R2 users to ask for checksums only
+        // where an operation requires one. AWS itself accepts both, so the `s3` choice keeps the default.
+        requestChecksumCalculation: 'WHEN_REQUIRED',
+        responseChecksumValidation: 'WHEN_REQUIRED',
     })
-    if (uploadTarget === 'post') return s3
+    if (target === 'post') return s3
     return {
         ...s3,
         createUploadTarget: async () => {
@@ -65,24 +69,5 @@ export function createCompatibleStorage(settings: CompatibleStorageSettings): St
                     'such as MinIO, or upload another way.',
             )
         },
-    }
-}
-
-function parseForcePathStyle(value: string | undefined): boolean | undefined {
-    if (value === undefined || value === '') return undefined
-    if (value === 'true') return true
-    if (value === 'false') return false
-    throw new Error(`STORAGE_FORCE_PATH_STYLE must be true or false when set (got "${value}")`)
-}
-
-function assertHttpUrl(endpoint: string): void {
-    let url: URL
-    try {
-        url = new URL(endpoint)
-    } catch {
-        throw new Error(`STORAGE_ENDPOINT must be an http(s) URL (got "${endpoint}")`)
-    }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-        throw new Error(`STORAGE_ENDPOINT must be an http(s) URL (got "${endpoint}")`)
     }
 }

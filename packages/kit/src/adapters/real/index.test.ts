@@ -275,6 +275,20 @@ describe('the optional ports follow their switches, and a port switched off is a
             expect(() => assertRealEnv()).toThrow(/Missing env: STORAGE_UPLOAD_TARGET\. /)
         })
 
+        it('refuses at preflight what the adapter would refuse at boot: a present value is not enough', async () => {
+            const { assertRealEnv } = await import('./index')
+            stubEnv(COMPATIBLE)
+            expect(() => assertRealEnv()).not.toThrow()
+            for (const [name, value, message] of [
+                ['STORAGE_UPLOAD_TARGET', 'POST', /STORAGE_UPLOAD_TARGET must be post or none/],
+                ['STORAGE_FORCE_PATH_STYLE', '1', /STORAGE_FORCE_PATH_STYLE must be true or false/],
+                ['STORAGE_ENDPOINT', 'acct.r2.example.com', /STORAGE_ENDPOINT must be an http\(s\) URL/],
+            ] as const) {
+                stubEnv({ ...COMPATIBLE, [name]: value })
+                expect(() => assertRealEnv(), name).toThrow(message)
+            }
+        })
+
         it('is its own choice: the `s3` settings do not select it, nor its settings select it', async () => {
             const { assertRealEnv } = await import('./index')
             // Every store setting present, switch unset: still `s3`, which wants AWS_REGION.

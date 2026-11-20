@@ -367,6 +367,21 @@ describe('storage on an S3-compatible store', () => {
         expect(config.credentials).toMatchObject({ accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'secret-example' })
     })
 
+    test('asks for checksums only where an operation requires one, which stores older than the SDK default reject', async () => {
+        send.mockResolvedValue({ IsTruncated: false })
+        await compatible().list('')
+        const client = send.mock.contexts[0] as S3Client
+        expect(await client.config.requestChecksumCalculation()).toBe('WHEN_REQUIRED')
+        expect(await client.config.responseChecksumValidation()).toBe('WHEN_REQUIRED')
+    })
+
+    test('the `s3` choice keeps the SDK’s own checksum behaviour', async () => {
+        send.mockResolvedValue({ IsTruncated: false })
+        await storage().list('')
+        const client = send.mock.contexts[0] as S3Client
+        expect(await client.config.requestChecksumCalculation()).toBe('WHEN_SUPPORTED')
+    })
+
     test('every other port method is the S3 adapter’s: a copy names the configured bucket and sends one CopyObject', async () => {
         send.mockResolvedValueOnce({})
         await compatible().copy('a/x', 'b/x')
@@ -407,6 +422,21 @@ describe('storage on an S3-compatible store', () => {
             expect(() => compatible({ endpoint })).toThrow(/STORAGE_ENDPOINT must be an http\(s\) URL/)
         },
     )
+
+    test('an endpoint carrying a user or password is refused, and no error repeats it', () => {
+        const endpoint = 'https://AKIDLEAK:sekret@acct123.r2.example.com'
+        let message = ''
+        try {
+            compatible({ endpoint })
+        } catch (error) {
+            message = (error as Error).message
+        }
+        expect(message).toMatch(/STORAGE_ENDPOINT must not carry a user or password/)
+        expect(message).not.toMatch(/AKIDLEAK|sekret/)
+        for (const bad of ['not a url', 'ftp://host']) {
+            expect(() => compatible({ endpoint: bad })).toThrow(/^STORAGE_ENDPOINT must be an http\(s\) URL$/)
+        }
+    })
 
     describe('createUploadTarget', () => {
         const constraints = { contentType: 'image/png', maxBytes: 1024 }

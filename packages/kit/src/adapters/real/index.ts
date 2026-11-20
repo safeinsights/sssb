@@ -11,6 +11,7 @@ import { realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { noAnalytics } from './no-analytics'
 import { optionalPortsEnv, portChoice } from './optional-ports'
+import { assertEndpoint, parseForcePathStyle, parseUploadTarget } from './storage-settings'
 
 interface RealPorts {
     auth: AuthPort
@@ -56,6 +57,12 @@ export function assertRealEnv(): void {
             rows as string[],
             `Missing env: ${missing.join(', ')}. See docs/cutover-checklist.md.`,
         )
+    }
+    // Present is not enough for the settings that choose behaviour: refuse here what the adapter would refuse at boot.
+    if (portChoice('storage') === 's3-compatible') {
+        parseUploadTarget(process.env['STORAGE_UPLOAD_TARGET'] ?? '')
+        parseForcePathStyle(process.env['STORAGE_FORCE_PATH_STYLE'])
+        assertEndpoint(process.env['STORAGE_ENDPOINT'] ?? '')
     }
 }
 
