@@ -46,11 +46,6 @@ export interface ConformanceOptions {
     appDir: string
     /** Checks this app leaves out, each with the reason: `{ '<check id>': '<why>' }`. */
     optOut?: Readonly<Record<string, string>>
-    /**
-     * SSSB's own run only: why `appDir` is not the package of the calling test file. The kit runs the suite against
-     * its fixture, `packages/kit/test-fixture`, from a test file in `packages/kit`; an app never has a reason to.
-     */
-    appDirOutsideCaller?: string
 }
 
 /** The nearest directory at or above `file` that holds a package.json, or null. */
@@ -88,6 +83,17 @@ export function appDirMismatch(appDir: string, testPath: string): string | null 
 
 /** Registers the conformance suite in the calling test file. Call it once, at the file's top level. */
 export function conformanceSuite(options: ConformanceOptions): void {
+    // Only the two published options are read: anything else an app passes is ignored, so nothing it writes can turn
+    // the appDir check below off.
+    registerConformanceSuite({ appDir: options.appDir, ...(options.optOut ? { optOut: options.optOut } : {}) })
+}
+
+/**
+ * SSSB's own entry, not a published subpath (`@sssb/kit/testing` exports `conformanceSuite` only): the suite with
+ * `appDirOutsideCaller`, the reason `appDir` is not the calling test file's package. The kit runs the suite against
+ * its fixture, `packages/kit/test-fixture`, from a test file in `packages/kit`; an app never has a reason to.
+ */
+export function registerConformanceSuite(options: ConformanceOptions & { appDirOutsideCaller?: string }): void {
     const optOut = options.optOut ?? {}
     checkOptOut('conformanceSuite', 'unit', optOut)
     if (typeof options.appDir !== 'string' || options.appDir === '') {

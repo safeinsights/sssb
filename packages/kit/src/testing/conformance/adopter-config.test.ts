@@ -82,14 +82,14 @@ const leftovers = ({ tmp }: Project) => readdirSync(tmp).filter((name) => name.s
 
 /** Every unit check but demo-presets opted out: the one that makes a scratch directory and replays into it. */
 const ONLY_DEMO_PRESETS = `
-import { conformanceSuite } from ${kit('testing/index.ts')}
+import { registerConformanceSuite } from ${kit('testing/conformance/suite.ts')}
 import registry from ${kit('testing/checks.json')}
 const optOut = Object.fromEntries(
     registry.checks
         .filter((check) => check.runner === 'unit' && check.id !== 'demo-presets')
         .map((check) => [check.id, 'not under test here']),
 )
-conformanceSuite({
+registerConformanceSuite({
     appDir: ${JSON.stringify(path.resolve(FIXTURE_SEAM, '..'))},
     appDirOutsideCaller: 'a scratch project replaying the kit fixture',
     optOut,

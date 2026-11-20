@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import registry from './checks.json'
+import { registerConformanceSuite } from './conformance/suite'
 import { conformanceSuite } from './index'
 
 /**
@@ -10,7 +11,7 @@ import { conformanceSuite } from './index'
  * kit's own scan (packages/kit/src/authz/authorized-mutations.test.ts) is what walks them; and with no `src/app` it
  * renders no page to hold to `real-auth-provider`, which ./conformance/auth-provider.test.ts runs on scratch apps.
  */
-conformanceSuite({
+registerConformanceSuite({
     appDir: path.resolve(import.meta.dirname, '../../test-fixture'),
     appDirOutsideCaller: "the kit's own run: the fixture is SSSB's stand-in app, not this test file's package",
     optOut: {
@@ -37,7 +38,12 @@ describe('conformanceSuite refuses, while the file is collected', () => {
         expect(() => conformanceSuite({ appDir: starter })).toThrow(
             new RegExp(`appDir is ${starter}.*belongs to ${path.resolve(import.meta.dirname, '../..')}`),
         )
-        expect(() => conformanceSuite({ appDir: starter, appDirOutsideCaller: ' ' })).toThrow(
+        // The exemption is SSSB's own: the published entry does not take it, and ignores it when passed anyway.
+        expect(() =>
+            // @ts-expect-error appDirOutsideCaller is not a published option
+            conformanceSuite({ appDir: starter, appDirOutsideCaller: 'an app turning the check off' }),
+        ).toThrow(/appDir is .*belongs to/)
+        expect(() => registerConformanceSuite({ appDir: starter, appDirOutsideCaller: ' ' })).toThrow(
             /appDirOutsideCaller needs a reason/,
         )
     })
