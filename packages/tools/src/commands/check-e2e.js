@@ -414,7 +414,8 @@ function kitLiteralsInCode(app, file, text) {
             const named =
                 ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) &&
                     parent.moduleSpecifier === node) ||
-                (ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent)) ||
+                // a string-literal TYPE (`type S = '@sssb/kit/…'`, an import('…') type's argument): a type loads nothing
+                ts.isLiteralTypeNode(parent) ||
                 // a NAME (an object-literal or class key, an interface member, a `declare module`): never a specifier
                 ('name' in parent && parent.name === node)
             if (!named) literals.push(node.text)
