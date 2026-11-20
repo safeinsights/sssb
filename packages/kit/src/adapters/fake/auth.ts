@@ -200,8 +200,11 @@ export async function acceptInvite(
 ): Promise<{ id: string; tenantSlug: string }> {
     const invite = findInvite(inviteId)
     if (!invite) throw new ForbiddenError(`unknown invite: ${inviteId}`)
+    if (typeof profile.name !== 'string') throw new ForbiddenError('invalid name')
     const name = profile.name.trim()
     if (!name) throw new ForbiddenError('name is required')
+    // The same bound updateProfile keeps, so a person cannot get a name at sign-up that they could not set later.
+    if (!isProfileName(name)) throw new ForbiddenError('invalid name')
 
     const person: SeedPerson = {
         id: `person-invited-${inviteId.slice(0, 8)}`,

@@ -39,6 +39,13 @@ const BAD_TO = [
     'invitee@example.test attacker@evil.example',
     'no-at-sign.example',
     '',
+    // One "@" and no comma, but the address mailed is not the one written: a display name, then the real address.
+    'a<b@c.d>',
+    '<a@b.c> x',
+    'x <a@b.c> (y@z.w)',
+    'x <a@b.c> (comment)',
+    '"Ada" <ada@example.test>',
+    'ada@example.test (Ada)',
 ]
 
 async function adapters() {
