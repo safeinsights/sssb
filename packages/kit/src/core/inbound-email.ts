@@ -42,13 +42,17 @@ export interface InboundRecipient {
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 /**
- * Pull the bare addr-spec out of a possibly-decorated address: `"Ada Keeper" <ada@x.test>` → `ada@x.test`,
+ * Pull the bare addr-spec out of a possibly-decorated address: `"Ada Keeper" <ada@x.test>` → `ada@x.test`
+ * (the last angle-bracketed part),
  * a bare `ada@x.test` → itself. Lowercased and trimmed (email domains are case-insensitive, and local
  * parts are case-insensitive in every practical mail system — we normalize so a sender/member match is
  * not defeated by case). Returns '' for anything without an addr-spec.
  */
 export function normalizeEmailAddress(raw: string): string {
-    const angle = raw.match(/<([^>]+)>/)
+    // The LAST <...> part: the addr-spec follows the display name, and a quoted display name may itself hold
+    // something that looks like an address (`"<victim@org.test>" <attacker@evil.test>`).
+    const angles = [...raw.matchAll(/<([^<>]+)>/g)]
+    const angle = angles.at(-1)
     const candidate = (angle ? angle[1]! : raw).trim().toLowerCase()
     // A single '@' with non-empty both sides, else not a usable address.
     const at = candidate.indexOf('@')

@@ -12,6 +12,11 @@ describe('normalizeEmailAddress', () => {
         expect(normalizeEmailAddress('Sam <sam@x.test>')).toBe('sam@x.test')
     })
 
+    it('takes the LAST angle-bracketed part, so a display name cannot supply the address', () => {
+        expect(normalizeEmailAddress('"<victim@org.test>" <attacker@evil.test>')).toBe('attacker@evil.test')
+        expect(normalizeEmailAddress('<victim@org.test> <attacker@evil.test>')).toBe('attacker@evil.test')
+    })
+
     it('passes a bare address through, trimmed and lowercased', () => {
         expect(normalizeEmailAddress('  Foo@Bar.TEST ')).toBe('foo@bar.test')
     })
