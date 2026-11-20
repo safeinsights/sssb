@@ -157,6 +157,9 @@ function fakeGh(
         admin?: boolean
         failSecretSet?: number
         installations?: Record<string, unknown>[]
+        /** The `npm-publish` environment as GitHub answers it; `null` answers 404, as before it is created. */
+        npmPublish?: Record<string, unknown> | null
+        npmPublishPolicies?: Record<string, unknown>[]
     } = {},
 ) {
     const state = {
@@ -209,6 +212,17 @@ function fakeGh(
             })
         if (apiPath === `${REPO}/environments/release/deployment-branch-policies`)
             return ok({ branch_policies: [{ name: 'main', type: 'branch' }] })
+        if (apiPath === `${REPO}/environments/npm-publish`)
+            return options.npmPublish === null
+                ? { code: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' }
+                : ok(
+                      options.npmPublish ?? {
+                          can_admins_bypass: false,
+                          deployment_branch_policy: { custom_branch_policies: true, protected_branches: false },
+                      },
+                  )
+        if (apiPath === `${REPO}/environments/npm-publish/deployment-branch-policies`)
+            return ok({ branch_policies: options.npmPublishPolicies ?? [{ name: 'v*', type: 'tag' }] })
         if (apiPath === `${REPO}/environments/release/secrets`)
             return ok({ secrets: state.secrets.map((name) => ({ name })) })
         if (apiPath === `${REPO}/environments/release/variables`)
@@ -464,6 +478,16 @@ describe('release-app create', () => {
         expect(h.text()).toContain('is not an administrator of safeinsights/sssb')
     })
 
+    it('refuses before anything exists when the npm-publish environment is missing or not held to v* tags', async () => {
+        for (const options of [{ npmPublish: null }, { npmPublishPolicies: [{ name: 'main', type: 'branch' }] }]) {
+            const h = harness({ gh: fakeGh(options) })
+            expect(await createCommand(h.deps, { applyBypass: false })).toBe(1)
+            expect(h.text()).toMatch(/environment "npm-publish": its deployment refs|could not read the "npm-publish"/)
+            expect(h.http.calls).toEqual([])
+            expect(h.browser()).toBeUndefined()
+        }
+    })
+
     it('refuses without a terminal', async () => {
         const h = harness({ tty: false })
         expect(await createCommand(h.deps, { applyBypass: false })).toBe(1)
@@ -671,6 +695,50 @@ describe('release-app verify and bypass', () => {
         const h = harness({ gh: fakeGh({ secret: true, variable: CLIENT_ID, installations: wide }) })
         expect(await verifyCommand(h.deps, { appId: APP_ID })).toBe(1)
         expect(h.text()).toContain('is installed on "all" repositories')
+    })
+
+    // release.yml's header: `npm-publish` deploys from `v*` tags only, administrators not exempt. npm's trusted
+    // publisher binds the environment, not a ref, so verify must hold that rule as it holds `release`'s.
+    it.each([
+        [
+            'a branch policy instead of the tag',
+            { npmPublishPolicies: [{ name: 'main', type: 'branch' }] },
+            'expected only the tags v*',
+        ],
+        ['no policy at all', { npmPublishPolicies: [] }, 'its deployment refs are []'],
+        [
+            'an extra policy',
+            { npmPublishPolicies: [{ name: 'v*', type: 'tag' }, { name: 'main' }] },
+            'its deployment refs are ["tag:v*","branch:main"]',
+        ],
+        [
+            'administrators exempt',
+            {
+                npmPublish: {
+                    can_admins_bypass: true,
+                    deployment_branch_policy: { custom_branch_policies: true, protected_branches: false },
+                },
+            },
+            'administrators can bypass its rules',
+        ],
+        [
+            'no deployment rule',
+            { npmPublish: { can_admins_bypass: false, deployment_branch_policy: null } },
+            'does not restrict deployments',
+        ],
+        ['missing', { npmPublish: null }, 'could not read the "npm-publish" environment'],
+    ])('verify fails the npm-publish environment with %s, and names it', async (_what, options, expected) => {
+        const h = harness({ gh: fakeGh({ secret: true, variable: CLIENT_ID, ...options }) })
+        expect(await verifyCommand(h.deps, { appId: APP_ID })).toBe(1)
+        expect(h.text()).toContain('npm-publish')
+        expect(h.text()).toContain(expected)
+    })
+
+    it('verify passes the npm-publish environment on the tags v* alone', async () => {
+        const h = harness({ gh: fakeGh({ secret: true, variable: CLIENT_ID }) })
+        await verifyCommand(h.deps, { appId: APP_ID })
+        expect(h.text()).toContain('environment "npm-publish": v* tags only, admins not exempt')
+        expect(h.text()).not.toMatch(/✗[^\n]*npm-publish/)
     })
 
     it('bypass --apply needs a terminal', async () => {
