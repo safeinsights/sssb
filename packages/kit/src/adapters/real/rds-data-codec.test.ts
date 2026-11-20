@@ -342,6 +342,13 @@ describe('rewritePlaceholders: a string constant continued on the next line is o
         expect(rewritePlaceholders("select E'a'\n'\\' $1', $1", (n) => `<P${n}>`)).toBe("select E'a'\n'\\' $1', <P1>")
     })
 
+    it('a bare carriage return is a newline to Postgres, so it continues the string too', () => {
+        expect(rewritePlaceholders("select E'a'\r'\\' $1', $1", (n) => `<P${n}>`)).toBe("select E'a'\r'\\' $1', <P1>")
+        expect(rewritePlaceholders("select E'a'\r\n  '\\' $1', $1", (n) => `<P${n}>`)).toBe(
+            "select E'a'\r\n  '\\' $1', <P1>",
+        )
+    })
+
     it('a plain continuation is one string too; on one line, two strings are two', () => {
         expect(rewritePlaceholders("select 'a'\n  'b $1', $1", (n) => `<P${n}>`)).toBe("select 'a'\n  'b $1', <P1>")
         expect(rewritePlaceholders("select 'a' 'b', $1", (n) => `<P${n}>`)).toBe("select 'a' 'b', <P1>")
