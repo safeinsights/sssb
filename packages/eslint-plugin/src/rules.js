@@ -771,12 +771,8 @@ const pathIntoKit = {
             if (!landingsCache.has(target)) landingsCache.set(target, landingsOf(target))
             return /** @type {string[]} */ (landingsCache.get(target))
         }
-        // `throughNodeModules`: whether a `node_modules` segment is a finding of its own. Not for a string handed to a
-        // `.resolve` that is not a module resolver (`path.resolve('node_modules/.cache/x')`, `Promise.resolve(…)`).
-        const finding = (specifier, throughNodeModules = true) => {
-            if (throughNodeModules && NODE_MODULES_SEGMENT.test(specifier)) {
-                return { messageId: 'nodeModules', landing: '' }
-            }
+        const finding = (specifier) => {
+            if (NODE_MODULES_SEGMENT.test(specifier)) return { messageId: 'nodeModules', landing: '' }
             for (const reading of readingsOf(specifier)) {
                 const target = targetOf(reading)
                 if (!target) continue
@@ -787,15 +783,15 @@ const pathIntoKit = {
             }
             return undefined
         }
-        const report = (loc, rawSpecifier, throughNodeModules = true) => {
+        const report = (loc, rawSpecifier) => {
             const specifier = rawSpecifier.trim()
-            const found = finding(specifier, throughNodeModules)
+            const found = finding(specifier)
             if (found)
                 context.report({ ...loc, messageId: found.messageId, data: { specifier, landing: found.landing } })
         }
-        const check = (node, throughNodeModules = true) => {
+        const check = (node) => {
             const specifier = literalSpecifier(node)
-            if (typeof specifier === 'string') report({ node }, specifier, throughNodeModules)
+            if (typeof specifier === 'string') report({ node }, specifier)
         }
         // A module resolver's `.resolve`: `require.resolve`, `import.meta.resolve`, `createRequire(…).resolve` (also
         // `module.createRequire(…).resolve`).
@@ -818,11 +814,12 @@ const pathIntoKit = {
             // vitest/jest mock a module by specifier, which resolves exactly like an import.
             'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
                 check(node.arguments[0]),
-            // `require.resolve('…')`, `createRequire(…).resolve('…')`, `import.meta.resolve('…')`: a path the caller
-            // then reads or loads. Any other `.resolve(…)` (`path.resolve`, `Promise.resolve`) is judged only for a
-            // path that lands in the kit: its string need not be a module, so a `node_modules` in it is no finding.
-            'CallExpression[callee.type="MemberExpression"][callee.property.name="resolve"]': (node) =>
-                check(node.arguments[0], isModuleResolver(node.callee)),
+            // `require.resolve('…')`, `createRequire(…).resolve('…')`, `import.meta.resolve('…')`: a module the caller
+            // then reads or loads. Any other `.resolve(…)` (`path.resolve`, `Promise.resolve`) is not judged at all: its
+            // string need not be a module, and `path.resolve` reads it against the working directory, not this file.
+            'CallExpression[callee.type="MemberExpression"][callee.property.name="resolve"]': (node) => {
+                if (isModuleResolver(node.callee)) check(node.arguments[0])
+            },
             // `/// <reference path="…" />` makes the compiler load the file just as an import does.
             Program: () => {
                 for (const { loc, value } of referenceDirectives(context)) report({ loc }, value)

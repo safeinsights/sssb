@@ -143,12 +143,15 @@ describe('sssb/no-path-into-kit, through a symlink, the app alias, require.resol
 
     // `.resolve` is also `path.resolve` and `Promise.resolve`, whose string need not be a module: only a module
     // resolver's (`require`, `import.meta`, `createRequire(…)`) path through node_modules is a finding.
-    it('judges node_modules in a .resolve only for a module resolver', async () => {
+    it('judges a .resolve only for a module resolver', async () => {
         const app = workspace()
         const code = [
             "export const a = path.resolve('node_modules/.cache/x')",
             "export const b = Promise.resolve('node_modules')",
             "export const c = somePath.resolve('./x')",
+            "export const e = path.resolve('node_modules', '.bin')",
+            // not a module resolver, so not judged at all: path.resolve reads it against the working directory
+            "export const f = path.resolve('../../../kit/src/core/roles')",
         ].join('\n')
         expect(await firedIn(app, `${code}\n`)).toEqual([])
         for (const resolver of ['require', 'import.meta', "createRequire('/x')"]) {
