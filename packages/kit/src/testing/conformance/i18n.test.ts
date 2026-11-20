@@ -50,8 +50,25 @@ describe('parityProblems', () => {
         expect(check('Read <b>this</b>', 'Lee esto')).not.toEqual([])
     })
 
-    it('fails a message that does not parse, and a key on one side only', () => {
-        expect(check('Hi {name}', 'Hola {name')).not.toEqual([])
+    it('fails a message that parses on one side only, naming that side, and a key on one side only', () => {
+        expect(check('Hi {name}', 'Hola {name')).toEqual([expect.stringMatching(/^m: es does not parse as ICU/)])
+        expect(check('Press <Enter> to send', 'Pulsa Intro para enviar')).toEqual([
+            expect.stringMatching(/^m: en does not parse as ICU/),
+        ])
         expect(parityProblems({ a: 'x' }, { b: 'x' })).not.toEqual([])
+    })
+
+    it.each([
+        ['See <a href="https://x">docs</a>', 'Ver <a href="https://x">documentación</a>'],
+        ['<user@example.com>', '<user@example.com>'],
+        ['{ "a": 1 }', '{ "a": 1 }'],
+        ['Use {{name}} in templates', 'Usa {{name}} en plantillas'],
+        ['function() {}', 'function() {}'],
+    ])('passes a raw value (for t.raw) that parses on neither side: %j', (en, es) => {
+        expect(check(en, es)).toEqual([])
+    })
+
+    it('still holds a raw pair to the same {placeholder} names', () => {
+        expect(check('Use {{name}} in templates', 'Usa {{nombre}} en plantillas')).not.toEqual([])
     })
 })
