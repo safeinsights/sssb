@@ -468,7 +468,10 @@ jobs:
         permissions:
             contents: read
         steps:
+            # No later step pushes or calls the API, so the checkout leaves no token in .git/config for one to read.
             - uses: ${c.meta.actions['actions/checkout']}
+              with:
+                  persist-credentials: false
             - uses: ${c.meta.actions['pnpm/action-setup']}
             - uses: ${c.meta.actions['actions/setup-node']}
               with:
@@ -487,6 +490,7 @@ jobs:
             - uses: ${c.meta.actions['actions/checkout']}
               with:
                   fetch-depth: 0 # full history: a secret committed then deleted is still leaked
+                  persist-credentials: false # gitleaks reads the local history; nothing here needs the token
             - name: gitleaks (pinned binary; gitleaks-action requires a license key for organization repositories)
               # The digest is the one gitleaks publishes for this asset; the binary runs only if the download matches it.
               run: |

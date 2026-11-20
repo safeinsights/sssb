@@ -344,6 +344,20 @@ describe('@sssb/create: the generated workspace', () => {
         expect(read(other, '.github/workflows/checks.yml')).toContain(`app-checks.yml@${'a'.repeat(40)} `)
     })
 
+    // No job of the generated workflow pushes or calls the API after its checkout, so none leaves the token in
+    // .git/config, where any later step (a dependency's install script, say) could read it. The jobs the reusable
+    // workflow runs are SSSB's, and pinned the same way in its own test.
+    it('checks out with persist-credentials: false in every job it writes', () => {
+        const workflow = parseYaml(read(ws, '.github/workflows/checks.yml')) as {
+            jobs: Record<string, { steps?: { uses?: string; with?: Record<string, unknown> }[] }>
+        }
+        const checkouts = Object.entries(workflow.jobs).flatMap(([job, { steps = [] }]) =>
+            steps.filter((step) => step.uses?.startsWith('actions/checkout@')).map((step) => [job, step] as const),
+        )
+        expect(checkouts.map(([job]) => job).sort()).toEqual(['secret-scan', 'workspace-checks'])
+        for (const [job, step] of checkouts) expect(step.with?.['persist-credentials'], job).toBe(false)
+    })
+
     // A release asset is as replaceable as a tag, and this one is executed: the step checks it against the digest SSSB's
     // own workflow carries for the same version before it runs it.
     it('verifies the gitleaks download against the digest SSSB pins, before running it', () => {
