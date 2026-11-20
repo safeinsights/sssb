@@ -12,6 +12,15 @@ function escapeHtml(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+/**
+ * Twin of the server's notification email (../server-lib/notify.ts): a heading, a body line and the footer. The
+ * values are already-translated copy, and that copy interpolates what people typed (an invited address, an app's
+ * subject line), so each is escaped.
+ */
+export function buildNotificationEmailHtml(labels: { title: string; body: string; footer: string }): string {
+    return `<h2>${escapeHtml(labels.title)}</h2><p>${escapeHtml(labels.body)}</p><p>${escapeHtml(labels.footer)}</p>`
+}
+
 /** Twin of ../email/templates/invite-email.tsx. */
 export function buildInviteEmailHtml(
     labels: { heading: string; body: string; button: string; linkFallback: string },

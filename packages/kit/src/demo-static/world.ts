@@ -70,7 +70,7 @@ import type {
     StaticPresetOperationContext,
     StaticPresetOperationHandler,
 } from './contracts'
-import { buildDigestEmailHtml, buildInviteEmailHtml } from './email-html'
+import { buildDigestEmailHtml, buildInviteEmailHtml, buildNotificationEmailHtml } from './email-html'
 import { go, useHashRoute } from './hash-route'
 import type {
     DemoAcceptance,
@@ -433,10 +433,11 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
             const c = (key: string, values?: Record<string, string>) =>
                 tRoot(`${copy.namespace ?? FRAMEWORK_NOTIFICATION_NAMESPACE}.${key}`, values)
             if (channels.includes('email')) {
-                const html =
-                    `<h2>${c(copy.titleKey, copy.values)}</h2>` +
-                    `<p>${c(copy.bodyKey, copy.values)}</p>` +
-                    `<p>${tNotifications('emailFooter')}</p>`
+                const html = buildNotificationEmailHtml({
+                    title: c(copy.titleKey, copy.values),
+                    body: c(copy.bodyKey, copy.values),
+                    footer: tNotifications('emailFooter'),
+                })
                 setEmails((prev) => [
                     {
                         id: `email-${prev.length}`,
