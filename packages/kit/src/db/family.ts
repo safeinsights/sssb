@@ -8,7 +8,7 @@ import { runWithTenant } from './with-tenant'
 /**
  * The database family (ADR-0015, second addendum, point 3): what is specific to one database engine, gathered behind
  * one object so the framework's logic stays generic over the engine. SSSB has one family today, Postgres, with three
- * transports (pglite, node-postgres, the RDS Data API); a second family (libsql, `.claude/future-tasks/db-libsql-family.md`)
+ * transports (pglite, node-postgres, the RDS Data API); a second family (libsql, safeinsights/sssb#174)
  * is a second object of this shape, not a fork of the data layer.
  *
  * A family owns:

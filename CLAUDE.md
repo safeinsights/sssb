@@ -222,7 +222,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   raw calls in test files, and `test:unit`, `test:coverage` and `test:contract` run through `sssb check-tmpdir-leak`.
 - **E2E `workers` stays 1** (the old "10GB VM / OOM" reason was wrong; measured). Parallelism belongs where the worlds
   are separate: across apps locally, across CI shards. Read
-  `.claude/future-tasks/e2e-shared-world-blocks-parallelism.md` before raising it.
+  [safeinsights/sssb#99](https://github.com/safeinsights/sssb/issues/99) before raising it.
 - Component workshop: `pnpm ladle` (screens AND react-email templates).
 - **The dev ticker** (the guide's dev loop) is `@sssb/tools/ticker` (start, stop, status), policy-free; all of it
   lives in `packages/tools/src/tick`. Here `pnpm tick` ticks the showcase and `pnpm tick:starter` the starter, and
@@ -281,10 +281,22 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   root `package.json`'s `sssb.apps`, and must work in a generated workspace: `tests/tooling/plugin.test.ts` fails a
   path, script, `sssb` command, `@sssb/kit` subpath or rule id one names that a generated workspace lacks. Maintainer-only, in `.claude/commands/`:
   `/new-kit-port` (a framework port in `packages/kit`), `/record-fixtures`, `/branch-review`, `/sub-review`,
-  `/repo-health`.
+  `/repo-health`, `/backlog-triage`.
 - Record important lessons in `docs/build-notes.md`; unplanned decisions in `docs/decision-log.md`;
-  designed-but-unbuilt work in `.claude/future-tasks/` (one file per item, listed in its `index.md`).
-  Amend an ADR by appending a dated addendum — never by editing what its body said.
+  designed-but-unbuilt work as a GitHub issue (below). Amend an ADR by appending a dated addendum — never by editing
+  what its body said.
+- **The backlog is this repository's GitHub issues**, ranked on the org's "SSSB backlog" Project: its **Do next**
+  status, in row order, is what to work on now. Anything found and not done in a session (a review aside, a deferred
+  fix, a design sketched but unbuilt) is filed before the session ends: `gh issue create --type Bug|Feature|Task` with a
+  `P0`–`P3` label, one or two `area:*` labels (`kit`, `simulator`, `tooling`, `ci`, `infra`, `docs`), and
+  `needs-decision` or `security` when they apply. The body carries the design so nobody re-derives it: Problem, What
+  we know (numbers dated), Proposed approach, Open questions, Done when. **Issues are public, edit history included**:
+  never name or identify an adopter (write "an adopter", "an app that ..."), people (say "the maintainer"), private
+  hosts, accounts or repositories. Cite one in code and docs as `safeinsights/sssb#N`, and close it with `Closes #N`
+  in the PR body; a merge into `integration` or an `int-*` branch closes it too
+  (`.github/workflows/close-issues-on-integration-merge.yml`). `/backlog-triage` curates it.
+  `.claude/future-tasks/` is the frozen archive from before the move (`issue-map.json` maps each migrated file to its
+  issues); add nothing there.
 - **Doctrine docs are gated**: `tests/docs/doc-paths.test.ts` fails if a doctrine doc cites a repo path
   that doesn't exist. The doc set and its exemptions are `sssb.docPaths` in the root `package.json`, read by
   `@sssb/tools/doc-paths` (`sssb check-doc-paths` runs the same engine) through `tests/docs/doc-set.ts`; the app guide

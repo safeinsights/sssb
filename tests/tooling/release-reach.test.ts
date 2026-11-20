@@ -193,7 +193,8 @@ describe('the one way onto npm', () => {
 
     it('runs no publish anywhere else, but as a dry run, and nothing else holds an id-token, environment or secret', () => {
         const others = files.filter((f) => f !== 'release.yml')
-        expect(others.sort()).toEqual(['app-checks.yml', 'checks.yml'])
+        // close-issues-on-integration-merge.yml closes the issues a merged PR names; it holds `issues: write` alone
+        expect(others.sort()).toEqual(['app-checks.yml', 'checks.yml', 'close-issues-on-integration-merge.yml'])
         // the reusable workflow starts only when called, from `checks.yml` here or from an adopter's own CI
         expect(Object.keys(read('app-checks.yml').on)).toEqual(['workflow_call'])
         for (const file of others) {
