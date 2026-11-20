@@ -11,7 +11,7 @@ export interface ProfileValues {
 }
 
 /** The longest display name SSSB's auth adapters accept; a blank one is refused too. */
-export const PROFILE_NAME_MAX_LENGTH = 256
+const PROFILE_NAME_MAX_LENGTH = 256
 
 /**
  * Lean take on Clerk's UserProfile (ADR-0003): a sectioned account page. The Profile section is live;
