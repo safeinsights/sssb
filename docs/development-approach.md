@@ -285,7 +285,7 @@ react-email precedent.
 **The simulated world has its own surface: Simulator ✅.** The fakes don't just stub vendors — together they
 simulate the world _around_ the app: the other users, their inboxes, the state of the whole set. Simulator is
 that world's UI: a collapsible panel docked beside the app (simulated mode only, 404 in real builds), skinned so it
-reads as "not the product." _Cast_ switches you between people instantly, restoring where each of them last
+reads as "not the product." _People_ switches you between people instantly, restoring where each of them last
 was — including invited-but-unregistered people, whose inbox you can read before they have an account (a
 signed-out main pane is their "desktop," and clicking the invite in their mail walks the real accept flow).
 _Mail_ is a per-person inbox over the caught-email store, with a "compose inbound" affordance and the
