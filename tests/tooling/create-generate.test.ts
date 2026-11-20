@@ -344,6 +344,25 @@ describe('@sssb/create: the generated workspace', () => {
         expect(read(other, '.github/workflows/checks.yml')).toContain(`app-checks.yml@${'a'.repeat(40)} `)
     })
 
+    // A release asset is as replaceable as a tag, and this one is executed: the step checks it against the digest SSSB's
+    // own workflow carries for the same version before it runs it.
+    it('verifies the gitleaks download against the digest SSSB pins, before running it', () => {
+        const ours = readFileSync(path.join(REPO, '.github/workflows/checks.yml'), 'utf8')
+        const digest = /echo "([0-9a-f]{64}) /.exec(ours)?.[1]
+        expect(digest).toMatch(/^[0-9a-f]{64}$/)
+        const step =
+            /- name: gitleaks[\s\S]*?\.\/gitleaks git[^\n]*/.exec(read(ws, '.github/workflows/checks.yml'))?.[0] ?? ''
+        const lines = step.split('\n').map((line) => line.trim())
+        const at = (fragment: string) => lines.findIndex((line) => line.includes(fragment))
+        expect(lines[at('sha256sum -c -')]).toBe(`echo "${digest}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -`)
+        // downloaded, then checked, then unpacked, then run
+        expect(at('curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz"')).toBeGreaterThanOrEqual(0)
+        expect(at('curl')).toBeLessThan(at('sha256sum -c -'))
+        expect(at('sha256sum -c -')).toBeLessThan(at('tar -xzf'))
+        expect(at('tar -xzf')).toBeLessThan(at('./gitleaks git'))
+        expect(step).not.toMatch(/\| *tar/)
+    })
+
     it("enables SSSB's Claude Code plugin from its marketplace, pinned to the workflow's commit", () => {
         const marketplace = readJson(REPO, '.claude-plugin/marketplace.json')
         const plugin = readJson(REPO, 'plugins/sssb/.claude-plugin/plugin.json')

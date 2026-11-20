@@ -137,6 +137,20 @@ describe('@sssb/create: the template holds what git tracks, and only that', () =
 
         expect(build(standIn({ withGit: false }))).toThrow(/is not a git checkout/)
     })
+
+    it('refuses a source workflow that pins a gitleaks version and no digest for it', () => {
+        const repo = standIn()
+        const file = path.join(repo, '.github/workflows/checks.yml')
+        const unchecked = readFileSync(file, 'utf8').replace(/^.*sha256sum -c -.*\n/m, '')
+        expect(unchecked).toMatch(/gitleaks\/releases\/download\/v\d/)
+        writeFileSync(file, unchecked)
+        git(repo, ['add', '-A'])
+        commit(repo)
+        const out = path.join(makeTestTmpDir('create-standin-out-'), 'template')
+        expect(() => buildTemplate({ repoRoot: repo, outDir: out, workflowRef: 'f'.repeat(40) })).toThrow(
+            /could not read the gitleaks download's sha256 from the repository's checks\.yml/,
+        )
+    })
 })
 
 describe('@sssb/create: the pinned commit must be on GitHub', () => {

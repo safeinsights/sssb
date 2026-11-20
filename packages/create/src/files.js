@@ -488,8 +488,11 @@ jobs:
               with:
                   fetch-depth: 0 # full history: a secret committed then deleted is still leaked
             - name: gitleaks (pinned binary; gitleaks-action requires a license key for organization repositories)
+              # The digest is the one gitleaks publishes for this asset; the binary runs only if the download matches it.
               run: |
-                  curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v${c.meta.gitleaksVersion}/gitleaks_${c.meta.gitleaksVersion}_linux_x64.tar.gz | tar -xz gitleaks
+                  curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v${c.meta.gitleaksVersion}/gitleaks_${c.meta.gitleaksVersion}_linux_x64.tar.gz
+                  echo "${c.meta.gitleaksSha256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+                  tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" gitleaks
                   ./gitleaks git --redact --config .gitleaks.toml
 `
 }
