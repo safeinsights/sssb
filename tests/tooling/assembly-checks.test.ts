@@ -240,6 +240,7 @@ describe("a resource policy on the cluster's secret", () => {
         ['everyone but a role', { NotPrincipal: { AWS: own } }],
         ['a role no function runs as', { Principal: { AWS: { 'Fn::GetAtt': ['Stray', 'Arn'] } } }],
         ['an own role beside anyone', { Principal: { AWS: [own, '*'] } }],
+        ['an own role with a second intrinsic beside it', { Principal: { AWS: { ...own, 'Fn::Sub': '*' } } }],
     ])('fails one that lets in %s', (_, principal) => {
         expect(secretGrantProblems(open(principal))).toEqual([PROBLEM])
     })

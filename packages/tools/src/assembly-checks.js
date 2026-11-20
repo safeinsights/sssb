@@ -260,7 +260,8 @@ function secretResourcePolicies(all, secretIds) {
     const roles = functionRoles(all)
     /** @param {unknown} principal */
     const isOwnRole = (principal) => {
-        const att = /** @type {{ 'Fn::GetAtt'?: unknown[] } | null} */ (principal)?.['Fn::GetAtt']
+        if (principal === null || typeof principal !== 'object' || Object.keys(principal).length !== 1) return false
+        const att = /** @type {{ 'Fn::GetAtt'?: unknown[] }} */ (principal)['Fn::GetAtt']
         return (
             Array.isArray(att) &&
             att.length === 2 &&
