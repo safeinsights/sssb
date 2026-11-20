@@ -25,6 +25,10 @@ import { actors } from '@sssb/app-config/actors'
 import { presets } from '@sssb/app-config/presets'
 import { tabs as appSimulatorTabs } from '@sssb/app-config/simulator'
 import { mailLinkTarget } from './mail-link'
+import { serverRedirectPath } from './server-redirect'
+
+/** A body-less Simulator POST: the simulated-only routes take JSON only, as the kit's own host sends every POST. */
+const JSON_POST: RequestInit = { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }
 
 interface Summary {
     viewpoint: string | null
@@ -412,9 +416,10 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             body: JSON.stringify({ person, locale }),
         }).then(async (response) => {
             if (!response.ok) return
-            const json = (await response.json()) as { redirectTo: string }
-            // A full reload is required anyway: theme + header are per-user RSC output.
-            window.location.assign(json.redirectTo)
+            // A full reload is required anyway: theme + header are per-user RSC output. Only to a path on this
+            // origin (./server-redirect); anything else stays put.
+            const path = serverRedirectPath(await response.json())
+            if (path) window.location.assign(path)
         })
     }
 
@@ -450,7 +455,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     function handleClearMail() {
-        void fetch('/api/simulator/mail/clear', { method: 'POST' }).then((response) => {
+        void fetch('/api/simulator/mail/clear', JSON_POST).then((response) => {
             if (!response.ok) return
             void refreshMail()
             void refresh()
@@ -492,7 +497,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     function handleRunPending() {
-        void fetch('/api/simulator/jobs/run-pending', { method: 'POST' }).then(async (response) => {
+        void fetch('/api/simulator/jobs/run-pending', JSON_POST).then(async (response) => {
             if (!response.ok) return
             const { ran } = (await response.json()) as { ran: number }
             await refreshJobs()
@@ -533,7 +538,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     async function handleRunDue() {
-        const response = await fetch('/api/simulator/schedules/run-due', { method: 'POST' })
+        const response = await fetch('/api/simulator/schedules/run-due', JSON_POST)
         if (!response.ok) return
         const { spawned } = (await response.json()) as { spawned: number }
         await afterSchedulesChanged(spawned, null)
@@ -591,7 +596,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
     }
 
     async function handleRunDueDeliveries() {
-        const response = await fetch('/api/simulator/webhooks/run-due', { method: 'POST' })
+        const response = await fetch('/api/simulator/webhooks/run-due', JSON_POST)
         if (!response.ok) return
         const { deliveries } = (await response.json()) as { deliveries: { delivered: number } }
         await refreshHooks()
@@ -618,7 +623,7 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             setSnapshotsBusy(false)
             return false
         }
-        return fetch('/api/simulator/reset', { method: 'POST' }).then((response) => {
+        return fetch('/api/simulator/reset', JSON_POST).then((response) => {
             if (response.ok) {
                 window.sessionStorage.setItem(POST_NOTICE_KEY, JSON.stringify({ kind: 'reset' }))
                 // Hard reload of a wiped world (per design invariant) — no point resetting
@@ -679,10 +684,12 @@ function SimulatorGlueInner({ locale, children }: { locale: string; children: Re
             body: JSON.stringify({ name: id, locale }),
         }).then(
             async (response) => {
-                if (response.ok) {
-                    const { redirectTo } = (await response.json()) as { redirectTo: string }
+                // A redirect off this origin is not followed: the load is reported as failed, which says the world may
+                // have changed underneath the page.
+                const path = response.ok ? serverRedirectPath(await response.json()) : null
+                if (path) {
                     window.sessionStorage.setItem(POST_NOTICE_KEY, JSON.stringify({ kind: 'preset', name: id }))
-                    window.location.assign(redirectTo)
+                    window.location.assign(path)
                     return untilReload()
                 }
                 return presetFailed(id)
