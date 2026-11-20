@@ -98,13 +98,22 @@ export async function recordJobStatus(
     // Outbound webhooks: a job status change is an emitted event. Enqueue only — cheap; the
     // drain delivers async. Deliberately AFTER the status transaction commits (the audit precedent),
     // and skipped when the job has no org (RLS-proof / legacy rows can't have subscribed endpoints).
+    // The status is durable by now, so a failed enqueue must not fail the caller: a runner that saw
+    // `running` throw would never run the handler, and one that saw `completed` throw would answer an
+    // error for a job that finished. The event is lost and logged (console.warn reaches CloudWatch in
+    // Lambda; SSSB has no logger port, as ../adapters/real/db.ts says).
     if (job.orgId) {
-        await enqueueWebhookEvent(db, {
-            tenantId,
-            orgId: job.orgId,
-            kind: 'job.status_changed',
-            payload: { jobId, jobKind: job.kind, status: next, orgId: job.orgId },
-        })
+        try {
+            await enqueueWebhookEvent(db, {
+                tenantId,
+                orgId: job.orgId,
+                kind: 'job.status_changed',
+                payload: { jobId, jobKind: job.kind, status: next, orgId: job.orgId },
+            })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            console.warn(`SSSB jobs: job ${jobId} is ${next}, but enqueueing its webhook event failed: ${message}`)
+        }
     }
 }
 
