@@ -2,8 +2,11 @@ import { auth } from '@sssb/kit/adapters/index'
 import { LOCALES, type Locale } from '@sssb/kit/core/locale'
 import { readJsonObject, withPortErrors } from '../respond'
 
-/** The longest display name the route accepts. A name is shown on every page of the org, to every member. */
-const MAX_NAME_LENGTH = 120
+/**
+ * The longest display name the route accepts: the auth port's own limit (256 characters, as both of SSSB's auth
+ * adapters and its ProfileScreen enforce), so the screen, the route and the port agree on one number.
+ */
+const MAX_NAME_LENGTH = 256
 
 /**
  * Updates the caller's own display name and/or locale. The name is validated here, at the boundary: it

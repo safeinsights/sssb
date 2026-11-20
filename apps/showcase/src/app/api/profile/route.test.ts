@@ -33,7 +33,7 @@ describe('POST /api/profile', () => {
         ['an object', { name: { a: 1 } }],
         ['a number', { name: 5 }],
         ['empty', { name: '   ' }],
-        ['over-long', { name: 'x'.repeat(121) }],
+        ['over-long', { name: 'x'.repeat(257) }],
     ])('400 for a name that is %s, and the provider is never called', async (_label, body) => {
         const response = await post(JSON.stringify(body))
         expect(response.status).toBe(400)
@@ -52,5 +52,11 @@ describe('POST /api/profile, signed out', () => {
         h.requireUser.mockRejectedValue(new AuthRequiredError())
         expect((await post(body)).status).toBe(401)
         expect(h.updateProfile).not.toHaveBeenCalled()
+    })
+})
+
+describe('POST /api/profile, the name limit', () => {
+    test("a 256-character name is the auth port's limit, and is accepted", async () => {
+        expect((await post(JSON.stringify({ name: 'x'.repeat(256) }))).status).toBe(200)
     })
 })
