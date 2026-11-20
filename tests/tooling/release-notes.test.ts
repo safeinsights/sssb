@@ -266,16 +266,38 @@ describe('assembleNotes', () => {
     })
 })
 
+/** Every changeset under `root` assembles, lands in a section and is blamed for nothing; how many there were. */
+function assemblesEveryOne(root: string): number {
+    expect(lintChangesets(root)).toEqual([])
+    const changesets = readChangesets(root)
+    const { markdown, entries, empty } = releaseNotes(root)
+    expect(entries + empty).toBe(changesets.length)
+    for (const { text } of changesets) {
+        const title = /^### (.+)$/m.exec(text.split('---').slice(2).join('---'))?.[1]
+        if (title) expect(markdown).toContain(`### ${title}`)
+    }
+    return changesets.length
+}
+
 describe("this repository's own changesets", () => {
+    // Right after a release `.changeset/` holds none, and this case then checks nothing; the next one holds the same
+    // check to a tree that always has some.
     it('assemble, every one of them lands in a section, and none is blamed', () => {
-        expect(lintChangesets(ROOT)).toEqual([])
-        const changesets = readChangesets(ROOT)
-        const { markdown, entries, empty } = releaseNotes(ROOT)
-        expect(entries + empty).toBe(changesets.length)
-        for (const { text } of changesets) {
-            const title = /^### (.+)$/m.exec(text.split('---').slice(2).join('---'))?.[1]
-            if (title) expect(markdown).toContain(`### ${title}`)
+        assemblesEveryOne(ROOT)
+    })
+
+    it('the same check, over a .changeset/ that is never empty', () => {
+        const root = makeTestTmpDir('sssb-notes-own-')
+        mkdirSync(path.join(root, '.changeset'))
+        for (const name of ['README.md', 'config.json']) {
+            copyFileSync(path.join(ROOT, '.changeset', name), path.join(root, '.changeset', name))
         }
+        writeFileSync(
+            path.join(root, '.changeset/a-seam.md'),
+            changeset({ kind: 'seam', action: 'required', title: 'A seam gains a hook' }),
+        )
+        writeFileSync(path.join(root, '.changeset/b-nothing.md'), EMPTY)
+        expect(assemblesEveryOne(root)).toBe(2)
     })
 
     it('reads the same names as release.mjs does: what Changesets itself reads as a changeset', () => {

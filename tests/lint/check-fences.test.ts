@@ -24,6 +24,12 @@ const APPS = readdirSync(path.join(repoRoot, 'apps'), { withFileTypes: true })
     .sort()
 
 describe("this repo's apps keep every fence through the repo's config", () => {
+    // The cases below are one per app found under apps/, so an empty list (a moved directory, a broken filter) would
+    // pass with nothing checked.
+    it('finds the apps it checks', () => {
+        expect(APPS.length).toBeGreaterThan(0)
+    })
+
     it.each(APPS)(
         'apps/%s',
         async (app) => {
