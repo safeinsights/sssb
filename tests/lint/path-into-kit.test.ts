@@ -107,6 +107,11 @@ describe('sssb/no-path-into-kit, through a symlink, the app alias, require.resol
         // a FILE symlink, imported without its extension, and a DIRECTORY symlink, reached through `@/`
         symlinkSync(path.join(root, 'kit/src/core/roles.ts'), path.join(root, 'app/src/zzkit.ts'))
         symlinkSync(path.join(root, 'kit/src'), path.join(root, 'app/src/zzdir'), 'dir')
+        // a resolver prefers a file to a directory of the same name, follows a directory's index, and maps `.js` to `.ts`
+        write('app/src/zz/real.ts', 'export const z = 1\n')
+        symlinkSync(path.join(root, 'kit/src/core/roles.ts'), path.join(root, 'app/src/zz.ts'))
+        mkdirSync(path.join(root, 'app/src/yy'))
+        symlinkSync(path.join(root, 'kit/src/core/roles.ts'), path.join(root, 'app/src/yy/index.ts'))
         return path.join(root, 'app')
     }
     const firedIn = async (app: string, code: string) => {
@@ -123,6 +128,9 @@ describe('sssb/no-path-into-kit, through a symlink, the app alias, require.resol
         ['the @/ alias through a directory symlink', "import { r } from '@/zzdir/core/roles'\nexport { r }\n"],
         ['the @/ alias climbing out of src/', "import { r } from '@/../../kit/src/core/roles'\nexport { r }\n"],
         ['require.resolve()', "export const at = require.resolve('../../../kit/src/core/roles')\n"],
+        ['a file symlink beside a real directory of its name', "import { r } from '../zz'\nexport { r }\n"],
+        ['a directory whose index is a symlink', "import { r } from '../yy'\nexport { r }\n"],
+        ['a .js name whose .ts twin is a symlink', "import { r } from '../zzkit.js'\nexport { r }\n"],
         [
             'a triple-slash reference path',
             '/// <reference path="../../../kit/src/core/roles.ts" />\nexport const x = 1\n',
@@ -131,6 +139,26 @@ describe('sssb/no-path-into-kit, through a symlink, the app alias, require.resol
         const findings = await firedIn(workspace(), code)
         expect(findings).toHaveLength(1)
         expect(findings[0].message).toContain('is a path into @sssb/kit')
+    })
+
+    // `.resolve` is also `path.resolve` and `Promise.resolve`, whose string need not be a module: only a module
+    // resolver's (`require`, `import.meta`, `createRequire(…)`) path through node_modules is a finding.
+    it('judges node_modules in a .resolve only for a module resolver', async () => {
+        const app = workspace()
+        const code = [
+            "export const a = path.resolve('node_modules/.cache/x')",
+            "export const b = Promise.resolve('node_modules')",
+            "export const c = somePath.resolve('./x')",
+        ].join('\n')
+        expect(await firedIn(app, `${code}\n`)).toEqual([])
+        for (const resolver of ['require', 'import.meta', "createRequire('/x')"]) {
+            const findings = await firedIn(
+                app,
+                `export const d = ${resolver}.resolve('../node_modules/@sssb/kit/src/x')\n`,
+            )
+            expect(findings, resolver).toHaveLength(1)
+            expect(findings[0].message).toContain('is a path through node_modules')
+        }
     })
 
     it("leaves the app's own @/ imports and a resolve of its own file alone", async () => {
