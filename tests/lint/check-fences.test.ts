@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import sssb from '@sssb/eslint-plugin'
@@ -492,10 +492,16 @@ describe('the fences as the app lints them, whatever its config or its lint comm
     })
 
     it('leaves an app alone whose own typescript-eslint parser is another version', async () => {
+        // The scratch app cannot resolve typescript-eslint by name, so its config loads this repository's copy by a
+        // file: URL through node_modules, which sssb/no-path-into-kit reports as a finding in the app's own files (step
+        // 4). Held in a variable, the URL is not a specifier the fence reads; an adopter's config imports it by name.
         const after =
-            `{ languageOptions: { parser: { ...(await import('${TS_ESLINT}')).default.parser, ` +
+            `{ languageOptions: { parser: { ...(await import(tsEslint)).default.parser, ` +
             "meta: { name: 'typescript-eslint/parser', version: '99.0.0' } } } }"
-        expect(await problemsOf(scratchApp(after))).toEqual([])
+        const appDir = scratchApp(after)
+        const config = path.join(appDir, 'eslint.config.mjs')
+        writeFileSync(config, `const tsEslint = '${TS_ESLINT}'\n${readFileSync(config, 'utf8')}`)
+        expect(await problemsOf(appDir)).toEqual([])
     })
 
     it('fences a directory deeper in the app that has a build output’s name', async () => {
