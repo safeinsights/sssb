@@ -60,7 +60,8 @@ export interface ProviderIdentitySource {
  *   needs a non-restricted member), so such a job is one the app's own rules let the person start.
  * - `createInvite`: refused. Anyone the provider signs in is already placed in the home org; an app adds people through
  *   its provider's own sign-up.
- * - `listMyOrgs`: the home org alone, named by its slug (this module reads no database). `setActiveOrg`: the home org
+ * - `listMyOrgs`: the home org alone, named by its org row's name, which the caller supplies a lookup for (`orgName`;
+ *   the slug when the row is missing). `setActiveOrg`: the home org
  *   is accepted and changes nothing; any other is refused.
  *
  * `signInPath` and `signOut` are always the adapter's, and `updateProfile` writes through it after the guard.
@@ -70,6 +71,11 @@ export function configuredAuth(
     settings: AuthSettings,
     source: ProviderIdentitySource,
     staffOrgSlug: string,
+    /**
+     * The display name of an org, by its tenant's slug and its own, or null when there is no such row: how a fixed org
+     * source names its home org, since this module knows it only by slug. Left out (a test), the slug is the name.
+     */
+    orgName?: (tenantSlug: string, orgSlug: string) => Promise<string | null>,
 ): AuthPort {
     const { tenancy, orgSource } = settings
     if (tenancy.kind === 'multi' && orgSource.kind === 'provider') return base
@@ -169,7 +175,12 @@ export function configuredAuth(
         async listMyOrgs(): Promise<OrgRef[]> {
             const user = await port.getCurrentUser()
             if (!user) return []
-            if (fixed) return [{ slug: fixed.homeOrgSlug, name: fixed.homeOrgSlug, role: fixed.role }]
+            if (fixed) {
+                // The org row's name, read per call (a rename shows at once); the slug when the row is missing,
+                // which the cutover row `auth-tenancy` says to create.
+                const name = (await orgName?.(user.tenantSlug, fixed.homeOrgSlug)) ?? fixed.homeOrgSlug
+                return [{ slug: fixed.homeOrgSlug, name, role: fixed.role }]
+            }
             return base.listMyOrgs()
         },
 

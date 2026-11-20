@@ -41,6 +41,7 @@ function setup(
     settings: Pick<AuthSettings, 'tenancy' | 'orgSource'>,
     identity: ProviderIdentity | null = NOBODY_SPECIAL,
     accounts: Record<string, string | null | undefined> = {},
+    orgName?: (tenantSlug: string, orgSlug: string) => Promise<string | null>,
 ) {
     const base = {
         getCurrentUser: vi.fn(async () =>
@@ -67,7 +68,7 @@ function setup(
                 : null,
         ),
     }
-    const auth = configuredAuth(base, { ...settings, tenantMetadataKey: 'tenantSlug' }, source, STAFF_ORG)
+    const auth = configuredAuth(base, { ...settings, tenantMetadataKey: 'tenantSlug' }, source, STAFF_ORG, orgName)
     return { auth, base, source }
 }
 
@@ -206,11 +207,22 @@ describe('a fixed org source: everyone in the home org, with the configured role
         expect(base.listMembers).not.toHaveBeenCalled()
     })
 
-    it('knows one org, the home org, and refuses any other', async () => {
-        const { auth } = setup(settings)
-        expect(await auth.listMyOrgs()).toEqual([{ slug: 'depot', name: 'depot', role: 'none' }])
+    it('knows one org, the home org, named by its org row, and refuses any other', async () => {
+        const orgName = vi.fn(async (tenant: string, org: string) =>
+            tenant === 'harbor' && org === 'depot' ? 'Harbor Depot' : null,
+        )
+        const { auth } = setup(settings, NOBODY_SPECIAL, {}, orgName)
+        expect(await auth.listMyOrgs()).toEqual([{ slug: 'depot', name: 'Harbor Depot', role: 'none' }])
+        expect(orgName).toHaveBeenCalledWith('harbor', 'depot')
         await expect(auth.setActiveOrg('depot')).resolves.toBeUndefined()
         await expect(auth.setActiveOrg('annex')).rejects.toBeInstanceOf(ForbiddenError)
+    })
+
+    it('names the home org by its slug when its row is missing, or no lookup is given', async () => {
+        expect(await setup(settings, NOBODY_SPECIAL, {}, async () => null).auth.listMyOrgs()).toEqual([
+            { slug: 'depot', name: 'depot', role: 'none' },
+        ])
+        expect(await setup(settings).auth.listMyOrgs()).toEqual([{ slug: 'depot', name: 'depot', role: 'none' }])
     })
 
     it('leaves signing in and out, and the profile write, to the adapter, and reads the user again after it', async () => {
