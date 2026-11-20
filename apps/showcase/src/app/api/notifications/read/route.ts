@@ -17,10 +17,11 @@ export async function POST(request: Request): Promise<Response> {
         authorize(user, user.orgSlug, 'update', { type: 'Notification', ownerId: user.id })
         const tenantId = await resolveTenantId(user)
         if (tenantId instanceof Response) return tenantId
-        // An absent or unreadable body marks everything read; a listed id that cannot be a row is a 400.
+        // An absent or unreadable body, or one without `ids`, marks everything read. `ids` that is there must be an array
+        // of ids that can be rows: anything else is a 400, never a silent "mark all".
         const body: unknown = await request.json().catch(() => ({}))
         const listed = typeof body === 'object' && body !== null ? (body as { ids?: unknown }).ids : undefined
-        if (Array.isArray(listed) && !listed.every(isUuid)) {
+        if (listed !== undefined && (!Array.isArray(listed) || !listed.every(isUuid))) {
             return Response.json({ error: 'invalid-payload' }, { status: 400 })
         }
         const ids = Array.isArray(listed) ? listed : undefined
