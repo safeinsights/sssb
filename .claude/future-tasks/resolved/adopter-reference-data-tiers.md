@@ -1,6 +1,6 @@
 # Tell adopters where their data can live, and what each choice guarantees
 
-**Priority:** P2 · **Status:** open, accepted to write now (docs only)
+**Priority:** P2 · **Status:** resolved 2026-11-19
 **Decided in:** ADR-0015, first addendum ("Datastores: tiers") and second addendum (2026-11-19).
 
 ## Why
@@ -30,3 +30,14 @@ voice:
 - The section reads true against the code: the doc-path gate passes, and every claim has been checked against the file
   it describes (run the `claim-check` skill).
 - The adopter guide's own length is unchanged or shorter.
+
+## Resolution (2026-11-19)
+
+`docs/adopting-reference.md` has a section, "Where your data lives, and what SSSB guarantees for it", after "Building
+your product", with the three arrangements: Postgres (what the proof suite and its coverage check prove, the role
+precondition, which Postgres), SSSB on Postgres with the app's data elsewhere (what is and is not proven, the fake's
+tables reported isolated on pglite and on real Postgres alike, and what to do: say so in the app's docs, name the
+fake's tables and their proofs as the fake's), and another database for SSSB itself (not yet; the isolation an adapter
+will declare is described in words, since `db-postgres-family-groundwork.md` has not put it in code). The recipe's "In
+your own tables" bullet points at it. The adopter guide is unchanged. Rejected: a link from the guide (it would make
+the guide longer), and naming `DbPort.isolation` before the groundwork lands.
