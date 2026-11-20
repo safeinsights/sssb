@@ -6996,3 +6996,39 @@ left to the builder:
   the app declares its family in its `package.json`'s `sssb` block, which doctor already reads (the port slot), and the
   conformance suite holds that declaration to the port's `isolation`, so doctor never boots the adapter registry.
   Rejected: printing `rls` today, which reads as a choice the app made.
+
+## Single-tenant sign-in, and a configurable tenant metadata key (2026-11-19, `feat/auth-single-tenant`)
+
+JP decided (relayed by pages' design manager): "yes I think we want such a mode so we don't have to set up a useless
+tenantSlug. Separately, I hope the tenantSlug name is configurable." ADR-0003's addendum of this date records the
+design; these are the calls made building it, each with the rejected alternative.
+
+- **A new role, `none`, with no standing**, rather than mapping single-tenant users to `restricted`. The framework's
+  rules let any member read its org's jobs, members and org record (`restricted` included), and on a shared Clerk
+  instance that would be every user of the other product. Rejected as well: placing users in no org at all, which
+  leaves the protected layout, data scoping and the app's own rules without the home org.
+- **No standing means no `sameOrg`, in the framework's rules and in the predicate handed to the app's**, and no
+  manage-all, refused both where the actor is built and in `defineAbilitiesFor`. The starter's one team is its staff
+  org, so a generated app turned single-tenant would otherwise hand every user manage-all. Rejected: gating only the
+  framework's rules, which leaves an app's `sameOrg`-based rules granting `none`.
+- **One wrapper for both adapters** (`packages/kit/src/adapters/single-tenant-auth.ts`), fed by a small identity
+  source each adapter supplies, so the mode's meaning is written and tested once. Clerk's source makes no
+  organization call per request. Rejected: a branch inside each adapter.
+- **The fake runs the mode when its environment sets it**, so a single-tenant app's `pnpm dev` places people as its
+  deployment does. Rejected: leaving the fake multi-tenant, where seeded roles would grant what deployed users never
+  have.
+- **Per method:**
+    - `listMembers` is empty: listing a shared instance's users would enumerate the other product's.
+    - `createInvite` is refused: membership is implicit.
+    - `getMember` answers `none` for an account Clerk still has, so a credential is judged as a session.
+    - The home org is the only org, named by its slug, since the adapter reads no database.
+- **A user whose metadata names a different tenant is refused**, so the mode switched on for a multi-tenant instance by
+  mistake cannot merge its tenants. Users with no claim, a shared instance's other users, are admitted with `none`.
+  Rejected: ignoring the claim, which would make that mistake a cross-tenant exposure.
+- **An explicit switch, `AUTH_TENANCY`, set from `params.auth` and validated at synth and at boot**, refusing a
+  single-mode slug left on a multi deployment. Rejected: inferring single mode from the slugs being set.
+- **`sssb doctor` and the conformance suite gain nothing.** Doctor reads no deployment settings, and the conformance
+  suite cannot tell an app rule that grants by its own list from one that grants by mistake. The kit's tests prove
+  `none` gets nothing from the framework's rules and a false `sameOrg` in the app's, and the guide says how app rules
+  must grant. Rejected: a conformance check running every app subject past a `none` actor, which would fail apps that
+  rightly grant a person their own records.

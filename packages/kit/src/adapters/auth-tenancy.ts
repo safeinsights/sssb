@@ -29,7 +29,7 @@ const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const METADATA_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /** The settings single mode requires, each mapped to its cutover row. */
-export const SINGLE_TENANT_ENV: Readonly<Record<string, string>> = {
+const SINGLE_TENANT_ENV: Readonly<Record<string, string>> = {
     AUTH_TENANT_SLUG: 'auth-tenancy',
     AUTH_HOME_ORG_SLUG: 'auth-tenancy',
 }
