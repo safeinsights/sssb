@@ -1108,6 +1108,9 @@ const EAGER_ITERATION: ReadonlySet<string> = new Set([
     'reduce',
     'reduceRight',
     'some',
+    // A comparator: called in place, and an async one's promise is read as a number (NaN), never awaited.
+    'sort',
+    'toSorted',
 ])
 
 /** Every array iteration method: on an array all run in place; on an iterator `filter`, `flatMap`, `map` are lazy. */
@@ -1185,11 +1188,15 @@ function neverCarriesFailure(src: Source, callee: ts.Expression): boolean {
     }
     const name = memberName(callee)
     if (name !== undefined && DETACHING_METHODS.has(name)) return true
-    // `globalThis.setTimeout`, `self.queueMicrotask`, `window.setTimeout`.
+    // `globalThis.setTimeout`, `self.queueMicrotask`, `window.setTimeout`, and `timers.setTimeout` through a namespace
+    // import of Node's timers module.
     if (name !== undefined && DETACHING_GLOBALS.has(name)) {
         const target = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
-        if (ts.isIdentifier(target) && GLOBAL_OBJECTS.has(target.text) && declarationOf(src, target) === undefined) {
-            return true
+        if (ts.isIdentifier(target)) {
+            const decl = declarationOf(src, target)
+            if (decl === undefined) return GLOBAL_OBJECTS.has(target.text)
+            const imported = valueImportOf(decl)
+            if (imported?.kind === 'namespace' && TIMER_MODULES.has(imported.module)) return true
         }
     }
     return isGlobalMember(src, callee, 'process', 'nextTick') || isGlobalMember(src, callee, 'Promise', 'resolve')

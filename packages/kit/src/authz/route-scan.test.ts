@@ -2426,6 +2426,27 @@ describe("the fix review's verdict (X1, X2, X5-X8)", () => {
             files: post(`await setTimeout(() => { ${CALL} }, 0)`, "import { setTimeout } from 'node:timers'\n"),
             expect: 'open',
         },
+        // From the probe rerun: a sort comparator runs in place, and Node's timers through a namespace import.
+        {
+            name: 'an async sort comparator',
+            files: post(`ids.sort(async () => { ${CALL}; return 0 })`, ASYNC),
+            expect: 'open',
+        },
+        {
+            name: 'an async toSorted comparator',
+            files: post(`ids.toSorted(async () => { ${CALL}; return 0 })`, ASYNC),
+            expect: 'open',
+        },
+        {
+            name: 'a sync sort comparator (throws in place)',
+            files: post(`ids.sort(() => { ${CALL}; return 0 })`, ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'setTimeout through a namespace import of node:timers',
+            files: post(`await timers.setTimeout(() => { ${CALL} }, 0)`, "import * as timers from 'node:timers'\n"),
+            expect: 'open',
+        },
         // X8: Object.entries returns an array.
         {
             name: 'Promise.all over Object.entries(m).map with an async callback',
