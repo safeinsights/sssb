@@ -50,7 +50,7 @@ const MIGRATIONS = [
 
 /** The Postgres family's own modules, relative to `packages/kit/src`, each with why it is the family's. */
 const POSTGRES_FAMILY: Readonly<Record<string, string>> = {
-    'db/family.ts': 'the family itself: its dialect helpers, isolation, tenant scope and loaders',
+    'db/family.ts': "the family's runtime half: its dialect helpers, isolation and tenant scope",
     'db/jsonb.ts': "the family's JSON encoding, a published subpath (`@sssb/kit/db/jsonb`)",
     'db/with-tenant.ts': "the family's tenant scope: `set_config` of the role and the tenant",
     ...Object.fromEntries(
@@ -187,10 +187,12 @@ function loadedSpecifiers(fileName: string, source: string): string[] {
             ts.isCallExpression(node) &&
             (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
                 (ts.isIdentifier(node.expression) && node.expression.text === 'require')) &&
-            node.arguments[0] !== undefined &&
-            ts.isStringLiteralLike(node.arguments[0])
+            node.arguments[0] !== undefined
         ) {
-            loaded.push(node.arguments[0].text)
+            // A specifier computed at run time is one this walk cannot follow, and a bundler builds a context module
+            // from its static prefix, taking in every module that matches. So it is recorded as itself, and fails.
+            const [specifier] = node.arguments
+            loaded.push(ts.isStringLiteralLike(specifier) ? specifier.text : `<computed: ${specifier.getText(file)}>`)
         }
         ts.forEachChild(node, visit)
     }
@@ -236,6 +238,22 @@ describe("the family's runtime half", () => {
         const source = "import { sql } from 'kysely'\nexport const proofs = () => import('./rls-proof-runner')\n"
         expect(loadedSpecifiers('db/probe.ts', source)).toEqual(['kysely', './rls-proof-runner'])
         expect(loadedSpecifiers('db/probe.ts', "import type { DB } from './schema'\nexport type T = DB\n")).toEqual([])
+        // a specifier computed at run time is not followed: it is reported, so the closure above cannot equal its list
+        expect(loadedSpecifiers('db/probe.ts', 'export const load = (name) => import(`./${name}`)\n')).toEqual([
+            '<computed: `./${name}`>',
+        ])
+    })
+
+    it('is the only half the request path loads: just the suites import the suite half', () => {
+        const importers = shippedModules(KIT_SRC)
+            .filter((file) =>
+                loadedSpecifiers(file, readFileSync(file, 'utf8')).some((specifier) =>
+                    /(^|\/)family-suite(\.ts)?$/.test(specifier),
+                ),
+            )
+            .map(relative)
+            .sort()
+        expect(importers).toEqual(['testing/conformance/db.ts', 'testing/contract.ts'])
     })
 })
 
