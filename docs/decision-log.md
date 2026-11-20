@@ -6900,3 +6900,10 @@ Accepted in part; the work it starts is seven briefs under `.claude/future-tasks
   family object does not.
 - **`CLAUDE.md` names ADR-0015 among those to follow, in the parts its second addendum accepts.** Rejected: leaving it
   out until every part is built, which would leave the accepted principles unstated where sessions read them first.
+- **The addendum records the four agreed points and nothing more; every further detail is a brief's proposal** for
+  its builder to decide and record (the registration's shapes, reserved names, how `SssbApp` learns names, the
+  isolation values, the drift test, port versioning). Review found the first draft presenting those as decided.
+  Rejected: settling them in the addendum, which would put words in the approver's mouth.
+- **On an S3-compatible store the upload target is explicit**, a setting saying whether the store accepts presigned
+  POST (MinIO does, R2 does not), never guessed from the endpoint. Rejected: refusing it always, which would take
+  browser upload from stores that support it.

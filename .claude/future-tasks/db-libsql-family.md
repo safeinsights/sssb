@@ -9,7 +9,9 @@ adopter needs it
 
 A second family beside Postgres, in the slot the groundwork makes:
 
-- **Transports:** a local libsql file or in-memory database as the hermetic fake, and Turso remote for real.
+- **Transports:** a local libsql file under `.data/` as the hermetic fake (not in-memory: the Simulator's reset,
+  snapshots and presets copy the files under `.data/`, `packages/kit/src/adapters/fake/simulator-admin.ts`), and Turso
+  remote for real.
 - **Migrations:** the framework's migrations in SQLite DDL (UUIDs, timestamps and JSON as text; SSSB already treats dates
   as strings).
 - **Isolation, declared:**
@@ -22,8 +24,13 @@ A second family beside Postgres, in the slot the groundwork makes:
   re-proved under that model.
 - **Proofs:** a tenant's handle cannot address another tenant's database, run by the conformance suite for an app
   that declares this family.
-- **Drift guard:** a test that both families' migrations produce the same `DB` schema type
-  (`packages/kit/src/db/schema.ts`).
+- **Drift guard:** a test that the two families' migrations produce the same tables and columns, by migrating each and
+  comparing what each database reports about itself. `DB` (`packages/kit/src/db/schema.ts`) is written by hand, kept in
+  lockstep with the migrations by its header's own account, so nothing generates it to compare; either compare the
+  introspected schemas with each other and with `DB`, or bring in the codegen the header mentions first.
+- **Its shape is the second addendum's:** the framework keeps `Kysely<DB>` and its logic, with this family's dialect
+  helpers, rather than moving every framework store behind repository ports, which the first addendum's tier 3 had
+  proposed.
 
 ## What the adopter takes on
 
@@ -34,5 +41,5 @@ Turso.
 
 - The framework's whole unit suite and the conformance suite pass on the libsql fake.
 - The family's isolation proofs pass, and have been seen to fail with a cross-tenant handle.
-- The schema-type drift test is green and seen red.
+- The schema drift test is green, and has been seen red with one family missing a column.
 - A cutover row names the live checks against Turso.

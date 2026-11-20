@@ -21,8 +21,9 @@ voice:
 - **SSSB on Postgres, the app's data elsewhere**: what SSSB still proves (its own tables), what it does not (the app's
   store), and the simulated-world caveat above, with what to do about it: say so in the app's own docs, and keep the
   fake's tables named as the fake's.
-- **Another database for SSSB itself**: not yet; point at ADR-0015 for the family design and at what a family declares
-  (`rls`, `database-per-tenant`, `single-tenant`).
+- **Another database for SSSB itself**: not yet; point at ADR-0015 for the family design. Name the isolation an adapter
+  declares only once `db-postgres-family-groundwork.md` has put the declaration in the code; until then, describe the
+  arrangements in words, never as values an app can set.
 
 ## Done when
 

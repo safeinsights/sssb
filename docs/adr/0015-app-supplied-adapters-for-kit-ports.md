@@ -1,6 +1,6 @@
 # ADR-0015 — Swappable kit ports: protocol choices first, then app-supplied adapters
 
-- Status: Accepted in part (2026-11-19); see the second addendum for which parts
+- Status: Accepted in part (2026-11-19): the second addendum says which parts
 - Approver: JP Slavinsky
 - Date: 2026-11-19
 - Amends, if accepted (each by a dated addendum): [ADR-0002](0002-data-layer-kysely-pglite.md),
@@ -684,27 +684,26 @@ has, and the adopter guide says what each promises. Nothing about tenancy is lef
 ## Addendum (2026-11-19, later): the decision, accepted in part
 
 JP read the study and both addenda, asked how far SSSB's logic can stay generic over its vendors, and agreed four
-points (in chat, 2026-11-19: "Agree all four"). This addendum records them. Where it differs from the body or the first
-addendum, it wins. The work it starts is written as future tasks, each a brief a session can build from without this
-conversation (listed at the end).
+points (in chat, 2026-11-19: "Agree all four"). This addendum records those four points and nothing more; where it
+differs from the body or the first addendum, it wins. The work they start is written as future tasks, each a brief a
+session can build from without this conversation (listed at the end). A detail a brief proposes is the builder's to
+decide and record, not decided here.
 
-**Status.** Accepted in part. Accepted now: the principles, the second datastore tier written down, an S3-compatible
-storage choice, and the Postgres family's groundwork. Recorded as design, built when an adopter needs it: named
-adapters for the ports without a protocol choice, the auth bundle, `smtp`, and a second database family.
+**Status.** Accepted in part. Accepted now: the principles below, the second datastore tier written down for adopters,
+an S3-compatible storage choice, and the Postgres family's groundwork. Recorded as design and built when an adopter
+needs it: named adapters, the auth bundle, `smtp`, and a second database family.
+
+**The principles accepted** are the body's and the addenda's: a protocol choice in the kit before an adapter an app
+writes; SSSB's fakes stay SSSB's whatever an app plugs in for real mode; every arrangement states the guarantee it makes
+and proves it; and the three points below.
 
 ### 1. Named adapters replace `app`
 
-The body's `app` value is replaced by a name the app chooses. The app registers its adapter under that name in its
-seam (`llm: { openai: { create, env } }`, the shapes section 3 and the first addendum give), and a deployment selects
-it as it selects one of SSSB's: `LLM_PROVIDER=openai`.
-
-- A name may not be one of SSSB's own choices for that port (`anthropic`, `mailgun`, `s3`, `none`); boot fails when it
-  is, so a name never means two adapters.
-- The names live in the data-only `@sssb/app-config/adapter-env` module, which is how `SssbApp` and `sssb doctor` learn
-  them without running the app's code.
-- The contract suite and its opt-outs are per adapter name.
-- An adapter written this way has the shape of SSSB's own, so contributing it to SSSB is a move of its module and its
-  suite into the kit. Whether SSSB takes it is still "What SSSB ships"; a protocol adapter passes that test easily.
+The body's `app` value is replaced by a name the app chooses. The app writes its adapter, registers it under that name,
+and a deployment selects it by that name as it selects one of SSSB's (`LLM_PROVIDER=openai`). An adapter written this
+way has the shape of SSSB's own, which makes contributing it to SSSB a matter of moving it into the kit, subject as
+ever to "What SSSB ships". The registration's details (where the names are declared, how `SssbApp` learns them, what a
+name may not be) are `named-adapters.md`'s to settle.
 
 ### 2. Ports are designed for future adapters
 
@@ -712,49 +711,54 @@ Each port is shaped against at least two real implementations: SSSB's current on
 and an OIDC provider; storage: S3 and Cloudflare R2; email: Mailgun and SMTP; LLM: Anthropic and an OpenAI-compatible
 API; the database: Postgres and SQLite). Where the two differ, the port names the generic capability rather than one
 vendor's form of it: sign-in is a step that may redirect, an upload target may be a POST or a PUT, the database adapter
-declares how it isolates tenants. The contract suite is written against the port, never against a vendor, and a change
-to a port is versioned as the public contract it becomes.
+declares how it isolates tenants. A port's contract suite is written against the port, never against a vendor.
 
 ### 3. The database is a family of adapters
 
-This replaces the body's "the database engine, no", and the first addendum's tiers move inside it. SSSB's logic stays
-generic over the database: what is specific to one engine belongs to that engine's family.
+This replaces the body's "the database engine, no". SSSB's logic stays generic over the database, and what is specific
+to one engine belongs to that engine's family: its transports, its framework migrations, its tenancy mechanism (behind
+`withTenant`, already a port method each adapter implements), its isolation proofs, and the few dialect helpers the
+framework's logic needs.
 
-- **What a family owns**: its transports, its framework migrations, its tenancy mechanism (behind `withTenant`, already
-  a port method that each adapter implements), its isolation proofs, and the few dialect helpers the framework's logic
-  needs.
-- **Postgres is the first family**, with three transports: pglite (the hermetic dev and test database), node-postgres,
-  and the RDS Data API. Measured on 2026-11-19, its engine-specific code in the framework's runtime logic is about ten
-  spots: four `jsonb()` encodings (audit, notifications, webhooks), three `forUpdate()` row locks (claiming jobs,
-  schedules and webhook deliveries), one raw `now()` (jobs), a keyset ordering, and `withTenant`'s `set_config`.
-  Everything else engine-specific is in the 13 framework migrations and the isolation proofs.
-- **Each database adapter declares its isolation**: `rls` (Postgres), `database-per-tenant`, or `single-tenant` (boot
-  refuses a second tenant). The declaration is stated where the adopter reads it, and the conformance suite runs that
-  family's proofs. An adapter that claims isolation with no mechanism behind it is the one thing not allowed.
-- **A second family (libsql)** is a contained addition once the groundwork is in: its migrations, its `withTenant`, its
-  proofs, a local libsql fake, and a control database for the reads made before a tenant is known. The first addendum's
-  costs for it stand, and a test that each family's migrations produce the same `DB` schema type guards the two against
-  drift.
+- **Postgres is the first family**, with three transports: pglite (the hermetic dev and test database), node-postgres
+  and the RDS Data API. Measured on 2026-11-19, the framework's runtime data logic has about ten engine-specific spots
+  (four `jsonb()` encodings, three `forUpdate()` row locks, one raw `now()`, a keyset ordering, and `withTenant`'s
+  `set_config`); the rest is in the 13 framework migrations, the isolation proofs (the framework's half and each app's
+  half), and tooling that reads Postgres's own catalogs. `db-postgres-family-groundwork.md` has the full inventory.
+- **Each database adapter declares how it isolates tenants**, the guarantee is stated where the adopter reads it, and
+  the conformance suite runs that family's proofs. The first addendum's arrangements are the candidates: row-level
+  security, a database per tenant, a single-tenant deployment, and, chosen by name, an unenforced filter. Declaring a
+  guarantee with no mechanism behind it is not allowed.
+- **A second family (libsql) is a contained addition once the groundwork is in.** It replaces the first addendum's tier
+  3 design for libsql: the framework keeps `Kysely<DB>` and its logic, with the family's dialect helpers, rather than
+  moving every framework store behind repository ports. The first addendum's other costs for it stand: a control
+  database for the reads made before a tenant is known, and migrations that fan out across every tenant's database.
 
-### 4. What is built now, and what waits
+### Decided in writing this
 
-Now:
+Under the standing rule for these sessions, one call is mine, recorded in `docs/decision-log.md`: the S3-compatible store
+is a storage choice of its own (`s3-compatible`), not the `s3` choice reading an endpoint when one is set as the body
+and section 1 describe it, because the switch rule forbids choosing behaviour from which settings happen to be set. R2's
+missing presigned POST stays its own step.
 
-- the Postgres family's groundwork, which changes nothing for anyone on Postgres;
-- an S3-compatible storage choice (R2, MinIO, Backblaze B2), with R2's upload-target gap kept as its own step;
-- the second datastore tier written down for adopters.
+### A correction to the first addendum
 
-Built when an adopter needs it: the named-adapter mechanism (proven on the LLM first), the auth bundle, `smtp`, and the
-libsql family.
+Its "How a bundle is chosen" describes the invitation link as broken in real mode. safeinsights/sssb#83 fixed it:
+`createInvite` now returns the link to mail, and the Clerk adapter returns Clerk's invitation URL.
 
 ### Work items
 
-Each is a future task under `.claude/future-tasks/`, written to be picked up cold:
+Built now:
 
 - `db-postgres-family-groundwork.md`
 - `storage-s3-compatible-choice.md`
 - `adopter-reference-data-tiers.md`
+
+Built when an adopter needs them:
+
 - `named-adapters.md`
 - `auth-provider-bundle.md`
 - `email-smtp-choice.md`
 - `db-libsql-family.md`
+
+All seven are under `.claude/future-tasks/`.
