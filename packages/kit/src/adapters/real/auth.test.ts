@@ -16,12 +16,17 @@ const h = vi.hoisted(() => ({
     myMemberships: [] as unknown[],
     user: null as null | Record<string, unknown>,
     writes: [] as string[],
+    // What the mocked Clerk serves at most per page, whatever `limit` asks, and a totalCount that lies when set.
+    serverPageCap: 500,
+    reportedTotal: null as number | null,
+    // A broken server that answers every page with a row and never reaches its count.
+    endless: false,
 }))
 
 vi.mock('@clerk/nextjs/server', () => {
     const paged = (rows: unknown[], { limit = 10, offset = 0 }: { limit?: number; offset?: number }) => ({
-        data: rows.slice(offset, offset + Math.min(limit, 500)),
-        totalCount: rows.length,
+        data: h.endless ? rows.slice(0, 1) : rows.slice(offset, offset + Math.min(limit, h.serverPageCap)),
+        totalCount: h.reportedTotal ?? rows.length,
     })
     return {
         auth: async () => ({ userId: 'user_inviter' }),
@@ -61,6 +66,9 @@ beforeEach(() => {
     h.myMemberships = []
     h.user = null
     h.writes = []
+    h.serverPageCap = 500
+    h.reportedTotal = null
+    h.endless = false
 })
 
 const member = (n: number, role?: string) => ({
@@ -141,6 +149,30 @@ describe('the Clerk adapter, reading lists longer than one page', () => {
         const user = await realAuth.getCurrentUser()
         expect(user?.orgSlug).toBe('org-125')
         expect(user?.role).toBe('admin')
+    })
+})
+
+describe('the Clerk adapter, a server that serves fewer rows per page than asked', () => {
+    it('still reads to the count: 50 per page of 120 lists all 120', async () => {
+        h.serverPageCap = 50
+        h.orgMembers = range(120).map((n) => member(n, 'member'))
+        const { realAuth } = await import('./auth')
+        expect(await realAuth.listMembers('depot')).toHaveLength(120)
+    })
+
+    it('stops on an empty page when the count is more than there is', async () => {
+        h.orgMembers = range(3).map((n) => member(n, 'member'))
+        h.reportedTotal = 10
+        const { realAuth } = await import('./auth')
+        expect(await realAuth.listMembers('depot')).toHaveLength(3)
+    })
+
+    it('throws rather than loop without end on a list that never reaches its count', async () => {
+        h.orgMembers = [member(1, 'member')]
+        h.reportedTotal = Number.MAX_SAFE_INTEGER
+        h.endless = true
+        const { realAuth } = await import('./auth')
+        await expect(realAuth.listMembers('depot')).rejects.toThrow(/ran past 1000 pages/)
     })
 })
 

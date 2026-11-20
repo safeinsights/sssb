@@ -53,19 +53,25 @@ function acceptPagePath(acceptPageUrl: string): string {
 /** Clerk's list calls answer a page at a time; this is the page size the adapter asks for. */
 const PAGE_SIZE = 100
 
+/** The most pages `allPages` reads before it gives up: 100,000 rows at PAGE_SIZE, far past any team or person. */
+const MAX_PAGES = 1_000
+
 /**
  * Every row of a Clerk list, read a page at a time. A list read as one page would silently drop whoever is past it: a
- * team's 101st member from its notifications, or a person's 101st org from their switcher.
+ * team's 101st member from its notifications, or a person's 101st org from their switcher. It stops on an empty page
+ * or once it holds `totalCount` rows, never on a page shorter than asked for, since a server may serve fewer rows per
+ * page than the limit; and it throws rather than loop without end on a list that never reaches its count.
  */
 async function allPages<T>(
     page: (params: { limit: number; offset: number }) => Promise<{ data: T[]; totalCount: number }>,
 ): Promise<T[]> {
     const rows: T[] = []
-    for (;;) {
+    for (let read = 0; read < MAX_PAGES; read += 1) {
         const { data, totalCount } = await page({ limit: PAGE_SIZE, offset: rows.length })
         rows.push(...data)
-        if (data.length < PAGE_SIZE || rows.length >= totalCount) return rows
+        if (data.length === 0 || rows.length >= totalCount) return rows
     }
+    throw new Error(`a Clerk list ran past ${MAX_PAGES} pages without reaching its count`)
 }
 
 /** A display name the auth port accepts: a string with something in it, at most 256 characters (Clerk's own limit). */
