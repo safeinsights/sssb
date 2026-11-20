@@ -812,7 +812,24 @@ describe('planBypass', () => {
     it('refuses a checks ruleset that excludes main', () => {
         const rulesets = liveRulesets()
         rulesets[1].conditions.ref_name.exclude = ['refs/heads/main']
-        expect(planBypass(rulesets, APP_ID).problems[0]).toMatch(/does not cover main/)
+        expect(planBypass(rulesets, APP_ID).problems[0]).toMatch(/must cover main alone/)
+    })
+
+    it('refuses a checks ruleset that covers more than main: the bypass would reach every ref it covers', () => {
+        const rulesets = liveRulesets()
+        rulesets[1].conditions.ref_name.include = ['~DEFAULT_BRANCH', 'refs/heads/integration', 'refs/heads/release/*']
+        const plan = planBypass(rulesets, APP_ID)
+        expect(plan.problems).toEqual([
+            `"${MAIN_CHECKS}" must cover main alone: it covers {"include":["~DEFAULT_BRANCH","refs/heads/integration","refs/heads/release/*"],"exclude":[]}; ` +
+                'expected include exactly ["~DEFAULT_BRANCH"] or ["refs/heads/main"], and no exclude',
+        ])
+        expect(plan.changes).toEqual([])
+        for (const include of [['~ALL'], ['refs/heads/*']]) {
+            rulesets[1].conditions.ref_name.include = include
+            expect(planBypass(rulesets, APP_ID).problems[0]).toMatch(/must cover main alone/)
+        }
+        rulesets[1].conditions.ref_name.include = ['refs/heads/main']
+        expect(planBypass(rulesets, APP_ID).problems).toEqual([])
     })
 
     it('refuses to bypass a main ruleset that carries more than the checks', () => {
