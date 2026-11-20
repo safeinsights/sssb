@@ -611,9 +611,9 @@ workspace generated from the packed packages. Each check was watched failing bef
 ## Where your data lives, and what SSSB guarantees for it
 
 What SSSB promises about tenant isolation depends on where the data is kept. There are three arrangements: the first is
-the default and the only one in which SSSB proves isolation for your tables, the second works today with your data
-outside its proofs, and the third does not exist yet. ADR-0015 decided them (its first addendum's "Datastores: tiers"
-and its second addendum).
+the default and the only one in which SSSB checks your tables at all, the second works today with your data outside its
+checks, and the third does not exist yet. ADR-0015's second addendum accepted this account of them; its first
+addendum's "Datastores: tiers" gives the reasoning.
 
 ### Postgres, the default
 
@@ -622,37 +622,52 @@ every other tenant (ADR-0004). Your queries run inside `db.withTenant()`, which 
 the tenant for the transaction; each tenant table's policy compares the row's `tenant_id` with that setting, and
 `FORCE ROW LEVEL SECURITY` holds the table's owner to it too.
 
-- **What proves it.** One proof suite runs twice: on pglite in your unit run (the conformance suite's `rls-pglite`
-  check) and on real Postgres in `pnpm test:contract` (`contract-rls`). It runs SSSB's proofs and yours
-  (`apps/<app>/src/app-config/db/rls-proofs.ts`), and before either it checks coverage: every relation `app_user` can
-  reach must be a table with row-level security, `FORCE` and a policy that reads the tenant setting, or the run fails
-  (`packages/kit/src/db/rls-coverage.ts`). A table of yours is held to that the moment a migration creates it, whether
-  or not you wrote proofs for it. Three of SSSB's tables are exempt by design, because they are read before a tenant is
-  known: `tenants`, `organizations` and `service_keys` (SSSB's `SECURITY.md` says why).
+- **What is checked, and what is proven.** One proof suite runs twice: on pglite in your unit run (the conformance
+  suite's `rls-pglite` check) and on real Postgres in `pnpm test:contract` (`contract-rls`), each failing the run unless
+  you opt it out by name. It does three things:
+    - **Coverage** (`packages/kit/src/db/rls-coverage.ts`): every relation `app_user` can reach must be a table with
+      row-level security, `FORCE` and a policy that reads the tenant setting. A table of yours is held to that once a
+      migration grants `app_user` access to it, whether or not you wrote proofs for it. Coverage reads the policy's
+      text, not what it does: a policy that mentions the setting and filters nothing passes it.
+    - **SSSB's proofs** show its own tables isolate, by reading and writing across two tenants.
+    - **Your proofs** (`apps/<app>/src/app-config/db/rls-proofs.ts`, a section per table) are the only thing that shows
+      your tables isolate. A table without one is covered, not proven.
+
+    Three of SSSB's tables are exempt from coverage by design, because they are read before a tenant is known:
+    `tenants`, `organizations` and `service_keys` (SSSB's [`SECURITY.md`](../SECURITY.md) says why). Your app gets no
+    exemption: every table it reads through `withTenant` is tenant-scoped, so keep data that every tenant shares in code,
+    or a copy per tenant.
+
 - **What it cannot check for you.** A role with `SUPERUSER` or `BYPASSRLS` skips row-level security outright, so the
-  role your server connects as must have neither: the `db-role-not-superuser` row of your cutover checklist.
+  role your server connects as must have neither: the `db-role-not-superuser` row of your cutover checklist. `SssbApp`
+  connects with the database's master credentials, which own every table, so `FORCE` is what holds that connection to
+  the policies.
 - **Which Postgres.** PostgreSQL 16 or later ("SSSB needs Postgres 16 or later", under Cutover below). `SssbApp`
-  builds Aurora; another host, reached through `DATABASE_URL`, keeps the guarantee only if it is genuine PostgreSQL (not
-  an engine that speaks its wire protocol) and lets the migrating role create roles (migration 0001 creates
-  `app_user`). ADR-0015's "libsql and Turso" section lists what else such a host costs today.
+  builds Aurora. Another host, reached through `DATABASE_URL`, can keep the guarantee only if it is genuine PostgreSQL
+  (not an engine that speaks its wire protocol), lets the migrating role create roles (migration 0001 creates
+  `app_user`) and grant itself the switch to it (0015). Those are needed, not enough: off AWS there is no migrate
+  command yet, and SSSB's `pg` adapter has not been run against any deployed database. ADR-0015's "libsql and Turso"
+  section lists the rest.
 
 ### SSSB on Postgres, your data elsewhere
 
 Your app may keep its own data in another store (DynamoDB, a vendor's API, anything) through a port it owns
-([an adapter your app owns](recipes/app-owned-adapter.md)), while SSSB's tables stay in Postgres. This needs no switch
-and no declaration.
+([an adapter your app owns](recipes/app-owned-adapter.md)), while SSSB's tables stay in Postgres. Today this needs no
+switch and no declaration.
 
-- **What SSSB still proves**: everything above, for its own tables and for any of yours still in Postgres.
+- **What SSSB still checks**: everything above, for its own tables and for any of yours still in Postgres.
 - **What it does not**: anything about the other store. `withTenant` scopes Postgres only, and the proof suite reads
   Postgres's catalog, so the store is invisible to both. Keeping tenants apart there is your real adapter's job, by
   whatever mechanism the store has (a tenant key on every call, credentials scoped to one tenant), and so is proving it,
-  usually against the real service: a row in your cutover checklist that names the proof. Data there cannot hold a
-  foreign key to `tenants` or `organizations`, as a table of yours in Postgres does.
+  usually against the real service: a row in your cutover checklist that names the proof.
+- **What you give up.** A `withTenant` transaction covers Postgres only: a change that writes to both stores is two
+  writes, and if it fails between them, recovering is your code's job. And unlike a table of yours in Postgres, data
+  there cannot hold a foreign key to `tenants` or `organizations`, so nothing keeps it consistent with them.
 - **The simulated world says more than the real one.** The recipe's fake keeps its state "in your own tables" so that
   a Simulator reset and snapshots cover it. Those are Postgres tables that `app_user` reaches through `withTenant`, so
-  the coverage check holds them to a policy, the proofs you write for them pass, and the suite reports them isolated.
-  It does so on real Postgres too: your migrations run in every database, a deployed one included, where those tables
-  sit empty. None of it says anything about the store your real adapter talks to. So:
+  coverage holds them to a policy, the proofs you write for them pass, and the suite reports them isolated, on pglite
+  and in `pnpm test:contract` alike. Your migrations also create them, empty, in every deployed database. None of it
+  says anything about the store your real adapter talks to. So:
     - say in your app's own docs which data lives outside Postgres, and what keeps its tenants apart there;
     - name the fake's tables as the fake's (`fake_edge_kv`, say), and their section of `rls-proofs.ts` likewise, so
       nobody reads them as proofs of the real store.
@@ -668,6 +683,10 @@ adapter declares how it keeps tenants apart, the conformance suite runs that fam
 mechanism behind it is not allowed. The candidates it names are row-level security, a database per tenant, a
 deployment that serves one tenant, and, chosen by name, a filter that nothing enforces. None of them is something your
 app can choose or declare today.
+
+Meanwhile, if what you want from libsql or Turso is cost, scale to zero or a database outside a VPC, another Postgres
+host is the route ("Which Postgres" above). If you need another database, ask for it in SSSB's repository ("Changing
+SSSB itself" below).
 
 ## The scheduled tick
 
