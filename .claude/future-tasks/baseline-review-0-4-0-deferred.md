@@ -8,7 +8,7 @@ and left, because each needs a decision between real alternatives. One section e
 Neither the server's real adapter (`packages/kit/src/adapters/real/db.ts`) nor the migrator
 (`packages/kit/src/adapters/real/migrate-handler.ts`) sets an SSL mode. The server's TLS is whatever `DATABASE_URL`
 asks for; the migrator builds its URL from the secret and cannot carry one, so a cluster that forces SSL refuses
-it. Proposed: one deployment parameter both read (an SSL mode beside the transport in `config/params.ts`), set by
+it. Proposed: one deployment parameter both read (an SSL mode beside the transport in `apps/<app>/config/params.ts`), set by
 `SssbApp`. The cutover row `db-role-not-superuser` names the gap until then.
 
 ## A timeout and error mapping for the LLM adapter
@@ -25,7 +25,7 @@ per-tick and per-tenant budget, and an order that is fair across tenants.
 
 ## The static demo does not re-theme on a tenant switch
 
-Each app's `src/demo-static/main.tsx` themes by the first tenant; the server layout themes by the signed-in one.
+Each app's `apps/<app>/src/demo-static/main.tsx` themes by the first tenant; the server layout themes by the signed-in one.
 Proposed: `DemoShell` renders the theme provider itself from `world.tenant`, kit-side, one place. It changes the
 apps' static composition root, and the starter's copy is in the `sssb remove-items` diffs.
 
