@@ -4,6 +4,12 @@ import { Button, Card, Container, List, Stack, Text, Textarea, Title } from '@ma
 import { useTranslations } from 'next-intl'
 import { type ReactNode, useState } from 'react'
 
+/**
+ * The longest question the assistant takes. POST /api/assistant enforces the same number (it answers 400
+ * `invalid-question` above it), so the box stops there instead of sending one that can only fail.
+ */
+const MAX_QUESTION_LENGTH = 2000
+
 export interface DashboardUser {
     name: string
     role: string
@@ -55,13 +61,15 @@ export function DashboardScreen({
                                 label={t('assistantLabel')}
                                 placeholder={t('assistantPlaceholder')}
                                 value={question}
+                                maxLength={MAX_QUESTION_LENGTH}
+                                data-testid="assistant-question"
                                 onChange={(event) => setQuestion(event.currentTarget.value)}
                                 autosize
                                 minRows={2}
                             />
                             <Button
                                 loading={busy}
-                                disabled={!question.trim()}
+                                disabled={!question.trim() || question.length > MAX_QUESTION_LENGTH}
                                 data-testid="ask-button"
                                 onClick={() => {
                                     setBusy(true)

@@ -106,7 +106,17 @@ function signatureOrError(message: string): string[] | string {
     }
 }
 
-/** Every way `es` is not a faithful counterpart of `en`: a key on one side only, or a message whose signature differs. */
+/**
+ * The `{name}` placeholder names in a value that is not ICU, sorted: what a raw pair (a value read with next-intl's
+ * `t.raw()`, such as markup, JSON or a template) must still agree on.
+ */
+const rawPlaceholderNames = (value: string) => [...new Set([...value.matchAll(/\{(\w+)/g)].map((m) => m[1]!))].sort()
+
+/**
+ * Every way `es` is not a faithful counterpart of `en`: a key on one side only, or a message whose signature differs.
+ * A pair that parses as ICU on NEITHER side is a raw value (`t.raw()`), compared by its `{name}` placeholder names
+ * only; a pair that parses on exactly one side fails, naming the side that does not.
+ */
 export function parityProblems(en: MessageTree, es: MessageTree): string[] {
     const enFlat = flatten(en)
     const esFlat = flatten(es)
@@ -118,9 +128,19 @@ export function parityProblems(en: MessageTree, es: MessageTree): string[] {
         if (esMsg === undefined) continue
         const enSig = signatureOrError(enMsg)
         const esSig = signatureOrError(esMsg)
-        if (typeof enSig === 'string') problems.push(`${key}: en ${enSig}`)
-        if (typeof esSig === 'string') problems.push(`${key}: es ${esSig}`)
-        if (typeof enSig !== 'string' && typeof esSig !== 'string' && enSig.join() !== esSig.join()) {
+        if (typeof enSig === 'string' && typeof esSig === 'string') {
+            const enRaw = rawPlaceholderNames(enMsg)
+            const esRaw = rawPlaceholderNames(esMsg)
+            if (enRaw.join() !== esRaw.join()) {
+                problems.push(
+                    `${key}: a raw value (ICU on neither side) with en {${enRaw.join(', ')}}, es {${esRaw.join(', ')}}`,
+                )
+            }
+        } else if (typeof enSig === 'string') {
+            problems.push(`${key}: en ${enSig}, while es parses`)
+        } else if (typeof esSig === 'string') {
+            problems.push(`${key}: es ${esSig}, while en parses`)
+        } else if (enSig.join() !== esSig.join()) {
             problems.push(`${key}: en has [${enSig.join(', ')}], es has [${esSig.join(', ')}]`)
         }
     }
@@ -135,7 +155,7 @@ function expectParity(en: MessageTree, es: MessageTree): void {
  * `i18n-parity`: en/es parity over the MERGED catalog (the framework half + the app half, which arrives through the
  * ADR-0012 seam). The catalogs are physically split, but what ships to the user is the merge — so that is what must
  * stay key- and placeholder-identical: the same arguments, each of the same type (inside plural and select
- * branches too), and the same tags (`icuSignature`). The framework half is checked on its own too, so the package carries a
+ * branches too), and the same tags (`icuSignature`). A raw value, ICU on neither side, keeps its `{name}` placeholders. The framework half is checked on its own too, so the package carries a
  * truthful guarantee independent of whatever app consumes it.
  */
 export const i18nParity: CheckImpl = {

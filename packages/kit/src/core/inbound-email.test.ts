@@ -12,9 +12,19 @@ describe('normalizeEmailAddress', () => {
         expect(normalizeEmailAddress('Sam <sam@x.test>')).toBe('sam@x.test')
     })
 
-    it('takes the LAST angle-bracketed part, so a display name cannot supply the address', () => {
+    it('ignores a quoted display name, so it cannot supply the address', () => {
         expect(normalizeEmailAddress('"<victim@org.test>" <attacker@evil.test>')).toBe('attacker@evil.test')
-        expect(normalizeEmailAddress('<victim@org.test> <attacker@evil.test>')).toBe('attacker@evil.test')
+        expect(normalizeEmailAddress('"Ada \\"<victim@org.test>\\"" <ada@x.test>')).toBe('ada@x.test')
+    })
+
+    it('fails closed on an address it cannot read one way only', () => {
+        // A comment after the address, two addresses, and text after the brackets: each names a second address.
+        expect(normalizeEmailAddress('Mallory <attacker@evil.test> (<victim@org.test>)')).toBe('')
+        expect(normalizeEmailAddress('<attacker@evil.test>, <victim@org.test>')).toBe('')
+        expect(normalizeEmailAddress('<victim@org.test> <attacker@evil.test>')).toBe('')
+        expect(normalizeEmailAddress('x<victim@org.test>y@evil.test')).toBe('')
+        expect(normalizeEmailAddress('Ada <ada@x.test')).toBe('')
+        expect(normalizeEmailAddress('ada@x.test>')).toBe('')
     })
 
     it('passes a bare address through, trimmed and lowercased', () => {

@@ -42,18 +42,27 @@ export interface InboundRecipient {
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 /**
- * Pull the bare addr-spec out of a possibly-decorated address: `"Ada Keeper" <ada@x.test>` → `ada@x.test`
- * (the last angle-bracketed part),
- * a bare `ada@x.test` → itself. Lowercased and trimmed (email domains are case-insensitive, and local
- * parts are case-insensitive in every practical mail system — we normalize so a sender/member match is
- * not defeated by case). Returns '' for anything without an addr-spec.
+ * Pull the bare addr-spec out of a possibly-decorated address: `"Ada Keeper" <ada@x.test>` → `ada@x.test`, a bare
+ * `ada@x.test` → itself. Lowercased and trimmed (email domains are case-insensitive, and local parts are
+ * case-insensitive in every practical mail system — we normalize so a sender/member match is not defeated by case).
+ *
+ * It fails closed: anything it cannot read one way only returns '' ("no address"), never a guess. Double-quoted
+ * strings (a display name) are dropped first, so `"<victim@org.test>" <attacker@evil.test>` is the attacker's own
+ * address. Then a value with angle brackets must hold exactly one `<...>` with nothing but whitespace after its `>`:
+ * a comment after the address (`<a@x> (<b@y>)`), a second address (`<a@x>, <b@y>`) or text after the brackets
+ * (`x<b@y>a@x`) each name another address, so they return ''. Returns '' for anything without an addr-spec too.
  */
 export function normalizeEmailAddress(raw: string): string {
-    // The LAST <...> part: the addr-spec follows the display name, and a quoted display name may itself hold
-    // something that looks like an address (`"<victim@org.test>" <attacker@evil.test>`).
-    const angles = [...raw.matchAll(/<([^<>]+)>/g)]
-    const angle = angles.at(-1)
-    const candidate = (angle ? angle[1]! : raw).trim().toLowerCase()
+    const unquoted = raw.replace(/"(?:[^"\\]|\\.)*"/g, '')
+    let candidate: string
+    if (/[<>]/.test(unquoted)) {
+        const only = /^[^<>]*<([^<>]*)>\s*$/.exec(unquoted)
+        if (!only) return ''
+        candidate = only[1]!
+    } else {
+        candidate = unquoted
+    }
+    candidate = candidate.trim().toLowerCase()
     // A single '@' with non-empty both sides, else not a usable address.
     const at = candidate.indexOf('@')
     if (at <= 0 || at !== candidate.lastIndexOf('@') || at === candidate.length - 1) return ''
