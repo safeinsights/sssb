@@ -23,10 +23,11 @@ export async function POST(request: Request): Promise<Response> {
         if (typeof body.role !== 'string' || !isAssignableRole(body.role)) {
             return Response.json({ error: 'role not assignable' }, { status: 400 })
         }
-        // Same shape check the form runs — the API must not trust the UI (mirrors the role
-        // allowlist above).
+        // The API must not trust the UI (mirrors the role allowlist above). ONE address: no whitespace,
+        // comma or semicolon anywhere and exactly one @, because a mail vendor's `to` takes a list, so
+        // "a@x.test, b@y.test" would be one invitation sent to two people.
         const inviteEmail = typeof body.email === 'string' ? body.email.trim() : ''
-        if (!/.+@.+\..+/.test(inviteEmail)) {
+        if (!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(inviteEmail)) {
             return Response.json({ error: 'invalid email' }, { status: 400 })
         }
         // One row per address: a second invite (or an invite to an existing member) would create
