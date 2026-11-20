@@ -40,6 +40,7 @@ vi.mock('@clerk/nextjs/server', () => ({
                             publicMetadata: { role: h.membershipRole },
                         },
                     ],
+                    totalCount: 1,
                 }
             },
             getUser: async (userId: string) => {
