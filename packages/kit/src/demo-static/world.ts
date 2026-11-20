@@ -1129,7 +1129,10 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
 
     function markMailSeen() {
         if (!viewpoint) return
-        setMailSeenAt((prev) => ({ ...prev, [viewpoint]: new Date().toISOString() }))
+        // World time, never behind real time: a digest the clock's Advance made is dated ahead, and an email stamped
+        // with real now must still count as seen after the clock is reset.
+        const seenAt = new Date(Date.now() + Math.max(0, clockOffsetMs)).toISOString()
+        setMailSeenAt((prev) => ({ ...prev, [viewpoint]: seenAt }))
     }
 
     function openMailLink(href: string) {
