@@ -534,6 +534,32 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         }
     })
 
+    test('an array of a type node-postgres does not parse (an enum created after the emulator first read pg_type) reads as on pg', async () => {
+        await sql`drop table if exists data_api_moods`.execute(viaPg.getDb())
+        await sql`drop type if exists data_api_mood`.execute(viaPg.getDb())
+        await sql`create type data_api_mood as enum ('happy', 'sad', 'with space')`.execute(viaPg.getDb())
+        await sql`create table data_api_moods (k int primary key, one data_api_mood, many data_api_mood[])`.execute(
+            viaPg.getDb(),
+        )
+        await sql`insert into data_api_moods values (1, 'sad', '{happy,sad,"with space",NULL}')`.execute(viaPg.getDb())
+        const read = (port: DbPort) => sql`select one, many from data_api_moods`.execute(port.getDb())
+        const [fromDataApi] = (await read(dataApi)).rows
+        const [fromPg] = (await read(viaPg)).rows
+        expect(fromPg).toEqual({ one: 'sad', many: '{happy,sad,"with space",NULL}' })
+        expect(fromDataApi).toEqual(fromPg)
+        // The emulator names the new type as PgJDBC would, rather than `unknown` from a pg_type read before it existed.
+        const answer = (await emulator.send(
+            new ExecuteStatementCommand({
+                resourceArn: RESOURCE_ARN,
+                secretArn: SECRET_ARN,
+                database: DATABASE,
+                sql: 'select many from data_api_moods',
+                includeResultMetadata: true,
+            }),
+        )) as { columnMetadata?: { typeName?: string }[] }
+        expect(answer.columnMetadata?.[0]?.typeName).toBe('_data_api_mood')
+    })
+
     test('a value too long for a domain is refused on both transports, never truncated', async () => {
         // data_api_parity and its domains exist: the parity test above created them.
         for (const [label, port] of [

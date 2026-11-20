@@ -348,7 +348,8 @@ function arrayLiteral(values: readonly unknown[]): string {
  * One result row, keyed by column label, each value decoded to what node-postgres returns through SSSB's
  * pg adapter (../real/db.ts): `int8`/`numeric` as strings (but `numeric[]` elements as numbers, as
  * node-postgres has it), `json`/`jsonb` parsed, `timestamptz` as a `Date` (`±Infinity` for infinity),
- * `date` as the wire string, `bytea` as a Buffer, arrays element by element. Types SSSB's migrations do
+ * `date` as the wire string, `bytea` as a Buffer, arrays element by element (but an array of a type node-postgres
+ * has no array parser for, an enum's say, as Postgres's text form, `{happy,sad}`). Types SSSB's migrations do
  * not use and node-postgres parses into objects (`interval`) come back as the Data API's string.
  */
 export function decodeRow(record: readonly Field[], columns: readonly ColumnMetadata[]): Record<string, unknown> {
@@ -362,9 +363,64 @@ export function decodeRow(record: readonly Field[], columns: readonly ColumnMeta
 export function decodeField(field: Field | undefined, typeName: string): unknown {
     if (!field || field.isNull) return null
     const type = typeName.toLowerCase().replace(/^"|"$/g, '')
-    if (field.arrayValue !== undefined) return decodeArray(field.arrayValue, type.replace(/^_/, ''))
+    if (field.arrayValue !== undefined) {
+        const baseType = type.replace(/^_/, '')
+        // node-postgres returns an array of a type it has no parser for (an enum's, `bit[]`, `name[]`) as Postgres's
+        // text form, `{happy,sad}`, not as a JS array: so does this, or the two transports would disagree.
+        if (!PG_PARSED_ARRAYS.has(baseType)) return arrayText(field.arrayValue)
+        return decodeArray(field.arrayValue, baseType)
+    }
     const raw = field.stringValue ?? field.longValue ?? field.doubleValue ?? field.booleanValue ?? field.blobValue
     return decodeScalar(raw, type)
+}
+
+/**
+ * The element types whose arrays node-postgres parses into a JS array: pg-types' text parsers (pg 8), named as
+ * `pg_type.typname` names them (`bpchar` is `char(n)`; `char`, the one-byte type, has none).
+ */
+const PG_PARSED_ARRAYS: ReadonlySet<string> = new Set([
+    'bool',
+    'bpchar',
+    'bytea',
+    'cidr',
+    'date',
+    'float4',
+    'float8',
+    'inet',
+    'int2',
+    'int4',
+    'int8',
+    'interval',
+    'json',
+    'jsonb',
+    'macaddr',
+    'money',
+    'numeric',
+    'numrange',
+    'oid',
+    'point',
+    'regproc',
+    'text',
+    'time',
+    'timestamp',
+    'timestamptz',
+    'timetz',
+    'uuid',
+    'varchar',
+])
+
+/** An array as Postgres's text output writes it: `{a,"b c",NULL,{1,2}}`. */
+function arrayText(value: ArrayValue): string {
+    if (value.arrayValues) return `{${value.arrayValues.map((inner) => (inner ? arrayText(inner) : 'NULL')).join(',')}}`
+    const items: readonly unknown[] =
+        value.stringValues ?? value.longValues ?? value.doubleValues ?? value.booleanValues ?? []
+    return `{${items.map((item) => (item === null || item === undefined ? 'NULL' : arrayTextItem(String(item)))).join(',')}}`
+}
+
+/** One element of Postgres's array output: quoted, with `"` and `\` escaped, when it would not read back bare. */
+function arrayTextItem(item: string): string {
+    if (item !== '' && !/[{}",\\\s]/.test(item) && item.toUpperCase() !== 'NULL') return item
+    return `"${item.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
 function decodeArray(value: ArrayValue, baseType: string): unknown[] {

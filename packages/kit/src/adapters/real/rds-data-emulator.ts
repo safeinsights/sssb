@@ -150,7 +150,6 @@ export class RdsDataEmulator implements RdsDataClientLike {
         }
 
         try {
-            const typeNames = await this.#types(client)
             let result
             try {
                 result = await client.query({ text, values, rowMode: 'array' })
@@ -158,6 +157,10 @@ export class RdsDataEmulator implements RdsDataClientLike {
                 // Message only, no SQLSTATE: the worst case the Data API is reported to return.
                 throw awsError('DatabaseErrorException', `ERROR: ${(error as Error).message}`, error)
             }
+            const typeNames = await this.#types(
+                client,
+                result.fields.map((field) => field.dataTypeID),
+            )
             const longAsString = input.resultSetOptions?.longReturnType === 'STRING'
             const columns: ColumnMetadata[] = result.fields.map((field) => ({
                 name: field.name,
@@ -199,10 +202,15 @@ export class RdsDataEmulator implements RdsDataClientLike {
         }
     }
 
-    /** `pg_type.typname` by oid, which is what PgJDBC reports as a column's type name (`_text` for text[]). */
+    /**
+     * `pg_type.typname` by oid, which is what PgJDBC reports as a column's type name (`_text` for text[]). Read again
+     * when a result has an oid the cached map lacks: a type a migration created after the first read (an enum, its
+     * array) would otherwise be `unknown` for ever, and a value of it would come back in whatever shape `unknown`
+     * gets, hiding what the real Data API sends for it.
+     */
     // On the connection already held — with `maxConnections: 1` a second checkout would wait forever.
-    async #types(client: PoolClient): Promise<Map<number, string>> {
-        if (!this.#typeNames) {
+    async #types(client: PoolClient, oids: readonly number[]): Promise<Map<number, string>> {
+        if (!this.#typeNames || oids.some((oid) => !this.#typeNames!.has(oid))) {
             const { rows } = await client.query<{ oid: string; typname: string }>('SELECT oid, typname FROM pg_type')
             this.#typeNames = new Map(rows.map((row) => [Number(row.oid), row.typname]))
         }

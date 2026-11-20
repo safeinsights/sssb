@@ -311,3 +311,28 @@ describe('normalizeDatabaseError: code and constraint where node-postgres would 
         expect(normalizeDatabaseError('not an error')).toBe('not an error')
     })
 })
+
+describe('decodeField: an array of a type node-postgres has no parser for', () => {
+    it('comes back as Postgres text, as node-postgres returns it (an enum[], bit[], name[])', () => {
+        expect(decodeField({ arrayValue: { stringValues: ['happy', 'sad'] } }, '_mood')).toBe('{happy,sad}')
+        expect(decodeField({ arrayValue: { stringValues: ['101', '0'] } }, '_bit')).toBe('{101,0}')
+        expect(
+            decodeField(
+                {
+                    arrayValue: {
+                        stringValues: ['a b', 'with,comma', 'q"uote', 'back\\slash', '', 'null', null as never],
+                    },
+                },
+                '_name',
+            ),
+        ).toBe('{"a b","with,comma","q\\"uote","back\\\\slash","","null",NULL}')
+        expect(
+            decodeField({ arrayValue: { arrayValues: [{ stringValues: ['a'] }, { stringValues: ['b'] }] } }, '_mood'),
+        ).toBe('{{a},{b}}')
+    })
+
+    it('a type it does parse still comes back as an array', () => {
+        expect(decodeField({ arrayValue: { stringValues: ['x', 'y'] } }, '_text')).toEqual(['x', 'y'])
+        expect(decodeField({ arrayValue: { longValues: [1, 2] } }, '_int4')).toEqual([1, 2])
+    })
+})
