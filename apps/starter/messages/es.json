@@ -14,6 +14,7 @@
         "hint": "Los elementos pertenecen al equipo en el que trabajas y nunca salen de tu organización.",
         "empty": "Aún no hay elementos en este equipo.",
         "addLabel": "Nuevo elemento",
+        "addError": "No se pudo añadir el elemento. Tu texto sigue aquí: inténtalo de nuevo.",
         "addButton": "Añadir elemento",
         "readOnlyHint": "Tienes acceso de solo lectura a los elementos de este equipo.",
         "loadMore": "Ver elementos anteriores"

@@ -1,3 +1,15 @@
+import {
+    isDateElement,
+    isLiteralElement,
+    isNumberElement,
+    isPluralElement,
+    isPoundElement,
+    isSelectElement,
+    isTagElement,
+    isTimeElement,
+    type MessageFormatElement,
+    parse,
+} from '@formatjs/icu-messageformat-parser'
 import { expect } from 'vitest'
 import enFramework from '../../i18n/messages/en.json'
 import esFramework from '../../i18n/messages/es.json'
@@ -46,22 +58,84 @@ function flatten(tree: MessageTree, prefix = ''): Map<string, string> {
     return out
 }
 
-const icuArgs = (msg: string) => [...msg.matchAll(/\{(\w+)/g)].map((m) => m[1]).sort()
+/**
+ * What a translation of `message` must keep, as sorted strings: each argument with its type (`count:plural`,
+ * `name:argument`, `d:date`), including arguments nested inside a plural or select branch, and each tag (`<b>`).
+ * Branch text is text, a quoted `'{literal}'` is text, and branch keys are not compared (Spanish and English need
+ * different plural categories). It is a set: an argument used in one branch of one side and in every branch of the
+ * other matches. Throws when `message` is not ICU.
+ */
+export function icuSignature(message: string): string[] {
+    const found = new Set<string>()
+    const visit = (elements: MessageFormatElement[]): void => {
+        for (const element of elements) {
+            if (isLiteralElement(element) || isPoundElement(element)) continue
+            if (isTagElement(element)) {
+                found.add(`<${element.value}>`)
+                visit(element.children)
+                continue
+            }
+            const type = isPluralElement(element)
+                ? element.pluralType === 'ordinal'
+                    ? 'selectordinal'
+                    : 'plural'
+                : isSelectElement(element)
+                  ? 'select'
+                  : isNumberElement(element)
+                    ? 'number'
+                    : isDateElement(element)
+                      ? 'date'
+                      : isTimeElement(element)
+                        ? 'time'
+                        : 'argument'
+            found.add(`${element.value}:${type}`)
+            if (isPluralElement(element) || isSelectElement(element)) {
+                for (const option of Object.values(element.options)) visit(option.value)
+            }
+        }
+    }
+    visit(parse(message))
+    return [...found].sort()
+}
 
-function expectParity(en: MessageTree, es: MessageTree): void {
+function signatureOrError(message: string): string[] | string {
+    try {
+        return icuSignature(message)
+    } catch (error) {
+        return `does not parse as ICU (${(error as Error).message})`
+    }
+}
+
+/** Every way `es` is not a faithful counterpart of `en`: a key on one side only, or a message whose signature differs. */
+export function parityProblems(en: MessageTree, es: MessageTree): string[] {
     const enFlat = flatten(en)
     const esFlat = flatten(es)
-    expect([...esFlat.keys()].sort()).toEqual([...enFlat.keys()].sort())
+    const problems: string[] = []
+    for (const key of enFlat.keys()) if (!esFlat.has(key)) problems.push(`${key}: missing from es`)
+    for (const key of esFlat.keys()) if (!enFlat.has(key)) problems.push(`${key}: missing from en`)
     for (const [key, enMsg] of enFlat) {
         const esMsg = esFlat.get(key)
-        if (esMsg !== undefined) expect.soft(icuArgs(esMsg), key).toEqual(icuArgs(enMsg))
+        if (esMsg === undefined) continue
+        const enSig = signatureOrError(enMsg)
+        const esSig = signatureOrError(esMsg)
+        if (typeof enSig === 'string') problems.push(`${key}: en ${enSig}`)
+        if (typeof esSig === 'string') problems.push(`${key}: es ${esSig}`)
+        if (typeof enSig !== 'string' && typeof esSig !== 'string' && enSig.join() !== esSig.join()) {
+            problems.push(`${key}: en has [${enSig.join(', ')}], es has [${esSig.join(', ')}]`)
+        }
     }
+    return problems
+}
+
+function expectParity(en: MessageTree, es: MessageTree): void {
+    expect(parityProblems(en, es)).toEqual([])
 }
 
 /**
  * `i18n-parity`: en/es parity over the MERGED catalog (the framework half + the app half, which arrives through the
  * ADR-0012 seam). The catalogs are physically split, but what ships to the user is the merge — so that is what must
- * stay key- and placeholder-identical. The framework half is checked on its own too, so the package carries a
+ * stay key- and placeholder-identical: the same arguments, each of the same type (inside plural and select
+ * branches too), and the same tags (`icuSignature`). The framework half is checked on its own too, so the package carries a
  * truthful guarantee independent of whatever app consumes it.
  */
 export const i18nParity: CheckImpl = {

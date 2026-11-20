@@ -1,4 +1,6 @@
+import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
+import { expect } from 'vitest'
 import { realAuthProvider } from './auth-provider'
 import { authzMutations } from './authz'
 import { appRolesCheck, migrationOrder, rlsPglite } from './db'
@@ -46,16 +48,72 @@ export interface ConformanceOptions {
     optOut?: Readonly<Record<string, string>>
 }
 
+/** The nearest directory at or above `file` that holds a package.json, or null. */
+function packageDirOf(file: string): string | null {
+    for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+        if (existsSync(path.join(dir, 'package.json'))) return dir
+        if (path.dirname(dir) === dir) return null
+    }
+}
+
+const realOrNull = (dir: string) => {
+    try {
+        return realpathSync(dir)
+    } catch {
+        return null
+    }
+}
+
+/**
+ * Why `appDir` is not the app whose suite file `testPath` is, or null when it is. The app is the nearest directory at
+ * or above the test file that holds a package.json; both sides are compared by real path, so `..` and symbolic links
+ * do not matter. A suite file in one app pointed at another would otherwise run every file-reading check over the
+ * other app's files and pass.
+ */
+export function appDirMismatch(appDir: string, testPath: string): string | null {
+    const own = packageDirOf(realOrNull(testPath) ?? testPath)
+    const given = realOrNull(path.resolve(appDir))
+    const ownReal = own === null ? null : realOrNull(own)
+    if (given !== null && ownReal !== null && given === ownReal) return null
+    return (
+        `conformanceSuite: appDir is ${path.resolve(appDir)}, but the suite file ${testPath} belongs to ` +
+        `${own ?? 'no package (no package.json above it)'}; appDir must be the directory of the app that runs it`
+    )
+}
+
 /** Registers the conformance suite in the calling test file. Call it once, at the file's top level. */
 export function conformanceSuite(options: ConformanceOptions): void {
-    // First, so the scratch directories' cleanup is this file's own, at its top level, and runs after the checks'
-    // teardown, even under `isolate: false`, where the helper loads once per worker (../tmp-dir.ts).
-    registerTestTmpDirCleanup()
+    // Only the two published options are read: anything else an app passes is ignored, so nothing it writes can turn
+    // the appDir check below off.
+    registerConformanceSuite({ appDir: options.appDir, ...(options.optOut ? { optOut: options.optOut } : {}) })
+}
+
+/**
+ * SSSB's own entry, not a published subpath (`@sssb/kit/testing` exports `conformanceSuite` only): the suite with
+ * `appDirOutsideCaller`, the reason `appDir` is not the calling test file's package. The kit runs the suite against
+ * its fixture, `packages/kit/test-fixture`, from a test file in `packages/kit`; an app never has a reason to.
+ */
+export function registerConformanceSuite(options: ConformanceOptions & { appDirOutsideCaller?: string }): void {
     const optOut = options.optOut ?? {}
     checkOptOut('conformanceSuite', 'unit', optOut)
     if (typeof options.appDir !== 'string' || options.appDir === '') {
         throw new Error('conformanceSuite: appDir must name the app directory')
     }
+    // Refused while the file is collected, before anything is registered.
+    const outside = options.appDirOutsideCaller
+    if (outside !== undefined) {
+        if (typeof outside !== 'string' || !outside.trim()) {
+            throw new Error('conformanceSuite: appDirOutsideCaller needs a reason')
+        }
+    } else {
+        const testPath = expect.getState().testPath
+        if (!testPath) throw new Error('conformanceSuite: call it at the top level of a Vitest test file')
+        const mismatch = appDirMismatch(options.appDir, testPath)
+        if (mismatch) throw new Error(mismatch)
+    }
+    // Before the checks, so the scratch directories' cleanup is this file's own, at its top level, and runs after the
+    // checks' teardown, even under `isolate: false`, where the helper loads once per worker (../tmp-dir.ts).
+    registerTestTmpDirCleanup()
     const context: CheckContext = { appDir: path.resolve(options.appDir) }
     registerChecks({ caller: 'conformanceSuite', runner: 'unit', implementations: IMPLEMENTATIONS, optOut, context })
 }

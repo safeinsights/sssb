@@ -21,7 +21,7 @@ test.afterAll(async ({ browser, baseURL }) => {
     // `baseURL` comes from the config, so an isolated-port run resets the server it actually drove.
     const context = await browser.newContext({ baseURL })
     try {
-        await context.request.post('/api/simulator/reset')
+        await context.request.post('/api/simulator/reset', { data: {} })
     } finally {
         await context.close()
     }

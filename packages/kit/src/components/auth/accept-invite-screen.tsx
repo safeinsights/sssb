@@ -117,7 +117,11 @@ export function AcceptInviteScreen({
                         <Text size="xs" c="gray.7" data-testid="accept-agreements-notice">
                             {t('agreementsNotice')}
                         </Text>
-                        {error ? <Text c="red.8">{error}</Text> : null}
+                        {error ? (
+                            <Text c="red.8" role="alert">
+                                {error}
+                            </Text>
+                        ) : null}
                     </Stack>
                 </form>
             }

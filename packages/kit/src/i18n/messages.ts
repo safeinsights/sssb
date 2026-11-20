@@ -13,8 +13,9 @@ export type MessageTree = { [key: string]: string | MessageTree }
 
 /**
  * Deep-merge catalogs, later trees winning per leaf. The framework/app namespaces are disjoint at the
- * top level (the conformance suite's `i18n-partition` check proves it), so this never actually overwrites today — the merge is deep
- * anyway so an app CAN override a single framework string without forking a whole namespace.
+ * top level, and the conformance suite's `i18n-partition` check fails an app catalog that holds a framework
+ * namespace, so an app cannot override a framework string and nothing here ever overwrites. The merge is deep only
+ * so that it would stay correct if two trees ever shared a namespace.
  */
 export function mergeMessages(...trees: MessageTree[]): MessageTree {
     const out: MessageTree = {}

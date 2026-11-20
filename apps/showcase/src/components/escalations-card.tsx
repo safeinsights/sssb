@@ -61,6 +61,7 @@ export function EscalationsCard({
     canCreate: boolean
     /** Responder-side accept/reject affordance (org manager). */
     canRespond: boolean
+    /** Rejects when the escalation was not created: the card then keeps the draft and says so. */
     onCreate: (input: { responderOrgSlug: string; subject: string; body: string }) => Promise<void>
     onRespond: (id: string, decision: 'accept' | 'reject') => Promise<void>
     onCancel: (id: string) => Promise<void>
@@ -70,6 +71,7 @@ export function EscalationsCard({
     const [subject, setSubject] = useState('')
     const [body, setBody] = useState('')
     const [busy, setBusy] = useState(false)
+    const [createFailed, setCreateFailed] = useState(false)
 
     function StatusBadge({ status }: { status: string }) {
         return (
@@ -244,17 +246,26 @@ export function EscalationsCard({
                             onClick={() => {
                                 if (!target) return
                                 setBusy(true)
+                                setCreateFailed(false)
                                 onCreate({ responderOrgSlug: target, subject: subject.trim(), body: body.trim() })
-                                    .then(() => {
-                                        setTarget(null)
-                                        setSubject('')
-                                        setBody('')
-                                    })
+                                    .then(
+                                        () => {
+                                            setTarget(null)
+                                            setSubject('')
+                                            setBody('')
+                                        },
+                                        () => setCreateFailed(true),
+                                    )
                                     .finally(() => setBusy(false))
                             }}
                         >
                             {t('createButton')}
                         </Button>
+                        {createFailed ? (
+                            <Text size="sm" c="red.8" role="alert" data-testid="escalation-create-error">
+                                {t('createError')}
+                            </Text>
+                        ) : null}
                     </Stack>
                 ) : null}
 

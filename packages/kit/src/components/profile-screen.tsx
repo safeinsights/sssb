@@ -10,6 +10,9 @@ export interface ProfileValues {
     locale: string
 }
 
+/** The longest display name SSSB's auth adapters accept; a blank one is refused too. */
+const PROFILE_NAME_MAX_LENGTH = 256
+
 /**
  * Lean take on Clerk's UserProfile (ADR-0003): a sectioned account page. The Profile section is live;
  * the Security section is a named seam so MFA / password / connected accounts have a home when those
@@ -27,13 +30,25 @@ export function ProfileScreen({
     initial: ProfileValues
     email: string
     locales: string[]
+    /** Rejects when the profile was not saved: the screen then keeps the form and says so. */
     onSave: (values: ProfileValues) => Promise<void>
     extraSection?: ReactNode
 }) {
     const t = useTranslations('profile')
     const [saved, setSaved] = useState(false)
     const [busy, setBusy] = useState(false)
-    const form = useForm({ initialValues: initial })
+    const [saveFailed, setSaveFailed] = useState(false)
+    const form = useForm({
+        initialValues: initial,
+        validate: {
+            name: (value) =>
+                !value.trim()
+                    ? t('nameRequired')
+                    : value.length > PROFILE_NAME_MAX_LENGTH
+                      ? t('nameTooLong', { max: PROFILE_NAME_MAX_LENGTH })
+                      : null,
+        },
+    })
 
     return (
         <Container component="main" size="sm" py="xl">
@@ -48,8 +63,12 @@ export function ProfileScreen({
                         onSubmit={form.onSubmit((values) => {
                             setBusy(true)
                             setSaved(false)
+                            setSaveFailed(false)
                             onSave(values)
-                                .then(() => setSaved(true))
+                                .then(
+                                    () => setSaved(true),
+                                    () => setSaveFailed(true),
+                                )
                                 .finally(() => setBusy(false))
                         })}
                     >
@@ -58,6 +77,7 @@ export function ProfileScreen({
                             <TextInput
                                 label={t('nameLabel')}
                                 data-testid="profile-name"
+                                withAsterisk
                                 {...form.getInputProps('name')}
                             />
                             <Select
@@ -75,6 +95,11 @@ export function ProfileScreen({
                             >
                                 {t('saveButton')}
                             </Button>
+                            {saveFailed ? (
+                                <Text c="red.8" size="sm" role="alert" data-testid="profile-save-error">
+                                    {t('saveError')}
+                                </Text>
+                            ) : null}
                             {saved ? (
                                 <Text c="green.8" size="sm" data-testid="profile-saved">
                                     {t('saved')}

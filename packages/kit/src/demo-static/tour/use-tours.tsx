@@ -105,8 +105,9 @@ export function useTours(
     // Where the story is meant to be standing: captured when a step's entry script finishes, and the
     // place "Back to the tour" returns to.
     const stepLocationRef = useRef<string | null>(null)
-    // Bumped on every goto so a script that finishes AFTER the viewer pressed Back cannot light that
-    // abandoned step's spotlight on the screen they are now looking at.
+    // Bumped on every goto and end, so a script that finishes AFTER the viewer pressed Back cannot light that
+    // abandoned step's spotlight on the screen they are now looking at, and a Next whose advance script was
+    // running when the viewer pressed Exit cannot re-open the tour they just closed.
     const runTokenRef = useRef(0)
 
     const tour = appTours.find((candidate) => candidate.id === activeId) ?? null
@@ -155,6 +156,7 @@ export function useTours(
     }
 
     function end(stepsRun: number) {
+        runTokenRef.current += 1
         cancelScript()
         hideCursor()
         writeResumeMarker(null)
@@ -190,12 +192,14 @@ export function useTours(
     async function next() {
         if (advancing || !tour) return
         const step = tour.steps[idx]
+        const token = runTokenRef.current
         setAdvancing(true)
         // Next DURING an entry script fast-forwards it to completion rather than cancelling it: a
         // cancelled script leaves a half-typed form on screen, which reads as a bug.
         if (isDriving()) {
             requestFastForward()
             while (isDriving()) await new Promise((resolve) => setTimeout(resolve, 60))
+            if (runTokenRef.current !== token) return
         }
         // Move the resume marker BEFORE the advance script runs. Every submission lives in `advance`,
         // and on a server host some of them reload the page (a feature flag, a person switch) — writing
@@ -206,6 +210,8 @@ export function useTours(
             setSpotlight(null) // the vignette lifts before the cursor clicks through it
             await runScript(step.advance, addMiss)
         }
+        // Exit (or anything else that moved the tour) while this awaited: that already settled the tour.
+        if (runTokenRef.current !== token) return
         setAdvancing(false)
         if (idx >= tour.steps.length - 1) end(tour.steps.length)
         else goto(tour.id, idx + 1)
