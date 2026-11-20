@@ -26,18 +26,24 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
 
     const submit = form.onSubmit(async (values) => {
         setFormError(null)
-        const { error } = await signIn.password({ identifier: values.email, password: values.password })
-        if (error) {
-            setFormError(labels.genericError)
-            return
-        }
-        if (signIn.status === 'complete') {
-            const finalized = await signIn.finalize()
-            if (finalized.error) setFormError(labels.genericError)
-            else window.location.assign(sameOriginPath(returnTo) ?? '/')
-        } else if (signIn.status === 'needs_second_factor') {
-            setFormError(labels.mfaNotImplemented)
-        } else {
+        // A Clerk call that throws (the network, not a refused password) is shown as the same generic error, never left
+        // as an unhandled rejection with nothing on screen.
+        try {
+            const { error } = await signIn.password({ identifier: values.email, password: values.password })
+            if (error) {
+                setFormError(labels.genericError)
+                return
+            }
+            if (signIn.status === 'complete') {
+                const finalized = await signIn.finalize()
+                if (finalized.error) setFormError(labels.genericError)
+                else window.location.assign(sameOriginPath(returnTo) ?? '/')
+            } else if (signIn.status === 'needs_second_factor') {
+                setFormError(labels.mfaNotImplemented)
+            } else {
+                setFormError(labels.genericError)
+            }
+        } catch {
             setFormError(labels.genericError)
         }
     })
@@ -50,7 +56,11 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
                 <Button type="submit" loading={fetchStatus === 'fetching'}>
                     {labels.submit}
                 </Button>
-                {formError ? <Text c="red.8">{formError}</Text> : null}
+                {formError ? (
+                    <Text c="red.8" role="alert">
+                        {formError}
+                    </Text>
+                ) : null}
             </Stack>
         </form>
     )

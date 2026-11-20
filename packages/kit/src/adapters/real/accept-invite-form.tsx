@@ -74,21 +74,30 @@ export function RealAcceptInviteForm({
             }
             const { signIn: currentSignIn, signUp: currentSignUp } = flows.current
             const flow = plan === 'sign-in' ? currentSignIn : currentSignUp
-            const { error: ticketError } =
-                plan === 'sign-in' ? await currentSignIn.ticket({ ticket }) : await currentSignUp.ticket({ ticket })
-            if (ticketError) {
-                setError(labels.genericError)
-                return
-            }
-            if (flow.status === 'complete') {
-                const finalized = await flow.finalize()
-                if (finalized.error) {
+            setError(null) // a retry after a thrown call starts with no error on screen
+            try {
+                const { error: ticketError } =
+                    plan === 'sign-in' ? await currentSignIn.ticket({ ticket }) : await currentSignUp.ticket({ ticket })
+                if (ticketError) {
                     setError(labels.genericError)
                     return
                 }
-                setAccepted(true)
-                window.location.assign(redirectTo)
-            } else {
+                if (flow.status === 'complete') {
+                    const finalized = await flow.finalize()
+                    if (finalized.error) {
+                        setError(labels.genericError)
+                        return
+                    }
+                    setAccepted(true)
+                    window.location.assign(redirectTo)
+                } else {
+                    setError(labels.genericError)
+                }
+            } catch {
+                // A call that THREW (the network) is not Clerk refusing the ticket: show the error, and forget that this
+                // ticket was started, so the effect's next run (Clerk reloading, the page remounting) submits it again.
+                // A refusal above is not retried: Clerk has answered, and a ticket is single-use.
+                started.current = null
                 setError(labels.genericError)
             }
         })()
@@ -101,7 +110,11 @@ export function RealAcceptInviteForm({
             {!accepted && !error ? (
                 <Text c="gray.7">{fetchStatus === 'fetching' ? labels.accepting : labels.oneMoment}</Text>
             ) : null}
-            {error ? <Text c="red.8">{error}</Text> : null}
+            {error ? (
+                <Text c="red.8" role="alert">
+                    {error}
+                </Text>
+            ) : null}
         </Stack>
     )
 }

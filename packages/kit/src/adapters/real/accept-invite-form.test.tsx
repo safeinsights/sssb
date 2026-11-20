@@ -116,4 +116,31 @@ describe('RealAcceptInviteForm', () => {
         expect(h.signIn.ticket).not.toHaveBeenCalled()
         expect(container.textContent).toContain('error')
     })
+    it('shows the error as an alert, and submits the ticket again once Clerk reloads, when a ticket call throws', async () => {
+        const failing = h.signUp
+        failing.ticket.mockImplementationOnce(async () => {
+            throw new Error('network down')
+        })
+        await render({ ticket: 't-6', status: 'sign_up' })
+        expect(failing.ticket).toHaveBeenCalledTimes(1)
+        expect(container.querySelector('[role="alert"]')?.textContent).toBe('error')
+        expect(assign).not.toHaveBeenCalled()
+
+        h.isLoaded = false
+        await render({ ticket: 't-6', status: 'sign_up' })
+        h.isLoaded = true
+        await render({ ticket: 't-6', status: 'sign_up' })
+        expect(failing.ticket).toHaveBeenCalledTimes(2)
+        expect(assign).toHaveBeenCalledWith('/en/dashboard')
+        expect(container.querySelector('[role="alert"]')).toBeNull()
+    })
+
+    it('shows the error as an alert when finalizing throws', async () => {
+        h.signIn.finalize.mockImplementationOnce(async () => {
+            throw new Error('network down')
+        })
+        await render({ ticket: 't-7', status: 'sign_in' })
+        expect(container.querySelector('[role="alert"]')?.textContent).toBe('error')
+        expect(assign).not.toHaveBeenCalled()
+    })
 })
