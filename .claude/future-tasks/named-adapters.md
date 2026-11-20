@@ -7,7 +7,7 @@ point 1 (named rather than `app`) and point 2 (ports designed against two implem
 
 ## The shape, decided
 
-- The app writes its adapter in its own `src/adapters/real/` and registers it under a name it chooses:
+- The app writes its adapter in its own `apps/<app>/src/adapters/real/` and registers it under a name it chooses:
   `llm: { openai: { create, env } }`. A deployment selects it as it selects one of SSSB's: `LLM_PROVIDER=openai`.
 - A name may not be one of SSSB's own choices for the port; boot fails when it is.
 - Registration is split for boot safety, as the first addendum says: `@sssb/app-config/adapter-env` (data only: each
@@ -18,7 +18,7 @@ point 1 (named rather than `app`) and point 2 (ports designed against two implem
 - A graph check (esbuild's metafile, as `sssb check-real-env` builds it) fails when an app adapter's module graph
   reaches `@sssb/kit/adapters/index`, since that would deadlock boot.
 - A port contract suite, `@sssb/kit/testing/ports`, run against SSSB's fakes in SSSB's CI and against the app's adapter
-  in a runner of its own (`tests/ports/`, needing the vendor's credentials, failing without them unless opted out by
+  in a runner of its own (`apps/<app>/tests/ports/`, needing the vendor's credentials, failing without them unless opted out by
   name). `sssb doctor` checks the app runs it for each named adapter, reading `adapter-env`.
 
 ## Start with
