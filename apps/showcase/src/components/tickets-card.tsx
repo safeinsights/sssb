@@ -72,6 +72,7 @@ export function TicketsCard({
     hasMore?: boolean
     /** Appends the next page. Absent = this list does not page (the read-only/static callers). */
     onLoadMore?: () => Promise<void>
+    /** Rejects when the ticket was not created: the card then keeps the draft and says so. */
     onCreate: (input: { subject: string; body: string }) => Promise<void>
     onUpdate: (id: string, changes: { status?: TicketStatus; assigneeUserId?: string | null }) => Promise<void>
     onDelete: (id: string) => Promise<void>
@@ -83,6 +84,7 @@ export function TicketsCard({
     const [subject, setSubject] = useState('')
     const [body, setBody] = useState('')
     const [busy, setBusy] = useState(false)
+    const [createFailed, setCreateFailed] = useState(false)
     const [loadingMore, setLoadingMore] = useState(false)
 
     const assigneeOptions = [
@@ -226,16 +228,25 @@ export function TicketsCard({
                     style={{ alignSelf: 'flex-start' }}
                     onClick={() => {
                         setBusy(true)
+                        setCreateFailed(false)
                         onCreate({ subject: subject.trim(), body: body.trim() })
-                            .then(() => {
-                                setSubject('')
-                                setBody('')
-                            })
+                            .then(
+                                () => {
+                                    setSubject('')
+                                    setBody('')
+                                },
+                                () => setCreateFailed(true),
+                            )
                             .finally(() => setBusy(false))
                     }}
                 >
                     {t('addButton')}
                 </Button>
+                {createFailed ? (
+                    <Text size="sm" c="red.8" role="alert" data-testid="ticket-add-error">
+                        {t('addError')}
+                    </Text>
+                ) : null}
 
                 {!canWrite ? (
                     <Text size="sm" c="gray.7" data-testid="tickets-readonly-hint">

@@ -203,7 +203,10 @@ export function DashboardGlue({
                         headers: { 'content-type': 'application/json' },
                         body: JSON.stringify(input),
                     })
-                    if (response.ok) await refreshTickets()
+                    // A refusal rejects, so the card keeps the draft and shows its error.
+                    if (!response.ok) throw new Error(`POST /api/tickets answered ${response.status}`)
+                    // Created: a failed refresh must not read as a failed create.
+                    await refreshTickets().catch(() => undefined)
                 }}
                 onUpdate={async (id, changes) => {
                     const response = await fetch(`/api/tickets/${id}`, {
@@ -244,7 +247,8 @@ export function DashboardGlue({
                         headers: { 'content-type': 'application/json' },
                         body: JSON.stringify(input),
                     })
-                    if (response.ok) await refreshEscalations()
+                    if (!response.ok) throw new Error(`POST /api/escalations answered ${response.status}`)
+                    await refreshEscalations().catch(() => undefined)
                 }}
                 onRespond={async (id, decision) => {
                     const response = await fetch(`/api/escalations/${id}/respond`, {
