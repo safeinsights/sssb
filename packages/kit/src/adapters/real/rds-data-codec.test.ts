@@ -180,6 +180,20 @@ describe('toSqlParameter: every value goes as a string the explicit CAST parses,
         expect(toSqlParameter(1, undefined)).toEqual({ name: 'kp1', value: { isNull: true } })
     })
 
+    it('a Date outside years 1-9999 goes in the form Postgres reads, as node-postgres stores it', () => {
+        const at = (year: number) => {
+            const date = new Date(Date.UTC(2000, 2, 15, 12, 0, 0))
+            date.setUTCFullYear(year)
+            return toSqlParameter(1, date).value?.stringValue
+        }
+        expect(at(-43)).toBe('0044-03-15T12:00:00.000Z BC')
+        expect(at(0)).toBe('0001-03-15T12:00:00.000Z BC')
+        expect(at(1)).toBe('0001-03-15T12:00:00.000Z')
+        expect(at(9999)).toBe('9999-03-15T12:00:00.000Z')
+        expect(at(10000)).toBe('10000-03-15T12:00:00.000Z')
+        expect(at(275760 - 1)).toBe('275759-03-15T12:00:00.000Z')
+    })
+
     it('an invalid Date is refused rather than sent as "Invalid Date"', () => {
         expect(() => toSqlParameter(1, new Date('nope'))).toThrow(/invalid Date/)
     })
@@ -295,5 +309,41 @@ describe('normalizeDatabaseError: code and constraint where node-postgres would 
         const timeout = awsError('StatementTimeoutException', 'timed out')
         expect(normalizeDatabaseError(timeout)).toBe(timeout)
         expect(normalizeDatabaseError('not an error')).toBe('not an error')
+    })
+})
+
+describe('decodeField: an array of a type node-postgres has no parser for', () => {
+    it('comes back as Postgres text, as node-postgres returns it (an enum[], bit[], name[])', () => {
+        expect(decodeField({ arrayValue: { stringValues: ['happy', 'sad'] } }, '_mood')).toBe('{happy,sad}')
+        expect(decodeField({ arrayValue: { stringValues: ['101', '0'] } }, '_bit')).toBe('{101,0}')
+        expect(
+            decodeField(
+                {
+                    arrayValue: {
+                        stringValues: ['a b', 'with,comma', 'q"uote', 'back\\slash', '', 'null', null as never],
+                    },
+                },
+                '_name',
+            ),
+        ).toBe('{"a b","with,comma","q\\"uote","back\\\\slash","","null",NULL}')
+        expect(
+            decodeField({ arrayValue: { arrayValues: [{ stringValues: ['a'] }, { stringValues: ['b'] }] } }, '_mood'),
+        ).toBe('{{a},{b}}')
+    })
+
+    it('a type it does parse still comes back as an array', () => {
+        expect(decodeField({ arrayValue: { stringValues: ['x', 'y'] } }, '_text')).toEqual(['x', 'y'])
+        expect(decodeField({ arrayValue: { longValues: [1, 2] } }, '_int4')).toEqual([1, 2])
+    })
+})
+
+describe('rewritePlaceholders: a string constant continued on the next line is one string', () => {
+    it("an E-string's continuation keeps its backslash escapes, so a $1 inside it is not a placeholder", () => {
+        expect(rewritePlaceholders("select E'a'\n'\\' $1', $1", (n) => `<P${n}>`)).toBe("select E'a'\n'\\' $1', <P1>")
+    })
+
+    it('a plain continuation is one string too; on one line, two strings are two', () => {
+        expect(rewritePlaceholders("select 'a'\n  'b $1', $1", (n) => `<P${n}>`)).toBe("select 'a'\n  'b $1', <P1>")
+        expect(rewritePlaceholders("select 'a' 'b', $1", (n) => `<P${n}>`)).toBe("select 'a' 'b', <P1>")
     })
 })

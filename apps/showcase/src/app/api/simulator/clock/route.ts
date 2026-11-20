@@ -3,7 +3,7 @@ import { advanceClockMs, readClockOffsetMs, resetClock, worldNow } from '@sssb/k
 import { runDueSchedules } from '@sssb/kit/db/schedules'
 import { runDueDeliveries } from '@sssb/kit/db/webhooks'
 import { dispatchWebhook } from '@sssb/kit/server-lib/webhook-dispatch'
-import { withPortErrors } from '../../respond'
+import { refuseNonJson, withPortErrors } from '../../respond'
 
 /** Advance is capped at a year of delta per call — a demo control, not an arbitrary time machine. */
 const MAX_ADVANCE_MS = 366 * 86_400_000
@@ -17,6 +17,8 @@ const MAX_ADVANCE_MS = 366 * 86_400_000
  */
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
+    const refused = refuseNonJson(request)
+    if (refused) return refused
     return withPortErrors(async () => {
         const body = (await request.json().catch(() => null)) as Record<string, unknown> | null
         if (typeof body !== 'object' || body === null)

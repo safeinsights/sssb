@@ -39,9 +39,14 @@ function user(overrides: Partial<AuthUser> = {}): AuthUser {
 
 const ORG_IDS: Record<string, string> = { frontline: 'org-frontline', platform: 'org-platform' }
 // An escalation frontline -> platform: the active org (platform) is the responder side.
-const REQUEST = { id: 'req-1', status: 'open', requesterOrgId: 'org-frontline', responderOrgId: 'org-platform' }
+const REQUEST = {
+    id: 'c0000000-0000-4000-8000-000000000001',
+    status: 'open',
+    requesterOrgId: 'org-frontline',
+    responderOrgId: 'org-platform',
+}
 
-function post(body: unknown, id = 'req-1'): Promise<Response> {
+function post(body: unknown, id = 'c0000000-0000-4000-8000-000000000001'): Promise<Response> {
     return POST(
         new Request(`http://localhost/api/escalations/${id}/respond`, {
             method: 'POST',
@@ -66,17 +71,23 @@ describe('POST /api/escalations/[id]/respond', () => {
         const response = await post({ decision: 'accept' })
 
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({ id: 'req-1', status: 'accepted' })
-        expect(h.transitionEscalation).toHaveBeenCalledWith({}, 'tenant-northwind', 'req-1', 'accepted', {
-            byUserId: 'user-sam',
-        })
+        expect(await response.json()).toEqual({ id: 'c0000000-0000-4000-8000-000000000001', status: 'accepted' })
+        expect(h.transitionEscalation).toHaveBeenCalledWith(
+            {},
+            'tenant-northwind',
+            'c0000000-0000-4000-8000-000000000001',
+            'accepted',
+            {
+                byUserId: 'user-sam',
+            },
+        )
     })
 
     test('200 rejects an escalation (decision reject)', async () => {
         const response = await post({ decision: 'reject' })
 
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({ id: 'req-1', status: 'rejected' })
+        expect(await response.json()).toEqual({ id: 'c0000000-0000-4000-8000-000000000001', status: 'rejected' })
     })
 
     test('400 on a missing / non-accept-reject decision', async () => {
@@ -111,5 +122,20 @@ describe('POST /api/escalations/[id]/respond', () => {
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({ error: 'invalid-transition', from: 'accepted', to: 'rejected' })
+    })
+})
+
+describe('a path id that cannot be an escalation, or a malformed body', () => {
+    test('a non-uuid id is a 404, a body that does not parse a 400', async () => {
+        expect((await post({ decision: 'accept' }, 'nope')).status).toBe(404)
+        const id = REQUEST.id
+        const response = await POST(
+            new Request(`http://localhost/api/escalations/${id}/respond`, { method: 'POST', body: '{' }),
+            {
+                params: Promise.resolve({ id }),
+            },
+        )
+        expect(response.status).toBe(400)
+        expect(h.escalationForActiveOrg).not.toHaveBeenCalled()
     })
 })

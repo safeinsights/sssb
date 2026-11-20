@@ -12,7 +12,9 @@ import { type ScanRoot, exemptionFor, judge, scanRoutes } from './route-scan'
  * build-time scan makes "every mutating product route is authorized" a checked invariant rather than
  * a discipline: it judges EACH exported mutating handler (POST/PUT/PATCH/DELETE) on its own: the handler
  * must reach authorize(...) on its own path, or its route must sit in the justified exemption map AND the
- * handler must pass that exemption's gate. GET-only files never have to authorize.
+ * handler must pass that exemption's gate. GET-only files never have to authorize. "Reach" is may-reach: the scan
+ * does not prove that every path authorizes, or that it does so before mutating (./route-scan.ts, "What it does
+ * not prove").
  *
  * The judging is ./route-scan.ts: it reads the files with the TypeScript compiler's parser and binder, so a
  * string, a comment, a call in another handler, a dead branch or an uncalled function proves nothing (the

@@ -3,7 +3,7 @@ import { authorize } from '@sssb/kit/authz/authorize'
 import { isNotificationChannel, isNotificationKind } from '@sssb/kit/core/notifications'
 import { readPrefRows, setPref } from '@sssb/kit/db/notifications'
 import { resolveOrgContext } from '../org-context'
-import { withPortErrors } from '../respond'
+import { readJsonObject, withPortErrors } from '../respond'
 
 /**
  * Notification preferences, scoped to the caller's ACTIVE org (prefs are org-scoped so a user
@@ -31,8 +31,7 @@ export async function POST(request: Request): Promise<Response> {
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
-        const body = (await request.json()) as { kind?: unknown; channel?: unknown; enabled?: unknown }
-        const { kind, channel, enabled } = body
+        const { kind, channel, enabled } = await readJsonObject(request)
         if (
             typeof kind !== 'string' ||
             !isNotificationKind(kind) ||

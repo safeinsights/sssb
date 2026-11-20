@@ -65,6 +65,9 @@ export async function dispatchWebhook(input: WebhookDispatchInput): Promise<Webh
             body: input.body,
             signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
         })
+        // The outcome is the status alone, so the body is never read: cancel it rather than leave the
+        // connection held open until garbage collection reclaims the unread stream (undici's behaviour).
+        await response.body?.cancel().catch(() => undefined)
         return response.ok
             ? { delivered: true, status: response.status }
             : { delivered: false, status: response.status, error: `HTTP ${response.status}` }

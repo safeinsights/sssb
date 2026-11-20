@@ -161,3 +161,15 @@ describe('GET /api/attachments (list)', () => {
         expect((await GET()).status).toBe(401)
     })
 })
+
+describe('POST /api/attachments: a malformed body is a 400, never a 500', () => {
+    test('a body that does not parse, and fields of the wrong type', async () => {
+        expect(
+            (await POST(new Request('http://localhost/api/attachments', { method: 'POST', body: '{' }))).status,
+        ).toBe(400)
+        expect((await post({ filename: 5 })).status).toBe(400)
+        expect((await post({ filename: 'a.txt', contentType: 7 })).status).toBe(400)
+        expect((await post({ filename: 'a.txt', kind: ['attachment'] })).status).toBe(400)
+        expect(h.createAttachment).not.toHaveBeenCalled()
+    })
+})

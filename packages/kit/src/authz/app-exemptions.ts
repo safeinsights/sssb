@@ -1,8 +1,20 @@
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { FRAMEWORK_POLICY, isGate } from './route-policy'
-import { type Exemption, type ScannedRoute, type ScanRoot, type ScanPolicy, judge, scanRoutes } from './route-scan'
+import {
+    type Exemption,
+    type ScannedAction,
+    type ScannedRoute,
+    type ScanRoot,
+    type ScanPolicy,
+    judge,
+    judgeServerAction,
+    scanRoutes,
+    scanServerActions,
+    serverActionFilesOutsideSrc,
+    unreadRouteFiles,
+} from './route-scan'
 
 /**
  * AN APP'S OWN AUTHORIZATION EXEMPTIONS, and the per-app authorization scan that applies them (the conformance
@@ -180,17 +192,38 @@ export interface AppScan {
     root: ScanRoot
     /** Every route file under the app's `src/app`, mutating or not. Empty when there is no `src/app`. */
     routes: ScannedRoute[]
-    /** One message per mutating handler that fails, `<root>: <rel> <VERB> …why`. */
+    /** Every Server Action under the app's `src`. */
+    actions: ScannedAction[]
+    /**
+     * One message per mutating handler or Server Action that fails (`<root>: <rel> <VERB> …why`), and one for each
+     * Pages Router API directory the app has, which the scan cannot read.
+     */
     failures: string[]
     /** The app's exemptions file: malformed, colliding or stale entries. */
     exemptionProblems: string[]
 }
 
+/** Whether `file` is a directory (through a link); false when it is missing or a file. */
+function isDirectory(file: string): boolean {
+    try {
+        return statSync(file).isDirectory()
+    } catch {
+        return false
+    }
+}
+
+/** Where Next looks for Pages Router API routes: `pages/api` beside `src`, or inside it. */
+const PAGES_API_DIRS = ['pages/api', 'src/pages/api']
+
 /**
  * The authorization scan over ONE app: every `route.*` under `<appDir>/src/app` (Next serves one from anywhere
- * there, so not only `api/`), judged against the framework's policy plus the app's own exemptions, which are
- * measured from `<appDir>/src/app/api` (so a mutating route outside `api/` can match no exemption and must call
- * `authorize(...)` itself). Re-exported handlers are followed with the app's `tsconfig.json` (or `jsconfig.json`).
+ * there, so not only `api/`, and through a symbolic link too), judged against the framework's policy plus the app's
+ * own exemptions, which are measured from `<appDir>/src/app/api` (so a mutating route outside `api/` can match no
+ * exemption and must call `authorize(...)` itself). Every Server Action under `<appDir>/src` (a `'use server'` file's
+ * exports, and each function whose body opens with `'use server'`) is judged as a POST is, and can match no
+ * exemption. A Pages Router API directory fails outright: SSSB apps are App Router, and the scan reads no
+ * `pages/api` handler. So does a root-level `app/` directory (Next serves it instead of `src/app`), and a file under
+ * `src/app` named `route.<ext>` for an extension the scan does not read (`pageExtensions` is not read). Re-exported handlers are followed with the app's `tsconfig.json` (or `jsconfig.json`).
  */
 export async function scanApp(appDir: string): Promise<AppScan> {
     const name = path.basename(appDir)
@@ -206,13 +239,43 @@ export async function scanApp(appDir: string): Promise<AppScan> {
     const routes = existsSync(root.dir) ? scanRoutes([root]) : []
     const mutating = routes.filter((route) => route.handlers.length > 0)
     const policy = policyWithApp(exemptions)
-    const failures = mutating.flatMap((route) =>
-        route.handlers.flatMap((handler) => judge(route, handler, policy) ?? []),
-    )
+    const srcDir = path.join(appDir, 'src')
+    const actions = existsSync(srcDir) ? scanServerActions({ ...root, dir: srcDir, exemptDir: srcDir }) : []
+    const failures = [
+        ...mutating.flatMap((route) => route.handlers.flatMap((handler) => judge(route, handler, policy) ?? [])),
+        ...actions.flatMap((action) => judgeServerAction(action) ?? []),
+        ...(isDirectory(path.join(appDir, 'app'))
+            ? [
+                  `${name}: app/ is a root-level App Router directory. Next serves it and ignores src/app when both ` +
+                      `exist, and the authorization scan reads only src/app, so no route in app/ is checked. Keep the ` +
+                      `app's routes in src/app.`,
+              ]
+            : []),
+        ...(existsSync(root.dir) ? unreadRouteFiles(root.dir) : []).map(
+            (file) =>
+                `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} is named like a route, but the ` +
+                `authorization scan reads only route.ts, route.tsx, route.js, route.jsx and route.mjs. If Next serves it ` +
+                `(a pageExtensions entry), nothing checked it: rename it to one of those, or rename it to something not ` +
+                `named route.`,
+        ),
+        ...serverActionFilesOutsideSrc(appDir).map(
+            (file) =>
+                `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} declares Server Actions outside src, ` +
+                `where the authorization scan does not judge them. Move them under src. (Actions a workspace package ` +
+                `exports are not read either.)`,
+        ),
+        ...PAGES_API_DIRS.filter((dir) => existsSync(path.join(appDir, dir))).map(
+            (dir) =>
+                `${name}: ${dir} is a Pages Router API directory. SSSB apps are App Router, and the authorization scan ` +
+                `reads only route handlers under src/app and Server Actions, so nothing in ${dir} is checked. Move ` +
+                `each handler to a route.ts under src/app/api.`,
+        ),
+    ]
     const label = `${name}/${APP_EXEMPTIONS_FILE}`
     return {
         root,
         routes,
+        actions,
         failures,
         exemptionProblems: [
             ...problems,

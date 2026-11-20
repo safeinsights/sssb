@@ -2,7 +2,7 @@ import { db, isSimulated } from '@sssb/kit/adapters/index'
 import { acceptInvite } from '@sssb/kit/adapters/fake/auth'
 import { listAgreementsForTenant, recordAcceptance } from '@sssb/kit/db/agreements'
 import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
-import { withPortErrors } from '../../respond'
+import { readJsonObject, refuseNonJson, withPortErrors } from '../../respond'
 
 /**
  * The accept-invitation product surface's simulated-mode entrypoint (Bob's lifecycle). Same 404 gate
@@ -12,13 +12,15 @@ import { withPortErrors } from '../../respond'
  */
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
+    const refused = refuseNonJson(request)
+    if (refused) return refused
     return withPortErrors(async () => {
-        const { inviteId, name, locale } = (await request.json()) as {
-            inviteId?: string
-            name?: string
-            locale?: string
-        }
-        if (typeof inviteId !== 'string' || typeof name !== 'string') {
+        const { inviteId, name, locale } = await readJsonObject(request)
+        if (
+            typeof inviteId !== 'string' ||
+            typeof name !== 'string' ||
+            (locale !== undefined && typeof locale !== 'string')
+        ) {
             return Response.json({ error: 'invalid request' }, { status: 400 })
         }
         const joined = await acceptInvite(inviteId, { name, locale })

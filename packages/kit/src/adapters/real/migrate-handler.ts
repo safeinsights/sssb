@@ -58,8 +58,10 @@ export async function handler(): Promise<{ ok: true }> {
     // for infra that does not, and is there only if the cluster's secret attachment added it.
     const database = process.env['DATABASE_NAME'] ?? dbname
     if (!database) throw new Error('neither DATABASE_NAME nor the secret names the database to migrate')
+    // Every part a secret or a deployment supplies is encoded: a database name with a `/`, `?`, `#` or `%`
+    // would otherwise be read as a path, a query or an escape, and connect to a different database.
     const db = createRealDb(
-        `postgres://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}/${database}`,
+        `postgres://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`,
     )
     await db.migrateToLatest()
     return { ok: true }

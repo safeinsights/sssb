@@ -1,6 +1,6 @@
 import { isSimulated } from '@sssb/kit/adapters/index'
 import { setEndpointFailing } from '@sssb/kit/adapters/fake/webhooks'
-import { withPortErrors } from '../../../respond'
+import { refuseNonJson, withPortErrors } from '../../../respond'
 
 /**
  * Simulator failure-toggle control (simulated-mode-only; 404 in real): mark an endpoint's fake dispatch to
@@ -9,6 +9,8 @@ import { withPortErrors } from '../../../respond'
  */
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
+    const refused = refuseNonJson(request)
+    if (refused) return refused
     return withPortErrors(async () => {
         const body = (await request.json().catch(() => null)) as { endpointId?: unknown; failing?: unknown } | null
         if (!body || typeof body.endpointId !== 'string' || typeof body.failing !== 'boolean') {

@@ -3,7 +3,7 @@ import { authorize } from '@sssb/kit/authz/authorize'
 import { recordAuditEvent } from '@sssb/kit/db/audit'
 import { readAgreement, recordAcceptance } from '@sssb/kit/db/agreements'
 import { resolveOrgContext } from '../../org-context'
-import { withPortErrors } from '../../respond'
+import { isUuid, readJsonObject, withPortErrors } from '../../respond'
 
 /**
  * Accept an agreement FOR YOURSELF — the resolution flow behind a pending agreement gate.
@@ -24,8 +24,8 @@ export async function POST(request: Request): Promise<Response> {
         // Self-only authorization: accept for myself. Throws ForbiddenError → 403 via withPortErrors.
         authorize(user, user.orgSlug, 'create', { type: 'AgreementAcceptance', ownerId: user.id })
 
-        const { agreementId } = (await request.json()) as { agreementId?: unknown }
-        if (typeof agreementId !== 'string' || !agreementId) {
+        const { agreementId } = await readJsonObject(request)
+        if (!isUuid(agreementId)) {
             return Response.json({ error: 'invalid-agreement' }, { status: 400 })
         }
 

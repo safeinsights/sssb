@@ -2,7 +2,7 @@ import { auth, db } from '@sssb/kit/adapters/index'
 import { authorize } from '@sssb/kit/authz/authorize'
 import { markNotificationsRead } from '@sssb/kit/db/notifications'
 import { resolveTenantId } from '../../org-context'
-import { withPortErrors } from '../../respond'
+import { isUuid, withPortErrors } from '../../respond'
 
 /**
  * Mark the caller's notifications read. authorize() with a self-only Notification subject is
@@ -17,8 +17,13 @@ export async function POST(request: Request): Promise<Response> {
         authorize(user, user.orgSlug, 'update', { type: 'Notification', ownerId: user.id })
         const tenantId = await resolveTenantId(user)
         if (tenantId instanceof Response) return tenantId
-        const body = (await request.json().catch(() => ({}))) as { ids?: unknown }
-        const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string') : undefined
+        // An absent or unreadable body marks everything read; a listed id that cannot be a row is a 400.
+        const body: unknown = await request.json().catch(() => ({}))
+        const listed = typeof body === 'object' && body !== null ? (body as { ids?: unknown }).ids : undefined
+        if (Array.isArray(listed) && !listed.every(isUuid)) {
+            return Response.json({ error: 'invalid-payload' }, { status: 400 })
+        }
+        const ids = Array.isArray(listed) ? listed : undefined
         const marked = await markNotificationsRead(db, tenantId, user.id, new Date(), ids)
         return Response.json({ marked })
     })

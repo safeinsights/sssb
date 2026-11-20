@@ -2,6 +2,7 @@ import { db } from '@sssb/kit/adapters/index'
 import { authorize } from '@sssb/kit/authz/authorize'
 import { exportKeyPrefix, isJobStatus } from '@sssb/kit/core/jobs'
 import { jobForOrg, recordJobStatus } from '@sssb/kit/db/jobs'
+import { readJsonObject, requireUuidParam } from '../../../../respond'
 import { withServiceCaller } from '../../../respond'
 
 const isOptionalString = (value: unknown): value is string | undefined =>
@@ -16,11 +17,8 @@ const isOptionalString = (value: unknown): value is string | undefined =>
  * hop surfaces as 409 via withServiceCaller.
  */
 export const POST = withServiceCaller<{ id: string }>(async ({ identity, actor, request, params }) => {
-    const { id } = params
-    const body = (await request.json()) as Record<string, unknown> | null
-    if (typeof body !== 'object' || body === null) return Response.json({ error: 'invalid-payload' }, { status: 400 })
-
-    const { status, resultKey, error, message } = body
+    const id = requireUuidParam(params.id)
+    const { status, resultKey, error, message } = await readJsonObject(request)
     if (typeof status !== 'string' || !isJobStatus(status) || status === 'queued') {
         return Response.json({ error: 'invalid-payload' }, { status: 400 })
     }
