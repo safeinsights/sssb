@@ -34,3 +34,17 @@ describe('POST /api/auth/dev-signin (simulated mode)', () => {
         },
     )
 })
+
+describe('POST /api/auth/dev-signin, a JSON request with a bad body', () => {
+    test.each([['{'], ['null'], [JSON.stringify({ personId: 5 })]])('400, never a 500, for %s', async (body) => {
+        const response = await POST(
+            new Request('http://localhost/api/auth/dev-signin', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body,
+            }),
+        )
+        expect(response.status).toBe(400)
+        expect(h.devSignIn).not.toHaveBeenCalled()
+    })
+})
