@@ -16,8 +16,8 @@
 // package.json is `@sssb/kit`'s), and the seam always; every other package stays external. A `require()` esbuild can
 // see is followed like an import. A loader it cannot see through (a function made by `createRequire(...)`, a plain
 // `require` handed a variable that holds the specifier) is not, so a followed file outside the kit that writes, as a
-// string literal in its code, an `@sssb/kit` specifier esbuild did not resolve (other than the entry and the kit's
-// `package.json`, and other than an import or export declaration's or a type `import('…')`'s, which esbuild reads or
+// string literal in its code, an `@sssb/kit` specifier esbuild did not resolve (other than the entry and a `.md` or
+// `.json` file of the kit, such as the guide or its `package.json`, other than a property name, and other than an import or export declaration's or a type `import('…')`'s, which esbuild reads or
 // which load nothing) fails too; the file is read by the app's own TypeScript parser, so a comment is not code. A
 // computed specifier stays out of reach of any static check.
 //
@@ -55,8 +55,10 @@ import { isInRepoKit, seamOfKit } from './doctor-checks.js'
 
 const KIT = '@sssb/kit'
 const ENTRY = `${KIT}/testing/e2e`
-/** Kit specifiers written in code that load no framework code. */
+/** Kit specifiers written in code that load no framework code: the entry, and a data file (the guide, a manifest). */
 const NOT_FRAMEWORK = new Set([ENTRY, `${KIT}/package.json`])
+/** @param {string} specifier */
+const loadsNoFramework = (specifier) => NOT_FRAMEWORK.has(specifier) || /\.(md|json)$/.test(specifier)
 const KEEP = /^@sssb\/(kit|app-config)(\/|$)/
 const PROBE = 'sssbCheckE2eProbe'
 const CONFIG = /^playwright(\.[\w-]+)?\.config\.(c|m)?[jt]s$/
@@ -413,7 +415,8 @@ function kitLiteralsInCode(app, file, text) {
                 ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) &&
                     parent.moduleSpecifier === node) ||
                 (ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent)) ||
-                (ts.isModuleDeclaration(parent) && parent.name === node)
+                // a NAME (an object-literal or class key, an interface member, a `declare module`): never a specifier
+                ('name' in parent && parent.name === node)
             if (!named) literals.push(node.text)
         }
         ts.forEachChild(node, visit)
@@ -529,7 +532,7 @@ export async function e2eReach(appDir, extraConfigs = []) {
             const text = readFileSync(source, 'utf8')
             const seen = new Set(input.imports.map((i) => i.original))
             for (const specifier of kitLiteralsInCode(app, source, text)) {
-                if (!NOT_FRAMEWORK.has(specifier) && !seen.has(specifier))
+                if (!loadsNoFramework(specifier) && !seen.has(specifier))
                     unfollowed.push(`${show(source)} names '${specifier}' where esbuild cannot follow it`)
             }
         }

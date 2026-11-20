@@ -374,6 +374,9 @@ describe('check-e2e against an installed kit (the entry is compiled)', () => {
                 "const k = '@sssb/kit/core/state-machine'\ntest('v', () => { console.log(require(k)) })\n",
             'tests/e2e/typed.spec.ts':
                 "import type { Machine } from '@sssb/kit/core/state-machine'\nexport type T = import('@sssb/kit/core/state-machine').Machine | Machine\ntest('t', () => {})\n",
+            // an object key is a name, never a specifier; the kit's guide and manifest are data, not framework code
+            'tests/e2e/data.spec.ts':
+                "const keys = { '@sssb/kit/core/state-machine': 1 }\nconst guide = `@sssb/kit/guide.md`\nconst m = '@sssb/kit/package.json'\ntest('d', () => { console.log(keys, guide, m) })\n",
             'tests/e2e/entry.spec.ts':
                 "// const k = '@sssb/kit/core/state-machine'\nconst e = '@sssb/kit/testing/e2e'\ntest('e', () => { console.log(e) })\n",
         }
@@ -390,6 +393,7 @@ describe('check-e2e against an installed kit (the entry is compiled)', () => {
         })
         expect(bySpec['tests/e2e/typed.spec.ts']).toMatchObject({ count: 0, unfollowed: [] })
         expect(bySpec['tests/e2e/entry.spec.ts']).toMatchObject({ count: 0, unfollowed: [] })
+        expect(bySpec['tests/e2e/data.spec.ts']).toMatchObject({ count: 0, unfollowed: [] })
     })
 
     it("fails the config when a spec reaches the kit's TypeScript source, which Playwright cannot load, naming the kit file", async () => {
