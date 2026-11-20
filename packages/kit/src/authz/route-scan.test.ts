@@ -2319,3 +2319,125 @@ describe('second pass of the baseline review of 0.4.0', () => {
         expect(facts.wrappedBy).not.toBe('withWebhookSecret')
     })
 })
+
+describe("the fix review's verdict (X1, X2, X5-X8)", () => {
+    const PORT = "import { auth } from '@sssb/kit/ports/auth'\n"
+    const gateRuns = (body: string, prelude = '') =>
+        factsOf(
+            `${PORT}${prelude}export async function POST(body: unknown) {\n${body}\nreturn new Response('ok')\n}\n`,
+        ).calls.has('auth.updateProfile')
+
+    it('X1: a gate call counts wherever it runs, whatever a try around it does with its failure', () => {
+        expect(
+            gateRuns(
+                "try { await auth.updateProfile(body) } catch (e) { return new Response('bad', { status: 400 }) }",
+            ),
+        ).toBe(true)
+        expect(gateRuns('try { await auth.updateProfile(body) } finally { void 0 }')).toBe(true)
+        expect(gateRuns('auth.updateProfile(body)')).toBe(true)
+        expect(gateRuns('await Promise.all([1].map(async () => auth.updateProfile(body)))')).toBe(true)
+        // ...and still not where it never runs.
+        expect(gateRuns('never(() => auth.updateProfile(body))', 'function never(_f: unknown) {}\n')).toBe(false)
+        expect(gateRuns('setTimeout(() => auth.updateProfile(body), 0)')).toBe(false)
+        expect(
+            gateRuns('await load().catch(() => auth.updateProfile(body))', 'declare const load: () => Promise<void>\n'),
+        ).toBe(false)
+        expect(
+            gateRuns(
+                'await load().then(undefined, () => auth.updateProfile(body))',
+                'declare const load: () => Promise<void>\n',
+            ),
+        ).toBe(false)
+    })
+
+    const ASYNC = `async function remove(_id: string) { ${CALL} }\ndeclare const ids: string[]\n`
+    const DB = "import { db } from './db'\n"
+    const cases: Array<{ name: string; files: Record<string, string>; expect: Outcome }> = [
+        // X2: a sync map callback under Promise.all carries what it returns.
+        {
+            name: 'Promise.all over a sync map callback returning the promise (expression body)',
+            files: post('await Promise.all(ids.map((id) => remove(id)))', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'Promise.all over a sync map callback returning the promise (block)',
+            files: post('await Promise.all(ids.map((id) => { return remove(id) }))', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'Promise.all over a sync map callback returning withTenant over the helper',
+            files: post("await Promise.all(ids.map((id) => db.withTenant('t', () => remove(id))))", ASYNC + DB),
+            expect: 'authorized',
+        },
+        {
+            name: 'Promise.all over a sync map callback that calls without returning',
+            files: post('await Promise.all(ids.map((id) => { remove(id) }))', ASYNC),
+            expect: 'open',
+        },
+        // X5: .then's second argument is a .catch handler.
+        {
+            name: '.then(undefined, onRejected)',
+            files: post(`await load().then(undefined, () => { ${CALL} })`, 'declare const load: () => Promise<void>\n'),
+            expect: 'open',
+        },
+        {
+            name: '.then(ok => ok, onRejected)',
+            files: post(
+                `await load().then((ok) => ok, () => { ${CALL} })`,
+                'declare const load: () => Promise<void>\n',
+            ),
+            expect: 'open',
+        },
+        // X6: Next's after.
+        {
+            name: 'after() from next/server',
+            files: post(`await after(() => { ${CALL} })`, "import { after } from 'next/server'\n"),
+            expect: 'open',
+        },
+        {
+            name: 'unstable_after() from next/server',
+            files: post(`await unstable_after(() => { ${CALL} })`, "import { unstable_after } from 'next/server'\n"),
+            expect: 'open',
+        },
+        // X7a: only the callback argument of an iteration method runs.
+        {
+            name: "forEach's thisArg function",
+            files: post(`ids.forEach(() => {}, () => { ${CALL} })`, ASYNC),
+            expect: 'open',
+        },
+        {
+            name: "map's thisArg function under Promise.all",
+            files: post(`await Promise.all(ids.map(async () => {}, async () => { ${CALL} }))`, ASYNC),
+            expect: 'open',
+        },
+        // X7b: timers through the global object and Node's module.
+        {
+            name: 'globalThis.setTimeout',
+            files: post(`await globalThis.setTimeout(() => { ${CALL} }, 0)`),
+            expect: 'open',
+        },
+        {
+            name: 'self.queueMicrotask',
+            files: post(`await (self as any).queueMicrotask(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'setTimeout imported from node:timers',
+            files: post(`await setTimeout(() => { ${CALL} }, 0)`, "import { setTimeout } from 'node:timers'\n"),
+            expect: 'open',
+        },
+        // X8: Object.entries returns an array.
+        {
+            name: 'Promise.all over Object.entries(m).map with an async callback',
+            files: post(
+                `await Promise.all(Object.entries(m).map(async ([k]) => { void k; ${CALL} }))`,
+                'declare const m: Record<string, number>\n',
+            ),
+            expect: 'authorized',
+        },
+    ]
+
+    it.each(cases)('$name', ({ files, expect: expected }) => {
+        expectVerdicts(verdicts(files), { POST: expected })
+    })
+})

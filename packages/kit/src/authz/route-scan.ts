@@ -27,8 +27,10 @@ import ts from 'typescript'
  *   calls its argument. It extends none to a callee whose code is in this file (`isSameFile`): a function is not
  *   followed through a parameter, so what such a callee is handed counts for nothing. Nor to a callee known never to
  *   hand a function's failure back (`neverCarriesFailure`): a timer or microtask (`setTimeout`, `setInterval`,
- *   `setImmediate`, `queueMicrotask`, `process.nextTick`), `Promise.resolve`, which never calls a function, and a
- *   `.catch`, `.finally` or listener method (`.on`, `.once`, `addEventListener`, …) on any receiver. A function
+ *   `setImmediate`, `queueMicrotask`, `process.nextTick`; bare, as a member of `globalThis`, `self` or `window`, or
+ *   imported from Node's `timers`), Next's `after` (and `unstable_after`), which runs its callback after the response,
+ *   `Promise.resolve`, which never calls a function, a `.catch`, `.finally` or listener method (`.on`, `.once`,
+ *   `addEventListener`, …) on any receiver, and the second argument of `.then`, which runs only on a rejection. A function
  *   handed to a callee whose result is RETURNED counts only where a throw at the call would also reach the outcome
  *   (not inside a `try` whose `catch` swallows): the callee may run it synchronously, a tracing span does;
  * - in a function declared in the SAME module and called (or passed as an argument) from the handler's
@@ -72,9 +74,11 @@ import ts from 'typescript'
  * value import (not `import type`, not a JSDoc `@import`). A local function that happens to be named
  * `authorize` is followed like any other, so it counts only if it calls the real one.
  *
- * WHAT COUNTS AS A GATE'S NAME: the same rule, by binding (`gateName`), and a gate's call is on the path under the same
- * rule as `authorize`'s: where a throw at the call would reach the handler's outcome. A gate call handed to a function
- * that never runs it, or that drops its failure, is not on the path. `withWebhookSecret`, `auth.updateProfile`,
+ * WHAT COUNTS AS A GATE'S NAME: the same rule, by binding (`gateName`). A gate's call counts wherever it RUNS on the
+ * handler's path, whatever a `try` around it does with its failure (a `calls` gate says what the route's mutation is,
+ * so what matters is that it runs). One in a function that never runs, or runs only later and not for the handler (a
+ * same-file callee the scan does not follow, a lazy iterator, a timer, a listener, a `.catch` handler, an `after`
+ * callback), does not count. `withWebhookSecret`, `auth.updateProfile`,
  * `isSimulated` count only when the name (the head of a dotted one) is a value import kept under the name it is
  * exported by, from any module; a namespace member reads under its own name. A local look-alike
  * (`const isSimulated = true`) or an alias (`import { identity as withWebhookSecret }`) is not the gate.
@@ -698,10 +702,21 @@ interface Outcome {
     thrown: boolean
     /** A promise the current function returns reaches the handler's outcome, so a rejection of it does. */
     returned: boolean
+    /**
+     * Code here runs when the handler does (as far as the scan can tell), whether or not its failure reaches the
+     * outcome. A gate's call counts where this holds: a `calls` gate says what the route's mutation IS, so what
+     * matters is that it runs, not where its failure goes. False in a function never invoked, or run later by
+     * something that is not the handler (a same-file callee not followed, a lazy iterator, a timer, a listener, a
+     * `.catch` handler).
+     */
+    runs: boolean
 }
 
-const HANDLER_OUTCOME: Outcome = { thrown: true, returned: true }
-const LOST: Outcome = { thrown: false, returned: false }
+const HANDLER_OUTCOME: Outcome = { thrown: true, returned: true, runs: true }
+/** Never runs on the handler's path. */
+const NEVER: Outcome = { thrown: false, returned: false, runs: false }
+/** Runs, but its failure does not reach the handler's outcome (the outcome `outer` carries over its `runs`). */
+const dropped = (outer: Outcome): Outcome => ({ thrown: false, returned: false, runs: outer.runs })
 
 /** Walks one handler's path, collecting the calls on it. One instance per handler, never shared. */
 class Reach {
@@ -720,7 +735,7 @@ class Reach {
 
     /** Walks `fn`'s body, where `outcome` says what reaches the handler's outcome from inside it. */
     invoke(fn: ts.FunctionLikeDeclaration, outcome: Outcome = HANDLER_OUTCOME): void {
-        const key = `${outcome.thrown}/${outcome.returned}`
+        const key = `${outcome.thrown}/${outcome.returned}/${outcome.runs}`
         const seen = this.invoked.get(fn) ?? new Set<string>()
         if (seen.has(key)) return
         seen.add(key)
@@ -742,7 +757,7 @@ class Reach {
      * is handed counts for nothing, and so does what a wrapper inside it is handed.
      */
     wrapped(call: ts.CallExpression, outcome: Outcome = HANDLER_OUTCOME): void {
-        const own = this.isSameFile(call.expression) ? LOST : outcome
+        const own = this.isSameFile(call.expression) ? NEVER : outcome
         for (const argument of call.arguments) {
             const a = unwrap(argument)
             if (isFunctionLiteral(a)) this.invoke(a, own)
@@ -837,7 +852,7 @@ class Reach {
         }
         const imported = ts.isIdentifier(head) && valueImportOf(declarationOf(this.src, head)) !== undefined
         if (this.isSameFileObject(receiver)) return undefined
-        return { name, lazy: !EAGER_ITERATION.has(name) && isIterator(receiver), imported }
+        return { name, lazy: !EAGER_ITERATION.has(name) && isIterator(this.src, receiver), imported }
     }
 
     private visit(node: ts.Node, outcome: Outcome): void {
@@ -867,11 +882,11 @@ class Reach {
         // the call nor its arguments run.
         if (shortCircuitsOnConstant(this.src, node)) return
         const callee = unwrap(node.expression)
-        // A gate's call counts under the same rule as `authorize`: only where a throw here reaches the outcome.
-        // A call handed to a function that never runs it (a same-file no-op, a lazy iterator, an async callback an
-        // iteration method drops) is not on the handler's path, whatever its name.
+        // A gate's call counts wherever it RUNS on the handler's path, whatever a `try` around it does with its
+        // failure; one in a function that never runs (a same-file no-op, a lazy iterator, a timer, a `.catch`
+        // handler) does not.
         const name = gateName(this.src, callee)
-        if (name && outcome.thrown) this.calls.add(name)
+        if (name && outcome.runs) this.calls.add(name)
         // `authorize` throws synchronously, so its denial reaches the outcome wherever a throw here does.
         if (outcome.thrown && this.isAuthorize(callee)) this.authorize = true
         // The promise this call returns reaches the outcome only when it is awaited or returned on the spot.
@@ -884,7 +899,9 @@ class Reach {
         const handedResult = settled === 'return' ? result && outcome.thrown : result
         // Called directly, a sync function throws into this point; an async one only rejects its promise.
         const direct = (fn: ts.FunctionLikeDeclaration): Outcome =>
-            isAsync(fn) ? { thrown: result, returned: result } : { thrown: outcome.thrown, returned: result }
+            isAsync(fn)
+                ? { thrown: result, returned: result, runs: outcome.runs }
+                : { thrown: outcome.thrown, returned: result, runs: outcome.runs }
         if (isFunctionLiteral(callee)) this.invoke(callee, direct(callee))
         else {
             this.visit(callee, outcome)
@@ -898,37 +915,45 @@ class Reach {
         // this file is not followed through its parameter, so what it is handed counts for nothing.
         const method = this.iterationMethod(callee)
         const allOf = method?.name === 'map' && !method.lazy ? promiseAllOf(this.src, node) : undefined
-        const handed = (fn: ts.FunctionLikeDeclaration): Outcome => {
+        const handed = (fn: ts.FunctionLikeDeclaration, index: number): Outcome => {
             if (method !== undefined) {
-                // `await Promise.all(xs.map(async (x) => …))`: the array of promises map returns is what Promise.all
-                // settles, and it rejects with the first rejection, so an async callback's failure comes out of the
-                // Promise.all call's own result. Only Promise.all: allSettled never rejects, and any and race settle
-                // on another promise's outcome.
-                if (allOf !== undefined && isAsync(fn)) {
+                // Only the callback is called: argument 0 (Array.from's mapper is argument 1). Another function
+                // argument is a `thisArg`, which is never invoked.
+                if (index !== (method.name === 'from' ? 1 : 0)) return NEVER
+                if (method.lazy) return NEVER
+                // `await Promise.all(xs.map(cb))`: the array map returns is what Promise.all settles, and it rejects
+                // with the first rejection, so what each callback RETURNS reaches the Promise.all call's own result:
+                // an async callback's promise, or the promise a sync one returns (`xs.map((x) => db.withTenant(…))`).
+                // A sync callback's throw still goes up through map. Only Promise.all: allSettled never rejects, and
+                // any and race settle on another promise's outcome.
+                if (allOf !== undefined) {
                     const settledAll = settledBy(allOf)
                     const reaches =
                         settledAll === 'await' ? outcome.thrown : settledAll === 'return' && outcome.returned
-                    return reaches ? { thrown: true, returned: true } : LOST
+                    if (isAsync(fn)) return { thrown: reaches, returned: reaches, runs: outcome.runs }
+                    return { thrown: outcome.thrown, returned: reaches, runs: outcome.runs }
                 }
-                if (isAsync(fn) || method.lazy) return LOST
+                if (isAsync(fn)) return dropped(outcome)
                 // A sync callback runs in place on an array. On a receiver whose head is an import, the same name may
                 // be a library's (a curried `R.forEach`, a query builder's `map`) that runs it later or not at all,
                 // so it is trusted no further than any imported callee: only when the call's result is settled.
-                if (method.imported && !handedResult) return LOST
-                return { thrown: outcome.thrown, returned: false }
+                if (method.imported && !handedResult) return dropped(outcome)
+                return { thrown: outcome.thrown, returned: false, runs: outcome.runs }
             }
-            if (this.isSameFile(callee) || neverCarriesFailure(this.src, callee)) return LOST
-            return handedResult ? HANDLER_OUTCOME : LOST
+            // `.then(onFulfilled, onRejected)`: the second runs only on a rejection, as a `.catch` handler does.
+            if (index === 1 && memberName(callee) === 'then') return NEVER
+            if (this.isSameFile(callee) || neverCarriesFailure(this.src, callee)) return NEVER
+            return handedResult ? { ...HANDLER_OUTCOME, runs: outcome.runs } : dropped(outcome)
         }
-        for (const argument of node.arguments ?? []) {
+        node.arguments?.forEach((argument, index) => {
             const a = unwrap(argument)
-            if (isFunctionLiteral(a)) this.invoke(a, handed(a))
+            if (isFunctionLiteral(a)) this.invoke(a, handed(a, index))
             else {
                 this.visit(a, outcome)
                 const local = this.localFunction(a)
-                if (local) this.invoke(local, handed(local))
+                if (local) this.invoke(local, handed(local, index))
             }
-        }
+        })
     }
 
     private localFunction(e: ts.Expression): ts.FunctionLikeDeclaration | undefined {
@@ -994,8 +1019,9 @@ class Reach {
                 (!alwaysExits(this.src, s.catchClause.block) || leavesBlock(s.catchClause.block, true))
             const thrown = outcome.thrown && !finallyMayLeave
             const returned = outcome.returned && !finallyMayLeave
-            this.statements(s.tryBlock.statements, { thrown: thrown && !catchSwallows, returned })
-            if (s.catchClause) this.statements(s.catchClause.block.statements, { thrown, returned })
+            const runs = outcome.runs
+            this.statements(s.tryBlock.statements, { thrown: thrown && !catchSwallows, returned, runs })
+            if (s.catchClause) this.statements(s.catchClause.block.statements, { thrown, returned, runs })
             if (s.finallyBlock) this.statements(s.finallyBlock.statements, outcome)
         } else if (ts.isWhileStatement(s)) {
             const condition = constantTruth(this.src, s.expression)
@@ -1050,12 +1076,14 @@ const EAGER_ITERATION: ReadonlySet<string> = new Set([
 const ARRAY_ITERATION: ReadonlySet<string> = new Set([...EAGER_ITERATION, 'filter', 'flatMap', 'map'])
 
 /** A receiver that is visibly an iterator: `xs.values()`, `xs.keys()`, `xs.entries()` or `Iterator.from(…)`. */
-function isIterator(receiver: ts.Expression): boolean {
+function isIterator(src: Source, receiver: ts.Expression): boolean {
     const e = unwrap(receiver)
     if (!ts.isCallExpression(e) || !ts.isPropertyAccessExpression(e.expression)) return false
     const name = e.expression.name.text
-    if (name === 'values' || name === 'keys' || name === 'entries') return true
     const target = unwrap(e.expression.expression)
+    // `Object.entries(m)` and its siblings return arrays, not iterators.
+    if (ts.isIdentifier(target) && target.text === 'Object' && declarationOf(src, target) === undefined) return false
+    if (name === 'values' || name === 'keys' || name === 'entries') return true
     return name === 'from' && ts.isIdentifier(target) && target.text === 'Iterator'
 }
 
@@ -1108,11 +1136,32 @@ const DETACHING_METHODS: ReadonlySet<string> = new Set([
  * is neither same-file nor an iteration method is trusted when its result is settled (see the header).
  */
 function neverCarriesFailure(src: Source, callee: ts.Expression): boolean {
-    if (ts.isIdentifier(callee)) return DETACHING_GLOBALS.has(callee.text) && declarationOf(src, callee) === undefined
+    if (ts.isIdentifier(callee)) {
+        const decl = declarationOf(src, callee)
+        if (decl === undefined) return DETACHING_GLOBALS.has(callee.text)
+        const imported = valueImportOf(decl)
+        if (imported?.kind !== 'named') return false
+        // Next's `after` runs its callback once the response has been sent; Node's timers module exports the timers.
+        if (imported.module === 'next/server') return imported.name === 'after' || imported.name === 'unstable_after'
+        return TIMER_MODULES.has(imported.module) && DETACHING_GLOBALS.has(imported.name)
+    }
     const name = memberName(callee)
     if (name !== undefined && DETACHING_METHODS.has(name)) return true
+    // `globalThis.setTimeout`, `self.queueMicrotask`, `window.setTimeout`.
+    if (name !== undefined && DETACHING_GLOBALS.has(name)) {
+        const target = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
+        if (ts.isIdentifier(target) && GLOBAL_OBJECTS.has(target.text) && declarationOf(src, target) === undefined) {
+            return true
+        }
+    }
     return isGlobalMember(src, callee, 'process', 'nextTick') || isGlobalMember(src, callee, 'Promise', 'resolve')
 }
+
+/** Node's modules that export the timer functions under their global names. */
+const TIMER_MODULES: ReadonlySet<string> = new Set(['timers', 'node:timers'])
+
+/** The names the global object goes by. */
+const GLOBAL_OBJECTS: ReadonlySet<string> = new Set(['globalThis', 'self', 'window'])
 
 /**
  * The `Promise.all(…)` call `node` is the first argument of (through parentheses and type assertions), when
