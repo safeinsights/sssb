@@ -140,7 +140,7 @@ remain different types. The two kinds of caller meet in `authorize()`'s actor, n
 ## Addendum (2026-11-19): a single-tenant mode, and a configurable tenant metadata key
 
 The Decision places the tenant in the user's metadata and the org and role in the provider's organizations, with one
-provider instance per tenant. That costs an app with one tenant per deployment (SSSB's first adopter) a tenant claim on
+provider instance per tenant. That costs an app with one tenant per deployment a tenant claim on
 every account and an organization nobody uses, and it cannot work on a provider instance that the app shares with
 another product. JP decided (2026-11-19) to add a mode for it, and to make the metadata key configurable.
 
@@ -180,3 +180,35 @@ the registry, the fake job runner, the conformance suite's preset replay).
 SSSB grants them nothing, but whatever the app shows any signed-in person, they see; the adopter reference says so in
 as many words. Membership-driven features (an org's admins, invitations, the member list) have nothing to work with in
 this mode, by design.
+
+## Addendum (2026-11-20): the tenant and the organizations are separate choices
+
+The addendum above made single tenancy fix two things at once: the tenant, and one home org with the role `none` for
+everyone. That conflated two questions. JP (2026-11-20) asked why fixing the tenant should touch the provider's
+organizations at all, why notifications should depend on there being one tenant, and what an app that uses Clerk
+without organizations gets. So the mode is split into two independent settings, each validated at synth
+(`packages/cdk/src/auth-tenancy.js`) and at boot (`packages/kit/src/adapters/auth-tenancy.ts`). One pairing is
+refused: a fixed org source needs a single tenancy, since it reads no org or role from the provider, and with a multi
+tenancy the tenant claim in the provider's metadata would be all that places a person.
+
+- **`AUTH_TENANCY`, where the tenant comes from**: `multi` (the Decision) or `single` (`AUTH_TENANT_SLUG`). Single
+  tenancy changes nothing else: organizations, roles, the members list, invitations, `listMyOrgs`, `setActiveOrg` and
+  job notifications are the org source's, exactly as in multi. It keeps the guard above: a person whose metadata
+  names another tenant, or holds there something that is not a slug, is no user and has no standing as a credential.
+- **`AUTH_ORG_SOURCE`, where organizations and roles come from**: `provider` (the Decision) or `fixed`, for an app that
+  uses the provider without its organizations. A fixed org source places everyone the provider signs in in
+  `AUTH_HOME_ORG_SLUG` with `AUTH_DEFAULT_ROLE`, `none` by default or `restricted`, and reads no role from the
+  provider. No writing role is offered, since on an instance shared with another product everyone that product signs
+  in gets it, and a home org that is the staff org with a role that has standing is refused (it would hand everyone
+  manage-all). The members list is empty, invitations are refused, the home org is the only org, and `getMember`
+  gives the configured role to an account the provider still has.
+
+**`none` stays**, as the fixed org source's default; what the addendum above says it grants still holds. The tenant
+guard and the rule that org-scoped reads authorize are kept; what existed only because the org was fixed by the
+tenancy is gone.
+
+**Notifications.** A fixed org source has no org admins, so a job's end goes to the person who submitted it when the
+org has no active admin to tell: the `jobs` table records them (`requested_by`, framework migration 0017), and the
+auth port's `getMember` now says how to reach a person (`name`, `email`). The provider's organizations are unchanged
+wherever an org has an admin. One module, `packages/kit/src/adapters/configured-auth.ts`, applies both settings over
+either adapter, and on the defaults it is the adapter itself.

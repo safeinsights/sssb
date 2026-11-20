@@ -1,18 +1,17 @@
 # Job retries with backoff
 
 **Priority:** P2 · **Status:** open
-**Found by:** `feat/job-notify-on`, 2026-11-19, from the first adopter's design manager, who asked for it beside the
-opt-out from completion notifications. Recorded, not built: it is a slice of its own, and the decisions below come first.
+**Found by:** `feat/job-notify-on`, 2026-11-19, asked for beside the opt-out from completion notifications. Recorded, not built: it is a slice of its own, and the decisions below come first.
 
 A job SSSB runs is tried once. A handler that throws, a build that fails, an invocation that ends mid-run (the in-process
 runner's sweep, `packages/kit/src/adapters/real/jobs-in-process.ts`): each ends the job `failed`, a terminal state with no
 way out (`jobStatusMachine`, `packages/kit/src/core/jobs.ts`). Whoever wants it done again submits a new job.
 
-## What the first adopter would use it for
+## What an app would use it for
 
-Its maintenance runs as an hourly scheduled job, written so that **each run is idempotent and time-budgeted**: a run the
+Take an app whose maintenance runs as an hourly scheduled job, written so that **each run is idempotent and time-budgeted**: a run the
 invocation's limit cuts off is picked up by the next hour's run, because SSSB has no retry. That is a retry by other
-means, with a delay (an hour) the adopter chose by cadence, not by need. With retries it would:
+means, with a delay (an hour) the app chose by cadence, not by need. With retries it would:
 
 - keep the hourly schedule (the work is periodic whatever happens), and stop relying on the next run to finish a cut-off
   one: a run that failed or was lost would be tried again in minutes, then later, and a run that never succeeds would
@@ -20,7 +19,7 @@ means, with a delay (an hour) the adopter chose by cadence, not by need. With re
 - tell a job that is failing for good from one that failed once: today both are a `failed` row, and an hour later the
   next run's outcome is all anyone sees.
 
-The adopter said it would use retries **instead of** its own resume-next-hour discipline. Whether it can drop that
+Such an app would use retries **instead of** its own resume-next-hour discipline. Whether it can drop that
 discipline depends on the first decision below: a handler that is retried is run more than once, so it stays idempotent
 whatever SSSB does.
 
@@ -52,7 +51,7 @@ whatever SSSB does.
   and SSSB cannot make them so. It can tell a handler which attempt it is (`ctx.attempt`, from 1) and carry a stable
   key across attempts (the first attempt's job id) for a handler to deduplicate its own side effects on. The guide says
   it in the jobs section. An app whose handler is not idempotent leaves its kind on one attempt.
-- **Time budgets.** A budgeted handler (the adopter's) returns having done part of the work and succeeds; that is a
+- **Time budgets.** A budgeted handler returns having done part of the work and succeeds; that is a
   completion, not a failure, and is not retried. A handler cut off by the invocation limit is the lost case below. Retries
   do not extend the limit: each attempt has its own invocation's limit, which is what makes a cut-off run finishable.
 - **The sweep.** `sweep` fails a job the in-process runner claimed and left `running` past `IN_PROCESS_LOST_AFTER_MS`

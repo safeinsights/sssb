@@ -6999,7 +6999,7 @@ left to the builder:
 
 ## Single-tenant sign-in, and a configurable tenant metadata key (2026-11-19, `feat/auth-single-tenant`)
 
-JP decided (relayed by pages' design manager): "yes I think we want such a mode so we don't have to set up a useless
+JP decided: "yes I think we want such a mode so we don't have to set up a useless
 tenantSlug. Separately, I hope the tenantSlug name is configurable." ADR-0003's addendum of this date records the
 design; these are the calls made building it, each with the rejected alternative.
 
@@ -7065,10 +7065,10 @@ design; these are the calls made building it, each with the rejected alternative
 
 ## A job kind says when its end is notified (2026-11-19, `feat/job-notify-on`)
 
-The first adopter runs its maintenance as an hourly in-process job, each run idempotent and time-budgeted so that a
+An app may run its maintenance as an hourly in-process job, each run idempotent and time-budgeted so that a
 cut-off run resumes the next hour. SSSB notified the home org's admins of every completed app job, so a routine job meant
 24 in-app notifications, refused email attempts and `listMembers` calls (an identity-provider call in real mode) a day.
-It asked for a kind to opt out, or to notify only on failure, and for job retries with backoff.
+An adopter asked for a kind to opt out, or to notify only on failure, and for job retries with backoff.
 
 - **The setting is an optional seam export, `jobNotify`, in `@sssb/app-config/jobs`**:
   `Partial<Record<AppJobKind, 'always' | 'failure' | 'never'>>`. A kind it does not name, and an app that has no export,
@@ -7111,3 +7111,73 @@ It asked for a kind to opt out, or to notify only on failure, and for job retrie
   patch: the seam module's contract grew. It names `@sssb/create` too, for the plugin's `/sssb:new-job`.
 - **Retries with backoff are recorded, not built**: `.claude/future-tasks/job-retries-with-backoff.md`. Its first
   decision (a retry as the same row or a new one) turns on terminal states, which the jobs webhook's idempotency rests on.
+
+## The tenant and the organizations are separate choices (2026-11-20, `feat/auth-tenancy-and-org-source`)
+
+JP found that single-tenant auth fixed the organization as well as the tenant, which turned off the provider's
+organizations, roles, invitations and admin notifications, and asked what an app that uses Clerk without organizations
+gets. ADR-0003's addendum of this date records the design; these are the calls made building it, each with the
+rejected alternative.
+
+- **Two settings, `AUTH_TENANCY` and `AUTH_ORG_SOURCE`.** Single tenancy fixes the tenant and nothing else. Rejected:
+  a third tenancy value (`single-fixed`), which keeps the two questions in one switch, when a single tenancy over the
+  provider's organizations is a mode of its own.
+- **A fixed org source needs a single tenancy**, refused at synth and at boot otherwise, after both round-one reviewers
+  found the gap. A fixed org source reads no org or role from the provider, so with a multi tenancy the tenant claim
+  in the provider's metadata is all that places a person, and another product's operator on a shared instance writes
+  that metadata. `getMember` could not check a credential against its org's tenant either: it is given an org slug,
+  not a tenant. Rejected: allowing every pairing, as first built; and passing the org's tenant to `getMember`, a port
+  change for a pairing no adopter has asked for. With ADR-0003's one provider instance per tenant, a deployment
+  without organizations serves one tenant, which a single tenancy says.
+- **The org source's values are `provider` and `fixed`.** Rejected: `single`, which reads as a tenancy, and `none`,
+  which is wrong: the person is placed in an org.
+- **A fixed org source's role is `none` by default, or `restricted`; nothing that writes.** On an instance shared with
+  another product, everyone that product signs in gets the role, and `guest` can submit jobs and the app's
+  `!restricted` writes. Rejected: `guest` as the default, and any role configurable. An app that wants more grants it
+  through its own rules, for the people it knows.
+- **A fixed org source reads no role from the provider.** Rejected: a role in the user's public metadata, which another
+  product on a shared instance may write for its own reasons, and which would make that product's operator an admin of
+  this app.
+- **A home org that is the staff org, with `restricted`, is refused at boot**, and allowed with `none`. The staff org's
+  members wield manage-all, and `restricted` has standing. Checked where the port is built
+  (`fixedOrgProblem`), with the seam's `staffOrgSlug`. `SssbApp` cannot know the staff org at synth, so this one check
+  is boot-only. Rejected: making manage-all require a managing role, which changes what every staff-org member has.
+- **A fixed org source's members list is empty, and its invitations refused**, as the first single mode had them: the
+  only list would be every account on the instance, another product's included, and a digest or an admin notification
+  would mail them. Rejected: Clerk's user list as the members, and Clerk's instance invitations, which would create
+  accounts on a shared instance.
+- **A job's end reaches the person who started it when the team has no active admin.** The `jobs` table records them
+  (`requested_by`, migration 0017), set by `submitJob`'s optional `requestedBy`, and the auth port's `getMember` says how
+  to reach a person (`name`, `email`, optional). The rule does not ask which org source is on: an org on the provider's
+  organizations whose admins have all left now tells the requester too, where before it told no one. Rejected: a
+  configured list of admin user ids for a fixed org source, a second way to raise people that a deployment must
+  defend; reading the submitter from the audit trail, which the app writes, not the framework; storing their email on
+  the job, a copy of personal data; and a new port method, which a test double would lack.
+- **`name` and `email` on `MemberStanding` are optional.** SSSB's adapters always fill them, but a required field would
+  fail every app's typecheck that writes a stand-in `getMember` returning the old shape. A standing without an email is
+  told in-app only.
+- **A scheduled job, and the digest email, have no one to tell under a fixed org source.** Documented, with
+  `jobNotify` `never` for a routine kind. Rejected: a fallback operator address, which is a setting of its own for a
+  case no adopter has asked about.
+- **A provider membership whose role is the string `none` stays `none`**, no standing, where before the role existed it
+  fell back to `guest`. SSSB never writes that string (an invitation cannot grant it), so it is an operator's own word,
+  and reading it as `guest` would grant more than they wrote. Rejected: mapping it back to `guest`. Pinned in
+  `packages/kit/src/adapters/real/auth-tenancy.test.ts`.
+- **One module applies both settings, `configured-auth.ts`, replacing `single-tenant-auth.ts`**, and on the defaults it
+  returns the adapter itself, so a deployment that sets nothing makes no extra call. Single tenancy over the provider's
+  organizations reads the signed-in account through the identity source (for the raw claim, which the adapter's user
+  folds into `''`) and then the adapter's user, and refuses a mismatch of the two ids. Rejected: two stacked wrappers,
+  which read the identity twice per request.
+- **The tenant guard now also covers `createInvite`, `setActiveOrg` and `listMyOrgs` over the provider's
+  organizations**, which call the adapter only once the port has a user. The adapter checks only that someone is signed
+  in.
+- **`listMembers` under single tenancy is the provider's, unfiltered.** An org's membership is the provider's own grant,
+  and filtering it by each member's claim is a request per member. A member whose claim names another tenant is still
+  refused as a credential (`getMember`) and in session.
+- **The first single mode's settings are refused, not translated.** `AUTH_TENANCY=single` with `AUTH_HOME_ORG_SLUG` and no
+  org source fails at boot ("set AUTH_ORG_SOURCE=fixed"), as `params.auth` with `homeOrgSlug` fails at synth. It never
+  shipped in a release, so no deployment has it. Rejected: reading `homeOrgSlug` as an implied fixed org source, the
+  inference the explicit switch exists to prevent.
+- **Adopter names that the first single mode's records carried are taken out of the records it added**, which have not
+  reached `main`, as well as out of the changesets, the future task and the ADR addendum: the dependency runs from an
+  adopter to SSSB, never back.
