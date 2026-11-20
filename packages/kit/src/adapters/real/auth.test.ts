@@ -155,3 +155,12 @@ describe('the Clerk adapter, a membership that records no role', () => {
         expect((await realAuth.listMembers('depot')).map((m) => m.role)).toEqual(['guest', 'guest', 'guest'])
     })
 })
+
+describe('the Clerk adapter, updating a profile', () => {
+    it('refuses an unknown locale before writing anything, the name included', async () => {
+        const { realAuth } = await import('./auth')
+        const update = { name: 'New Name', locale: 'xx' } as unknown as Parameters<typeof realAuth.updateProfile>[0]
+        await expect(realAuth.updateProfile(update)).rejects.toThrow('unknown locale')
+        expect(h.writes).toEqual([])
+    })
+})

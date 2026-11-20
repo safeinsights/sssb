@@ -132,14 +132,14 @@ export const realAuth: AuthPort = {
     async updateProfile(update: ProfileUpdate): Promise<AuthUser> {
         const { userId } = await auth()
         if (!userId) throw new AuthRequiredError()
+        // Same guard the fake adapter enforces, and as early: before any write, so a refused update changes nothing.
+        if (update.locale !== undefined && !LOCALES.includes(update.locale)) throw new ForbiddenError('unknown locale')
         const client = await clerkClient()
         if (update.name !== undefined) {
             const [firstName = '', ...rest] = update.name.split(' ')
             await client.users.updateUser(userId, { firstName, lastName: rest.join(' ') })
         }
         if (update.locale !== undefined) {
-            // Same guard the fake adapter enforces — the two adapters must reject alike.
-            if (!LOCALES.includes(update.locale)) throw new ForbiddenError('unknown locale')
             await client.users.updateUserMetadata(userId, { publicMetadata: { locale: update.locale } })
         }
         const user = await this.getCurrentUser()
