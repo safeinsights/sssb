@@ -51,7 +51,8 @@ By task. The list under Doctrine is by document.
   cutover, each upgrade step
 - [development-approach.md](development-approach.md) — the engineering philosophy: thin slices,
   ports/adapters, hermetic dev, demo mode, what SSSB ships
-- [adr/](adr/) — the architecture decisions: 0001–0014 Accepted. Each body states the decision as it holds
+- [adr/](adr/) — the architecture decisions: 0001–0012 and 0014 Accepted, 0013 Superseded by 0014, 0015 Accepted in
+  part. Each body states the decision as it holds
   today; from here an ADR is amended by appending a **dated addendum**, never by editing what it said
 - [auth-ui-playbook.md](auth-ui-playbook.md) — the recipe for adding auth capabilities (Clerk anatomy
   re-expressed in Mantine)

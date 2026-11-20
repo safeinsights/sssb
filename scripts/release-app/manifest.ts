@@ -10,6 +10,12 @@ export const RELEASE_REPO = { owner: 'safeinsights', repo: 'sssb' } as const
 
 /** The environment release.yml's `push` job runs in, and the names it reads the App by. */
 export const RELEASE_ENVIRONMENT = 'release'
+/**
+ * The environment release.yml's `npm-publish` job runs in, which npm's trusted publishers name. npm binds the publisher
+ * to the repository, the workflow file and this environment, not to a ref, so its rule (`v*` tags only, administrators
+ * not exempt) is what keeps an edited release.yml on another ref from publishing.
+ */
+export const NPM_PUBLISH_ENVIRONMENT = 'npm-publish'
 export const KEY_SECRET = 'RELEASE_BOT_PRIVATE_KEY'
 /** A VARIABLE, not a secret: release.yml reads `vars.RELEASE_BOT_CLIENT_ID`, and a client id is not secret. */
 export const CLIENT_ID_VARIABLE = 'RELEASE_BOT_CLIENT_ID'

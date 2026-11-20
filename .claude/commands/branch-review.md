@@ -10,7 +10,7 @@ concrete proposal — do not front-run the review with design questions.
 
 ## Determining the base branch
 
-Before reviewing, detect the actual branch point: run `git log --oneline --decorate --all --simplify-by-decoration --max-count=100` and identify the most recent branch point ancestor that is not the current branch (e.g., `main`, `develop`). Use `git merge-base --fork-point <candidate> HEAD` for likely upstream branches. Use this as the base for all diffs — do NOT hardcode `main`. (`--max-count=100`, not `HEAD~100..HEAD`: this repo is published as a single root commit, and a range naming a hundredth ancestor is fatal on a fresh clone.)
+Before reviewing, detect the actual branch point: run `git log --oneline --decorate --all --simplify-by-decoration --max-count=100` and identify the most recent branch point ancestor that is not the current branch (e.g., `main`, `develop`). Use `git merge-base --fork-point <candidate> HEAD` for likely upstream branches. Use this as the base for all diffs — do NOT hardcode `main`. (`--max-count=100`, not `HEAD~100..HEAD`: a range naming a hundredth ancestor is fatal wherever the history is shorter than that, a shallow clone included.)
 
 ## Steps
 

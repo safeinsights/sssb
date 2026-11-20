@@ -16,16 +16,17 @@ read its local showcase app instead).
    app's own spec helpers
    (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/tests/e2e/support`: `signInAs`,
    `openSimulatorPanel`), which a generated app lacks: sign in through the people picker as
-   `tests/e2e/items.spec.ts` does, and drop the reference's Simulator-panel pass, since `pnpm dev` has no panel in a
-   generated app. Fix any violations first: axe findings are never "noise". If Playwright complains about a missing
+   `tests/e2e/items.spec.ts` does, and point the reference's Simulator-panel pass at the tabs a generated app's
+   `pnpm dev` panel has (People, Mail, Jobs), opening it by its pill as `tests/e2e/simulator.spec.ts` does. Fix any violations first: axe findings are never "noise". If Playwright complains about a missing
    browser, run `pnpm --filter <app> exec playwright install chromium` once, then retry.
 2. With `pnpm dev` up, go beyond axe using Playwright or browser tools:
     - Keyboard-only pass across sign-in → dashboard → team switch and the app's own flows: tab order matches visual
       order, focus is visible at every stop, no traps, Escape closes the user menu and the team switcher.
     - Focus management after a team switch and after form submits: focus must not silently reset to `body`.
     - Semantics: one `h1` per page, no skipped heading levels, landmarks present, the app's tables have real
-      headers, async feedback (sent, saved, failed) is announced through `aria-live` or `role=status`. A generated
-      app's only Simulator panel is the static demo's (`pnpm build:demo-static`): check its tabs' tables there.
+      headers, async feedback (sent, saved, failed) is announced through `aria-live` or `role=status`. Check the
+      Simulator panel's tables on `pnpm dev` (People, Mail, Jobs) and the static demo's other tabs
+      (`pnpm build:demo-static`).
     - Contrast judgment on EVERY tenant theme the seed defines (`src/seed/index.ts`) and BOTH locales. SSSB's theme
       uses `primaryShade: 8` because shade 6 failed WCAG; an app that overrides the theme re-checks it.
 3. Done when the axe spec is green and you've produced a ranked findings list (WCAG criterion, page, suggested fix).
