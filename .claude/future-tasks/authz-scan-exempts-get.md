@@ -1,13 +1,13 @@
 # The authorization scan judges only mutating verbs, so a GET that reads org-scoped data is held to "authorize the read" by the guide alone
 
 **Priority:** P1 · **Status:** open
-**Found by:** the auth-tenancy rework (2026-11-20, `feat/auth-tenancy-and-org-source`), which added `authorize(…, 'read', …)` to every org-scoped GET.
+**Found by:** the single-tenant auth work (`feat/auth-single-tenant`, 2026-11-19), which added `authorize(…, 'read', …)` to every org-scoped GET of both reference apps; recorded by the auth-tenancy rework (2026-11-20, `feat/auth-tenancy-and-org-source`).
 
 ## What is true
 
 The app guide (`packages/kit/src/guide.md`, Authorization) says a route or screen that reads org-scoped data authorizes the read too: the session's org says where a person is placed, not that they may read there, and the role `none` is placed in an org with no standing in it. Nothing enforces it. The scan (`packages/kit/src/authz/route-scan.ts`, `MUTATING_VERBS`) judges POST, PUT, PATCH and DELETE only, GET, HEAD and OPTIONS are never judged, and the conformance check `authz-mutations` (applied per app by `packages/kit/src/authz/app-exemptions.ts`) inherits that. A new org-scoped GET that forgets `authorize` passes every gate and shows a person with no standing their org's rows.
 
-Today the reads are pinned only by hand-written route tests, one per route.
+Today the reference apps' reads are pinned only by hand-written route tests, one per route (a restricted member reads, and `none` is refused); an app's own routes have nothing.
 
 ## The design
 

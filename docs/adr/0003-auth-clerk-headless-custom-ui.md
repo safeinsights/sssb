@@ -186,7 +186,7 @@ this mode, by design.
 The addendum above made single tenancy fix two things at once: the tenant, and one home org with the role `none` for
 everyone. That conflated two questions. JP (2026-11-20) asked why fixing the tenant should touch the provider's
 organizations at all, why notifications should depend on there being one tenant, and what an app that uses Clerk
-without organizations gets. So the mode is split into two independent settings, each validated at synth
+without organizations gets. So the mode is split into two settings, each validated at synth
 (`packages/cdk/src/auth-tenancy.js`) and at boot (`packages/kit/src/adapters/auth-tenancy.ts`). One pairing is
 refused: a fixed org source needs a single tenancy, since it reads no org or role from the provider, and with a multi
 tenancy the tenant claim in the provider's metadata would be all that places a person.

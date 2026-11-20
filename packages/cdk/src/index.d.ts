@@ -30,7 +30,7 @@ export interface OptionalPorts {
 }
 
 /**
- * How the auth adapter places a signed-in person: the app's `params.auth`, two independent choices. The construct sets
+ * How the auth adapter places a signed-in person: the app's `params.auth`, two choices. The construct sets
  * `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and the settings each choice reads; left out, the framework takes multi tenancy
  * with the `tenantSlug` metadata key, and the identity provider's organizations.
  * - `tenancy: 'single'` fixes the tenant at `tenantSlug` and changes nothing else.

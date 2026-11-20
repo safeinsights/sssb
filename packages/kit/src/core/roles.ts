@@ -1,8 +1,8 @@
 /**
  * `none` is the lowest: a signed-in person with no standing in the org they are placed in. A fixed org source
- * (`AUTH_ORG_SOURCE=fixed`, the app's `params.auth`) gives it to every user of the deployment's identity provider unless
- * it names `restricted`, and it grants nothing a membership would: no org-scoped access in the framework's rules or the app's, and never manage-all (`hasStanding`).
- * It is not grantable by invite.
+ * (`AUTH_ORG_SOURCE=fixed`, the app's `params.auth`) gives it to every user of the deployment's identity provider by
+ * default (its other choice is `restricted`). It grants nothing a membership would: no org-scoped access in the
+ * framework's rules or the app's, and never manage-all (`hasStanding`). It is not grantable by invite.
  */
 export const ROLES = ['admin', 'staff', 'member', 'guest', 'restricted', 'none'] as const
 export type Role = (typeof ROLES)[number]

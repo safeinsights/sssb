@@ -8,12 +8,12 @@
 
 **Action.** optional
 
-**What changed.** The auth adapters, the fake and Clerk, read two independent settings, each validated at boot. Left
+**What changed.** The auth adapters, the fake and Clerk, read two settings, each validated at boot. Left
 unset, both keep today's behaviour.
 
 - **`AUTH_TENANCY`**: `multi` (the default) reads each user's tenant from their public metadata under
   `AUTH_TENANT_METADATA_KEY` (`tenantSlug` when unset). `single`, with `AUTH_TENANT_SLUG`, fixes the tenant for the
-  deployment and changes nothing else: orgs, roles, members, invitations and notifications stay the provider's. A user
+  deployment and changes nothing else: orgs, roles, members, invitations and notifications are the org source's. A user
   whose metadata names a different tenant is refused.
 - **`AUTH_ORG_SOURCE`**: `provider` (the default) is the identity provider's organizations and per-membership roles.
   `fixed`, with `AUTH_HOME_ORG_SLUG`, is for an app that uses the provider without its organizations, and needs a

@@ -1,8 +1,8 @@
 /**
  * How the auth adapters place a signed-in person: the deployment's two choices, read here from the environment, which
  * `SssbApp` sets from the app's `params.auth` (an app's own infra sets it itself). Both adapters read them, the fake as
- * well as Clerk, so a simulated world runs the same placement as the deployment when its environment says so. The two
- * choices are independent: each answers its own question.
+ * well as Clerk, so a simulated world runs the same placement as the deployment when its environment says so. Each
+ * answers its own question, and one pairing is refused (below).
  *
  * **Where the tenant comes from, `AUTH_TENANCY`:**
  * - `multi` (the default, what every deployment did before the switch existed): the tenant is the user's own claim, in

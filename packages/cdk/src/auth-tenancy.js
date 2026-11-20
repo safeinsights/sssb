@@ -6,7 +6,7 @@
  * agree, through the framework each app resolves). Left out, it sets nothing, and the framework takes its defaults:
  * multi tenancy with the `tenantSlug` metadata key, and the identity provider's organizations.
  *
- * Two independent choices:
+ * Two choices, one pairing refused:
  * - `tenancy`, where the tenant comes from: `'multi'` (the default), each user's claim in their identity provider's
  *   metadata, under `tenantMetadataKey` when given; or `'single'`, the deployment's `tenantSlug`. A single tenancy
  *   changes nothing else.

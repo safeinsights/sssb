@@ -44,7 +44,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `listMembers` call. If the static demo starts the kind, pass the same map as `useDemoWorld`'s `jobNotify`.
 - A route that submits a job for a person passes `requestedBy: user.id` to `submitJob` (`@sssb/kit/db/jobs`): when the
   team has no admin to tell (a fixed org source, `params.auth`, has none), the job's end reaches the person who started
-  it, and a job submitted without one reaches no one.
+  it, and a job submitted without one reaches no one. Under a fixed org source SSSB's `Job` rule admits no one (its
+  roles are `none` and `restricted`), so authorize such a submission on a subject of your own.
 - `pnpm dev` stays hermetic: no docker, no credentials, no network. Never add `next/font/google`, telemetry, or
   anything that phones home.
 - Anything that needs real credentials, accounts or money is a row in the workspace's cutover checklist, never a

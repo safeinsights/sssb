@@ -76,7 +76,7 @@ describe('POST /api/assistant (the ticket read it authorizes)', () => {
         expect(h.runToolLoop).not.toHaveBeenCalled()
     })
 
-    test('403 for a person with the role none, who is not restricted: authorize refuses the Ticket read', async () => {
+    test('403 for the role none even past the restricted check (no adapter makes one unrestricted): authorize refuses', async () => {
         h.requireUser.mockResolvedValue(user({ role: 'none', restricted: false }))
 
         expect((await ask()).status).toBe(403)

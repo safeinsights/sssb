@@ -7153,6 +7153,11 @@ rejected alternative.
   configured list of admin user ids for a fixed org source, a second way to raise people that a deployment must
   defend; reading the submitter from the audit trail, which the app writes, not the framework; storing their email on
   the job, a copy of personal data; and a new port method, which a test double would lack.
+- **Under a fixed org source no one passes SSSB's `Job` rule**: creating a job needs a member who is not restricted,
+  and the source offers `none` and `restricted`. So the requester there is someone the app's own rules let start a
+  job, on a subject of its own, and the guide and `/sssb:new-job` say so. Found by the claims pass, which caught the
+  cutover row asking an operator to submit a job through a route that would refuse them. Rejected: letting `restricted`
+  create jobs in this mode, which would hand job submission to every user of a shared instance.
 - **`name` and `email` on `MemberStanding` are optional.** SSSB's adapters always fill them, but a required field would
   fail every app's typecheck that writes a stand-in `getMember` returning the old shape. A standing without an email is
   told in-app only.
@@ -7166,8 +7171,9 @@ rejected alternative.
 - **One module applies both settings, `configured-auth.ts`, replacing `single-tenant-auth.ts`**, and on the defaults it
   returns the adapter itself, so a deployment that sets nothing makes no extra call. Single tenancy over the provider's
   organizations reads the signed-in account through the identity source (for the raw claim, which the adapter's user
-  folds into `''`) and then the adapter's user, and refuses a mismatch of the two ids. Rejected: two stacked wrappers,
-  which read the identity twice per request.
+  folds into `''`) and then the adapter's user, and refuses a mismatch of the two ids. That is two reads of the
+  account, which on Clerk may be two user requests per call; the cutover row says to measure it. Rejected: two stacked
+  wrappers, one per setting, each reading the identity on its own.
 - **The tenant guard now also covers `createInvite`, `setActiveOrg` and `listMyOrgs` over the provider's
   organizations**, which call the adapter only once the port has a user. The adapter checks only that someone is signed
   in.

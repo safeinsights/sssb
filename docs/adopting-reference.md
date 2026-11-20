@@ -826,7 +826,7 @@ older server that migration cannot run. Everything SSSB targets already meets it
 
 ### How sign-in places people: `params.auth`
 
-`params.auth` in `apps/<app>/config/params.ts` makes two independent choices about a signed-in person: which tenant
+`params.auth` in `apps/<app>/config/params.ts` makes two choices about a signed-in person: which tenant
 they are in, and which orgs and roles they have. `SssbApp` sets `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and their settings
 from it, and validates them at synth; the framework validates them again at boot. A deployment that does not use
 `SssbApp` sets them itself. Left out, both are the defaults, as every deployment was before the settings existed. Real
@@ -853,13 +853,13 @@ mode seeds nothing: create the tenant and org rows the slugs below name (cutover
   SSSB never writes it (an invitation cannot grant it), so it is an operator's own word.
 - **`'fixed'`, with `homeOrgSlug` and an optional `defaultRole`**: for an app that uses the provider without its
   organizations. It needs `tenancy: 'single'`: it reads nothing from the provider about orgs or roles, so with a multi
-  tenancy the tenant claim in the provider's metadata would be all that places a person. Every user the provider signs in is placed in that org with that role, and no role is read from the
-  provider, so nothing written in its metadata raises anyone. `defaultRole` is `'none'` when left out, or
-  `'restricted'`; no role that writes is offered.
+  tenancy the tenant claim in the provider's metadata would be all that places a person. Every user the provider signs
+  in is placed in that org with that role, and no role is read from the provider, so nothing written in its metadata
+  raises anyone. `defaultRole` is `'none'` when left out, or `'restricted'`; no role that writes is offered.
     - `'none'` grants nothing a membership would in SSSB's ability rules: no org-scoped read or write, and never the staff
       org's manage-all. Your own rules see it as active in no org (`sameOrg` is false, and its active org matches none).
-    - `'restricted'` reads what a restricted member reads (in SSSB's rules, the org's record, jobs and webhook endpoints) and writes nothing org-scoped
-      through SSSB's rules. It has standing, so a home org that is your staff org (`staffOrgSlug`) with `'restricted'`
+    - `'restricted'` reads what a restricted member reads (in SSSB's rules, the org's record, its jobs, its webhook
+      endpoints and its members list, which is empty here) and writes nothing org-scoped through SSSB's rules. It has standing, so a home org that is your staff org (`staffOrgSlug`) with `'restricted'`
       is refused at boot: everyone would wield manage-all.
 
     What a signed-in person may do beyond that is your rules' to grant, for the people your app knows. In this mode:
@@ -869,10 +869,13 @@ mode seeds nothing: create the tenant and org rows the slugs below name (cutover
     - a token or email sender is judged as a session: the configured role, while the provider still has the account
       (a banned one has none).
 
-    So the org has no admins, and SSSB's notifications addressed to them (`notifyAdmins`) reach no one. A job's end goes
-    to the person who submitted it instead (the job records them: `submitJob`'s `requestedBy`), while they still have
-    standing. A job no person submitted, a scheduled run, has no one to tell, so set its kind's `jobNotify` to `'never'`
-    (`apps/<app>/src/app-config/jobs.ts`) to skip the lookup. The scheduled digest email is addressed to an org admin, and has no recipient. Address your own notifications to the people your app knows (`notifyMember` with a membership you
+    So the org has no admins, and SSSB's notifications addressed to them (`notifyAdmins`) reach no one. Neither role may
+    submit a `Job` through SSSB's rules (creating one needs a member who is not restricted), so a job a person starts is
+    one your own rules let them start: authorize it on a subject of your app's, and pass `submitJob` their id as
+    `requestedBy`. Its end then goes to them, while they still have standing. A job no person submitted, a scheduled
+    run, has no one to tell, so set its kind's `jobNotify` to `'never'` (`apps/<app>/src/app-config/jobs.ts`) to skip the
+    lookup. The scheduled digest email goes to an org admin, or else the first member, so in a deployment it has no
+    recipient. Address your own notifications to the people your app knows (`notifyMember` with a membership you
     build).
 
 **Your routes must authorize reads.** A session's org says where a person is placed, not that they may read there: with
@@ -892,7 +895,8 @@ notification preferences are stored there.
 
 The same settings run in `pnpm dev` when your dev environment sets `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and their slugs:
 the simulated world then places its seeded people the same way. With a single tenancy, seed them in that tenant; with a
-fixed org source, seed each with a membership in the home org, which the simulated sign-in needs.
+fixed org source, seed each with a membership (the simulated sign-in needs one; the org source then places them in
+the home org whatever it names).
 
 ### What `SssbApp`'s distribution decides for you
 

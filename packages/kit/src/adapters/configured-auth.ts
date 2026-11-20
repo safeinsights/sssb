@@ -12,7 +12,8 @@ export interface ProviderIdentity {
     locale: Locale
     /**
      * The account's tenant claim under the metadata key: the slug it names, `undefined` when it names none (the key is
-     * absent, null or empty), or `null` when it holds something that is not a slug at all, which single tenancy refuses.
+     * absent, null or empty), or `null` when it holds something that is not a slug at all, which single tenancy
+     * refuses.
      */
     tenantClaim: string | null | undefined
 }
@@ -41,8 +42,10 @@ export interface ProviderIdentitySource {
  * slug, is no user at all, and has no standing anywhere as a credential (`getMember`): that is a multi-tenant instance
  * switched to this mode by mistake, and admitting them would put another tenant's people in this one. Refused without
  * signing out: this runs while server components render, where a session cookie cannot be changed, and on a shared
- * instance it would end their session in the other product. Every other method is the adapter's, with the provider's
- * organizations, roles, members and invitations.
+ * instance it would end their session in the other product. Over the provider's organizations, every method is
+ * otherwise the adapter's, with its organizations, roles, members and invitations; the ones that act for the signed-in
+ * person (`updateProfile`, `createInvite`, `listMyOrgs`, `setActiveOrg`) run the tenant guard first, and `getMember`
+ * runs it after the provider's membership.
  *
  * **A fixed org source places everyone in one org with one role**, and what each method means follows from it:
  * - `getCurrentUser`: the home org and the configured role, whatever the provider's metadata says. No role is read from
@@ -51,15 +54,16 @@ export interface ProviderIdentitySource {
  * - `getMember`: the same standing, with the account's name and email, for an account the provider still has, in the
  *   home org; null for any other org, and for an unknown or banned account.
  * - `listMembers`: empty. Membership is implicit, and listing the provider's users would enumerate everyone on the
- *   instance, another product's users included, and mail them. So no one is an org admin: a job's end notification
- *   goes to whoever started it instead (../server-lib/notify.ts `notifyJobTerminal`), and an app addresses its own
- *   notifications to the people it knows.
+ *   instance, another product's users included, and mail them. So no one is an org admin: the end of a job submitted
+ *   with a requester goes to that person instead (../server-lib/notify.ts `notifyJobTerminal`), and an app addresses
+ *   its own notifications to the people it knows. SSSB's own rules let neither offered role submit a `Job` (create
+ *   needs a non-restricted member), so such a job is one the app's own rules let the person start.
  * - `createInvite`: refused. Anyone the provider signs in is already placed in the home org; an app adds people through
  *   its provider's own sign-up.
  * - `listMyOrgs`: the home org alone, named by its slug (this module reads no database). `setActiveOrg`: the home org
  *   is accepted and changes nothing; any other is refused.
  *
- * `signInPath`, `signOut` and `updateProfile` are always the adapter's.
+ * `signInPath` and `signOut` are always the adapter's, and `updateProfile` writes through it after the guard.
  */
 export function configuredAuth(
     base: AuthPort,
@@ -91,13 +95,15 @@ export function configuredAuth(
                     email: identity.email,
                     locale: identity.locale,
                     role: fixed.role,
+                    // A fixed org source needs a single tenancy (refused above otherwise).
                     tenantSlug: tenancy.kind === 'single' ? tenancy.tenantSlug : '',
                     orgSlug: fixed.homeOrgSlug,
                     restricted: fixedRestricted,
                 }
             }
             // Single tenancy over the provider's organizations: the adapter's user, in the configured tenant. The
-            // adapter reads the same signed-in account (Clerk dedupes the request's user fetch).
+            // adapter reads the signed-in account again, so on Clerk this may be a second user request per call (the
+            // cutover row `auth-tenancy` says to measure it).
             const user = await base.getCurrentUser()
             if (!user || user.id !== identity.id) return null
             return tenancy.kind === 'single' ? { ...user, tenantSlug: tenancy.tenantSlug } : user

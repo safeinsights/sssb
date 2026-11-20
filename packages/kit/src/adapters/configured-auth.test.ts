@@ -99,7 +99,7 @@ describe('a single tenancy over the provider organizations: only the tenant chan
     })
 
     it("judges a credential by the provider's membership, after the tenant guard", async () => {
-        const { auth, base } = setup(settings, null, { user_a: undefined, user_b: 'lakeside' })
+        const { auth } = setup(settings, null, { user_a: undefined, user_b: 'lakeside' })
         expect(await auth.getMember('depot', 'user_a')).toEqual({ role: 'member', restricted: false })
         expect(await auth.getMember('depot', 'user_b')).toBeNull()
         expect(await auth.getMember('depot', 'user_gone')).toBeNull()
