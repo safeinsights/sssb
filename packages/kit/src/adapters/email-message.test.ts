@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
 
 /**
@@ -23,6 +23,13 @@ vi.mock('mailgun.js', () => ({
         }
     },
 }))
+
+// Each test starts with no Mailgun call and an empty fake mailbox, so it passes or fails on its own sends alone.
+beforeEach(async () => {
+    create.mockClear()
+    const { clearCaughtEmails } = await import('./fake/email')
+    clearCaughtEmails()
+})
 
 const BODY = { html: '<p>h</p>', text: 't' }
 const BAD_TO = [
