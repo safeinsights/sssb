@@ -372,6 +372,9 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.5.11
         version: 0.5.16
+      '@formatjs/icu-messageformat-parser':
+        specifier: ^3.5.15
+        version: 3.5.15
       '@mantine/core':
         specifier: ^9.7.3
         version: 9.8.0(@mantine/hooks@9.8.0(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
