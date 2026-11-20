@@ -1,5 +1,186 @@
 # @sssb/kit
 
+## 0.4.0
+
+### Minor Changes
+
+- 179752d: ### The database port declares how it isolates tenants
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** `DbPort` (`@sssb/kit/ports/db`) has a required, read-only `isolation`, of the new type
+    `DbIsolation`. Every database adapter SSSB ships (pglite in simulated mode, node-postgres and the RDS Data API in real
+    mode) declares `'rls'`: row-level security, proven by the isolation proof suite, as before. Nothing else changes for an
+    app on Postgres: the same migrations, the same SQL, the same proofs and conformance checks (`rls-pglite` keeps its
+    name). Inside the kit, what is specific to Postgres is now gathered as the Postgres database family, so a second
+    database engine can be added beside it later.
+
+    **To adopt.** An object you type as `DbPort` yourself, usually a test double, needs the member too, or the typecheck
+    fails. Add it with the guarantee of the adapter it stands in for:
+
+    ```ts
+    const failing: DbPort = {
+        isolation: 'rls',
+        getDb: () => {
+            throw new Error('not used')
+        },
+        ready: async () => {},
+        migrateToLatest: async () => {},
+        withTenant: async () => {
+            throw new Error('refused')
+        },
+    }
+    ```
+
+    A double spread from SSSB's own port (`{ ...db }`) already has it, and one cast with `as unknown as DbPort` compiles
+    without it, though adding it keeps the double honest.
+
+- 7508a62: ### The invitation mail carries a link the real accept page can use
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** SSSB mailed every invitee `/<locale>/accept-invite?invite=<id>`, the fake's link, in every mode. In
+    real mode the accept page reads Clerk's `__clerk_ticket`, which that link never carries, so a real invitation could
+    not be accepted from SSSB's mail. The link is now the auth adapter's to build: `AuthPort.createInvite` takes
+    `acceptPageUrl` (the app's accept page, absolute, no query) and returns a `CreatedInvite`, a `Membership` with
+    `acceptUrl`, the link to mail. The fake returns its page with `?invite=<id>`, as before; the Clerk adapter passes the
+    page's path to Clerk as `redirectUrl` (a path, since a deployed request's URL names the server's own host) and returns
+    Clerk's invitation URL. When the adapter returns no link, `sendOrgInvite` sends no mail of its own, and it never
+    returns the link to its caller: it is the invitee's credential. `RealAcceptInviteForm` takes an optional `status`, the
+    page's `__clerk_status`: `sign_in`, an invitee who already has an account, signs in by ticket rather than signing up,
+    and `complete`, an invitation Clerk already accepted, only redirects. It also submits a ticket once, after Clerk has
+    loaded: it used to submit it again as Clerk loaded, and twice under React's StrictMode.
+
+    **To adopt.** If your app calls `sendOrgInvite`, its code changes nothing, but in real mode Clerk now sends invitees to
+    your `/<locale>/accept-invite` page: an app that invites people needs that page, rendering `RealAcceptInviteForm` with
+    `ticket` and `status` from `__clerk_ticket` and `__clerk_status`, as SSSB's showcase does. If it calls
+    `auth.createInvite` itself, pass
+    `acceptPageUrl` and mail the returned `acceptUrl` to the invitee only (never send it back to the inviter), sending
+    nothing when it is `null`. An app-side fake or test double of the auth port returns `acceptUrl` too.
+
+    **Now deletable.** Code that rebuilds an accept link from an invitation's id, or appends a ticket to one, after calling
+    `createInvite`.
+
+- 99fb466: ### The conformance suite checks that real-mode sign-in has its provider
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** SSSB's real sign-in and invite forms (`@sssb/kit/adapters/real/sign-in-form`,
+    `@sssb/kit/adapters/real/accept-invite-form`) call the auth provider's client hooks, which throw outside its
+    provider, `RealAuthProviders` (`@sssb/kit/adapters/real/providers`). Only real mode loads either, so a missing
+    provider showed nowhere but in a real sign-in page that failed to render. A new conformance check,
+    `real-auth-provider`, follows the app's own imports from each page, layout and other rendering file under `src/app`,
+    and fails one that reaches either form unless a layout or template wrapping it reaches the provider.
+
+    **To adopt.** If your conformance suite fails `real-auth-provider`, mount the provider in your locale layout,
+    `src/app/[locale]/layout.tsx`, in real mode only:
+
+    ```tsx
+    async function AuthProviders({ children }: { children: ReactNode }) {
+        if (isSimulated) return children
+        const { RealAuthProviders } = await import('@sssb/kit/adapters/real/providers')
+        return <RealAuthProviders>{children}</RealAuthProviders>
+    }
+    ```
+
+    and wrap the layout's children in `<AuthProviders>`. An app whose layout already mounts it, or that renders neither
+    form, changes nothing.
+
+    **Now deletable.** A `ClerkProvider` imported from `@clerk/nextjs` in your own layout to make real-mode sign-in work:
+    `RealAuthProviders` is that provider, and keeps the vendor import inside SSSB's adapters.
+
+- 3867cc8: ### An app that stores no files needs no S3 bucket
+
+    **Kind.** operator
+
+    **Action.** required
+
+    **What changed.** The storage port is one of SSSB's optional ports, with the switch `STORAGE_PROVIDER` (`s3` or
+    `none`). With `none` the port is absent: real mode no longer requires `STORAGE_BUCKET`, never loads the S3 SDK, and a
+    call through the port (or a job handler's) throws an error naming the switch. `AWS_REGION` is now required only by
+    what calls AWS: storage on `s3`, `JOBS_RUNNER=codebuild` and `DATABASE_TRANSPORT=data-api`. An unset switch is `s3`, so
+    a deployment that sets nothing requires exactly what it did. `SssbApp` sets the switch from `params.ports.storage`, and
+    with `none` builds no storage bucket, sets no `STORAGE_BUCKET` and grants the server no S3 access; with `s3` or left
+    out, the bucket keeps its logical id. `SssbApp`'s `storageBucket` is therefore `Bucket | undefined`.
+    `required-env.json` lists `STORAGE_PROVIDER`'s choices, and `AWS_REGION` under `JOBS_RUNNER`'s `codebuild`.
+
+    **To adopt.** Add `storage` to the `ports` in `apps/<app>/config/params.ts`: `'s3'` if your app stores files
+    (uploads, attachments, job artifacts), else `'none'`. Infra code that reads `app.storageBucket` handles `undefined`
+    (TypeScript now says where). Before switching a deployed stack to `none`, copy out what its bucket holds: a
+    `production: true` deployment retains the bucket outside the stack, and any other deletes it with its objects. A
+    deployment that does not use `SssbApp` sets `STORAGE_PROVIDER` itself.
+
+    **Now deletable.** A placeholder `STORAGE_BUCKET`, and a bucket created only so that real mode would start.
+
+- 587112b: ### Object storage on any S3-compatible store: `STORAGE_PROVIDER=s3-compatible`
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** The storage port has a third choice beside `s3` and `none`: `s3-compatible`, for Cloudflare R2, MinIO
+    and Backblaze B2, through the same S3 adapter. It is a choice of its own, never inferred from `s3` reading an endpoint.
+    It requires `STORAGE_BUCKET`, `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_ACCESS_KEY_ID`,
+    `STORAGE_SECRET_ACCESS_KEY` and `STORAGE_UPLOAD_TARGET` (`post` if the store accepts a presigned POST, which
+    `createUploadTarget` is, or `none` if it does not, as Cloudflare documents for R2: `createUploadTarget` then fails with
+    an error that names the setting, and every other method works), and fails at boot naming each one missing. It reads
+    `STORAGE_FORCE_PATH_STYLE` (`true` or `false`) when set, which MinIO needs. It does not use `AWS_REGION` or the AWS
+    key pair, which Lambda reserves. `SssbApp` accepts `params.ports.storage: 's3-compatible'`, builds no storage bucket
+    and grants no S3 access for it. `required-env.json` lists the choice, so this is a `minor`; an app that keeps `s3`,
+    `none` or no choice requires exactly what it did and keeps its bucket's logical id. Three cutover rows are new:
+    `storage-compatible-store`, `storage-compatible-credentials` and `storage-compatible-live`.
+
+    **To adopt.** Nothing, unless you want it. To use R2, MinIO or B2: set `ports: { storage: 's3-compatible' }` in
+    `apps/<app>/config/params.ts`, add the six settings to the server's environment from your infra (`app.server`; the
+    key pair kept out of the repository), and work the three cutover rows. Switching a deployed stack from `s3` takes its bucket
+    out of the stack (retained in production, deleted elsewhere), as `none` does: copy the objects first. A store without
+    presigned POST cannot take a browser upload through `createUploadTarget` yet.
+
+    **Now deletable.** A hand-written storage adapter, or a copy of `createS3Storage` with an endpoint, that only pointed
+    SSSB's storage port at another S3-compatible store.
+
+### Patch Changes
+
+- 69500cb: ### The `db-role-not-superuser` cutover row covers the Data API transport
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** The cutover row `db-role-not-superuser` said "The role in `DATABASE_URL`", but a deployment on the
+    Data API transport sets no `DATABASE_URL`: the role it connects as is the one the secret at `DATABASE_SECRET_ARN` holds.
+    The row (`@sssb/kit/cutover/rows.json`, and its proof in SSSB's checklist) now names both, and says how to run the
+    check on each: through `DATABASE_URL` on `pg`, with `aws rds-data execute-statement` and that secret on `data-api`.
+
+    **To adopt.** If your deployment uses `data-api`, close the row by running its check through the Data API as the
+    role the secret at `DATABASE_SECRET_ARN` holds. You may copy the new wording into your own checklist's row; nothing
+    reads it but people.
+
+- 99fb466: ### A real deployment without a PostHog key no longer writes to disk
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** In real mode without `POSTHOG_KEY`, the analytics port was the simulated world's fake, which writes
+    each capture and reads each flag under `.data/` in the server's working directory. On Lambda that directory is the
+    deployment package, which is read-only, so those calls most likely threw, and sending an invite awaits one. It is now a
+    no-op: nothing is captured, and `isFlagEnabled` answers the default its caller passes, as the PostHog adapter does
+    when PostHog cannot be reached. With a key, PostHog is unchanged.
+
+    **To adopt.** Nothing to change. If your deployment sets no `POSTHOG_KEY`, its analytics calls now do nothing instead
+    of touching the filesystem; if you set `APP_DATA_DIR` to a writable directory such as `/tmp` to get past this, you
+    can drop it.
+
+    **Now deletable.** An `APP_DATA_DIR` (or a placeholder `POSTHOG_KEY`) set on a real deployment only so that analytics
+    calls would not fail.
+
 ## 0.3.0
 
 ### Minor Changes

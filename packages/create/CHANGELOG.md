@@ -1,5 +1,34 @@
 # @sssb/create
 
+## 0.4.0
+
+### Patch Changes
+
+- 3867cc8: ### The starter declares that it stores no files
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** The starter's `config/params.ts` `ports` entry has `storage: 'none'`, since the starter stores no
+    files. A workspace generated from now on deploys with no storage bucket and needs no `STORAGE_BUCKET`.
+
+    **To adopt.** Add `storage` to the `ports` in your own `config/params.ts`: `'s3'` if your app stores files, else
+    `'none'` (the entry "An app that stores no files needs no S3 bucket" says what each does to a deployed stack).
+
+- 99fb466: ### The starter's layout mounts the auth provider in real mode
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** The starter's `src/app/[locale]/layout.tsx` rendered SSSB's real sign-in form without the provider
+    its hooks need, so real-mode sign-in in a generated app failed to render. It now mounts `RealAuthProviders` in real
+    mode, loaded with `import()` so that simulated mode and `pnpm dev` load none of it.
+
+    **To adopt.** The entry "The conformance suite checks that real-mode sign-in has its provider" gives the change to
+    make in your own layout, and its check tells you whether you need it.
+
 ## 0.3.0
 
 ### Minor Changes

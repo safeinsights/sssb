@@ -1,5 +1,64 @@
 # @sssb/cdk
 
+## 0.4.0
+
+### Minor Changes
+
+- 3867cc8: ### An app that stores no files needs no S3 bucket
+
+    **Kind.** operator
+
+    **Action.** required
+
+    **What changed.** The storage port is one of SSSB's optional ports, with the switch `STORAGE_PROVIDER` (`s3` or
+    `none`). With `none` the port is absent: real mode no longer requires `STORAGE_BUCKET`, never loads the S3 SDK, and a
+    call through the port (or a job handler's) throws an error naming the switch. `AWS_REGION` is now required only by
+    what calls AWS: storage on `s3`, `JOBS_RUNNER=codebuild` and `DATABASE_TRANSPORT=data-api`. An unset switch is `s3`, so
+    a deployment that sets nothing requires exactly what it did. `SssbApp` sets the switch from `params.ports.storage`, and
+    with `none` builds no storage bucket, sets no `STORAGE_BUCKET` and grants the server no S3 access; with `s3` or left
+    out, the bucket keeps its logical id. `SssbApp`'s `storageBucket` is therefore `Bucket | undefined`.
+    `required-env.json` lists `STORAGE_PROVIDER`'s choices, and `AWS_REGION` under `JOBS_RUNNER`'s `codebuild`.
+
+    **To adopt.** Add `storage` to the `ports` in `apps/<app>/config/params.ts`: `'s3'` if your app stores files
+    (uploads, attachments, job artifacts), else `'none'`. Infra code that reads `app.storageBucket` handles `undefined`
+    (TypeScript now says where). Before switching a deployed stack to `none`, copy out what its bucket holds: a
+    `production: true` deployment retains the bucket outside the stack, and any other deletes it with its objects. A
+    deployment that does not use `SssbApp` sets `STORAGE_PROVIDER` itself.
+
+    **Now deletable.** A placeholder `STORAGE_BUCKET`, and a bucket created only so that real mode would start.
+
+- 587112b: ### Object storage on any S3-compatible store: `STORAGE_PROVIDER=s3-compatible`
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** The storage port has a third choice beside `s3` and `none`: `s3-compatible`, for Cloudflare R2, MinIO
+    and Backblaze B2, through the same S3 adapter. It is a choice of its own, never inferred from `s3` reading an endpoint.
+    It requires `STORAGE_BUCKET`, `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_ACCESS_KEY_ID`,
+    `STORAGE_SECRET_ACCESS_KEY` and `STORAGE_UPLOAD_TARGET` (`post` if the store accepts a presigned POST, which
+    `createUploadTarget` is, or `none` if it does not, as Cloudflare documents for R2: `createUploadTarget` then fails with
+    an error that names the setting, and every other method works), and fails at boot naming each one missing. It reads
+    `STORAGE_FORCE_PATH_STYLE` (`true` or `false`) when set, which MinIO needs. It does not use `AWS_REGION` or the AWS
+    key pair, which Lambda reserves. `SssbApp` accepts `params.ports.storage: 's3-compatible'`, builds no storage bucket
+    and grants no S3 access for it. `required-env.json` lists the choice, so this is a `minor`; an app that keeps `s3`,
+    `none` or no choice requires exactly what it did and keeps its bucket's logical id. Three cutover rows are new:
+    `storage-compatible-store`, `storage-compatible-credentials` and `storage-compatible-live`.
+
+    **To adopt.** Nothing, unless you want it. To use R2, MinIO or B2: set `ports: { storage: 's3-compatible' }` in
+    `apps/<app>/config/params.ts`, add the six settings to the server's environment from your infra (`app.server`; the
+    key pair kept out of the repository), and work the three cutover rows. Switching a deployed stack from `s3` takes its bucket
+    out of the stack (retained in production, deleted elsewhere), as `none` does: copy the objects first. A store without
+    presigned POST cannot take a browser upload through `createUploadTarget` yet.
+
+    **Now deletable.** A hand-written storage adapter, or a copy of `createS3Storage` with an endpoint, that only pointed
+    SSSB's storage port at another S3-compatible store.
+
+### Patch Changes
+
+- Updated dependencies [a6e849e]
+    - @sssb/tools@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
