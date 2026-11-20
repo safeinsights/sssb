@@ -7,7 +7,9 @@ import type { JobsPort } from '../../ports/jobs'
 import type { LlmPort } from '../../ports/llm'
 import type { StoragePort } from '../../ports/storage'
 import { absentEmail, absentJobs, absentLlm, absentStorage } from './absent'
-import { realAuth } from './auth'
+import { authTenancy, authTenancyEnv } from '../auth-tenancy'
+import { singleTenantAuth } from '../single-tenant-auth'
+import { clerkIdentitySource, realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { noAnalytics } from './no-analytics'
 import { optionalPortsEnv, portChoice } from './optional-ports'
@@ -49,6 +51,7 @@ export function assertRealEnv(): void {
         ...DATABASE_ENV[transport],
         ...(transport === 'data-api' ? DATA_API_REGION_ENV : {}),
         ...optionalPortsEnv(),
+        ...authTenancyEnv(),
     }
     const missing = Object.keys(required).filter((name) => !process.env[name])
     if (missing.length > 0) {
@@ -68,6 +71,12 @@ export function assertRealEnv(): void {
         } catch (error) {
             throw new CutoverPendingError(['storage-compatible-store'], (error as Error).message)
         }
+    }
+    // The auth tenancy: an unknown mode, a malformed slug or key, or a single-mode setting left on a multi deployment.
+    try {
+        authTenancy()
+    } catch (error) {
+        throw new CutoverPendingError(['auth-tenancy'], (error as Error).message)
     }
 }
 
@@ -95,6 +104,11 @@ interface RealPortsHooks {
 export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealPorts> {
     assertRealEnv()
     const env = process.env
+    // Clerk, as multi-tenant auth or wrapped as single-tenant auth (../auth-tenancy.ts). Every port that reaches the
+    // people (the in-process runner's job context included) is handed this one.
+    const tenancy = authTenancy()
+    const auth: AuthPort =
+        tenancy.kind === 'single' ? singleTenantAuth(realAuth, tenancy, clerkIdentitySource) : realAuth
     // assertRealEnv above already proved every required variable is set; this narrows the type.
     const need = (name: string): string => {
         const value = env[name]
@@ -144,7 +158,7 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
         runner === 'codebuild'
             ? (await import('./jobs')).createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION'))
             : runner === 'in-process'
-              ? await inProcessJobs(hooks, { db, storage, email, llm, auth: realAuth })
+              ? await inProcessJobs(hooks, { db, storage, email, llm, auth })
               : absentJobs
     // PostHog only where a key is configured (staging/prod per ADR-0010); a no-op otherwise (./no-analytics.ts), never
     // the simulated world's fake, which writes under `.data/`.
@@ -152,7 +166,7 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
         ? (await import('./analytics')).createRealAnalytics(env['POSTHOG_KEY'], env['POSTHOG_HOST'] ?? '')
         : noAnalytics
     return {
-        auth: realAuth,
+        auth,
         db,
         storage,
         llm,

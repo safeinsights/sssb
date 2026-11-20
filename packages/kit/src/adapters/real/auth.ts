@@ -13,13 +13,18 @@ import type {
     ProfileUpdate,
 } from '../../ports/auth'
 import { AuthRequiredError, ForbiddenError } from '../../ports/errors'
+import { authTenancy } from '../auth-tenancy'
+import type { ProviderIdentitySource } from '../single-tenant-auth'
 
 /**
  * Clerk headless adapter (ADR-0003). Clerk organizations ARE our orgs
  * (product copy: "teams"); our org slug === Clerk org slug (no mapping layer). The tenant (site) is
- * ambient and lives in user publicMetadata.tenantSlug — one Clerk instance per tenant in prod, so
+ * ambient and lives in the user's publicMetadata, under the deployment's key (`tenantSlug` unless
+ * AUTH_TENANT_METADATA_KEY says otherwise) — one Clerk instance per tenant in prod, so
  * every org a user sees belongs to their tenant. The ACTIVE org rides in unsafeMetadata.currentOrgSlug,
  * and the request-time role comes from that org membership's publicMetadata.role (role is per-org).
+ * This is multi-tenant auth; single-tenant auth (AUTH_TENANCY=single) wraps this adapter with
+ * ../single-tenant-auth.ts and reads Clerk through `clerkIdentitySource` below.
  *
  * AUTHORED — CUTOVER (`auth-dev`): typechecked against @clerk/nextjs, never run against a real
  * Clerk instance. Verify the full port contract suite against the dev instance at cutover.
@@ -31,7 +36,20 @@ interface AppPublicMetadata {
     role?: string
     locale?: string
     restricted?: boolean
-    tenantSlug?: string
+}
+
+/**
+ * The tenant a user's public metadata claims, under the deployment's key (`AUTH_TENANT_METADATA_KEY`, default
+ * `tenantSlug`: ../auth-tenancy.ts). Only a non-empty string counts.
+ */
+function tenantClaim(metadata: unknown): string | undefined {
+    const value = (metadata as Record<string, unknown> | null | undefined)?.[authTenancy().tenantMetadataKey]
+    return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+function localeFrom(metadata: unknown): Locale {
+    const locale = (metadata as AppPublicMetadata | null | undefined)?.locale
+    return LOCALES.includes(locale as Locale) ? (locale as Locale) : DEFAULT_LOCALE
 }
 
 function roleFrom(metadata: unknown, fallback: Role): Role {
@@ -58,7 +76,7 @@ export const realAuth: AuthPort = {
         const user = await currentUser()
         if (!user) return null
         const metadata = (user.publicMetadata ?? {}) as AppPublicMetadata
-        const locale = LOCALES.includes(metadata.locale as Locale) ? (metadata.locale as Locale) : DEFAULT_LOCALE
+        const locale = localeFrom(metadata)
 
         // Resolve the active org membership: the remembered currentOrgSlug if still a membership,
         // else the first one. Role comes from that membership (per-org), not the user object.
@@ -77,7 +95,7 @@ export const realAuth: AuthPort = {
             role,
             locale,
             // Ambient site claim — never the active org's business.
-            tenantSlug: metadata.tenantSlug ?? '',
+            tenantSlug: tenantClaim(user.publicMetadata) ?? '',
             orgSlug: active ? (active.organization.slug ?? active.organization.id) : '',
             restricted: isRestricted(metadata.restricted, role),
         }
@@ -238,5 +256,38 @@ export const realAuth: AuthPort = {
         if (!mine.some((o) => o.slug === orgSlug)) throw new ForbiddenError(`no membership in org: ${orgSlug}`)
         const client = await clerkClient()
         await client.users.updateUserMetadata(userId, { unsafeMetadata: { currentOrgSlug: orgSlug } })
+    },
+}
+
+/**
+ * Clerk's accounts as single-tenant auth sees them (../single-tenant-auth.ts): who is signed in and whether an account
+ * may still act, with no organization or role in it, so single mode makes no membership call per request. A banned
+ * account may not act, as `getMember` says above; a locked one may, for the reason given there.
+ */
+export const clerkIdentitySource: ProviderIdentitySource = {
+    async current() {
+        const { userId } = await auth()
+        if (!userId) return null
+        const user = await currentUser()
+        if (!user) return null
+        return {
+            id: userId,
+            name: user.fullName ?? user.primaryEmailAddress?.emailAddress ?? userId,
+            email: user.primaryEmailAddress?.emailAddress ?? '',
+            locale: localeFrom(user.publicMetadata),
+            tenantClaim: tenantClaim(user.publicMetadata),
+        }
+    },
+    async account(userId) {
+        const client = await clerkClient()
+        let user
+        try {
+            user = await client.users.getUser(userId)
+        } catch (error) {
+            if (isClerkAPIResponseError(error) && error.status === 404) return null
+            throw error
+        }
+        if (user.banned) return null
+        return { tenantClaim: tenantClaim(user.publicMetadata) }
     },
 }
