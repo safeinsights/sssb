@@ -12,7 +12,8 @@
 each file in SSSB's repository at this release (`apps/starter`).
 
 - `src/app/[locale]/signin/page.tsx` and `signin/picker-glue.tsx` take their `returnTo` through `sameOriginPath`
-  (the entry "`sameOriginPath` is published"): the old check was an open redirect.
+  (the entry "`sameOriginPath` is published"): the old check was an open redirect. The picker glue's `onPick` also
+  returns its fetch and resolves `false` on a refusal, which needs this release's `PeoplePicker`.
 - `src/proxy.ts`: the matcher's excluded prefixes end at a slash (`api(?:/|$)`, `_next/`, `_vercel/`) and the API
   branch matches `/api` or `/api/...`, so a page named like `/apiary` reaches the proxy and the auth provider's
   middleware.
@@ -20,7 +21,10 @@ each file in SSSB's repository at this release (`apps/starter`).
   answer 400, not 500, on a body that is not a JSON object or a field of the wrong type. `POST /api/auth/dev-signin`
   (simulated mode only) answers 415 to a request that is not `application/json`, so another site's page cannot sign
   a developer in.
-- The Items card keeps the typed title and shows `items.addError` (new, in both catalogs) when a create fails.
+- The Items card keeps the typed title and shows `items.addError` (new, in both catalogs) when a create fails. It
+  takes three files: `src/components/items-card.tsx`, the message key, and
+  `src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx`, whose `onAdd` must reject on a response that is not
+  ok; without that the card still clears the draft.
 - `playwright.demo.config.ts` forbids `test.only` on CI.
 - The generated `.github/workflows/checks.yml`: its secret-scan job checks the gitleaks download's sha256 before
   running it, and its own checkouts set `persist-credentials: false`. SSSB's reusable workflow (`app-checks.yml`)

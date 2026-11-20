@@ -995,7 +995,7 @@ registration does not fully switch off.
 ## Addendum (2026-11-20): what the authorization scan reads, and what it does not prove
 
 A baseline review of 0.4.0 found shapes the scan passed that authorize nothing, and code Next serves that the scan
-never read. The scan now refuses the first and reads or refuses the second. The decision log has each shape.
+never read. The scan now refuses the first and reads or refuses the second. The rules are below.
 
 **What it reads now.** Besides every `route.*` handler under `src/app`:
 
@@ -1020,12 +1020,10 @@ states.
 **Limits.** In addition to the earlier lists:
 
 - The scan proves a handler MAY reach `authorize`, not that every path does, nor that the call comes before the
-  mutation. An early return, a non-constant condition, an authorize after the write and an empty loop all pass. The
-  app guide says to call it first, unconditionally, before any `try`.
+  mutation. An early return, a non-constant condition, an authorize after the write and an empty loop all pass. The app guide says to call it before the mutation and before any `try`, on a path every request takes.
 - `Promise.all(...).then(f)` is not followed through the `.then`, and a sync `forEach` on a receiver whose head is an
-  import is trusted only when awaited or returned. Both refuse correct code; the message says what to change.
+  import is trusted only when awaited or returned. Both refuse correct code, and the message does not name the shape; the app guide says what to write instead.
 - A Server Action a workspace package exports is not read, and a re-export resolved through a package's `exports`
   conditions (`react-server` against `default`) is read as TypeScript resolves it, which may not be what Next serves.
-- The simulated-mode opening accepts only a `Response`, `NextResponse` or a thrown global `Error` or an error from
-  `@sssb/kit/ports/errors`, in a file that assigns to none of those globals. Tampering through
+- The simulated-mode opening accepts only a `Response`, `NextResponse` or a thrown global error (any global `...Error`) or an error from `@sssb/kit/ports/errors`, in a file that assigns to none of those globals. Tampering through
   `Object.defineProperty(globalThis, ...)` is not seen.

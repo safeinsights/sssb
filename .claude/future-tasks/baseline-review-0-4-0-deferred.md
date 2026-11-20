@@ -26,8 +26,7 @@ per-tick and per-tenant budget, and an order that is fair across tenants.
 ## The static demo does not re-theme on a tenant switch
 
 Each app's `apps/<app>/src/demo-static/main.tsx` themes by the first tenant; the server layout themes by the signed-in one.
-Proposed: `DemoShell` renders the theme provider itself from `world.tenant`, kit-side, one place. It changes the
-apps' static composition root, and the starter's copy is in the `sssb remove-items` diffs.
+Proposed: `DemoShell` renders the theme provider itself from `world.tenant`, kit-side, one place. It changes the apps' static composition root; the starter's `demo-static/app.tsx` is in the `sssb remove-items` diffs, its `main.tsx` is not.
 
 ## A feature-flag read has no short bound
 

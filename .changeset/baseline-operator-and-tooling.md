@@ -22,9 +22,9 @@
 - Data API transport: a date before year 1 or after 9999 is accepted; an array of a type node-postgres has no
   parser for (an `enum[]`) comes back as Postgres text, as on `pg`; a string constant continued on the next line is
   read as one string.
-- A keyset cursor at year 0000 is invalid (a 400), not a 500. A failed webhook enqueue after a job status commits
+- `parseDbKeysetCursor` answers `invalid` for a cursor at year 0000, which the database cannot hold, so the route's 400 replaces a 500. A failed webhook enqueue after a job status commits
   is logged and no longer fails the caller. An outbound webhook's response body is cancelled once its status is read.
-- Fake adapters accept a relative `APP_DATA_DIR`. A fake analytics flag named like an `Object.prototype` member
+- A relative `APP_DATA_DIR` works: fake storage refused every key under one. A fake analytics flag named like an `Object.prototype` member
   answers its default.
 - In a linked git worktree anywhere (a `.git` file that points into `worktrees/`), not only under
   `.claude/worktrees/`, an app's ports are derived per checkout; a checkout that is itself a worktree of a bare

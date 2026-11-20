@@ -6999,7 +6999,7 @@ left to the builder:
 
 ## Baseline review of 0.4.0 (2026-11-20, `fix/post-0.4.0-baseline-review`)
 
-Five reviewers read the whole repository at 4dc9a89, the commit released as 0.4.0, one area each; five workers fixed
+Five reviewers read the whole repository at 4dc9a89, the commit 0.4.0 was cut from (its release commit is dfc5cdd), one area each; five workers fixed
 what was confirmed, and each reviewer then read its area's fix diff. JP was away, so these were decided without him.
 
 - **`@sssb/kit/core/same-origin-path` is published.** The starter's sign-in page guarded `returnTo` with a prefix test
@@ -7022,7 +7022,7 @@ what was confirmed, and each reviewer then read its area's fix diff. JP was away
   from a direct caller.
 - **A simulated-only POST answers 415 unless it is JSON**, in both apps, body-less ones included, as the kit's own
   simulator API already did: a cross-origin "simple" POST could sign in as a seeded person or wipe the world on a
-  developer's machine.
+  developer's machine. The one exception, which the test names, is the showcase's fake storage upload target: it takes a multipart POST under its signed policy.
 - **The contract runner connects through the real `pg` adapter.** It built a bare pool, so an app's contract pass
   proved a driver configuration it does not deploy (a `date` column came back as a `Date`).
 - **The proxy matcher's excluded prefixes end at a slash** (`api(?:/|$)`, `_next/`, `_vercel/`), and the proxy's API

@@ -15,7 +15,8 @@ import type { CheckContext, CheckImpl } from './types'
  * parse, a `'use server'` file outside `src`.
  *
  * The test names are fixed (doctor computes them), so every failing handler is reported in ONE assertion, one line
- * each, `<app>: <rel> <VERB> …why`.
+ * each: `<app>: <rel> <VERB> …why` for a handler, `<app>: <rel> Server Action \`name\` …why` for an action, and a
+ * plain sentence for a directory or file the scan cannot read.
  */
 const scans = new Map<string, Promise<AppScan>>()
 const scanOf = ({ appDir }: CheckContext): Promise<AppScan> => {

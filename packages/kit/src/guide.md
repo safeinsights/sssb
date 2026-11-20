@@ -97,7 +97,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   answer the 403. Over many items, `await Promise.all(items.map(...))`; `Promise.allSettled` does not count, and
   neither does a `.then(...)` chained after it.
 - The check proves that a handler can reach `authorize(...)`, not that every path through it does, nor that it
-  comes before the mutation. Call it first, unconditionally, before any `try`.
+  comes before the mutation. Call it before the mutation and before any `try`, on a path every request takes: after
+  `auth.requireUser()` and the lookups that give it the org, never inside a condition or a loop.
 - A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
   with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
   app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named

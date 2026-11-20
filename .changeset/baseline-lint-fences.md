@@ -13,15 +13,17 @@
 
 - A new app-side fence, `sssb/no-path-into-kit`, in the preset and in `sssb check-fences`' probes. An import,
   `import()`, `require` or type import that reaches `@sssb/kit` by a path into the package
-  (`../node_modules/@sssb/kit/src/...`, an absolute path, a `file:` URL), or any path through `node_modules`, fails
+  (`../node_modules/@sssb/kit/src/...`, an absolute path, a `file:` URL, the app's `@/` alias, a symbolic link), or any path through `node_modules`, fails
   lint. The kit ships its source, so such a path reached any internal past the exports map. A stylesheet or worker
   imported as `../node_modules/<package>/...` gets the same finding: import it by the package's name.
 - An app's `sssb.vendors` entry must be a package name (`stripe`, `@stripe/stripe-js`) or one subpath of it
   (`firebase/app`), either followed by `/*`, or a whole scope (`@stripe/*`), in lower case. Any other gitignore
   pattern (`@stripe/**`, `stripe-*`, `stripe/`) banned an import declaration and let `import()` through; it now fails
   the lint config, naming the entry. `sssb check-fences` lints a probe per entry through both vendor rules.
-- The import fences match a bare specifier cut at a resource query or hash too (`pg?raw`). The framework/app path
-  fence and core's framework ban read `/// <reference>` directives.
+- The import fences match a bare specifier cut at a resource query or hash too (`pg?raw`), and read more forms of a
+  specifier: a template literal, a type `import('...')`, `import x = require(...)`, Vitest's `vi.mock` and
+  `vi.importActual` family, `require.resolve`. A vendor or a path into the kit written one of those ways now fails
+  lint where it passed.
 - `sssb check-e2e` fails a spec, or a module it imports, that names an `@sssb/kit` subpath as a string esbuild
   cannot follow (a plain `require` of a variable, say), not only beside `createRequire`. An object key, a type, and a
   kit `.md` or `.json` file named in code pass.
