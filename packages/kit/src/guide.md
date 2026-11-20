@@ -123,6 +123,13 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant
   `none` too.
+- Under a fixed org source (`params.auth.orgSource` `'fixed'`) everyone has the role `none` or `restricted`, and both
+  are restricted (`AuthUser.restricted` and the actor's `restricted`), so `restricted` cannot tell your own admins from
+  anyone else. Grant your own people from your own data (a field on the subject, such as its publishers; your own table
+  in a route or screen) BEFORE any denial on `restricted`, in `appAbilityRules` and wherever a route or screen reads
+  `user.restricted`: a check that denies on `restricted` first locks out everyone, your own admins included. Your rules
+  see `none` in no org (`sameOrg` is false), so a grant that must be scoped to the home org needs
+  `defaultRole: 'restricted'`.
 
 ## UI
 

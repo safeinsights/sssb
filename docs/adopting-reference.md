@@ -846,7 +846,11 @@ mode seeds nothing: create the tenant and org rows the slugs below name (cutover
   whatever `orgSource` says. A user whose metadata names a different tenant under the key, or holds there something
   that is not a slug, is refused, in session and as a token or email sender, so this mode switched on for a
   multi-tenant instance by mistake does not merge its tenants (the guard reads the key, so keep `tenantMetadataKey` if
-  you used one). A refused user stays signed in to the provider and is simply no user here.
+  you used one). A refused user stays signed in to the provider and is no user here. Your sign-in page asks the auth
+  port why (`auth.refusal?.()`, as the starter's `apps/starter/src/app/[locale]/signin/page.tsx` does) and shows
+  `AccountRefused` (`@sssb/kit/components/auth/account-refused`): the account belongs to another site, and one
+  explicit sign-out button, which says first that it also signs the person out of other sites sharing the sign-in.
+  Nothing signs them out on its own.
 
 **Where orgs and roles come from: `orgSource`.**
 
@@ -867,7 +871,11 @@ mode seeds nothing: create the tenant and org rows the slugs below name (cutover
       endpoints and its members list, which is empty here) and writes nothing org-scoped through SSSB's rules. It has standing, so a home org that is your staff org (`staffOrgSlug`) with `'restricted'`
       is refused at boot: everyone would wield manage-all.
 
-    What a signed-in person may do beyond that is your rules' to grant, for the people your app knows. In this mode:
+    What a signed-in person may do beyond that is your rules' to grant, for the people your app knows. Both roles are
+    restricted (`restricted` is `true` for everyone), so grant your own people (your admins, say) from your own data
+    before anything denies on `restricted`, or that denial locks them out too; the guide's Authorization section says
+    how. Your rules see `none` in no org, so a grant scoped to the home org needs `'restricted'`. The header names the
+    home org by its org row's name (the slug if the row is missing). In this mode:
     - the members list is empty, since listing the provider's users would enumerate everyone on the instance;
     - invitations are refused, since anyone the provider signs in is already placed in the org;
     - the home org is the only org;
