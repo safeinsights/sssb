@@ -7,7 +7,7 @@ import {
     type AppSubjectFields,
     type AppSubjectType,
 } from '@sssb/app-config/abilities'
-import { canManageOrg, isRole, type Role } from './roles'
+import { canManageOrg, hasStanding, isRole, type Role } from './roles'
 
 /**
  * The authorization model. PURE TypeScript — imports only ./roles and the app-config seam
@@ -324,16 +324,22 @@ export function defineAbilitiesFor(actor: Actor): Ability {
     // The staff superpower belongs to a SESSION acting as the operator org. Enforced here rather than
     // trusted to whoever built the actor: a person who came through any other credential (an email, a
     // token), or who states none, never wields it, even acting in the staff org. The app's rules are
-    // handed the same effective value.
+    // handed the same effective value. A person without standing (role `none`, ./roles.ts `hasStanding`) never wields
+    // it either: single-tenant auth places every user of the identity provider in the home org, which may be the staff
+    // org.
     const session = copy.credential?.kind === 'session'
+    const standing = hasStanding(copy.role)
     // Read at call time, like the app's machine rules (see the machine branch above).
     const widening: NonSessionAdministration = nonSessionAdministration
     const person: AbilityActor =
-        copy.manageAll && session
+        copy.manageAll && session && standing
             ? { ...copy, manageAll: true, credential: { kind: 'session', id: copy.credential?.id ?? null } }
             : { ...copy, manageAll: false }
-    // sameOrg for the person reads the COPY's org, like every other person rule.
-    const personSameOrg: SameOrg = (subject) => subject.orgId != null && subject.orgId === person.activeOrgId
+    // sameOrg for the person reads the COPY's org, like every other person rule. A person without standing is in no
+    // org for any rule, the framework's or the app's (which are handed this same predicate): being placed in an org is
+    // not membership of it.
+    const personSameOrg: SameOrg = (subject) =>
+        standing && subject.orgId != null && subject.orgId === person.activeOrgId
 
     function can(action: AbilityAction, subject: AbilitySubject): boolean {
         // The staff-org superpower. manageAll precedes
