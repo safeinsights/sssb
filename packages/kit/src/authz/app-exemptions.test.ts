@@ -221,6 +221,26 @@ describe('what the scan reaches beyond src/app route files (baseline review of 0
         ])
     })
 
+    it('fails a root-level app/ directory, which Next serves instead of src/app', async () => {
+        const scan = await scanApp(appWith({ 'app/api/wipe/route.ts': OPEN_POST }))
+        expect(scan.failures).toEqual([expect.stringMatching(/^acme: app\/ is a root-level App Router directory/)])
+    })
+
+    it('fails a file named route.<ext> the scan does not read, naming it, and leaves tests and stories alone', async () => {
+        const scan = await scanApp(
+            appWith({
+                'src/app/api/x/route.mts': OPEN_POST,
+                'src/app/api/y/route.api.ts': OPEN_POST,
+                'src/app/api/dockets/route.test.ts': 'export {}\n',
+                'src/app/api/dockets/route.stories.tsx': 'export {}\n',
+            }),
+        )
+        expect(scan.failures).toEqual([
+            expect.stringMatching(/^acme: src\/app\/api\/x\/route\.mts is named like a route/),
+            expect.stringMatching(/^acme: src\/app\/api\/y\/route\.api\.ts is named like a route/),
+        ])
+    })
+
     it("does not take a 'use server' string that is not a directive for one", async () => {
         const scan = await scanApp(
             appWith({

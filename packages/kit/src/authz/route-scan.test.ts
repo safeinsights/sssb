@@ -1805,9 +1805,22 @@ describe('the facts a gate is judged on', () => {
         expect(gate("if (!isSimulated) throw new Gone('x')", `${SIM}class Gone { constructor(_: string) {} }\n`)).toBe(
             false,
         )
+        // A thrown constructor runs code: only SSSB's port errors (and a global Error) are known to do nothing.
+        expect(
+            gate(
+                "if (!isSimulated) throw new NotFoundError('x')",
+                `${SIM}import { NotFoundError } from '@sssb/kit/ports/errors'\n`,
+            ),
+        ).toBe(true)
+        expect(
+            gate(
+                "if (!isSimulated) throw new errors.NotFoundError('x')",
+                `${SIM}import * as errors from '@sssb/kit/ports/errors'\n`,
+            ),
+        ).toBe(true)
         expect(
             gate("if (!isSimulated) throw new NotFoundError('x')", `${SIM}import { NotFoundError } from 'k'\n`),
-        ).toBe(true)
+        ).toBe(false)
         expect(
             factsOf(
                 `${SIM}declare const db: any\nexport async function POST(r: Request, c: unknown, x = db.wipe()) { if (!isSimulated) return new Response(null) }`,
@@ -2181,5 +2194,128 @@ describe('the walk through symbolic links (baseline review of 0.4.0)', () => {
         const routes = scanRoutes([{ label: 'case', dir, exemptDir: dir }])
         expect(routes.map((route) => route.rel)).toEqual(['linked/route.ts', 'real/route.ts'])
         expect(routes.every((route) => route.handlers[0]?.facts?.reachesAuthorize === false)).toBe(true)
+    })
+})
+
+describe('second pass of the baseline review of 0.4.0', () => {
+    const OTEL = "import { tracer } from './otel'\nimport { wrap } from './w'\n"
+    const cases: Array<{ name: string; files: Record<string, string>; expect: Outcome }> = [
+        // S3: a function handed to an imported callee may run synchronously inside it, and throw out of the call.
+        {
+            name: 'returned from a try whose catch swallows: a span callback (a sync throw is caught)',
+            files: post(
+                `try { return tracer.startActiveSpan('del', () => { ${CALL}; return new Response('ok') }) } catch (e) { void e }\nreturn new Response('mutated')`,
+                OTEL,
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'returned from a try whose catch swallows: a generic wrapper',
+            files: post(`try { return wrap(() => { ${CALL} }) } catch {}\nreturn new Response('mutated')`, OTEL),
+            expect: 'open',
+        },
+        {
+            name: 'awaited in a try whose catch swallows (control, already open)',
+            files: post(`try { await tracer.startActiveSpan('del', () => { ${CALL} }) } catch {}`, OTEL),
+            expect: 'open',
+        },
+        {
+            name: 'returned outside a try (still reaches)',
+            files: post(`return tracer.startActiveSpan('del', () => { ${CALL}; return new Response('ok') })`, OTEL),
+            expect: 'authorized',
+        },
+        {
+            name: 'returned from a try whose catch rethrows (still reaches)',
+            files: post(`try { return wrap(() => { ${CALL} }) } catch (e) { throw e }`, OTEL),
+            expect: 'authorized',
+        },
+        // S6: an optional call on a receiver a constant makes nullish never runs its arguments.
+        {
+            name: 'an optional call on a const null hook',
+            files: post(`hook?.(${CALL})`, 'const hook = null as null | ((x: unknown) => void)\n'),
+            expect: 'open',
+        },
+        { name: 'an optional call on a literal null', files: post(`;(null as any)?.(${CALL})`), expect: 'open' },
+        { name: 'an optional method on undefined', files: post(`;(undefined as any)?.x(${CALL})`), expect: 'open' },
+        {
+            name: 'an optional call on a hook that may be set (still reaches)',
+            files: post(`hook?.(${CALL})`, 'declare const hook: undefined | ((x: unknown) => void)\n'),
+            expect: 'authorized',
+        },
+    ]
+
+    it.each(cases)('$name', ({ files, expect: expected }) => {
+        expectVerdicts(verdicts(files), { POST: expected })
+    })
+
+    const SIM = "import { isSimulated } from '@sssb/kit/adapters/index'\n"
+    const opens = (body: string, prelude = '') =>
+        factsOf(`${SIM}${prelude}export async function POST() {\n${body}\nreturn new Response('ok')\n}\n`)
+            .opensWithSimulated404
+
+    it('S5: a constructor thrown from the simulated-mode gate must be a global Error or one of SSSB port errors', () => {
+        expect(opens("if (!isSimulated) throw new PurgeTenant('all')", "import { PurgeTenant } from './jobs'\n")).toBe(
+            false,
+        )
+        expect(opens('if (!isSimulated) throw new Purge()', "import Purge from './jobs'\n")).toBe(false)
+        expect(opens('if (!isSimulated) throw new jobs.Purge()', "import * as jobs from './jobs'\n")).toBe(false)
+        expect(opens("if (!isSimulated) throw new Error('x')")).toBe(true)
+    })
+
+    it('S5: a file that assigns to a global the gate builds (Error, Response, JSON) does not open with the gate', () => {
+        expect(opens("if (!isSimulated) throw new Error('x')", 'Error = class {} as never\n')).toBe(false)
+        expect(
+            opens(
+                'if (!isSimulated) return new Response(null, { status: 404 })',
+                'Response = function () {} as never\n',
+            ),
+        ).toBe(false)
+        expect(
+            opens(
+                'if (!isSimulated) return Response.json({ error: 1 })',
+                'Response.json = (() => undefined) as never\n',
+            ),
+        ).toBe(false)
+        expect(
+            opens('if (!isSimulated) return new Response(JSON.stringify(1))', 'JSON.stringify = (() => "") as never\n'),
+        ).toBe(false)
+        // A local declaration of the name is not the global, and was never taken for it.
+        expect(opens('if (!isSimulated) return new Response(null, { status: 404 })', 'let JSON = 1\nJSON = 2\n')).toBe(
+            true,
+        )
+    })
+
+    it("a directive prologue ('use strict') before the gate runs nothing, so the gate still opens the handler", () => {
+        expect(opens("'use strict'\nif (!isSimulated) return new Response(null, { status: 404 })")).toBe(true)
+        // ...but only a prologue: any other statement first still fails it.
+        expect(opens('void 0\nif (!isSimulated) return new Response(null, { status: 404 })')).toBe(false)
+    })
+
+    // Known limits: correct code the scan refuses (fail closed). Pinned so a change to any of them is seen.
+    it.each([
+        {
+            name: 'a module helper is not followed when a nested block declares a function of the same name',
+            files: post('check()', `function check() { ${CALL} }\nif (cond) { function check() {} }\n`),
+        },
+        {
+            name: 'a module helper is not followed when a nested loop binds a const of the same name',
+            files: post('check()', `function check() { ${CALL} }\nfor (const check of [1]) { void check }\n`),
+        },
+    ])('known limit: $name', ({ files }) => {
+        expectVerdicts(verdicts(files), { POST: 'open' })
+    })
+
+    it('known limit: a namespace merged with the handler function is refused', () => {
+        const route = scanTree({
+            'route.ts': `${AUTHORIZE}${DECLS}export async function POST() { ${CALL}; return new Response('ok') }\nexport namespace POST { export const maxDuration = 1 }\n`,
+        }).find((r) => r.rel === 'route.ts')
+        expect(route?.handlers[0]?.refusal).toBeDefined()
+    })
+
+    it('known limit: a wrapper reached through .bind is not the wrapper the gate names', () => {
+        const facts = factsOf(
+            "import { withWebhookSecret } from './respond'\nexport const POST = withWebhookSecret.bind(null)(async () => new Response('x'))\n",
+        )
+        expect(facts.wrappedBy).not.toBe('withWebhookSecret')
     })
 })

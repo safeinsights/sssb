@@ -12,6 +12,7 @@ import {
     judgeServerAction,
     scanRoutes,
     scanServerActions,
+    unreadRouteFiles,
 } from './route-scan'
 
 /**
@@ -211,7 +212,8 @@ const PAGES_API_DIRS = ['pages/api', 'src/pages/api']
  * exemption and must call `authorize(...)` itself). Every Server Action under `<appDir>/src` (a `'use server'` file's
  * exports, and each function whose body opens with `'use server'`) is judged as a POST is, and can match no
  * exemption. A Pages Router API directory fails outright: SSSB apps are App Router, and the scan reads no
- * `pages/api` handler. Re-exported handlers are followed with the app's `tsconfig.json` (or `jsconfig.json`).
+ * `pages/api` handler. So does a root-level `app/` directory (Next serves it instead of `src/app`), and a file under
+ * `src/app` named `route.<ext>` for an extension the scan does not read (`pageExtensions` is not read). Re-exported handlers are followed with the app's `tsconfig.json` (or `jsconfig.json`).
  */
 export async function scanApp(appDir: string): Promise<AppScan> {
     const name = path.basename(appDir)
@@ -232,6 +234,20 @@ export async function scanApp(appDir: string): Promise<AppScan> {
     const failures = [
         ...mutating.flatMap((route) => route.handlers.flatMap((handler) => judge(route, handler, policy) ?? [])),
         ...actions.flatMap((action) => judgeServerAction(action) ?? []),
+        ...(existsSync(path.join(appDir, 'app'))
+            ? [
+                  `${name}: app/ is a root-level App Router directory. Next serves it and ignores src/app when both ` +
+                      `exist, and the authorization scan reads only src/app, so no route in app/ is checked. Keep the ` +
+                      `app's routes in src/app.`,
+              ]
+            : []),
+        ...(existsSync(root.dir) ? unreadRouteFiles(root.dir) : []).map(
+            (file) =>
+                `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} is named like a route, but the ` +
+                `authorization scan reads only route.ts, route.tsx, route.js, route.jsx and route.mjs. If Next serves it ` +
+                `(a pageExtensions entry), nothing checked it: rename it to one of those, or rename it to something not ` +
+                `named route.`,
+        ),
         ...PAGES_API_DIRS.filter((dir) => existsSync(path.join(appDir, dir))).map(
             (dir) =>
                 `${name}: ${dir} is a Pages Router API directory. SSSB apps are App Router, and the authorization scan ` +
