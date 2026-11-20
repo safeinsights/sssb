@@ -30,7 +30,7 @@
         },
         {
             "id": "db-role-not-superuser",
-            "what": "The role in `DATABASE_URL` holds neither `SUPERUSER` nor `BYPASSRLS`"
+            "what": "The role the app connects as (the one in `DATABASE_URL` on `pg`, the one the secret at `DATABASE_SECRET_ARN` holds on `data-api`) holds neither `SUPERUSER` nor `BYPASSRLS`"
         },
         {
             "id": "origin-not-publicly-reachable",
