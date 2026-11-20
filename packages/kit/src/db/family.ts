@@ -73,7 +73,7 @@ export interface DbFamily {
     proofs(): Promise<{ runRlsProofs: typeof runRlsProofs }>
 }
 
-export const postgresFamily: DbFamily = {
+const postgresFamily: DbFamily = {
     name: 'postgres',
     // Row-level security: every tenant table's policy compares `tenant_id` with the transaction's tenant setting,
     // under a role that cannot bypass it (ADR-0004).
@@ -104,5 +104,8 @@ export const postgresFamily: DbFamily = {
     proofs: () => import('./rls-proof-runner'),
 }
 
-/** The family the framework's logic runs on. One today; choosing it from the app's declaration arrives with a second. */
+/**
+ * The family the framework runs on: its data modules' dialect helpers, and its transports' isolation and tenant scope.
+ * Postgres, the one family today; choosing it from the app's declaration arrives with a second.
+ */
 export const family: DbFamily = postgresFamily

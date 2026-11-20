@@ -10,7 +10,7 @@ import {
 } from 'kysely'
 import { describe, expect, it } from 'vitest'
 import { dbPortFor } from '../adapters/real/db-port'
-import { family, postgresFamily } from './family'
+import { family } from './family'
 import { jsonb } from './jsonb'
 import type { DB } from './schema'
 import { runWithTenant } from './with-tenant'
@@ -121,26 +121,26 @@ describe('the Postgres family sends the SQL its call sites wrote inline', () => 
 
 describe('the Postgres family is the one every transport runs', () => {
     it('is the family in use, isolating by row-level security', () => {
-        expect(family).toBe(postgresFamily)
-        expect(postgresFamily.isolation).toBe('rls')
+        expect(family.name).toBe('postgres')
+        expect(family.isolation).toBe('rls')
     })
 
     it("scopes a tenant with the framework's runWithTenant", () => {
-        expect(postgresFamily.runWithTenant).toBe(runWithTenant)
+        expect(family.runWithTenant).toBe(runWithTenant)
     })
 
     it('every Postgres transport declares the family isolation', async () => {
         const { fakeDb } = await import('../adapters/fake/db')
-        expect(fakeDb.isolation).toBe(postgresFamily.isolation)
+        expect(fakeDb.isolation).toBe(family.isolation)
         // node-postgres and the Data API share one port shape (../adapters/real/db-port.ts)
-        expect(dbPortFor(db).isolation).toBe(postgresFamily.isolation)
+        expect(dbPortFor(db).isolation).toBe(family.isolation)
     })
 
     it("loads the framework's migrations, the migrator and the proof runner", async () => {
-        const { frameworkMigrations, migrations } = await postgresFamily.migrations()
+        const { frameworkMigrations, migrations } = await family.migrations()
         expect(Object.keys(frameworkMigrations)).toContain('0001_tenants')
         expect(Object.keys(migrations)).toEqual(expect.arrayContaining(Object.keys(frameworkMigrations)))
-        expect(await postgresFamily.migrator()).toBe(await import('./migrate'))
-        expect((await postgresFamily.proofs()).runRlsProofs).toBe((await import('./rls-proof-runner')).runRlsProofs)
+        expect(await family.migrator()).toBe(await import('./migrate'))
+        expect((await family.proofs()).runRlsProofs).toBe((await import('./rls-proof-runner')).runRlsProofs)
     })
 })

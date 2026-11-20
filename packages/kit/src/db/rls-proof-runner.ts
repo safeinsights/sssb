@@ -4,7 +4,7 @@ import type { DbPort } from '../ports/db'
 import { proveRlsCoverage } from './rls-coverage'
 import { frameworkRlsProofs, type ProofExpectation } from './rls-proofs'
 import type { DB } from './schema'
-import { postgresFamily } from './family'
+import { family } from './family'
 
 /**
  * The composition root of THE tenant-isolation proof suite (ADR-0004): framework proofs ∪ app proofs,
@@ -64,9 +64,9 @@ export async function runRlsProofs(
     // (`keysetPage`, which takes a DbPort and opens `withTenant` itself) rather than a re-implementation
     // of them. Migration/ready are not this suite's business — it is handed an already-migrated engine.
     const dbPort: DbPort = {
-        isolation: postgresFamily.isolation,
+        isolation: family.isolation,
         getDb: () => db,
-        withTenant: (tenantId, fn) => postgresFamily.runWithTenant(appDb, tenantId, fn),
+        withTenant: (tenantId, fn) => family.runWithTenant(appDb, tenantId, fn),
         ready: () => Promise.resolve(),
         migrateToLatest: () => Promise.resolve(),
     }
