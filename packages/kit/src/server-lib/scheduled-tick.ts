@@ -24,7 +24,11 @@ import { dispatchWebhook } from './webhook-dispatch'
 export interface ScheduledTickResult {
     /** Jobs spawned from due schedules. */
     spawned: number
-    /** Due schedules whose spawn failed (retried on the next tick). */
+    /**
+     * Due schedules whose spawn failed. One that failed inside the spawn transaction is retried on the next tick (its
+     * next_run_at never advanced); one that failed after it committed (the audit write, the runner's start) is not:
+     * its job is already queued and the schedule has moved to its next slot (../db/schedules.ts, "Fault isolation").
+     */
     failed: number
     /** What the delivery drain did (`runDueDeliveries`'s own result). */
     deliveries: Awaited<ReturnType<typeof runDueDeliveries>>
