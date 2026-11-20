@@ -142,3 +142,16 @@ describe('the Clerk adapter, reading lists longer than one page', () => {
         expect(user?.role).toBe('admin')
     })
 })
+
+describe('the Clerk adapter, a membership that records no role', () => {
+    it('is a guest everywhere: in the session, the switcher and the member list alike', async () => {
+        h.orgMembers = [member(1), member(2, 'not-a-role')]
+        h.invitations = [{ id: 'orginv_1', emailAddress: 'i@example.test', publicMetadata: {} }]
+        h.myMemberships = [myMembership(1)]
+        h.user = { fullName: 'Pat', primaryEmailAddress: null, publicMetadata: {}, unsafeMetadata: {} }
+        const { realAuth } = await import('./auth')
+        expect((await realAuth.getCurrentUser())?.role).toBe('guest')
+        expect((await realAuth.listMyOrgs()).map((o) => o.role)).toEqual(['guest'])
+        expect((await realAuth.listMembers('depot')).map((m) => m.role)).toEqual(['guest', 'guest', 'guest'])
+    })
+})

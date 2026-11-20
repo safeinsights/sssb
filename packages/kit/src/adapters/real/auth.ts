@@ -34,9 +34,14 @@ interface AppPublicMetadata {
     tenantSlug?: string
 }
 
-function roleFrom(metadata: unknown, fallback: Role): Role {
+/**
+ * The role a membership or invitation records, or `guest` when it records none (or one this app does not know): the
+ * least privilege, and the same answer everywhere, so the switcher and the member list never show a role the session
+ * does not have.
+ */
+function roleFrom(metadata: unknown): Role {
     const role = (metadata as AppPublicMetadata)?.role
-    return role && isRole(role) ? role : fallback
+    return role && isRole(role) ? role : 'guest'
 }
 
 /** The accept page as a path (with any query), for Clerk to resolve against the instance's own domain. */
@@ -86,7 +91,7 @@ export const realAuth: AuthPort = {
         const active =
             memberships.find((m) => (m.organization.slug ?? m.organization.id) === currentOrgSlug) ?? memberships[0]
 
-        const role = roleFrom(active?.publicMetadata, 'guest')
+        const role = roleFrom(active?.publicMetadata)
         return {
             id: userId,
             name: user.fullName ?? user.primaryEmailAddress?.emailAddress ?? userId,
@@ -168,7 +173,7 @@ export const realAuth: AuthPort = {
         // as "no standing" would hand an attacker a way to kill a victim's tokens.
         if (user.banned) return null
         const metadata = (user.publicMetadata ?? {}) as AppPublicMetadata
-        const role = roleFrom(membership.publicMetadata, 'guest')
+        const role = roleFrom(membership.publicMetadata)
         return { role, restricted: isRestricted(metadata.restricted, role) }
     },
 
@@ -190,7 +195,7 @@ export const realAuth: AuthPort = {
                 id: data?.userId ?? m.id,
                 name: data ? `${data.firstName ?? ''} ${data.lastName ?? ''}`.trim() || null : null,
                 email: data?.identifier ?? '',
-                role: roleFrom(m.publicMetadata, 'member'),
+                role: roleFrom(m.publicMetadata),
                 status: 'active' as const,
             }
         })
@@ -198,7 +203,7 @@ export const realAuth: AuthPort = {
             id: i.id,
             name: null,
             email: i.emailAddress,
-            role: roleFrom(i.publicMetadata, 'member'),
+            role: roleFrom(i.publicMetadata),
             status: 'invited' as const,
         }))
         return [...active, ...invited]
@@ -246,7 +251,7 @@ export const realAuth: AuthPort = {
         return memberships.map((m) => ({
             slug: m.organization.slug ?? m.organization.id,
             name: m.organization.name,
-            role: roleFrom(m.publicMetadata, 'member'),
+            role: roleFrom(m.publicMetadata),
         }))
     },
 
