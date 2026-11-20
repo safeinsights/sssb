@@ -155,6 +155,23 @@ emulator together:
 - `ts` is a `stringValue` of UTC wall-clock time, `YYYY-MM-DD HH:MM:SS[.ffffff]`, with no zone.
 - `big` and `n` are `stringValue`s; `ds` is an `arrayValue` of `stringValues`; `by` is a `blobValue`.
 
+Then the shapes the emulator models but nobody has seen AWS answer:
+
+```bash
+rds execute-statement --database "$DB" --include-result-metadata \
+  --result-set-options decimalReturnType=STRING,longReturnType=STRING \
+  --sql "SELECT 0.0000001::numeric AS tiny, '{9007199254740993}'::int8[] AS bigs, 1.1::float4 AS f,
+         B'1' AS bit1, '12:34:56.789'::time AS t"
+```
+
+- Check that `tiny` is `0.0000001`, not scientific notation (`1E-7`): the codec passes the string through.
+- Check that `bigs`' element is a string, not a JSON number: `longReturnType=STRING` must reach inside an array,
+  or an `int8[]` value past 2^53 loses precision silently.
+- Check that `f` is `1.1` (not a float32-widened `1.100000023841858`), `bit1` the shape the emulator answers (not a
+  `booleanValue`), and `t` keeps its `.789`.
+- Check that `numberOfRecordsUpdated` for an `UPDATE … RETURNING` is the number of rows, as the emulator answers:
+  `UPDATE tenants SET name = name WHERE slug = (SELECT slug FROM tenants LIMIT 1) RETURNING slug` should say 1.
+
 Then a response over the 1 MiB cap, in rows that each stay under the 64 KB per row that AWS's
 troubleshooting page also lists, so that a failure is the cap's:
 
@@ -184,6 +201,9 @@ rds execute-statement --database "$DB" --sql "INSERT INTO tenants (slug, name) S
 This fails with a unique violation. Record the exception's name and its whole message, including whether
 it ends `; SQLState: 23505`. The dialect handles both forms (`normalizeDatabaseError` in
 `packages/kit/src/adapters/real/rds-data-codec.ts`), but the row should say which one AWS sends.
+Check too whether the message carries Postgres's `Detail:` line, which quotes the row's values:
+`normalizeDatabaseError` takes the first pattern that matches anywhere in it, so row text could give the wrong
+constraint name or code.
 
 Also roll back a transaction id that has already ended, and record that exception's name and message: the
 dialect treats `TransactionNotFoundException`, or a message saying the transaction is not found, as already
@@ -199,9 +219,9 @@ rds execute-statement --database "$DB" --sql "SELECT 1; SELECT 2"
 ```
 
 The emulator names all three `ValidationException`, and the dialect takes that name to mean the request
-never reached the database, so a transaction it happened in stays usable. If AWS sends another name, change
-both. (The dialect refuses a multistatement itself before calling; the third request checks the emulator's
-model of AWS.)
+never reached the database, so a transaction it happened in stays usable. If AWS sends another name
+(`BadRequestException`, say), change both: until then the dialect marks that transaction failed. (The dialect
+refuses a multistatement itself before calling; the third request checks the emulator's model of AWS.)
 
 ## 5. The app on the transport
 
