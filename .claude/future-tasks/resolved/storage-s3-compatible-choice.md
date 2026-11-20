@@ -1,6 +1,6 @@
 # Storage on any S3-compatible store (R2, MinIO, Backblaze B2)
 
-**Priority:** P2 · **Status:** open, accepted to build now
+**Priority:** P2 · **Status:** resolved 2026-11-19
 **Decided in:** ADR-0015, section 1 and the second addendum (2026-11-19), whose "Decided in writing this" makes it a
 choice of its own. Section 6's R2 worked example has the facts about R2.
 
@@ -43,3 +43,28 @@ configuration, not a new adapter.
 - The adopter reference says how to point at R2, MinIO or B2, and what the choice cannot do yet.
 - A cutover row names the live check: a round trip of every other port method against a real R2 bucket. Nothing here
   calls R2.
+
+## Implementation summary (2026-11-19)
+
+`STORAGE_PROVIDER=s3-compatible` is a choice of its own in `packages/kit/src/adapters/real/optional-ports.ts`, with
+`createCompatibleStorage` in `packages/kit/src/adapters/real/storage.ts` building the S3 adapter on the endpoint, region
+and key pair, which the registry reads from `STORAGE_BUCKET`, `STORAGE_ENDPOINT`, `STORAGE_REGION`,
+`STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY` and `STORAGE_UPLOAD_TARGET`, and optionally
+`STORAGE_FORCE_PATH_STYLE`. `SssbApp` builds no bucket and grants no S3 access for it (`params.ports.storage` is
+`s3` or `s3-compatible` or `none`); the required-environment snapshot gained the choice and nothing else changed.
+
+Decided here (and in `docs/decision-log.md`):
+
+- **`STORAGE_UPLOAD_TARGET` is required, `post` or `none`, with no default.** Either default is a guess that fails on
+  some store only when a browser first uploads. Rejected: optional with a default of `post` (R2 fails at the first
+  upload) or of `none` (MinIO silently loses a feature it has).
+- **The compatible adapter is a new export beside `createRealStorage`, whose signature is unchanged.**
+  Rejected: widening `createRealStorage`, which is the `s3` choice's and takes the AWS region.
+- **A value that is wrong fails at boot, naming its variable**: `STORAGE_UPLOAD_TARGET` outside `post` and `none`,
+  `STORAGE_FORCE_PATH_STYLE` outside `true` and `false` (empty is unset), `STORAGE_ENDPOINT` not an http(s) URL.
+- **`STORAGE_FORCE_PATH_STYLE` unset leaves the SDK's own addressing**, never derived from the endpoint.
+- **The cutover rows are three**: `storage-compatible-store` and `storage-compatible-credentials` (the two groups of
+  settings the choice's `env` map names) and `storage-compatible-live` (the round trip against a real bucket, which
+  nothing here calls).
+
+The PUT form is `storage-upload-target-put-form.md`.

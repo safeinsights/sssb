@@ -7,7 +7,7 @@ import {
 } from '@aws-sdk/client-s3'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { NotFoundError, PreconditionFailedError } from '../../ports/errors'
-import { createRealStorage } from './storage'
+import { createCompatibleStorage, createRealStorage, type CompatibleStorageSettings } from './storage'
 
 /**
  * The real storage adapter has never run against a bucket (cutover row `cloud-accounts`), but how it
@@ -328,5 +328,110 @@ describe('real storage copy with ifMatch', () => {
     test('a copy onto itself is refused before any request even with an ifMatch', async () => {
         await expect(storage().copy('same', 'same', { ifMatch: '"x"' })).rejects.toThrow(/same key/)
         expect(send).not.toHaveBeenCalled()
+    })
+})
+
+/**
+ * `STORAGE_PROVIDER=s3-compatible`: the same adapter on another store's endpoint and keys. Nothing here reaches a
+ * network: the SDK's transport is replaced as above, and a presigned POST is computed locally.
+ */
+describe('storage on an S3-compatible store', () => {
+    const SETTINGS: CompatibleStorageSettings = {
+        bucket: 'media',
+        endpoint: 'https://acct123.r2.example.com',
+        region: 'auto',
+        accessKeyId: 'AKIDEXAMPLE',
+        secretAccessKey: 'secret-example',
+        uploadTarget: 'post',
+    }
+    const compatible = (overrides: Partial<CompatibleStorageSettings> = {}) =>
+        createCompatibleStorage({ ...SETTINGS, ...overrides })
+
+    /** The configuration of the S3 client the adapter built, read from the one `send` went through. */
+    async function clientOf(storage: ReturnType<typeof compatible>) {
+        send.mockResolvedValue({ IsTruncated: false })
+        await storage.list('')
+        const client = send.mock.contexts[0] as S3Client
+        return {
+            endpoint: await client.config.endpoint?.(),
+            region: await client.config.region(),
+            credentials: await client.config.credentials(),
+            forcePathStyle: client.config.forcePathStyle,
+        }
+    }
+
+    test('reaches the store at its endpoint, region and key pair, not AWS’s', async () => {
+        const config = await clientOf(compatible())
+        expect(config.endpoint).toMatchObject({ protocol: 'https:', hostname: 'acct123.r2.example.com' })
+        expect(config.region).toBe('auto')
+        expect(config.credentials).toMatchObject({ accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'secret-example' })
+    })
+
+    test('every other port method is the S3 adapter’s: a copy names the configured bucket and sends one CopyObject', async () => {
+        send.mockResolvedValueOnce({})
+        await compatible().copy('a/x', 'b/x')
+        expect(sentOfType(CopyObjectCommand)[0]!.input).toMatchObject({ Bucket: 'media', CopySource: 'media/a/x' })
+    })
+
+    test.each([
+        ['unset', undefined, undefined],
+        ['empty, which is unset', '', undefined],
+        ['true', 'true', true],
+        ['false', 'false', false],
+    ])('STORAGE_FORCE_PATH_STYLE %s reaches the client as %s', async (_label, value, expected) => {
+        const config = await clientOf(compatible({ forcePathStyle: value }))
+        // Unset leaves the SDK's own default, which is false: nothing is guessed from the endpoint.
+        expect(config.forcePathStyle ?? false).toBe(expected ?? false)
+        if (expected === undefined) expect(config.forcePathStyle).not.toBe(true)
+    })
+
+    test.each(['1', 'yes', 'TRUE', ' true'])(
+        'STORAGE_FORCE_PATH_STYLE=%j fails at boot, naming the setting',
+        (value) => {
+            expect(() => compatible({ forcePathStyle: value })).toThrow(
+                /STORAGE_FORCE_PATH_STYLE must be true or false when set \(got/,
+            )
+        },
+    )
+
+    test.each(['', 'POST', 'put', 'true', ' post'])(
+        'STORAGE_UPLOAD_TARGET=%j fails at boot: it is post or none, and has no default',
+        (uploadTarget) => {
+            expect(() => compatible({ uploadTarget })).toThrow(/STORAGE_UPLOAD_TARGET must be post or none/)
+        },
+    )
+
+    test.each(['', 'acct123.r2.example.com', 'ftp://host', 'not a url'])(
+        'STORAGE_ENDPOINT=%j fails at boot, naming the setting',
+        (endpoint) => {
+            expect(() => compatible({ endpoint })).toThrow(/STORAGE_ENDPOINT must be an http\(s\) URL/)
+        },
+    )
+
+    describe('createUploadTarget', () => {
+        const constraints = { contentType: 'image/png', maxBytes: 1024 }
+
+        test('with `post` mints a presigned POST at the store’s endpoint, carrying the policy', async () => {
+            const target = await compatible({ forcePathStyle: 'true' }).createUploadTarget('k/1.png', constraints)
+            expect(target.url).toBe('https://acct123.r2.example.com/media')
+            expect(target.fields).toMatchObject({ key: 'k/1.png', 'Content-Type': 'image/png' })
+            const policy = JSON.parse(Buffer.from(target.fields['Policy']!, 'base64').toString('utf8'))
+            expect(policy.conditions).toContainEqual(['content-length-range', 0, 1024])
+        })
+
+        test('with `none` fails, naming STORAGE_UPLOAD_TARGET, and touches no store', async () => {
+            const failure = compatible({ uploadTarget: 'none' }).createUploadTarget('k/1.png', constraints)
+            await expect(failure).rejects.toThrow(/STORAGE_UPLOAD_TARGET=none/)
+            expect(send).not.toHaveBeenCalled()
+        })
+
+        test('with `none` leaves every other method working', async () => {
+            const storage = compatible({ uploadTarget: 'none' })
+            send.mockResolvedValueOnce({ IsTruncated: false, Contents: [{ Key: 'a' }] })
+            expect(await storage.list('')).toEqual(['a'])
+            for (const method of ['put', 'get', 'head', 'copy', 'delete', 'list', 'getSignedDownloadUrl'] as const) {
+                expect(typeof storage[method]).toBe('function')
+            }
+        })
     })
 })

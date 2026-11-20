@@ -6907,3 +6907,36 @@ Accepted in part; the work it starts is seven briefs under `.claude/future-tasks
 - **On an S3-compatible store the upload target is explicit**, a setting saying whether the store accepts presigned
   POST (MinIO does, R2 does not), never guessed from the endpoint. Rejected: refusing it always, which would take
   browser upload from stores that support it.
+
+## `s3-compatible` storage choice (2026-11-19, `feat/storage-s3-compatible`)
+
+Built from `.claude/future-tasks/resolved/storage-s3-compatible-choice.md` (ADR-0015, second addendum). Decisions taken
+in building it:
+
+- **`STORAGE_UPLOAD_TARGET` is a required setting of the choice, `post` or `none`.** The brief proposed the setting and
+  left its default open. Either default is a guess that fails only when a browser first uploads: `post` on R2 fails at
+  the first upload, `none` on MinIO silently drops a feature it has. Requiring it makes it the sixth variable of the
+  choice, which costs nobody anything: the choice is new. Rejected: optional with a default of either.
+- **A new `createCompatibleStorage` beside `createRealStorage`, which is unchanged.** The `s3` choice takes the bucket
+  and the AWS region and must keep doing so. Rejected: widening `createRealStorage`'s parameters, which would make one
+  function behave differently by which of them is set (the switch rule again).
+- **Values that choose behaviour are checked where the adapter is built, and a wrong one fails at boot naming its
+  variable**: `STORAGE_UPLOAD_TARGET` outside `post` and `none`, `STORAGE_FORCE_PATH_STYLE` outside `true` and `false`
+  (an empty value is unset), `STORAGE_ENDPOINT` that is not an http(s) URL. Rejected: coercing (`TRUE`, `1`), which turns a
+  typo into the other behaviour. The check is not in `assertRealEnv`, which only reports what is missing and is held to
+  the committed snapshot of required names.
+- **`STORAGE_FORCE_PATH_STYLE` unset leaves the SDK's own addressing**, never derived from the endpoint or the provider.
+  MinIO needs `true`, and the adopter reference says so.
+- **With `none`, `createUploadTarget` throws a plain `Error` naming `STORAGE_UPLOAD_TARGET`**, as the absent port
+  throws, so a route that reaches it answers 500 and the log says which setting to change. Rejected: a port error class
+  `withPortErrors` maps, since a deployment's declaration is a misconfiguration to the route that hits it, not a request
+  the client can fix.
+- **`SssbApp` sets only the switch for `s3-compatible`.** The endpoint, region and keys are the deployment's to add to
+  `app.server`, as an app's Mailgun or Anthropic key already is; the construct never handles a secret. Rejected: new
+  `SssbApp` props for the store's settings, which would put the key in a stack's template.
+- **Three cutover rows**, two for the groups of settings the choice's `env` map names (`storage-compatible-store`,
+  `storage-compatible-credentials`) and one for the live check (`storage-compatible-live`), which asks a round trip of
+  every other port method against a real bucket on the chosen store. Rejected: one row for all six variables, which
+  would make a missing key and a missing endpoint the same row, and reusing `cloud-accounts`, which says AWS.
+- **The PUT form of the upload target is its own future task**, `storage-upload-target-put-form.md`, with `put` named as
+  a third value of the same setting.

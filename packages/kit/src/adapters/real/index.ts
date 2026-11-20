@@ -102,10 +102,21 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
                   region: need('AWS_REGION'),
               })
             : (await import('./db')).createRealDb(need('DATABASE_URL'))
+    const storageChoice = portChoice('storage')
     const storage =
-        portChoice('storage') === 's3'
+        storageChoice === 's3'
             ? (await import('./storage')).createRealStorage(need('STORAGE_BUCKET'), need('AWS_REGION'))
-            : absentStorage
+            : storageChoice === 's3-compatible'
+              ? (await import('./storage')).createCompatibleStorage({
+                    bucket: need('STORAGE_BUCKET'),
+                    endpoint: need('STORAGE_ENDPOINT'),
+                    region: need('STORAGE_REGION'),
+                    accessKeyId: need('STORAGE_ACCESS_KEY_ID'),
+                    secretAccessKey: need('STORAGE_SECRET_ACCESS_KEY'),
+                    uploadTarget: need('STORAGE_UPLOAD_TARGET'),
+                    forcePathStyle: env['STORAGE_FORCE_PATH_STYLE'],
+                })
+              : absentStorage
     const llm =
         portChoice('llm') === 'anthropic' ? (await import('./llm')).createRealLlm(need('ANTHROPIC_API_KEY')) : absentLlm
     const email =

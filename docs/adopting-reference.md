@@ -686,7 +686,7 @@ rather than restated. Read it once for the level of detail each row deserves bef
 
 Real mode requires the settings of SSSB's optional ports only for the ones your app uses. Declare them in
 `apps/<app>/config/params.ts`, under `ports`: `llm` (`anthropic` or `none`), `email` (`mailgun` or `none`),
-`inboundEmail` (`mailgun` or `none`), `jobs` (`codebuild`, `in-process` or `none`) and `storage` (`s3` or `none`).
+`inboundEmail` (`mailgun` or `none`), `jobs` (`codebuild`, `in-process` or `none`) and `storage` (`s3`, `s3-compatible` or `none`).
 `SssbApp` sets each as the server's switch (`LLM_PROVIDER`, `EMAIL_PROVIDER`, `INBOUND_EMAIL_PROVIDER`, `JOBS_RUNNER`,
 `STORAGE_PROVIDER`); a deployment of your own, or `pnpm dev:real`, sets the variables itself. An unset switch takes its
 first value, which is what real mode required before the switches existed.
@@ -704,6 +704,27 @@ first value, which is what real mode required before the switches existed.
   a deployed stack from `s3` to `none` takes the bucket out of the stack: a `production: true` deployment retains it,
   with its objects, outside the stack; any other deletes it and everything in it, as deleting the stack would. Copy
   out what you need first. Switching back builds a new, empty bucket under the same logical id, never the old one.
+- **`storage: 's3-compatible'` points the storage port at another store that speaks the S3 API** (Cloudflare R2,
+  MinIO, Backblaze B2), through the same adapter and no code of yours. It is a choice of its own, so setting an
+  endpoint under `s3` does nothing. `SssbApp` builds no bucket and grants no S3 access for it (the store is not in your
+  stack), sets only `STORAGE_PROVIDER`, and you add the rest to the server's environment yourself (`app.server`), the
+  keys from your secret store: `STORAGE_BUCKET`, `STORAGE_ENDPOINT` (the store's S3 API URL, such as
+  `https://<account id>.r2.cloudflarestorage.com` for R2 or `https://s3.<region>.backblazeb2.com` for B2),
+  `STORAGE_REGION` (what the store signs for; R2 takes `auto`), `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY` and
+  `STORAGE_UPLOAD_TARGET`. Real mode fails at boot naming each one that is missing. The AWS names are not used:
+  `AWS_REGION` and the AWS key pair are the function's own, which Lambda reserves. `STORAGE_FORCE_PATH_STYLE=true`
+  addresses the bucket in the path (`https://host/bucket/key`), which MinIO needs; left out, the SDK's own addressing
+  applies. Whatever the store, `getSignedDownloadUrl`, `put`, `get`, `head`, `list`, `copy` (with `ifMatch`) and `delete` are
+  S3's calls, so what the store implements of them decides what works: run the cutover row `storage-compatible-live`
+  against a real bucket before you rely on it.
+  **What it cannot do yet: a browser upload on a store without presigned POST.** `createUploadTarget` mints an S3
+  presigned POST, which Cloudflare documents R2 as not supporting (MinIO accepts one). So `STORAGE_UPLOAD_TARGET` is
+  required, never guessed from the endpoint: `post` if the store accepts a presigned POST, `none` if it does not, and
+  with `none` `createUploadTarget` fails with an error that names the setting, while every other method works. An app
+  that must take browser uploads into R2 waits for a PUT form of the upload target (a future task,
+  `.claude/future-tasks/storage-upload-target-put-form.md` in SSSB's repository); until then it sends the file through
+  its own server and calls `put`. Switching a deployed stack from `s3` to `s3-compatible` takes the bucket out of the
+  stack, as `none` does (above); copy the objects to the new store first.
 - **`jobs: 'in-process'` needs no CodeBuild project.** Each job's handler runs in the server, from the request or the
   scheduled tick that started it, and its status is recorded before that call returns. It shares that invocation's
   time limit (30 seconds on `SssbApp`), so work that may outrun it belongs on `codebuild`, which runs each job as a

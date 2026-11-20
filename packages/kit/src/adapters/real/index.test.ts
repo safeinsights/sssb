@@ -84,7 +84,10 @@ beforeEach(() => {
     })
     vi.doMock('./storage', () => {
         loaded.storage += 1
-        return { createRealStorage: () => ({ kind: 's3' }) }
+        return {
+            createRealStorage: () => ({ kind: 's3' }),
+            createCompatibleStorage: (settings: object) => ({ kind: 's3-compatible', settings }),
+        }
     })
     // The registry builds the in-process runner; this module must never load it (a counter that stays 0).
     vi.doMock('./jobs-in-process', () => {
@@ -207,6 +210,77 @@ describe('the optional ports follow their switches, and a port switched off is a
             await expect(call(), method).rejects.toThrow(/the storage port is absent.*STORAGE_PROVIDER=none/)
         }
         await ports.db.getDb().destroy()
+    })
+
+    describe('STORAGE_PROVIDER=s3-compatible', () => {
+        const COMPATIBLE = {
+            ...PG,
+            STORAGE_PROVIDER: 's3-compatible',
+            JOBS_RUNNER: 'in-process',
+            STORAGE_BUCKET: 'media',
+            STORAGE_ENDPOINT: 'https://acct123.r2.example.com',
+            STORAGE_REGION: 'auto',
+            STORAGE_ACCESS_KEY_ID: 'key-id',
+            STORAGE_SECRET_ACCESS_KEY: 'key-secret',
+            STORAGE_UPLOAD_TARGET: 'none',
+            // What `s3` would read, and what Lambda reserves: neither is used, nor required.
+            AWS_REGION: undefined,
+            STORAGE_FORCE_PATH_STYLE: undefined,
+        }
+
+        it('builds the adapter on the store’s own settings, never on AWS_REGION or the AWS key pair', async () => {
+            stubEnv({ ...COMPATIBLE, STORAGE_FORCE_PATH_STYLE: 'true', AWS_ACCESS_KEY_ID: 'lambda-role-key' })
+            const { createRealPorts } = await import('./index')
+            const ports = await createRealPorts(HOOKS)
+            expect(loaded.storage).toBe(1)
+            expect(ports.storage).toEqual({
+                kind: 's3-compatible',
+                settings: {
+                    bucket: 'media',
+                    endpoint: 'https://acct123.r2.example.com',
+                    region: 'auto',
+                    accessKeyId: 'key-id',
+                    secretAccessKey: 'key-secret',
+                    uploadTarget: 'none',
+                    forcePathStyle: 'true',
+                },
+            })
+            await ports.db.getDb().destroy()
+        })
+
+        it('fails at boot without its settings, naming each missing one and the rows that hold them', async () => {
+            const { assertRealEnv } = await import('./index')
+            stubEnv({ ...COMPATIBLE, STORAGE_ENDPOINT: undefined, STORAGE_SECRET_ACCESS_KEY: undefined })
+            expect(() => assertRealEnv()).toThrow(
+                /storage-compatible-store, storage-compatible-credentials.*Missing env: STORAGE_ENDPOINT, STORAGE_SECRET_ACCESS_KEY\. /s,
+            )
+            for (const name of [
+                'STORAGE_BUCKET',
+                'STORAGE_ENDPOINT',
+                'STORAGE_REGION',
+                'STORAGE_ACCESS_KEY_ID',
+                'STORAGE_SECRET_ACCESS_KEY',
+                'STORAGE_UPLOAD_TARGET',
+            ]) {
+                stubEnv({ ...COMPATIBLE, [name]: undefined })
+                expect(() => assertRealEnv(), name).toThrow(new RegExp(`Missing env: ${name}\\. `))
+            }
+        })
+
+        it('leaves STORAGE_FORCE_PATH_STYLE optional, and the upload target explicit rather than defaulted', async () => {
+            const { assertRealEnv } = await import('./index')
+            stubEnv({ ...COMPATIBLE, STORAGE_FORCE_PATH_STYLE: undefined })
+            expect(() => assertRealEnv()).not.toThrow()
+            stubEnv({ STORAGE_UPLOAD_TARGET: '' })
+            expect(() => assertRealEnv()).toThrow(/Missing env: STORAGE_UPLOAD_TARGET\. /)
+        })
+
+        it('is its own choice: the `s3` settings do not select it, nor its settings select it', async () => {
+            const { assertRealEnv } = await import('./index')
+            // Every store setting present, switch unset: still `s3`, which wants AWS_REGION.
+            stubEnv({ ...COMPATIBLE, STORAGE_PROVIDER: undefined })
+            expect(() => assertRealEnv()).toThrow(/Missing env: AWS_REGION\. /)
+        })
     })
 
     it('JOBS_RUNNER=in-process needs no CodeBuild project and never loads the CodeBuild runner', async () => {
@@ -340,6 +414,9 @@ describe('the required environment', () => {
         expect(source).not.toMatch(/\bneed\(\s*[^'\s)]/) // a name not written as a literal could not be checked here
         const required = new Set<string>()
         for (const transport of DATABASE_TRANSPORTS) for (const name of await requiredOn(transport)) required.add(name)
+        // Variables only a non-default choice reads (`s3-compatible`'s) count too.
+        for (const choices of Object.values(await requiredByPorts()))
+            for (const names of Object.values(choices)) for (const name of names) required.add(name)
         expect(needed.filter((name) => !required.has(name))).toEqual([])
     })
 })

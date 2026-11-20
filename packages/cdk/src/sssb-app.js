@@ -369,8 +369,9 @@ export class SssbApp extends Construct {
         }
         // The optional ports' switches (LLM_PROVIDER, …), from `params.ports`: validated here, before anything is built.
         const portsEnv = portsEnvironment(props.params?.ports)
-        // Storage left out is the framework's default, `s3`: the bucket below exists unless the app says `none`.
-        const storesObjects = portsEnv['STORAGE_PROVIDER'] !== 'none'
+        // Storage left out is the framework's default, `s3`: the bucket below exists for `s3` alone. `s3-compatible`
+        // keeps its objects in a store this stack does not own (R2, MinIO, B2), and `none` stores nothing.
+        const storesObjects = (portsEnv['STORAGE_PROVIDER'] ?? 's3') === 's3'
         const scheduledTick = props.scheduledTick
         // Duck-typed: an imported secret (`Secret.fromSecretCompleteArn`) is no `Secret` instance.
         const tickSecret = /** @type {{ secretArn?: unknown, grantRead?: unknown } | undefined} */ (
@@ -455,9 +456,9 @@ export class SssbApp extends Construct {
         })
         // App object storage (StoragePort) — private, NEVER behind CloudFront: sharing the CDN
         // bucket would make app-stored objects publicly fetchable and let the app overwrite
-        // served JS. Only for an app that stores objects (`params.ports.storage` not `none`). Its construct id, and so
+        // served JS. Only for an app on the `s3` choice (`params.ports.storage` `s3`, or left out). Its construct id, and so
         // its logical id, is the same whenever it exists (the stateful logical ids snapshot). Switching an existing
-        // deployment to `none` removes it from the stack: in production its removal policy retains it, orphaned with
+        // deployment to `none` or `s3-compatible` removes it from the stack: in production its removal policy retains it, orphaned with
         // its objects; elsewhere it is emptied and deleted, as on the stack's own deletion.
         const storageBucket = storesObjects
             ? new aws_s3.Bucket(this, 'StorageBucket', {
