@@ -65,7 +65,7 @@ describe('DashboardGlue tickets', () => {
                 <NextIntlClientProvider locale="en" messages={mergeMessages(enFramework, en)}>
                     <MantineProvider>
                         <DashboardGlue
-                            user={{ name: 'Dana', role: 'admin' }}
+                            user={{ name: 'Dana', role: 'admin', restricted: false }}
                             assignees={[]}
                             canCreateTicket
                             canUpdateTicket
