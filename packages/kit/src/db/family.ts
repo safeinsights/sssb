@@ -1,9 +1,6 @@
 import { type Kysely, type RawBuilder, type SelectQueryBuilder, sql, type SqlBool, type Transaction } from 'kysely'
-import type { Migration } from 'kysely/migration'
 import type { KeysetPosition } from '../core/keyset'
 import type { DbIsolation } from '../ports/db'
-// TYPE-ONLY (erased): the proof runner reads the app's seam, and only the loader below may bring it in.
-import type { runRlsProofs } from './rls-proof-runner'
 import { jsonb } from './jsonb'
 import type { DB } from './schema'
 import { runWithTenant } from './with-tenant'
@@ -29,10 +26,10 @@ import { runWithTenant } from './with-tenant'
  *    app on another database writes its proofs for that database;
  *  - its catalog-reading tooling (`./app-roles.ts`, the conformance suite's schema reads, the contract server).
  *
- * The migrations, the migrator and the proof runner are LOADERS, not values. The registry composes the app's
- * migrations and the runner the app's proofs, both through `@sssb/app-config/*`, and collecting a test must not reach
- * the seam (the conformance suite and the contract runner are built from this file at collection time). This module
- * imports nothing that reaches it.
+ * The family comes in two halves, by who imports them. This module is the RUNTIME half: the data modules and the
+ * transports import it on the request path, so it imports nothing but Kysely, `./jsonb` and `./with-tenant`, statically
+ * or by `import()`: a bundler follows a literal `import()` into the server build. The SUITE half, `./family-suite.ts`,
+ * loads the migrations, the migrator and the proofs for the conformance suite and the contract runner.
  *
  * Today's modules are referenced where they stand, not moved: docs cite them by path.
  *
@@ -59,18 +56,6 @@ export interface DbFamily {
     ): SelectQueryBuilder<DB, TB, O & { keyset_at: string }>
     /** The tenant scope every transport's `withTenant` runs: `fn` inside one transaction scoped to `tenantId`. */
     runWithTenant<T>(db: Kysely<DB>, tenantId: string, fn: (trx: Transaction<DB>) => Promise<T>): Promise<T>
-    /** Loads the framework's migrations, and the registry composing them with the app's. */
-    migrations(): Promise<{
-        frameworkMigrations: Record<string, Migration>
-        migrations: Record<string, Migration>
-    }>
-    /** Loads the migrator, which applies the composed registry (or any registry it is given). */
-    migrator(): Promise<{
-        migrateToLatest(db: Kysely<DB>): Promise<void>
-        migrateRegistryToLatest(db: Kysely<DB>, registry: Record<string, Migration>): Promise<void>
-    }>
-    /** Loads the isolation proof suite: the framework's proofs and the app's, as one run. */
-    proofs(): Promise<{ runRlsProofs: typeof runRlsProofs }>
 }
 
 const postgresFamily: DbFamily = {
@@ -99,9 +84,6 @@ const postgresFamily: DbFamily = {
             .limit(take)
     },
     runWithTenant,
-    migrations: () => import('./migrations/index'),
-    migrator: () => import('./migrate'),
-    proofs: () => import('./rls-proof-runner'),
 }
 
 /**

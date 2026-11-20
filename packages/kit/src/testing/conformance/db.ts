@@ -3,14 +3,14 @@ import { type Migration, Migrator } from 'kysely/migration'
 import { expect } from 'vitest'
 import { openPglite, PGliteDialect } from '../../adapters/fake/pglite-dialect'
 import type { FoundRole } from '../../db/app-roles'
-import { family } from '../../db/family'
+import { familySuite } from '../../db/family-suite'
 import type { DB } from '../../db/schema'
 import type { CheckImpl } from './types'
 
 // Everything that composes the framework's migrations with the app's reaches the seam, so the database family hands
-// it over as loaders (../../db/family.ts), run when a test runs, not when the suite is collected.
-const migrate = () => family.migrator()
-const registry = () => family.migrations()
+// it over as loaders (../../db/family-suite.ts), run when a test runs, not when the suite is collected.
+const migrate = () => familySuite.migrator()
+const registry = () => familySuite.migrations()
 
 const pglite = () => new Kysely<DB>({ dialect: new PGliteDialect(openPglite()) })
 
@@ -198,7 +198,7 @@ export const rlsPglite: CheckImpl = {
     tests: {
         'the full RLS proof suite passes': async () => {
             const { migrateToLatest } = await migrate()
-            const { runRlsProofs } = await family.proofs()
+            const { runRlsProofs } = await familySuite.proofs()
             const db = pglite()
             try {
                 await migrateToLatest(db)

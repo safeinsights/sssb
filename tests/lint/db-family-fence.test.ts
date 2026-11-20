@@ -15,8 +15,13 @@ import { describe, expect, it } from 'vitest'
  *
  *  - Kysely's raw SQL: `sql` imported from `kysely` (under any local name, or re-exported), `CompiledQuery` (whose
  *    `raw` takes a SQL string), anything reached through a namespace import of `kysely`, and `import('kysely')`;
- *  - a row lock: `forUpdate`, `forShare`, `forKeyShare` or `forNoKeyUpdate`, called or named as a key;
+ *  - a row lock: `forUpdate`, `forShare`, `forKeyShare` or `forNoKeyUpdate`, called, destructured, or named as a key
+ *    in a string;
  *  - the jsonb encoding: importing the `jsonb` module (`./jsonb`, `@sssb/kit/db/jsonb`).
+ *
+ * What it cannot read: a key computed at run time (`q['for' + 'Update']`), and SQL handed to a driver as a string
+ * (`client.query('BEGIN')`), which only the family's transports and their emulator do. It is a fence against the
+ * framework's logic drifting back into one engine's SQL, not a proof that it cannot.
  *
  * Scope: every module under `packages/kit/src` that ships. Tests and stories do not (`@sssb/kit`'s `files`), and a
  * test of the family's own SQL has to write it. An app's code is the app's: its queries are written for its family
@@ -128,6 +133,8 @@ function engineSqlIn(fileName: string, source: string): string[] {
         } else if (ts.isElementAccessExpression(node)) {
             const key = specifierOf(node.argumentExpression)
             if (key !== undefined && ROW_LOCKS.has(key)) at(node, `takes a row lock (\`${key}\`)`)
+        } else if (ts.isBindingElement(node) && ROW_LOCKS.has((node.propertyName ?? node.name).getText(file))) {
+            at(node, `destructures a row lock (\`${(node.propertyName ?? node.name).getText(file)}\`)`)
         } else if (
             ts.isStringLiteralLike(node) &&
             ROW_LOCKS.has(node.text) &&
@@ -153,6 +160,84 @@ function shippedModules(dir: string): string[] {
 }
 
 const relative = (file: string) => path.relative(KIT_SRC, file).split(path.sep).join('/')
+
+/**
+ * What a module loads when it runs, or that a bundler follows into a build: its value imports and re-exports, and every
+ * literal `import()` and `require()`. A type-only import or re-export, and `import('…')` in a type, load nothing.
+ */
+function loadedSpecifiers(fileName: string, source: string): string[] {
+    const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true)
+    const loaded: string[] = []
+    const visit = (node: ts.Node): void => {
+        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+            const clause = node.importClause
+            const bindings = clause?.namedBindings
+            const typeOnly =
+                clause !== undefined &&
+                (clause.isTypeOnly ||
+                    (clause.name === undefined &&
+                        bindings !== undefined &&
+                        ts.isNamedImports(bindings) &&
+                        bindings.elements.length > 0 &&
+                        bindings.elements.every((element) => element.isTypeOnly)))
+            if (!typeOnly) loaded.push(node.moduleSpecifier.text)
+        } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+            if (!node.isTypeOnly) loaded.push(node.moduleSpecifier.text)
+        } else if (
+            ts.isCallExpression(node) &&
+            (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+                (ts.isIdentifier(node.expression) && node.expression.text === 'require')) &&
+            node.arguments[0] !== undefined &&
+            ts.isStringLiteralLike(node.arguments[0])
+        ) {
+            loaded.push(node.arguments[0].text)
+        }
+        ts.forEachChild(node, visit)
+    }
+    visit(file)
+    return loaded
+}
+
+/** Every module `entry` loads, transitively: the kit's own by path relative to its `src`, a package by its name. */
+function loadedFrom(entry: string): Set<string> {
+    const reached = new Set<string>()
+    const pending = [entry]
+    while (pending.length > 0) {
+        const file = pending.pop()!
+        if (reached.has(relative(file))) continue
+        reached.add(relative(file))
+        for (const specifier of loadedSpecifiers(file, readFileSync(file, 'utf8'))) {
+            if (!specifier.startsWith('.')) {
+                reached.add(specifier)
+                continue
+            }
+            const base = path.resolve(path.dirname(file), specifier)
+            const found = [`${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')].find((candidate) =>
+                existsSync(candidate),
+            )
+            if (found === undefined) throw new Error(`${relative(file)}: cannot resolve '${specifier}'`)
+            pending.push(found)
+        }
+    }
+    return reached
+}
+
+describe("the family's runtime half", () => {
+    // The data modules and the transports import ./family.ts on the request path, and a bundler follows every literal
+    // `import()` into the server build. So the runtime half loads nothing but Kysely and the two modules it reuses:
+    // the migrations, the migrator and the proofs (the app's among them) are the suite half's (./family-suite.ts).
+    it('loads nothing but kysely, the jsonb encoding and the tenant scope', () => {
+        expect([...loadedFrom(path.join(KIT_SRC, 'db/family.ts'))].sort()).toEqual(
+            ['db/family.ts', 'db/jsonb.ts', 'db/with-tenant.ts', 'kysely'].sort(),
+        )
+    })
+
+    it('reads a loader, which would bring the suite half in', () => {
+        const source = "import { sql } from 'kysely'\nexport const proofs = () => import('./rls-proof-runner')\n"
+        expect(loadedSpecifiers('db/probe.ts', source)).toEqual(['kysely', './rls-proof-runner'])
+        expect(loadedSpecifiers('db/probe.ts', "import type { DB } from './schema'\nexport type T = DB\n")).toEqual([])
+    })
+})
 
 describe('the database family fence', () => {
     it("no framework module writes engine SQL unless it is one of the Postgres family's", () => {
@@ -195,6 +280,11 @@ describe('the database family fence', () => {
             ['forKeyShare', 'export const lock = (q) => q.forKeyShare()\n'],
             ['a row lock as a computed key', "export const lock = (q) => q['forUpdate']()\n"],
             [
+                'a destructured row lock',
+                'export const lock = (q) => {\n    const { forUpdate } = q\n    return forUpdate.call(q)\n}\n',
+            ],
+            ['a row lock destructured from a parameter', 'export const lock = ({ forShare }) => forShare()\n'],
+            [
                 'a row lock as a key held in a variable',
                 "const key = 'forUpdate'\nexport const lock = (q) => q[key]()\n",
             ],
@@ -210,7 +300,7 @@ describe('the database family fence', () => {
 
         const ALLOWED: [string, string][] = [
             ['types from kysely', "import type { Kysely, Transaction } from 'kysely'\nexport type T = Kysely<never>\n"],
-            ['a type-only sql name', "import { type Kysely } from 'kysely'\nexport type T = Kysely<never>\n"],
+            ['a type-only sql name', "import { type sql } from 'kysely'\nexport type T = typeof sql\n"],
             ['an import type', "export type R = import('kysely').RawBuilder<string>\n"],
             ['the family', "import { family } from './family'\nexport const lock = (q) => q.$call(family.lockRow)\n"],
             ['a word in a comment', "// FOR UPDATE, jsonb and sql`now()` are the family's\nexport const x = 1\n"],

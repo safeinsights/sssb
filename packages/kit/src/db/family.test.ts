@@ -11,6 +11,7 @@ import {
 import { describe, expect, it } from 'vitest'
 import { dbPortFor } from '../adapters/real/db-port'
 import { family } from './family'
+import { familySuite } from './family-suite'
 import { jsonb } from './jsonb'
 import type { DB } from './schema'
 import { runWithTenant } from './with-tenant'
@@ -81,6 +82,12 @@ describe('the Postgres family sends the SQL its call sites wrote inline', () => 
 
         const detail = { refusal: 'revoked', steps: ['a', 'b'] }
         expect(sent(db.selectNoFrom(family.json(detail).as('v')))).toEqual(sent(db.selectNoFrom(jsonb(detail).as('v'))))
+        // `family.json` IS `jsonb` today, so the comparisons above hold by identity; these pin what both send.
+        expect(sent(db.selectNoFrom(family.json(detail).as('v')))).toEqual({
+            text: 'select $1::jsonb as "v"',
+            parameters: [JSON.stringify(detail)],
+        })
+        expect(sent(endpoint(family.json(kinds))).parameters[4]).toBe(JSON.stringify(kinds))
     })
 
     describe('keysetSlice is the keyset ordering, window and cursor rendering keyset.ts wrote', () => {
@@ -137,10 +144,10 @@ describe('the Postgres family is the one every transport runs', () => {
     })
 
     it("loads the framework's migrations, the migrator and the proof runner", async () => {
-        const { frameworkMigrations, migrations } = await family.migrations()
+        const { frameworkMigrations, migrations } = await familySuite.migrations()
         expect(Object.keys(frameworkMigrations)).toContain('0001_tenants')
         expect(Object.keys(migrations)).toEqual(expect.arrayContaining(Object.keys(frameworkMigrations)))
-        expect(await family.migrator()).toBe(await import('./migrate'))
-        expect((await family.proofs()).runRlsProofs).toBe((await import('./rls-proof-runner')).runRlsProofs)
+        expect(await familySuite.migrator()).toBe(await import('./migrate'))
+        expect((await familySuite.proofs()).runRlsProofs).toBe((await import('./rls-proof-runner')).runRlsProofs)
     })
 })
