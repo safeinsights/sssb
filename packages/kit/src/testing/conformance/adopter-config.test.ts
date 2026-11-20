@@ -89,7 +89,11 @@ const optOut = Object.fromEntries(
         .filter((check) => check.runner === 'unit' && check.id !== 'demo-presets')
         .map((check) => [check.id, 'not under test here']),
 )
-conformanceSuite({ appDir: ${JSON.stringify(path.resolve(FIXTURE_SEAM, '..'))}, optOut })
+conformanceSuite({
+    appDir: ${JSON.stringify(path.resolve(FIXTURE_SEAM, '..'))},
+    appDirOutsideCaller: 'a scratch project replaying the kit fixture',
+    optOut,
+})
 `
 
 /** Every scratch directory and marker any tmp-dir helper left in the child's TMPDIR. */

@@ -111,7 +111,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 
 - Keep `src/sssb.conformance.test.ts` (SSSB's conformance suite) and `tests/contract/rls-contract.test.ts` (the
   contract runner on real Postgres). Leave a check out only by a named opt-out with its reason,
-  `optOut: { '<check id>': '<why>' }`. `sssb doctor` fails when the Vitest config does not run them.
+  `optOut: { '<check id>': '<why>' }`. `sssb doctor` fails when the Vitest config does not run them. The suite's
+  `appDir` is the app's own directory: it refuses, while the file is collected, one that is not the package the suite
+  file sits in.
 - A test that needs a scratch directory calls `makeTestTmpDir()` or `makeTestTmpDirAsync()` from
   `@sssb/tools/testing/tmp-dir`, never `mkdtemp` directly. A script that runs Vitest as a gate goes through
   `sssb check-tmpdir-leak`.

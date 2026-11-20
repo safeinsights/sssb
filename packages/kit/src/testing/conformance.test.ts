@@ -12,6 +12,7 @@ import { conformanceSuite } from './index'
  */
 conformanceSuite({
     appDir: path.resolve(import.meta.dirname, '../../test-fixture'),
+    appDirOutsideCaller: "the kit's own run: the fixture is SSSB's stand-in app, not this test file's package",
     optOut: {
         'authz-mutations':
             "the fixture's routes live under test-fixture/api, not src/app; authorized-mutations.test.ts scans them",
@@ -28,6 +29,16 @@ describe('conformanceSuite refuses, while the file is collected', () => {
         // A contract check is not the unit suite's to leave out.
         expect(() => conformanceSuite({ appDir: '.', optOut: { 'contract-rls': 'not here' } })).toThrow(
             /optOut names "contract-rls"/,
+        )
+    })
+
+    it("an appDir that is not the calling file's app, naming both", () => {
+        const starter = path.resolve(import.meta.dirname, '../../../../apps/starter')
+        expect(() => conformanceSuite({ appDir: starter })).toThrow(
+            new RegExp(`appDir is ${starter}.*belongs to ${path.resolve(import.meta.dirname, '../..')}`),
+        )
+        expect(() => conformanceSuite({ appDir: starter, appDirOutsideCaller: ' ' })).toThrow(
+            /appDirOutsideCaller needs a reason/,
         )
     })
 
