@@ -45,6 +45,24 @@ function acceptPagePath(acceptPageUrl: string): string {
     return `${url.pathname}${url.search}`
 }
 
+/** Clerk's list calls answer a page at a time; this is the page size the adapter asks for. */
+const PAGE_SIZE = 100
+
+/**
+ * Every row of a Clerk list, read a page at a time. A list read as one page would silently drop whoever is past it: a
+ * team's 101st member from its notifications, or a person's 101st org from their switcher.
+ */
+async function allPages<T>(
+    page: (params: { limit: number; offset: number }) => Promise<{ data: T[]; totalCount: number }>,
+): Promise<T[]> {
+    const rows: T[] = []
+    for (;;) {
+        const { data, totalCount } = await page({ limit: PAGE_SIZE, offset: rows.length })
+        rows.push(...data)
+        if (data.length < PAGE_SIZE || rows.length >= totalCount) return rows
+    }
+}
+
 async function organizationIdForSlug(slug: string): Promise<string> {
     const client = await clerkClient()
     const org = await client.organizations.getOrganization({ slug })
@@ -63,11 +81,10 @@ export const realAuth: AuthPort = {
         // Resolve the active org membership: the remembered currentOrgSlug if still a membership,
         // else the first one. Role comes from that membership (per-org), not the user object.
         const client = await clerkClient()
-        const memberships = await client.users.getOrganizationMembershipList({ userId, limit: 100 })
+        const memberships = await allPages((page) => client.users.getOrganizationMembershipList({ userId, ...page }))
         const currentOrgSlug = (user.unsafeMetadata as { currentOrgSlug?: string })?.currentOrgSlug
         const active =
-            memberships.data.find((m) => (m.organization.slug ?? m.organization.id) === currentOrgSlug) ??
-            memberships.data[0]
+            memberships.find((m) => (m.organization.slug ?? m.organization.id) === currentOrgSlug) ?? memberships[0]
 
         const role = roleFrom(active?.publicMetadata, 'guest')
         return {
@@ -159,10 +176,12 @@ export const realAuth: AuthPort = {
         const client = await clerkClient()
         const organizationId = await organizationIdForSlug(orgSlug)
         const [members, invitations] = await Promise.all([
-            client.organizations.getOrganizationMembershipList({ organizationId, limit: 100 }),
-            client.organizations.getOrganizationInvitationList({ organizationId, status: ['pending'], limit: 100 }),
+            allPages((page) => client.organizations.getOrganizationMembershipList({ organizationId, ...page })),
+            allPages((page) =>
+                client.organizations.getOrganizationInvitationList({ organizationId, status: ['pending'], ...page }),
+            ),
         ])
-        const active: Membership[] = members.data.map((m) => {
+        const active: Membership[] = members.map((m) => {
             const data = m.publicUserData
             return {
                 // The USER id, never the membership resource id: Membership.id must share
@@ -175,7 +194,7 @@ export const realAuth: AuthPort = {
                 status: 'active' as const,
             }
         })
-        const invited: Membership[] = invitations.data.map((i) => ({
+        const invited: Membership[] = invitations.map((i) => ({
             id: i.id,
             name: null,
             email: i.emailAddress,
@@ -223,8 +242,8 @@ export const realAuth: AuthPort = {
         const { userId } = await auth()
         if (!userId) return []
         const client = await clerkClient()
-        const memberships = await client.users.getOrganizationMembershipList({ userId, limit: 100 })
-        return memberships.data.map((m) => ({
+        const memberships = await allPages((page) => client.users.getOrganizationMembershipList({ userId, ...page }))
+        return memberships.map((m) => ({
             slug: m.organization.slug ?? m.organization.id,
             name: m.organization.name,
             role: roleFrom(m.publicMetadata, 'member'),
