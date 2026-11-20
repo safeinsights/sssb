@@ -32,6 +32,24 @@ const ROUTES = routeFiles(API)
     .filter((rel) => NOT_JSON[rel] === undefined)
     .sort()
 
+it('misses no simulated-only POST: every route file that reads isSimulated and exports POST is listed or named', () => {
+    const exportsPost = /export\s+(?:async\s+function\s+POST\b|const\s+POST\b|\{[^}]*\bPOST\b[^}]*\})/
+    const candidates = readdirSync(API, { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile() && /^route\.(?:mjs|[jt]sx?)$/.test(entry.name))
+        .map((entry) => path.join(entry.parentPath, entry.name))
+        .filter((file) => {
+            const text = readFileSync(file, 'utf8')
+            return text.includes('isSimulated') && exportsPost.test(text)
+        })
+        .map((file) => path.relative(API, file).split(path.sep).join('/'))
+    const unlisted = candidates.filter((rel) => !ROUTES.includes(rel) && NOT_JSON[rel] === undefined)
+    expect(
+        unlisted,
+        'a simulated-only POST this test does not reach: open its POST with the simulated-mode 404 as the others do, ' +
+            'or name it in NOT_JSON with a reason',
+    ).toEqual([])
+})
+
 it('finds the simulated-only POST routes (a walk that found none would pass vacuously)', () => {
     expect(ROUTES.length).toBeGreaterThanOrEqual(21)
     expect(ROUTES).toContain('simulator/reset/route.ts')
@@ -41,16 +59,20 @@ it('finds the simulated-only POST routes (a walk that found none would pass vacu
 describe('simulated-mode-only POSTs answer 415 to a cross-origin simple request', () => {
     test.each(ROUTES)('%s', async (rel) => {
         const { POST } = (await import(/* @vite-ignore */ path.join(API, rel))) as { POST: unknown }
-        for (const contentType of [
-            'text/plain',
-            'application/x-www-form-urlencoded',
-            'multipart/form-data; boundary=x',
-        ]) {
-            const request = new Request(`http://localhost/api/${rel}`, {
-                method: 'POST',
-                headers: { 'content-type': contentType, origin: 'https://evil.example' },
-                body: '{"personId":"person-admin"}',
-            })
+        const requests = [
+            ...['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x'].map(
+                (contentType) =>
+                    new Request(`http://localhost/api/${rel}`, {
+                        method: 'POST',
+                        headers: { 'content-type': contentType, origin: 'https://evil.example' },
+                        body: '{"personId":"person-admin"}',
+                    }),
+            ),
+            // No headers and no body at all: what a cross-origin `fetch(url, { method: 'POST', mode: 'no-cors' })` sends.
+            new Request(`http://localhost/api/${rel}`, { method: 'POST' }),
+        ]
+        for (const request of requests) {
+            const contentType = request.headers.get('content-type') ?? 'no content-type'
             const response = await (POST as (request: Request) => Promise<Response>)(request)
             expect(response.status, `${rel} with ${contentType}`).toBe(415)
             expect(await response.json()).toEqual({ error: 'json-only' })
