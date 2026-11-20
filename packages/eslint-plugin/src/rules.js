@@ -391,21 +391,21 @@ const publicSurface = {
     },
     create(context) {
         const isPublic = publicSurfaceOf(join(optionsOf(context, 'public-surface').root, KIT_MANIFEST))
+        // Every place an import fence reads a specifier (./import-ban.js), so a template literal, a type-position
+        // import('…'), `import x = require('…')`, vi.requireActual and a specifier with spaces around it are read as
+        // an import declaration is: each compiles and runs against the internal module through the source alias.
         const check = (node) => {
-            const value = node?.value
+            const value = literalSpecifier(node)?.trim()
             if (typeof value !== 'string' || !value.startsWith('@sssb/kit/')) return
             if (isPublic(value)) return
             context.report({ node, messageId: 'private', data: { specifier: value } })
         }
         return {
-            ImportDeclaration: (node) => check(node.source),
-            ImportExpression: (node) => check(node.source),
-            ExportAllDeclaration: (node) => check(node.source),
-            ExportNamedDeclaration: (node) => check(node.source),
-            'CallExpression[callee.name="require"]': (node) => check(node.arguments[0]),
+            ...declarationVisitors((_declaration, source) => check(source)),
+            ...declarationlessVisitors(check),
             // vitest/jest mock a module by specifier, which resolves exactly like an import.
-            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock|importActual|importMock)$/]':
-                (node) => check(node.arguments[0]),
+            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
+                check(node.arguments[0]),
         }
     },
 }
