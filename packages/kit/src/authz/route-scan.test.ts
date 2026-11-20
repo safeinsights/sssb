@@ -2032,3 +2032,138 @@ describe('the walk', () => {
         expect(routes.map((r) => r.rel)).toEqual(['x/route.ts', '../page/route.ts'])
     })
 })
+
+describe('denials that float, and gate calls that never run (baseline review of 0.4.0)', () => {
+    const IDS = 'declare const ids: string[]\n'
+    const cases: Array<{ name: string; files: Record<string, string>; expect: Outcome }> = [
+        {
+            name: 'an async callback to forEach on an imported array, awaited (forEach drops its promise)',
+            files: post(`await items.forEach(async () => { ${CALL} })`, "import { items } from './items'\n"),
+            expect: 'open',
+        },
+        {
+            name: "an async callback to map on an imported call's result, awaited (await does not await the array)",
+            files: post(`await parse(request).ids.map(async () => { ${CALL} })`, "import { parse } from './parse'\n"),
+            expect: 'open',
+        },
+        {
+            name: 'an async mapper to Array.from, awaited',
+            files: post(`await Array.from(ids, async () => { ${CALL} })`, IDS),
+            expect: 'open',
+        },
+        {
+            name: 'a sync mapper to Array.from (it runs in place)',
+            files: post(`Array.from(ids, () => ${CALL})`, IDS),
+            expect: 'authorized',
+        },
+        {
+            name: 'a callback to queueMicrotask, awaited',
+            files: post(`await queueMicrotask(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to setTimeout, awaited',
+            files: post(`await setTimeout(() => { ${CALL} }, 0)`),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to process.nextTick, awaited',
+            files: post(`await process.nextTick(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'a function handed to Promise.resolve, awaited (it is never called)',
+            files: post(`await Promise.resolve(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'an awaited .catch handler (it runs only on a rejection)',
+            files: post(`await request.json().catch(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'an awaited .finally handler (it runs after the promise has settled)',
+            files: post(`await request.json().finally(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'a listener handed to an imported emitter, awaited',
+            files: post(`await bus.on('x', () => { ${CALL} })`, "import { bus } from './bus'\n"),
+            expect: 'open',
+        },
+        {
+            name: 'awaited Promise.all over map with an async callback (the correct form)',
+            files: post(`await Promise.all(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'authorized',
+        },
+        {
+            name: 'returned Promise.all over map with an async callback',
+            files: post(`return Promise.all(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'authorized',
+        },
+        {
+            name: 'Promise.all over map with an async callback, not awaited',
+            files: post(`void Promise.all(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'open',
+        },
+        {
+            name: 'awaited Promise.allSettled over map with an async callback (it never rejects)',
+            files: post(`await Promise.allSettled(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'open',
+        },
+        {
+            name: 'awaited Promise.any over map with an async callback (one fulfilment is enough)',
+            files: post(`await Promise.any(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'open',
+        },
+        {
+            name: "a local Promise's all is not the global's",
+            files: post(
+                `await Promise.all(ids.map(async () => { ${CALL} }))`,
+                `${IDS}const Promise = { all: (_x: unknown) => undefined }\n`,
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a sync callback to an imported namespace forEach, awaited (trusted like any imported callee)',
+            files: post(`await R.forEach(() => ${CALL})`, "import * as R from 'ramda'\n"),
+            expect: 'authorized',
+        },
+    ]
+
+    it.each(cases)('$name', ({ files, expect: expected }) => {
+        expectVerdicts(verdicts(files), { POST: expected })
+    })
+
+    const PORT = "import { auth } from '@sssb/kit/ports/auth'\n"
+    it.each([
+        [
+            'handed to a same-file function that never calls it',
+            'never(() => auth.updateProfile())',
+            'function never(_f: unknown) {}\n',
+        ],
+        [
+            'handed to a same-file arrow that only returns it',
+            'later(() => auth.updateProfile())',
+            'const later = (f: () => unknown) => f\n',
+        ],
+        ['inside a lazy iterator map nobody consumes', '[1].values().map(() => auth.updateProfile())', ''],
+        [
+            'inside an async callback a same-file no-op is handed',
+            'noop(async () => auth.updateProfile())',
+            'const noop = (..._a: unknown[]) => {}\n',
+        ],
+        ['inside a generator', 'gen()', 'function* gen() { auth.updateProfile() }\n'],
+    ])('a gate call %s is not on the path', (_label, body, prelude) => {
+        expect(
+            factsOf(`${PORT}${prelude}export async function POST() {\n${body}\nreturn new Response('ok')\n}\n`).calls,
+        ).not.toContain('auth.updateProfile')
+    })
+
+    it('a gate call on the path still counts, awaited or not', () => {
+        const facts = factsOf(
+            `${PORT}export async function POST() {\nawait auth.updateProfile()\nreturn new Response('ok')\n}\n`,
+        )
+        expect(facts.calls).toContain('auth.updateProfile')
+    })
+})

@@ -22,7 +22,10 @@ import ts from 'typescript'
  *   ASSUMED to invoke and to carry its failure in the call's own result. That is the wrapper idiom every route
  *   uses, and the one trust this module extends: it cannot read an imported wrapper to see whether it really
  *   calls its argument. It extends none to a callee whose code is in this file (`isSameFile`): a function is not
- *   followed through a parameter, so what such a callee is handed counts for nothing;
+ *   followed through a parameter, so what such a callee is handed counts for nothing. Nor to a callee known never to
+ *   hand a function's failure back (`neverCarriesFailure`): a timer or microtask (`setTimeout`, `setInterval`,
+ *   `setImmediate`, `queueMicrotask`, `process.nextTick`), `Promise.resolve`, which never calls a function, and a
+ *   `.catch`, `.finally` or listener method (`.on`, `.once`, `addEventListener`, …) on any receiver;
  * - in a function declared in the SAME module and called (or passed as an argument) from the handler's
  *   path, followed to any depth. A function that is only defined, or that the file reassigns or declares twice,
  *   is not followed;
@@ -34,10 +37,15 @@ import ts from 'typescript'
  *     on the spot (`settledBy`: `return`, an arrow's expression body; through parentheses, a type assertion, a
  *     ternary arm, the right of `&&`, `||`, `??` or a comma, or the left of `||` or `??`). A statement of its own,
  *     `void`, a variable awaited later, a `.then` or `.catch` chain, an argument, all leave the promise floating;
- *   - an array iteration method (`forEach`, `map`, …, by name, on a receiver that is neither an import nor an
- *     object whose code is in this file). It drops an `async` function's promise, awaited or not, and runs a sync
- *     one in place, so its throw goes up through the call; but a `map`, `filter` or `flatMap` on a receiver that is
- *     visibly an iterator (`xs.values()`, `Iterator.from(…)`) runs nothing until consumed;
+ *   - an array iteration method (`forEach`, `map`, …, by name on any receiver but an object whose code is in this
+ *     file, and `Array.from`'s mapper). It drops an `async` function's promise, awaited or not, and runs a sync one
+ *     in place, so its throw goes up through the call; but a `map`, `filter` or `flatMap` on a receiver that is
+ *     visibly an iterator (`xs.values()`, `Iterator.from(…)`) runs nothing until consumed, and on a receiver whose
+ *     head is an import (`R.forEach`, `parse(req).ids.map`), where the name may be a library's, a sync callback
+ *     counts only when the call's result is settled, as for any imported callee. The one way an async callback's
+ *     failure comes back is `Promise.all(xs.map(async …))` awaited or returned: Promise.all rejects with the first
+ *     rejection. `allSettled` never rejects, and `any` and `race` settle on another promise, so they do not count.
+ *     (`Array.fromAsync` awaits what its mapper returns, so it is trusted like any imported callee);
  *   - a `try` whose `catch` can do anything but rethrow (fall through, `return`, `break` or `continue` out of
  *     itself), or whose `finally` can leave in the throw's place. A promise the `try` returns (`return p`) is not
  *     caught; `return await p` throws inside it.
@@ -59,7 +67,9 @@ import ts from 'typescript'
  * value import (not `import type`, not a JSDoc `@import`). A local function that happens to be named
  * `authorize` is followed like any other, so it counts only if it calls the real one.
  *
- * WHAT COUNTS AS A GATE'S NAME: the same rule, by binding (`gateName`). `withWebhookSecret`, `auth.updateProfile`,
+ * WHAT COUNTS AS A GATE'S NAME: the same rule, by binding (`gateName`), and a gate's call is on the path under the same
+ * rule as `authorize`'s: where a throw at the call would reach the handler's outcome. A gate call handed to a function
+ * that never runs it, or that drops its failure, is not on the path. `withWebhookSecret`, `auth.updateProfile`,
  * `isSimulated` count only when the name (the head of a dotted one) is a value import kept under the name it is
  * exported by, from any module; a namespace member reads under its own name. A local look-alike
  * (`const isSimulated = true`) or an alias (`import { identity as withWebhookSecret }`) is not the gate.
@@ -67,6 +77,13 @@ import ts from 'typescript'
  * A handler the module cannot resolve at all (a destructured export, a `let`, a reassigned function, an
  * unresolvable re-export, a file that does not parse, a module that is not an ES module) is REFUSED with
  * the reason, and a refusal is a failure.
+ *
+ * WHAT IT DOES NOT PROVE. "Reaches" is MAY-reach: some path through the handler passes an `authorize` whose denial
+ * stops it. It does not prove that EVERY path does, nor that the call comes before the mutation. A handler that
+ * returns early on an attacker's input before authorizing, authorizes only inside an `if`, mutates first and
+ * authorizes after, or authorizes in a loop over a list that may be empty, passes. Only a branch a constant rules
+ * out is dead to it; a condition it cannot evaluate is taken both ways. The rule an author keeps by hand is
+ * stronger: authorize before anything else the handler does, on every path.
  */
 
 /** The verbs that mutate. GET, HEAD and OPTIONS are never judged. */
@@ -625,18 +642,17 @@ class Reach {
     }
 
     /**
-     * `xs.forEach`, `xs['map']` and the like, by name: an array iteration method, unless the receiver's head is an
-     * import, where the same name is often a library's (Ramda's curried `R.map`, `Effect.map`), deferred or lazy, or
-     * an object whose code is in this file, whose `forEach` is its own. `lazy` is a `map`, `filter` or `flatMap` on
-     * a receiver that is visibly an iterator (`xs.values()`, `.keys()`, `.entries()`, `Iterator.from(…)`), which
-     * runs nothing until something consumes it.
+     * `xs.forEach`, `xs['map']` and the like, by name, whatever the receiver: an array iteration method, unless the
+     * receiver is an object whose code is in this file, whose `forEach` is its own (and, being same-file, is not
+     * followed through its parameter at all). `imported` is a receiver whose head is an import (`parse(req).ids`,
+     * `R`), where the same name may be a library's, deferred or lazy: an async callback is dropped either way, and a
+     * sync one is trusted only as far as an imported callee is. `lazy` is a `map`, `filter` or `flatMap` on a
+     * receiver that is visibly an iterator (`xs.values()`, `.keys()`, `.entries()`, `Iterator.from(…)`), which runs
+     * nothing until something consumes it. `Array.from(xs, fn)` maps like an eager method.
      */
-    private iterationMethod(callee: ts.Expression): { name: string; lazy: boolean } | undefined {
-        let name: string | undefined
-        if (ts.isPropertyAccessExpression(callee)) name = callee.name.text
-        else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
-            name = callee.argumentExpression.text
-        }
+    private iterationMethod(callee: ts.Expression): { name: string; lazy: boolean; imported: boolean } | undefined {
+        if (isGlobalMember(this.src, callee, 'Array', 'from')) return { name: 'from', lazy: false, imported: false }
+        const name = memberName(callee)
         if (name === undefined || !ARRAY_ITERATION.has(name)) return undefined
         const receiver = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
         let head = receiver
@@ -646,9 +662,9 @@ class Reach {
             else if (ts.isCallExpression(head)) head = unwrap(head.expression)
             else break
         }
-        if (ts.isIdentifier(head) && valueImportOf(declarationOf(this.src, head)) !== undefined) return undefined
+        const imported = ts.isIdentifier(head) && valueImportOf(declarationOf(this.src, head)) !== undefined
         if (this.isSameFileObject(receiver)) return undefined
-        return { name, lazy: !EAGER_ITERATION.has(name) && isIterator(receiver) }
+        return { name, lazy: !EAGER_ITERATION.has(name) && isIterator(receiver), imported }
     }
 
     private visit(node: ts.Node, outcome: Outcome): void {
@@ -675,8 +691,11 @@ class Reach {
 
     private call(node: ts.CallExpression | ts.NewExpression, outcome: Outcome): void {
         const callee = unwrap(node.expression)
+        // A gate's call counts under the same rule as `authorize`: only where a throw here reaches the outcome.
+        // A call handed to a function that never runs it (a same-file no-op, a lazy iterator, an async callback an
+        // iteration method drops) is not on the handler's path, whatever its name.
         const name = gateName(this.src, callee)
-        if (name) this.calls.add(name)
+        if (name && outcome.thrown) this.calls.add(name)
         // `authorize` throws synchronously, so its denial reaches the outcome wherever a throw here does.
         if (outcome.thrown && this.isAuthorize(callee)) this.authorize = true
         // The promise this call returns reaches the outcome only when it is awaited or returned on the spot.
@@ -697,10 +716,27 @@ class Reach {
         // place, so it throws through the call; a lazy one on an iterator runs nothing. A callee whose code is in
         // this file is not followed through its parameter, so what it is handed counts for nothing.
         const method = this.iterationMethod(callee)
+        const allOf = method?.name === 'map' && !method.lazy ? promiseAllOf(this.src, node) : undefined
         const handed = (fn: ts.FunctionLikeDeclaration): Outcome => {
-            if (method !== undefined)
-                return isAsync(fn) || method.lazy ? LOST : { thrown: outcome.thrown, returned: false }
-            if (this.isSameFile(callee)) return LOST
+            if (method !== undefined) {
+                // `await Promise.all(xs.map(async (x) => …))`: the array of promises map returns is what Promise.all
+                // settles, and it rejects with the first rejection, so an async callback's failure comes out of the
+                // Promise.all call's own result. Only Promise.all: allSettled never rejects, and any and race settle
+                // on another promise's outcome.
+                if (allOf !== undefined && isAsync(fn)) {
+                    const settledAll = settledBy(allOf)
+                    const reaches =
+                        settledAll === 'await' ? outcome.thrown : settledAll === 'return' && outcome.returned
+                    return reaches ? { thrown: true, returned: true } : LOST
+                }
+                if (isAsync(fn) || method.lazy) return LOST
+                // A sync callback runs in place on an array. On a receiver whose head is an import, the same name may
+                // be a library's (a curried `R.forEach`, a query builder's `map`) that runs it later or not at all,
+                // so it is trusted no further than any imported callee: only when the call's result is settled.
+                if (method.imported && !result) return LOST
+                return { thrown: outcome.thrown, returned: false }
+            }
+            if (this.isSameFile(callee) || neverCarriesFailure(this.src, callee)) return LOST
             return result ? HANDLER_OUTCOME : LOST
         }
         for (const argument of node.arguments ?? []) {
@@ -840,6 +876,82 @@ function isIterator(receiver: ts.Expression): boolean {
     if (name === 'values' || name === 'keys' || name === 'entries') return true
     const target = unwrap(e.expression.expression)
     return name === 'from' && ts.isIdentifier(target) && target.text === 'Iterator'
+}
+
+/** The member a callee names, `x.name` or `x['name']`; undefined for any other callee. */
+function memberName(callee: ts.Expression): string | undefined {
+    if (ts.isPropertyAccessExpression(callee)) return callee.name.text
+    if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
+        return callee.argumentExpression.text
+    }
+    return undefined
+}
+
+/** `Global.member` (or `Global['member']`), where `Global` is not declared or imported in this file. */
+function isGlobalMember(src: Source, callee: ts.Expression, global: string, member: string): boolean {
+    if (memberName(callee) !== member) return false
+    const target = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
+    return ts.isIdentifier(target) && target.text === global && declarationOf(src, target) === undefined
+}
+
+/** Globals that take a function and never hand its failure back: they run it later, or not at all. */
+const DETACHING_GLOBALS: ReadonlySet<string> = new Set([
+    'queueMicrotask',
+    'requestAnimationFrame',
+    'requestIdleCallback',
+    'setImmediate',
+    'setInterval',
+    'setTimeout',
+])
+
+/**
+ * Methods, by name on any receiver, whose function argument's failure never comes out of the call's result: a
+ * `.catch` handler runs only if the promise rejects, a `.finally` one after it has settled, and a listener when
+ * an event fires.
+ */
+const DETACHING_METHODS: ReadonlySet<string> = new Set([
+    'addEventListener',
+    'addListener',
+    'catch',
+    'finally',
+    'on',
+    'once',
+    'prependListener',
+    'prependOnceListener',
+])
+
+/**
+ * A callee known not to carry the failure of a function handed to it out of its own result, awaited or not: a
+ * timer or microtask (`setTimeout`, `queueMicrotask`, `process.nextTick`), `Promise.resolve`, which never calls a
+ * function it is given, or a `.catch`, `.finally` or listener method (DETACHING_METHODS). Every other callee that
+ * is neither same-file nor an iteration method is trusted when its result is settled (see the header).
+ */
+function neverCarriesFailure(src: Source, callee: ts.Expression): boolean {
+    if (ts.isIdentifier(callee)) return DETACHING_GLOBALS.has(callee.text) && declarationOf(src, callee) === undefined
+    const name = memberName(callee)
+    if (name !== undefined && DETACHING_METHODS.has(name)) return true
+    return isGlobalMember(src, callee, 'process', 'nextTick') || isGlobalMember(src, callee, 'Promise', 'resolve')
+}
+
+/**
+ * The `Promise.all(…)` call `node` is the first argument of (through parentheses and type assertions), when
+ * `Promise` is the global; undefined otherwise.
+ */
+function promiseAllOf(src: Source, node: ts.CallExpression | ts.NewExpression): ts.CallExpression | undefined {
+    let child: ts.Node = node
+    let parent: ts.Node = node.parent
+    while (
+        ts.isParenthesizedExpression(parent) ||
+        ts.isAsExpression(parent) ||
+        ts.isSatisfiesExpression(parent) ||
+        ts.isNonNullExpression(parent) ||
+        ts.isTypeAssertionExpression(parent)
+    ) {
+        child = parent
+        parent = parent.parent
+    }
+    if (!ts.isCallExpression(parent) || parent.arguments[0] !== child) return undefined
+    return isGlobalMember(src, unwrap(parent.expression), 'Promise', 'all') ? parent : undefined
 }
 
 /** The variable declaration a declared name belongs to, through destructuring; undefined for a parameter. */
