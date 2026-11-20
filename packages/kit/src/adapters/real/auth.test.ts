@@ -164,4 +164,11 @@ describe('the Clerk adapter, updating a profile', () => {
         await expect(realAuth.updateProfile(update)).rejects.toThrow('unknown locale')
         expect(h.writes).toEqual([])
     })
+
+    it.each([{ a: 1 }, '', '   ', 'x'.repeat(257)])('refuses the name %j before writing anything', async (name) => {
+        const { realAuth } = await import('./auth')
+        const update = { name } as unknown as Parameters<typeof realAuth.updateProfile>[0]
+        await expect(realAuth.updateProfile(update)).rejects.toThrow('invalid name')
+        expect(h.writes).toEqual([])
+    })
 })

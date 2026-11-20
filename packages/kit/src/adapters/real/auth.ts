@@ -68,6 +68,11 @@ async function allPages<T>(
     }
 }
 
+/** A display name the auth port accepts: a string with something in it, at most 256 characters (Clerk's own limit). */
+function isProfileName(name: unknown): name is string {
+    return typeof name === 'string' && name.trim() !== '' && name.length <= 256
+}
+
 async function organizationIdForSlug(slug: string): Promise<string> {
     const client = await clerkClient()
     const org = await client.organizations.getOrganization({ slug })
@@ -132,7 +137,8 @@ export const realAuth: AuthPort = {
     async updateProfile(update: ProfileUpdate): Promise<AuthUser> {
         const { userId } = await auth()
         if (!userId) throw new AuthRequiredError()
-        // Same guard the fake adapter enforces, and as early: before any write, so a refused update changes nothing.
+        // Same guards the fake adapter enforces, and as early: before any write, so a refused update changes nothing.
+        if (update.name !== undefined && !isProfileName(update.name)) throw new ForbiddenError('invalid name')
         if (update.locale !== undefined && !LOCALES.includes(update.locale)) throw new ForbiddenError('unknown locale')
         const client = await clerkClient()
         if (update.name !== undefined) {
