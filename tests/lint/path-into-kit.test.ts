@@ -1,6 +1,9 @@
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { ESLint } from 'eslint'
 import { describe, expect, it } from 'vitest'
+import { makeTestTmpDir } from '../support/tmp-dir'
 import { APP, lint } from './lint-text'
 
 /**
@@ -77,5 +80,96 @@ describe('sssb/no-path-into-kit', () => {
         ['packages/kit/test-fixture/domain/kv.ts', "import { r } from '../../src/core/roles'\nexport { r }\n"],
     ])('leaves %s, inside the package, free to import its siblings', async (file, code) => {
         expect(await fired(file, code)).toEqual([])
+    })
+})
+
+/**
+ * The spellings a plain relative path does not cover, in a scratch workspace outside this repository: an app under the
+ * preset, and a stand-in `@sssb/kit` package beside it (its package.json is what names it), so a symlink never has to be
+ * written into this checkout.
+ */
+describe('sssb/no-path-into-kit, through a symlink, the app alias, require.resolve and a reference', () => {
+    const PLUGIN = pathToFileURL(path.join(process.cwd(), 'packages/eslint-plugin/src/index.js')).href
+    const workspace = () => {
+        const root = realpathSync(makeTestTmpDir('path-into-kit-'))
+        const write = (file: string, text: string) => {
+            mkdirSync(path.dirname(path.join(root, file)), { recursive: true })
+            writeFileSync(path.join(root, file), text)
+        }
+        write('kit/package.json', JSON.stringify({ name: '@sssb/kit' }))
+        write('kit/src/core/roles.ts', 'export const r = 1\n')
+        write('app/package.json', JSON.stringify({ name: 'app', private: true }))
+        write('app/src/lib/other.ts', 'export const o = 1\n')
+        write(
+            'app/eslint.config.mjs',
+            `import sssb from '${PLUGIN}'\nexport default [...(await sssb.configs.app({ root: import.meta.dirname }))]\n`,
+        )
+        // a FILE symlink, imported without its extension, and a DIRECTORY symlink, reached through `@/`
+        symlinkSync(path.join(root, 'kit/src/core/roles.ts'), path.join(root, 'app/src/zzkit.ts'))
+        symlinkSync(path.join(root, 'kit/src'), path.join(root, 'app/src/zzdir'), 'dir')
+        return path.join(root, 'app')
+    }
+    const firedIn = async (app: string, code: string) => {
+        const [result] = await new ESLint({ cwd: app }).lintText(code, { filePath: path.join(app, 'src/lib/x.ts') })
+        expect(
+            result.messages.filter((m) => !m.ruleId),
+            'not actually linted',
+        ).toEqual([])
+        return result.messages.filter((m) => m.ruleId === RULE)
+    }
+
+    it.each([
+        ['a file symlink imported without its extension', "import { r } from '../zzkit'\nexport { r }\n"],
+        ['the @/ alias through a directory symlink', "import { r } from '@/zzdir/core/roles'\nexport { r }\n"],
+        ['the @/ alias climbing out of src/', "import { r } from '@/../../kit/src/core/roles'\nexport { r }\n"],
+        ['require.resolve()', "export const at = require.resolve('../../../kit/src/core/roles')\n"],
+        [
+            'a triple-slash reference path',
+            '/// <reference path="../../../kit/src/core/roles.ts" />\nexport const x = 1\n',
+        ],
+    ])('refuses %s', async (_, code) => {
+        const findings = await firedIn(workspace(), code)
+        expect(findings).toHaveLength(1)
+        expect(findings[0].message).toContain('is a path into @sssb/kit')
+    })
+
+    it("leaves the app's own @/ imports and a resolve of its own file alone", async () => {
+        const code = "import { o } from '@/lib/other'\nexport { o }\nexport const at = require.resolve('./other')\n"
+        expect(await firedIn(workspace(), code)).toEqual([])
+    })
+})
+
+// The two kit-internal path rules judge a landing with the same helper, and had the same blind spot: a file symlink
+// inside packages/kit, named without its extension, was not followed out of the package.
+describe('sssb/no-path-out-of-package follows an extensionless file symlink too', () => {
+    it('reports a symlink under packages/kit that lands outside it', async () => {
+        const root = realpathSync(makeTestTmpDir('path-out-of-package-'))
+        const write = (file: string, text: string) => {
+            mkdirSync(path.dirname(path.join(root, file)), { recursive: true })
+            writeFileSync(path.join(root, file), text)
+        }
+        write('packages/kit/package.json', JSON.stringify({ name: '@sssb/kit', files: ['src'] }))
+        write('scripts/helper.ts', 'export const h = 1\n')
+        write('packages/kit/src/roles.ts', 'export const r = 1\n')
+        symlinkSync(path.join(root, 'scripts/helper.ts'), path.join(root, 'packages/kit/src/zzhelper.ts'))
+        const { default: sssb } = await import('@sssb/eslint-plugin')
+        const { default: tseslint } = await import('typescript-eslint')
+        const eslint = new ESLint({
+            cwd: root,
+            overrideConfigFile: true,
+            overrideConfig: [
+                {
+                    files: ['**/*.ts'],
+                    languageOptions: { parser: tseslint.parser },
+                    plugins: { sssb },
+                    rules: { 'sssb/no-path-out-of-package': ['error', { root }] },
+                },
+            ],
+        })
+        const [result] = await eslint.lintText("import { h } from './zzhelper'\nexport { h }\n", {
+            filePath: path.join(root, 'packages/kit/src/x.ts'),
+        })
+        expect(result.messages.map((m) => m.ruleId)).toEqual(['sssb/no-path-out-of-package'])
+        expect(result.messages[0].message).toContain('leaves packages/kit (it lands in scripts/helper)')
     })
 })

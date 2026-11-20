@@ -455,7 +455,19 @@ const APP_CODE_DIRS = ['apps', 'packages/seed']
 const throughNodeModules = new RegExp(nodeModulesPathPattern.regex, 'iu')
 // Where `target` really is: symlinks resolved through its deepest existing ancestor, because a specifier names a
 // module without its extension, or one that does not exist yet.
+const RESOLVED_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.d.ts', '.js', '.jsx', '.mjs', '.cjs']
 const realPathOf = (target) => {
+    // A specifier names a module without its extension (`./roles` for `roles.ts`), so a target that does not exist as
+    // written is tried with each extension the compiler and the bundlers resolve, `.d.ts` included: a FILE symlink
+    // (`zzkit.ts` pointing into another package) is followed only when its own name is found. The extension added is
+    // taken off again, so the landing reads as the specifier did.
+    if (!existsSync(target)) {
+        for (const ext of RESOLVED_EXTENSIONS) {
+            if (!existsSync(`${target}${ext}`)) continue
+            const real = realpathSync(`${target}${ext}`)
+            return real.endsWith(ext) ? real.slice(0, -ext.length) : real
+        }
+    }
     const missing = []
     let existing = target
     while (!existsSync(existing) && dirname(existing) !== existing) {
@@ -690,10 +702,24 @@ const pathIntoKit = {
         }
         const importer = realPathOf(resolve(context.filename))
         const isUnderDir = (file, dir) => file === dir || file.startsWith(`${dir}/`) || file.startsWith(`${dir}\\`)
+        // The app's `@/` alias is `src/` of the app (the generator writes `"@/*": ["src/*"]`, and the guide says so):
+        // the nearest directory above the importing file with a package.json and a `src/` beside it. A path spelled
+        // through it is judged as that path (`@/../../../packages/kit/…`, or a symlink under src/ into the kit).
+        const appSrc = (() => {
+            for (let dir = dirname(resolve(context.filename)); ; dir = dirname(dir)) {
+                if (existsSync(join(dir, 'package.json')) && existsSync(join(dir, 'src'))) return join(dir, 'src')
+                if (dirname(dir) === dir) return undefined
+            }
+        })()
+        /** @param {string} reading */
+        const targetOf = (reading) => {
+            if (reading.startsWith('@/')) return appSrc === undefined ? undefined : resolve(appSrc, reading.slice(2))
+            return pathTarget(context.filename, reading)
+        }
         const finding = (specifier) => {
             if (NODE_MODULES_SEGMENT.test(specifier)) return { messageId: 'nodeModules', landing: '' }
             for (const reading of readingsOf(specifier)) {
-                const target = pathTarget(context.filename, reading)
+                const target = targetOf(reading)
                 if (!target) continue
                 const landing = realPathOf(target)
                 const kitRoot = kitRootAbove(dirname(landing))
@@ -701,11 +727,15 @@ const pathIntoKit = {
             }
             return undefined
         }
-        const check = (node) => {
-            const specifier = literalSpecifier(node)?.trim()
-            if (typeof specifier !== 'string') return
+        const report = (loc, rawSpecifier) => {
+            const specifier = rawSpecifier.trim()
             const found = finding(specifier)
-            if (found) context.report({ node, messageId: found.messageId, data: { specifier, landing: found.landing } })
+            if (found)
+                context.report({ ...loc, messageId: found.messageId, data: { specifier, landing: found.landing } })
+        }
+        const check = (node) => {
+            const specifier = literalSpecifier(node)
+            if (typeof specifier === 'string') report({ node }, specifier)
         }
         return {
             ...declarationVisitors((_declaration, source) => check(source)),
@@ -713,6 +743,14 @@ const pathIntoKit = {
             // vitest/jest mock a module by specifier, which resolves exactly like an import.
             'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
                 check(node.arguments[0]),
+            // `require.resolve('…')`, `createRequire(…).resolve('…')`, `import.meta.resolve('…')`: a path the caller
+            // then reads or loads.
+            'CallExpression[callee.type="MemberExpression"][callee.property.name="resolve"]': (node) =>
+                check(node.arguments[0]),
+            // `/// <reference path="…" />` makes the compiler load the file just as an import does.
+            Program: () => {
+                for (const { loc, value } of referenceDirectives(context)) report({ loc }, value)
+            },
         }
     },
 }
