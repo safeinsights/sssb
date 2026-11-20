@@ -1,5 +1,5 @@
 import { AuthRequiredError } from '@sssb/kit/ports/errors'
-import { verifyMailgunWebhook } from '@sssb/kit/service-auth/mailgun'
+import { forgetMailgunToken, verifyMailgunWebhook } from '@sssb/kit/service-auth/mailgun'
 import { verifyWebhookCaller } from '@sssb/kit/service-auth/webhook'
 import { withPortErrors } from '../respond'
 
@@ -33,7 +33,8 @@ export function withWebhookSecret<P = Record<string, string>>(
  * request as HMAC-SHA256(signingKey, `${timestamp}${token}`); this reads the form ONCE, verifies the
  * signature + freshness + single-use token (verifyMailgunWebhook), then hands the parsed FormData to the
  * handler. A missing/invalid signature is the same opaque 401 as the shared-secret path; an unparseable body is
- * a 400. Sits under the `webhooks/` authorize()-exemption (a machine caller, not a user session — the
+ * a 400. When the handler then throws or answers 5xx, the token is forgotten (forgetMailgunToken), so
+ * Mailgun's retry of the unprocessed message is processed rather than refused as a replay. Sits under the `webhooks/` authorize()-exemption (a machine caller, not a user session — the
  * exemption's mustMatch accepts this wrapper as well as withWebhookSecret). Ships in REAL builds; keep
  * the node runtime upstream for consistency with the shared-secret wrapper (the Mailgun compare itself is the
  * pure-TS timingSafeHexEqual from core, not node:crypto).
@@ -49,10 +50,11 @@ export function withMailgunSignature(
             } catch {
                 return Response.json({ error: 'invalid-payload' }, { status: 400 })
             }
+            const token = String(form.get('token') ?? '')
             try {
                 verifyMailgunWebhook({
                     timestamp: String(form.get('timestamp') ?? ''),
-                    token: String(form.get('token') ?? ''),
+                    token,
                     signature: String(form.get('signature') ?? ''),
                 })
             } catch (error) {
@@ -61,7 +63,14 @@ export function withMailgunSignature(
                 }
                 throw error
             }
-            return handler({ form, request })
+            try {
+                const response = await handler({ form, request })
+                if (response.status >= 500) forgetMailgunToken(token)
+                return response
+            } catch (error) {
+                forgetMailgunToken(token)
+                throw error
+            }
         })
     }
 }
