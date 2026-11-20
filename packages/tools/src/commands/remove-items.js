@@ -8,8 +8,9 @@
 // against the starter without Items, applied EXACTLY by ./exact-patch.js). The code half removes everything an app's
 // code says about Items: the card, the route, the query, the ability, the catalog namespace, the dashboard's glue, the
 // static demo's card, the specs that name Items, and the proofs of paging. It writes nothing of its own: the starter's
-// other e2e spec (the Simulator's) stays, so the app still has one for `sssb check-e2e`. The database half removes the migrations, the table's type and its
-// RLS proofs, and only runs with `--drop-migrations`.
+// e2e specs that do not name Items (the Simulator's among them) stay, so the app still has some for `sssb check-e2e`.
+// The database half removes the migrations, the table's type and its RLS proofs, and only runs with
+// `--drop-migrations`.
 //
 // THE RULE FOR MIGRATIONS. A database that ran `1001_items` records it, and the migrator refuses to start when a migration
 // it recorded is gone from the code (Kysely: "previously executed migration ... is missing"). So this command never
