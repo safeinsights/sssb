@@ -14,7 +14,7 @@ import type { CheckImpl } from './types'
  * How it reads the app: from each of Next's rendering files under `src/app` (`page`, `layout`, `template`, `default`,
  * `not-found`, `error`, `global-error`, `loading`, `forbidden`, `unauthorized`), it follows the app's own imports
  * (a relative path, `@/` for the app's `src/`, `@sssb/app-config/` for its seam) through import and export
- * declarations and `import()` of a literal, and notes whether each file reaches a form or the provider. An import that
+ * declarations, `import x = require()`, and `import()` or `require()` of a literal, and notes whether each file reaches a form or the provider. An import that
  * loads nothing (`import type`, or every name marked `type`) is not followed, nor is a specifier it cannot resolve to
  * a file; a comment or a string naming a module does not count. A rendering file that reaches a form passes when it
  * is wrapped by one that reaches the provider: a layout or template that is itself that file, or one in a directory
@@ -22,8 +22,9 @@ import type { CheckImpl } from './types'
  * inside neither. `global-error` replaces the root layout, so only it can wrap itself.
  *
  * What it does not read: whether an import runs (an `isSimulated` branch is how it should be written, and a dead one
- * would pass), a path alias other than those two, and anything behind a symbolic link, which it does not follow, as the
- * authorization scan does not. It parses each file once and settles what every file reaches in one pass over the
+ * would pass), a path alias other than those two, anything behind a symbolic link, which it does not follow, as the
+ * authorization scan does not, and a rendering file named for a custom `pageExtensions` (`page.page.tsx`), which it
+ * does not find. It parses each file once and settles what every file reaches in one pass over the
  * graph, so its cost grows with the app's size, not with its pages times its modules.
  */
 
@@ -100,7 +101,10 @@ function typeOnly(node: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
     )
 }
 
-/** The specifiers `file` loads at run time: value import and export declarations, and `import()` of a literal. */
+/**
+ * The specifiers `file` loads at run time: value import and export declarations, `import x = require()` (not
+ * `import type`), and `import()` or `require()` of a literal.
+ */
 function loadedSpecifiers(file: string): string[] {
     const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true)
     const found: string[] = []
@@ -109,8 +113,16 @@ function loadedSpecifiers(file: string): string[] {
             const specifier = node.moduleSpecifier
             if (specifier && ts.isStringLiteral(specifier) && !typeOnly(node)) found.push(specifier.text)
         } else if (
+            ts.isImportEqualsDeclaration(node) &&
+            !node.isTypeOnly &&
+            ts.isExternalModuleReference(node.moduleReference) &&
+            ts.isStringLiteralLike(node.moduleReference.expression)
+        ) {
+            found.push(node.moduleReference.expression.text)
+        } else if (
             ts.isCallExpression(node) &&
-            node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+            (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+                (ts.isIdentifier(node.expression) && node.expression.text === 'require')) &&
             node.arguments[0] &&
             ts.isStringLiteralLike(node.arguments[0])
         ) {
