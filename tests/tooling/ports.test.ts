@@ -88,6 +88,43 @@ describe('portForRoot', () => {
     })
 })
 
+// `git worktree add ../wt2` puts a linked worktree anywhere, and it shared the main checkout's :3000 (Playwright then
+// adopted the other checkout's dev server). What marks one is its `.git`: a FILE pointing into the main repository's
+// `.git/worktrees/`, where a main checkout has a directory and a submodule a file pointing into `.git/modules/`.
+describe('a linked git worktree outside .claude/worktrees/', () => {
+    const checkout = (git: 'directory' | string) => {
+        const root = realpathSync(makeTestTmpDir('sssb-ports-git-'))
+        if (git === 'directory') mkdirSync(path.join(root, '.git'))
+        else writeFileSync(path.join(root, '.git'), git)
+        return root
+    }
+    const services = ['showcase', 'starter', 'ladle', 'contractPg'] as const
+    const defaults = services.map((service) => portForRoot(MAIN, service, {}))
+    const portsOf = (root: string) => services.map((service) => portForRoot(root, service, {}))
+
+    it('derives its ports when its .git is a file pointing into .git/worktrees/', () => {
+        const root = checkout('gitdir: /repos/sssb/.git/worktrees/wt2\n')
+        const ports = portsOf(root)
+        ports.forEach((port, i) => expect(port, services[i]).not.toBe(defaults[i]))
+        // ...from the root and from a directory inside it with no .git of its own
+        mkdirSync(path.join(root, 'apps', 'web'), { recursive: true })
+        expect(portsOf(path.join(root, 'apps', 'web'))).not.toEqual(defaults)
+        expect(portsOf(root)).toEqual(ports)
+    })
+
+    it('keeps the defaults in a main checkout, whose .git is a directory', () => {
+        expect(portsOf(checkout('directory'))).toEqual(defaults)
+    })
+
+    it('keeps the defaults in a submodule, whose .git file points into .git/modules/', () => {
+        expect(portsOf(checkout('gitdir: ../.git/modules/vendored\n'))).toEqual(defaults)
+    })
+
+    it('keeps the defaults when the .git file says nothing it can read', () => {
+        expect(portsOf(checkout('not a gitdir line\n'))).toEqual(defaults)
+    })
+})
+
 describe('portFor with no workspace file', () => {
     it('falls back to the nearest .git, then the start directory, instead of throwing', () => {
         const scratch = realpathSync(makeTestTmpDir('sssb-ports-nows-'))
