@@ -1,3 +1,4 @@
+import { staffOrgSlug } from '@sssb/app-config/abilities'
 import type { AnalyticsPort } from '../../ports/analytics'
 import type { AuthPort } from '../../ports/auth'
 import type { DbPort } from '../../ports/db'
@@ -7,8 +8,8 @@ import type { JobsPort } from '../../ports/jobs'
 import type { LlmPort } from '../../ports/llm'
 import type { StoragePort } from '../../ports/storage'
 import { absentEmail, absentJobs, absentLlm, absentStorage } from './absent'
-import { authTenancy, authTenancyEnv } from '../auth-tenancy'
-import { singleTenantAuth } from '../single-tenant-auth'
+import { authRequiredEnv, authSettings, fixedOrgProblem } from '../auth-tenancy'
+import { configuredAuth } from '../configured-auth'
 import { clerkIdentitySource, realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { noAnalytics } from './no-analytics'
@@ -51,7 +52,7 @@ export function assertRealEnv(): void {
         ...DATABASE_ENV[transport],
         ...(transport === 'data-api' ? DATA_API_REGION_ENV : {}),
         ...optionalPortsEnv(),
-        ...authTenancyEnv(),
+        ...authRequiredEnv(),
     }
     const missing = Object.keys(required).filter((name) => !process.env[name])
     if (missing.length > 0) {
@@ -72,12 +73,15 @@ export function assertRealEnv(): void {
             throw new CutoverPendingError(['storage-compatible-store'], (error as Error).message)
         }
     }
-    // The auth tenancy: an unknown mode, a malformed slug or key, or a single-mode setting left on a multi deployment.
+    // The auth settings: an unknown choice, a malformed slug, key or role, a setting its choice does not use, or a fixed
+    // org source that would hand everyone the staff org's manage-all.
+    let problem: string | null
     try {
-        authTenancy()
+        problem = fixedOrgProblem(authSettings().orgSource, staffOrgSlug)
     } catch (error) {
-        throw new CutoverPendingError(['auth-tenancy'], (error as Error).message)
+        problem = (error as Error).message
     }
+    if (problem) throw new CutoverPendingError(['auth-tenancy'], problem)
 }
 
 /**
@@ -104,11 +108,9 @@ interface RealPortsHooks {
 export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealPorts> {
     assertRealEnv()
     const env = process.env
-    // Clerk, as multi-tenant auth or wrapped as single-tenant auth (../auth-tenancy.ts). Every port that reaches the
-    // people (the in-process runner's job context included) is handed this one.
-    const tenancy = authTenancy()
-    const auth: AuthPort =
-        tenancy.kind === 'single' ? singleTenantAuth(realAuth, tenancy, clerkIdentitySource) : realAuth
+    // Clerk, placed as the auth settings say (../auth-tenancy.ts), and Clerk itself on the defaults. Every port that
+    // reaches the people (the in-process runner's job context included) is handed this one.
+    const auth: AuthPort = configuredAuth(realAuth, authSettings(), clerkIdentitySource, staffOrgSlug)
     // assertRealEnv above already proved every required variable is set; this narrows the type.
     const need = (name: string): string => {
         const value = env[name]

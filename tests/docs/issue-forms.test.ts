@@ -34,7 +34,8 @@ import { describe, expect, it } from 'vitest'
 const FORM_DIR = '.github/ISSUE_TEMPLATE'
 
 /** `config.yml` is the chooser, not a form — it has no `body:` and a different schema. */
-const NOT_A_FORM = new Set(['config.yml'])
+// The template chooser's config, in either spelling of the extension, configures the chooser and is not a form.
+const NOT_A_FORM = new Set(['config.yml', 'config.yaml'])
 
 /** https://docs.github.com/issues — the body item types GitHub accepts. */
 const ITEM_TYPES = new Set(['markdown', 'textarea', 'input', 'dropdown', 'checkboxes'])
@@ -153,7 +154,8 @@ function parseForm(text: string): Form {
 }
 
 const forms = readdirSync(FORM_DIR)
-    .filter((f) => f.endsWith('.yml') && !NOT_A_FORM.has(f))
+    // GitHub reads a form from a `.yaml` file as well as a `.yml` one.
+    .filter((f) => /\.ya?ml$/.test(f) && !NOT_A_FORM.has(f))
     .sort()
 
 describe('GitHub issue forms are well-formed', () => {

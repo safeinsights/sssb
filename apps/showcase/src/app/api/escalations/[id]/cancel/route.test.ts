@@ -39,9 +39,14 @@ function user(overrides: Partial<AuthUser> = {}): AuthUser {
 
 const ORG_IDS: Record<string, string> = { frontline: 'org-frontline', platform: 'org-platform' }
 // An escalation frontline -> platform: the active org (frontline) is the requester side and may withdraw.
-const REQUEST = { id: 'req-1', status: 'open', requesterOrgId: 'org-frontline', responderOrgId: 'org-platform' }
+const REQUEST = {
+    id: 'c0000000-0000-4000-8000-000000000001',
+    status: 'open',
+    requesterOrgId: 'org-frontline',
+    responderOrgId: 'org-platform',
+}
 
-function post(id = 'req-1'): Promise<Response> {
+function post(id = 'c0000000-0000-4000-8000-000000000001'): Promise<Response> {
     return POST(new Request(`http://localhost/api/escalations/${id}/cancel`, { method: 'POST' }), {
         params: Promise.resolve({ id }),
     })
@@ -61,10 +66,16 @@ describe('POST /api/escalations/[id]/cancel', () => {
         const response = await post()
 
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({ id: 'req-1', status: 'cancelled' })
-        expect(h.transitionEscalation).toHaveBeenCalledWith({}, 'tenant-northwind', 'req-1', 'cancelled', {
-            byUserId: 'user-marisol',
-        })
+        expect(await response.json()).toEqual({ id: 'c0000000-0000-4000-8000-000000000001', status: 'cancelled' })
+        expect(h.transitionEscalation).toHaveBeenCalledWith(
+            {},
+            'tenant-northwind',
+            'c0000000-0000-4000-8000-000000000001',
+            'cancelled',
+            {
+                byUserId: 'user-marisol',
+            },
+        )
     })
 
     test('403 when a restricted member tries to withdraw', async () => {
@@ -92,5 +103,12 @@ describe('POST /api/escalations/[id]/cancel', () => {
 
         expect(response.status).toBe(409)
         expect(await response.json()).toEqual({ error: 'invalid-transition', from: 'accepted', to: 'cancelled' })
+    })
+})
+
+describe('a path id that cannot be an escalation', () => {
+    test('is a 404, without touching the data module', async () => {
+        expect((await post('nope')).status).toBe(404)
+        expect(h.escalationForActiveOrg).not.toHaveBeenCalled()
     })
 })

@@ -29,7 +29,9 @@ import jsxA11y from 'eslint-plugin-jsx-a11y'
 import reactPlugin from 'eslint-plugin-react'
 import reactHooksPlugin from 'eslint-plugin-react-hooks'
 import typescriptEslint from 'typescript-eslint'
-import { SRC_EXT, STORY_FILES, TEST_FILES } from './patterns.js'
+import { SRC_EXT, STORY_FILES, TEST_FILES, vendorEntryShapes, vendorEntrySource } from './patterns.js'
+
+const VENDOR_ENTRY = new RegExp(vendorEntrySource)
 
 // APP-OWNED LINT EXCEPTIONS. A fence that takes named exceptions should not make an adopter edit SSSB's config, so
 // each app lists its own in `lint-exceptions.mjs` at its root, by path relative to the app, and the preset reads it.
@@ -90,16 +92,18 @@ export async function loadAppLintExceptions(appDir) {
 
 // THE APP'S OWN VENDORS. An adapter the app owns (docs/recipes/app-owned-adapter.md) wraps a vendor SDK SSSB's list
 // does not name, and the app adds it to the ban in its own package.json: `"sssb": { "vendors": ["stripe", "stripe/*"] }`,
-// in the gitignore-style patterns SSSB's list uses. A file, not a `configs.app` option, so `sssb check-fences` reads
-// the same list the preset does and compares the rules' options EXACTLY: a later block that sets the vendor rules'
-// options for some directory, replacing the app's list there, shows up as options the preset does not set. A pattern
-// that starts with `!` is refused: in gitignore syntax it is a negation, and it would take a vendor OFF SSSB's list.
+// each entry a package name, one followed by `/*`, or a whole scope (vendorEntrySource, the shapes both halves of the
+// ban read alike; the rules' schema makes the same test). A file, not a `configs.app` option, so `sssb check-fences`
+// reads the same list the preset does and compares the rules' options EXACTLY: a later block that sets the vendor
+// rules' options for some directory, replacing the app's list there, shows up as options the preset does not set. A
+// pattern that starts with `!` is refused by name: in gitignore syntax it is a negation, and it would take a vendor OFF
+// SSSB's list.
 /**
  * The app's own vendor patterns, from its package.json's `sssb.vendors`; [] when it names none.
  * @param {string} appDir
  * @returns {string[]}
  */
-function loadAppVendors(appDir) {
+export function loadAppVendors(appDir) {
     const manifest = join(appDir, 'package.json')
     if (!existsSync(manifest)) return []
     const vendors = JSON.parse(readFileSync(manifest, 'utf8')).sssb?.vendors
@@ -115,6 +119,12 @@ function loadAppVendors(appDir) {
         if (vendor.startsWith('!')) {
             fail(
                 `holds ${JSON.stringify(vendor)}: a leading ! un-bans a vendor, and the app's list only adds to SSSB's`,
+            )
+        }
+        if (!VENDOR_ENTRY.test(vendor)) {
+            fail(
+                `holds ${JSON.stringify(vendor)}: each entry is ${vendorEntryShapes}, the shapes import() is fenced ` +
+                    'by as well as an import declaration',
             )
         }
     }
@@ -387,6 +397,14 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             ignores: [`${src('adapters/real')}/**`, `${src('adapters')}/index.ts`, TEST_FILES],
             plugins: sssb,
             rules: { 'sssb/no-dynamic-real-adapter-import': 'error' },
+        }),
+        // @sssb/kit ships its source, so a path into the package (`../node_modules/@sssb/kit/src/…`) reaches any of its
+        // internals past the exports map, and so does any path through node_modules. Every file of the app: a test or a
+        // script is as able to reach one as a route.
+        at('no-path-into-kit', {
+            files: files(''),
+            plugins: sssb,
+            rules: { 'sssb/no-path-into-kit': 'error' },
         }),
         // No raw mkdtemp in tests: every unit test, and everything under tests/ (Playwright's default testMatch picks
         // up `.spec.mjs` and `.test.js`, and a support helper can be either).

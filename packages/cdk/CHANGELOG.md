@@ -1,5 +1,13 @@
 # @sssb/cdk
 
+## 0.5.0
+
+### Patch Changes
+
+- Updated dependencies [9d56c29]
+- Updated dependencies [9d56c29]
+    - @sssb/tools@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes

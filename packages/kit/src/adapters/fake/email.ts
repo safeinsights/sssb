@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import type { EmailMessage, EmailPort } from '../../ports/email'
+import { assertSendableMessage } from '../email-message'
 import { writeJsonAtomic } from './atomic-write'
 import { dataDir } from './data-dir'
 
@@ -19,6 +20,7 @@ let counter = 0
 
 export const fakeEmail: EmailPort = {
     async send(message) {
+        assertSendableMessage(message) // as the real adapter does, so a test on fakes catches a list in `to`
         const caught: CaughtEmail = {
             id: `${Date.now()}-${(counter++).toString().padStart(3, '0')}`,
             at: new Date().toISOString(),

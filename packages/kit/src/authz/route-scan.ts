@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs'
+import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 
@@ -8,7 +8,9 @@ import ts from 'typescript'
  * ./route-policy.ts and an app's own) is input rather than something this module knows. It reads route
  * files with the TypeScript compiler's parser and binder, never a regex over their text, and judges EACH
  * exported mutating handler on its own: a string, a comment, a call in another handler or a call in
- * statically dead code proves nothing about the handler in front of it.
+ * statically dead code proves nothing about the handler in front of it. Server Actions (`scanServerActions`) are
+ * judged by the same rules as a POST, each export of a `'use server'` file and each function whose body opens with
+ * `'use server'`; no exemption applies to one. The walks follow a symbolic link to a directory, as Next does.
  *
  * WHAT "REACHES" MEANS. A call counts for a handler when it sits on that handler's own path:
  *
@@ -16,13 +18,21 @@ import ts from 'typescript'
  *   `continue`; an `if`, `try`, `switch` or labeled block every way through which does; a `while (true)` or
  *   `for (;;)` nothing breaks out of; a `do` whose body never falls through;
  * - not in a branch a constant condition rules out: `if (false)`, `false && …`, `true ? … : here`,
- *   `'x' ?? …`, or a `const` bound to such a literal. Constants are literals, `!`, `void` and parentheses;
+ *   `'x' ?? …`, an optional call on a receiver a constant makes nullish (`hook?.(…)` with `const hook = null`), or a
+ *   `const` bound to such a literal. Constants are literals, `!`, `void` and parentheses;
  *   nothing else is evaluated;
  * - in a function literal passed as an argument (`withPortErrors(async () => { … })`), which the call is
  *   ASSUMED to invoke and to carry its failure in the call's own result. That is the wrapper idiom every route
  *   uses, and the one trust this module extends: it cannot read an imported wrapper to see whether it really
  *   calls its argument. It extends none to a callee whose code is in this file (`isSameFile`): a function is not
- *   followed through a parameter, so what such a callee is handed counts for nothing;
+ *   followed through a parameter, so what such a callee is handed counts for nothing. Nor to a callee known never to
+ *   hand a function's failure back (`neverCarriesFailure`): a timer or microtask (`setTimeout`, `setInterval`,
+ *   `setImmediate`, `queueMicrotask`, `process.nextTick`; bare, as a member of `globalThis`, `self` or `window`, or
+ *   imported from Node's `timers`), Next's `after` (and `unstable_after`), which runs its callback after the response,
+ *   `Promise.resolve`, which never calls a function, a `.catch`, `.finally` or listener method (`.on`, `.once`,
+ *   `addEventListener`, …) on any receiver, and the second argument of `.then`, which runs only on a rejection. A function
+ *   handed to a callee whose result is RETURNED counts only where a throw at the call would also reach the outcome
+ *   (not inside a `try` whose `catch` swallows): the callee may run it synchronously, a tracing span does;
  * - in a function declared in the SAME module and called (or passed as an argument) from the handler's
  *   path, followed to any depth. A function that is only defined, or that the file reassigns or declares twice,
  *   is not followed;
@@ -34,10 +44,15 @@ import ts from 'typescript'
  *     on the spot (`settledBy`: `return`, an arrow's expression body; through parentheses, a type assertion, a
  *     ternary arm, the right of `&&`, `||`, `??` or a comma, or the left of `||` or `??`). A statement of its own,
  *     `void`, a variable awaited later, a `.then` or `.catch` chain, an argument, all leave the promise floating;
- *   - an array iteration method (`forEach`, `map`, …, by name, on a receiver that is neither an import nor an
- *     object whose code is in this file). It drops an `async` function's promise, awaited or not, and runs a sync
- *     one in place, so its throw goes up through the call; but a `map`, `filter` or `flatMap` on a receiver that is
- *     visibly an iterator (`xs.values()`, `Iterator.from(…)`) runs nothing until consumed;
+ *   - an array iteration method (`forEach`, `map`, …, by name on any receiver but an object whose code is in this
+ *     file, and `Array.from`'s mapper). It drops an `async` function's promise, awaited or not, and runs a sync one
+ *     in place, so its throw goes up through the call; but a `map`, `filter` or `flatMap` on a receiver that is
+ *     visibly an iterator (`xs.values()`, `Iterator.from(…)`) runs nothing until consumed, and on a receiver whose
+ *     head is an import (`R.forEach`, `parse(req).ids.map`), where the name may be a library's, a sync callback
+ *     counts only when the call's result is settled, as for any imported callee. The one way an async callback's
+ *     failure comes back is `Promise.all(xs.map(async …))` awaited or returned: Promise.all rejects with the first
+ *     rejection. `allSettled` never rejects, and `any` and `race` settle on another promise, so they do not count.
+ *     (`Array.fromAsync` awaits what its mapper returns, so it is trusted like any imported callee);
  *   - a `try` whose `catch` can do anything but rethrow (fall through, `return`, `break` or `continue` out of
  *     itself), or whose `finally` can leave in the throw's place. A promise the `try` returns (`return p`) is not
  *     caught; `return await p` throws inside it.
@@ -59,7 +74,11 @@ import ts from 'typescript'
  * value import (not `import type`, not a JSDoc `@import`). A local function that happens to be named
  * `authorize` is followed like any other, so it counts only if it calls the real one.
  *
- * WHAT COUNTS AS A GATE'S NAME: the same rule, by binding (`gateName`). `withWebhookSecret`, `auth.updateProfile`,
+ * WHAT COUNTS AS A GATE'S NAME: the same rule, by binding (`gateName`). A gate's call counts wherever it RUNS on the
+ * handler's path, whatever a `try` around it does with its failure (a `calls` gate says what the route's mutation is,
+ * so what matters is that it runs). One in a function that never runs, or runs only later and not for the handler (a
+ * same-file callee the scan does not follow, a lazy iterator, a timer, a listener, a `.catch` handler, an `after`
+ * callback), does not count. `withWebhookSecret`, `auth.updateProfile`,
  * `isSimulated` count only when the name (the head of a dotted one) is a value import kept under the name it is
  * exported by, from any module; a namespace member reads under its own name. A local look-alike
  * (`const isSimulated = true`) or an alias (`import { identity as withWebhookSecret }`) is not the gate.
@@ -67,6 +86,13 @@ import ts from 'typescript'
  * A handler the module cannot resolve at all (a destructured export, a `let`, a reassigned function, an
  * unresolvable re-export, a file that does not parse, a module that is not an ES module) is REFUSED with
  * the reason, and a refusal is a failure.
+ *
+ * WHAT IT DOES NOT PROVE. "Reaches" is MAY-reach: some path through the handler passes an `authorize` whose denial
+ * stops it. It does not prove that EVERY path does, nor that the call comes before the mutation. A handler that
+ * returns early on an attacker's input before authorizing, authorizes only inside an `if`, mutates first and
+ * authorizes after, or authorizes in a loop over a list that may be empty, passes. Only a branch a constant rules
+ * out is dead to it; a condition it cannot evaluate is taken both ways. The rule an author keeps by hand is
+ * stronger: authorize before anything else the handler does, on every path.
  */
 
 /** The verbs that mutate. GET, HEAD and OPTIONS are never judged. */
@@ -114,10 +140,12 @@ export interface ScanRoot {
  * - `wrapped-by`: the handler IS a call to one of `callees` (`export const POST = withWebhookSecret(…)`).
  *   For a guard that wraps the handler, reaching it is not enough: the guard has to be what Next calls.
  * - `calls`: the handler reaches a call to one of `callees` (dotted names, `auth.updateProfile`).
- * - `opens-with-simulated-404`: the handler's FIRST statement is `if (!isSimulated)` and its branch does
- *   nothing but return or throw a response built from literals (`return new Response(null, { status: 404 })`,
- *   `return Response.json(…)`, `throw new NotFoundError(…)`), and no parameter runs code before it (a default),
- *   so the real-mode path does nothing.
+ * - `opens-with-simulated-404`: the handler's FIRST statement (after a directive prologue) is `if (!isSimulated)`
+ *   and its branch does nothing but return or throw a response built from literals (`return new Response(null,
+ *   { status: 404 })`, `return Response.json(…)`, `throw new NotFoundError(…)` with the error imported from
+ *   `@sssb/kit/ports/errors`, or a global `…Error`), no parameter runs code before it (a default), and the file
+ *   assigns to none of the globals that branch builds (`Response`, `JSON`, an `…Error`), so the real-mode path
+ *   does nothing.
  */
 export type Gate =
     | { kind: 'wrapped-by'; callees: readonly string[] }
@@ -159,23 +187,277 @@ export function scanRoutes(roots: readonly ScanRoot[], options: ScanOptions = {}
     const authorizeModules = options.authorizeModules ?? ['@sssb/kit/authz/authorize']
     return roots.flatMap((root) => {
         const scanner = new RootScanner(root, authorizeModules)
-        return routeFiles(root.dir).map((file) => ({
+        const unreadable = new Map<string, string>()
+        const routes: ScannedRoute[] = routeFiles(root.dir, unreadable).map((file) => ({
             root: root.label,
             rel: path.relative(root.exemptDir, file).split(path.sep).join('/'),
             file,
             handlers: scanner.handlers(file),
         }))
+        for (const [dir, code] of unreadable) {
+            routes.push({
+                root: root.label,
+                rel: path.relative(root.exemptDir, dir).split(path.sep).join('/'),
+                file: dir,
+                handlers: [{ verb: '*', refusal: unreadableRefusal(code) }],
+            })
+        }
+        return routes
     })
 }
 
-function routeFiles(dir: string): string[] {
+function routeFiles(dir: string, unreadable: Map<string, string>): string[] {
+    return walkFiles(
+        dir,
+        (name) => ROUTE_FILE.test(name),
+        () => true,
+        new Set(),
+        new Map(),
+        unreadable,
+    )
+}
+
+/** The refusal for a directory the walk could not read: a failure, since a route or an action may be in it. */
+function unreadableRefusal(code: string): string {
+    return `the directory could not be read (${code}), so a route or Server Action in it would go unchecked`
+}
+
+/**
+ * Files under `dir` named `route.<something>` that the scan does not read as a route (`route.mts`, `route.api.ts`):
+ * Next serves `route.<ext>` for every extension its `pageExtensions` names, which the scan does not read, so such a
+ * file may be a route nobody checked. A colocated test artefact (`route.test.ts`, `route.integration.test.ts`,
+ * `route.spec.tsx`, `route.stories.tsx`, `route.bench.ts`, `route.test-d.ts`, a `.snap`) and a declaration file are
+ * not routes.
+ */
+export function unreadRouteFiles(dir: string): string[] {
+    const named = (name: string) =>
+        /^route\./.test(name) &&
+        !ROUTE_FILE.test(name) &&
+        !/^route\.(?:[\w-]+\.)*(?:test|spec|stories|bench|test-d)\.[cm]?[jt]sx?$/.test(name) &&
+        !/\.d\.[cm]?ts$/.test(name) &&
+        !name.endsWith('.snap')
+    return walkFiles(dir, named, () => true)
+}
+
+/**
+ * Every file under `dir` whose name `accept`s, descending into each directory `descend` allows. A symbolic link to
+ * a directory is followed as Next's own walk follows it (a `Dirent` reports the link, not a directory, so a walk
+ * that asked only `isDirectory()` skipped every route behind one), and a link back to a directory the walk is
+ * already inside is not, so a cycle ends. A file's path is the one the walk reached it by, link included: that is
+ * the path Next serves it at.
+ */
+function walkFiles(
+    dir: string,
+    accept: (name: string) => boolean,
+    descend: (name: string) => boolean,
+    ancestors: ReadonlySet<string> = new Set(),
+    walked: Map<string, { base: string; files: string[] }> = new Map(),
+    unreadable: Map<string, string> = new Map(),
+): string[] {
+    // A directory the walk cannot read (EACCES, or removed mid-walk: ENOENT) may hold a route: it is recorded in
+    // `unreadable` with the error's code, for the caller to report as a failure, never skipped in silence.
+    let real: string
+    let listed: Dirent[]
+    try {
+        real = realpathSync(dir)
+        if (ancestors.has(real)) return []
+        listed = readdirSync(dir, { withFileTypes: true })
+    } catch (error) {
+        unreadable.set(dir, (error as NodeJS.ErrnoException).code ?? 'unknown error')
+        return []
+    }
+    const inside = new Set(ancestors).add(real)
     const out: string[] = []
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    // Sorted, so what the walk finds never depends on the filesystem's entry order.
+    const entries = listed.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    for (const entry of entries) {
         const full = path.join(dir, entry.name)
-        if (entry.isDirectory()) out.push(...routeFiles(full))
-        else if (ROUTE_FILE.test(entry.name)) out.push(full)
+        const linked = entry.isSymbolicLink() && isDirectoryTarget(full)
+        if (entry.isDirectory() || linked) {
+            if (!descend(entry.name)) continue
+            // A directory reached through a link that was already walked is not walked again (two links per level would
+            // make the walk exponential in the depth), but every file found there is reported again at THIS path too:
+            // Next serves it at both, and an exemption is judged by path.
+            const target = linked ? realpathOrUndefined(full) : undefined
+            const prior = target === undefined || inside.has(target) ? undefined : walked.get(target)
+            if (prior) {
+                out.push(...prior.files.map((file) => path.join(full, path.relative(prior.base, file))))
+                continue
+            }
+            const files = walkFiles(full, accept, descend, inside, walked, unreadable)
+            const walkedReal = realpathOrUndefined(full)
+            if (walkedReal !== undefined) walked.set(walkedReal, { base: full, files })
+            out.push(...files)
+        } else if (accept(entry.name)) out.push(full)
     }
     return out.sort()
+}
+
+/** A path's real path, or undefined when it cannot be resolved (the walk reports such a directory itself). */
+function realpathOrUndefined(file: string): string | undefined {
+    try {
+        return realpathSync(file)
+    } catch {
+        return undefined
+    }
+}
+
+/** Whether a symbolic link leads to a directory; false for a dangling one. */
+function isDirectoryTarget(link: string): boolean {
+    try {
+        return statSync(link).isDirectory()
+    } catch {
+        return false
+    }
+}
+
+/** A source file Next could compile into the app, by extension. Declaration files hold no code. */
+function isSourceFile(name: string): boolean {
+    return /\.(?:[cm]?[jt]sx?)$/.test(name) && !/\.d\.[cm]?ts$/.test(name)
+}
+
+/** Whether `statements` opens with a `'use server'` directive (a string-literal statement in the prologue). */
+function hasUseServer(statements: readonly ts.Statement[]): boolean {
+    for (const statement of statements) {
+        if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) return false
+        if (statement.expression.text === 'use server') return true
+    }
+    return false
+}
+
+/** Whether the file declares any Server Action: a file-level `'use server'`, or one opening a function's body. */
+function declaresServerActions(file: string): boolean {
+    let text: string
+    try {
+        text = readFileSync(file, 'utf8')
+    } catch {
+        // A dangling link (an editor's lockfile, `.#page.tsx -> user@host.pid`): nothing there to serve or to read.
+        return false
+    }
+    if (!text.includes('use server')) return false
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, false)
+    let found = hasUseServer(sf.statements)
+    const visit = (node: ts.Node): void => {
+        if (found) return
+        if (ts.isFunctionLike(node) && 'body' in node && node.body && ts.isBlock(node.body)) {
+            if (hasUseServer(node.body.statements)) found = true
+        }
+        ts.forEachChild(node, visit)
+    }
+    if (!found) visit(sf)
+    return found
+}
+
+export interface ScannedAction {
+    root: string
+    /** Path relative to the root's `dir`, `/`-separated. */
+    rel: string
+    file: string
+    /** The action's name: its export name, or `<function name or "inline"> (line N)` for an inline one. */
+    name: string
+    handler: Handler
+}
+
+/**
+ * Every Server Action under `root.dir`, each analysed as a mutating handler (verb `action`). A Server Action is
+ * a POST endpoint Next exposes for the function, so it must reach `authorize` by the same rules as a route's
+ * POST, and no exemption applies to one (the exemption map names route paths). Two kinds: every export of a file
+ * that opens with `'use server'`, and every function whose own body opens with it. `node_modules` is not walked.
+ */
+export function scanServerActions(root: ScanRoot, options: ScanOptions = {}): ScannedAction[] {
+    const authorizeModules = options.authorizeModules ?? ['@sssb/kit/authz/authorize']
+    const scanner = new RootScanner(root, authorizeModules)
+    const unreadable = new Map<string, string>()
+    const files = walkFiles(
+        root.dir,
+        isSourceFile,
+        (name) => name !== 'node_modules',
+        new Set(),
+        new Map(),
+        unreadable,
+    ).filter(declaresServerActions)
+    const actions: ScannedAction[] = files.flatMap((file) =>
+        scanner.actions(file).map(({ name, handler }) => ({
+            root: root.label,
+            rel: path.relative(root.dir, file).split(path.sep).join('/'),
+            file,
+            name,
+            handler,
+        })),
+    )
+    for (const [dir, code] of unreadable) {
+        actions.push({
+            root: root.label,
+            rel: path.relative(root.dir, dir).split(path.sep).join('/'),
+            file: dir,
+            name: '*',
+            handler: { verb: 'action', refusal: unreadableRefusal(code) },
+        })
+    }
+    return actions
+}
+
+/**
+ * Build and test output a generated workspace's `.gitignore` names, at any depth. A bundler can keep a `'use server'`
+ * directive as the first statement of what it writes there, which is not the app's source: judging it would make the
+ * check's verdict depend on whether a build had run.
+ */
+const BUILD_OUTPUT_DIRS: ReadonlySet<string> = new Set([
+    'build',
+    'cdk.out',
+    'coverage',
+    'dist',
+    'dist-demo',
+    'out',
+    'playwright-report',
+    'storybook-static',
+    'test-results',
+])
+
+/**
+ * Files in `appDir` but outside its `src` (and outside `node_modules`, dot-directories such as a build's `.next`, and
+ * BUILD_OUTPUT_DIRS) that declare Server Actions. The scan judges actions only under `src`, so one elsewhere would go
+ * unchecked. A directory it cannot read goes in `unreadable`, with its error code.
+ */
+export function serverActionFilesOutsideSrc(appDir: string, unreadable: Map<string, string> = new Map()): string[] {
+    const keep = (name: string) => name !== 'node_modules' && !name.startsWith('.') && !BUILD_OUTPUT_DIRS.has(name)
+    if (!existsSync(appDir)) return []
+    let entries: Dirent[]
+    try {
+        entries = readdirSync(appDir, { withFileTypes: true })
+    } catch (error) {
+        unreadable.set(appDir, (error as NodeJS.ErrnoException).code ?? 'unknown error')
+        return []
+    }
+    return entries
+        .flatMap((entry) => {
+            const full = path.join(appDir, entry.name)
+            if (entry.name === 'src' || !keep(entry.name)) return []
+            if (entry.isDirectory() || (entry.isSymbolicLink() && isDirectoryTarget(full))) {
+                return walkFiles(full, isSourceFile, keep, new Set(), new Map(), unreadable)
+            }
+            return isSourceFile(entry.name) ? [full] : []
+        })
+        .filter(declaresServerActions)
+        .sort()
+}
+
+/** Why a Server Action fails the scan, or undefined if it passes. No exemption applies to one. */
+export function judgeServerAction(action: ScannedAction): string | undefined {
+    const where = `${action.root}: ${action.rel} Server Action \`${action.name}\``
+    if (action.handler.refusal !== undefined) {
+        return `${where} cannot be checked: ${action.handler.refusal}. The scan fails a handler it cannot follow rather than pass it.`
+    }
+    if (action.handler.facts.reachesAuthorize) return undefined
+    return (
+        `${where} does not reach authorize(...) on its own path. A Server Action is a POST endpoint Next exposes ` +
+        `for the function, whoever renders the form that calls it, so it is judged as a route's POST is, and no ` +
+        `exemption applies to it. A call in a dead branch, an uncalled function or another module does not count, nor ` +
+        `does one whose denial cannot reach the action: in an async function or a callback whose promise it neither ` +
+        `awaits nor returns, or in a try whose catch does not rethrow (the useActionState shape, ` +
+        `\`try { authorize(...); … } catch (e) { return { error } }\`, swallows the denial). Call authorize(...) first, ` +
+        `before any try (or in a function in this file that it calls, awaiting it if it is async).`
+    )
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -233,7 +515,10 @@ export function describeGate(gate: Gate): string {
             return (
                 'the handler takes no parameter that runs code (a default) and opens with ' +
                 '`if (!isSimulated) return new Response(null, { status: 404 })` (an imported ' +
-                '`isSimulated`, and a branch that only returns or throws a response built from inert values)'
+                '`isSimulated`, and a branch that only returns or throws a response built from inert values: ' +
+                '`new Response(…)` or `Response.json(…)` with literal arguments, or `throw new NotFoundError(…)` imported ' +
+                "from @sssb/kit/ports/errors. Next's `notFound()` (next/navigation) and an options object held in a " +
+                'variable, `new Response(null, NOT_FOUND)`, are refused: the scan cannot see that either runs nothing)'
             )
     }
 }
@@ -333,6 +618,46 @@ class RootScanner {
             const node = this.handlerOf(binding, new Set())
             return 'reason' in node ? { verb, refusal: node.reason } : { verb, facts: this.facts(node) }
         })
+    }
+
+    /** Every Server Action `file` declares, with its facts or why it could not be read. */
+    actions(file: string): Array<{ name: string; handler: Handler }> {
+        const src = this.load(file)
+        if (typeof src === 'string') return [{ name: '*', handler: { verb: 'action', refusal: src } }]
+        const out: Array<{ name: string; handler: Handler }> = []
+        if (hasUseServer(src.sf.statements)) {
+            const { named, stars } = exportsOf(src)
+            for (const [name, binding] of named) {
+                const node = this.handlerOf(binding, new Set())
+                out.push({
+                    name,
+                    handler:
+                        'reason' in node
+                            ? { verb: 'action', refusal: node.reason }
+                            : { verb: 'action', facts: this.facts(node) },
+                })
+            }
+            for (const specifier of stars) {
+                const refusal = `\`export * from '${specifier}'\` in a 'use server' file is not followed; export each action by name`
+                out.push({ name: '*', handler: { verb: 'action', refusal } })
+            }
+        }
+        const visit = (node: ts.Node): void => {
+            if (ts.isFunctionLike(node) && 'body' in node && node.body && ts.isBlock(node.body)) {
+                if (hasUseServer(node.body.statements)) {
+                    const fn = node as ts.FunctionLikeDeclaration
+                    const line = src.sf.getLineAndCharacterOfPosition(fn.getStart(src.sf)).line + 1
+                    const label = fn.name && ts.isIdentifier(fn.name) ? fn.name.text : 'inline'
+                    out.push({
+                        name: `${label} (line ${line})`,
+                        handler: { verb: 'action', facts: this.facts({ src, fn }) },
+                    })
+                }
+            }
+            ts.forEachChild(node, visit)
+        }
+        visit(src.sf)
+        return out
     }
 
     private load(fileName: string): Source | string {
@@ -508,10 +833,21 @@ interface Outcome {
     thrown: boolean
     /** A promise the current function returns reaches the handler's outcome, so a rejection of it does. */
     returned: boolean
+    /**
+     * Code here runs when the handler does (as far as the scan can tell), whether or not its failure reaches the
+     * outcome. A gate's call counts where this holds: a `calls` gate says what the route's mutation IS, so what
+     * matters is that it runs, not where its failure goes. False in a function never invoked, or run later by
+     * something that is not the handler (a same-file callee not followed, a lazy iterator, a timer, a listener, a
+     * `.catch` handler).
+     */
+    runs: boolean
 }
 
-const HANDLER_OUTCOME: Outcome = { thrown: true, returned: true }
-const LOST: Outcome = { thrown: false, returned: false }
+const HANDLER_OUTCOME: Outcome = { thrown: true, returned: true, runs: true }
+/** Never runs on the handler's path. */
+const NEVER: Outcome = { thrown: false, returned: false, runs: false }
+/** Runs, but its failure does not reach the handler's outcome (the outcome `outer` carries over its `runs`). */
+const dropped = (outer: Outcome): Outcome => ({ thrown: false, returned: false, runs: outer.runs })
 
 /** Walks one handler's path, collecting the calls on it. One instance per handler, never shared. */
 class Reach {
@@ -530,7 +866,7 @@ class Reach {
 
     /** Walks `fn`'s body, where `outcome` says what reaches the handler's outcome from inside it. */
     invoke(fn: ts.FunctionLikeDeclaration, outcome: Outcome = HANDLER_OUTCOME): void {
-        const key = `${outcome.thrown}/${outcome.returned}`
+        const key = `${outcome.thrown}/${outcome.returned}/${outcome.runs}`
         const seen = this.invoked.get(fn) ?? new Set<string>()
         if (seen.has(key)) return
         seen.add(key)
@@ -552,7 +888,7 @@ class Reach {
      * is handed counts for nothing, and so does what a wrapper inside it is handed.
      */
     wrapped(call: ts.CallExpression, outcome: Outcome = HANDLER_OUTCOME): void {
-        const own = this.isSameFile(call.expression) ? LOST : outcome
+        const own = this.isSameFile(call.expression) ? NEVER : outcome
         for (const argument of call.arguments) {
             const a = unwrap(argument)
             if (isFunctionLiteral(a)) this.invoke(a, own)
@@ -625,18 +961,17 @@ class Reach {
     }
 
     /**
-     * `xs.forEach`, `xs['map']` and the like, by name: an array iteration method, unless the receiver's head is an
-     * import, where the same name is often a library's (Ramda's curried `R.map`, `Effect.map`), deferred or lazy, or
-     * an object whose code is in this file, whose `forEach` is its own. `lazy` is a `map`, `filter` or `flatMap` on
-     * a receiver that is visibly an iterator (`xs.values()`, `.keys()`, `.entries()`, `Iterator.from(…)`), which
-     * runs nothing until something consumes it.
+     * `xs.forEach`, `xs['map']` and the like, by name, whatever the receiver: an array iteration method, unless the
+     * receiver is an object whose code is in this file, whose `forEach` is its own (and, being same-file, is not
+     * followed through its parameter at all). `imported` is a receiver whose head is an import (`parse(req).ids`,
+     * `R`), where the same name may be a library's, deferred or lazy: an async callback is dropped either way, and a
+     * sync one is trusted only as far as an imported callee is. `lazy` is a `map`, `filter` or `flatMap` on a
+     * receiver that is visibly an iterator (`xs.values()`, `.keys()`, `.entries()`, `Iterator.from(…)`), which runs
+     * nothing until something consumes it. `Array.from(xs, fn)` maps like an eager method.
      */
-    private iterationMethod(callee: ts.Expression): { name: string; lazy: boolean } | undefined {
-        let name: string | undefined
-        if (ts.isPropertyAccessExpression(callee)) name = callee.name.text
-        else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
-            name = callee.argumentExpression.text
-        }
+    private iterationMethod(callee: ts.Expression): { name: string; lazy: boolean; imported: boolean } | undefined {
+        if (isGlobalMember(this.src, callee, 'Array', 'from')) return { name: 'from', lazy: false, imported: false }
+        const name = memberName(callee)
         if (name === undefined || !ARRAY_ITERATION.has(name)) return undefined
         const receiver = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
         let head = receiver
@@ -646,9 +981,9 @@ class Reach {
             else if (ts.isCallExpression(head)) head = unwrap(head.expression)
             else break
         }
-        if (ts.isIdentifier(head) && valueImportOf(declarationOf(this.src, head)) !== undefined) return undefined
+        const imported = ts.isIdentifier(head) && valueImportOf(declarationOf(this.src, head)) !== undefined
         if (this.isSameFileObject(receiver)) return undefined
-        return { name, lazy: !EAGER_ITERATION.has(name) && isIterator(receiver) }
+        return { name, lazy: !EAGER_ITERATION.has(name) && isIterator(this.src, receiver), imported }
     }
 
     private visit(node: ts.Node, outcome: Outcome): void {
@@ -674,17 +1009,33 @@ class Reach {
     }
 
     private call(node: ts.CallExpression | ts.NewExpression, outcome: Outcome): void {
+        // `hook?.(…)`, `x?.y(…)` on a receiver a constant makes null or undefined: the chain stops there, and neither
+        // the call nor its arguments run.
+        if (shortCircuitsOnConstant(this.src, node)) return
         const callee = unwrap(node.expression)
+        // A gate's call counts wherever it RUNS on the handler's path, whatever a `try` around it does with its
+        // failure; one in a function that never runs (a same-file no-op, a lazy iterator, a timer, a `.catch`
+        // handler) does not.
         const name = gateName(this.src, callee)
-        if (name) this.calls.add(name)
+        if (name && outcome.runs) this.calls.add(name)
         // `authorize` throws synchronously, so its denial reaches the outcome wherever a throw here does.
         if (outcome.thrown && this.isAuthorize(callee)) this.authorize = true
         // The promise this call returns reaches the outcome only when it is awaited or returned on the spot.
         const settled = settledBy(node)
         const result = settled === 'await' ? outcome.thrown : settled === 'return' ? outcome.returned : false
+        // A function handed to an imported callee may run synchronously inside it (a tracing span, an
+        // AsyncLocalStorage.run), so its denial may come out as a throw from the call rather than as a rejection of
+        // what the call returns. A returned call carries it only where a throw at the call also reaches the outcome:
+        // not inside a `try` whose `catch` swallows, where `return wrap(() => authorize(…))` passed before.
+        // An async function literal cannot throw synchronously out of the call (its denial rejects its promise), so the
+        // condition applies only to a sync one.
+        const handedResult = (fn: ts.FunctionLikeDeclaration): boolean =>
+            settled === 'return' && !isAsync(fn) ? result && outcome.thrown : result
         // Called directly, a sync function throws into this point; an async one only rejects its promise.
         const direct = (fn: ts.FunctionLikeDeclaration): Outcome =>
-            isAsync(fn) ? { thrown: result, returned: result } : { thrown: outcome.thrown, returned: result }
+            isAsync(fn)
+                ? { thrown: result, returned: result, runs: outcome.runs }
+                : { thrown: outcome.thrown, returned: result, runs: outcome.runs }
         if (isFunctionLiteral(callee)) this.invoke(callee, direct(callee))
         else {
             this.visit(callee, outcome)
@@ -697,21 +1048,46 @@ class Reach {
         // place, so it throws through the call; a lazy one on an iterator runs nothing. A callee whose code is in
         // this file is not followed through its parameter, so what it is handed counts for nothing.
         const method = this.iterationMethod(callee)
-        const handed = (fn: ts.FunctionLikeDeclaration): Outcome => {
-            if (method !== undefined)
-                return isAsync(fn) || method.lazy ? LOST : { thrown: outcome.thrown, returned: false }
-            if (this.isSameFile(callee)) return LOST
-            return result ? HANDLER_OUTCOME : LOST
+        const allOf = method?.name === 'map' && !method.lazy ? promiseAllOf(this.src, node) : undefined
+        const handed = (fn: ts.FunctionLikeDeclaration, index: number): Outcome => {
+            if (method !== undefined) {
+                // Only the callback is called: argument 0 (Array.from's mapper is argument 1). Another function
+                // argument is a `thisArg`, which is never invoked.
+                if (index !== (method.name === 'from' ? 1 : 0)) return NEVER
+                if (method.lazy) return NEVER
+                // `await Promise.all(xs.map(cb))`: the array map returns is what Promise.all settles, and it rejects
+                // with the first rejection, so what each callback RETURNS reaches the Promise.all call's own result:
+                // an async callback's promise, or the promise a sync one returns (`xs.map((x) => db.withTenant(…))`).
+                // A sync callback's throw still goes up through map. Only Promise.all: allSettled never rejects, and
+                // any and race settle on another promise's outcome.
+                if (allOf !== undefined) {
+                    const settledAll = settledBy(allOf)
+                    const reaches =
+                        settledAll === 'await' ? outcome.thrown : settledAll === 'return' && outcome.returned
+                    if (isAsync(fn)) return { thrown: reaches, returned: reaches, runs: outcome.runs }
+                    return { thrown: outcome.thrown, returned: reaches, runs: outcome.runs }
+                }
+                if (isAsync(fn)) return dropped(outcome)
+                // A sync callback runs in place on an array. On a receiver whose head is an import, the same name may
+                // be a library's (a curried `R.forEach`, a query builder's `map`) that runs it later or not at all,
+                // so it is trusted no further than any imported callee: only when the call's result is settled.
+                if (method.imported && !handedResult(fn)) return dropped(outcome)
+                return { thrown: outcome.thrown, returned: false, runs: outcome.runs }
+            }
+            // `.then(onFulfilled, onRejected)`: the second runs only on a rejection, as a `.catch` handler does.
+            if (index === 1 && memberName(callee) === 'then') return NEVER
+            if (this.isSameFile(callee) || neverCarriesFailure(this.src, callee)) return NEVER
+            return handedResult(fn) ? { ...HANDLER_OUTCOME, runs: outcome.runs } : dropped(outcome)
         }
-        for (const argument of node.arguments ?? []) {
+        node.arguments?.forEach((argument, index) => {
             const a = unwrap(argument)
-            if (isFunctionLiteral(a)) this.invoke(a, handed(a))
+            if (isFunctionLiteral(a)) this.invoke(a, handed(a, index))
             else {
                 this.visit(a, outcome)
                 const local = this.localFunction(a)
-                if (local) this.invoke(local, handed(local))
+                if (local) this.invoke(local, handed(local, index))
             }
-        }
+        })
     }
 
     private localFunction(e: ts.Expression): ts.FunctionLikeDeclaration | undefined {
@@ -777,8 +1153,9 @@ class Reach {
                 (!alwaysExits(this.src, s.catchClause.block) || leavesBlock(s.catchClause.block, true))
             const thrown = outcome.thrown && !finallyMayLeave
             const returned = outcome.returned && !finallyMayLeave
-            this.statements(s.tryBlock.statements, { thrown: thrown && !catchSwallows, returned })
-            if (s.catchClause) this.statements(s.catchClause.block.statements, { thrown, returned })
+            const runs = outcome.runs
+            this.statements(s.tryBlock.statements, { thrown: thrown && !catchSwallows, returned, runs })
+            if (s.catchClause) this.statements(s.catchClause.block.statements, { thrown, returned, runs })
             if (s.finallyBlock) this.statements(s.finallyBlock.statements, outcome)
         } else if (ts.isWhileStatement(s)) {
             const condition = constantTruth(this.src, s.expression)
@@ -827,19 +1204,125 @@ const EAGER_ITERATION: ReadonlySet<string> = new Set([
     'reduce',
     'reduceRight',
     'some',
+    // A comparator: called in place, and an async one's promise is read as a number (NaN), never awaited.
+    'sort',
+    'toSorted',
 ])
 
 /** Every array iteration method: on an array all run in place; on an iterator `filter`, `flatMap`, `map` are lazy. */
 const ARRAY_ITERATION: ReadonlySet<string> = new Set([...EAGER_ITERATION, 'filter', 'flatMap', 'map'])
 
 /** A receiver that is visibly an iterator: `xs.values()`, `xs.keys()`, `xs.entries()` or `Iterator.from(…)`. */
-function isIterator(receiver: ts.Expression): boolean {
+function isIterator(src: Source, receiver: ts.Expression): boolean {
     const e = unwrap(receiver)
     if (!ts.isCallExpression(e) || !ts.isPropertyAccessExpression(e.expression)) return false
     const name = e.expression.name.text
-    if (name === 'values' || name === 'keys' || name === 'entries') return true
     const target = unwrap(e.expression.expression)
+    // `Object.entries(m)` and its siblings return arrays, not iterators.
+    if (ts.isIdentifier(target) && target.text === 'Object' && declarationOf(src, target) === undefined) return false
+    if (name === 'values' || name === 'keys' || name === 'entries') return true
     return name === 'from' && ts.isIdentifier(target) && target.text === 'Iterator'
+}
+
+/** The member a callee names, `x.name` or `x['name']`; undefined for any other callee. */
+function memberName(callee: ts.Expression): string | undefined {
+    if (ts.isPropertyAccessExpression(callee)) return callee.name.text
+    if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
+        return callee.argumentExpression.text
+    }
+    return undefined
+}
+
+/** `Global.member` (or `Global['member']`), where `Global` is not declared or imported in this file. */
+function isGlobalMember(src: Source, callee: ts.Expression, global: string, member: string): boolean {
+    if (memberName(callee) !== member) return false
+    const target = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
+    return ts.isIdentifier(target) && target.text === global && declarationOf(src, target) === undefined
+}
+
+/** Globals that take a function and never hand its failure back: they run it later, or not at all. */
+const DETACHING_GLOBALS: ReadonlySet<string> = new Set([
+    'queueMicrotask',
+    'requestAnimationFrame',
+    'requestIdleCallback',
+    'setImmediate',
+    'setInterval',
+    'setTimeout',
+])
+
+/**
+ * Methods, by name on any receiver, whose function argument's failure never comes out of the call's result: a
+ * `.catch` handler runs only if the promise rejects, a `.finally` one after it has settled, and a listener when
+ * an event fires.
+ */
+const DETACHING_METHODS: ReadonlySet<string> = new Set([
+    'addEventListener',
+    'addListener',
+    'catch',
+    'finally',
+    'on',
+    'once',
+    'prependListener',
+    'prependOnceListener',
+])
+
+/**
+ * A callee known not to carry the failure of a function handed to it out of its own result, awaited or not: a
+ * timer or microtask (`setTimeout`, `queueMicrotask`, `process.nextTick`), `Promise.resolve`, which never calls a
+ * function it is given, or a `.catch`, `.finally` or listener method (DETACHING_METHODS). Every other callee that
+ * is neither same-file nor an iteration method is trusted when its result is settled (see the header).
+ */
+function neverCarriesFailure(src: Source, callee: ts.Expression): boolean {
+    if (ts.isIdentifier(callee)) {
+        const decl = declarationOf(src, callee)
+        if (decl === undefined) return DETACHING_GLOBALS.has(callee.text)
+        const imported = valueImportOf(decl)
+        if (imported?.kind !== 'named') return false
+        // Next's `after` runs its callback once the response has been sent; Node's timers module exports the timers.
+        if (imported.module === 'next/server') return imported.name === 'after' || imported.name === 'unstable_after'
+        return TIMER_MODULES.has(imported.module) && DETACHING_GLOBALS.has(imported.name)
+    }
+    const name = memberName(callee)
+    if (name !== undefined && DETACHING_METHODS.has(name)) return true
+    // `globalThis.setTimeout`, `self.queueMicrotask`, `window.setTimeout`, and `timers.setTimeout` through a namespace
+    // import of Node's timers module.
+    if (name !== undefined && DETACHING_GLOBALS.has(name)) {
+        const target = unwrap((callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)
+        if (ts.isIdentifier(target)) {
+            const decl = declarationOf(src, target)
+            if (decl === undefined) return GLOBAL_OBJECTS.has(target.text)
+            const imported = valueImportOf(decl)
+            if (imported?.kind === 'namespace' && TIMER_MODULES.has(imported.module)) return true
+        }
+    }
+    return isGlobalMember(src, callee, 'process', 'nextTick') || isGlobalMember(src, callee, 'Promise', 'resolve')
+}
+
+/** Node's modules that export the timer functions under their global names. */
+const TIMER_MODULES: ReadonlySet<string> = new Set(['timers', 'node:timers'])
+
+/** The names the global object goes by. */
+const GLOBAL_OBJECTS: ReadonlySet<string> = new Set(['globalThis', 'self', 'window'])
+
+/**
+ * The `Promise.all(…)` call `node` is the first argument of (through parentheses and type assertions), when
+ * `Promise` is the global; undefined otherwise.
+ */
+function promiseAllOf(src: Source, node: ts.CallExpression | ts.NewExpression): ts.CallExpression | undefined {
+    let child: ts.Node = node
+    let parent: ts.Node = node.parent
+    while (
+        ts.isParenthesizedExpression(parent) ||
+        ts.isAsExpression(parent) ||
+        ts.isSatisfiesExpression(parent) ||
+        ts.isNonNullExpression(parent) ||
+        ts.isTypeAssertionExpression(parent)
+    ) {
+        child = parent
+        parent = parent.parent
+    }
+    if (!ts.isCallExpression(parent) || parent.arguments[0] !== child) return undefined
+    return isGlobalMember(src, unwrap(parent.expression), 'Promise', 'all') ? parent : undefined
 }
 
 /** The variable declaration a declared name belongs to, through destructuring; undefined for a parameter. */
@@ -1249,6 +1732,26 @@ function constantlyNonNullish(src: Source, expression: ts.Expression, depth = 0)
     return constantTruth(src, e) !== undefined
 }
 
+/** Whether the value is a constant known to be null or undefined: `null`, `void …`, `undefined`, or a const of one. */
+function constantlyNullish(src: Source, expression: ts.Expression, depth = 0): boolean {
+    const e = unwrap(expression)
+    if (e.kind === ts.SyntaxKind.NullKeyword || e.kind === ts.SyntaxKind.VoidExpression) return true
+    if (!ts.isIdentifier(e)) return false
+    if (e.text === 'undefined' && !declarationOf(src, e)) return true
+    const init = constInitializer(src, e, depth)
+    return init !== undefined && constantlyNullish(src, init, depth + 1)
+}
+
+/** A call in an optional chain (`a?.(…)`, `a?.b(…)`, `a?.b.c(…)`) whose optional link's receiver is constantly nullish. */
+function shortCircuitsOnConstant(src: Source, node: ts.CallExpression | ts.NewExpression): boolean {
+    let link: ts.Expression = node
+    while (ts.isCallExpression(link) || ts.isPropertyAccessExpression(link) || ts.isElementAccessExpression(link)) {
+        if (link.questionDotToken && constantlyNullish(src, link.expression)) return true
+        link = unwrap(link.expression)
+    }
+    return false
+}
+
 function isShortCircuit(kind: ts.SyntaxKind): boolean {
     return (
         kind === ts.SyntaxKind.AmpersandAmpersandToken ||
@@ -1362,7 +1865,9 @@ function breaksOut(body: ts.Node, labels: readonly string[], unlabeled: boolean,
 function opensWithSimulated404(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
     if (!fn.body || !ts.isBlock(fn.body)) return false
     if (!fn.parameters.every(runsNothing)) return false
-    const [first] = fn.body.statements
+    if (assignsGateGlobal(src.sf)) return false
+    // A directive prologue (`'use strict'`) runs nothing, so the gate may follow it.
+    const first = fn.body.statements.find((s) => !(ts.isExpressionStatement(s) && ts.isStringLiteral(s.expression)))
     if (!first || !ts.isIfStatement(first)) return false
     const condition = unwrap(first.expression)
     if (!ts.isPrefixUnaryExpression(condition) || condition.operator !== ts.SyntaxKind.ExclamationToken) return false
@@ -1398,19 +1903,85 @@ function isInertExit(src: Source, s: ts.Statement): boolean {
         return name !== undefined && allowed.includes(name) && (e.arguments ?? []).every((a) => isLiteralValue(src, a))
     }
     if (ts.isThrowStatement(s)) {
-        // An imported constructor falls under the gate-name trust (gateName); a global must be an Error, since
-        // other globals (a WebSocket) do I/O when built.
+        // A constructor runs code when built, so only one known to do nothing may be thrown: a global Error, or one
+        // of SSSB's port errors imported from ERRORS_MODULE. Any other import (`throw new PurgeTenant('all')`) may
+        // do anything, and other globals (a WebSocket) do I/O.
         const e = unwrap(s.expression)
         if (!ts.isNewExpression(e)) return false
         const name = globalOrGateName(src, e.expression)
         const global = isGlobal(src, e.expression)
         return (
             name !== undefined &&
-            (!global || GLOBAL_ERROR.test(name)) &&
+            (global ? GLOBAL_ERROR.test(name) : importedFrom(src, e.expression) === ERRORS_MODULE) &&
             (e.arguments ?? []).every((a) => isLiteralValue(src, a))
         )
     }
     return false
+}
+
+/** The module whose errors (`NotFoundError` and the rest) the simulated-mode gate may throw. */
+const ERRORS_MODULE = '@sssb/kit/ports/errors'
+
+/** The module a callee's head is a value import from, or undefined. */
+function importedFrom(src: Source, callee: ts.Expression): string | undefined {
+    let head = unwrap(callee)
+    while (ts.isPropertyAccessExpression(head)) head = unwrap(head.expression)
+    return ts.isIdentifier(head) ? valueImportOf(declarationOf(src, head))?.module : undefined
+}
+
+/**
+ * Whether the file assigns to a global the gate's inert exit relies on (`Response`, `NextResponse`, `JSON`, an
+ * `…Error`, or `globalThis`), or to a property of one (`Response.json = …`): an assignment replaces what the exit
+ * builds with code of the file's own. Undeclared names only; a declared one is not the global anyway.
+ */
+function assignsGateGlobal(sf: ts.SourceFile): boolean {
+    let found = false
+    const relied = (name: string) =>
+        name === 'Response' ||
+        name === 'NextResponse' ||
+        name === 'JSON' ||
+        name === 'globalThis' ||
+        GLOBAL_ERROR.test(name)
+    const visit = (node: ts.Node): void => {
+        if (found) return
+        if (
+            ts.isBinaryExpression(node) &&
+            node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+            node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+        ) {
+            let head = unwrap(node.left)
+            while (ts.isPropertyAccessExpression(head) || ts.isElementAccessExpression(head))
+                head = unwrap(head.expression)
+            if (ts.isIdentifier(head) && relied(head.text) && !hasLocalDeclaration(sf, head.text)) found = true
+        }
+        ts.forEachChild(node, visit)
+    }
+    visit(sf)
+    return found
+}
+
+/** Whether `name` is declared anywhere in the file (a variable, function, class, parameter or import). */
+function hasLocalDeclaration(sf: ts.SourceFile, name: string): boolean {
+    let found = false
+    const visit = (node: ts.Node): void => {
+        if (found) return
+        const declared =
+            (ts.isVariableDeclaration(node) ||
+                ts.isFunctionDeclaration(node) ||
+                ts.isClassDeclaration(node) ||
+                ts.isParameter(node) ||
+                ts.isImportSpecifier(node) ||
+                ts.isImportClause(node) ||
+                ts.isNamespaceImport(node) ||
+                ts.isBindingElement(node)) &&
+            node.name !== undefined &&
+            ts.isIdentifier(node.name) &&
+            node.name.text === name
+        if (declared) found = true
+        else ts.forEachChild(node, visit)
+    }
+    visit(sf)
+    return found
 }
 
 /** The callee's head is declared nowhere in the file. */

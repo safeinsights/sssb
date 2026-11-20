@@ -162,7 +162,7 @@ describe('sssb remove-items', () => {
         ])
             expect(existsSync(path.join(app, gone)), gone).toBe(false)
         // The e2e directory keeps a spec (an app with none fails `sssb check-e2e`): the Simulator's, which names no item.
-        expect(readdirSync(path.join(app, 'tests/e2e'))).toEqual(['simulator.spec.ts'])
+        expect(readdirSync(path.join(app, 'tests/e2e'))).toEqual(['sign-in.spec.ts', 'simulator.spec.ts'])
         // The migrations a database may have recorded stay, registered, with the table's type and its proofs.
         expect(readdirSync(path.join(app, 'src/app-config/db/migrations')).sort()).toEqual([
             '1001_items.ts',

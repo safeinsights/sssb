@@ -13,8 +13,8 @@ import type {
     ProfileUpdate,
 } from '../../ports/auth'
 import { AuthRequiredError, ForbiddenError } from '../../ports/errors'
-import { authTenancy } from '../auth-tenancy'
-import type { ProviderIdentitySource } from '../single-tenant-auth'
+import { authSettings } from '../auth-tenancy'
+import type { ProviderIdentitySource } from '../configured-auth'
 
 /**
  * Clerk headless adapter (ADR-0003). Clerk organizations ARE our orgs
@@ -23,8 +23,9 @@ import type { ProviderIdentitySource } from '../single-tenant-auth'
  * AUTH_TENANT_METADATA_KEY says otherwise) — one Clerk instance per tenant in prod, so
  * every org a user sees belongs to their tenant. The ACTIVE org rides in unsafeMetadata.currentOrgSlug,
  * and the request-time role comes from that org membership's publicMetadata.role (role is per-org).
- * This is multi-tenant auth; single-tenant auth (AUTH_TENANCY=single) wraps this adapter with
- * ../single-tenant-auth.ts and reads Clerk through `clerkIdentitySource` below.
+ * These are the default auth settings (multi tenancy, the provider's organizations); a single tenancy or a fixed
+ * org source (../auth-tenancy.ts) wraps this adapter with ../configured-auth.ts, which reads Clerk's accounts
+ * through `clerkIdentitySource` below.
  *
  * AUTHORED — CUTOVER (`auth-dev`): typechecked against @clerk/nextjs, never run against a real
  * Clerk instance. Verify the full port contract suite against the dev instance at cutover.
@@ -41,10 +42,15 @@ interface AppPublicMetadata {
 /**
  * The tenant a user's public metadata claims, under the deployment's key (`AUTH_TENANT_METADATA_KEY`, default
  * `tenantSlug`: ../auth-tenancy.ts): the string it holds; `undefined` when it holds none (absent, null or empty); or
- * `null` when it holds something else, which single-tenant auth refuses and multi-tenant auth reads as no tenant.
+ * `null` when it holds something else, which a single tenancy refuses and a multi tenancy reads as no tenant.
  */
 function tenantClaim(metadata: unknown): string | null | undefined {
-    const value = (metadata as Record<string, unknown> | null | undefined)?.[authTenancy().tenantMetadataKey]
+    const key = authSettings().tenantMetadataKey
+    // Its own property only: a key such as `toString` names something every object inherits.
+    const value =
+        metadata !== null && typeof metadata === 'object' && Object.hasOwn(metadata, key)
+            ? (metadata as Record<string, unknown>)[key]
+            : undefined
     if (value === undefined || value === null || value === '') return undefined
     return typeof value === 'string' ? value : null
 }
@@ -54,15 +60,49 @@ function localeFrom(metadata: unknown): Locale {
     return LOCALES.includes(locale as Locale) ? (locale as Locale) : DEFAULT_LOCALE
 }
 
-function roleFrom(metadata: unknown, fallback: Role): Role {
+/**
+ * The role a membership or invitation records, or `guest` when it records none (or one this app does not know): the
+ * least privilege, and the same answer everywhere, so the switcher and the member list never show a role the session
+ * does not have.
+ */
+function roleFrom(metadata: unknown): Role {
     const role = (metadata as AppPublicMetadata)?.role
-    return role && isRole(role) ? role : fallback
+    return role && isRole(role) ? role : 'guest'
 }
 
 /** The accept page as a path (with any query), for Clerk to resolve against the instance's own domain. */
 function acceptPagePath(acceptPageUrl: string): string {
     const url = new URL(acceptPageUrl)
     return `${url.pathname}${url.search}`
+}
+
+/** Clerk's list calls answer a page at a time; this is the page size the adapter asks for. */
+const PAGE_SIZE = 100
+
+/** The most pages `allPages` reads before it gives up: 100,000 rows at PAGE_SIZE, far past any team or person. */
+const MAX_PAGES = 1_000
+
+/**
+ * Every row of a Clerk list, read a page at a time. A list read as one page would silently drop whoever is past it: a
+ * team's 101st member from its notifications, or a person's 101st org from their switcher. It stops on an empty page
+ * or once it holds `totalCount` rows, never on a page shorter than asked for, since a server may serve fewer rows per
+ * page than the limit; and it throws rather than loop without end on a list that never reaches its count.
+ */
+async function allPages<T>(
+    page: (params: { limit: number; offset: number }) => Promise<{ data: T[]; totalCount: number }>,
+): Promise<T[]> {
+    const rows: T[] = []
+    for (let read = 0; read < MAX_PAGES; read += 1) {
+        const { data, totalCount } = await page({ limit: PAGE_SIZE, offset: rows.length })
+        rows.push(...data)
+        if (data.length === 0 || rows.length >= totalCount) return rows
+    }
+    throw new Error(`a Clerk list ran past ${MAX_PAGES} pages without reaching its count`)
+}
+
+/** A display name the auth port accepts: a string with something in it, at most 256 characters (SSSB's limit). */
+function isProfileName(name: unknown): name is string {
+    return typeof name === 'string' && name.trim() !== '' && name.length <= 256
 }
 
 async function organizationIdForSlug(slug: string): Promise<string> {
@@ -83,13 +123,12 @@ export const realAuth: AuthPort = {
         // Resolve the active org membership: the remembered currentOrgSlug if still a membership,
         // else the first one. Role comes from that membership (per-org), not the user object.
         const client = await clerkClient()
-        const memberships = await client.users.getOrganizationMembershipList({ userId, limit: 100 })
+        const memberships = await allPages((page) => client.users.getOrganizationMembershipList({ userId, ...page }))
         const currentOrgSlug = (user.unsafeMetadata as { currentOrgSlug?: string })?.currentOrgSlug
         const active =
-            memberships.data.find((m) => (m.organization.slug ?? m.organization.id) === currentOrgSlug) ??
-            memberships.data[0]
+            memberships.find((m) => (m.organization.slug ?? m.organization.id) === currentOrgSlug) ?? memberships[0]
 
-        const role = roleFrom(active?.publicMetadata, 'guest')
+        const role = roleFrom(active?.publicMetadata)
         return {
             id: userId,
             name: user.fullName ?? user.primaryEmailAddress?.emailAddress ?? userId,
@@ -130,14 +169,15 @@ export const realAuth: AuthPort = {
     async updateProfile(update: ProfileUpdate): Promise<AuthUser> {
         const { userId } = await auth()
         if (!userId) throw new AuthRequiredError()
+        // Same guards the fake adapter enforces, and as early: before any write, so a refused update changes nothing.
+        if (update.name !== undefined && !isProfileName(update.name)) throw new ForbiddenError('invalid name')
+        if (update.locale !== undefined && !LOCALES.includes(update.locale)) throw new ForbiddenError('unknown locale')
         const client = await clerkClient()
         if (update.name !== undefined) {
             const [firstName = '', ...rest] = update.name.split(' ')
             await client.users.updateUser(userId, { firstName, lastName: rest.join(' ') })
         }
         if (update.locale !== undefined) {
-            // Same guard the fake adapter enforces — the two adapters must reject alike.
-            if (!LOCALES.includes(update.locale)) throw new ForbiddenError('unknown locale')
             await client.users.updateUserMetadata(userId, { publicMetadata: { locale: update.locale } })
         }
         const user = await this.getCurrentUser()
@@ -171,18 +211,25 @@ export const realAuth: AuthPort = {
         // as "no standing" would hand an attacker a way to kill a victim's tokens.
         if (user.banned) return null
         const metadata = (user.publicMetadata ?? {}) as AppPublicMetadata
-        const role = roleFrom(membership.publicMetadata, 'guest')
-        return { role, restricted: isRestricted(metadata.restricted, role) }
+        const role = roleFrom(membership.publicMetadata)
+        return {
+            role,
+            restricted: isRestricted(metadata.restricted, role),
+            name: user.fullName ?? null,
+            email: user.primaryEmailAddress?.emailAddress ?? '',
+        }
     },
 
     async listMembers(orgSlug: string): Promise<Membership[]> {
         const client = await clerkClient()
         const organizationId = await organizationIdForSlug(orgSlug)
         const [members, invitations] = await Promise.all([
-            client.organizations.getOrganizationMembershipList({ organizationId, limit: 100 }),
-            client.organizations.getOrganizationInvitationList({ organizationId, status: ['pending'], limit: 100 }),
+            allPages((page) => client.organizations.getOrganizationMembershipList({ organizationId, ...page })),
+            allPages((page) =>
+                client.organizations.getOrganizationInvitationList({ organizationId, status: ['pending'], ...page }),
+            ),
         ])
-        const active: Membership[] = members.data.map((m) => {
+        const active: Membership[] = members.map((m) => {
             const data = m.publicUserData
             return {
                 // The USER id, never the membership resource id: Membership.id must share
@@ -191,15 +238,15 @@ export const realAuth: AuthPort = {
                 id: data?.userId ?? m.id,
                 name: data ? `${data.firstName ?? ''} ${data.lastName ?? ''}`.trim() || null : null,
                 email: data?.identifier ?? '',
-                role: roleFrom(m.publicMetadata, 'member'),
+                role: roleFrom(m.publicMetadata),
                 status: 'active' as const,
             }
         })
-        const invited: Membership[] = invitations.data.map((i) => ({
+        const invited: Membership[] = invitations.map((i) => ({
             id: i.id,
             name: null,
             email: i.emailAddress,
-            role: roleFrom(i.publicMetadata, 'member'),
+            role: roleFrom(i.publicMetadata),
             status: 'invited' as const,
         }))
         return [...active, ...invited]
@@ -243,11 +290,11 @@ export const realAuth: AuthPort = {
         const { userId } = await auth()
         if (!userId) return []
         const client = await clerkClient()
-        const memberships = await client.users.getOrganizationMembershipList({ userId, limit: 100 })
-        return memberships.data.map((m) => ({
+        const memberships = await allPages((page) => client.users.getOrganizationMembershipList({ userId, ...page }))
+        return memberships.map((m) => ({
             slug: m.organization.slug ?? m.organization.id,
             name: m.organization.name,
-            role: roleFrom(m.publicMetadata, 'member'),
+            role: roleFrom(m.publicMetadata),
         }))
     },
 
@@ -262,8 +309,8 @@ export const realAuth: AuthPort = {
 }
 
 /**
- * Clerk's accounts as single-tenant auth sees them (../single-tenant-auth.ts): who is signed in and whether an account
- * may still act, with no organization or role in it, so single mode makes no membership call per request. A banned
+ * Clerk's accounts as the auth settings see them (../configured-auth.ts): who is signed in and whether an account may
+ * still act, with no organization or role in it, so a fixed org source makes no membership call per request. A banned
  * account may not act, as `getMember` says above; a locked one may, for the reason given there.
  */
 export const clerkIdentitySource: ProviderIdentitySource = {
@@ -290,6 +337,10 @@ export const clerkIdentitySource: ProviderIdentitySource = {
             throw error
         }
         if (user.banned) return null
-        return { tenantClaim: tenantClaim(user.publicMetadata) }
+        return {
+            tenantClaim: tenantClaim(user.publicMetadata),
+            name: user.fullName ?? null,
+            email: user.primaryEmailAddress?.emailAddress ?? '',
+        }
     },
 }

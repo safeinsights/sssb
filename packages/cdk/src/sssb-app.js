@@ -370,7 +370,7 @@ export class SssbApp extends Construct {
         }
         // The optional ports' switches (LLM_PROVIDER, …), from `params.ports`: validated here, before anything is built.
         const portsEnv = portsEnvironment(props.params?.ports)
-        // The auth tenancy (AUTH_TENANCY, …), from `params.auth`: validated here too.
+        // The auth settings (AUTH_TENANCY, AUTH_ORG_SOURCE, …), from `params.auth`: validated here too.
         const authEnv = authEnvironment(props.params?.auth)
         // Storage left out is the framework's default, `s3`: the bucket below exists for `s3` alone. `s3-compatible`
         // keeps its objects in a store this stack does not own (R2, MinIO, B2), and `none` stores nothing.

@@ -2,7 +2,7 @@ import { db, isSimulated } from '@sssb/kit/adapters/index'
 import { worldNow } from '@sssb/kit/adapters/fake/clock'
 import { runDueDeliveries } from '@sssb/kit/db/webhooks'
 import { dispatchWebhook } from '@sssb/kit/server-lib/webhook-dispatch'
-import { withPortErrors } from '../../../respond'
+import { refuseNonJson, withPortErrors } from '../../../respond'
 
 /**
  * Simulator "deliver due now" (simulated-mode-only; 404 in real): drains due webhook deliveries at the
@@ -10,8 +10,10 @@ import { withPortErrors } from '../../../respond'
  * the world clock also drains deliveries, so this is the no-move operator override). Exempt from the
  * authorize() scan by the simulator/ simulated-mode gate.
  */
-export async function POST(): Promise<Response> {
+export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
+    const refused = refuseNonJson(request)
+    if (refused) return refused
     return withPortErrors(async () => {
         const deliveries = await runDueDeliveries(db, worldNow(), dispatchWebhook)
         return Response.json({ ok: true, deliveries })

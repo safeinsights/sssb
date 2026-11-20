@@ -10,6 +10,7 @@
 // The port: PORT when set, else the named port service, else the app's declared one (`"sssb": { "port": … }`).
 import { spawn } from 'node:child_process'
 import { cpSync, existsSync, readdirSync } from 'node:fs'
+import { constants } from 'node:os'
 import path from 'node:path'
 import { appPortService, serviceNamed, servicesKnownTo } from '../app-port.js'
 import { takeAppDir, UsageError } from '../app.js'
@@ -68,11 +69,23 @@ export async function run(args) {
         env: { ...process.env, PORT: port, HOSTNAME: '127.0.0.1', APP_DATA_DIR: dataDir },
         cwd: serverDir,
     })
+    // A signal sent to this process alone (`kill <pid>`, a supervisor, a CI cancel) is forwarded, so the server does not
+    // outlive the wrapper holding the app's port, where the next run's `reuseExistingServer` would adopt a stale
+    // build. A server that dies on a signal is a failure (128 + the signal's number), never a success.
+    /** @type {NodeJS.Signals[]} */
+    const signals = ['SIGINT', 'SIGTERM', 'SIGHUP']
+    const forwards = signals.map((signal) => /** @type {const} */ ([signal, () => child.kill(signal)]))
+    for (const [signal, forward] of forwards) process.on(signal, forward)
     return await new Promise((resolve) => {
+        /** @param {number} status */
+        const done = (status) => {
+            for (const [signal, forward] of forwards) process.off(signal, forward)
+            resolve(status)
+        }
         child.on('error', (error) => {
             console.error(`Could not start the standalone server: ${error.message}`)
-            resolve(1)
+            done(1)
         })
-        child.on('exit', (code) => resolve(code ?? 0))
+        child.on('exit', (code, signal) => done(code ?? 128 + (signal ? constants.signals[signal] : 1)))
     })
 }

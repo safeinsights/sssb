@@ -231,8 +231,11 @@ function notifyModeFor(kind: string): JobNotify {
 }
 
 /**
- * Notify a job's org admins that a user-facing job reached a terminal state. Jobs carry no
- * creator column, so the org's admins are the recipients (the recorded decision). Resolves the job's
+ * Notify a job's org admins that a user-facing job reached a terminal state; when the org has no active admin to
+ * tell, the person who submitted the job (`requested_by`), while the auth port still gives them standing in the org.
+ * An org without admins is what a fixed org source makes (everyone in one org with one role, and an empty members
+ * list), and an org whose admins have all left. A job no person submitted (a scheduled run) then reaches no one, so a
+ * routine kind there says `jobNotify` `never` to skip the lookup. Resolves the job's
  * kind + org itself from (tenantId, jobId) so both terminal sites — the fake in-process executor and
  * the real completion webhook — call it with the same three facts. A no-op for internal job kinds, a
  * job with no org, an unknown job/org, or a status the kind's `jobNotify` setting does not notify (checked before
@@ -255,12 +258,35 @@ export async function notifyJobTerminal(
         const org = await orgForId(deps.db, job.orgId)
         if (!org) return
         const members = await authPort.listMembers(org.slug)
-        await notifyAdmins(deps, {
-            members,
+        const payload = { jobId: input.jobId, jobKind: job.kind, status: input.status }
+        if (members.some((m) => m.status === 'active' && canManageOrg(m.role as Role))) {
+            await notifyAdmins(deps, {
+                members,
+                tenantId: input.tenantId,
+                orgId: job.orgId,
+                kind: 'job.completed',
+                payload,
+            })
+            return
+        }
+        if (!job.requestedBy) return
+        // Read afresh, like a credential: someone removed from the org, or barred, is told nothing more.
+        const requester = await authPort.getMember(org.slug, job.requestedBy)
+        if (!requester) return
+        const recipient: Membership = {
+            id: job.requestedBy,
+            name: requester.name ?? null,
+            email: requester.email ?? '',
+            role: requester.role,
+            status: 'active',
+        }
+        await notifyMember(deps, {
+            members: [recipient],
             tenantId: input.tenantId,
             orgId: job.orgId,
+            recipientUserId: recipient.id,
             kind: 'job.completed',
-            payload: { jobId: input.jobId, jobKind: job.kind, status: input.status },
+            payload,
         })
     } catch {
         // Swallowed by design — see above.

@@ -4,7 +4,7 @@ import { isAssignableRole } from '@sssb/kit/core/roles'
 import { findOrg } from '@app/seed'
 import { sendOrgInvite } from '@sssb/kit/server-lib/invite'
 import { resolveOrgContext } from '../../org-context'
-import { withPortErrors } from '../../respond'
+import { readJsonObject, withPortErrors } from '../../respond'
 
 export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {
@@ -18,15 +18,18 @@ export async function POST(request: Request): Promise<Response> {
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
-        const body = (await request.json()) as { email: string; role: string }
+        const body = await readJsonObject(request)
         // Server-side allowlist, independent of what the UI offers: managers may never grant admin.
-        if (!isAssignableRole(body.role)) {
+        if (typeof body.role !== 'string' || !isAssignableRole(body.role)) {
             return Response.json({ error: 'role not assignable' }, { status: 400 })
         }
-        // Same shape check the form runs — the API must not trust the UI (mirrors the role
-        // allowlist above).
+        // The API must not trust the UI (mirrors the role allowlist above). ONE address: no whitespace,
+        // comma or semicolon anywhere and exactly one @, because a mail vendor's `to` takes a list, so
+        // "a@x.test, b@y.test" would be one invitation sent to two people; and no <, >, " or parentheses, because the
+        // vendor reads `a<b@c.d>` as a display name and mails b@c.d while the row stores the literal string, which
+        // gets past the one-row-per-address check below.
         const inviteEmail = typeof body.email === 'string' ? body.email.trim() : ''
-        if (!/.+@.+\..+/.test(inviteEmail)) {
+        if (!/^[^\s@,;<>"()]+@[^\s@,;<>"()]+\.[^\s@,;<>"()]+$/.test(inviteEmail)) {
             return Response.json({ error: 'invalid email' }, { status: 400 })
         }
         // One row per address: a second invite (or an invite to an existing member) would create

@@ -30,6 +30,8 @@ interface JobsTable {
     status: Generated<string>
     result_key: string | null
     error: string | null
+    /** The user id of the person who submitted it; null for a scheduled or service job (0017_job_requester). */
+    requested_by: Generated<string | null>
     created_at: Generated<string>
     updated_at: Generated<string>
 }

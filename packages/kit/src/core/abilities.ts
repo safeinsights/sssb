@@ -331,7 +331,7 @@ export function defineAbilitiesFor(actor: Actor): Ability {
     // trusted to whoever built the actor: a person who came through any other credential (an email, a
     // token), or who states none, never wields it, even acting in the staff org. The app's rules are
     // handed the same effective value. A person without standing (role `none`, ./roles.ts `hasStanding`) never wields
-    // it either: single-tenant auth places every user of the identity provider in the home org, which may be the staff
+    // it either: a fixed org source places every user of the identity provider in the home org, which may be the staff
     // org.
     const session = copy.credential?.kind === 'session'
     const standing = hasStanding(copy.role)

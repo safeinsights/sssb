@@ -55,7 +55,7 @@ export async function up(db: Kysely<any>): Promise<void> {
             END IF;
         EXCEPTION WHEN insufficient_privilege THEN
             -- The statement is printed with the role QUOTED, so copying it runs as-is for any role name.
-            RAISE EXCEPTION 'keel: role % cannot switch to app_user, and cannot grant itself that (it holds no ADMIN on app_user). As a role that does, run: GRANT app_user TO % WITH SET TRUE, INHERIT FALSE', current_user, quote_ident(current_user);
+            RAISE EXCEPTION 'SSSB: role % cannot switch to app_user, and cannot grant itself that (it holds no ADMIN on app_user). As a role that does, run: GRANT app_user TO % WITH SET TRUE, INHERIT FALSE', current_user, quote_ident(current_user);
         END $$
     `.execute(db)
 }

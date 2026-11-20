@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeTestTmpDir } from '../../testing/tmp-dir'
-import { AUTH_TENANCY_CHOICES } from '../auth-tenancy'
+import { AUTH_ORG_SOURCE_CHOICES, AUTH_TENANCY_CHOICES } from '../auth-tenancy'
 import { DATABASE_TRANSPORTS } from './database-transport'
 import { OPTIONAL_PORTS } from './optional-ports'
 
@@ -101,7 +101,9 @@ beforeEach(() => {
     stubEnv({
         AUTH_TENANCY: undefined,
         AUTH_TENANT_SLUG: undefined,
+        AUTH_ORG_SOURCE: undefined,
         AUTH_HOME_ORG_SLUG: undefined,
+        AUTH_DEFAULT_ROLE: undefined,
         AUTH_TENANT_METADATA_KEY: undefined,
     })
 })
@@ -160,11 +162,11 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
     })
 })
 
-describe('the auth tenancy (AUTH_TENANCY)', () => {
+describe('the auth settings (AUTH_TENANCY, AUTH_ORG_SOURCE)', () => {
     const PG = { DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' }
     const IN_PROCESS = { JOBS_RUNNER: 'in-process' }
 
-    it('unset, is Clerk as it was, handed to the ports and the in-process runner alike', async () => {
+    it('unset, are Clerk as it was, handed to the ports and the in-process runner alike', async () => {
         stubEnv({ ...PG, ...IN_PROCESS })
         const { createRealPorts } = await import('./index')
         const ports = await createRealPorts(HOOKS)
@@ -173,20 +175,28 @@ describe('the auth tenancy (AUTH_TENANCY)', () => {
         await ports.db.getDb().destroy()
     })
 
-    it('single, without its slugs, fails at boot naming them and its cutover row', async () => {
-        stubEnv({ ...PG, AUTH_TENANCY: 'single' })
+    it.each([
+        ['a single tenancy without its slug', { AUTH_TENANCY: 'single' }, 'AUTH_TENANT_SLUG'],
+        [
+            'a fixed org source without its slug',
+            { AUTH_TENANCY: 'single', AUTH_TENANT_SLUG: 'harbor', AUTH_ORG_SOURCE: 'fixed' },
+            'AUTH_HOME_ORG_SLUG',
+        ],
+    ])('%s fails at boot naming it and its cutover row', async (_, env, missing) => {
+        stubEnv({ ...PG, ...env })
         const { createRealPorts } = await import('./index')
         await expect(createRealPorts(HOOKS)).rejects.toThrow(
-            /auth-tenancy.*AUTH_TENANT_SLUG|AUTH_TENANT_SLUG.*auth-tenancy/s,
+            new RegExp(`auth-tenancy.*${missing}|${missing}.*auth-tenancy`, 's'),
         )
     })
 
-    it('single, is single-tenant auth over Clerk, handed to the ports and the in-process runner alike', async () => {
+    it('a single tenancy and a fixed org source wrap Clerk, handed to the ports and the in-process runner alike', async () => {
         stubEnv({
             ...PG,
             ...IN_PROCESS,
             AUTH_TENANCY: 'single',
             AUTH_TENANT_SLUG: 'harbor',
+            AUTH_ORG_SOURCE: 'fixed',
             AUTH_HOME_ORG_SLUG: 'depot',
         })
         const { createRealPorts } = await import('./index')
@@ -197,10 +207,34 @@ describe('the auth tenancy (AUTH_TENANCY)', () => {
         await ports.db.getDb().destroy()
     })
 
-    it('a single-mode setting left on a multi deployment fails at boot rather than being ignored', async () => {
-        stubEnv({ ...PG, AUTH_HOME_ORG_SLUG: 'depot' })
+    it('a setting its choice does not use fails at boot rather than being ignored', async () => {
         const { assertRealEnv } = await import('./index')
-        expect(() => assertRealEnv()).toThrow(/AUTH_TENANCY is multi/)
+        stubEnv({ ...PG, AUTH_TENANT_SLUG: 'harbor' })
+        expect(() => assertRealEnv()).toThrow(/auth-tenancy.*AUTH_TENANCY is multi/s)
+        stubEnv({ AUTH_TENANT_SLUG: undefined, AUTH_HOME_ORG_SLUG: 'depot' })
+        expect(() => assertRealEnv()).toThrow(/auth-tenancy.*AUTH_ORG_SOURCE is provider/s)
+    })
+
+    it('a fixed org source with a multi tenancy fails at boot', async () => {
+        const { assertRealEnv } = await import('./index')
+        stubEnv({ ...PG, AUTH_ORG_SOURCE: 'fixed', AUTH_HOME_ORG_SLUG: 'depot' })
+        expect(() => assertRealEnv()).toThrow(/auth-tenancy.*needs AUTH_TENANCY=single/s)
+    })
+
+    it("a fixed org source that would hand everyone the staff org's manage-all fails at boot", async () => {
+        const { staffOrgSlug } = await import('@sssb/app-config/abilities')
+        const { assertRealEnv } = await import('./index')
+        stubEnv({
+            ...PG,
+            AUTH_TENANCY: 'single',
+            AUTH_TENANT_SLUG: 'harbor',
+            AUTH_ORG_SOURCE: 'fixed',
+            AUTH_HOME_ORG_SLUG: staffOrgSlug,
+            AUTH_DEFAULT_ROLE: 'restricted',
+        })
+        expect(() => assertRealEnv()).toThrow(/auth-tenancy.*manage-all/s)
+        stubEnv({ AUTH_DEFAULT_ROLE: 'none' })
+        expect(() => assertRealEnv()).not.toThrow()
     })
 })
 
@@ -423,7 +457,7 @@ describe('the required environment', () => {
     const COMMENT =
         'The environment variables a real deployment must set (assertRealEnv), per DATABASE_TRANSPORT with every ' +
         "optional port at its default, under 'ports' what each choice of an optional port's switch requires, and under " +
-        "'auth' what each AUTH_TENANCY choice requires, from " +
+        "'auth' what each choice of AUTH_TENANCY and AUTH_ORG_SOURCE requires, from " +
         "packages/kit/src/adapters/real/index.test.ts. A new one breaks every deployment that lacks it: change this file only with a 'minor' " +
         'changeset (ADR-0014 part 10; .github/scripts/require-changeset.sh).'
 
@@ -460,21 +494,27 @@ describe('the required environment', () => {
         return result
     }
 
-    /** What each auth tenancy requires beyond a deployment on the default, multi-tenant auth. */
-    async function requiredByTenancy(): Promise<Record<string, Record<string, string[]>>> {
+    /** What each choice of the two auth settings requires beyond a deployment on the defaults. */
+    async function requiredByAuth(): Promise<Record<string, Record<string, string[]>>> {
         const baseline = new Set(await requiredOn('pg'))
-        const result: Record<string, string[]> = {}
-        for (const choice of AUTH_TENANCY_CHOICES) {
-            result[choice] = (await requiredOn('pg', { AUTH_TENANCY: choice })).filter((name) => !baseline.has(name))
+        const result: Record<string, Record<string, string[]>> = { AUTH_TENANCY: {}, AUTH_ORG_SOURCE: {} }
+        for (const [variable, choices] of [
+            ['AUTH_TENANCY', AUTH_TENANCY_CHOICES],
+            ['AUTH_ORG_SOURCE', AUTH_ORG_SOURCE_CHOICES],
+        ] as const) {
+            for (const choice of choices) {
+                const required = await requiredOn('pg', { [variable]: choice })
+                result[variable]![choice] = required.filter((name) => !baseline.has(name))
+            }
         }
-        return { AUTH_TENANCY: result }
+        return result
     }
 
     it('is the committed snapshot: a change is a minor changeset', async () => {
         const actual: Record<string, unknown> = { $comment: COMMENT }
         for (const transport of DATABASE_TRANSPORTS) actual[transport] = await requiredOn(transport)
         actual['ports'] = await requiredByPorts()
-        actual['auth'] = await requiredByTenancy()
+        actual['auth'] = await requiredByAuth()
         const committed: unknown = JSON.parse(readFileSync(SNAPSHOT, 'utf8'))
         expect(
             actual,

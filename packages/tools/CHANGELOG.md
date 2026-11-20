@@ -1,5 +1,80 @@
 # @sssb/tools
 
+## 0.5.0
+
+### Minor Changes
+
+- 9d56c29: ### Lint fences and `sssb` checks that let a form through
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.**
+
+    - A new app-side fence, `sssb/no-path-into-kit`, in the preset and in `sssb check-fences`' probes. An import,
+      `import()`, `require` or type import that reaches `@sssb/kit` by a path into the package
+      (`../node_modules/@sssb/kit/src/...`, an absolute path, a `file:` URL, the app's `@/` alias, a symbolic link), or any path through `node_modules`, fails
+      lint. The kit ships its source, so such a path reached any internal past the exports map. A stylesheet or worker
+      imported as `../node_modules/<package>/...` gets the same finding: import it by the package's name.
+    - An app's `sssb.vendors` entry must be a package name (`stripe`, `@stripe/stripe-js`) or one subpath of it
+      (`firebase/app`), either followed by `/*`, or a whole scope (`@stripe/*`), in lower case. Any other gitignore
+      pattern (`@stripe/**`, `stripe-*`, `stripe/`) banned an import declaration and let `import()` through; it now fails
+      the lint config, naming the entry. `sssb check-fences` lints a probe per entry through both vendor rules.
+    - The import fences match a bare specifier cut at a resource query or hash too (`pg?raw`), and read more forms of a
+      specifier: a template literal, a type `import('...')`, `import x = require(...)`, Vitest's `vi.mock` and
+      `vi.importActual` family, `require.resolve`. A vendor or a path into the kit written one of those ways now fails
+      lint where it passed.
+    - `sssb check-e2e` fails a spec, or a module it imports, that names an `@sssb/kit` subpath as a string esbuild
+      cannot follow (a plain `require` of a variable, say), not only beside `createRequire`. An object key, a type, and a
+      kit `.md` or `.json` file named in code pass.
+    - `sssb ci lint-typecheck-unit` holds doctor to every app it fans out over, as a bare `sssb doctor` does.
+    - `secretGrantProblems` and `dataApiShapeProblems` (`@sssb/tools/assembly-checks`) read grants from
+      `AWS::IAM::RolePolicy`, `UserPolicy` and `GroupPolicy`, from users' and groups' inline and AWS-managed policies,
+      and from a Secrets Manager resource policy on the cluster's secret, and fail any other `AWS::IAM::*` type that
+      could carry a grant. A `?` in a granted resource is a wildcard. A stack built on `SssbApp` alone is unaffected.
+
+    **To adopt.** Run `pnpm lint` and `pnpm verify`. Import the framework by a published `@sssb/kit/...` subpath and any
+    package by its name. Rewrite a `sssb.vendors` entry the lint config refuses in one of the accepted shapes. If your
+    own infra fails an assembly check, the message names the resource that grants too much.
+
+### Patch Changes
+
+- 9d56c29: ### Deployment and tooling fixes from the 0.4.0 baseline review
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.**
+
+    - The CodeBuild jobs runner passes the job's org to the build as `JOB_ORG_ID` (empty for none). Job payloads go to
+      CodeBuild as plaintext, readable in its console and in CloudTrail: never put a secret or personal data in one.
+    - The PostHog adapter's `capture` waits for the event to be sent, for at most two seconds, so an event is not lost
+      when a Lambda freezes after its response. A slow or failed send is logged, never thrown.
+    - Mailgun inbound: a token is remembered until its signature goes stale, which closes a replay window when the
+      sender's clock runs ahead. The new `forgetMailgunToken` (`@sssb/kit/service-auth/mailgun`) lets a route forget a
+      token whose handler failed, so the provider's retry is processed.
+    - The migrator encodes the database name in its connection URL. Migration 0015's role error says SSSB.
+    - Data API transport: a date before year 1 or after 9999 is accepted; an array of a type node-postgres has no
+      parser for (an `enum[]`) comes back as Postgres text, as on `pg`; a string constant continued on the next line is
+      read as one string.
+    - `parseDbKeysetCursor` answers `invalid` for a cursor at year 0000, which the database cannot hold, so the route's 400 replaces a 500. A failed webhook enqueue after a job status commits
+      is logged and no longer fails the caller. An outbound webhook's response body is cancelled once its status is read.
+    - A relative `APP_DATA_DIR` works: fake storage refused every key under one. A fake analytics flag named like an `Object.prototype` member
+      answers its default.
+    - In a linked git worktree anywhere (a `.git` file that points into `worktrees/`), not only under
+      `.claude/worktrees/`, an app's ports are derived per checkout; a checkout that is itself a worktree of a bare
+      repository now gets derived ports too. `pnpm exec sssb port` prints them. Ladle's derived ports start at 61001.
+    - `createTicker(...).stop()` resolves to the ticker's status, as its type said. `sssb serve-standalone` forwards
+      SIGINT, SIGTERM and SIGHUP to the server and fails when the server dies on a signal.
+    - The static demo: notification emails escape their copy; a held job's webhook goes to the job's own org; an actor
+      completing a job emits what the server emits; Exit during a tour step stays exited; reset reseeds schedules from
+      the world clock.
+
+    **To adopt.** Nothing is required. A CodeBuild buildspec can read `JOB_ORG_ID`. An inbound-email route can call
+    `forgetMailgunToken(token)` when its handler throws or answers a 5xx, as SSSB's reference app does.
+
 ## 0.4.0
 
 ### Patch Changes

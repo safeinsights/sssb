@@ -36,6 +36,7 @@ import {
     processEnvSelector,
     runModeEnvDestructureSelector,
     runModeEnvSelector,
+    vendorEntrySource,
     vendorSdkPattern,
 } from './patterns.js'
 
@@ -44,13 +45,13 @@ import {
 // ADR-0014's P6, and is now a rule of its own, so a later block that sets either core rule cannot drop it.
 
 // The vendor list is SSSB's, and an app adds its own adapters' SDKs to it in its package.json (`sssb.vendors`), which
-// the preset passes to both halves as this option. SSSB's list is always part of the group, and the schema refuses a
-// leading `!` (a gitignore negation), so the option adds patterns and cannot remove one of SSSB's. `sssb check-fences`
-// still compares it exactly with the app's package.json, so a later block cannot swap the app's list for another.
+// the preset passes to both halves as this option. SSSB's list is always part of the group, and the schema admits only
+// the shapes both halves read alike (vendorEntrySource, the same test loadAppVendors makes), which leaves out a leading
+// `!` (a gitignore negation), so the option adds patterns and cannot remove one of SSSB's. `sssb check-fences` still
+// compares it exactly with the app's package.json, so a later block cannot swap the app's list for another.
 const vendorsOption = {
     type: 'object',
-    // A leading `!` is a gitignore negation: it would take a vendor OFF the list, so the schema refuses it.
-    properties: { vendors: { type: 'array', items: { type: 'string', minLength: 1, pattern: '^[^!\\s]' } } },
+    properties: { vendors: { type: 'array', items: { type: 'string', pattern: vendorEntrySource } } },
     additionalProperties: false,
 }
 const vendorGroupOf = (context) => [...vendorSdkPattern.group, ...(context.options[0]?.vendors ?? [])]
@@ -242,11 +243,42 @@ const coreFrameworkImport = declarationImportBan({
     description: '@sssb/kit/core imports no framework.',
     patterns: [coreFrameworkPattern],
 })
-const coreFrameworkImportDynamic = declarationlessImportBan({
-    description: '@sssb/kit/core does not reach a framework by import(), require() or a type import().',
+const coreFrameworkMatches = matchesPatterns([coreFrameworkPattern])
+const coreFrameworkImportDynamicBan = declarationlessImportBan({
+    description:
+        '@sssb/kit/core does not reach a framework by import(), require(), a type import() or a ' +
+        '`/// <reference types>`.',
     what: 'a framework',
-    matches: matchesPatterns([coreFrameworkPattern]),
+    matches: coreFrameworkMatches,
 })
+// `/// <reference types="react" />` pulls React's global types into the pure-TypeScript core with no import at all,
+// so a `types=` that names a package is judged as a specifier too.
+/** @type {import('eslint').Rule.RuleModule} */
+const coreFrameworkImportDynamic = {
+    meta: {
+        ...coreFrameworkImportDynamicBan.meta,
+        messages: {
+            ...coreFrameworkImportDynamicBan.meta.messages,
+            reference:
+                '`{{specifier}}` is a framework, and `/// <reference types="{{specifier}}" />` loads its types into ' +
+                '@sssb/kit/core as an import would. {{rule}}',
+        },
+    },
+    create(context) {
+        const visitors = coreFrameworkImportDynamicBan.create(context)
+        return {
+            ...visitors,
+            Program: () => {
+                for (const { loc, kind, value } of referenceDirectives(context)) {
+                    if (kind !== 'types') continue
+                    for (const rule of coreFrameworkMatches(value.trim())) {
+                        context.report({ loc, messageId: 'reference', data: { specifier: value.trim(), rule } })
+                    }
+                }
+            },
+        }
+    },
+}
 
 // JSX in @sssb/kit/core is a framework import nobody writes: with `"jsx": "react-jsx"` every element compiles to an
 // import of `react/jsx-runtime`. Neither half of core's ban can see an import that is not in the source, so the JSX
@@ -390,21 +422,21 @@ const publicSurface = {
     },
     create(context) {
         const isPublic = publicSurfaceOf(join(optionsOf(context, 'public-surface').root, KIT_MANIFEST))
+        // Every place an import fence reads a specifier (./import-ban.js), so a template literal, a type-position
+        // import('…'), `import x = require('…')`, vi.requireActual and a specifier with spaces around it are read as
+        // an import declaration is: each compiles and runs against the internal module through the source alias.
         const check = (node) => {
-            const value = node?.value
+            const value = literalSpecifier(node)?.trim()
             if (typeof value !== 'string' || !value.startsWith('@sssb/kit/')) return
             if (isPublic(value)) return
             context.report({ node, messageId: 'private', data: { specifier: value } })
         }
         return {
-            ImportDeclaration: (node) => check(node.source),
-            ImportExpression: (node) => check(node.source),
-            ExportAllDeclaration: (node) => check(node.source),
-            ExportNamedDeclaration: (node) => check(node.source),
-            'CallExpression[callee.name="require"]': (node) => check(node.arguments[0]),
+            ...declarationVisitors((_declaration, source) => check(source)),
+            ...declarationlessVisitors(check),
             // vitest/jest mock a module by specifier, which resolves exactly like an import.
-            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock|importActual|importMock)$/]':
-                (node) => check(node.arguments[0]),
+            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
+                check(node.arguments[0]),
         }
     },
 }
@@ -423,7 +455,31 @@ const APP_CODE_DIRS = ['apps', 'packages/seed']
 const throughNodeModules = new RegExp(nodeModulesPathPattern.regex, 'iu')
 // Where `target` really is: symlinks resolved through its deepest existing ancestor, because a specifier names a
 // module without its extension, or one that does not exist yet.
-const realPathOf = (target) => {
+const RESOLVED_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.d.ts', '.js', '.jsx', '.mjs', '.cjs']
+// A `.js` specifier names its TypeScript source to the compiler and the bundlers (`./roles.js` for `roles.ts`).
+const TYPESCRIPT_TWINS = {
+    '.js': ['.ts', '.tsx', '.d.ts'],
+    '.jsx': ['.tsx'],
+    '.mjs': ['.mts', '.d.mts'],
+    '.cjs': ['.cts', '.d.cts'],
+}
+const isFileAt = (file) => {
+    try {
+        return statSync(file).isFile()
+    } catch {
+        return false
+    }
+}
+const isDirectoryAt = (file) => {
+    try {
+        return statSync(file).isDirectory()
+    } catch {
+        return false
+    }
+}
+// Where `target` really is when nothing of it is a file to follow: symlinks resolved through its deepest existing
+// ancestor, because a specifier can name a module that does not exist yet.
+const realPathThroughAncestors = (target) => {
     const missing = []
     let existing = target
     while (!existsSync(existing) && dirname(existing) !== existing) {
@@ -432,6 +488,43 @@ const realPathOf = (target) => {
     }
     return join(realpathSync(existing), ...missing)
 }
+/**
+ * EVERY file a resolver could load for `target`, real paths, in the order resolvers try them: the file itself; the name
+ * with each extension (a module is named without one, and a resolver prefers `zz.ts` to a directory `zz/`); a
+ * directory's `index` with each extension; a missing `.js` name's TypeScript twin (`roles.js` for `roles.ts`). The
+ * extension a probe added to the name is taken off again, so a landing reads as the specifier did. When none exists,
+ * the target itself, through its deepest existing ancestor. A path rule judges every one: resolvers differ in which
+ * they pick, and a symlink at any of them (`zz.ts` beside a real `zz/`, `yy/index.ts`, `zzkit.ts` named `zzkit.js`)
+ * would otherwise go unseen.
+ * @param {string} target
+ * @returns {string[]}
+ */
+const landingsOf = (target) => {
+    if (isFileAt(target)) return [realpathSync(target)]
+    /** @type {string[]} */
+    const landings = []
+    for (const ext of RESOLVED_EXTENSIONS) {
+        if (!isFileAt(`${target}${ext}`)) continue
+        const real = realpathSync(`${target}${ext}`)
+        landings.push(real.endsWith(ext) ? real.slice(0, -ext.length) : real)
+    }
+    if (isDirectoryAt(target)) {
+        for (const ext of RESOLVED_EXTENSIONS) {
+            const index = join(target, `index${ext}`)
+            if (isFileAt(index)) landings.push(realpathSync(index))
+        }
+    } else {
+        const ext = /\.[cm]?jsx?$/.exec(target)?.[0]
+        for (const twin of (ext && TYPESCRIPT_TWINS[ext]) ?? []) {
+            const file = `${target.slice(0, -ext.length)}${twin}`
+            if (isFileAt(file)) landings.push(realpathSync(file))
+        }
+    }
+    landings.push(realPathThroughAncestors(target))
+    return [...new Set(landings)]
+}
+/** The first of landingsOf(target): the file a resolver loads, for a rule that judges one landing. */
+const realPathOf = (target) => landingsOf(target)[0]
 // The file a path specifier names: a `file:` URL's (Node loads one as the absolute path it names), or a relative or
 // absolute path resolved against the importer. Anything else is not a path.
 const pathTarget = (filename, specifier) => {
@@ -453,6 +546,24 @@ const landingOfPath = (repoRoot, filename, specifier) => {
     return relative(repoRoot, realPathOf(target).toLowerCase()).replaceAll('\\', '/')
 }
 const isUnder = (fromRoot, dir) => fromRoot === dir || fromRoot.startsWith(`${dir}/`)
+// Both readings of a path specifier: as written, and cut at its first `?` or `#` (by index: `/[?#].*$/` retried from
+// every `?` in a long run, which a linted file controls, and took time quadratic in it). Vite and Vitest load the file a
+// relative path's query or hash is cut from; the compiler reads it as written. A `file:` URL's are URL syntax, which
+// fileURLToPath reads, so it has one reading. Both path rules judge both readings, so neither can hand the other a
+// specifier whose second reading lands somewhere only the other rule would have looked.
+const readingsOf = (specifier) => {
+    const cut = /^file:/i.test(specifier) ? -1 : specifier.search(/[?#]/)
+    return cut < 0 ? [specifier] : [specifier, specifier.slice(0, cut)]
+}
+// A triple-slash `path=` or `types=` reference, in any case and with its attributes in any order: the compiler loads
+// what it names just as an import does. A `types=` that names a package is not a path, and pathTarget leaves it alone.
+const REFERENCE_DIRECTIVE = /^\/\s*<reference\s[^>]*?\b(path|types)\s*=\s*(["'])(.+?)\2/i
+/** Each `/// <reference path|types="…" />` in the file: `{ loc, kind, value }`. */
+const referenceDirectives = (context) =>
+    context.sourceCode.getAllComments().flatMap((comment) => {
+        const match = comment.type === 'Line' ? REFERENCE_DIRECTIVE.exec(comment.value) : null
+        return match ? [{ loc: comment.loc, kind: match[1].toLowerCase(), value: match[3] }] : []
+    })
 
 /** @type {import('eslint').Rule.RuleModule} */
 const pathToAppCode = {
@@ -468,16 +579,30 @@ const pathToAppCode = {
     },
     create(context) {
         const repoRoot = realRootOf(optionsOf(context, 'no-path-to-app-code').root)
+        // The app directory either reading of the specifier lands in, or undefined.
+        const appDirOf = (specifier) => {
+            for (const reading of readingsOf(specifier.trim())) {
+                const fromRoot = landingOfPath(repoRoot, context.filename, reading)
+                const dir = fromRoot === undefined ? undefined : APP_CODE_DIRS.find((d) => isUnder(fromRoot, d))
+                if (dir) return dir
+            }
+            return undefined
+        }
+        const report = (loc, specifier) => {
+            const dir = appDirOf(specifier)
+            if (dir) context.report({ ...loc, messageId: 'path', data: { specifier, dir } })
+        }
         const check = (node) => {
             const specifier = literalSpecifier(node)
-            if (typeof specifier !== 'string') return
-            const fromRoot = landingOfPath(repoRoot, context.filename, specifier.trim())
-            const dir = fromRoot === undefined ? undefined : APP_CODE_DIRS.find((d) => isUnder(fromRoot, d))
-            if (dir) context.report({ node, messageId: 'path', data: { specifier, dir } })
+            if (typeof specifier === 'string') report({ node }, specifier)
         }
         return {
             ...declarationVisitors((_node, source) => check(source)),
             ...declarationlessVisitors(check),
+            // `/// <reference path="…" />` makes the compiler load a file just as an import does.
+            Program: () => {
+                for (const { loc, value } of referenceDirectives(context)) report({ loc }, value)
+            },
         }
     },
 }
@@ -514,9 +639,6 @@ const shippedKitFiles = (manifest) => {
         (isUnder(fromRoot, `${KIT_DIR}/src`) && (!TEST_OR_STORY.test(fromRoot) || isReincluded(fromRoot)))
 }
 const isAbsoluteSpecifier = (specifier) => /^file:/i.test(specifier) || /^[\\/]/.test(specifier)
-// A triple-slash `path=` or `types=` reference, in any case and with its attributes in any order; a `types=` that
-// names a package is not a path, and pathTarget leaves it alone.
-const REFERENCE_PATH = /^\/\s*<reference\s[^>]*?\b(?:path|types)\s*=\s*(["'])(.+?)\1/i
 /** @type {import('eslint').Rule.RuleModule} */
 const pathOutOfPackage = {
     meta: {
@@ -543,14 +665,16 @@ const pathOutOfPackage = {
         const { root } = optionsOf(context, 'no-path-out-of-package')
         const repoRoot = realRootOf(root)
         const isShipped = shippedKitFiles(join(root, KIT_DIR, 'package.json'))
-        // The message id and landing for a specifier that crosses the package's edge, or undefined when it does not. A
-        // relative path's `?query` or `#hash` is dropped first: Vite and Vitest load the file it names (a `file:` URL's
-        // are URL syntax, which fileURLToPath reads).
+        // The message id and landing for a specifier that crosses the package's edge, or undefined when it does not.
+        // Each reading is judged (readingsOf): as written, and with a relative path's `?query` or `#hash` cut off.
         const finding = (rawSpecifier) => {
-            // Cut at the first `?` or `#` by index: `/[?#].*$/` retried from every `?` in a long run, which a
-            // linted file controls, and took time quadratic in it.
-            const cut = /^file:/i.test(rawSpecifier) ? -1 : rawSpecifier.search(/[?#]/)
-            const specifier = cut < 0 ? rawSpecifier : rawSpecifier.slice(0, cut)
+            for (const reading of readingsOf(rawSpecifier)) {
+                const found = findingOf(reading)
+                if (found) return found
+            }
+            return undefined
+        }
+        const findingOf = (specifier) => {
             const landing = landingOfPath(repoRoot, context.filename, specifier)
             if (landing === undefined || APP_CODE_DIRS.some((dir) => isUnder(landing, dir))) return undefined
             if (!isUnder(landing, KIT_DIR)) return { messageId: 'outside', landing: landing || '.' }
@@ -573,10 +697,132 @@ const pathOutOfPackage = {
             ...declarationlessVisitors(check),
             // `/// <reference path="…" />` makes the compiler load a file just as an import does.
             Program: () => {
-                for (const comment of context.sourceCode.getAllComments()) {
-                    const match = comment.type === 'Line' ? REFERENCE_PATH.exec(comment.value) : null
-                    if (match?.[2]) report({ loc: comment.loc }, match[2])
+                for (const { loc, value } of referenceDirectives(context)) report({ loc }, value)
+            },
+        }
+    },
+}
+
+// THE KIT BY PATH (an app-side fence; `sssb/public-surface` judges `@sssb/kit/…` specifiers only). @sssb/kit ships
+// its source, so `../node_modules/@sssb/kit/src/testing/conformance/suite` from an adopter's app, or
+// `../../../packages/kit/src/…` in SSSB's own repository, reaches any internal of the framework past its exports map,
+// and compiles and runs. A relative or absolute path, or a `file:` URL, is judged where it really lands (symlinks
+// resolved, both readings of a `?`/`#` specifier): inside the package whose nearest package.json names `@sssb/kit` it
+// is a finding, unless the importing file is inside that package too (the kit's own files and its fixture). Any
+// specifier with a `node_modules` segment is a finding of its own, wherever it lands: a package is imported by its
+// name. One finding per node.
+const NODE_MODULES_SEGMENT = /(^|[\\/])node_modules([\\/]|$)/i
+/** @type {import('eslint').Rule.RuleModule} */
+const pathIntoKit = {
+    meta: {
+        type: 'problem',
+        docs: { description: '@sssb/kit is imported by a published subpath, never by a path into the package.' },
+        schema: [],
+        messages: {
+            kit:
+                '`{{specifier}}` is a path into @sssb/kit ({{landing}}), past its exports map. Import `@sssb/kit` by ' +
+                'a published subpath (its package.json `exports`) instead.',
+            nodeModules:
+                '`{{specifier}}` is a path through node_modules. Import a package by its name, and `@sssb/kit` by a ' +
+                'published subpath (its package.json `exports`).',
+        },
+    },
+    create(context) {
+        /** @type {Map<string, string | null>} the kit package's root a directory is inside, or null */
+        const kitRootOf = new Map()
+        /** @param {string} dir */
+        const kitRootAbove = (dir) => {
+            if (kitRootOf.has(dir)) return kitRootOf.get(dir) ?? null
+            const manifest = join(dir, 'package.json')
+            let found = null
+            if (existsSync(manifest)) {
+                let name
+                try {
+                    name = readJson(manifest)?.name
+                } catch {
+                    name = undefined // a manifest that does not parse names no package
                 }
+                found = name === '@sssb/kit' ? dir : null
+            } else if (dirname(dir) !== dir) {
+                found = kitRootAbove(dirname(dir))
+            }
+            kitRootOf.set(dir, found)
+            return found
+        }
+        const importer = realPathOf(resolve(context.filename))
+        const isUnderDir = (file, dir) => file === dir || file.startsWith(`${dir}/`) || file.startsWith(`${dir}\\`)
+        // The app's `@/` alias is `src/` of the app (the generator writes `"@/*": ["src/*"]`, and the guide says so):
+        // the nearest directory above the importing file with a package.json and a `src/` beside it. A path spelled
+        // through it is judged as that path (`@/../../../packages/kit/…`, or a symlink under src/ into the kit).
+        const appSrc = (() => {
+            for (let dir = dirname(resolve(context.filename)); ; dir = dirname(dir)) {
+                if (existsSync(join(dir, 'package.json')) && existsSync(join(dir, 'src'))) return join(dir, 'src')
+                if (dirname(dir) === dir) return undefined
+            }
+        })()
+        /** @param {string} reading */
+        const targetOf = (reading) => {
+            if (reading.startsWith('@/')) return appSrc === undefined ? undefined : resolve(appSrc, reading.slice(2))
+            return pathTarget(context.filename, reading)
+        }
+        /** @type {Map<string, string[]>} each target's landings, for this file: every relative specifier is probed */
+        const landingsCache = new Map()
+        const landingsFor = (target) => {
+            if (!landingsCache.has(target)) landingsCache.set(target, landingsOf(target))
+            return /** @type {string[]} */ (landingsCache.get(target))
+        }
+        const finding = (specifier) => {
+            if (NODE_MODULES_SEGMENT.test(specifier)) return { messageId: 'nodeModules', landing: '' }
+            for (const reading of readingsOf(specifier)) {
+                const target = targetOf(reading)
+                if (!target) continue
+                for (const landing of landingsFor(target)) {
+                    const kitRoot = kitRootAbove(dirname(landing))
+                    if (kitRoot && !isUnderDir(importer, kitRoot)) return { messageId: 'kit', landing }
+                }
+            }
+            return undefined
+        }
+        const report = (loc, rawSpecifier) => {
+            const specifier = rawSpecifier.trim()
+            const found = finding(specifier)
+            if (found)
+                context.report({ ...loc, messageId: found.messageId, data: { specifier, landing: found.landing } })
+        }
+        const check = (node) => {
+            const specifier = literalSpecifier(node)
+            if (typeof specifier === 'string') report({ node }, specifier)
+        }
+        // A module resolver's `.resolve`: `require.resolve`, `import.meta.resolve`, `createRequire(…).resolve` (also
+        // `module.createRequire(…).resolve`).
+        const isModuleResolver = (callee) => {
+            const object = callee.object
+            if (object.type === 'Identifier') return object.name === 'require'
+            if (object.type === 'MetaProperty') return object.meta.name === 'import' && object.property.name === 'meta'
+            if (object.type !== 'CallExpression') return false
+            const made = object.callee
+            return (
+                (made.type === 'Identifier' && made.name === 'createRequire') ||
+                (made.type === 'MemberExpression' &&
+                    made.property.type === 'Identifier' &&
+                    made.property.name === 'createRequire')
+            )
+        }
+        return {
+            ...declarationVisitors((_declaration, source) => check(source)),
+            ...declarationlessVisitors(check),
+            // vitest/jest mock a module by specifier, which resolves exactly like an import.
+            'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
+                check(node.arguments[0]),
+            // `require.resolve('…')`, `createRequire(…).resolve('…')`, `import.meta.resolve('…')`: a module the caller
+            // then reads or loads. Any other `.resolve(…)` (`path.resolve`, `Promise.resolve`) is not judged at all: its
+            // string need not be a module, and `path.resolve` reads it against the working directory, not this file.
+            'CallExpression[callee.type="MemberExpression"][callee.property.name="resolve"]': (node) => {
+                if (isModuleResolver(node.callee)) check(node.arguments[0])
+            },
+            // `/// <reference path="…" />` makes the compiler load the file just as an import does.
+            Program: () => {
+                for (const { loc, value } of referenceDirectives(context)) report({ loc }, value)
             },
         }
     },
@@ -598,6 +844,7 @@ export const rules = {
     'no-jsx-literals': jsxLiterals,
     'no-raw-db-handle': rawDbHandle,
     'no-direct-mkdtemp': directMkdtemp,
+    'no-path-into-kit': pathIntoKit,
     // SSSB-internal: SSSB's own repository enables these over packages/kit
     'no-app-import': appImport,
     'no-dynamic-app-import': appImportDynamic,

@@ -155,9 +155,38 @@ describe('GET /api/attachments (list)', () => {
         expect(h.getSignedDownloadUrl).toHaveBeenCalledWith('attachments/tenant-northwind/uuid/report.csv')
     })
 
+    test('a restricted member may still READ the list (Attachment read = sameOrg, not gated on restricted)', async () => {
+        h.requireUser.mockResolvedValue(user({ role: 'restricted', restricted: true }))
+        h.listAttachments.mockResolvedValue([])
+
+        const response = await GET()
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ attachments: [] })
+    })
+
+    test('403 for a person with the role none: no standing in the org, so no org-scoped read', async () => {
+        h.requireUser.mockResolvedValue(user({ role: 'none', restricted: true }))
+
+        expect((await GET()).status).toBe(403)
+        expect(h.listAttachments).not.toHaveBeenCalled()
+    })
+
     test('401 when no one is signed in', async () => {
         const { AuthRequiredError } = await import('@sssb/kit/ports/errors')
         h.requireUser.mockRejectedValue(new AuthRequiredError())
         expect((await GET()).status).toBe(401)
+    })
+})
+
+describe('POST /api/attachments: a malformed body is a 400, never a 500', () => {
+    test('a body that does not parse, and fields of the wrong type', async () => {
+        expect(
+            (await POST(new Request('http://localhost/api/attachments', { method: 'POST', body: '{' }))).status,
+        ).toBe(400)
+        expect((await post({ filename: 5 })).status).toBe(400)
+        expect((await post({ filename: 'a.txt', contentType: 7 })).status).toBe(400)
+        expect((await post({ filename: 'a.txt', kind: ['attachment'] })).status).toBe(400)
+        expect(h.createAttachment).not.toHaveBeenCalled()
     })
 })

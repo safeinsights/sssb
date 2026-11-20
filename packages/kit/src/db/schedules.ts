@@ -38,9 +38,15 @@ const MAX_COALESCE = 100_000
  * skipped period. jobs.start() runs only AFTER that transaction commits, exactly as submitJob does, so
  * a handler never observes a job — or a schedule state — that isn't durable yet.
  *
- * FAULT ISOLATION. One bad row (a malformed spec that parseScheduleSpec rejects, a start() failure)
- * must not stall every other schedule: each schedule drains inside its own try/catch, counted in
- * `failed` and retried naturally on the next tick because its next_run_at never advanced.
+ * FAULT ISOLATION. One bad row must not stall every other schedule: each schedule drains inside its
+ * own try/catch, counted in `failed`. What a failure leaves depends on where it happens. A failure
+ * INSIDE the transaction (a malformed spec that parseScheduleSpec rejects, a failed insert) rolls it
+ * back, so next_run_at never advanced and the next tick tries the row again. A failure AFTER it
+ * commits (the audit insert, or jobs.start()) is NOT retried: the job row is already `queued` and the
+ * schedule has already moved on to its next slot, so that period's run is not started by this code.
+ * Retrying would make the spawn at-least-once for handlers written to run at most once. The job left
+ * `queued` is the runner's to deal with: the in-process runner's sweep fails a job left queued too
+ * long; under any other runner it stays queued.
  */
 export async function runDueSchedules(
     db: DbPort,

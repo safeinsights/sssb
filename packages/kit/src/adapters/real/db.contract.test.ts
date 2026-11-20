@@ -97,10 +97,13 @@ function connect(login: { database: string; user: string; password: string }) {
 }
 
 describe('SSSB fixture seam on real Postgres, through the real adapter (contract)', () => {
-    // FIRST, deliberately (vitest runs a file's tests in order): on a fresh server, which a local run's
-    // embedded one always is and CI's service is when this file runs before the app's, nothing has created
-    // `app_user` yet, so the owner creates it itself. The next test runs the pass again on the same server,
-    // which takes the branch a reused server takes (owner-pass.ts).
+    // FIRST, deliberately (vitest runs a file's tests in order). On a fresh server nothing has created `app_user`
+    // yet, so the owner creates it itself; the next test runs the pass again on the same server, which takes the
+    // branch a reused server takes (owner-pass.ts). A local run's embedded server is this file's own, so it is
+    // always fresh here. On CI's shared service (CONTRACT_DATABASE_URL) another suite may have run first (the
+    // contract runner's own over the fixture, ./contract-runner.contract.test.ts, sorts before this file), and then
+    // both tests take the reused branch: the fresh branch is covered by whichever suite reached that server first,
+    // since every suite's first owner pass takes it there.
     // The pass every other one cannot be: a NON-SUPERUSER owner, as Aurora's master user is, runs the
     // migrations and makes every role switch in the proofs (packages/kit/src/db/owner-pass.ts).
     test('a non-superuser owner migrates, and switches to app_user inside withTenant', async () => {
@@ -224,7 +227,7 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                 () => null,
                 (error: unknown) => String(error),
             )
-            expect(failure).toMatch(new RegExp(`keel: role ${second} cannot switch to app_user`))
+            expect(failure).toMatch(new RegExp(`SSSB: role ${second} cannot switch to app_user`))
             // Kysely runs every pending migration in one transaction, so nothing of the run survives: no
             // migration recorded, and no table the earlier migrations created.
             const executed = await sql<{ n: number }>`SELECT count(*)::int AS n FROM kysely_migration`.execute(ownerDb)

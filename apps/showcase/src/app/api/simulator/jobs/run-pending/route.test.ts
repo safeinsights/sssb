@@ -23,7 +23,13 @@ describe('POST /api/simulator/jobs/run-pending', () => {
         const { POST } = await import('./route')
         state.fake = false
 
-        const response = await POST()
+        const response = await POST(
+            new Request('http://localhost/api/simulator', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            }),
+        )
 
         expect(response.status).toBe(404)
     })
@@ -33,7 +39,13 @@ describe('POST /api/simulator/jobs/run-pending', () => {
         state.fake = true
         state.ran = 3
 
-        const response = await POST()
+        const response = await POST(
+            new Request('http://localhost/api/simulator', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            }),
+        )
 
         expect(response.status).toBe(200)
         const body = (await response.json()) as { ran: number }

@@ -22,6 +22,7 @@ export function ItemsCard({
     onLoadMore,
 }: {
     items: Item[]
+    /** Rejects when the item was not created: the card then keeps the draft and says so. */
     onAdd: (title: string) => Promise<void>
     /** When false (restricted members), the add affordance is disabled and a read-only hint shows. */
     canCreate?: boolean
@@ -33,6 +34,7 @@ export function ItemsCard({
     const t = useTranslations('items')
     const [draft, setDraft] = useState('')
     const [busy, setBusy] = useState(false)
+    const [addFailed, setAddFailed] = useState(false)
     const [loadingMore, setLoadingMore] = useState(false)
 
     return (
@@ -87,14 +89,23 @@ export function ItemsCard({
                         data-testid="item-add"
                         onClick={() => {
                             setBusy(true)
+                            setAddFailed(false)
                             onAdd(draft.trim())
-                                .then(() => setDraft(''))
+                                .then(
+                                    () => setDraft(''),
+                                    () => setAddFailed(true),
+                                )
                                 .finally(() => setBusy(false))
                         }}
                     >
                         {t('addButton')}
                     </Button>
                 </Group>
+                {addFailed ? (
+                    <Text size="sm" c="red.8" role="alert" data-testid="items-add-error">
+                        {t('addError')}
+                    </Text>
+                ) : null}
                 {!canCreate ? (
                     <Text size="sm" c="gray.7" data-testid="items-readonly-hint">
                         {t('readOnlyHint')}

@@ -5,7 +5,7 @@ import { parseDbKeysetCursor } from '@sssb/kit/db/keyset'
 import { orgIdForSlug } from '@sssb/kit/db/org-lookup'
 import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 import { listItems } from '@/domain/db/items'
-import { withPortErrors } from '../respond'
+import { readJsonObject, withPortErrors } from '../respond'
 
 /**
  * The app's only product route. Items are tenant-scoped by RLS (the hostile-isolation boundary) AND
@@ -41,8 +41,8 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {
         const user = await auth.requireUser()
-        const { title } = (await request.json()) as { title: string }
-        if (!title?.trim()) return Response.json({ error: 'empty item' }, { status: 400 })
+        const { title } = await readJsonObject(request)
+        if (typeof title !== 'string' || !title.trim()) return Response.json({ error: 'empty item' }, { status: 400 })
         const tenantId = await tenantIdForSlug(db, user.tenantSlug)
         if (!tenantId) return Response.json({ error: 'unknown tenant' }, { status: 404 })
         const orgId = await orgIdForSlug(db, tenantId, user.orgSlug)

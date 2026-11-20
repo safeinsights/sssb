@@ -33,16 +33,24 @@ export function toIso(value: unknown): string {
  * Submits a job: one tenant-scoped transaction persists the `jobs` row and its opening 'queued'
  * timeline entry together, THEN — only once that has committed — hands off to the execution seam
  * so the handler (fake: in-process; real: CodeBuild) can never observe a job that isn't durable yet.
+ * `requestedBy` is the user id of the person submitting it, when a person is: their job's end reaches them when
+ * the org has no admin to tell (../server-lib/notify.ts `notifyJobTerminal`).
  */
 export async function submitJob(
     db: DbPort,
     jobs: JobsPort,
-    input: { tenantId: string; orgId: string | null; kind: string; payload: unknown },
+    input: { tenantId: string; orgId: string | null; kind: string; payload: unknown; requestedBy?: string | null },
 ): Promise<{ id: string }> {
     const { id } = await db.withTenant(input.tenantId, async (trx) => {
         const job = await trx
             .insertInto('jobs')
-            .values({ tenant_id: input.tenantId, org_id: input.orgId, kind: input.kind, payload: input.payload })
+            .values({
+                tenant_id: input.tenantId,
+                org_id: input.orgId,
+                kind: input.kind,
+                payload: input.payload,
+                requested_by: input.requestedBy ?? null,
+            })
             .returning('id')
             .executeTakeFirstOrThrow()
         await trx
@@ -98,13 +106,22 @@ export async function recordJobStatus(
     // Outbound webhooks: a job status change is an emitted event. Enqueue only — cheap; the
     // drain delivers async. Deliberately AFTER the status transaction commits (the audit precedent),
     // and skipped when the job has no org (RLS-proof / legacy rows can't have subscribed endpoints).
+    // The status is durable by now, so a failed enqueue must not fail the caller: a runner that saw
+    // `running` throw would never run the handler, and one that saw `completed` throw would answer an
+    // error for a job that finished. The event is lost and logged (console.warn reaches CloudWatch in
+    // Lambda; SSSB has no logger port, as ../adapters/real/db.ts says).
     if (job.orgId) {
-        await enqueueWebhookEvent(db, {
-            tenantId,
-            orgId: job.orgId,
-            kind: 'job.status_changed',
-            payload: { jobId, jobKind: job.kind, status: next, orgId: job.orgId },
-        })
+        try {
+            await enqueueWebhookEvent(db, {
+                tenantId,
+                orgId: job.orgId,
+                kind: 'job.status_changed',
+                payload: { jobId, jobKind: job.kind, status: next, orgId: job.orgId },
+            })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            console.warn(`SSSB jobs: job ${jobId} is ${next}, but enqueueing its webhook event failed: ${message}`)
+        }
     }
 }
 
@@ -270,10 +287,14 @@ export async function jobKindAndOrg(
     db: DbPort,
     tenantId: string,
     jobId: string,
-): Promise<{ kind: string; orgId: string | null } | null> {
+): Promise<{ kind: string; orgId: string | null; requestedBy: string | null } | null> {
     return db.withTenant(tenantId, async (trx) => {
-        const row = await trx.selectFrom('jobs').select(['kind', 'org_id']).where('id', '=', jobId).executeTakeFirst()
-        return row ? { kind: row.kind, orgId: row.org_id } : null
+        const row = await trx
+            .selectFrom('jobs')
+            .select(['kind', 'org_id', 'requested_by'])
+            .where('id', '=', jobId)
+            .executeTakeFirst()
+        return row ? { kind: row.kind, orgId: row.org_id, requestedBy: row.requested_by } : null
     })
 }
 

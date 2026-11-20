@@ -51,8 +51,7 @@ export function AttachmentsCard({
     const [kind, setKind] = useState<AttachmentKind>('attachment')
     const [analyzing, setAnalyzing] = useState<string | null>(null)
 
-    async function handleFiles(files: FileList | null) {
-        const file = files?.[0]
+    async function handleFile(file: File | undefined) {
         if (!file || status === 'uploading') return
         setStatus('uploading')
         try {
@@ -106,7 +105,7 @@ export function AttachmentsCard({
                         onDrop={(event) => {
                             event.preventDefault()
                             setDragging(false)
-                            void handleFiles(event.dataTransfer.files)
+                            void handleFile(event.dataTransfer.files[0])
                         }}
                     >
                         <input
@@ -126,7 +125,13 @@ export function AttachmentsCard({
                                 whiteSpace: 'nowrap',
                                 border: 0,
                             }}
-                            onChange={(event) => void handleFiles(event.currentTarget.files)}
+                            onChange={(event) => {
+                                const input = event.currentTarget
+                                void handleFile(input.files?.[0])
+                                // A browser fires change only when the selection changes: clear it once the file
+                                // is taken, so the same file can be picked again (after a failed upload, say).
+                                input.value = ''
+                            }}
                         />
                         {status === 'uploading' ? (
                             <Group justify="center" gap="xs">

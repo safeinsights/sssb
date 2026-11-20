@@ -143,4 +143,25 @@ describe('GET /api/tickets (queue)', () => {
 
         expect((await GET(queueRequest())).status).toBe(200)
     })
+
+    test('403 for a person with the role none: no standing in the org, so no org-scoped read', async () => {
+        h.requireUser.mockResolvedValue(user({ role: 'none', restricted: true }))
+
+        expect((await GET(queueRequest())).status).toBe(403)
+        expect(h.listTickets).not.toHaveBeenCalled()
+    })
+})
+
+describe('POST /api/tickets: a malformed body is a 400, never a 500', () => {
+    test.each([['{'], ['null'], ['[]'], ['"text"']])('body %s', async (body) => {
+        const response = await POST(new Request('http://localhost/api/tickets', { method: 'POST', body }))
+        expect(response.status).toBe(400)
+        expect(h.createTicket).not.toHaveBeenCalled()
+    })
+
+    test('a subject or body that is not a string', async () => {
+        expect((await post({ subject: 5 })).status).toBe(400)
+        expect((await post({ subject: 'Blank labels', body: { a: 1 } })).status).toBe(400)
+        expect(h.createTicket).not.toHaveBeenCalled()
+    })
 })

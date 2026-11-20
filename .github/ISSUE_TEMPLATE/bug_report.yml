@@ -49,4 +49,4 @@ body:
           label: Gate
           options:
               - label: I ran `pnpm verify` and included the relevant output
-              - label: This reproduces on a fresh clone (not only in my adopted fork)
+              - label: This reproduces on a fresh clone (not only in my generated workspace)

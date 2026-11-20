@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { auth, isSimulated } from '@sssb/kit/adapters/index'
 import { listAllPeople } from '@sssb/kit/adapters/fake/auth'
 import { SignInScreen } from '@sssb/kit/components/auth/sign-in-screen'
+import { sameOriginPath } from '@sssb/kit/core/same-origin-path'
 import { findTenant } from '@/seed'
 import { PickerGlue } from './picker-glue'
 
@@ -17,9 +18,9 @@ export default async function SignInPage({
     const { locale } = await params
     setRequestLocale(locale)
     const { returnTo } = await searchParams
-    // Only same-origin, path-shaped targets; anything else falls back to the dashboard.
-    const safe = returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')
-    const target = (safe ? returnTo : `/${locale}/dashboard`) as Route
+    // Only a path on this origin, normalised (a browser reads `/\\host` or `/<tab>/host` as another origin, which a
+    // prefix check lets through); anything else falls back to the dashboard.
+    const target = (sameOriginPath(returnTo) ?? `/${locale}/dashboard`) as Route
 
     if (await auth.getCurrentUser()) redirect(target)
 

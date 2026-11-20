@@ -5,7 +5,7 @@ import { deleteTicket, ticketForOrg } from '@/domain/db/tickets'
 import { applyTicketChanges, type TicketChanges } from '@/domain/ticket-changes'
 import { isTicketStatus } from '@/domain/tickets'
 import { resolveOrgContext } from '../../org-context'
-import { withPortErrors } from '../../respond'
+import { readJsonObject, requireUuidParam, withPortErrors } from '../../respond'
 
 /**
  * Editing and closing a ticket — the two routes the ability model has always described and nothing
@@ -25,7 +25,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return withPortErrors(async () => {
         const { id } = await context.params
         const user = await auth.requireUser()
-        const payload = (await request.json()) as { status?: unknown; assigneeUserId?: unknown }
+        requireUuidParam(id)
+        const payload = await readJsonObject(request)
 
         // Validate at the boundary, explicitly, before anything is resolved: an unknown status is a
         // 400, not a state machine surprise later.
@@ -56,6 +57,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         // Authorization choke point: a restricted member may read the queue but not change it.
         authorize(user, orgId, 'update', { type: 'Ticket', orgId })
 
+        // A ticket is handed to someone on this team, never to an id that names nobody (or someone
+        // outside the org): checked against the auth port, the authority on membership, after the
+        // caller is authorized so a denied caller learns nothing about who is a member.
+        if (
+            typeof changes.assigneeUserId === 'string' &&
+            !(await auth.getMember(user.orgSlug, changes.assigneeUserId))
+        ) {
+            return Response.json({ error: 'invalid-assignee' }, { status: 400 })
+        }
+
         // An illegal status hop (open → open, or anything the machine forbids) throws
         // InvalidTransitionError inside the transaction → 409 via withPortErrors, and no row is written.
         const ticket = await applyTicketChanges(db, {
@@ -75,6 +86,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     return withPortErrors(async () => {
         const { id } = await context.params
         const user = await auth.requireUser()
+        requireUuidParam(id)
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved

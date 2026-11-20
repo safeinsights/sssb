@@ -28,6 +28,8 @@ export interface DemoJob {
     createdAt: string
     error: string | null
     timeline: { status: string; at: string; message?: string | null }[]
+    /** Twin of `jobs.requested_by`: the person who started it; absent for a scheduled run. */
+    requestedBy?: string | null
 }
 
 /** Twin of a StoredInvite (../adapters/fake/auth.ts) — with no server an invite is just a row of

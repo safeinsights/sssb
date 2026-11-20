@@ -1,5 +1,5 @@
 import { makeTestTmpDir } from '../testing/tmp-dir'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -1805,9 +1805,22 @@ describe('the facts a gate is judged on', () => {
         expect(gate("if (!isSimulated) throw new Gone('x')", `${SIM}class Gone { constructor(_: string) {} }\n`)).toBe(
             false,
         )
+        // A thrown constructor runs code: only SSSB's port errors (and a global Error) are known to do nothing.
+        expect(
+            gate(
+                "if (!isSimulated) throw new NotFoundError('x')",
+                `${SIM}import { NotFoundError } from '@sssb/kit/ports/errors'\n`,
+            ),
+        ).toBe(true)
+        expect(
+            gate(
+                "if (!isSimulated) throw new errors.NotFoundError('x')",
+                `${SIM}import * as errors from '@sssb/kit/ports/errors'\n`,
+            ),
+        ).toBe(true)
         expect(
             gate("if (!isSimulated) throw new NotFoundError('x')", `${SIM}import { NotFoundError } from 'k'\n`),
-        ).toBe(true)
+        ).toBe(false)
         expect(
             factsOf(
                 `${SIM}declare const db: any\nexport async function POST(r: Request, c: unknown, x = db.wipe()) { if (!isSimulated) return new Response(null) }`,
@@ -2030,5 +2043,437 @@ describe('the walk', () => {
             exemptDir: path.join(dir, 'api'),
         }))
         expect(routes.map((r) => r.rel)).toEqual(['x/route.ts', '../page/route.ts'])
+    })
+})
+
+describe('denials that float, and gate calls that never run (baseline review of 0.4.0)', () => {
+    const IDS = 'declare const ids: string[]\n'
+    const cases: Array<{ name: string; files: Record<string, string>; expect: Outcome }> = [
+        {
+            name: 'an async callback to forEach on an imported array, awaited (forEach drops its promise)',
+            files: post(`await items.forEach(async () => { ${CALL} })`, "import { items } from './items'\n"),
+            expect: 'open',
+        },
+        {
+            name: "an async callback to map on an imported call's result, awaited (await does not await the array)",
+            files: post(`await parse(request).ids.map(async () => { ${CALL} })`, "import { parse } from './parse'\n"),
+            expect: 'open',
+        },
+        {
+            name: 'an async mapper to Array.from, awaited',
+            files: post(`await Array.from(ids, async () => { ${CALL} })`, IDS),
+            expect: 'open',
+        },
+        {
+            name: 'a sync mapper to Array.from (it runs in place)',
+            files: post(`Array.from(ids, () => ${CALL})`, IDS),
+            expect: 'authorized',
+        },
+        {
+            name: 'a callback to queueMicrotask, awaited',
+            files: post(`await queueMicrotask(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to setTimeout, awaited',
+            files: post(`await setTimeout(() => { ${CALL} }, 0)`),
+            expect: 'open',
+        },
+        {
+            name: 'a callback to process.nextTick, awaited',
+            files: post(`await process.nextTick(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'a function handed to Promise.resolve, awaited (it is never called)',
+            files: post(`await Promise.resolve(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'an awaited .catch handler (it runs only on a rejection)',
+            files: post(`await request.json().catch(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'an awaited .finally handler (it runs after the promise has settled)',
+            files: post(`await request.json().finally(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'a listener handed to an imported emitter, awaited',
+            files: post(`await bus.on('x', () => { ${CALL} })`, "import { bus } from './bus'\n"),
+            expect: 'open',
+        },
+        {
+            name: 'awaited Promise.all over map with an async callback (the correct form)',
+            files: post(`await Promise.all(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'authorized',
+        },
+        {
+            name: 'returned Promise.all over map with an async callback',
+            files: post(`return Promise.all(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'authorized',
+        },
+        {
+            name: 'Promise.all over map with an async callback, not awaited',
+            files: post(`void Promise.all(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'open',
+        },
+        {
+            name: 'awaited Promise.allSettled over map with an async callback (it never rejects)',
+            files: post(`await Promise.allSettled(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'open',
+        },
+        {
+            name: 'awaited Promise.any over map with an async callback (one fulfilment is enough)',
+            files: post(`await Promise.any(ids.map(async () => { ${CALL} }))`, IDS),
+            expect: 'open',
+        },
+        {
+            name: "a local Promise's all is not the global's",
+            files: post(
+                `await Promise.all(ids.map(async () => { ${CALL} }))`,
+                `${IDS}const Promise = { all: (_x: unknown) => undefined }\n`,
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'a sync callback to an imported namespace forEach, awaited (trusted like any imported callee)',
+            files: post(`await R.forEach(() => ${CALL})`, "import * as R from 'ramda'\n"),
+            expect: 'authorized',
+        },
+    ]
+
+    it.each(cases)('$name', ({ files, expect: expected }) => {
+        expectVerdicts(verdicts(files), { POST: expected })
+    })
+
+    const PORT = "import { auth } from '@sssb/kit/ports/auth'\n"
+    it.each([
+        [
+            'handed to a same-file function that never calls it',
+            'never(() => auth.updateProfile())',
+            'function never(_f: unknown) {}\n',
+        ],
+        [
+            'handed to a same-file arrow that only returns it',
+            'later(() => auth.updateProfile())',
+            'const later = (f: () => unknown) => f\n',
+        ],
+        ['inside a lazy iterator map nobody consumes', '[1].values().map(() => auth.updateProfile())', ''],
+        [
+            'inside an async callback a same-file no-op is handed',
+            'noop(async () => auth.updateProfile())',
+            'const noop = (..._a: unknown[]) => {}\n',
+        ],
+        ['inside a generator', 'gen()', 'function* gen() { auth.updateProfile() }\n'],
+    ])('a gate call %s is not on the path', (_label, body, prelude) => {
+        expect(
+            factsOf(`${PORT}${prelude}export async function POST() {\n${body}\nreturn new Response('ok')\n}\n`).calls,
+        ).not.toContain('auth.updateProfile')
+    })
+
+    it('a gate call on the path still counts, awaited or not', () => {
+        const facts = factsOf(
+            `${PORT}export async function POST() {\nawait auth.updateProfile()\nreturn new Response('ok')\n}\n`,
+        )
+        expect(facts.calls).toContain('auth.updateProfile')
+    })
+})
+
+describe('the walk through symbolic links (baseline review of 0.4.0)', () => {
+    it('scans a route behind a symlinked directory at the path Next serves it from, and ends a cycle', () => {
+        const dir = path.join(SCRATCH, `case-${++caseNumber}`)
+        mkdirSync(path.join(dir, 'real'), { recursive: true })
+        writeFileSync(
+            path.join(dir, 'real/route.ts'),
+            "export async function POST() { return new Response('mutated') }\n",
+        )
+        symlinkSync(path.join(dir, 'real'), path.join(dir, 'linked'), 'dir')
+        symlinkSync(dir, path.join(dir, 'real/loop'), 'dir')
+        const routes = scanRoutes([{ label: 'case', dir, exemptDir: dir }])
+        expect(routes.map((route) => route.rel)).toEqual(['linked/route.ts', 'real/route.ts'])
+        expect(routes.every((route) => route.handlers[0]?.facts?.reachesAuthorize === false)).toBe(true)
+    })
+})
+
+describe('second pass of the baseline review of 0.4.0', () => {
+    const OTEL = "import { tracer } from './otel'\nimport { wrap } from './w'\n"
+    const cases: Array<{ name: string; files: Record<string, string>; expect: Outcome }> = [
+        // S3: a function handed to an imported callee may run synchronously inside it, and throw out of the call.
+        {
+            name: 'returned from a try whose catch swallows: a span callback (a sync throw is caught)',
+            files: post(
+                `try { return tracer.startActiveSpan('del', () => { ${CALL}; return new Response('ok') }) } catch (e) { void e }\nreturn new Response('mutated')`,
+                OTEL,
+            ),
+            expect: 'open',
+        },
+        {
+            name: 'returned from a try whose catch swallows: a generic wrapper',
+            files: post(`try { return wrap(() => { ${CALL} }) } catch {}\nreturn new Response('mutated')`, OTEL),
+            expect: 'open',
+        },
+        {
+            name: 'awaited in a try whose catch swallows (control, already open)',
+            files: post(`try { await tracer.startActiveSpan('del', () => { ${CALL} }) } catch {}`, OTEL),
+            expect: 'open',
+        },
+        {
+            name: 'returned outside a try (still reaches)',
+            files: post(`return tracer.startActiveSpan('del', () => { ${CALL}; return new Response('ok') })`, OTEL),
+            expect: 'authorized',
+        },
+        {
+            name: 'returned from a try whose catch rethrows (still reaches)',
+            files: post(`try { return wrap(() => { ${CALL} }) } catch (e) { throw e }`, OTEL),
+            expect: 'authorized',
+        },
+        // S6: an optional call on a receiver a constant makes nullish never runs its arguments.
+        {
+            name: 'an optional call on a const null hook',
+            files: post(`hook?.(${CALL})`, 'const hook = null as null | ((x: unknown) => void)\n'),
+            expect: 'open',
+        },
+        { name: 'an optional call on a literal null', files: post(`;(null as any)?.(${CALL})`), expect: 'open' },
+        { name: 'an optional method on undefined', files: post(`;(undefined as any)?.x(${CALL})`), expect: 'open' },
+        {
+            name: 'an optional call on a hook that may be set (still reaches)',
+            files: post(`hook?.(${CALL})`, 'declare const hook: undefined | ((x: unknown) => void)\n'),
+            expect: 'authorized',
+        },
+    ]
+
+    it.each(cases)('$name', ({ files, expect: expected }) => {
+        expectVerdicts(verdicts(files), { POST: expected })
+    })
+
+    const SIM = "import { isSimulated } from '@sssb/kit/adapters/index'\n"
+    const opens = (body: string, prelude = '') =>
+        factsOf(`${SIM}${prelude}export async function POST() {\n${body}\nreturn new Response('ok')\n}\n`)
+            .opensWithSimulated404
+
+    it('S5: a constructor thrown from the simulated-mode gate must be a global Error or one of SSSB port errors', () => {
+        expect(opens("if (!isSimulated) throw new PurgeTenant('all')", "import { PurgeTenant } from './jobs'\n")).toBe(
+            false,
+        )
+        expect(opens('if (!isSimulated) throw new Purge()', "import Purge from './jobs'\n")).toBe(false)
+        expect(opens('if (!isSimulated) throw new jobs.Purge()', "import * as jobs from './jobs'\n")).toBe(false)
+        expect(opens("if (!isSimulated) throw new Error('x')")).toBe(true)
+    })
+
+    it('S5: a file that assigns to a global the gate builds (Error, Response, JSON) does not open with the gate', () => {
+        expect(opens("if (!isSimulated) throw new Error('x')", 'Error = class {} as never\n')).toBe(false)
+        expect(
+            opens(
+                'if (!isSimulated) return new Response(null, { status: 404 })',
+                'Response = function () {} as never\n',
+            ),
+        ).toBe(false)
+        expect(
+            opens(
+                'if (!isSimulated) return Response.json({ error: 1 })',
+                'Response.json = (() => undefined) as never\n',
+            ),
+        ).toBe(false)
+        expect(
+            opens('if (!isSimulated) return new Response(JSON.stringify(1))', 'JSON.stringify = (() => "") as never\n'),
+        ).toBe(false)
+        // A local declaration of the name is not the global, and was never taken for it.
+        expect(opens('if (!isSimulated) return new Response(null, { status: 404 })', 'let JSON = 1\nJSON = 2\n')).toBe(
+            true,
+        )
+    })
+
+    it("a directive prologue ('use strict') before the gate runs nothing, so the gate still opens the handler", () => {
+        expect(opens("'use strict'\nif (!isSimulated) return new Response(null, { status: 404 })")).toBe(true)
+        // ...but only a prologue: any other statement first still fails it.
+        expect(opens('void 0\nif (!isSimulated) return new Response(null, { status: 404 })')).toBe(false)
+    })
+
+    // Known limits: correct code the scan refuses (fail closed). Pinned so a change to any of them is seen.
+    it.each([
+        {
+            name: 'a module helper is not followed when a nested block declares a function of the same name',
+            files: post('check()', `function check() { ${CALL} }\nif (cond) { function check() {} }\n`),
+        },
+        {
+            name: 'a module helper is not followed when a nested loop binds a const of the same name',
+            files: post('check()', `function check() { ${CALL} }\nfor (const check of [1]) { void check }\n`),
+        },
+    ])('known limit: $name', ({ files }) => {
+        expectVerdicts(verdicts(files), { POST: 'open' })
+    })
+
+    it('known limit: a namespace merged with the handler function is refused', () => {
+        const route = scanTree({
+            'route.ts': `${AUTHORIZE}${DECLS}export async function POST() { ${CALL}; return new Response('ok') }\nexport namespace POST { export const maxDuration = 1 }\n`,
+        }).find((r) => r.rel === 'route.ts')
+        expect(route?.handlers[0]?.refusal).toBeDefined()
+    })
+
+    it('known limit: a wrapper reached through .bind is not the wrapper the gate names', () => {
+        const facts = factsOf(
+            "import { withWebhookSecret } from './respond'\nexport const POST = withWebhookSecret.bind(null)(async () => new Response('x'))\n",
+        )
+        expect(facts.wrappedBy).not.toBe('withWebhookSecret')
+    })
+})
+
+describe("the fix review's verdict (X1, X2, X5-X8)", () => {
+    const PORT = "import { auth } from '@sssb/kit/ports/auth'\n"
+    const gateRuns = (body: string, prelude = '') =>
+        factsOf(
+            `${PORT}${prelude}export async function POST(body: unknown) {\n${body}\nreturn new Response('ok')\n}\n`,
+        ).calls.has('auth.updateProfile')
+
+    it('X1: a gate call counts wherever it runs, whatever a try around it does with its failure', () => {
+        expect(
+            gateRuns(
+                "try { await auth.updateProfile(body) } catch (e) { return new Response('bad', { status: 400 }) }",
+            ),
+        ).toBe(true)
+        expect(gateRuns('try { await auth.updateProfile(body) } finally { void 0 }')).toBe(true)
+        expect(gateRuns('auth.updateProfile(body)')).toBe(true)
+        expect(gateRuns('await Promise.all([1].map(async () => auth.updateProfile(body)))')).toBe(true)
+        // ...and still not where it never runs.
+        expect(gateRuns('never(() => auth.updateProfile(body))', 'function never(_f: unknown) {}\n')).toBe(false)
+        expect(gateRuns('setTimeout(() => auth.updateProfile(body), 0)')).toBe(false)
+        expect(
+            gateRuns('await load().catch(() => auth.updateProfile(body))', 'declare const load: () => Promise<void>\n'),
+        ).toBe(false)
+        expect(
+            gateRuns(
+                'await load().then(undefined, () => auth.updateProfile(body))',
+                'declare const load: () => Promise<void>\n',
+            ),
+        ).toBe(false)
+    })
+
+    const ASYNC = `async function remove(_id: string) { ${CALL} }\ndeclare const ids: string[]\n`
+    const DB = "import { db } from './db'\n"
+    const cases: Array<{ name: string; files: Record<string, string>; expect: Outcome }> = [
+        // X2: a sync map callback under Promise.all carries what it returns.
+        {
+            name: 'Promise.all over a sync map callback returning the promise (expression body)',
+            files: post('await Promise.all(ids.map((id) => remove(id)))', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'Promise.all over a sync map callback returning the promise (block)',
+            files: post('await Promise.all(ids.map((id) => { return remove(id) }))', ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'Promise.all over a sync map callback returning withTenant over the helper',
+            files: post("await Promise.all(ids.map((id) => db.withTenant('t', () => remove(id))))", ASYNC + DB),
+            expect: 'authorized',
+        },
+        {
+            name: 'Promise.all over a sync map callback that calls without returning',
+            files: post('await Promise.all(ids.map((id) => { remove(id) }))', ASYNC),
+            expect: 'open',
+        },
+        // X5: .then's second argument is a .catch handler.
+        {
+            name: '.then(undefined, onRejected)',
+            files: post(`await load().then(undefined, () => { ${CALL} })`, 'declare const load: () => Promise<void>\n'),
+            expect: 'open',
+        },
+        {
+            name: '.then(ok => ok, onRejected)',
+            files: post(
+                `await load().then((ok) => ok, () => { ${CALL} })`,
+                'declare const load: () => Promise<void>\n',
+            ),
+            expect: 'open',
+        },
+        // X6: Next's after.
+        {
+            name: 'after() from next/server',
+            files: post(`await after(() => { ${CALL} })`, "import { after } from 'next/server'\n"),
+            expect: 'open',
+        },
+        {
+            name: 'unstable_after() from next/server',
+            files: post(`await unstable_after(() => { ${CALL} })`, "import { unstable_after } from 'next/server'\n"),
+            expect: 'open',
+        },
+        // X7a: only the callback argument of an iteration method runs.
+        {
+            name: "forEach's thisArg function",
+            files: post(`ids.forEach(() => {}, () => { ${CALL} })`, ASYNC),
+            expect: 'open',
+        },
+        {
+            name: "map's thisArg function under Promise.all",
+            files: post(`await Promise.all(ids.map(async () => {}, async () => { ${CALL} }))`, ASYNC),
+            expect: 'open',
+        },
+        // X7b: timers through the global object and Node's module.
+        {
+            name: 'globalThis.setTimeout',
+            files: post(`await globalThis.setTimeout(() => { ${CALL} }, 0)`),
+            expect: 'open',
+        },
+        {
+            name: 'self.queueMicrotask',
+            files: post(`await (self as any).queueMicrotask(() => { ${CALL} })`),
+            expect: 'open',
+        },
+        {
+            name: 'setTimeout imported from node:timers',
+            files: post(`await setTimeout(() => { ${CALL} }, 0)`, "import { setTimeout } from 'node:timers'\n"),
+            expect: 'open',
+        },
+        // From the probe rerun: a sort comparator runs in place, and Node's timers through a namespace import.
+        {
+            name: 'an async sort comparator',
+            files: post(`ids.sort(async () => { ${CALL}; return 0 })`, ASYNC),
+            expect: 'open',
+        },
+        {
+            name: 'an async toSorted comparator',
+            files: post(`ids.toSorted(async () => { ${CALL}; return 0 })`, ASYNC),
+            expect: 'open',
+        },
+        {
+            name: 'a sync sort comparator (throws in place)',
+            files: post(`ids.sort(() => { ${CALL}; return 0 })`, ASYNC),
+            expect: 'authorized',
+        },
+        {
+            name: 'setTimeout through a namespace import of node:timers',
+            files: post(`await timers.setTimeout(() => { ${CALL} }, 0)`, "import * as timers from 'node:timers'\n"),
+            expect: 'open',
+        },
+        // X8: Object.entries returns an array.
+        {
+            name: 'Promise.all over Object.entries(m).map with an async callback',
+            files: post(
+                `await Promise.all(Object.entries(m).map(async ([k]) => { void k; ${CALL} }))`,
+                'declare const m: Record<string, number>\n',
+            ),
+            expect: 'authorized',
+        },
+    ]
+
+    it.each(cases)('$name', ({ files, expect: expected }) => {
+        expectVerdicts(verdicts(files), { POST: expected })
+    })
+})
+
+describe("the fix review's second verdict (Y3, Y5)", () => {
+    it('Y3: an async callback returned from a try whose catch swallows still reaches (it cannot throw synchronously)', () => {
+        const files = post(
+            `try { return withPortErrors(async () => { ${CALL}; return new Response('ok') }) } catch { return new Response('', { status: 500 }) }`,
+            "import { withPortErrors } from './respond'\n",
+        )
+        expectVerdicts(verdicts(files), { POST: 'authorized' })
+    })
+
+    it("Y5: the simulated-404 gate's description says what it refuses", () => {
+        expect(describeGate({ kind: 'opens-with-simulated-404' })).toMatch(/notFound\(\)/)
+        expect(describeGate({ kind: 'opens-with-simulated-404' })).toMatch(/new Response\(null, NOT_FOUND\)/)
     })
 })

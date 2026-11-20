@@ -1,7 +1,7 @@
 import { auth, db, isSimulated } from '@sssb/kit/adapters/index'
 import { DEMO_INBOUND_DOMAIN, formatInboundRecipient } from '@sssb/kit/core/inbound-email'
 import { intakeInboundEmail } from '@sssb/kit/inbound-email/intake'
-import { withPortErrors } from '../../../respond'
+import { refuseNonJson, withPortErrors } from '../../../respond'
 
 /**
  * Simulator "compose inbound" — the world emails the app. Simulator-mode gate, first line
@@ -13,6 +13,8 @@ import { withPortErrors } from '../../../respond'
  */
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
+    const refused = refuseNonJson(request)
+    if (refused) return refused
     return withPortErrors(async () => {
         const body = (await request.json()) as {
             from?: unknown

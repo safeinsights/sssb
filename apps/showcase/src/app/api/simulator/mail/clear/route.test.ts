@@ -8,7 +8,13 @@ describe('POST /api/simulator/mail/clear', () => {
     test('404s outside simulated mode', async () => {
         const { POST } = await import('./route')
 
-        const response = await POST()
+        const response = await POST(
+            new Request('http://localhost/api/simulator', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            }),
+        )
 
         expect(response.status).toBe(404)
     })

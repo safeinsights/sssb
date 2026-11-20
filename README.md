@@ -179,7 +179,7 @@ checks the seam. Expect a straight answer, not a fast one.
 - [docs/README.md](docs/README.md) — the map of the doc set: binding doctrine (path-gated), dated records,
   and `.claude/future-tasks/`
 - [docs/development-approach.md](docs/development-approach.md) — the engineering philosophy, and why
-- `docs/adr/` — the architecture decisions: 0001–0014 Accepted (the design is decided, not aspirational)
+- `docs/adr/` — the architecture decisions: 0001–0012 and 0014 Accepted, 0013 Superseded by 0014, 0015 Accepted in part (the design is decided, not aspirational)
 - `docs/cutover-checklist.md` — every deferred item that needs real credentials, and the proof each owes
 - [CONTRIBUTING.md](CONTRIBUTING.md) — conventions, how to add an adapter, commit format
 

@@ -275,7 +275,9 @@ const eslintConfig = [
     {
         files: [`**/*.${SRC_EXT}`],
         plugins: { sssb },
-        rules: { 'sssb/public-surface': ['error', REPO] },
+        // ...and by path: a relative path into packages/kit, or one through node_modules, is the same reach past the map
+        // (the kit's own files, its fixture included, are inside the package and stay free to import each other).
+        rules: { 'sssb/public-surface': ['error', REPO], 'sssb/no-path-into-kit': 'error' },
     },
     // No raw mkdtemp in tests, anywhere in the repo (the preset covers the apps' tests/ too). The two helpers
     // (packages/kit/src/testing/tmp-dir.ts and packages/tools/src/testing/tmp-dir.js) are the places the raw call is

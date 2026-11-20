@@ -8,8 +8,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  */
 const h = vi.hoisted(() => ({
     publicMetadata: {} as Record<string, unknown>,
-    accounts: {} as Record<string, { banned: boolean; publicMetadata: Record<string, unknown> }>,
+    accounts: {} as Record<
+        string,
+        {
+            banned: boolean
+            publicMetadata: Record<string, unknown>
+            fullName?: string
+            primaryEmailAddress?: { emailAddress: string }
+        }
+    >,
     membershipCalls: 0,
+    membershipRole: 'member' as unknown,
 }))
 
 vi.mock('@clerk/nextjs/server', () => ({
@@ -28,9 +37,10 @@ vi.mock('@clerk/nextjs/server', () => ({
                     data: [
                         {
                             organization: { slug: 'depot', id: 'org_1', name: 'Depot' },
-                            publicMetadata: { role: 'member' },
+                            publicMetadata: { role: h.membershipRole },
                         },
                     ],
+                    totalCount: 1,
                 }
             },
             getUser: async (userId: string) => {
@@ -49,6 +59,7 @@ beforeEach(() => {
     h.publicMetadata = {}
     h.accounts = {}
     h.membershipCalls = 0
+    h.membershipRole = 'member'
 })
 afterEach(() => {
     vi.unstubAllEnvs()
@@ -79,7 +90,21 @@ describe('the Clerk adapter, multi-tenant', () => {
     })
 })
 
-describe("Clerk's identity source, for single-tenant auth", () => {
+describe("a membership's role, as Clerk holds it", () => {
+    // A membership whose role string is already `none` is read as `none`: no standing, refused every org read. Before
+    // the role existed it was no role and fell back to `guest`. Kept deliberately (fail closed): SSSB never writes
+    // `none` on a membership (an invite cannot grant it), so it is an operator's own word, and reading it as `guest`
+    // would grant more than they wrote.
+    it('reads none as none, with no standing, and an unknown role as guest', async () => {
+        const { realAuth } = await import('./auth')
+        h.membershipRole = 'none'
+        expect(await realAuth.getCurrentUser()).toMatchObject({ role: 'none', restricted: true })
+        h.membershipRole = 'owner'
+        expect(await realAuth.getCurrentUser()).toMatchObject({ role: 'guest', restricted: false })
+    })
+})
+
+describe("Clerk's identity source, for the auth settings", () => {
     it('reads who is signed in and their tenant claim under the key, with no membership call', async () => {
         vi.stubEnv('AUTH_TENANT_METADATA_KEY', 'siteSlug')
         h.publicMetadata = { siteSlug: 'harbor', locale: 'es' }
@@ -96,18 +121,27 @@ describe("Clerk's identity source, for single-tenant auth", () => {
 
     it('refuses a banned or unknown account, and reports a live one with its claim', async () => {
         h.accounts = {
-            user_live: { banned: false, publicMetadata: { tenantSlug: 'harbor' } },
+            user_live: {
+                banned: false,
+                publicMetadata: { tenantSlug: 'harbor' },
+                fullName: 'Lee Live',
+                primaryEmailAddress: { emailAddress: 'lee@example.test' },
+            },
             user_banned: { banned: true, publicMetadata: {} },
         }
         const { clerkIdentitySource } = await import('./auth')
-        expect(await clerkIdentitySource.account('user_live')).toEqual({ tenantClaim: 'harbor' })
+        expect(await clerkIdentitySource.account('user_live')).toEqual({
+            tenantClaim: 'harbor',
+            name: 'Lee Live',
+            email: 'lee@example.test',
+        })
         expect(await clerkIdentitySource.account('user_banned')).toBeNull()
         expect(await clerkIdentitySource.account('user_unknown')).toBeNull()
     })
 })
 
 describe('a tenant claim that is not a slug', () => {
-    it("is reported as unreadable to single-tenant auth, and as no tenant to multi-tenant's user", async () => {
+    it("is reported as unreadable to a single tenancy, and as no tenant to a multi tenancy's user", async () => {
         h.publicMetadata = { tenantSlug: ['harbor'] }
         const { clerkIdentitySource, realAuth } = await import('./auth')
         expect((await clerkIdentitySource.current())?.tenantClaim).toBeNull()

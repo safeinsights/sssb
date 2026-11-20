@@ -62,7 +62,7 @@ describe('abilityActorFromUser', () => {
         expect(actor.manageAll).toBe(true)
     })
 
-    test('except for a person with no standing (role none), whom single-tenant auth may place in the staff org', () => {
+    test('except for a person with no standing (role none), whom a fixed org source may place in the staff org', () => {
         const actor = abilityActorFromUser(user({ role: 'none', restricted: true, orgSlug: staffOrgSlug }), 'org-staff')
         expect(actor.manageAll).toBe(false)
     })
