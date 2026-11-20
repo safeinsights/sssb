@@ -294,6 +294,9 @@ export interface Ability {
  * one is ever needed it intersects here, `can(...) && withinCeiling(actor.credential, action, subject)`,
  * so every caller of `can` honours it.
  */
+/** An active-org id no org has: what the app's rules are shown for a person without standing (`hasStanding`). */
+const NO_STANDING_ORG = '\u0000no-standing'
+
 export function defineAbilitiesFor(actor: Actor): Ability {
     // Same org iff the subject is org-scoped AND its org is the one the actor is acting in.
     const sameOrg: SameOrg = (subject) => subject.orgId != null && subject.orgId === actor.activeOrgId
@@ -340,6 +343,10 @@ export function defineAbilitiesFor(actor: Actor): Ability {
     // not membership of it.
     const personSameOrg: SameOrg = (subject) =>
         standing && subject.orgId != null && subject.orgId === person.activeOrgId
+    // The app's rules see a person without standing as active in no org at all: its `activeOrgId` is a value no org id
+    // equals, so a rule that compares org ids itself rather than calling `sameOrg` (a two-sided subject's requester and
+    // responder sides, say) cannot grant it either.
+    const ruleActor: AbilityActor = standing ? person : { ...person, activeOrgId: NO_STANDING_ORG }
 
     function can(action: AbilityAction, subject: AbilitySubject): boolean {
         // The staff-org superpower. manageAll precedes
@@ -409,7 +416,7 @@ export function defineAbilitiesFor(actor: Actor): Ability {
             default:
                 // App subjects register through the seam (src/app-config/abilities.ts). Deny by default:
                 // appAbilityRules returns false for anything it does not explicitly allow.
-                return appAbilityRules(person, action, subject, { sameOrg: personSameOrg })
+                return appAbilityRules(ruleActor, action, subject, { sameOrg: personSameOrg })
         }
     }
 

@@ -11,8 +11,11 @@ export interface ProviderIdentity {
     name: string
     email: string
     locale: Locale
-    /** The value under the tenant metadata key, if the account carries one. */
-    tenantClaim: string | undefined
+    /**
+     * The account's tenant claim under the metadata key: the slug it names, `undefined` when it names none (the key is
+     * absent, null or empty), or `null` when it holds something that is not a slug at all, which is refused.
+     */
+    tenantClaim: string | null | undefined
 }
 
 /** What single mode needs from an auth adapter beyond its port: the provider's facts, with no org or role in them. */
@@ -33,8 +36,9 @@ export interface ProviderIdentitySource {
  *
  * What each method means here, and why:
  * - `getCurrentUser`: the configured tenant and home org, role `none`, restricted. A person whose account names a
- *   different tenant under the metadata key is no user at all: that is a multi-tenant instance switched to this mode
- *   by mistake, and admitting them would put another tenant's people in this one.
+ *   different tenant under the metadata key, or holds there something that is not a slug, is no user at all, and is
+ *   signed out: that is a multi-tenant instance switched to this mode by mistake, and admitting them would put another
+ *   tenant's people in this one.
  * - `requireRole`: as ever, so every role-gated action is refused to `none`.
  * - `getMember`: the same standing, `none`, for an account the provider still has in the home org; null for any other
  *   org, an unknown or banned account, or one claiming another tenant. A credential is judged as a session is.
@@ -48,12 +52,18 @@ export interface ProviderIdentitySource {
  * - `signInPath`, `signOut`, `updateProfile`: the adapter's own.
  */
 export function singleTenantAuth(base: AuthPort, tenancy: SingleTenancy, source: ProviderIdentitySource): AuthPort {
-    const sameTenant = (claim: string | undefined) => claim === undefined || claim === tenancy.tenantSlug
+    const sameTenant = (claim: string | null | undefined) => claim === undefined || claim === tenancy.tenantSlug
 
     const port: AuthPort = {
         async getCurrentUser(): Promise<AuthUser | null> {
             const identity = await source.current()
-            if (!identity || !sameTenant(identity.tenantClaim)) return null
+            if (!identity) return null
+            if (!sameTenant(identity.tenantClaim)) {
+                // Refused, and signed out, so the person is not left signed in to the provider with no way out of it
+                // from here (the app's sign-out lives in pages a refused person never reaches).
+                await base.signOut()
+                return null
+            }
             return {
                 id: identity.id,
                 name: identity.name,

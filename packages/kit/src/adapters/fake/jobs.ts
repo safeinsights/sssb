@@ -5,11 +5,12 @@ import { runJobInProcess } from '../../jobs/run-in-process'
 import { NotFoundError } from '../../ports/errors'
 import type { JobsPort, SubmittedJob } from '../../ports/jobs'
 import { readFlags } from './analytics'
-import { fakeAuth, personLocale } from './auth'
+import { personLocale } from './auth'
 import { fakeDb } from './db'
 import { fakeEmail } from './email'
 import { fakeLlm } from './llm'
 import { fakeSendSms } from './sms'
+import { simulatedAuth } from './simulated-auth'
 import { fakeStorage } from './storage'
 
 /** Simulator flag: when set, submitted jobs stay 'queued' so an operator can step them forward. */
@@ -31,7 +32,7 @@ async function notifyTerminal(job: SubmittedJob, status: 'completed' | 'failed')
         const { notifyJobTerminal } = await import('../../server-lib/notify')
         await notifyJobTerminal(
             { db: fakeDb, email: fakeEmail, sms: fakeSendSms, resolveLocale: personLocale },
-            fakeAuth,
+            simulatedAuth(),
             { tenantId: job.tenantId, jobId: job.id, status },
         )
     } catch {
@@ -53,7 +54,7 @@ async function executeJob(job: SubmittedJob): Promise<boolean> {
         storage: fakeStorage,
         email: fakeEmail,
         llm: fakeLlm,
-        auth: fakeAuth,
+        auth: simulatedAuth(),
         resolveLocale: personLocale,
     }
     return runJobInProcess(job, ports, (status) => notifyTerminal(job, status))
@@ -234,7 +235,7 @@ export async function produceJobArtifact(
             storage: fakeStorage,
             email: fakeEmail,
             llm: fakeLlm,
-            auth: fakeAuth,
+            auth: simulatedAuth(),
             resolveLocale: personLocale,
             tenantId: row.tenant_id,
             orgId: row.org_id,

@@ -26,7 +26,10 @@ const NOBODY_SPECIAL: ProviderIdentity = {
     tenantClaim: undefined,
 }
 
-function setup(identity: ProviderIdentity | null = NOBODY_SPECIAL, accounts: Record<string, string | undefined> = {}) {
+function setup(
+    identity: ProviderIdentity | null = NOBODY_SPECIAL,
+    accounts: Record<string, string | null | undefined> = {},
+) {
     const base = {
         signInPath: vi.fn(() => '/signin'),
         signOut: vi.fn(async () => {}),
@@ -70,11 +73,18 @@ describe('single-tenant auth', () => {
         }
     })
 
-    it('is no user at all for an account that claims another tenant', async () => {
-        const { auth } = setup({ ...NOBODY_SPECIAL, tenantClaim: 'lakeside' })
+    it('is no user at all for an account that claims another tenant, and signs it out', async () => {
+        const { auth, base } = setup({ ...NOBODY_SPECIAL, tenantClaim: 'lakeside' })
         expect(await auth.getCurrentUser()).toBeNull()
+        expect(base.signOut).toHaveBeenCalled()
         await expect(auth.requireUser()).rejects.toBeInstanceOf(AuthRequiredError)
         expect(await auth.listMyOrgs()).toEqual([])
+    })
+
+    it('refuses an account whose claim is not a slug at all, in session and as a credential', async () => {
+        const { auth } = setup({ ...NOBODY_SPECIAL, tenantClaim: null }, { user_odd: null })
+        expect(await auth.getCurrentUser()).toBeNull()
+        expect(await auth.getMember('depot', 'user_odd')).toBeNull()
     })
 
     it('admits an account that claims the configured tenant itself', async () => {

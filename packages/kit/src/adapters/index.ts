@@ -9,9 +9,7 @@ import type { LlmPort } from '../ports/llm'
 import type { StoragePort } from '../ports/storage'
 import { simulatedDevServer } from './dev-server'
 import { fakeAnalytics } from './fake/analytics'
-import { authTenancy } from './auth-tenancy'
-import { fakeAuth, fakeIdentitySource } from './fake/auth'
-import { singleTenantAuth } from './single-tenant-auth'
+import { simulatedAuth } from './fake/simulated-auth'
 import { fakeDb } from './fake/db'
 import { fakeEmail } from './fake/email'
 import { fakeJobs } from './fake/jobs'
@@ -111,12 +109,8 @@ const real =
         ? await (await import('./real/index')).createRealPorts({ inProcessJobs: buildInProcessJobs })
         : null
 
-// The simulated world runs the deployment's auth tenancy when its environment sets one (./auth-tenancy.ts), so a
-// single-tenant app's `pnpm dev` places people as its deployment does.
-const simulatedTenancy = real ? null : authTenancy()
-export const auth: AuthPort =
-    real?.auth ??
-    (simulatedTenancy?.kind === 'single' ? singleTenantAuth(fakeAuth, simulatedTenancy, fakeIdentitySource) : fakeAuth)
+// The simulated world runs the deployment's auth tenancy when its environment sets one (./fake/simulated-auth.ts).
+export const auth: AuthPort = real?.auth ?? simulatedAuth()
 export const db: DbPort = real?.db ?? fakeDb
 export const storage: StoragePort = real?.storage ?? fakeStorage
 export const llm: LlmPort = real?.llm ?? fakeLlm

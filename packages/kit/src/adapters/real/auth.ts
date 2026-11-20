@@ -40,11 +40,13 @@ interface AppPublicMetadata {
 
 /**
  * The tenant a user's public metadata claims, under the deployment's key (`AUTH_TENANT_METADATA_KEY`, default
- * `tenantSlug`: ../auth-tenancy.ts). Only a non-empty string counts.
+ * `tenantSlug`: ../auth-tenancy.ts): the string it holds; `undefined` when it holds none (absent, null or empty); or
+ * `null` when it holds something else, which single-tenant auth refuses and multi-tenant auth reads as no tenant.
  */
-function tenantClaim(metadata: unknown): string | undefined {
+function tenantClaim(metadata: unknown): string | null | undefined {
     const value = (metadata as Record<string, unknown> | null | undefined)?.[authTenancy().tenantMetadataKey]
-    return typeof value === 'string' && value !== '' ? value : undefined
+    if (value === undefined || value === null || value === '') return undefined
+    return typeof value === 'string' ? value : null
 }
 
 function localeFrom(metadata: unknown): Locale {

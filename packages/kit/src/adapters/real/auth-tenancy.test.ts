@@ -105,3 +105,20 @@ describe("Clerk's identity source, for single-tenant auth", () => {
         expect(await clerkIdentitySource.account('user_unknown')).toBeNull()
     })
 })
+
+describe('a tenant claim that is not a slug', () => {
+    it("is reported as unreadable to single-tenant auth, and as no tenant to multi-tenant's user", async () => {
+        h.publicMetadata = { tenantSlug: ['harbor'] }
+        const { clerkIdentitySource, realAuth } = await import('./auth')
+        expect((await clerkIdentitySource.current())?.tenantClaim).toBeNull()
+        expect((await realAuth.getCurrentUser())?.tenantSlug).toBe('')
+    })
+
+    it('is no claim when absent, null or empty', async () => {
+        const { clerkIdentitySource } = await import('./auth')
+        for (const value of [undefined, null, '']) {
+            h.publicMetadata = { tenantSlug: value }
+            expect((await clerkIdentitySource.current())?.tenantClaim).toBeUndefined()
+        }
+    })
+})
