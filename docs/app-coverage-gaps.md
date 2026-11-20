@@ -150,8 +150,8 @@ _advancing the clock also drains due schedules_ (so the digest appears in one cl
 manual "run due now" and "reset clock". The `digest-email` is addressed to the team's admin so it
 lands in a real Simulator inbox; a schedule firing is audited as `schedule.fired` by a synthetic
 `system:scheduler` actor (new ability `SubjectType` `JobSchedule`). No new vendor; the EventBridge
-tick is authored only as the `scheduled-tick` cutover row + a stack comment (a correct API-
-Destination construct depends on the not-yet-provisioned `job-runner` secret).
+tick is `SssbApp`'s opt-in `scheduledTick` (`packages/cdk/src/scheduled-tick.js`), proven live by the `scheduled-tick`
+cutover row.
 
 **Outbound webhooks**. The last missing integration class: signed egress.
 Org-scoped `webhook_endpoints` + operational (full-CRUD) `webhook_deliveries`; HMAC-SHA256 + timestamp signing
@@ -206,7 +206,7 @@ Twilio and web-push channels ship as `docs/recipes/sms-twilio.md` + `docs/recipe
 directions. `POST /api/webhooks/email` verifying Mailgun's signature scheme (HMAC over
 timestamp+token) beside the existing webhook verifier; normalized stored messages with
 tenant/org resolution from the recipient address pattern; a handler registry shaped like the
-job-handler registry with one demo handler (email-to-note); bounce/complaint events route
+job-handler registry with demo handlers (the showcase's `support` and `feedback`, each email-to-ticket); bounce/complaint events route
 through the same entry — the near-universal deliverability case. Fake: Simulator Mail grows
 "compose inbound" — the world can email the app. Cutover row `email-inbound`. **Size: S–M.**
 
@@ -222,11 +222,12 @@ against `node:crypto`); the stateful signing-key lookup + a per-process token re
 `packages/kit/src/service-auth/mailgun.ts` beside the bearer verifier, and the route wraps in a new
 `withMailgunSignature` (the `webhooks/` authorize-exemption `mustMatch` was widened to accept it). Intake
 (`packages/kit/src/inbound-email/`, the `apps/showcase/src/jobs/` registry shape) files a 'received' row, runs the
-address's handler in-tenant, and records the final status; the demo `note` handler creates a note ONLY for a
-sender who is a member of the resolved org (an unmatched sender or unknown handler slug files 'unmatched'; a
+address's handler in-tenant, and records the final status; the showcase's `support` and `feedback` handlers
+(`apps/showcase/src/domain/inbound-handlers.ts`) each create a ticket ONLY for a sender who is a member of the resolved
+org (an unmatched sender or unknown handler slug files 'unmatched'; a
 handler throw files 'failed' and STILL returns 200 so a poison message never triggers a Mailgun retry storm).
 Audit writes `inbound-email.received` (new audit-only subject `InboundEmail`) plus the handler's own
-`note.created`. Simulated mode: Simulator's Mail tab grew a "compose inbound" affordance + a world inbound list,
+`ticket.created`. Simulated mode: Simulator's Mail tab grew a "compose inbound" affordance + a world inbound list,
 and — the honest mechanism — compose calls the SAME intake seam directly rather than spoofing a signature.
 Inbound is intake machinery, NOT a new `email` port method (ADR-0011): the app never calls "receive
 email", the world does. Cutover row `email-inbound` (Route config + signing key env + bounce/complaint note).
