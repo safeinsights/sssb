@@ -44,8 +44,12 @@ export declare function failClosedEnvironmentProblems(env: Record<string, unknow
 
 /**
  * Problems with Secrets Manager and managed-policy grants: every Secrets Manager grant names only the
- * cluster's own secret, and no role attaches an AWS-managed policy the check cannot read. Needs the one
- * `AWS::RDS::DBCluster` in the template; runs on every database shape.
+ * cluster's own secret, no role, user or group attaches an AWS-managed policy the check cannot read, and no
+ * `AWS::IAM::*` resource is of a type the check does not read. Grants are read from `AWS::IAM::Policy`,
+ * `ManagedPolicy`, `RolePolicy`, `UserPolicy` and `GroupPolicy`, and from a `Role`'s, `User`'s or `Group`'s inline
+ * `Policies`; the IAM types that grant nothing (an instance profile, an identity provider, a service-linked role,
+ * an access key, a certificate, an MFA device, a user-to-group addition) pass. A `*` or `?` in a granted resource
+ * is a wildcard. Needs the one `AWS::RDS::DBCluster` in the template; runs on every database shape.
  */
 export declare function secretGrantProblems(resources: Resources): string[]
 
