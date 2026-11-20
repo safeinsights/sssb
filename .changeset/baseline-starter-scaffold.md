@@ -18,9 +18,10 @@ each file in SSSB's repository at this release (`apps/starter`).
   branch matches `/api` or `/api/...`, so a page named like `/apiary` reaches the proxy and the auth provider's
   middleware.
 - `src/app/api/respond.ts` gains `readJsonObject` and `refuseNonJson`. `POST /api/items` and `POST /api/auth/org`
-  answer 400, not 500, on a body that is not a JSON object or a field of the wrong type. `POST /api/auth/dev-signin`
-  (simulated mode only) answers 415 to a request that is not `application/json`, so another site's page cannot sign
-  a developer in.
+  answer 400, not 500, on a body that is not a JSON object or a field of the wrong type, and `POST /api/auth/org`
+  answers 401 to a signed-out caller before it reads the body. `POST /api/auth/dev-signin` (simulated mode only)
+  answers 415 to a request that is not `application/json`, so another site's page cannot sign a developer in, and
+  400 to a body that is not a JSON object or whose `personId` is not a non-empty string.
 - The Items card keeps the typed title and shows `items.addError` (new, in both catalogs) when a create fails. It
   takes three files: `src/components/items-card.tsx`, the message key, and
   `src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx`, whose `onAdd` must reject on a response that is not
