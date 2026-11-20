@@ -53,9 +53,11 @@ export function createCompatibleStorage(settings: CompatibleStorageSettings): St
         endpoint,
         credentials: { accessKeyId, secretAccessKey },
         forcePathStyle,
-        // The SDK's default (since v3.729) adds CRC32 checksum headers to PutObject and drops Content-MD5 from
-        // DeleteObjects, which several S3-compatible stores reject: Cloudflare tells R2 users to ask for checksums only
-        // where an operation requires one. AWS itself accepts both, so the `s3` choice keeps the default.
+        // The SDK's default (since v3.729, `WHEN_SUPPORTED`) puts a CRC32 checksum on every PutObject, which stores
+        // older than that default can reject; Cloudflare tells R2 users to ask for checksums only where an operation
+        // requires one. `WHEN_REQUIRED` does that, and no more: DeleteObjects requires one, so it still carries CRC32
+        // and no Content-MD5, which a store that wants MD5 would refuse (the live row, `storage-compatible-live`, runs
+        // `delete` against the real store for that). AWS accepts both, so the `s3` choice keeps the default.
         requestChecksumCalculation: 'WHEN_REQUIRED',
         responseChecksumValidation: 'WHEN_REQUIRED',
     })

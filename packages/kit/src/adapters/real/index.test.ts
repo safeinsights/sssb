@@ -286,6 +286,8 @@ describe('the optional ports follow their switches, and a port switched off is a
             ] as const) {
                 stubEnv({ ...COMPATIBLE, [name]: value })
                 expect(() => assertRealEnv(), name).toThrow(message)
+                // The form check-real-env prints, with the row that holds the setting.
+                expect(() => assertRealEnv(), name).toThrow(/open cutover items: storage-compatible-store\./)
             }
         })
 

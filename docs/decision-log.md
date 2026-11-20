@@ -6940,3 +6940,16 @@ in building it:
   would make a missing key and a missing endpoint the same row, and reusing `cloud-accounts`, which says AWS.
 - **The PUT form of the upload target is its own future task**, `storage-upload-target-put-form.md`, with `put` named as
   a third value of the same setting.
+- **The compatible client sets `requestChecksumCalculation` and `responseChecksumValidation` to `WHEN_REQUIRED`; the
+  `s3` choice keeps the SDK's default.** The default (since SDK v3.729) puts CRC32 on every PutObject, and Cloudflare tells
+  R2 users to turn it down. It is not a full answer: DeleteObjects requires a checksum, so it still sends CRC32 and no
+  Content-MD5 (measured against the installed SDK), which a store that insists on MD5 would refuse. Rejected: a
+  middleware that adds Content-MD5 to DeleteObjects, a guess about stores nothing here can call; the live cutover row
+  runs `delete` against the real store and says what to look for. `S3StorageOptions` gains the two settings, optional.
+- **The values that choose behaviour are checked in `storage-settings.ts`, which loads no SDK, by the adapter and by
+  `assertRealEnv`**, so `sssb check-real-env` refuses what the server would refuse at boot, as a `CutoverPendingError`
+  naming `storage-compatible-store`. Rejected: checking only in the adapter, which let the preflight say "complete"
+  for a value that stops the server. An endpoint carrying a user or password is refused and its error never repeats it;
+  the upload-target and path-style errors do repeat their values, which are not secrets.
+- **The apps' `params.ports.storage` type is widened to include `s3-compatible`**, the starter's too, so an adopter's
+  generated app accepts the choice without editing the cast.

@@ -58,11 +58,16 @@ export function assertRealEnv(): void {
             `Missing env: ${missing.join(', ')}. See docs/cutover-checklist.md.`,
         )
     }
-    // Present is not enough for the settings that choose behaviour: refuse here what the adapter would refuse at boot.
+    // Present is not enough for the settings that choose behaviour: refuse here what the adapter would refuse at boot,
+    // in the same form (a CutoverPendingError, which `sssb check-real-env` prints), naming the row that holds them.
     if (portChoice('storage') === 's3-compatible') {
-        parseUploadTarget(process.env['STORAGE_UPLOAD_TARGET'] ?? '')
-        parseForcePathStyle(process.env['STORAGE_FORCE_PATH_STYLE'])
-        assertEndpoint(process.env['STORAGE_ENDPOINT'] ?? '')
+        try {
+            parseUploadTarget(process.env['STORAGE_UPLOAD_TARGET'] ?? '')
+            parseForcePathStyle(process.env['STORAGE_FORCE_PATH_STYLE'])
+            assertEndpoint(process.env['STORAGE_ENDPOINT'] ?? '')
+        } catch (error) {
+            throw new CutoverPendingError(['storage-compatible-store'], (error as Error).message)
+        }
     }
 }
 

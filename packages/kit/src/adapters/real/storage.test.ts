@@ -367,7 +367,7 @@ describe('storage on an S3-compatible store', () => {
         expect(config.credentials).toMatchObject({ accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'secret-example' })
     })
 
-    test('asks for checksums only where an operation requires one, which stores older than the SDK default reject', async () => {
+    test('is configured to ask for checksums only where an operation requires one (a PutObject then carries none)', async () => {
         send.mockResolvedValue({ IsTruncated: false })
         await compatible().list('')
         const client = send.mock.contexts[0] as S3Client
