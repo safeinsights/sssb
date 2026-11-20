@@ -160,7 +160,7 @@ zohoSign: {
 ```
 
 Cutover-checklist row template (`docs/cutover-checklist.md`), matching that table's actual columns
-(`Status | Item | What it is | What unlocks it | Deferred verification` — copy the `email-outbound`/`twilio-sms`
+(`Status | Item | What it is | What unlocks it | Deferred verification` — copy the `email-outbound`
 row format exactly):
 
 | Status | Item             | What it is                                                                                               | What unlocks it                | Deferred verification                                                                                                                                                                                                                  |

@@ -30,8 +30,10 @@ export const PROBES = [
         code:
             `${IMPORTS_VENDOR}${LOADS_VENDOR}${READS_ENV}${TAKES_RAW_DB}${IMPORTS_KIT_REAL}` +
             "import { kv } from '@/adapters/real/kv'\nexport { kv }\n" +
-            "import { Inter } from 'next/font/google'\nexport const font = Inter\n",
+            "import { Inter } from 'next/font/google'\nexport const font = Inter\n" +
+            "export const suite = () => import('../../node_modules/@sssb/kit/src/testing/conformance/suite')\n",
         fires: [
+            'sssb/no-path-into-kit',
             'sssb/no-vendor-import',
             'sssb/no-dynamic-vendor-import',
             'sssb/no-process-env',
@@ -124,6 +126,27 @@ export const PROBES = [
         ],
     },
 ]
+
+/**
+ * The probes an app's OWN vendor list adds (`sssb.vendors`): for each entry, a module in src/domain that imports a
+ * package the entry names, once by a declaration and once by import(), and both vendor rules must report it. The
+ * composed config's options are already compared with the preset's (check-fences.js, step 1); this holds what the
+ * rules DO with the app's list, both halves of the ban alike.
+ * @param {readonly string[]} vendors entries already checked by loadAppVendors
+ * @returns {Probe[]}
+ */
+export function vendorProbes(vendors) {
+    return vendors.map((vendor, index) => {
+        const specimen = vendor.endsWith('/*') ? `${vendor.slice(0, -1)}${PROBE}` : vendor
+        return {
+            path: `src/domain/${PROBE}vendor${index}.ts`,
+            code:
+                `import * as vendor from '${specimen}'\nexport { vendor }\n` +
+                `export const load = () => import('${specimen}')\n`,
+            fires: ['sssb/no-vendor-import', 'sssb/no-dynamic-vendor-import'],
+        }
+    })
+}
 
 /** What a module named in lint-exceptions.mjs is linted with: the act the exception lets through. */
 export const EXCEPTION_PROBE_CODE = TAKES_RAW_DB

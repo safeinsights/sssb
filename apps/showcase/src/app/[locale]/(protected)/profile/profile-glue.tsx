@@ -57,9 +57,10 @@ export function ProfileGlue({
                     headers: { 'content-type': 'application/json' },
                     body: JSON.stringify(values),
                 })
-                if (response.ok && values.locale !== locale) {
-                    window.location.assign(`/${values.locale}/profile`)
-                }
+                // A refusal (a name the auth adapter does not accept, say) rejects, so the screen keeps the form
+                // and shows its error.
+                if (!response.ok) throw new Error(`POST /api/profile answered ${response.status}`)
+                if (values.locale !== locale) window.location.assign(`/${values.locale}/profile`)
             }}
             extraSection={
                 <>

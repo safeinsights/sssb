@@ -28,11 +28,14 @@
    standalone output under the app's path relative to the workspace root, so `server.js` is NOT at the
    zip root — `packages/tools/src/commands/serve-standalone.js` shows where to find it and where the static assets have
    to land beside it.
-2. ⛔ Upload zip to the deploy bucket; sync the app's `.next/static` + `public/` to the assets bucket
+2. ⛔ Put the zip where Lambda can take it (`SssbApp` builds no deploy bucket: a bucket of your pipeline's, or the
+   zip passed directly while it is under Lambda's upload limit); sync the app's `.next/static` + `public/` to the assets bucket
    (`/_next/static/*` and `/assets/*` behaviors are served from S3, not the Lambda).
 3. ⛔ Invoke the **Migrator** Lambda and require success before traffic shifts — it runs the same
    `packages/kit/src/db/migrations` registry unit and contract tests run.
-4. ⛔ Point the server Lambda at the new zip (version + alias shift).
+4. ⛔ Update the server Lambda's code to the new zip (`aws lambda update-function-code`). `SssbApp` builds no
+   version or alias: its Function URL, which CloudFront calls, is on the unqualified function, so the code update is
+   the traffic shift.
 5. Verify: `GET /api/health` returns `{ ok: true, mode: "real" }`; smoke the sign-in page.
 6. Record cold-start p50/p95 after the FIRST staging deploy in `docs/build-notes.md`, and size the
    function from the measurement rather than from a guess. It is not a cutover row — nothing is gated on
@@ -49,7 +52,8 @@ us-east-1 stack, and a first deploy then fails reading its function's ARN.
 
 ## Rollback
 
-Lambda alias back to the previous version (assets are content-hashed, no rollback needed). Migrations
+Update the server Lambda's code back to the previous zip, so keep it (with no alias there is no earlier version to
+point at; assets are content-hashed, no rollback needed). Migrations
 are expand-only by convention — never destructive in the same release as the code that stops using a
 column.
 

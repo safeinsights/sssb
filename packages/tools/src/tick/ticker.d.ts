@@ -16,7 +16,7 @@ export interface TickerStatus {
 export interface Ticker {
     /** Starts ticking every `seconds`, or does nothing if it already is (an interval change is a stop then a start). */
     start(seconds: number): TickerStatus
-    /** Stops ticking and waits for a tick in flight to end. */
+    /** Stops ticking, waits for a tick in flight to end, and resolves to the status then (`running: false`). */
     stop(): Promise<TickerStatus>
     status(): TickerStatus
 }
@@ -31,6 +31,9 @@ export interface TickerOptions {
     sleep?: (ms: number, signal: AbortSignal) => Promise<void>
     now?: () => Date
 }
+
+/** A sleep that ends early, and quietly, when `signal` aborts: the ticker's default `sleep`. */
+export declare function abortableSleep(ms: number, signal: AbortSignal): Promise<void>
 
 /** The dev ticker: one object that owns start, stop, the interval and whether it is running. */
 export declare function createTicker(options: TickerOptions): Ticker

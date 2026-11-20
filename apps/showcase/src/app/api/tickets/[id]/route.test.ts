@@ -4,10 +4,11 @@ import type { AuthUser } from '@sssb/kit/ports/auth'
 import { DELETE, PATCH } from './route'
 
 // Real authorize (pure abilities) and the real ticket machine's status vocabulary run — only the
-// adapters and data modules are faked. Low-entropy fixture ids/slugs (gitleaks): no hex, no UUIDs.
+// adapters and data modules are faked. Low-entropy fixture ids/slugs (gitleaks); the path id is a low-entropy uuid, the shape the route checks.
 const h = vi.hoisted(() => ({
     requireUser: vi.fn(),
     listMembers: vi.fn(),
+    getMember: vi.fn(),
     tenantIdForSlug: vi.fn(),
     orgIdForSlug: vi.fn(),
     ticketForOrg: vi.fn(),
@@ -18,7 +19,7 @@ const h = vi.hoisted(() => ({
     makeNotifyDeps: vi.fn(),
 }))
 vi.mock('@sssb/kit/adapters/index', () => ({
-    auth: { requireUser: h.requireUser, listMembers: h.listMembers },
+    auth: { requireUser: h.requireUser, listMembers: h.listMembers, getMember: h.getMember },
     db: {},
 }))
 vi.mock('@sssb/kit/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
@@ -48,9 +49,15 @@ function user(overrides: Partial<AuthUser> = {}): AuthUser {
 }
 
 const ORG_IDS: Record<string, string> = { frontline: 'org-frontline', platform: 'org-platform' }
-const TICKET = { id: 'ticket-1', ref: 'NW-1041', subject: 'Blank labels', status: 'open', assigneeUserId: null }
+const TICKET = {
+    id: 'b0000000-0000-4000-8000-000000000001',
+    ref: 'NW-1041',
+    subject: 'Blank labels',
+    status: 'open',
+    assigneeUserId: null,
+}
 
-function patch(body: unknown, id = 'ticket-1'): Promise<Response> {
+function patch(body: unknown, id = 'b0000000-0000-4000-8000-000000000001'): Promise<Response> {
     return PATCH(
         new Request(`http://localhost/api/tickets/${id}`, {
             method: 'PATCH',
@@ -61,7 +68,7 @@ function patch(body: unknown, id = 'ticket-1'): Promise<Response> {
     )
 }
 
-function del(id = 'ticket-1'): Promise<Response> {
+function del(id = 'b0000000-0000-4000-8000-000000000001'): Promise<Response> {
     return DELETE(new Request(`http://localhost/api/tickets/${id}`, { method: 'DELETE' }), {
         params: Promise.resolve({ id }),
     })
@@ -71,6 +78,7 @@ beforeEach(() => {
     for (const fn of Object.values(h)) fn.mockReset()
     h.requireUser.mockResolvedValue(user())
     h.listMembers.mockResolvedValue([])
+    h.getMember.mockResolvedValue({ role: 'member' })
     h.tenantIdForSlug.mockResolvedValue('tenant-northwind')
     h.orgIdForSlug.mockImplementation(async (_db: unknown, _tenantId: string, slug: string) => ORG_IDS[slug] ?? null)
     h.ticketForOrg.mockResolvedValue(TICKET)
@@ -134,9 +142,15 @@ describe('PATCH /api/tickets/[id] — the edit itself', () => {
         const response = await patch({ status: 'pending' })
 
         expect(response.status).toBe(200)
-        expect(h.updateTicket).toHaveBeenCalledWith({}, 'tenant-northwind', 'org-frontline', 'ticket-1', {
-            status: 'pending',
-        })
+        expect(h.updateTicket).toHaveBeenCalledWith(
+            {},
+            'tenant-northwind',
+            'org-frontline',
+            'b0000000-0000-4000-8000-000000000001',
+            {
+                status: 'pending',
+            },
+        )
         expect(h.recordAuditEvent).toHaveBeenCalledWith({}, expect.objectContaining({ action: 'ticket.updated' }))
         expect(h.notifyMember).not.toHaveBeenCalled()
     })
@@ -203,11 +217,16 @@ describe('DELETE /api/tickets/[id]', () => {
         const response = await del()
 
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({ deleted: 'ticket-1' })
-        expect(h.deleteTicket).toHaveBeenCalledWith({}, 'tenant-northwind', 'org-frontline', 'ticket-1')
+        expect(await response.json()).toEqual({ deleted: 'b0000000-0000-4000-8000-000000000001' })
+        expect(h.deleteTicket).toHaveBeenCalledWith(
+            {},
+            'tenant-northwind',
+            'org-frontline',
+            'b0000000-0000-4000-8000-000000000001',
+        )
         expect(h.recordAuditEvent).toHaveBeenCalledWith(
             {},
-            expect.objectContaining({ action: 'ticket.deleted', subjectId: 'ticket-1' }),
+            expect.objectContaining({ action: 'ticket.deleted', subjectId: 'b0000000-0000-4000-8000-000000000001' }),
         )
     })
 
@@ -231,5 +250,43 @@ describe('DELETE /api/tickets/[id]', () => {
 
         expect((await del()).status).toBe(404)
         expect(h.recordAuditEvent).not.toHaveBeenCalled()
+    })
+})
+
+describe('a path id that cannot be a ticket, or a malformed body', () => {
+    test('PATCH and DELETE answer 404 for a non-uuid id, without touching the data module', async () => {
+        expect((await patch({ status: 'pending' }, 'not-a-uuid')).status).toBe(404)
+        expect((await del('not-a-uuid')).status).toBe(404)
+        expect(h.ticketForOrg).not.toHaveBeenCalled()
+        expect(h.deleteTicket).not.toHaveBeenCalled()
+    })
+
+    test('PATCH answers 400 for a body that does not parse to an object', async () => {
+        const id = TICKET.id
+        for (const body of ['{', 'null', '[1]']) {
+            const response = await PATCH(new Request(`http://localhost/api/tickets/${id}`, { method: 'PATCH', body }), {
+                params: Promise.resolve({ id }),
+            })
+            expect(response.status).toBe(400)
+        }
+        expect(h.updateTicket).not.toHaveBeenCalled()
+    })
+})
+
+describe('PATCH: the assignee must be a member of the active org', () => {
+    test('400 for an id that names nobody on the team, and nothing is written', async () => {
+        h.getMember.mockResolvedValue(null)
+        const response = await patch({ assigneeUserId: 'nobody-at-all-in-any-org' })
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({ error: 'invalid-assignee' })
+        expect(h.getMember).toHaveBeenCalledWith('frontline', 'nobody-at-all-in-any-org')
+        expect(h.updateTicket).not.toHaveBeenCalled()
+    })
+
+    test('unassigning (null) asks no one', async () => {
+        h.updateTicket.mockResolvedValue({ ...TICKET, assigneeUserId: null })
+        h.ticketForOrg.mockResolvedValue({ ...TICKET, assigneeUserId: 'person-staff' })
+        expect((await patch({ assigneeUserId: null })).status).toBe(200)
+        expect(h.getMember).not.toHaveBeenCalled()
     })
 })

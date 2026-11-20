@@ -64,7 +64,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   deleting the showcase with a red gate.
-- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 142 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 143 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it). Lint-enforced
   (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
   publish it; add the `exports` line deliberately, and never widen the map to silence the rule.
@@ -95,7 +95,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   helper is an `exports` entry with its `.d.ts`. Pack and consume packs it beside the framework.
 - **`sssb remove-items` is a pair of diffs of the starter** (`packages/tools/src/remove-items/code.patch` and
   `database.patch`, applied exactly by `exact-patch.js`): the starter's Items slice taken out of an adopter's app (the
-  Simulator's e2e spec is what keeps the app's e2e directory from emptying). **A change to a starter file the diffs touch, or to the Items slice itself, fails
+  starter's e2e specs that do not name Items, the Simulator's among them, keep the app's e2e directory from emptying). **A change to a starter file the diffs touch, or to the Items slice itself, fails
   `tests/tooling/remove-items.test.ts`** until the diffs are regenerated (the command's header says how), and pack and
   consume's `generated` shape runs the command and the workspace's gates over what it leaves. The two files are the only
   non-JavaScript files `@sssb/tools` ships (`toolsShippedFileProblems` names them).

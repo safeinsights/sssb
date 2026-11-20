@@ -200,8 +200,11 @@ export async function acceptInvite(
 ): Promise<{ id: string; tenantSlug: string }> {
     const invite = findInvite(inviteId)
     if (!invite) throw new ForbiddenError(`unknown invite: ${inviteId}`)
+    if (typeof profile.name !== 'string') throw new ForbiddenError('invalid name')
     const name = profile.name.trim()
     if (!name) throw new ForbiddenError('name is required')
+    // The same bound updateProfile keeps, so a person cannot get a name at sign-up that they could not set later.
+    if (!isProfileName(name)) throw new ForbiddenError('invalid name')
 
     const person: SeedPerson = {
         id: `person-invited-${inviteId.slice(0, 8)}`,
@@ -254,9 +257,17 @@ export const fakeAuth: AuthPort = {
     async updateProfile(update: ProfileUpdate): Promise<AuthUser> {
         const session = await readSession()
         if (!session) throw new AuthRequiredError()
-        if (update.locale && !LOCALES.includes(update.locale)) throw new ForbiddenError('unknown locale')
+        // Refused as the real adapter refuses (./../real/auth.ts), before anything is stored: a name that is not a
+        // non-blank string of at most 256 characters, a locale this app does not ship. Only the two known fields are
+        // stored, so a body with anything else in it cannot reach every page that renders this person.
+        if (update.name !== undefined && !isProfileName(update.name)) throw new ForbiddenError('invalid name')
+        if (update.locale !== undefined && !LOCALES.includes(update.locale)) throw new ForbiddenError('unknown locale')
         const overrides = readOverrides()
-        overrides[session.person.id] = { ...overrides[session.person.id], ...update }
+        overrides[session.person.id] = {
+            ...overrides[session.person.id],
+            ...(update.name === undefined ? {} : { name: update.name }),
+            ...(update.locale === undefined ? {} : { locale: update.locale }),
+        }
         await writeJsonAtomic(overridesFile(), overrides)
         return toUser(session.person, session.orgSlug)
     },
@@ -321,4 +332,9 @@ export const fakeAuth: AuthPort = {
         await writeSession(session.person.id, orgSlug)
         updatePersonState(`person:${session.person.id}`, { activeOrgSlug: orgSlug })
     },
+}
+
+/** A display name the auth port accepts: a string with something in it, at most 256 characters (SSSB's limit). */
+function isProfileName(name: unknown): name is string {
+    return typeof name === 'string' && name.trim() !== '' && name.length <= 256
 }

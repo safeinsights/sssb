@@ -374,8 +374,8 @@ rest of this repository's are SSSB's own: the second app's (`dev:starter`, `tick
 
 One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 41 of SSSB's 142 published subpaths from its source (45
-counting its tests), so the same setting would start demanding you delete the other 101 — capabilities you merely have not
+nearly all of it. A one-entity app does not: `apps/starter` imports about 40 of SSSB's 140-odd published subpaths from its source (a
+few more counting its tests), so the same setting would start demanding you delete the hundred or so others — capabilities you merely have not
 reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration. The generated `knip.json` carries a few narrow entries beside the app's entry files: at the root,
@@ -452,7 +452,7 @@ apps/<app>/config/            APP_SLUG and (optionally) deployment params
 apps/<app>/src/app/           Next route files (thin wrappers; framework routes live here too)
 apps/<app>/src/app-config/    THE SEAM — your registrations
 apps/<app>/src/components/    your screens/cards
-apps/<app>/src/domain/        your domain modules (not generated: create it when you need it)
+apps/<app>/src/domain/        your domain modules (generated with the Items slice's `db/items.ts`, which `sssb remove-items` takes out)
 apps/<app>/src/ports/         your own ports, for a vendor SSSB has no port for (docs/recipes/app-owned-adapter.md; not generated)
 apps/<app>/src/adapters/      their registry and fakes; adapters/real/ is the app's only vendor-SDK directory (not generated)
 apps/<app>/src/demo-static/   your half of the file:// demo twin (the framework half is SSSB's)
@@ -470,7 +470,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 142 subpaths your app may
+lists the 143 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 78 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
@@ -518,7 +518,9 @@ file when it loads its config, so restart your editor's ESLint server after you 
 
 **A vendor SDK your app owns an adapter for** (`docs/recipes/app-owned-adapter.md`) is added to the vendor ban by
 your app, not by editing SSSB's list: name it in your app's `package.json`, `"sssb": { "vendors": ["stripe",
-"stripe/*"] }`, in the gitignore-style patterns SSSB's own list uses. The preset reads it, and so does
+"stripe/*"] }`. Each entry is a package name (`stripe`, `@stripe/stripe-js`) or one subpath of it (`firebase/app`),
+either followed by `/*`, or a whole scope (`@stripe/*`): the shapes the ban reads alike for an import declaration and
+for `import()`. Anything else, an uppercase name included, fails the lint config. The preset reads the list, and so does
 `checkFences`, which compares the vendor rules' options with it exactly. A pattern that starts with `!` is refused:
 your list adds to SSSB's and cannot take a vendor off it.
 
@@ -744,8 +746,11 @@ the showcase carries the same route over the same function.
 
     The answer is `{"ok":true,"spawned":0,"failed":0,"deliveries":{…}}`, which `pnpm tick` prints as one line. In a
     simulated world "now" is the Simulator's world clock (real time plus whatever offset a demo advanced), so a tick
-    honours a clock a demo moved. A schedule whose spawn failed, or a delivery that failed, shows in that line and is
-    retried by the next tick: the tick itself succeeded, so the exit code stays 0.
+    honours a clock a demo moved. A schedule whose spawn failed, or a delivery that failed, shows in that line; the tick
+    itself succeeded, so the exit code stays 0. The next tick retries a failed delivery, and a schedule whose failure
+    was inside its spawn transaction. A schedule that failed after that transaction committed is not retried: its job is
+    already queued and the schedule has moved on, so the in-process runner's sweep fails that job after five minutes,
+    and with another runner it stays queued.
 
 ## Cutover — from hermetic to real
 

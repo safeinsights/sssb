@@ -1,5 +1,6 @@
 import Mailgun from 'mailgun.js'
 import type { EmailPort } from '../../ports/email'
+import { assertSendableMessage } from '../email-message'
 
 /**
  * AUTHORED — CUTOVER (`email-outbound`): typechecked against mailgun.js, never sent for real.
@@ -10,6 +11,7 @@ export function createRealEmail(domain: string, apiKey: string, from: string): E
 
     return {
         async send(message) {
+            assertSendableMessage(message)
             await client.messages.create(domain, {
                 from,
                 to: [message.to],

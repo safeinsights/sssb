@@ -143,6 +143,7 @@ const ACTIONS = ['actions/checkout', 'pnpm/action-setup', 'actions/setup-node']
  *   cutoverRows: { id: string, what: string }[],
  *   actions: Record<string, string>,
  *   gitleaksVersion: string,
+ *   gitleaksSha256: string,
  *   dependencyNames: string[],
  *   plugin: { marketplace: string, name: string },
  * }} TemplateMeta
@@ -449,10 +450,18 @@ function writeTemplate({ repoRoot, outDir, workflowRef, warn = () => {} }) {
     const workspace = readFileSync(at('pnpm-workspace.yaml'), 'utf8')
     const releaseAge = /^minimumReleaseAge:\s*(\d+)\s*$/m.exec(workspace)?.[1]
     const appChecks = readFileSync(at('.github/workflows/app-checks.yml'), 'utf8')
-    const gitleaksVersion = /gitleaks\/releases\/download\/v(\d+\.\d+\.\d+)\//.exec(
-        readFileSync(at('.github/workflows/checks.yml'), 'utf8'),
-    )?.[1]
+    const checks = readFileSync(at('.github/workflows/checks.yml'), 'utf8')
+    const gitleaksVersion = /gitleaks\/releases\/download\/v(\d+\.\d+\.\d+)\//.exec(checks)?.[1]
     if (!gitleaksVersion) throw new CreateError("could not read the gitleaks version from the repository's checks.yml")
+    // The release asset's sha256, which the secret-scan step checks before it runs the binary: an asset is as
+    // replaceable as a tag, and this one is executed. Read beside the version, so the two move together.
+    const gitleaksSha256 = /\becho "([0-9a-f]{64}) +[^"\n]*gitleaks[^"\n]*" *\| *sha256sum -c -/.exec(checks)?.[1]
+    if (!gitleaksSha256) {
+        throw new CreateError(
+            "could not read the gitleaks download's sha256 from the repository's checks.yml (an " +
+                '`echo "<sha256>  <file>" | sha256sum -c -` line beside the download)',
+        )
+    }
 
     /** @type {TemplateMeta} */
     const meta = {
@@ -472,6 +481,7 @@ function writeTemplate({ repoRoot, outDir, workflowRef, warn = () => {} }) {
             .map((/** @type {{ id: string, what: string }} */ row) => ({ id: row.id, what: row.what })),
         actions: actionPins(appChecks),
         gitleaksVersion,
+        gitleaksSha256,
         dependencyNames: dependencyNames(readFileSync(at(WORKSPACE_LOCKFILE), 'utf8')),
         plugin: pluginNames(at),
     }

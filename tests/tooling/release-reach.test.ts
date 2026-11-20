@@ -18,6 +18,10 @@ import { parse } from 'yaml'
  * release app create `v*`, and each package's trusted publisher names this repository, `release.yml` and `npm-publish`.
  */
 const WORKFLOWS = fileURLToPath(new URL('../../.github/workflows/', import.meta.url))
+// A failure swallowed (`|| true`, `|| :`, `|| exit 0`, `|| echo …`), or errors turned off (`set +e`). `:` is not a word
+// character, so it cannot end in `\b` as the others do (that version never saw `|| :` at the end of a line, or before a
+// space or a `;`): it is `:` not followed by what would make it part of a longer word.
+const SWALLOWED_FAILURE = /\|\|\s*(?:(?:true|exit\s+0|echo)\b|:(?![\w-]))|\bset\s+\+e\b/
 
 type Step = { name?: string; run?: string; uses?: string; with?: Record<string, unknown> }
 type Job = {
@@ -96,7 +100,7 @@ describe('the one way onto npm', () => {
                 // package new at that commit has none, which must read as empty rather than fail the release.
                 const exempt = `before=$(git show "HEAD^:$dir/package.json" 2>/dev/null | jq -r .version || true)`
                 const script = (s.run ?? '').replace(exempt, '')
-                expect(script, `${name}: ${s.name}`).not.toMatch(/\|\|\s*(true|:|exit\s+0|echo)\b|\bset\s+\+e\b/)
+                expect(script, `${name}: ${s.name}`).not.toMatch(SWALLOWED_FAILURE)
                 expect((s as Step & { shell?: unknown }).shell, `${name}: ${s.name}`).toBeUndefined()
             }
         }
@@ -244,5 +248,30 @@ describe('the one way onto npm', () => {
             'npx --yes npm@11.21.2 publish "$file" --access public --provenance',
         )
         expect(script).not.toMatch(/git push|gh release|gh api/)
+    })
+})
+
+describe('the swallowed-failure pattern itself', () => {
+    it.each([
+        'foo || :',
+        'foo || :\nbar',
+        'foo ||: # x',
+        'foo || :;',
+        'foo ||:',
+        'foo || true',
+        'foo || exit 0',
+        'foo || echo skipped',
+        'set +e',
+    ])('sees %j', (script) => {
+        expect(script).toMatch(SWALLOWED_FAILURE)
+    })
+    it.each([
+        'foo || { echo "::error::failed"; exit 1; }',
+        'foo || exit 1',
+        'foo || :not-a-noop',
+        'a=x:y',
+        'set -euo pipefail',
+    ])('leaves %j alone', (script) => {
+        expect(script).not.toMatch(SWALLOWED_FAILURE)
     })
 })

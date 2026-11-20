@@ -172,6 +172,18 @@ test('disabling the email channel for a kind suppresses the email but keeps the 
     // ... but NO new notification email was caught for Dana (the email channel was suppressed).
     const adaEmailsAfter = await countAdaNotificationEmails(page)
     expect(adaEmailsAfter).toBe(adaEmailsBefore)
+
+    // The positive control: with the channel back on, the same trigger IS counted. Without it, a filter in
+    // countAdaNotificationEmails that matched nothing would pass the assertion above for the wrong reason.
+    const enableResp = await page.request.post('/api/notification-prefs', {
+        data: { kind: 'escalation.received', channel: 'email', enabled: true },
+    })
+    expect(enableResp.ok()).toBeTruthy()
+    await switchPerson(page, 'person-staff')
+    await pickOrg(page, 'frontline')
+    await createRequest(page, 'Platform Team', `${subject}-control`)
+    await switchPerson(page, 'person-admin')
+    await expect.poll(() => countAdaNotificationEmails(page)).toBe(adaEmailsAfter + 1)
 })
 
 test('a kind with SMS enabled lands a message in the Simulator Messages tab', async ({ page }) => {

@@ -6,7 +6,7 @@ import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 import { deleteEndpoint, endpointForOrg, setEndpointEnabled } from '@sssb/kit/db/webhooks'
 import type { AuthUser } from '@sssb/kit/ports/auth'
 import { NotFoundError } from '@sssb/kit/ports/errors'
-import { withPortErrors } from '../../respond'
+import { readJsonObject, requireUuidParam, withPortErrors } from '../../respond'
 
 /**
  * Enable/disable (PATCH) or remove (DELETE) one of the active org's webhook endpoints — both
@@ -28,7 +28,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return withPortErrors(async () => {
         const user = await auth.requireUser()
         const { id } = await context.params
-        const { enabled } = (await request.json()) as { enabled?: unknown }
+        requireUuidParam(id)
+        const { enabled } = await readJsonObject(request)
         if (typeof enabled !== 'boolean') return Response.json({ error: 'invalid-request' }, { status: 400 })
 
         const { tenantId, orgId } = await resolve(user, id)
@@ -50,6 +51,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     return withPortErrors(async () => {
         const user = await auth.requireUser()
         const { id } = await context.params
+        requireUuidParam(id)
 
         const { tenantId, orgId } = await resolve(user, id)
         authorize(user, orgId, 'delete', { type: 'WebhookEndpoint', orgId })

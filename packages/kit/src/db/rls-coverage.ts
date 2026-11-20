@@ -112,8 +112,15 @@ interface RelationRow {
     enabled: boolean
     forced: boolean
     is_partition: boolean
-    policies: number
-    policy_src: string
+}
+
+interface PolicyRow {
+    schema_name: string
+    table_name: string
+    policy_name: string
+    permissive: boolean
+    using_src: string | null
+    check_src: string | null
 }
 
 interface PrivilegeRow {
@@ -153,20 +160,33 @@ export async function proveRlsCoverage(db: Kysely<DB>, expect: (actual: unknown)
                c.relkind::text                                                    AS kind,
                c.relrowsecurity                                                   AS enabled,
                c.relforcerowsecurity                                              AS forced,
-               c.relispartition                                                   AS is_partition,
-               (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid)::int   AS policies,
-               COALESCE((
-                   SELECT string_agg(
-                       COALESCE(pg_get_expr(p.polqual, p.polrelid), '') || ' ' ||
-                       COALESCE(pg_get_expr(p.polwithcheck, p.polrelid), ''), ' ')
-                   FROM pg_policy p WHERE p.polrelid = c.oid
-               ), '')                                                             AS policy_src
+               c.relispartition                                                   AS is_partition
         FROM reachable r
         JOIN pg_class c ON c.oid = r.oid
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
         ORDER BY n.nspname, c.relname
     `.execute(db)
+
+    // Policies one row each. They used to be read as one string per table, and since PERMISSIVE policies
+    // are OR-ed, one isolating policy hid a `USING (true)` beside it: the table leaked with the gate green.
+    const { rows: policyRows } = await sql<PolicyRow>`
+        SELECT n.nspname                                AS schema_name,
+               c.relname                                AS table_name,
+               p.polname                                AS policy_name,
+               p.polpermissive                          AS permissive,
+               pg_get_expr(p.polqual, p.polrelid)       AS using_src,
+               pg_get_expr(p.polwithcheck, p.polrelid)  AS check_src
+        FROM pg_policy p
+        JOIN pg_class c ON c.oid = p.polrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        ORDER BY n.nspname, c.relname, p.polname
+    `.execute(db)
+    const policiesOf = new Map<string, PolicyRow[]>()
+    for (const policy of policyRows) {
+        const key = `${policy.schema_name}.${policy.table_name}`
+        policiesOf.set(key, [...(policiesOf.get(key) ?? []), policy])
+    }
 
     const failures: string[] = []
     const name = (row: RelationRow) => `${row.schema_name}.${row.table_name}`
@@ -213,17 +233,31 @@ export async function proveRlsCoverage(db: Kysely<DB>, expect: (actual: unknown)
             continue
         }
 
+        const policies = policiesOf.get(key) ?? []
         if (!row.enabled) failures.push(`${key} is reachable by app_user but has no ROW LEVEL SECURITY`)
         else if (!row.forced) failures.push(`${key} has RLS but not FORCE ROW LEVEL SECURITY`)
-        else if (row.policies === 0) failures.push(`${key} has RLS enabled but no policy`)
-        else if (!row.policy_src.includes(TENANT_SETTING)) {
+        else if (policies.length === 0) failures.push(`${key} has RLS enabled but no policy`)
+        else {
             // Coverage used to accept any policy at all, so `USING (true)` — a policy that exists and
             // isolates nothing — passed. Reading the expression is what distinguishes a policy from a
-            // policy that does something.
-            failures.push(
-                `${key} has a policy that never reads ${TENANT_SETTING}, so it does not isolate tenants: ` +
-                    `${row.policy_src.trim()}`,
-            )
+            // policy that does something. Each PERMISSIVE policy is read on its own (they are OR-ed, so
+            // one tenant-blind policy opens the table whatever the others say), and each expression it
+            // has on its own: a USING that isolates beside a `WITH CHECK (true)` still lets a write land
+            // in another tenant. A missing expression is fine (an INSERT policy has no USING; an absent
+            // WITH CHECK falls back to USING). RESTRICTIVE policies are AND-ed on top and can only narrow
+            // access, so they are not read here (a table with only restrictive policies shows app_user nothing).
+            for (const policy of policies) {
+                if (!policy.permissive) continue
+                const blind = [policy.using_src, policy.check_src].filter(
+                    (expression): expression is string => expression !== null && !expression.includes(TENANT_SETTING),
+                )
+                if (blind.length > 0) {
+                    failures.push(
+                        `${key} has a permissive policy \`${policy.policy_name}\` that never reads ${TENANT_SETTING}, ` +
+                            `so it does not isolate tenants (permissive policies are OR-ed): ${blind.join(' / ')}`,
+                    )
+                }
+            }
         }
     }
 

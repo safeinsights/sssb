@@ -39,16 +39,21 @@ function signingKey(): string | null {
     return isSimulated ? devWebhookSecret() : (process.env['MAILGUN_WEBHOOK_SIGNING_KEY'] ?? null)
 }
 
-/** token -> expiry epoch ms; a token is a replay if seen while still within the window. */
+/**
+ * token -> expiry epoch ms; a token is a replay if seen while still within the window. The expiry is
+ * the moment its SIGNATURE stops being fresh, not "tolerance from now": the timestamp may run up to the
+ * tolerance AHEAD of our clock (verifyMailgunSignature checks both directions), so a token remembered
+ * for only `now + tolerance` would be forgotten while a replay of it still verified.
+ */
 const seenTokens = new Map<string, number>()
 
-function rememberToken(token: string, nowMs: number): boolean {
+function rememberToken(token: string, nowMs: number, timestampMs: number): boolean {
     // Prune expired entries first so the map can't grow unbounded across a long-lived process.
     for (const [seen, expiry] of seenTokens) {
         if (expiry <= nowMs) seenTokens.delete(seen)
     }
     if (seenTokens.has(token)) return false
-    seenTokens.set(token, nowMs + WEBHOOK_REPLAY_TOLERANCE_MS)
+    seenTokens.set(token, Math.max(nowMs, timestampMs) + WEBHOOK_REPLAY_TOLERANCE_MS)
     return true
 }
 
@@ -61,7 +66,17 @@ export function verifyMailgunWebhook(fields: MailgunSignatureFields, now: Date =
     if (!key) throw new AuthRequiredError()
     const result = verifyMailgunSignature({ ...fields, signingKey: key, toleranceMs: WEBHOOK_REPLAY_TOLERANCE_MS, now })
     if (!result.ok) throw new AuthRequiredError()
-    if (!rememberToken(fields.token, now.getTime())) throw new AuthRequiredError()
+    if (!rememberToken(fields.token, now.getTime(), Number(fields.timestamp) * 1000)) throw new AuthRequiredError()
+}
+
+/**
+ * Forget a token whose request was verified but NOT processed: the route's handler threw or answered 5xx.
+ * The sender's retry of that message carries the same token, and refusing it as a replay would lose the
+ * message. A replay of an unprocessed message is a retry, not a second delivery, so forgetting it opens
+ * nothing the timestamp window does not already bound.
+ */
+export function forgetMailgunToken(token: string): void {
+    seenTokens.delete(token)
 }
 
 /** Test-only: clear the replay set between cases so a reused fixture token doesn't leak across tests. */

@@ -9,10 +9,14 @@ import type { CheckContext, CheckImpl } from './types'
  * `route.ts` from anywhere there), and judges each exported mutating handler, read with the TypeScript parser, never
  * the file's text: the handler must reach `authorize` on its own path, or its route must have a justified exemption
  * (the framework's, ../../authz/route-policy.ts, or the app's own `authz-exemptions.mjs`) and the handler must pass
- * that exemption's gate.
+ * that exemption's gate. The same scan judges every Server Action under the app's `src` (each export of a
+ * `'use server'` file, each function whose body opens with `'use server'`) like a POST, with no exemption, and fails
+ * what Next serves and it cannot read: a `pages/api` or root-level `app/` directory, a `route.<ext>` it does not
+ * parse, a `'use server'` file outside `src`.
  *
  * The test names are fixed (doctor computes them), so every failing handler is reported in ONE assertion, one line
- * each, `<app>: <rel> <VERB> …why`.
+ * each: `<app>: <rel> <VERB> …why` for a handler, `<app>: <rel> Server Action \`name\` …why` for an action, and a
+ * plain sentence for a directory or file the scan cannot read.
  */
 const scans = new Map<string, Promise<AppScan>>()
 const scanOf = ({ appDir }: CheckContext): Promise<AppScan> => {

@@ -31,8 +31,8 @@ are the framework's). You register the app side, and never edit a framework unio
    schedules machinery is the framework's and needs no registration.
 5. **Colocated test** beside the handler (fake ports; the reference app's
    `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app-config/jobs.test.ts`): it is what runs
-   your handler, since a generated app has no Simulator on `pnpm dev` to watch jobs in (the server panel is the
-   reference app's). The static demo's panel has a Jobs tab, but its jobs are the in-memory world's: a job the
+   your handler. On `pnpm dev`, Simulator → Jobs lists the app's jobs and runs what is queued (or, with the world
+   clock, what is due), so you can watch a real one there too. The static demo's panel has a Jobs tab, but its jobs are the in-memory world's: a job the
    composition root starts with `world.startJob('<kind>')` walks the status timeline (held while the `jobs-held` flag
    is on) without running your handler. Mirror a new demo surface there, in `src/demo-static/app.tsx`, if the slice
    has one.

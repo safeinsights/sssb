@@ -7,7 +7,7 @@ import { enqueueWebhookEvent } from '@sssb/kit/db/webhooks'
 import { notifyAdmins } from '@sssb/kit/server-lib/notify'
 import { makeNotifyDeps } from '@sssb/kit/server-lib/notify-deps'
 import { resolveOrgContext } from '../org-context'
-import { withPortErrors } from '../respond'
+import { readJsonObject, withPortErrors } from '../respond'
 
 /**
  * Escalations — one desk handing work to another team. Like tickets, every row is tenant-scoped by RLS;
@@ -34,12 +34,15 @@ export async function GET(): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {
         const user = await auth.requireUser()
-        const { responderOrgSlug, subject, body } = (await request.json()) as {
-            responderOrgSlug?: string
-            subject?: string
-            body?: string
-        }
-        if (!responderOrgSlug || !subject?.trim() || !body?.trim()) {
+        const { responderOrgSlug, subject, body } = await readJsonObject(request)
+        if (
+            typeof responderOrgSlug !== 'string' ||
+            !responderOrgSlug ||
+            typeof subject !== 'string' ||
+            !subject.trim() ||
+            typeof body !== 'string' ||
+            !body.trim()
+        ) {
             return Response.json({ error: 'invalid-request' }, { status: 400 })
         }
         const resolved = await resolveOrgContext(user)

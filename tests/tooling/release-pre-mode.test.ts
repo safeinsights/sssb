@@ -313,6 +313,15 @@ describe("this repository's own tree", () => {
             mkdirSync(path.dirname(path.join(root, f)), { recursive: true })
             copyFileSync(path.join(REPO, f), path.join(root, f))
         }
+        // Right after a release the tree holds no pending changeset, and `prepare` then has nothing to release, which
+        // used to end this case before anything was checked. A fixture changeset keeps the release path under test.
+        if (readChangesets(root).length === 0) {
+            writeFileSync(
+                path.join(root, '.changeset/zz-fixture.md'),
+                "---\n'@sssb/kit': patch\n---\n\n### A fixture change\n\n**Kind.** none\n\n**Action.** none\n\n" +
+                    '**What changed.** Nothing an adopter sees.\n',
+            )
+        }
         git(root, 'init', '-q', '-b', 'main')
         commit(root, 'the tree')
         const group = copied
@@ -331,7 +340,8 @@ describe("this repository's own tree", () => {
 
         const result = await prepare(root, { fetchImpl: NO_REGISTRY })
         if (firstRelease) expect(result).toMatchObject({ release: true, version: '0.2.0' })
-        if (!result.release) return // nothing pending: nothing to release, which is also nothing published
+        expect(result.release).toBe(true)
+        if (!result.release) return
         // a candidate's group releases its own version; a released one moves on from it
         if (/-rc\.\d+$/.test(current)) expect(result.version).toBe(current.split('-')[0])
         git(root, 'add', '-A')

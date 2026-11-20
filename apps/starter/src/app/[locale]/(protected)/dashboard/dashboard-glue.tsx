@@ -50,10 +50,10 @@ export function DashboardGlue({ user, canCreateItem }: { user: DashboardUser; ca
                         headers: { 'content-type': 'application/json' },
                         body: JSON.stringify({ title }),
                     })
-                    if (response.ok) {
-                        const { item } = (await response.json()) as { item: Item }
-                        setItems((prev) => [item, ...prev])
-                    }
+                    // A refusal rejects, so the card keeps the draft and shows its error.
+                    if (!response.ok) throw new Error(`POST /api/items answered ${response.status}`)
+                    const { item } = (await response.json()) as { item: Item }
+                    setItems((prev) => [item, ...prev])
                 }}
             />
         </DashboardScreen>

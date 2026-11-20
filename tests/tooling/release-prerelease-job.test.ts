@@ -121,8 +121,9 @@ describe("release.yml's prerelease job", () => {
     it('leaves a draft unpublished when it holds a stray file, and fails', () => {
         const { temp } = runner()
         const stray = { 'sssb-kit-0.2.0-rc.0.tgz': 'kit', 'sssb-tools-0.2.0-rc.0.tgz': 'tools', 'extra.tgz': 'x' }
-        const { status, state } = run(temp, { ...fresh(), release: existing(temp, stray, true) })
+        const { status, stdout, state } = run(temp, { ...fresh(), release: existing(temp, stray, true) })
         expect(status).toBe(1)
+        expect(stdout).toMatch(/::error::v0\.2\.0-rc\.0 holds other files than this candidate's tarballs/)
         expect(state.release!.draft).toBe(true)
     })
 
@@ -143,6 +144,7 @@ describe("release.yml's prerelease job", () => {
         expect(plain.state.calls).toEqual([])
         const untagged = run(temp, { ...fresh(), tags: [] })
         expect(untagged.status).toBe(1)
+        expect(untagged.stderr).toMatch(/tag v0\.2\.0-rc\.0 does not exist/)
         expect(untagged.state.release).toBeNull()
     })
 

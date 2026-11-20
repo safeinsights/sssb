@@ -67,7 +67,13 @@ export function sqlSegments(sql: string): SqlSegment[] {
             literal(blockCommentEnd(sql, i))
         } else if (ch === "'") {
             const escapes = (prev === 'E' || prev === 'e') && !IDENT_CHAR.test(i > 1 ? sql[i - 2]! : '')
-            literal(quotedEnd(sql, i, "'", escapes))
+            // Two string constants separated only by whitespace holding a newline are one constant, and a
+            // continued E-string keeps its backslash escapes: `E'a'<newline>'\' $1'` is one string.
+            let end = quotedEnd(sql, i, "'", escapes)
+            for (let gap = CONTINUATION.exec(sql.slice(end)); gap; gap = CONTINUATION.exec(sql.slice(end))) {
+                end = quotedEnd(sql, end + gap[0].length - 1, "'", escapes)
+            }
+            literal(end)
         } else if (ch === '"') {
             literal(quotedEnd(sql, i, '"', false))
         } else if (ch === '$' && !IDENT_CHAR.test(prev) && !/^\$\d/.test(sql.slice(i, i + 2))) {
@@ -87,6 +93,14 @@ export function sqlSegments(sql: string): SqlSegment[] {
     if (code) segments.push({ text: code, code: true })
     return segments
 }
+
+/**
+ * Whitespace holding at least one newline (`\n` or a bare `\r`, both newlines to Postgres's lexer), then the `'` that
+ * continues a string constant. A known limit: Postgres
+ * also allows a `-- comment` in that gap (`'a' -- note<newline>'b'`), which this does not, so such SQL is split into
+ * two literals here. Hand-written SQL only; Kysely never writes it.
+ */
+const CONTINUATION = /^[ \t\f]*[\r\n]\s*'/
 
 const PLACEHOLDER = new RegExp(`(?<!${IDENT_CHAR.source})\\$(\\d+)`, 'g')
 
@@ -311,10 +325,24 @@ function serializeScalar(value: unknown): string {
     if (typeof value === 'boolean') return value ? 'true' : 'false'
     if (value instanceof Date) {
         if (Number.isNaN(value.getTime())) throw new TypeError('cannot send an invalid Date to the database')
-        return value.toISOString()
+        return postgresInstant(value)
     }
     if (value instanceof Uint8Array) return `\\x${Buffer.from(value).toString('hex')}`
     return JSON.stringify(value)
+}
+
+/**
+ * A Date as an instant Postgres's timestamp input reads. `toISOString` writes a year outside 1-9999 in its
+ * expanded form (`-000043-…`, `+010000-…`), which Postgres refuses ("time zone displacement out of range"), where
+ * node-postgres sends such a Date and Postgres stores it. So a year before 1 is written as its BC year (JavaScript's
+ * year 0 is 1 BC, -43 is 44 BC) with Postgres's ` BC` suffix, and a year after 9999 with its digits unpadded.
+ */
+function postgresInstant(value: Date): string {
+    const year = value.getUTCFullYear()
+    const iso = value.toISOString()
+    if (year >= 1 && year <= 9999) return iso
+    const rest = iso.slice(iso.indexOf('-', 1))
+    return year < 1 ? `${String(1 - year).padStart(4, '0')}${rest} BC` : `${year}${rest}`
 }
 
 function arrayLiteral(values: readonly unknown[]): string {
@@ -334,7 +362,8 @@ function arrayLiteral(values: readonly unknown[]): string {
  * One result row, keyed by column label, each value decoded to what node-postgres returns through SSSB's
  * pg adapter (../real/db.ts): `int8`/`numeric` as strings (but `numeric[]` elements as numbers, as
  * node-postgres has it), `json`/`jsonb` parsed, `timestamptz` as a `Date` (`±Infinity` for infinity),
- * `date` as the wire string, `bytea` as a Buffer, arrays element by element. Types SSSB's migrations do
+ * `date` as the wire string, `bytea` as a Buffer, arrays element by element (but an array of a type node-postgres
+ * has no array parser for, an enum's say, as Postgres's text form, `{happy,sad}`). Types SSSB's migrations do
  * not use and node-postgres parses into objects (`interval`) come back as the Data API's string.
  */
 export function decodeRow(record: readonly Field[], columns: readonly ColumnMetadata[]): Record<string, unknown> {
@@ -348,9 +377,64 @@ export function decodeRow(record: readonly Field[], columns: readonly ColumnMeta
 export function decodeField(field: Field | undefined, typeName: string): unknown {
     if (!field || field.isNull) return null
     const type = typeName.toLowerCase().replace(/^"|"$/g, '')
-    if (field.arrayValue !== undefined) return decodeArray(field.arrayValue, type.replace(/^_/, ''))
+    if (field.arrayValue !== undefined) {
+        const baseType = type.replace(/^_/, '')
+        // node-postgres returns an array of a type it has no parser for (an enum's, `bit[]`, `name[]`) as Postgres's
+        // text form, `{happy,sad}`, not as a JS array: so does this, or the two transports would disagree.
+        if (!PG_PARSED_ARRAYS.has(baseType)) return arrayText(field.arrayValue)
+        return decodeArray(field.arrayValue, baseType)
+    }
     const raw = field.stringValue ?? field.longValue ?? field.doubleValue ?? field.booleanValue ?? field.blobValue
     return decodeScalar(raw, type)
+}
+
+/**
+ * The element types whose arrays node-postgres parses into a JS array: pg-types' text parsers (pg 8), named as
+ * `pg_type.typname` names them (`bpchar` is `char(n)`; `char`, the one-byte type, has none).
+ */
+const PG_PARSED_ARRAYS: ReadonlySet<string> = new Set([
+    'bool',
+    'bpchar',
+    'bytea',
+    'cidr',
+    'date',
+    'float4',
+    'float8',
+    'inet',
+    'int2',
+    'int4',
+    'int8',
+    'interval',
+    'json',
+    'jsonb',
+    'macaddr',
+    'money',
+    'numeric',
+    'numrange',
+    'oid',
+    'point',
+    'regproc',
+    'text',
+    'time',
+    'timestamp',
+    'timestamptz',
+    'timetz',
+    'uuid',
+    'varchar',
+])
+
+/** An array as Postgres's text output writes it: `{a,"b c",NULL,{1,2}}`. */
+function arrayText(value: ArrayValue): string {
+    if (value.arrayValues) return `{${value.arrayValues.map((inner) => (inner ? arrayText(inner) : 'NULL')).join(',')}}`
+    const items: readonly unknown[] =
+        value.stringValues ?? value.longValues ?? value.doubleValues ?? value.booleanValues ?? []
+    return `{${items.map((item) => (item === null || item === undefined ? 'NULL' : arrayTextItem(String(item)))).join(',')}}`
+}
+
+/** One element of Postgres's array output: quoted, with `"` and `\` escaped, when it would not read back bare. */
+function arrayTextItem(item: string): string {
+    if (item !== '' && !/[{}",\\\s]/.test(item) && item.toUpperCase() !== 'NULL') return item
+    return `"${item.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
 function decodeArray(value: ArrayValue, baseType: string): unknown[] {

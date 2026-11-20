@@ -12,7 +12,7 @@ export interface CheckFencesResult {
     problems: string[]
     /** How many of the app's source files had their effective config compared with the preset's. */
     files: number
-    /** How many virtual files were linted: the fence probes, and two per lint-exceptions.mjs entry. */
+    /** How many virtual files were linted: the fence probes, one per entry of the app's own vendors, and two per lint-exceptions.mjs entry. */
     probes: number
 }
 

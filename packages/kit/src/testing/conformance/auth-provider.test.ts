@@ -79,6 +79,18 @@ describe('real-auth-provider', () => {
         expect(realAuthProviderGaps(appDir).gaps).toEqual(['src/app/invite/page.tsx'])
     })
 
+    it('sees a form loaded with require() or import = require(), and a provider loaded either way', () => {
+        const appDir = app({
+            'layout.tsx': PLAIN_LAYOUT,
+            'a/page.tsx': `const { RealSignInForm } = require('@sssb/kit/adapters/real/sign-in-form')\nexport default RealSignInForm\n`,
+            'b/page.tsx': `import form = require('@sssb/kit/adapters/real/accept-invite-form')\nexport default form.RealAcceptInviteForm\n`,
+            'c/layout.tsx': `const { RealAuthProviders } = require('@sssb/kit/adapters/real/providers')\nexport default RealAuthProviders\n`,
+            'c/page.tsx': `const { RealSignInForm } = require('@sssb/kit/adapters/real/sign-in-form')\nexport default RealSignInForm\n`,
+            'd/page.tsx': `import type form = require('@sssb/kit/adapters/real/sign-in-form')\nconst f = require(name)\nexport default f\n`,
+        })
+        expect(realAuthProviderGaps(appDir).gaps).toEqual(['src/app/a/page.tsx', 'src/app/b/page.tsx'])
+    })
+
     it("follows the app's own imports: a wrapper module, a re-exporting layout, a shared glue module", () => {
         const appDir = app({
             'layout.tsx': PLAIN_LAYOUT,

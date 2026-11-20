@@ -267,8 +267,11 @@ function count(value) {
 }
 
 /**
- * What a tick did, in one line. `failed` is a schedule whose spawn failed (the next tick retries it) and a delivery
- * that failed or died: shown, but it is the tick reporting work that went wrong, not the tick failing.
+ * What a tick did, in one line. `failed` is a schedule whose spawn failed, and a delivery that failed or died: shown,
+ * but it is the tick reporting work that went wrong, not the tick failing. A failed schedule is retried by the next tick
+ * only when the failure was inside the spawn transaction (it rolled back); after that transaction commits, the job is
+ * left queued and the schedule has moved on (the in-process runner's sweep fails the job after five minutes; see
+ * `@sssb/kit/db/schedules`).
  *
  * @param {Record<string, unknown>} body the route's JSON: `{ ok, spawned, failed, deliveries: { delivered, failed, dead } }`
  */

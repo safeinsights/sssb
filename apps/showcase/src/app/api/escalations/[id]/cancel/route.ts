@@ -4,7 +4,7 @@ import { recordAuditEvent } from '@sssb/kit/db/audit'
 import { escalationForActiveOrg, transitionEscalation } from '@/domain/db/escalations'
 import { enqueueWebhookEvent } from '@sssb/kit/db/webhooks'
 import { resolveOrgContext } from '../../../org-context'
-import { withPortErrors } from '../../../respond'
+import { requireUuidParam, withPortErrors } from '../../../respond'
 
 /**
  * The raising desk withdraws its own escalation. 'delete' is the authorization verb (only a
@@ -17,6 +17,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     return withPortErrors(async () => {
         const user = await auth.requireUser()
         const { id } = await context.params
+        requireUuidParam(id)
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId: activeOrgId } = resolved

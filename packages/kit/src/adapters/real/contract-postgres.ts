@@ -1,5 +1,4 @@
-import { Kysely, PostgresDialect, sql } from 'kysely'
-import { Pool } from 'pg'
+import { type Kysely, sql } from 'kysely'
 import type { Login } from '../../db/owner-pass'
 import type { DB } from '../../db/schema'
 import { makeTestTmpDir } from '../../testing/tmp-dir'
@@ -33,7 +32,11 @@ export interface ContractServer {
     readonly maintenanceDatabase: string
     /** The URL of `database` on this server, as the superuser, or as `login` when given. */
     urlFor(database: string, login?: { user: string; password: string }): string
-    /** A pooled connection for a login to a database, through `pg`. Closed by its caller, or by `stop`. */
+    /**
+     * A pooled connection for a login to a database, through the REAL adapter (`createRealDb`: its pool, its type
+     * parsers, its connection-error listener), so a contract pass proves the driver configuration an app deploys.
+     * Closed by its caller, or by `stop`.
+     */
     connect(login: Login): Kysely<DB>
     /** The superuser's connection to `database`. */
     connectAsSuperuser(database: string): Kysely<DB>
@@ -104,6 +107,10 @@ export async function startContractServer(label: string, options: ContractServer
         serverUrl = `postgres://postgres:postgres@localhost:${port}/postgres`
     }
 
+    // Loaded here, not at the top: ./db reaches the migration registry, which imports the app's seam
+    // (`@sssb/app-config/*`), and a module that only needs this file's helpers (contractDatabaseName, say) must load
+    // without one.
+    const { createRealDb } = await import('./db')
     const parsed = new URL(serverUrl)
     const superuser = { user: decodeURIComponent(parsed.username), password: decodeURIComponent(parsed.password) }
     const maintenanceDatabase = parsed.pathname.slice(1) || 'postgres'
@@ -120,14 +127,11 @@ export async function startContractServer(label: string, options: ContractServer
     }
 
     const connect = (login: Login): Kysely<DB> => {
-        const pool = new Pool({ connectionString: urlFor(login.database, login), max: 3 })
-        // A server that ends a connection (a CI container's hiccup, an idle-session timeout) is an 'error' EVENT on
-        // that client, and an event with no listener is an uncaught exception: it would take the whole run down
-        // instead of failing the one test that was using the connection. The client's own listener covers it idle
-        // or checked out, as in the real adapter (./db.ts); the pool's re-emit of an idle one is already logged by it.
-        pool.on('connect', (client) => client.on('error', (error) => console.warn(`contract db: ${error.message}`)))
-        pool.on('error', () => undefined)
-        const db = new Kysely<DB>({ dialect: new PostgresDialect({ pool }) })
+        // The real adapter's own pool, parsers and listeners: it used to be a bare `pg` Pool here, so an app's contract
+        // run proved a different driver configuration from the one it deploys (a `date` column came back as a JS Date
+        // here and as a string from the deployed adapter). Destroying the Kysely ends the pool, which `stop` does for
+        // every one still open.
+        const db = createRealDb(urlFor(login.database, login)).getDb()
         open.push(db)
         return db
     }
