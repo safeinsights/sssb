@@ -1,9 +1,13 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 
-/** The directory all fake-adapter state lives under: APP_DATA_DIR, else `.data/` (gitignored). Creates nothing. */
+/**
+ * The directory all fake-adapter state lives under: APP_DATA_DIR, else `.data/` (gitignored), as an absolute path (a
+ * relative APP_DATA_DIR is read against the working directory). Absolute because fake storage keeps a key inside its
+ * directory by comparing resolved paths. Creates nothing.
+ */
 export function dataRoot(): string {
-    return process.env['APP_DATA_DIR'] ?? path.join(process.cwd(), '.data')
+    return path.resolve(process.env['APP_DATA_DIR'] ?? path.join(process.cwd(), '.data'))
 }
 
 /** A directory under the fake adapters' data root, created if missing. Tests point APP_DATA_DIR at a tmp dir. */
