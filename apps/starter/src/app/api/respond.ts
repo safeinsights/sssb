@@ -36,3 +36,15 @@ export async function readJsonObject(request: Request): Promise<Record<string, u
     if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new InvalidPayloadError()
     return body as Record<string, unknown>
 }
+
+/**
+ * The json-only guard of a simulated-mode-only POST: 415 `{ error: 'json-only' }` unless the request says
+ * `content-type: application/json`, else null. These routes sign a browser in as anyone or change the simulated world,
+ * and a page on another origin can send a simple POST (text/plain or a form, no preflight) to a developer's localhost
+ * or a hosted simulated demo. Asking for JSON makes such a browser request preflight, and the preflight fails because
+ * nothing here sends `Access-Control-Allow-Origin`. Call it right after the handler's opening simulated-mode 404.
+ */
+export function refuseNonJson(request: Request): Response | null {
+    if (request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) return null
+    return Response.json({ error: 'json-only' }, { status: 415 })
+}

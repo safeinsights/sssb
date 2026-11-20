@@ -1,6 +1,6 @@
 import { isSimulated } from '@sssb/kit/adapters/index'
 import { mintServiceToken } from '@sssb/kit/adapters/fake/service-auth'
-import { withPortErrors } from '../../respond'
+import { refuseNonJson, withPortErrors } from '../../respond'
 
 /**
  * Simulator-mode gate, not a role gate (design invariant): 404s outside simulated mode, first line. Mints
@@ -10,6 +10,8 @@ import { withPortErrors } from '../../respond'
  */
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
+    const refused = refuseNonJson(request)
+    if (refused) return refused
     return withPortErrors(async () => {
         const { orgSlug, tenantSlug } = (await request.json()) as { orgSlug?: unknown; tenantSlug?: unknown }
         if (typeof orgSlug !== 'string' || (tenantSlug !== undefined && typeof tenantSlug !== 'string')) {

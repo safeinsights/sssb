@@ -2,11 +2,13 @@ import { auth, isSimulated } from '@sssb/kit/adapters/index'
 import { devSignIn, findInvite } from '@sssb/kit/adapters/fake/auth'
 import { readSimulatorState, writeViewpointCookie, type PersonKey } from '@sssb/kit/adapters/fake/simulator'
 import { LOCALES } from '@sssb/kit/core/locale'
-import { withPortErrors } from '../../respond'
+import { refuseNonJson, withPortErrors } from '../../respond'
 
 /** Same simulated-mode-only gate as /api/simulator/summary; no auth required to call this. */
 export async function POST(request: Request): Promise<Response> {
     if (!isSimulated) return new Response(null, { status: 404 })
+    const refused = refuseNonJson(request)
+    if (refused) return refused
     return withPortErrors(async () => {
         const { person, locale } = (await request.json()) as { person?: PersonKey; locale?: string }
 
