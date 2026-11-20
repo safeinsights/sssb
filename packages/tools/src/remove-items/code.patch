@@ -1,8 +1,8 @@
 diff --git a/messages/en.json b/messages/en.json
-index 43e5945..15cd515 100644
+index 63e30fc..15cd515 100644
 --- a/messages/en.json
 +++ b/messages/en.json
-@@ -8,14 +8,5 @@
+@@ -8,15 +8,5 @@
      "dashboard": {
          "title": "Dashboard",
          "signedInAs": "Signed in as {name} ({role})."
@@ -12,16 +12,17 @@ index 43e5945..15cd515 100644
 -        "hint": "Items belong to the team you're working in — and never leave your tenant.",
 -        "empty": "No items in this team yet.",
 -        "addLabel": "New item",
+-        "addError": "That item could not be added. Your text is still here: try again.",
 -        "addButton": "Add item",
 -        "readOnlyHint": "You have read-only access to items in this team.",
 -        "loadMore": "Show older items"
      }
  }
 diff --git a/messages/es.json b/messages/es.json
-index 07b6b29..7a7ecf8 100644
+index b6428fd..7a7ecf8 100644
 --- a/messages/es.json
 +++ b/messages/es.json
-@@ -8,14 +8,5 @@
+@@ -8,15 +8,5 @@
      "dashboard": {
          "title": "Panel",
          "signedInAs": "Sesión iniciada como {name} ({role})."
@@ -31,34 +32,25 @@ index 07b6b29..7a7ecf8 100644
 -        "hint": "Los elementos pertenecen al equipo en el que trabajas y nunca salen de tu organización.",
 -        "empty": "Aún no hay elementos en este equipo.",
 -        "addLabel": "Nuevo elemento",
+-        "addError": "No se pudo añadir el elemento. Tu texto sigue aquí: inténtalo de nuevo.",
 -        "addButton": "Añadir elemento",
 -        "readOnlyHint": "Tienes acceso de solo lectura a los elementos de este equipo.",
 -        "loadMore": "Ver elementos anteriores"
      }
  }
 diff --git a/playwright.config.ts b/playwright.config.ts
-index a4815c5..e5a31e1 100644
+index 9317684..106ccfc 100644
 --- a/playwright.config.ts
 +++ b/playwright.config.ts
-@@ -20,15 +20,15 @@ const BASE_URL = originForApp(__dirname)
- export default defineConfig({
+@@ -21,7 +21,7 @@ export default defineConfig({
      testDir: './tests/e2e',
      fullyParallel: true,
--    // This app's whole suite is two short specs, so the first always starts against a cold dev server and pays a
+     // This app's whole suite is a few short specs, so the first always starts against a cold dev server and pays a
 -    // full Next compile on every route it touches — sign-in, dashboard, the items route, the Simulator's. The default
-+    // This app's whole suite is one short spec, so it always starts against a cold dev server and pays a
 +    // full Next compile on every route it touches — sign-in, dashboard, the Simulator's. The default
      // 30s is marginal for that (it timed out on the first run and passed on retry), and there is no
      // warm-up pass to inherit, so the budget is raised rather than left to flake.
      timeout: 60_000,
-     expect: { timeout: 15_000 },
-     forbidOnly: !!process.env['CI'],
-     retries: process.env['CI'] ? 2 : 1,
--    // One worker, on CI too — this app's whole suite is two short specs, so parallelism buys little here,
-+    // One worker, on CI too — this app's whole suite is one short spec, so parallelism buys little here,
-     // and more workers against one shared world (one `.data` behind one dev server) cost reliability rather than
-     // saving time.
-     workers: 1,
 diff --git a/src/app-config/abilities.ts b/src/app-config/abilities.ts
 index c69a9ec..851160c 100644
 --- a/src/app-config/abilities.ts
@@ -256,7 +248,7 @@ index 117cbdc..6539ae5 100644
  /**
   * The app's catalog for one locale. Framework code (the next-intl request config, the parity tests)
 diff --git a/src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx b/src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx
-index 5fdea5a..874f935 100644
+index 1aa84a0..874f935 100644
 --- a/src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx
 +++ b/src/app/[locale]/(protected)/dashboard/dashboard-glue.tsx
 @@ -1,61 +1,7 @@
@@ -312,10 +304,10 @@ index 5fdea5a..874f935 100644
 -                        headers: { 'content-type': 'application/json' },
 -                        body: JSON.stringify({ title }),
 -                    })
--                    if (response.ok) {
--                        const { item } = (await response.json()) as { item: Item }
--                        setItems((prev) => [item, ...prev])
--                    }
+-                    // A refusal rejects, so the card keeps the draft and shows its error.
+-                    if (!response.ok) throw new Error(`POST /api/items answered ${response.status}`)
+-                    const { item } = (await response.json()) as { item: Item }
+-                    setItems((prev) => [item, ...prev])
 -                }}
 -            />
 -        </DashboardScreen>
@@ -432,12 +424,76 @@ index 42b10b7..20ada9e 100644
      const t = useTranslations('dashboard')
      return (
          <Container component="main" size="sm" py="xl">
+diff --git a/src/components/items-card.test.tsx b/src/components/items-card.test.tsx
+deleted file mode 100644
+index 2380455..0000000
+--- a/src/components/items-card.test.tsx
++++ /dev/null
+@@ -1,58 +0,0 @@
+-import { MantineProvider } from '@mantine/core'
+-import { NextIntlClientProvider } from 'next-intl'
+-import { act } from 'react'
+-import { createRoot } from 'react-dom/client'
+-import { afterEach, describe, expect, it } from 'vitest'
+-import en from '../../messages/en.json'
+-import { ItemsCard } from './items-card'
+-
+-/** A create that fails keeps what the person typed and says so; one that succeeds clears the box. */
+-
+-const unmounts: Array<() => void> = []
+-afterEach(() => {
+-    for (const unmount of unmounts.splice(0)) act(unmount)
+-})
+-
+-async function addWith(onAdd: (title: string) => Promise<void>): Promise<HTMLElement> {
+-    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+-    const container = document.createElement('div')
+-    document.body.append(container)
+-    const root = createRoot(container)
+-    await act(async () => {
+-        root.render(
+-            <NextIntlClientProvider locale="en" messages={en}>
+-                <MantineProvider>
+-                    <ItemsCard items={[]} onAdd={onAdd} />
+-                </MantineProvider>
+-            </NextIntlClientProvider>,
+-        )
+-    })
+-    unmounts.push(() => root.unmount())
+-    const input = container.querySelector<HTMLInputElement>('[data-testid="item-input"]')!
+-    await act(async () => {
+-        // React tracks a controlled input's value; set it through the native setter so onChange sees the change.
+-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'my important draft')
+-        input.dispatchEvent(new Event('input', { bubbles: true }))
+-    })
+-    await act(async () => {
+-        container.querySelector<HTMLButtonElement>('[data-testid="item-add"]')!.click()
+-    })
+-    return container
+-}
+-
+-const inputValue = (container: HTMLElement) =>
+-    container.querySelector<HTMLInputElement>('[data-testid="item-input"]')!.value
+-
+-describe('ItemsCard', () => {
+-    it('keeps the draft and shows an alert when the create fails', async () => {
+-        const container = await addWith(() => Promise.reject(new Error('403')))
+-        expect(inputValue(container)).toBe('my important draft')
+-        expect(container.querySelector('[role="alert"]')?.textContent).toBe(en.items.addError)
+-    })
+-
+-    it('clears the draft, with no alert, when the create succeeds', async () => {
+-        const container = await addWith(() => Promise.resolve())
+-        expect(inputValue(container)).toBe('')
+-        expect(container.querySelector('[role="alert"]')).toBeNull()
+-    })
+-})
 diff --git a/src/components/items-card.tsx b/src/components/items-card.tsx
 deleted file mode 100644
-index 9a501ae..0000000
+index a36ed54..0000000
 --- a/src/components/items-card.tsx
 +++ /dev/null
-@@ -1,106 +0,0 @@
+@@ -1,117 +0,0 @@
 -'use client'
 -
 -import { Button, Card, Group, Stack, Text, TextInput, Title } from '@mantine/core'
@@ -462,6 +518,7 @@ index 9a501ae..0000000
 -    onLoadMore,
 -}: {
 -    items: Item[]
+-    /** Rejects when the item was not created: the card then keeps the draft and says so. */
 -    onAdd: (title: string) => Promise<void>
 -    /** When false (restricted members), the add affordance is disabled and a read-only hint shows. */
 -    canCreate?: boolean
@@ -473,6 +530,7 @@ index 9a501ae..0000000
 -    const t = useTranslations('items')
 -    const [draft, setDraft] = useState('')
 -    const [busy, setBusy] = useState(false)
+-    const [addFailed, setAddFailed] = useState(false)
 -    const [loadingMore, setLoadingMore] = useState(false)
 -
 -    return (
@@ -527,14 +585,23 @@ index 9a501ae..0000000
 -                        data-testid="item-add"
 -                        onClick={() => {
 -                            setBusy(true)
+-                            setAddFailed(false)
 -                            onAdd(draft.trim())
--                                .then(() => setDraft(''))
+-                                .then(
+-                                    () => setDraft(''),
+-                                    () => setAddFailed(true),
+-                                )
 -                                .finally(() => setBusy(false))
 -                        }}
 -                    >
 -                        {t('addButton')}
 -                    </Button>
 -                </Group>
+-                {addFailed ? (
+-                    <Text size="sm" c="red.8" role="alert" data-testid="items-add-error">
+-                        {t('addError')}
+-                    </Text>
+-                ) : null}
 -                {!canCreate ? (
 -                    <Text size="sm" c="gray.7" data-testid="items-readonly-hint">
 -                        {t('readOnlyHint')}
