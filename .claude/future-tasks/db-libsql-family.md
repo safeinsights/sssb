@@ -1,7 +1,7 @@
 # A libsql (Turso) database family
 
-**Priority:** P3 · **Status:** open, recorded design; blocked on `db-postgres-family-groundwork.md`, and built when an
-adopter needs it
+**Priority:** P3 · **Status:** open, recorded design; its groundwork is built
+(`resolved/db-postgres-family-groundwork.md`), and it is built when an adopter needs it
 **Decided in:** ADR-0015, the libsql worked example, the first addendum's tier 3 and the second addendum's point 3
 (2026-11-19). Read all three.
 
@@ -43,3 +43,18 @@ Turso.
 - The family's isolation proofs pass, and have been seen to fail with a cross-tenant handle.
 - The schema drift test is green, and has been seen red with one family missing a column.
 - A cutover row names the live checks against Turso.
+
+## Left by the groundwork (2026-11-19)
+
+The Postgres family is `packages/kit/src/db/family.ts`; this family is a second object of its `DbFamily` shape. What
+the groundwork did not do, and this task does:
+
+- Choose the family: today `family` is Postgres. A proposal is in `docs/decision-log.md` ("The Postgres family's
+  groundwork"): the app declares it in its `package.json`'s `sssb` block, doctor prints it, the conformance suite holds
+  it to `DbPort.isolation`.
+- Add this family's arrangements to `DbIsolation` (`packages/kit/src/ports/db.ts`), which is `'rls'` alone.
+- Engine knowledge that is not SQL, so the fence (`tests/lint/db-family-fence.test.ts`) does not see it:
+  `packages/kit/src/db/audit.ts` refuses a detail string holding a NUL or an unpaired surrogate because Postgres's
+  `jsonb` cannot store one.
+- The suites still open pglite themselves (`packages/kit/src/testing/conformance/db.ts`), and the contract runner
+  starts a Postgres; each needs this family's hermetic database instead.

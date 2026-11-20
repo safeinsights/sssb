@@ -89,3 +89,28 @@ makes Postgres the first family. It changes nothing for anyone on Postgres: same
 - libsql, or any second family;
 - moving files for tidiness;
 - the reads made before a tenant is known (`db-libsql-family.md` covers those).
+
+## Resolved (2026-11-19, `feat/db-postgres-family`)
+
+- **The family:** `packages/kit/src/db/family.ts`, internal. `DbFamily` and `postgresFamily`: `json`, `lockRow`,
+  `currentTime` and `keysetSlice`, `isolation: 'rls'`, `runWithTenant`, and loaders (`migrations`, `migrator`,
+  `proofs`). Its header says an app's own proof half belongs to its family. `family` is Postgres until a second one.
+- **The runtime spots:** `audit.ts`, `notifications.ts`, `webhooks.ts` (twice) call `family.json`; `jobs.ts`,
+  `schedules.ts`, `webhooks.ts` lock with `.$call(family.lockRow)`; `jobs.ts` writes `family.currentTime()`;
+  `keyset.ts` reads its page through `family.keysetSlice` and imports nothing of Kysely's raw SQL. The three
+  transports and the proof runner's port run `postgresFamily.runWithTenant`.
+- **The fence:** `tests/lint/db-family-fence.test.ts`, seen red with one raw `sql` in `db/jobs.ts` (and with a
+  `forUpdate` in `db/schedules.ts` and a `jsonb` import in `db/notifications.ts`), then green. Its staleness check
+  caught one exemption the inventory above suggested and the code did not need (`adapters/real/contract-data-api.ts`).
+- **The port:** `DbPort.isolation`, required, of type `DbIsolation` (`'rls'`). Doubles updated: the showcase's
+  `tickets.test.ts` (two) and `export-tickets.test.ts`, the kit's `audit.test.ts`, and the proof runner's own port.
+  Changeset `db-port-declares-isolation.md`, `minor`, seam, required.
+- **The suites:** the conformance suite's `rls-pglite`, `app-roles` and `migration-order` checks and the contract
+  runner reach the migrations, the migrator and the proofs through the family's loaders. `rls-pglite` keeps its name.
+- **SQL unchanged:** `packages/kit/src/db/family.test.ts` compares each helper's compiled query with the inline form
+  it replaced; the distinct statements pglite received across the kit's db tests, the conformance suites and both
+  apps' route and domain tests (407) were recorded before and after, and were identical.
+- **Doctor and the adopter reference:** doctor prints nothing yet (decision log); `adopter-reference-data-tiers.md`
+  describes the declaration.
+- Decisions: `docs/decision-log.md`, "The Postgres family's groundwork". What is left for a second family:
+  `db-libsql-family.md`, "Left by the groundwork".
