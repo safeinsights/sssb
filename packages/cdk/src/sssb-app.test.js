@@ -637,7 +637,9 @@ describe('the synth assertions fail', () => {
         expect(withPorts({ jobs: 'lambda' })).toThrow(
             /params\.ports\.jobs must be codebuild, in-process, none \(got "lambda"\)/,
         )
-        expect(withPorts({ storage: 'gcs' })).toThrow(/params\.ports\.storage must be s3, none \(got "gcs"\)/)
+        expect(withPorts({ storage: 'gcs' })).toThrow(
+            /params\.ports\.storage must be s3, s3-compatible, none \(got "gcs"\)/,
+        )
         expect(withPorts('none')).toThrow(/params\.ports must be an object/)
         expect(withPorts({ llm: 'none', jobs: 'in-process' })).not.toThrow()
     })
@@ -728,24 +730,30 @@ describe('the storage port', () => {
             },
         )
 
-        it('storage none builds no bucket, sets no STORAGE_BUCKET, grants the server no S3, and keeps every other stateful id', () => {
-            const { all } = synthesize({
-                appDir,
-                slug,
-                transport,
-                bundle: false,
-                production,
-                ports: { storage: 'none' },
-            })
-            const server = lambdaFunction(all, 'Server')
-            expect(server.env['STORAGE_PROVIDER']).toBe('none')
-            expect(server.env).not.toHaveProperty(['STORAGE_BUCKET'])
-            expect(buckets(all)).toEqual(['AssetsBucket5CB76180'])
-            expect(serverS3(all)).toEqual([])
-            for (const [id, type] of Object.entries(snapshotted(shape))) {
-                if (id !== STORAGE_BUCKET_ID) expect(all[id]?.Type, id).toBe(type)
-            }
-        })
+        it.each(['none', 's3-compatible'])(
+            'storage %s builds no bucket, sets no STORAGE_BUCKET, grants the server no S3, and keeps every other stateful id',
+            (choice) => {
+                const { all } = synthesize({
+                    appDir,
+                    slug,
+                    transport,
+                    bundle: false,
+                    production,
+                    ports: { storage: /** @type {any} */ (choice) },
+                })
+                const server = lambdaFunction(all, 'Server')
+                expect(server.env['STORAGE_PROVIDER']).toBe(choice)
+                // Only the switch: the compatible store's own settings (endpoint, keys) are the deployment's to add.
+                expect(Object.keys(server.env).filter((name) => name.startsWith('STORAGE_'))).toEqual([
+                    'STORAGE_PROVIDER',
+                ])
+                expect(buckets(all)).toEqual(['AssetsBucket5CB76180'])
+                expect(serverS3(all)).toEqual([])
+                for (const [id, type] of Object.entries(snapshotted(shape))) {
+                    if (id !== STORAGE_BUCKET_ID) expect(all[id]?.Type, id).toBe(type)
+                }
+            },
+        )
     })
 })
 

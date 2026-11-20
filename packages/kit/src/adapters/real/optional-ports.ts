@@ -10,11 +10,20 @@
  *   with (`@sssb/kit/service-auth/mailgun`). Without it that route refuses every request, as it always has.
  * - `JOBS_RUNNER`: `codebuild` (the default), `in-process` or `none`. The `jobs` port: a CodeBuild build per job, the
  *   job's handler run in the server itself (./jobs-in-process.ts), or no jobs at all.
- * - `STORAGE_PROVIDER`: `s3` (the default) or `none`. The `storage` port: an S3 bucket (./s3-storage.ts), or no object
- *   storage at all. The framework itself stores nothing; an app's attachments, uploads and job artifacts do.
+ * - `STORAGE_PROVIDER`: `s3` (the default), `s3-compatible` or `none`. The `storage` port: an S3 bucket
+ *   (./s3-storage.ts), the same adapter on another store that speaks the S3 API (Cloudflare R2, MinIO, Backblaze B2),
+ *   or no object storage at all. The framework itself stores nothing; an app's attachments, uploads and job artifacts
+ *   do. `s3-compatible` is a choice of its own, not `s3` reading an endpoint when one is set: which settings happen
+ *   to be set never picks behaviour (below). Beyond the required settings it reads `STORAGE_FORCE_PATH_STYLE`
+ *   (`true` or `false`; unset leaves the SDK's own, virtual-hosted addressing), and requires `STORAGE_UPLOAD_TARGET`:
+ *   `post` if the store accepts a presigned POST, which `createUploadTarget` is, or `none` if it does not (R2 does
+ *   not), so that `createUploadTarget` fails naming the setting. Explicit and with no default, because either default
+ *   would be a guess that fails on some store only when a browser first uploads.
  *
  * `AWS_REGION` is required by the choices that call AWS (`s3`, `codebuild`) and by the Data API transport
  * (./index.ts), not by every deployment: one on `pg` with no storage and no CodeBuild runner calls no AWS API.
+ * `s3-compatible` reads `STORAGE_REGION` and its own key pair instead of `AWS_REGION` and the AWS keys, which Lambda
+ * reserves for the function's own role and region.
  *
  * An unset switch is its default, which is what real mode required before the switches existed, so a deployment that
  * sets none of them boots as it did. `none` makes the port ABSENT (./absent.ts): its settings are not required, its
@@ -60,7 +69,18 @@ export const OPTIONAL_PORTS = {
     storage: {
         variable: 'STORAGE_PROVIDER',
         default: 's3',
-        env: { s3: { STORAGE_BUCKET: 'cloud-accounts', AWS_REGION: 'cloud-accounts' }, none: {} },
+        env: {
+            s3: { STORAGE_BUCKET: 'cloud-accounts', AWS_REGION: 'cloud-accounts' },
+            's3-compatible': {
+                STORAGE_BUCKET: 'storage-compatible-store',
+                STORAGE_ENDPOINT: 'storage-compatible-store',
+                STORAGE_REGION: 'storage-compatible-store',
+                STORAGE_UPLOAD_TARGET: 'storage-compatible-store',
+                STORAGE_ACCESS_KEY_ID: 'storage-compatible-credentials',
+                STORAGE_SECRET_ACCESS_KEY: 'storage-compatible-credentials',
+            },
+            none: {},
+        },
     },
 } as const satisfies Record<
     string,

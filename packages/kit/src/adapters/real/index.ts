@@ -11,6 +11,7 @@ import { realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { noAnalytics } from './no-analytics'
 import { optionalPortsEnv, portChoice } from './optional-ports'
+import { assertEndpoint, parseForcePathStyle, parseUploadTarget } from './storage-settings'
 
 interface RealPorts {
     auth: AuthPort
@@ -57,6 +58,17 @@ export function assertRealEnv(): void {
             `Missing env: ${missing.join(', ')}. See docs/cutover-checklist.md.`,
         )
     }
+    // Present is not enough for the settings that choose behaviour: refuse here what the adapter would refuse at boot,
+    // in the same form (a CutoverPendingError, which `sssb check-real-env` prints), naming the row that holds them.
+    if (portChoice('storage') === 's3-compatible') {
+        try {
+            parseUploadTarget(process.env['STORAGE_UPLOAD_TARGET'] ?? '')
+            parseForcePathStyle(process.env['STORAGE_FORCE_PATH_STYLE'])
+            assertEndpoint(process.env['STORAGE_ENDPOINT'] ?? '')
+        } catch (error) {
+            throw new CutoverPendingError(['storage-compatible-store'], (error as Error).message)
+        }
+    }
 }
 
 /**
@@ -102,10 +114,21 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
                   region: need('AWS_REGION'),
               })
             : (await import('./db')).createRealDb(need('DATABASE_URL'))
+    const storageChoice = portChoice('storage')
     const storage =
-        portChoice('storage') === 's3'
+        storageChoice === 's3'
             ? (await import('./storage')).createRealStorage(need('STORAGE_BUCKET'), need('AWS_REGION'))
-            : absentStorage
+            : storageChoice === 's3-compatible'
+              ? (await import('./storage')).createCompatibleStorage({
+                    bucket: need('STORAGE_BUCKET'),
+                    endpoint: need('STORAGE_ENDPOINT'),
+                    region: need('STORAGE_REGION'),
+                    accessKeyId: need('STORAGE_ACCESS_KEY_ID'),
+                    secretAccessKey: need('STORAGE_SECRET_ACCESS_KEY'),
+                    uploadTarget: need('STORAGE_UPLOAD_TARGET'),
+                    forcePathStyle: env['STORAGE_FORCE_PATH_STYLE'],
+                })
+              : absentStorage
     const llm =
         portChoice('llm') === 'anthropic' ? (await import('./llm')).createRealLlm(need('ANTHROPIC_API_KEY')) : absentLlm
     const email =

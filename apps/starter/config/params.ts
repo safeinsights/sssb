@@ -53,8 +53,9 @@ export const params = {
         // (cutover: job-runner) runs each job as a build instead, completed through a jobs webhook route
         jobs: 'in-process' as 'codebuild' | 'in-process' | 'none',
         // No object storage: set 's3' when the app stores files, and SssbApp builds its bucket (cutover:
-        // cloud-accounts)
-        storage: 'none' as 's3' | 'none',
+        // cloud-accounts); 's3-compatible' keeps them in another store (R2, MinIO, B2) and builds none (cutover:
+        // storage-compatible-store)
+        storage: 'none' as 's3' | 's3-compatible' | 'none',
     },
     clerk: {
         // cutover: auth-dev (development instance), auth-prod (production instance)

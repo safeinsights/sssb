@@ -53,7 +53,7 @@ export const params = {
         // (the job's handler runs in the server, within its time limit), or 'none'
         jobs: 'codebuild' as 'codebuild' | 'in-process' | 'none',
         // cutover: cloud-accounts — attachments, uploads, the ticket export's artifacts
-        storage: 's3' as 's3' | 'none',
+        storage: 's3' as 's3' | 's3-compatible' | 'none',
     },
     clerk: {
         // cutover: auth-dev (development instance), auth-prod (production instance)

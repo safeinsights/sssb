@@ -44,8 +44,14 @@ export interface S3StorageOptions {
     /** Address the bucket in the path (`https://host/bucket/key`), as most S3-compatible endpoints need. */
     forcePathStyle?: boolean | undefined
     /**
+     * When the client adds a checksum to a request, and checks one on a response (the SDK's own: `WHEN_SUPPORTED`).
+     * `WHEN_REQUIRED` is for stores that reject the checksum headers the default adds.
+     */
+    requestChecksumCalculation?: S3ClientConfig['requestChecksumCalculation'] | undefined
+    responseChecksumValidation?: S3ClientConfig['responseChecksumValidation'] | undefined
+    /**
      * A client the caller built, used as it is: for a client shared with other code, or one a test controls.
-     * Given with any of `region`, `endpoint`, `credentials` or `forcePathStyle`, it is refused, since those would be
+     * Given with any of `region`, `endpoint`, `credentials`, `forcePathStyle` or a checksum setting, it is refused, since those would be
      * silently ignored.
      */
     client?: S3Client | undefined

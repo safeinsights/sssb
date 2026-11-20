@@ -6908,6 +6908,51 @@ Accepted in part; the work it starts is seven briefs under `.claude/future-tasks
   POST (MinIO does, R2 does not), never guessed from the endpoint. Rejected: refusing it always, which would take
   browser upload from stores that support it.
 
+## `s3-compatible` storage choice (2026-11-19, `feat/storage-s3-compatible`)
+
+Built from `.claude/future-tasks/resolved/storage-s3-compatible-choice.md` (ADR-0015, second addendum). Decisions taken
+in building it:
+
+- **`STORAGE_UPLOAD_TARGET` is a required setting of the choice, `post` or `none`.** The brief proposed the setting and
+  left its default open. Either default is a guess that fails only when a browser first uploads: `post` on R2 fails at
+  the first upload, `none` on MinIO silently drops a feature it has. Requiring it makes it the sixth variable of the
+  choice, which costs nobody anything: the choice is new. Rejected: optional with a default of either.
+- **A new `createCompatibleStorage` beside `createRealStorage`, which is unchanged.** The `s3` choice takes the bucket
+  and the AWS region and must keep doing so. Rejected: widening `createRealStorage`'s parameters, which would make one
+  function behave differently by which of them is set (the switch rule again).
+- **Values that choose behaviour are checked where the adapter is built, and a wrong one fails at boot naming its
+  variable**: `STORAGE_UPLOAD_TARGET` outside `post` and `none`, `STORAGE_FORCE_PATH_STYLE` outside `true` and `false`
+  (an empty value is unset), `STORAGE_ENDPOINT` that is not an http(s) URL. Rejected: coercing (`TRUE`, `1`), which turns a
+  typo into the other behaviour. `assertRealEnv` runs the same checks (below), after it has reported what is missing.
+- **`STORAGE_FORCE_PATH_STYLE` unset leaves the SDK's own addressing**, never derived from the endpoint or the provider.
+  MinIO needs `true`, and the adopter reference says so.
+- **With `none`, `createUploadTarget` throws a plain `Error` naming `STORAGE_UPLOAD_TARGET`**, as the absent port
+  throws, so a route that reaches it answers 500 and the log says which setting to change. Rejected: a port error class
+  `withPortErrors` maps, since a deployment's declaration is a misconfiguration to the route that hits it, not a request
+  the client can fix.
+- **`SssbApp` sets only the switch for `s3-compatible`.** The endpoint, region and keys are the deployment's to add to
+  `app.server`, and the construct never handles a secret. Rejected: new
+  `SssbApp` props for the store's settings, which would put the key in a stack's template.
+- **Three cutover rows**, two for the groups of settings the choice's `env` map names (`storage-compatible-store`,
+  `storage-compatible-credentials`) and one for the live check (`storage-compatible-live`), which asks a round trip of
+  every other port method against a real bucket on the chosen store. Rejected: one row for all six variables, which
+  would make a missing key and a missing endpoint the same row, and reusing `cloud-accounts`, which says AWS.
+- **The PUT form of the upload target is its own future task**, `storage-upload-target-put-form.md`, with `put` named as
+  a third value of the same setting.
+- **The compatible client sets `requestChecksumCalculation` and `responseChecksumValidation` to `WHEN_REQUIRED`; the
+  `s3` choice keeps the SDK's default.** The default (since SDK v3.729) puts CRC32 on every PutObject, and Cloudflare tells
+  R2 users to turn it down. It is not a full answer: DeleteObjects requires a checksum, so it still sends CRC32 and no
+  Content-MD5 (measured against the installed SDK), which a store that insists on MD5 would refuse. Rejected: a
+  middleware that adds Content-MD5 to DeleteObjects, a guess about stores nothing here can call; the live cutover row
+  runs `delete` against the real store and says what to look for. `S3StorageOptions` gains the two settings, optional.
+- **The values that choose behaviour are checked in `storage-settings.ts`, which loads no SDK, by the adapter and by
+  `assertRealEnv`**, so `sssb check-real-env` refuses what the server would refuse at boot, as a `CutoverPendingError`
+  naming `storage-compatible-store`. Rejected: checking only in the adapter, which let the preflight say "complete"
+  for a value that stops the server. An endpoint carrying a user or password is refused and its error never repeats it;
+  the upload-target and path-style errors do repeat their values, which are not secrets.
+- **The apps' `params.ports.storage` type is widened to include `s3-compatible`**, the starter's too, so an adopter's
+  generated app accepts the choice without editing the cast.
+
 ## The Postgres family's groundwork (2026-11-19, `feat/db-postgres-family`)
 
 ADR-0015's second addendum, point 3, built from `db-postgres-family-groundwork.md`. Decisions its "proposed" details
