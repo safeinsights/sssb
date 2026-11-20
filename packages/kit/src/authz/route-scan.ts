@@ -231,6 +231,7 @@ function walkFiles(
     accept: (name: string) => boolean,
     descend: (name: string) => boolean,
     ancestors: ReadonlySet<string> = new Set(),
+    linkedVisited: Set<string> = new Set(),
 ): string[] {
     const real = realpathSync(dir)
     if (ancestors.has(real)) return []
@@ -238,9 +239,17 @@ function walkFiles(
     const out: string[] = []
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name)
-        const isDirectory = entry.isDirectory() || (entry.isSymbolicLink() && isDirectoryTarget(full))
-        if (isDirectory) {
-            if (descend(entry.name)) out.push(...walkFiles(full, accept, descend, inside))
+        const linked = entry.isSymbolicLink() && isDirectoryTarget(full)
+        if (entry.isDirectory() || linked) {
+            if (!descend(entry.name)) continue
+            // A directory reached through a link is walked once, at the first link's path: two links per level would
+            // otherwise make the walk exponential in the depth. A real directory is always walked at its own path.
+            if (linked) {
+                const target = realpathSync(full)
+                if (linkedVisited.has(target)) continue
+                linkedVisited.add(target)
+            }
+            out.push(...walkFiles(full, accept, descend, inside, linkedVisited))
         } else if (accept(entry.name)) out.push(full)
     }
     return out.sort()
@@ -271,7 +280,13 @@ function hasUseServer(statements: readonly ts.Statement[]): boolean {
 
 /** Whether the file declares any Server Action: a file-level `'use server'`, or one opening a function's body. */
 function declaresServerActions(file: string): boolean {
-    const text = readFileSync(file, 'utf8')
+    let text: string
+    try {
+        text = readFileSync(file, 'utf8')
+    } catch {
+        // A dangling link (an editor's lockfile, `.#page.tsx -> user@host.pid`): nothing there to serve or to read.
+        return false
+    }
     if (!text.includes('use server')) return false
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, false)
     let found = hasUseServer(sf.statements)
@@ -317,6 +332,26 @@ export function scanServerActions(root: ScanRoot, options: ScanOptions = {}): Sc
     )
 }
 
+/**
+ * Files in `appDir` but outside its `src` (and outside `node_modules` and dot-directories, a build's `.next` among
+ * them) that declare Server Actions. The scan judges actions only under `src`, so one elsewhere would go unchecked.
+ */
+export function serverActionFilesOutsideSrc(appDir: string): string[] {
+    const keep = (name: string) => name !== 'node_modules' && !name.startsWith('.')
+    if (!existsSync(appDir)) return []
+    return readdirSync(appDir, { withFileTypes: true })
+        .flatMap((entry) => {
+            const full = path.join(appDir, entry.name)
+            if (entry.name === 'src' || !keep(entry.name)) return []
+            if (entry.isDirectory() || (entry.isSymbolicLink() && isDirectoryTarget(full))) {
+                return walkFiles(full, isSourceFile, keep)
+            }
+            return isSourceFile(entry.name) ? [full] : []
+        })
+        .filter(declaresServerActions)
+        .sort()
+}
+
 /** Why a Server Action fails the scan, or undefined if it passes. No exemption applies to one. */
 export function judgeServerAction(action: ScannedAction): string | undefined {
     const where = `${action.root}: ${action.rel} Server Action \`${action.name}\``
@@ -327,8 +362,11 @@ export function judgeServerAction(action: ScannedAction): string | undefined {
     return (
         `${where} does not reach authorize(...) on its own path. A Server Action is a POST endpoint Next exposes ` +
         `for the function, whoever renders the form that calls it, so it is judged as a route's POST is, and no ` +
-        `exemption applies to it. Call authorize(...) in it (or in a function in this file that it calls, awaiting ` +
-        `it if it is async).`
+        `exemption applies to it. A call in a dead branch, an uncalled function or another module does not count, nor ` +
+        `does one whose denial cannot reach the action: in an async function or a callback whose promise it neither ` +
+        `awaits nor returns, or in a try whose catch does not rethrow (the useActionState shape, ` +
+        `\`try { authorize(...); … } catch (e) { return { error } }\`, swallows the denial). Call authorize(...) first, ` +
+        `before any try (or in a function in this file that it calls, awaiting it if it is async).`
     )
 }
 

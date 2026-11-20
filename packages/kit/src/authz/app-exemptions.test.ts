@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
@@ -249,6 +249,70 @@ describe('what the scan reaches beyond src/app route files (baseline review of 0
             }),
         )
         expect(scan.actions).toEqual([])
+        expect(scan.failures).toEqual([])
+    })
+})
+
+describe("the fix review's verdict (X3, X9, X10, X11)", () => {
+    function appWith(files: Record<string, string>, links: Record<string, string> = {}): string {
+        const dir = path.join(makeTestTmpDir('authz-app-'), 'acme')
+        mkdirSync(path.join(dir, 'src/app/api/dockets'), { recursive: true })
+        writeFileSync(path.join(dir, 'src/app/api/dockets/route.ts'), AUTHORIZED_POST)
+        for (const [rel, src] of Object.entries(files)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            writeFileSync(path.join(dir, rel), src)
+        }
+        for (const [rel, target] of Object.entries(links)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            symlinkSync(target.startsWith('/') ? target : path.join(dir, target), path.join(dir, rel))
+        }
+        return dir
+    }
+    const WIPE = "'use server'\nexport async function wipe() { return 'wiped' }\n"
+
+    it('X3: a dangling link with a source extension under src is skipped, and the actions beside it still judged', async () => {
+        const scan = await scanApp(
+            appWith({ 'src/actions/dockets.ts': WIPE }, { 'src/actions/.#dockets.ts': '/nonexistent/user@host.1234' }),
+        )
+        expect(scan.failures).toEqual([
+            expect.stringMatching(/actions\/dockets\.ts Server Action `wipe` does not reach/),
+        ])
+    })
+
+    it("X9: a 'use server' file in the app but outside src fails; node_modules and dot-directories are not read", async () => {
+        const scan = await scanApp(
+            appWith({ 'lib/outside.ts': WIPE, 'node_modules/pkg/index.js': WIPE, '.next/server/app.js': WIPE }),
+        )
+        expect(scan.failures).toEqual([
+            expect.stringMatching(/^acme: lib\/outside\.ts declares Server Actions outside src/),
+        ])
+    })
+
+    it('X10: an action whose try swallows the denial is told to authorize before the try', async () => {
+        const scan = await scanApp(
+            appWith({
+                'src/actions/save.ts':
+                    "'use server'\n" +
+                    AUTHORIZE +
+                    "export async function save() { try { authorize(user, 'depot', 'create', { type: 'Docket', orgId: 'depot' }); return { ok: true } } catch (e) { return { error: String(e) } } }\n",
+            }),
+        )
+        expect(scan.failures).toEqual([expect.stringMatching(/try whose catch does not rethrow.*before any try/)])
+    })
+
+    it('X11: two links per level to the same directory are walked once, so a deep tree stays quick', async () => {
+        const links: Record<string, string> = {}
+        const files: Record<string, string> = {}
+        // 12 levels, each with two links to the next: exponential without a visited set.
+        for (let level = 0; level < 12; level++) {
+            files[`src/app/l${level}/page.txt`] = ''
+            links[`src/app/l${level}/a`] = `src/app/l${level + 1}`
+            links[`src/app/l${level}/b`] = `src/app/l${level + 1}`
+        }
+        files['src/app/l12/page.txt'] = ''
+        const started = Date.now()
+        const scan = await scanApp(appWith(files, links))
+        expect(Date.now() - started).toBeLessThan(5000)
         expect(scan.failures).toEqual([])
     })
 })

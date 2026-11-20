@@ -94,7 +94,11 @@ export function sqlSegments(sql: string): SqlSegment[] {
     return segments
 }
 
-/** Whitespace holding at least one newline, then the `'` that continues a string constant. */
+/**
+ * Whitespace holding at least one newline, then the `'` that continues a string constant. A known limit: Postgres
+ * also allows a `-- comment` in that gap (`'a' -- note<newline>'b'`), which this does not, so such SQL is split into
+ * two literals here. Hand-written SQL only; Kysely never writes it.
+ */
 const CONTINUATION = /^[ \t\f\r]*\n\s*'/
 
 const PLACEHOLDER = new RegExp(`(?<!${IDENT_CHAR.source})\\$(\\d+)`, 'g')

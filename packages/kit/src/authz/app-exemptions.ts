@@ -12,6 +12,7 @@ import {
     judgeServerAction,
     scanRoutes,
     scanServerActions,
+    serverActionFilesOutsideSrc,
     unreadRouteFiles,
 } from './route-scan'
 
@@ -247,6 +248,12 @@ export async function scanApp(appDir: string): Promise<AppScan> {
                 `authorization scan reads only route.ts, route.tsx, route.js, route.jsx and route.mjs. If Next serves it ` +
                 `(a pageExtensions entry), nothing checked it: rename it to one of those, or rename it to something not ` +
                 `named route.`,
+        ),
+        ...serverActionFilesOutsideSrc(appDir).map(
+            (file) =>
+                `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} declares Server Actions outside src, ` +
+                `where the authorization scan does not judge them. Move them under src. (Actions a workspace package ` +
+                `exports are not read either.)`,
         ),
         ...PAGES_API_DIRS.filter((dir) => existsSync(path.join(appDir, dir))).map(
             (dir) =>
