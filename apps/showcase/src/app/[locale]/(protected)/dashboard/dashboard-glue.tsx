@@ -8,6 +8,7 @@ import { ExportCard, type ExportJob } from '@/components/export-card'
 import { TicketsCard, type TicketAssignee, type TicketItem } from '@/components/tickets-card'
 import type { AttachmentKind } from '@/domain/attachments'
 import { type JobStatus, jobStatusMachine } from '@sssb/kit/core/jobs'
+import { askAssistant } from './ask-assistant'
 
 interface EscalationLists {
     sent: EscalationItem[]
@@ -143,52 +144,7 @@ export function DashboardGlue({
     }, [jobs, refreshJobs])
 
     return (
-        <DashboardScreen
-            user={user}
-            onAsk={async (question, onDelta) => {
-                const response = await fetch('/api/assistant', {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ question }),
-                })
-                if (!response.ok || !response.body) {
-                    const data = (await response.json().catch(() => ({}))) as { error?: string }
-                    onDelta(data.error ?? '')
-                    return { sources: [] }
-                }
-                // NDJSON: one JSON object per line. The first carries the sources (pass 1 has already
-                // finished by the time a byte is written); every line after it is a text delta. Buffer
-                // across chunk boundaries — a network read can split a line anywhere.
-                const reader = response.body.getReader()
-                const decoder = new TextDecoder()
-                let buffer = ''
-                let sources: string[] = []
-                const consume = (line: string) => {
-                    if (!line.trim()) return
-                    let event: { sources?: string[]; delta?: string; error?: string }
-                    try {
-                        event = JSON.parse(line) as { sources?: string[]; delta?: string; error?: string }
-                    } catch {
-                        // A dropped connection can truncate the final line mid-object — skip it
-                        // rather than throwing out of the whole ask.
-                        return
-                    }
-                    if (event.sources) sources = event.sources
-                    if (event.delta) onDelta(event.delta)
-                    if (event.error) onDelta(event.error)
-                }
-                for (;;) {
-                    const { done, value } = await reader.read()
-                    if (done) break
-                    buffer += decoder.decode(value, { stream: true })
-                    const lines = buffer.split('\n')
-                    buffer = lines.pop() ?? ''
-                    for (const line of lines) consume(line)
-                }
-                consume(buffer)
-                return { sources }
-            }}
-        >
+        <DashboardScreen user={user} onAsk={askAssistant}>
             {/* Same <main> landmark as the rest of the dashboard (axe: region) */}
             <TicketsCard
                 tickets={tickets}
