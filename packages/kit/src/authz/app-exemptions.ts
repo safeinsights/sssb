@@ -241,6 +241,8 @@ export async function scanApp(appDir: string): Promise<AppScan> {
     const policy = policyWithApp(exemptions)
     const srcDir = path.join(appDir, 'src')
     const actions = existsSync(srcDir) ? scanServerActions({ ...root, dir: srcDir, exemptDir: srcDir }) : []
+    const outsideUnreadable = new Map<string, string>()
+    const outsideActionFiles = serverActionFilesOutsideSrc(appDir, outsideUnreadable)
     const failures = [
         ...mutating.flatMap((route) => route.handlers.flatMap((handler) => judge(route, handler, policy) ?? [])),
         ...actions.flatMap((action) => judgeServerAction(action) ?? []),
@@ -258,7 +260,12 @@ export async function scanApp(appDir: string): Promise<AppScan> {
                 `(a pageExtensions entry), nothing checked it: rename it to one of those, or rename it to something not ` +
                 `named route.`,
         ),
-        ...serverActionFilesOutsideSrc(appDir).map(
+        ...[...outsideUnreadable].map(
+            ([dir, code]) =>
+                `${name}: ${path.relative(appDir, dir).split(path.sep).join('/') || '.'} could not be read (${code}), so ` +
+                `a Server Action in it would go unchecked. Make it readable to the user running the check.`,
+        ),
+        ...outsideActionFiles.map(
             (file) =>
                 `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} declares Server Actions outside src, ` +
                 `where the authorization scan does not judge them. Move them under src. (Actions a workspace package ` +

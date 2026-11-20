@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
@@ -375,4 +375,57 @@ describe("the fix review's second verdict (Y1, Y2, Y5)", () => {
         const scan = await scanApp(appWith({ app: 'not a directory\n' }))
         expect(scan.failures).toEqual([])
     })
+})
+
+describe('the seam review (build output, unreadable directories)', () => {
+    function appWith(files: Record<string, string>): string {
+        const dir = path.join(makeTestTmpDir('authz-app-'), 'acme')
+        mkdirSync(path.join(dir, 'src/app/api/dockets'), { recursive: true })
+        writeFileSync(path.join(dir, 'src/app/api/dockets/route.ts'), AUTHORIZED_POST)
+        for (const [rel, src] of Object.entries(files)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            writeFileSync(path.join(dir, rel), src)
+        }
+        return dir
+    }
+    const WIPE = "'use server'\nexport async function wipe() { return 'wiped' }\n"
+
+    it("a 'use server' function in build output is not the app's source; one in lib/ beside src still fails", async () => {
+        const scan = await scanApp(
+            appWith({
+                'infra/cdk.out/asset.abc/index.mjs': WIPE,
+                'dist-demo/assets/x.js': WIPE,
+                'lib/outside.ts': WIPE,
+            }),
+        )
+        expect(scan.failures).toEqual([
+            expect.stringMatching(/^acme: lib\/outside\.ts declares Server Actions outside src/),
+        ])
+    })
+
+    const root = typeof process.getuid === 'function' && process.getuid() === 0
+    it.skipIf(root)(
+        'a directory the scan cannot read is a failure naming it and the error code, never skipped',
+        async () => {
+            const dir = appWith({ 'src/app/api/secret/route.ts': OPEN_POST, 'lib/locked/x.ts': WIPE })
+            const locked = [path.join(dir, 'src/app/api/secret'), path.join(dir, 'lib/locked')]
+            for (const target of locked) chmodSync(target, 0o000)
+            try {
+                const scan = await scanApp(dir)
+                expect(scan.failures).toEqual(
+                    expect.arrayContaining([
+                        expect.stringMatching(
+                            /^acme: secret \* cannot be checked: the directory could not be read \(EACCES\)/,
+                        ),
+                        expect.stringMatching(
+                            /^acme: app\/api\/secret Server Action `\*` cannot be checked: the directory could not be read \(EACCES\)/,
+                        ),
+                        expect.stringMatching(/^acme: lib\/locked could not be read \(EACCES\)/),
+                    ]),
+                )
+            } finally {
+                for (const target of locked) chmodSync(target, 0o755)
+            }
+        },
+    )
 })
