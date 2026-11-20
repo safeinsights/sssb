@@ -1,7 +1,7 @@
 # Instructions that have an adopter edit a file an upstream merge will change
 
 **Priority:** P2 · **Status:** open
-**Found by:** the adopter-merge-friction sweep, 2026-11-16 (`fix/adopter-merge-friction`), after a first adopter's
+**Found by:** the adopter-merge-friction sweep, 2026-11-16 (`fix/adopter-merge-friction`), after an adopter's
 second upstream merge hit two of them.
 
 ## The class

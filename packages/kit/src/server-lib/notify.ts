@@ -1,5 +1,6 @@
-import { appJobKinds } from '@sssb/app-config/jobs'
+import * as jobsSeam from '@sssb/app-config/jobs'
 import { getTranslations } from 'next-intl/server'
+import { isJobNotify, type JobNotify, notifiesOn } from '../core/jobs'
 import { DEFAULT_LOCALE, type Locale } from '../core/locale'
 import {
     FRAMEWORK_NOTIFICATION_NAMESPACE,
@@ -211,17 +212,34 @@ export async function notifyMember(
     }
 }
 
-/** Job kinds whose terminal state notifies the team. The app's OWN job kinds (appJobKinds,
+/** Job kinds whose terminal state can notify the team. The app's OWN job kinds (appJobKinds,
  *  the seam) are user-submitted work someone is waiting on; the framework's scheduled kinds (e.g.
  *  digest-email) are internal machinery and would just be noise (see the decision log). */
-const NOTIFIED_JOB_KINDS = new Set<string>(appJobKinds)
+const NOTIFIED_JOB_KINDS = new Set<string>(jobsSeam.appJobKinds)
 
 /**
- * Notify a job's org admins that a user-facing job reached a terminal state. Jobs carry no
- * creator column, so the org's admins are the recipients (the recorded decision). Resolves the job's
+ * When a kind's terminal state notifies: the app's `jobNotify` entry (`@sssb/app-config/jobs`, optional as an
+ * export and as an entry), else `always`, which every app kind did before the setting existed. Read through the
+ * namespace, as `db/seed.ts` reads `appSeedRows`, so an app that has not added the export still builds. A value that is
+ * not one of the three (an untyped seam) counts as absent: the kind notifies as it always did, and is never silenced by
+ * a typo.
+ */
+function notifyModeFor(kind: string): JobNotify {
+    const setting = (jobsSeam as Record<string, unknown>)['jobNotify'] as Record<string, unknown> | undefined
+    const mode = setting?.[kind]
+    return isJobNotify(mode) ? mode : 'always'
+}
+
+/**
+ * Notify a job's org admins that a user-facing job reached a terminal state; when the org has no active admin to
+ * tell, the person who submitted the job (`requested_by`), while the auth port still gives them standing in the org.
+ * An org without admins is what a fixed org source makes (everyone in one org with one role, and an empty members
+ * list), and an org whose admins have all left. A job no person submitted (a scheduled run) then reaches no one, so a
+ * routine kind there says `jobNotify` `never` to skip the lookup. Resolves the job's
  * kind + org itself from (tenantId, jobId) so both terminal sites — the fake in-process executor and
  * the real completion webhook — call it with the same three facts. A no-op for internal job kinds, a
- * job with no org, or an unknown job/org. Called AFTER the terminal status commits, like the webhook
+ * job with no org, an unknown job/org, or a status the kind's `jobNotify` setting does not notify (checked before
+ * the org is read, so a kind that opts out costs no `listMembers` call, the IdP call in real mode). Called AFTER the terminal status commits, like the webhook
  * emission beside it.
  */
 export async function notifyJobTerminal(
@@ -236,15 +254,39 @@ export async function notifyJobTerminal(
     try {
         const job = await jobKindAndOrg(deps.db, input.tenantId, input.jobId)
         if (!job || job.orgId === null || !NOTIFIED_JOB_KINDS.has(job.kind)) return
+        if (!notifiesOn(notifyModeFor(job.kind), input.status)) return
         const org = await orgForId(deps.db, job.orgId)
         if (!org) return
         const members = await authPort.listMembers(org.slug)
-        await notifyAdmins(deps, {
-            members,
+        const payload = { jobId: input.jobId, jobKind: job.kind, status: input.status }
+        if (members.some((m) => m.status === 'active' && canManageOrg(m.role as Role))) {
+            await notifyAdmins(deps, {
+                members,
+                tenantId: input.tenantId,
+                orgId: job.orgId,
+                kind: 'job.completed',
+                payload,
+            })
+            return
+        }
+        if (!job.requestedBy) return
+        // Read afresh, like a credential: someone removed from the org, or barred, is told nothing more.
+        const requester = await authPort.getMember(org.slug, job.requestedBy)
+        if (!requester) return
+        const recipient: Membership = {
+            id: job.requestedBy,
+            name: requester.name ?? null,
+            email: requester.email ?? '',
+            role: requester.role,
+            status: 'active',
+        }
+        await notifyMember(deps, {
+            members: [recipient],
             tenantId: input.tenantId,
             orgId: job.orgId,
+            recipientUserId: recipient.id,
             kind: 'job.completed',
-            payload: { jobId: input.jobId, jobKind: job.kind, status: input.status },
+            payload,
         })
     } catch {
         // Swallowed by design — see above.

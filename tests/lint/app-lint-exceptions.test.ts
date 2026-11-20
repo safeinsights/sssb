@@ -42,7 +42,7 @@ describe('an app lists its own exceptions, by path relative to the app', () => {
 
     it('an entry becomes an exact path under that app, whatever the app is called', async () => {
         const file = 'src/domain/maintenance.ts'
-        for (const app of ['starter', 'acme', 'pages']) {
+        for (const app of ['starter', 'acme', 'portal']) {
             const root = tree(app, entry(file), [file])
             // from the app's own config, relative to the app; from a config that lints every app, under its name
             expect(await exceptionsOf(path.join(root, 'apps', app))).toEqual([file])

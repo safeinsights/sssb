@@ -18,6 +18,7 @@ import type {
     ProfileUpdate,
 } from '../../ports/auth'
 import { AuthRequiredError, ForbiddenError } from '../../ports/errors'
+import type { ProviderIdentitySource } from '../configured-auth'
 import { writeFileAtomicSync, writeJsonAtomic } from './atomic-write'
 import { readSimulatorState, updatePersonState, writeViewpointCookie } from './simulator'
 import { dataDir } from './data-dir'
@@ -291,7 +292,12 @@ export const fakeAuth: AuthPort = {
         const person = findPerson(userId)
         const membership = person?.memberships.find((m) => m.orgSlug === orgSlug)
         if (!person || !membership) return null
-        return { role: membership.role, restricted: isRestricted(person.restricted, membership.role) }
+        return {
+            role: membership.role,
+            restricted: isRestricted(person.restricted, membership.role),
+            name: readOverrides()[person.id]?.name ?? person.name,
+            email: person.email,
+        }
     },
 
     async createInvite(invite: InviteInput): Promise<CreatedInvite> {
@@ -331,6 +337,34 @@ export const fakeAuth: AuthPort = {
         }
         await writeSession(session.person.id, orgSlug)
         updatePersonState(`person:${session.person.id}`, { activeOrgSlug: orgSlug })
+    },
+}
+
+/**
+ * The simulated world's people as the auth settings see them (../configured-auth.ts): who is signed in and whether an
+ * account exists, with no org or role in it. A person's seeded tenant is their tenant claim, so a world run in single
+ * tenancy must seed its people in the configured tenant, as a deployment's accounts must not claim another. The
+ * simulated sign-in resolves a membership, so a world run with a fixed org source still seeds each person one.
+ */
+export const fakeIdentitySource: ProviderIdentitySource = {
+    async current() {
+        const session = await readSession()
+        if (!session) return null
+        const user = toUser(session.person, session.orgSlug)
+        return {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            locale: user.locale,
+            // An empty claim is no claim, as Clerk's adapter reads it.
+            tenantClaim: session.person.tenantSlug || undefined,
+        }
+    },
+    async account(userId) {
+        const person = findPerson(userId)
+        if (!person) return null
+        const name = readOverrides()[person.id]?.name ?? person.name
+        return { tenantClaim: person.tenantSlug || undefined, name, email: person.email }
     },
 }
 

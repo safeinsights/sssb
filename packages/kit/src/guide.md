@@ -36,6 +36,16 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `jobs`, `storage`). A port the app does not use is `none`, never configured with placeholder values.
 - A job handler never reads the seed (`@sssb/app-config/seed`), which a deployment does not have: it finds people with
   `ctx.auth.listMembers(orgSlug)`, and a person's locale with `ctx.resolveLocale`, where the runner provides one.
+- A job kind's completion notifies its team's admins, whoever runs it and whatever it ends as. A routine kind, one a
+  schedule runs every hour, says otherwise in the seam's optional `jobNotify` export in `src/app-config/jobs.ts`:
+  `export const jobNotify: Partial<Record<AppJobKind, JobNotify>> = { 'sweep-items': 'failure' }`, with `JobNotify` from
+  `@sssb/kit/core/jobs`. `'failure'` notifies only a failed job (one the in-process runner's sweep fails as lost included) and `'never'` nothing; a kind not
+  named, and an app with no export, is `'always'`, and the framework's own kinds never notify. A refused run makes no
+  `listMembers` call. If the static demo starts the kind, pass the same map as `useDemoWorld`'s `jobNotify`.
+- A route that submits a job for a person passes `requestedBy: user.id` to `submitJob` (`@sssb/kit/db/jobs`): when the
+  team has no admin to tell (a fixed org source, `params.auth`, has none), the job's end reaches the person who started
+  it, and a job submitted without one reaches no one. Under a fixed org source SSSB's `Job` rule admits no one (its
+  roles are `none` and `restricted`), so authorize such a submission on a subject of your own.
 - `pnpm dev` stays hermetic: no docker, no credentials, no network. Never add `next/font/google`, telemetry, or
   anything that phones home.
 - Anything that needs real credentials, accounts or money is a row in the workspace's cutover checklist, never a
@@ -106,6 +116,13 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
   `src/app/api`), with a reason and a `mustMatch` gate. A mutating route outside `src/app/api` can match no
   exemption.
+- A route or screen that reads org-scoped data authorizes the read too, as `src/app/api/items/route.ts`'s GET does
+  (`authorize(user, orgId, 'read', …)`): the session's org says where a person is placed, not that they may read there.
+  The role `none` (a fixed org source gives it to every signed-in user by default: `params.auth`) is placed in the home
+  org with no standing in it.
+- In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
+  false for a person without standing, and a rule that grants because a role is not some other role would grant
+  `none` too.
 
 ## UI
 

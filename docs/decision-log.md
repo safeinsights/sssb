@@ -6997,6 +6997,197 @@ left to the builder:
   conformance suite holds that declaration to the port's `isolation`, so doctor never boots the adapter registry.
   Rejected: printing `rls` today, which reads as a choice the app made.
 
+## Single-tenant sign-in, and a configurable tenant metadata key (2026-11-19, `feat/auth-single-tenant`)
+
+JP decided: "yes I think we want such a mode so we don't have to set up a useless
+tenantSlug. Separately, I hope the tenantSlug name is configurable." ADR-0003's addendum of this date records the
+design; these are the calls made building it, each with the rejected alternative.
+
+- **A new role, `none`, with no standing**, rather than mapping single-tenant users to `restricted`. The framework's
+  rules let any member read its org's jobs, members and org record (`restricted` included), and on a shared Clerk
+  instance that would be every user of the other product. Rejected as well: placing users in no org at all, which
+  leaves the protected layout, data scoping and the app's own rules without the home org.
+- **No standing means no `sameOrg`, in the framework's rules and in the predicate handed to the app's**, and no
+  manage-all, refused both where the actor is built and in `defineAbilitiesFor`. The starter's one team is its staff
+  org, so a generated app turned single-tenant would otherwise hand every user manage-all. Rejected: gating only the
+  framework's rules, which leaves an app's `sameOrg`-based rules granting `none`.
+- **One wrapper for both adapters** (`packages/kit/src/adapters/single-tenant-auth.ts`), fed by a small identity
+  source each adapter supplies, so the mode's meaning is written and tested once. Clerk's source makes no
+  organization call per request. Rejected: a branch inside each adapter.
+- **The fake runs the mode when its environment sets it**, so a single-tenant app's `pnpm dev` places people as its
+  deployment does. Rejected: leaving the fake multi-tenant, where seeded roles would grant what deployed users never
+  have.
+- **Per method:**
+    - `listMembers` is empty: listing a shared instance's users would enumerate the other product's.
+    - `createInvite` is refused: membership is implicit.
+    - `getMember` answers `none` for an account Clerk still has, so a credential is judged as a session.
+    - The home org is the only org, named by its slug, since the adapter reads no database.
+- **A user whose metadata names a different tenant is refused**, so the mode switched on for a multi-tenant instance by
+  mistake cannot merge its tenants. Users with no claim, a shared instance's other users, are admitted with `none`.
+  Rejected: ignoring the claim, which would make that mistake a cross-tenant exposure.
+- **An explicit switch, `AUTH_TENANCY`, set from `params.auth` and validated at synth and at boot**, refusing a
+  single-mode slug left on a multi deployment. Rejected: inferring single mode from the slugs being set.
+- **`sssb doctor` and the conformance suite gain nothing.** Doctor reads no deployment settings, and the conformance
+  suite cannot tell an app rule that grants by its own list from one that grants by mistake. The kit's tests prove
+  `none` gets nothing from the framework's rules and a false `sameOrg` in the app's, and the guide says how app rules
+  must grant. Rejected: a conformance check running every app subject past a `none` actor, which would fail apps that
+  rightly grant a person their own records.
+- **Org-scoped reads authorize**, after the security review found that the reference apps' GET routes scope by the
+  session's org after `requireUser()` alone, which in single mode would show the home org's items, tickets, jobs,
+  attachments, escalations and webhook endpoints to every user of a shared Clerk instance. The starter's items GET and
+  the showcase's org-scoped GETs now call `authorize(user, orgId, 'read', …)`, and the guide makes it a rule.
+  Rejected: refusing a person without standing in the showcase's `resolveOrgContext`, which self-only routes share
+  (accepting the terms among them), so a `none` user could not get past the agreement gate; and taking the home org
+  off the session, which leaves the app's UI and its token credentials with no org. Not closed: the authorization scan
+  still exempts GET handlers, so an app's own reads are held to this by the guide alone.
+- **The app's rules see a person without standing as active in no org** (a sentinel no org id equals), so a rule that
+  compares org ids itself, as the showcase's two-sided `Escalation` does, cannot grant `none`. Rejected: fixing only
+  the showcase's rule, which leaves the pattern open to every app that copies it.
+- **The simulated auth is one memoized function** (`packages/kit/src/adapters/fake/simulated-auth.ts`) shared by the
+  registry, the fake job runner and the conformance replay, after review found job handlers and notifications in
+  simulated single mode still on the bare fake. It is read on first use, so real mode, which imports the fakes too,
+  reports a misconfigured switch through the boot check.
+- **An unreadable tenant claim is refused.** Absent, null or empty is no claim. A non-string is not a slug, and
+  admitting it would let a malformed claim through the tenant guard.
+- **A refused person is not signed out**, reversing a first fix. Signing them out inside `getCurrentUser` changed a
+  cookie while server components render, which Next refuses (every page failed in simulated single mode), and on
+  Clerk it revoked the shared session on every call, so a link to this app would have ended the person's session in
+  the other product. Rejected: that sign-out, and a refusal page with its own sign-out, left as a follow-up for a
+  state a correct deployment does not reach.
+- **The conformance preset replay runs the simulated auth, single mode included**: a preset that invites someone or
+  signs in a person of another tenant describes a world single-tenant auth cannot reach, and that check exists to
+  say so. Rejected: replaying on the bare fake, which would pass presets the deployment cannot replay.
+- **Known and left open, from the security review's second round:** the showcase's `[id]` routes read a row before
+  they authorize, so a `none` user can tell an existing id from a missing one (no data returned, ids opaque); and the
+  authorization scan still exempts GET handlers. Both are recorded for a later change.
+- **Single mode's seeded people keep a membership in the home org**, documented, rather than making the fake's session
+  code work without one: the simulated sign-in resolves a membership, and a dev-only edge is not worth reworking it.
+
+## A job kind says when its end is notified (2026-11-19, `feat/job-notify-on`)
+
+An app may run its maintenance as an hourly in-process job, each run idempotent and time-budgeted so that a
+cut-off run resumes the next hour. SSSB notified the home org's admins of every completed app job, so a routine job meant
+24 in-app notifications, refused email attempts and `listMembers` calls (an identity-provider call in real mode) a day.
+An adopter asked for a kind to opt out, or to notify only on failure, and for job retries with backoff.
+
+- **The setting is an optional seam export, `jobNotify`, in `@sssb/app-config/jobs`**:
+  `Partial<Record<AppJobKind, 'always' | 'failure' | 'never'>>`. A kind it does not name, and an app that has no export,
+  is `always`: today's behaviour, so nothing changes for an existing kind. The framework's own kinds (`digest-email`)
+  still never notify, as before, and a `jobNotify` entry cannot turn that on (the type names app kinds only; an entry
+  for a framework kind is read by nothing). Rejected: **a `notify` field on each kind's registration**, as the brief
+  sketched it. The registration is two parallel things, a `appJobKinds` tuple and a `jobHandlers` map of bare functions,
+  and neither has a place for a field: making a handler `{ handler, notify }` changes the type every adopter's
+  `jobHandlers` declares and every kit reader of it, so every app would break on upgrade for a setting most will never
+  use. Rejected: **a property on the handler function** (`Object.assign(handler, { notify })`), which hides the setting
+  in a value and which a re-wrapped handler silently drops.
+- **It is optional as an export, read through the namespace**, as `db/seed.ts` reads `appSeedRows`:
+  `import * as jobsSeam` and `jobsSeam['jobNotify']`. The earlier decision (2026-11-19, optional real ports) rejected "a
+  new seam module" because a seam module cannot be optional; an optional export of an existing module can be, and this
+  is what `appSeedRows` already is (`packages/kit/src/db/seed.ts:23`). Rejected: **a required export**, which would fail the typecheck of every adopter that has not
+  added it, a `required` seam change for a setting whose default is the old behaviour.
+- **The check is in `notifyJobTerminal`, before the org is read**, so a refused run costs no `listMembers` call, no in-app
+  row and no email attempt. That function is the one hop every runner already ends in: the simulated runner, the
+  in-process runner and its sweep (which fails a lost job and notifies it), and the jobs webhook route the CodeBuild
+  runner completes through. Rejected: **gating in `runJobInProcess`**, which only two of the three runners run, so a
+  CodeBuild job would notify what an in-process job did not, the dev-versus-deployment gap the simulated world exists to
+  close.
+- **`failure` means a job that ended `failed`, whatever failed it**: a handler's error, a failed build, and a job the
+  sweep judges lost. Rejected: **`failure` excluding the sweep's**, which would silence the one failure nobody was
+  watching.
+- **A value that is not a mode counts as `always`.** The types refuse it, but a seam can be untyped, and the notification
+  layer is never load-bearing: a typo must not silence a kind. Rejected: failing at boot, which turns a typo in a
+  maintenance setting into an outage. Pinned in `server-lib/notify-opt-out.test.ts`, with the absent export and an entry
+  for another kind.
+- **The static demo takes the map as a `useDemoWorld` option, `jobNotify`**, and its twin skips a notification for
+  `failure` and `never`, since the twin only ever completes a job. It cannot read the seam: the `jobs` seam module imports
+  every server handler, and the twin deliberately does not (`world.ts`). `contracts.ts` imports the type only, and `world.ts` imports nothing new. Rejected:
+  **calling the server's `notifiesOn` in the twin**, a value import of `core/jobs`, which reaches the seam. The showcase
+  sets no `jobNotify`, so it passes none; an adopter that sets one and starts the kind in its demo passes the same map.
+- **The fixture has a kind for each mode** (`export-dockets` says nothing, `sweep-dockets` is `failure`, `quiet-dockets`
+  is `never`), and `server-lib/notify-opt-out.test.ts` runs every kind to both ends on the simulated runner, the
+  in-process runner (and its sweep) and the CodeBuild runner's webhook sequence. Seen red first: with the check absent,
+  10 of 21 runner cases failed, each one a refused run that still called `listMembers`.
+- **The changeset files `minor`, Kind seam, Action optional**, as the brief asked, though Action `optional` could be a
+  patch: the seam module's contract grew. It names `@sssb/create` too, for the plugin's `/sssb:new-job`.
+- **Retries with backoff are recorded, not built**: `.claude/future-tasks/job-retries-with-backoff.md`. Its first
+  decision (a retry as the same row or a new one) turns on terminal states, which the jobs webhook's idempotency rests on.
+
+## The tenant and the organizations are separate choices (2026-11-20, `feat/auth-tenancy-and-org-source`)
+
+JP found that single-tenant auth fixed the organization as well as the tenant, which turned off the provider's
+organizations, roles, invitations and admin notifications, and asked what an app that uses Clerk without organizations
+gets. ADR-0003's addendum of this date records the design; these are the calls made building it, each with the
+rejected alternative.
+
+- **Two settings, `AUTH_TENANCY` and `AUTH_ORG_SOURCE`.** Single tenancy fixes the tenant and nothing else. Rejected:
+  a third tenancy value (`single-fixed`), which keeps the two questions in one switch, when a single tenancy over the
+  provider's organizations is a mode of its own.
+- **A fixed org source needs a single tenancy**, refused at synth and at boot otherwise, after both round-one reviewers
+  found the gap. A fixed org source reads no org or role from the provider, so with a multi tenancy the tenant claim
+  in the provider's metadata is all that places a person, and another product's operator on a shared instance writes
+  that metadata. `getMember` could not check a credential against its org's tenant either: it is given an org slug,
+  not a tenant. Rejected: allowing every pairing, as first built; and passing the org's tenant to `getMember`, a port
+  change for a pairing no adopter has asked for. With ADR-0003's one provider instance per tenant, a deployment
+  without organizations serves one tenant, which a single tenancy says.
+- **The org source's values are `provider` and `fixed`.** Rejected: `single`, which reads as a tenancy, and `none`,
+  which is wrong: the person is placed in an org.
+- **A fixed org source's role is `none` by default, or `restricted`; nothing that writes.** On an instance shared with
+  another product, everyone that product signs in gets the role, and `guest` can submit jobs and the app's
+  `!restricted` writes. Rejected: `guest` as the default, and any role configurable. An app that wants more grants it
+  through its own rules, for the people it knows.
+- **A fixed org source reads no role from the provider.** Rejected: a role in the user's public metadata, which another
+  product on a shared instance may write for its own reasons, and which would make that product's operator an admin of
+  this app.
+- **A home org that is the staff org, with `restricted`, is refused at boot**, and allowed with `none`. The staff org's
+  members wield manage-all, and `restricted` has standing. Checked where the port is built
+  (`fixedOrgProblem`), with the seam's `staffOrgSlug`. `SssbApp` cannot know the staff org at synth, so this one check
+  is boot-only. Rejected: making manage-all require a managing role, which changes what every staff-org member has.
+- **A fixed org source's members list is empty, and its invitations refused**, as the first single mode had them: the
+  only list would be every account on the instance, another product's included, and a digest or an admin notification
+  would mail them. Rejected: Clerk's user list as the members, and Clerk's instance invitations, which would create
+  accounts on a shared instance.
+- **A job's end reaches the person who started it when the team has no active admin.** The `jobs` table records them
+  (`requested_by`, migration 0017), set by `submitJob`'s optional `requestedBy`, and the auth port's `getMember` says how
+  to reach a person (`name`, `email`, optional). The rule does not ask which org source is on: an org on the provider's
+  organizations whose admins have all left now tells the requester too, where before it told no one. Rejected: a
+  configured list of admin user ids for a fixed org source, a second way to raise people that a deployment must
+  defend; reading the submitter from the audit trail, which the app writes, not the framework; storing their email on
+  the job, a copy of personal data; and a new port method, which a test double would lack.
+- **Under a fixed org source no one passes SSSB's `Job` rule**: creating a job needs a member who is not restricted,
+  and the source offers `none` and `restricted`. So the requester there is someone the app's own rules let start a
+  job, on a subject of its own, and the guide and `/sssb:new-job` say so. Found by the claims pass, which caught the
+  cutover row asking an operator to submit a job through a route that would refuse them. Rejected: letting `restricted`
+  create jobs in this mode, which would hand job submission to every user of a shared instance.
+- **`name` and `email` on `MemberStanding` are optional.** SSSB's adapters always fill them, but a required field would
+  fail every app's typecheck that writes a stand-in `getMember` returning the old shape. A standing without an email is
+  told in-app only.
+- **A scheduled job, and the digest email, have no one to tell under a fixed org source.** Documented, with
+  `jobNotify` `never` for a routine kind. Rejected: a fallback operator address, which is a setting of its own for a
+  case no adopter has asked about.
+- **A provider membership whose role is the string `none` stays `none`**, no standing, where before the role existed it
+  fell back to `guest`. SSSB never writes that string (an invitation cannot grant it), so it is an operator's own word,
+  and reading it as `guest` would grant more than they wrote. Rejected: mapping it back to `guest`. Pinned in
+  `packages/kit/src/adapters/real/auth-tenancy.test.ts`.
+- **One module applies both settings, `configured-auth.ts`, replacing `single-tenant-auth.ts`**, and on the defaults it
+  returns the adapter itself, so a deployment that sets nothing makes no extra call. Single tenancy over the provider's
+  organizations reads the signed-in account through the identity source (for the raw claim, which the adapter's user
+  folds into `''`) and then the adapter's user, and refuses a mismatch of the two ids. That is two reads of the
+  account, which on Clerk may be two user requests per call; the cutover row says to measure it. Rejected: two stacked
+  wrappers, one per setting, each reading the identity on its own.
+- **The tenant guard now also covers `createInvite`, `setActiveOrg` and `listMyOrgs` over the provider's
+  organizations**, which call the adapter only once the port has a user. The adapter checks only that someone is signed
+  in.
+- **`listMembers` under single tenancy is the provider's, unfiltered.** An org's membership is the provider's own grant,
+  and filtering it by each member's claim is a request per member. A member whose claim names another tenant is still
+  refused as a credential (`getMember`) and in session.
+- **The first single mode's settings are refused, not translated.** `AUTH_TENANCY=single` with `AUTH_HOME_ORG_SLUG` and no
+  org source fails at boot ("set AUTH_ORG_SOURCE=fixed"), as `params.auth` with `homeOrgSlug` fails at synth. It never
+  shipped in a release, so no deployment has it. Rejected: reading `homeOrgSlug` as an implied fixed org source, the
+  inference the explicit switch exists to prevent.
+- **Adopter names that the first single mode's records carried are taken out of the records it added**, which have not
+  reached `main`, as well as out of the changesets, the future task and the ADR addendum: the dependency runs from an
+  adopter to SSSB, never back.
+
 ## Baseline review of 0.4.0 (2026-11-20, `fix/post-0.4.0-baseline-review`)
 
 Five reviewers read the whole repository at 4dc9a89, the commit 0.4.0 was cut from (its release commit is dfc5cdd), one area each; five workers fixed
@@ -7043,3 +7234,19 @@ what was confirmed, and each reviewer then read its area's fix diff. JP was away
 - **`release-app verify` holds the `npm-publish` environment to tag `v*`**, and `planBypass` holds the main ruleset
   to main alone: the tool's own claims, which it did not check.
 - **Deferred, each needing a design decision**: `.claude/future-tasks/baseline-review-0-4-0-deferred.md`.
+
+### Adopter names out of SSSB's live files (2026-11-20)
+
+JP's rule: SSSB's code, docs and tasks do not talk about a specific adopter, because the dependency arrow runs from
+the adopter to SSSB. The sweep rewrote every live mention in general terms and left the dated records (this log, the
+build notes, ADR bodies, release notes, changelogs, resolved tasks, the adoption review) as they are.
+
+- **Pack and consume's `pages` shape is now `multi-app`** (`--shape multi-app|generated`, the step names, `checks.yml`,
+  `CLAUDE.md`). The job name `pack-and-consume` is unchanged, so no required check changes.
+- **Credits to a sibling project's code ("borrowed from", "modeled on") stay.** They record where code came from, not
+  who adopts SSSB. Rejected: rewriting them to "an upstream project", which loses the pointer to the source.
+- **The vouched org-ruleset bypass entry** names its bot generically in the report text; its App id, the part that
+  matches, is unchanged.
+- **No automated gate.** A check that fails on a named adopter must contain the name, which is the mention it forbids,
+  and the bare word "pages" is also Next's term, paging and web pages, so a precise pattern does not exist. The house
+  rule and review carry it.

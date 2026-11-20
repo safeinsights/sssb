@@ -27,6 +27,9 @@ export async function GET(request: Request): Promise<Response> {
         if (!tenantId) return Response.json({ error: 'unknown tenant' }, { status: 404 })
         const orgId = await orgIdForSlug(db, tenantId, user.orgSlug)
         if (!orgId) return Response.json({ error: 'unknown org' }, { status: 404 })
+        // A read is authorized as a write is: being placed in an org is not membership of it (a signed-in person with
+        // the role `none` has no standing there), so the session's org alone never decides what it may read.
+        authorize(user, orgId, 'read', { type: 'Item', orgId })
         const { items, nextCursor } = await listItems(db, tenantId, orgId, {
             after: cursor.position ?? null,
             limit: clampKeysetLimit(params.get('limit')),

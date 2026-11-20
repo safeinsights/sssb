@@ -81,3 +81,37 @@ describe('POST /api/assistant: a failed compose stream', () => {
         }
     })
 })
+
+// This route has no GET: its org-scoped read is authorized in POST, because the assistant's tools read the org's
+// tickets.
+describe('POST /api/assistant: the ticket read it authorizes', () => {
+    const question = JSON.stringify({ question: 'What is open?' })
+
+    test('a member is answered', async () => {
+        h.stream.mockImplementation(async function* () {
+            yield 'Two tickets are open.'
+        })
+
+        const response = await ask(question)
+
+        expect(response.status).toBe(200)
+        expect(await response.text()).toContain('Two tickets are open.')
+        expect(h.runToolLoop).toHaveBeenCalled()
+    })
+
+    // By design, the opposite of the other routes: the assistant refuses a restricted member outright, before any
+    // org lookup, even though Ticket read = sameOrg would allow them the queue itself.
+    test('403 for a restricted member: the assistant is closed to them by design', async () => {
+        h.requireUser.mockResolvedValue({ ...USER, role: 'restricted', restricted: true })
+
+        expect((await ask(question)).status).toBe(403)
+        expect(h.runToolLoop).not.toHaveBeenCalled()
+    })
+
+    test('403 for the role none even past the restricted check (no adapter makes one unrestricted): authorize refuses', async () => {
+        h.requireUser.mockResolvedValue({ ...USER, role: 'none', restricted: false })
+
+        expect((await ask(question)).status).toBe(403)
+        expect(h.runToolLoop).not.toHaveBeenCalled()
+    })
+})

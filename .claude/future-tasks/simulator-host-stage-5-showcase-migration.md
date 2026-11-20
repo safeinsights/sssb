@@ -26,7 +26,7 @@ Once stages 2 to 4 (`simulator-host-stage-2-world-state.md`, `simulator-host-sta
 - Re-measure jscpd: the Simulator glue was part of the showcase-and-starter clone pairs `route-glue-duplication.md`
   counts.
 
-## For pages
+## For an adopter that copied the glue
 
-Pages carries Simulator glue of its own, from the showcase (`docs/adoption-review-2026-11.md`, item 6: "optional: delete its own glue"). Once its tabs are all served, it can mount the catch-all and delete
+An adopter may carry Simulator glue of its own, copied from the showcase (`docs/adoption-review-2026-11.md`, item 6: "optional: delete its own glue"). Once its tabs are all served, it can mount the catch-all and delete
 its copy; each stage's changeset says which tabs that release added.

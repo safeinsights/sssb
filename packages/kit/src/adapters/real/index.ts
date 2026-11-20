@@ -1,3 +1,4 @@
+import { staffOrgSlug } from '@sssb/app-config/abilities'
 import type { AnalyticsPort } from '../../ports/analytics'
 import type { AuthPort } from '../../ports/auth'
 import type { DbPort } from '../../ports/db'
@@ -7,7 +8,9 @@ import type { JobsPort } from '../../ports/jobs'
 import type { LlmPort } from '../../ports/llm'
 import type { StoragePort } from '../../ports/storage'
 import { absentEmail, absentJobs, absentLlm, absentStorage } from './absent'
-import { realAuth } from './auth'
+import { authRequiredEnv, authSettings, fixedOrgProblem } from '../auth-tenancy'
+import { configuredAuth } from '../configured-auth'
+import { clerkIdentitySource, realAuth } from './auth'
 import { DATABASE_ENV, databaseTransport } from './database-transport'
 import { noAnalytics } from './no-analytics'
 import { optionalPortsEnv, portChoice } from './optional-ports'
@@ -49,6 +52,7 @@ export function assertRealEnv(): void {
         ...DATABASE_ENV[transport],
         ...(transport === 'data-api' ? DATA_API_REGION_ENV : {}),
         ...optionalPortsEnv(),
+        ...authRequiredEnv(),
     }
     const missing = Object.keys(required).filter((name) => !process.env[name])
     if (missing.length > 0) {
@@ -69,6 +73,15 @@ export function assertRealEnv(): void {
             throw new CutoverPendingError(['storage-compatible-store'], (error as Error).message)
         }
     }
+    // The auth settings: an unknown choice, a malformed slug, key or role, a setting its choice does not use, or a fixed
+    // org source that would hand everyone the staff org's manage-all.
+    let problem: string | null
+    try {
+        problem = fixedOrgProblem(authSettings().orgSource, staffOrgSlug)
+    } catch (error) {
+        problem = (error as Error).message
+    }
+    if (problem) throw new CutoverPendingError(['auth-tenancy'], problem)
 }
 
 /**
@@ -95,6 +108,9 @@ interface RealPortsHooks {
 export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealPorts> {
     assertRealEnv()
     const env = process.env
+    // Clerk, placed as the auth settings say (../auth-tenancy.ts), and Clerk itself on the defaults. Every port that
+    // reaches the people (the in-process runner's job context included) is handed this one.
+    const auth: AuthPort = configuredAuth(realAuth, authSettings(), clerkIdentitySource, staffOrgSlug)
     // assertRealEnv above already proved every required variable is set; this narrows the type.
     const need = (name: string): string => {
         const value = env[name]
@@ -144,7 +160,7 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
         runner === 'codebuild'
             ? (await import('./jobs')).createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION'))
             : runner === 'in-process'
-              ? await inProcessJobs(hooks, { db, storage, email, llm, auth: realAuth })
+              ? await inProcessJobs(hooks, { db, storage, email, llm, auth })
               : absentJobs
     // PostHog only where a key is configured (staging/prod per ADR-0010); a no-op otherwise (./no-analytics.ts), never
     // the simulated world's fake, which writes under `.data/`.
@@ -152,7 +168,7 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
         ? (await import('./analytics')).createRealAnalytics(env['POSTHOG_KEY'], env['POSTHOG_HOST'] ?? '')
         : noAnalytics
     return {
-        auth: realAuth,
+        auth,
         db,
         storage,
         llm,

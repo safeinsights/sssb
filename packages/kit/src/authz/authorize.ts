@@ -10,6 +10,7 @@ import {
     type SubjectType,
     defineAbilitiesFor,
 } from '../core/abilities'
+import { hasStanding } from '../core/roles'
 import type { OrgIdentity } from '../db/org-lookup'
 import type { AuthPort, AuthUser } from '../ports/auth'
 import { ForbiddenError } from '../ports/errors'
@@ -48,7 +49,9 @@ export function abilityActorFromUser(user: AuthUser, activeOrgId: string): Abili
         role: user.role,
         restricted: user.restricted,
         activeOrgId,
-        manageAll: user.orgSlug === staffOrgSlug,
+        // Not for a person without standing (role `none`): a fixed org source places every user of the identity
+        // provider in the home org, which may be the staff org. The ability layer refuses it again (defineAbilitiesFor).
+        manageAll: user.orgSlug === staffOrgSlug && hasStanding(user.role),
     }
 }
 

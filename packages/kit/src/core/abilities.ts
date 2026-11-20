@@ -7,7 +7,7 @@ import {
     type AppSubjectFields,
     type AppSubjectType,
 } from '@sssb/app-config/abilities'
-import { canManageOrg, isRole, type Role } from './roles'
+import { canManageOrg, hasStanding, isRole, type Role } from './roles'
 
 /**
  * The authorization model. PURE TypeScript — imports only ./roles and the app-config seam
@@ -274,6 +274,12 @@ export interface Ability {
 }
 
 /**
+ * An active-org id no org has: what the app's rules are shown for a person without standing (`hasStanding`). Org ids
+ * are database uuids, so no subject's org field can hold it.
+ */
+const NO_STANDING_ORG = '\u0000no-standing'
+
+/**
  * Compile the rule table for one actor. The framework rules (deny by default):
  * - manageAll → allow everything (held by a member acting AS the app's operator org; see above).
  * - Job:        read = sameOrg;  create              = !restricted && sameOrg.
@@ -324,16 +330,26 @@ export function defineAbilitiesFor(actor: Actor): Ability {
     // The staff superpower belongs to a SESSION acting as the operator org. Enforced here rather than
     // trusted to whoever built the actor: a person who came through any other credential (an email, a
     // token), or who states none, never wields it, even acting in the staff org. The app's rules are
-    // handed the same effective value.
+    // handed the same effective value. A person without standing (role `none`, ./roles.ts `hasStanding`) never wields
+    // it either: a fixed org source places every user of the identity provider in the home org, which may be the staff
+    // org.
     const session = copy.credential?.kind === 'session'
+    const standing = hasStanding(copy.role)
     // Read at call time, like the app's machine rules (see the machine branch above).
     const widening: NonSessionAdministration = nonSessionAdministration
     const person: AbilityActor =
-        copy.manageAll && session
+        copy.manageAll && session && standing
             ? { ...copy, manageAll: true, credential: { kind: 'session', id: copy.credential?.id ?? null } }
             : { ...copy, manageAll: false }
-    // sameOrg for the person reads the COPY's org, like every other person rule.
-    const personSameOrg: SameOrg = (subject) => subject.orgId != null && subject.orgId === person.activeOrgId
+    // sameOrg for the person reads the COPY's org, like every other person rule. A person without standing is in no
+    // org for any rule, the framework's or the app's (which are handed this same predicate): being placed in an org is
+    // not membership of it.
+    const personSameOrg: SameOrg = (subject) =>
+        standing && subject.orgId != null && subject.orgId === person.activeOrgId
+    // The app's rules see a person without standing as active in no org at all: its `activeOrgId` is a value no org id
+    // equals, so a rule that compares org ids itself rather than calling `sameOrg` (a two-sided subject's requester and
+    // responder sides, say) cannot grant it either.
+    const ruleActor: AbilityActor = standing ? person : { ...person, activeOrgId: NO_STANDING_ORG }
 
     function can(action: AbilityAction, subject: AbilitySubject): boolean {
         // The staff-org superpower. manageAll precedes
@@ -403,7 +419,7 @@ export function defineAbilitiesFor(actor: Actor): Ability {
             default:
                 // App subjects register through the seam (src/app-config/abilities.ts). Deny by default:
                 // appAbilityRules returns false for anything it does not explicitly allow.
-                return appAbilityRules(person, action, subject, { sameOrg: personSameOrg })
+                return appAbilityRules(ruleActor, action, subject, { sameOrg: personSameOrg })
         }
     }
 

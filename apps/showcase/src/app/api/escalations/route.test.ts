@@ -144,4 +144,22 @@ describe('GET /api/escalations (list + targets)', () => {
             targets: [{ slug: 'platform', name: 'Platform Team' }],
         })
     })
+
+    test('a restricted member may still READ (Escalation read = requester or responder side, not gated on restricted)', async () => {
+        h.requireUser.mockResolvedValue(user({ role: 'restricted', restricted: true }))
+        h.listEscalations.mockResolvedValue({ sent: [], received: [] })
+        h.listOrgsInTenant.mockResolvedValue([])
+
+        const response = await GET()
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ sent: [], received: [], targets: [] })
+    })
+
+    test('403 for a person with the role none: no standing in the org, so neither side of any escalation', async () => {
+        h.requireUser.mockResolvedValue(user({ role: 'none', restricted: true }))
+
+        expect((await GET()).status).toBe(403)
+        expect(h.listEscalations).not.toHaveBeenCalled()
+    })
 })

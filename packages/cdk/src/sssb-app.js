@@ -12,6 +12,7 @@ import { failClosedEnvironmentProblems, migratorBundleProblems } from '@sssb/too
 import { kitDirOf, kitVersionOf, resolveAppsKit } from '@sssb/tools/kit'
 import { databaseNameFor, SLUG } from './database-name.js'
 import { FORWARDED_HOST_SOURCE } from './forwarded-host.js'
+import { authEnvironment } from './auth-tenancy.js'
 import { portsEnvironment } from './optional-ports.js'
 import { addScheduledTick } from './scheduled-tick.js'
 
@@ -369,6 +370,8 @@ export class SssbApp extends Construct {
         }
         // The optional ports' switches (LLM_PROVIDER, …), from `params.ports`: validated here, before anything is built.
         const portsEnv = portsEnvironment(props.params?.ports)
+        // The auth settings (AUTH_TENANCY, AUTH_ORG_SOURCE, …), from `params.auth`: validated here too.
+        const authEnv = authEnvironment(props.params?.auth)
         // Storage left out is the framework's default, `s3`: the bucket below exists for `s3` alone. `s3-compatible`
         // keeps its objects in a store this stack does not own (R2, MinIO, B2), and `none` stores nothing.
         const storesObjects = (portsEnv['STORAGE_PROVIDER'] ?? 's3') === 's3'
@@ -530,8 +533,8 @@ export class SssbApp extends Construct {
                 // (next/dist/build/utils.js). Pinned to that default: the Web Adapter calls the server on 127.0.0.1,
                 // so an inherited HOSTNAME naming another address would leave it nothing to call, and with 127.0.0.1
                 // itself Next names itself `localhost` to the proxy but `127.0.0.1` when it routes, so a rewrite the
-                // proxy makes (Clerk's, on every request) looks external and Next fetches it over the network (pages,
-                // 2026-11-18). No wider than that: on pg the server's security group admits nothing, and on data-api
+                // proxy makes (Clerk's, on every request) looks external and Next fetches it over the network (an adopter's
+                // finding, 2026-11-18). No wider than that: on pg the server's security group admits nothing, and on data-api
                 // it is in no VPC. A run.sh that exports HOSTNAME overrides this; the deploy pipeline's must not.
                 HOSTNAME: '0.0.0.0',
                 APP_MODE: 'real',
@@ -539,6 +542,7 @@ export class SssbApp extends Construct {
                 ...databaseEnv,
                 ...(storageBucket && { STORAGE_BUCKET: storageBucket.bucketName }),
                 ...portsEnv,
+                ...authEnv,
             },
         })
         grantDatabase(server)

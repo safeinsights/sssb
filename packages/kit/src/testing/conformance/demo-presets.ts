@@ -53,7 +53,7 @@ function mockServerOnlyWorld(): void {
     vi.doMock('../../adapters/index', async () => ({
         [MOCK_MARK]: true,
         isSimulated: true,
-        auth: (await import('../../adapters/fake/auth')).fakeAuth,
+        auth: (await import('../../adapters/fake/simulated-auth')).simulatedAuth(),
         db: (await import('../../adapters/fake/db')).fakeDb,
         email: (await import('../../adapters/fake/email')).fakeEmail,
         analytics: (await import('../../adapters/fake/analytics')).fakeAnalytics,
@@ -262,7 +262,7 @@ async function replayEveryPreset(own: ScratchWorld): Promise<void> {
     const { presets } = await registries()
     const { expandPreset } = await import('../../core/presets')
     const { applyDemoPreset } = await import('../../server-lib/demo-presets')
-    const { fakeAuth } = await import('../../adapters/fake/auth')
+    const auth = (await import('../../adapters/fake/simulated-auth')).simulatedAuth()
     const { readActorHolds } = await import('../../adapters/fake/simulator')
     for (const preset of presets) {
         // What replays is the EXPANDED preset (`extends` chain flattened): a child's inherited invites
@@ -282,14 +282,14 @@ async function replayEveryPreset(own: ScratchWorld): Promise<void> {
         expect(readActorHolds(), `${preset.id}: actor holds`).toEqual(expectedHolds)
         for (const operation of expanded.operations) {
             if (operation.op !== 'invite') continue
-            const members = await fakeAuth.listMembers(operation.org)
+            const members = await auth.listMembers(operation.org)
             expect(
                 members.some((member) => member.status === 'invited' && member.email === operation.email),
                 `${preset.id}: invite to ${operation.email}`,
             ).toBe(true)
         }
         if (expanded.viewpoint !== undefined) {
-            expect((await fakeAuth.getCurrentUser())?.id, preset.id).toBe(expanded.viewpoint)
+            expect((await auth.getCurrentUser())?.id, preset.id).toBe(expanded.viewpoint)
         }
     }
 }

@@ -20,8 +20,12 @@ are the framework's). You register the app side, and never edit a framework unio
    defensively (they arrive as `unknown`).
 2. **Register** in `src/app-config/jobs.ts`: add the kind to `appJobKinds` and the handler to `appJobHandlers`. The
    framework composes `framework ∪ app` for `isJobKind` and the handler map.
+   Every kind notifies its team's admins when it ends, completed or failed. A routine or frequent kind says otherwise in
+   the optional `jobNotify` export of the same file (`'failure'` or `'never'`; the guide's jobs rule has the shape).
 3. **Submit path**: a route creates the job with `submitJob` (`@sssb/kit/db/jobs`) over the jobs port, after
-   `authorize(user, orgId, 'create', { type: 'Job', orgId })`. A generated app has no jobs route: create
+   `authorize(user, orgId, 'create', { type: 'Job', orgId })`, passing `requestedBy: user.id`: when the team has no
+   admin to tell, the job's end reaches the person who started it. Under a fixed org source (`params.auth.orgSource`)
+   no one passes the `Job` rule, so authorize the submission on a subject of the app's own instead. A generated app has no jobs route: create
    `src/app/api/jobs/route.ts`, resolving the tenant and team the way `src/app/api/items/route.ts` does. The reference
    app's (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/api/jobs/route.ts`, with its
    dashboard glue for the submit and timeline pattern) is the fuller example; its `resolveOrgContext` is a helper of

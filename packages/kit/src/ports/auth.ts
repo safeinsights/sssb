@@ -19,11 +19,20 @@ export interface AuthUser {
 /**
  * A person's CURRENT standing in one org: what their session would carry if they were the caller. Read
  * for someone who reached the app WITHOUT a session (an inbound email, a personal API token), so their
- * role and `restricted` flag come from the same place a session's do, never from the credential.
+ * role and `restricted` flag come from the same place a session's do, never from the credential. It also
+ * says how to reach them (`name`, `email`), for a notification addressed to one known person, such as the
+ * end of a job they started, where no members list names them.
  */
 export interface MemberStanding {
     role: Role
     restricted: boolean
+    /**
+     * How to reach them. SSSB's adapters always say; optional so that a stand-in written before these existed (a
+     * test double) still type-checks, and a recipient without an address is told in-app only.
+     */
+    name?: string | null
+    /** The account's primary address, or `''` when it has none. */
+    email?: string
 }
 
 /** An org the current user belongs to; `role` is their role in THAT org (drives the OrgSwitcher). */

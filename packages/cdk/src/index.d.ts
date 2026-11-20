@@ -29,6 +29,27 @@ export interface OptionalPorts {
     readonly storage?: 's3' | 's3-compatible' | 'none'
 }
 
+/**
+ * How the auth adapter places a signed-in person: the app's `params.auth`, two choices. The construct sets
+ * `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and the settings each choice reads; left out, the framework takes multi tenancy
+ * with the `tenantSlug` metadata key, and the identity provider's organizations.
+ * - `tenancy: 'single'` fixes the tenant at `tenantSlug` and changes nothing else.
+ * - `orgSource: 'fixed'`, which needs `tenancy: 'single'`, is for an app that uses the identity provider without its
+ *   organizations: every user it signs in is placed in `homeOrgSlug` with `defaultRole` (`'none'` when left out, which grants nothing a membership would;
+ *   or `'restricted'`). On a provider instance shared with another product, its users all sign in.
+ */
+export type AuthTenancyParams = (
+    | { readonly tenancy?: 'multi'; readonly orgSource?: 'provider' }
+    | { readonly tenancy: 'single'; readonly tenantSlug: string; readonly orgSource?: 'provider' }
+    | {
+          readonly tenancy: 'single'
+          readonly tenantSlug: string
+          readonly orgSource: 'fixed'
+          readonly homeOrgSlug: string
+          readonly defaultRole?: 'none' | 'restricted'
+      }
+) & { readonly tenantMetadataKey?: string }
+
 /** The scheduled tick: what runs the app's scheduled work (its cron route) in the deployment. */
 export interface ScheduledTickProps {
     /**
@@ -53,7 +74,11 @@ export interface SssbAppProps {
      */
     readonly slug: string
     /** The app's deployment params (`config/params.ts`); the construct reads `database.transport` and `ports`. */
-    readonly params: { readonly database: { readonly transport: DatabaseTransport }; readonly ports?: OptionalPorts }
+    readonly params: {
+        readonly database: { readonly transport: DatabaseTransport }
+        readonly ports?: OptionalPorts
+        readonly auth?: AuthTenancyParams
+    }
     /** The deployment's name, as the app's own policy spells it (`Staging`, `Production`). */
     readonly environment: string
     /** A production deployment: the database keeps a warm writer and the data stores are retained. */

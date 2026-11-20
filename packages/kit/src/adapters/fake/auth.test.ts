@@ -142,8 +142,18 @@ describe('acceptInvite — Simulator dynamic people (Bob lifecycle)', () => {
 describe("getMember — a person's standing, for a caller who is not them", () => {
     test("reports an active member's role in THAT org and their own restricted flag", async () => {
         const { fakeAuth } = await import('./auth')
-        expect(await fakeAuth.getMember('depot', 'fixture-lead')).toEqual({ role: 'admin', restricted: false })
-        expect(await fakeAuth.getMember('wharf', 'fixture-limited')).toEqual({ role: 'restricted', restricted: true })
+        expect(await fakeAuth.getMember('depot', 'fixture-lead')).toMatchObject({ role: 'admin', restricted: false })
+        expect(await fakeAuth.getMember('wharf', 'fixture-limited')).toMatchObject({
+            role: 'restricted',
+            restricted: true,
+        })
+    })
+
+    test('says how to reach them: their name and address', async () => {
+        const { fakeAuth } = await import('./auth')
+        const standing = await fakeAuth.getMember('depot', 'fixture-lead')
+        expect(standing?.email).toMatch(/@/)
+        expect(standing?.name).toEqual(expect.any(String))
     })
 
     test('is null for someone who is not an active member of that org, or does not exist', async () => {

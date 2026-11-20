@@ -1,5 +1,5 @@
 {
-    "$comment": "The environment variables a real deployment must set (assertRealEnv), per DATABASE_TRANSPORT with every optional port at its default, and under 'ports' what each choice of an optional port's switch requires, from packages/kit/src/adapters/real/index.test.ts. A new one breaks every deployment that lacks it: change this file only with a 'minor' changeset (ADR-0014 part 10; .github/scripts/require-changeset.sh).",
+    "$comment": "The environment variables a real deployment must set (assertRealEnv), per DATABASE_TRANSPORT with every optional port at its default, under 'ports' what each choice of an optional port's switch requires, and under 'auth' what each choice of AUTH_TENANCY and AUTH_ORG_SOURCE requires, from packages/kit/src/adapters/real/index.test.ts. A new one breaks every deployment that lacks it: change this file only with a 'minor' changeset (ADR-0014 part 10; .github/scripts/require-changeset.sh).",
     "pg": [
         "ANTHROPIC_API_KEY",
         "AWS_REGION",
@@ -59,6 +59,16 @@
                 "STORAGE_UPLOAD_TARGET"
             ],
             "none": []
+        }
+    },
+    "auth": {
+        "AUTH_TENANCY": {
+            "multi": [],
+            "single": ["AUTH_TENANT_SLUG"]
+        },
+        "AUTH_ORG_SOURCE": {
+            "provider": [],
+            "fixed": ["AUTH_HOME_ORG_SLUG"]
         }
     }
 }

@@ -22,6 +22,9 @@ export async function GET(): Promise<Response> {
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId: activeOrgId } = resolved
+        // A read is authorized as a write is: being placed in an org is not membership of it (a signed-in person
+        // with the role `none` has no standing there), so the session's org alone never decides what it may read.
+        authorize(user, activeOrgId, 'read', { type: 'Escalation', requesterOrgId: activeOrgId })
 
         const { sent, received } = await listEscalations(db, tenantId, activeOrgId)
         const targets = (await listOrgsInTenant(db, tenantId))

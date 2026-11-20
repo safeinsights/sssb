@@ -143,6 +143,13 @@ describe('GET /api/tickets (queue)', () => {
 
         expect((await GET(queueRequest())).status).toBe(200)
     })
+
+    test('403 for a person with the role none: no standing in the org, so no org-scoped read', async () => {
+        h.requireUser.mockResolvedValue(user({ role: 'none', restricted: true }))
+
+        expect((await GET(queueRequest())).status).toBe(403)
+        expect(h.listTickets).not.toHaveBeenCalled()
+    })
 })
 
 describe('POST /api/tickets: a malformed body is a 400, never a 500', () => {

@@ -178,7 +178,7 @@ edit. A `CODEOWNERS` naming an account GitHub cannot resolve makes every PR unme
 Code Owners" is on.
 
 **`--repo` names the repository, which is not the app's slug.** An app called `console` can live in a repo called
-`pages`, and a link that says `…/console/security/advisories/new` 404s while looking right.
+`portal`, and a link that says `…/console/security/advisories/new` 404s while looking right.
 
 Filling in the owner and repository is necessary and not sufficient: **every one of those links depends on a
 repository setting that is off by default.** `/security/advisories/new` resolves for a non-maintainer only once
@@ -472,7 +472,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 143 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 78 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 82 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -828,6 +828,80 @@ with `GRANT … WITH SET TRUE`, checked by `pg_has_role(…, 'SET')`. Both arriv
 older server that migration cannot run. Everything SSSB targets already meets it: the Aurora cluster in
 `packages/cdk/src/sssb-app.js` (16.10), CI's contract job (`postgres:16` in `.github/workflows/app-checks.yml`), pglite
 (18.6) and the embedded Postgres that a local `pnpm test:contract` starts (18.4).
+
+### How sign-in places people: `params.auth`
+
+`params.auth` in `apps/<app>/config/params.ts` makes two choices about a signed-in person: which tenant
+they are in, and which orgs and roles they have. `SssbApp` sets `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and their settings
+from it, and validates them at synth; the framework validates them again at boot. A deployment that does not use
+`SssbApp` sets them itself. Left out, both are the defaults, as every deployment was before the settings existed. Real
+mode seeds nothing: create the tenant and org rows the slugs below name (cutover row `auth-tenancy`).
+
+**Where the tenant comes from: `tenancy`.**
+
+- **`'multi'`** (the default): each user's tenant is the claim in their identity provider's public metadata, under
+  `tenantMetadataKey` (`tenantSlug` when left out), with one provider instance per tenant (ADR-0003).
+- **`'single'`, with `tenantSlug`**: for an app with one tenant per deployment. The tenant is the deployment's, and no
+  tenant metadata is needed. **Nothing else changes**: orgs, roles, the members list, invitations and notifications are
+  whatever `orgSource` says. A user whose metadata names a different tenant under the key, or holds there something
+  that is not a slug, is refused, in session and as a token or email sender, so this mode switched on for a
+  multi-tenant instance by mistake does not merge its tenants (the guard reads the key, so keep `tenantMetadataKey` if
+  you used one). A refused user stays signed in to the provider and is simply no user here.
+
+**Where orgs and roles come from: `orgSource`.**
+
+- **`'provider'`** (the default): the identity provider's organizations, and the role on each membership (ADR-0003). A
+  signed-in user with no membership gets the role `guest` and no org (`orgSlug` is `''`), so every org-scoped route
+  answers 404 (`unknown org`) and the org switcher is empty. That is what an app that uses Clerk without its
+  organizations gets on this choice: a signed-in shell with nothing org-scoped, and no admins for SSSB's
+  admin-addressed features to reach. A membership whose role is the string `'none'` is read as `none`, no standing:
+  SSSB never writes it (an invitation cannot grant it), so it is an operator's own word.
+- **`'fixed'`, with `homeOrgSlug` and an optional `defaultRole`**: for an app that uses the provider without its
+  organizations. It needs `tenancy: 'single'`: it reads nothing from the provider about orgs or roles, so with a multi
+  tenancy the tenant claim in the provider's metadata would be all that places a person. Every user the provider signs
+  in is placed in that org with that role, and no role is read from the provider, so nothing written in its metadata
+  raises anyone. `defaultRole` is `'none'` when left out, or `'restricted'`; no role that writes is offered.
+    - `'none'` grants nothing a membership would in SSSB's ability rules: no org-scoped read or write, and never the staff
+      org's manage-all. Your own rules see it as active in no org (`sameOrg` is false, and its active org matches none).
+    - `'restricted'` reads what a restricted member reads (in SSSB's rules, the org's record, its jobs, its webhook
+      endpoints and its members list, which is empty here) and writes nothing org-scoped through SSSB's rules. It has standing, so a home org that is your staff org (`staffOrgSlug`) with `'restricted'`
+      is refused at boot: everyone would wield manage-all.
+
+    What a signed-in person may do beyond that is your rules' to grant, for the people your app knows. In this mode:
+    - the members list is empty, since listing the provider's users would enumerate everyone on the instance;
+    - invitations are refused, since anyone the provider signs in is already placed in the org;
+    - the home org is the only org;
+    - a token or email sender is judged as a session: the configured role, while the provider still has the account
+      (a banned one has none).
+
+    So the org has no admins, and SSSB's notifications addressed to them (`notifyAdmins`) reach no one. Neither role may
+    submit a `Job` through SSSB's rules (creating one needs a member who is not restricted), so a job a person starts is
+    one your own rules let them start: authorize it on a subject of your app's, and pass `submitJob` their id as
+    `requestedBy`. Its end then goes to them, while they still have standing. A job no person submitted, a scheduled
+    run, has no one to tell, so set its kind's `jobNotify` to `'never'` (`apps/<app>/src/app-config/jobs.ts`) to skip the
+    lookup. The scheduled digest email goes to an org admin, or else the first member, so in a deployment it has no
+    recipient. Address your own notifications to the people your app knows (`notifyMember` with a membership you
+    build).
+
+**Your routes must authorize reads.** A session's org says where a person is placed, not that they may read there: with
+a fixed org source, every user the provider signs in is placed in your home org. A route that lists the org's data by
+the session's org alone (`orgIdForSlug(db, tenantId, user.orgSlug)` and a query) shows it to all of them. Authorize every
+org-scoped read, as the starter's `apps/starter/src/app/api/items/route.ts` GET does (`authorize(user, orgId, 'read', …)`),
+and check yours before you switch to a fixed org source.
+
+**An identity-provider instance shared with another product admits all its users.** Everyone who can sign in to the
+instance is a signed-in person of your app. With a fixed org source, each of them is placed in your home org with the
+configured role, and sees whatever your app shows any signed-in person there; with the provider's organizations, they
+are in no org until one of yours has them as a member. Decide that before you share an instance. Two writes reach the
+shared account too: the profile screen renames the person (Clerk's first and last name) and stores their locale under
+`publicMetadata.locale`, and signing out ends their Clerk session, in the other product as well. And a person with the
+role `none` can still write what is theirs: accepting the terms records an audit event in the home org, and
+notification preferences are stored there.
+
+The same settings run in `pnpm dev` when your dev environment sets `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and their slugs:
+the simulated world then places its seeded people the same way. With a single tenancy, seed them in that tenant; with a
+fixed org source, seed each with a membership (the simulated sign-in needs one; the org source then places them in
+the home org whatever it names).
 
 ### What `SssbApp`'s distribution decides for you
 

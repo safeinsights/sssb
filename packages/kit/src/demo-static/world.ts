@@ -226,7 +226,13 @@ function seededMail(initial: DemoWorldOptions['initialMail']): MailItem[] {
 }
 
 export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
-    const { inboundHandlers = {}, digestBodies, onReset, presetOperations: appPresetOperationHalves = {} } = options
+    const {
+        inboundHandlers = {},
+        digestBodies,
+        onReset,
+        presetOperations: appPresetOperationHalves = {},
+        jobNotify = {},
+    } = options
     const route = useHashRoute()
     const tEmail = useTranslations('email')
     const tSimulator = useTranslations('simulator')
@@ -503,7 +509,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
 
     /**
      * Twin of notifyJobTerminal: a user-facing job reaching a terminal state notifies its OWN team's
-     * admins (jobs carry no creator column, so the team's admins are the recipients).
+     * admins, and when the team has none, the person who started it while they are still a member.
      *
      * The server gates this on NOTIFIED_JOB_KINDS — `appJobKinds`, i.e. "kinds the app registered are
      * work someone submitted and is waiting on; the framework's scheduled kinds are internal machinery
@@ -513,9 +519,20 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
      * sites below ARE the app-submitted kinds. Importing the seam's registry to re-derive that would
      * have dragged every server handler's db/email dependencies into a bundle that has neither.
      */
-    function notifyJobTerminal(job: { id: string; kind: string; orgSlug: string | null }) {
+    function notifyJobTerminal(job: { id: string; kind: string; orgSlug: string | null; requestedBy?: string | null }) {
         if (job.orgSlug === null) return
-        notifyAdminsOf(job.orgSlug, 'job.completed', { jobId: job.id, jobKind: job.kind, status: 'completed' })
+        // The twin of the server's `jobNotify` check (server-lib/notify.ts): this world only ever completes a job (the
+        // server's runners also fail them), so a kind that notifies only a failure, or never, is silent here. The
+        // server's `notifiesOn` is a value import of core/jobs, which reaches the seam's handlers, so it is not used.
+        const mode = jobNotify[job.kind]
+        if (mode === 'failure' || mode === 'never') return
+        const orgSlug = job.orgSlug
+        const payload = { jobId: job.id, jobKind: job.kind, status: 'completed' } as const
+        const hasAdmin = allPeople.some(
+            (p) => p.memberships.some((m) => m.orgSlug === orgSlug) && canManageOrg(roleInOrg(p, orgSlug)),
+        )
+        if (hasAdmin) notifyAdminsOf(orgSlug, 'job.completed', payload)
+        else if (job.requestedBy) notifyMemberOf(orgSlug, job.requestedBy, 'job.completed', payload)
     }
 
     // ── Outbound webhooks ─────────────────────────────────────────────────────────────────────────
@@ -657,6 +674,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
             orgSlug: activeOrgSlug,
             createdAt: iso(0),
             error: null,
+            requestedBy: person?.id ?? null,
         }
         const job: DemoJob = held
             ? { ...base, status: 'queued', timeline: [{ status: 'queued', at: iso(0) }] }

@@ -55,6 +55,20 @@ export const params = {
         // cutover: cloud-accounts — attachments, uploads, the ticket export's artifacts
         storage: 's3' as 's3' | 's3-compatible' | 'none',
     },
+    auth: {
+        // How sign-in places people; SssbApp sets AUTH_TENANCY and AUTH_ORG_SOURCE from it. cutover: auth-tenancy
+        // Two choices. `tenancy`, where the tenant comes from: 'multi', each user's claim in their identity
+        // provider's public metadata (under `tenantMetadataKey`, `tenantSlug` when left out); or 'single' (add
+        // `tenantSlug`), fixed by the deployment, which changes nothing else. `orgSource`, where orgs and roles come
+        // from: 'provider', the identity provider's organizations and each membership's role; or 'fixed' (needs
+        // 'single'; add `homeOrgSlug`, and `defaultRole` 'none' or 'restricted', 'none' when left out), for a provider
+        // used without organizations: everyone it signs in is placed in that org with that role, and your own rules
+        // grant the rest.
+        // On a provider instance shared with another product, every user of that product can sign in to this one, and
+        // 'fixed' places each of them in your home org.
+        tenancy: 'multi' as const,
+        orgSource: 'provider' as const,
+    },
     clerk: {
         // cutover: auth-dev (development instance), auth-prod (production instance)
         publishableKeyName: 'PLACEHOLDER_CLERK_PUBLISHABLE_KEY_NAME',
