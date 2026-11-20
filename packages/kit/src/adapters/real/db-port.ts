@@ -1,7 +1,7 @@
 import type { Kysely, Transaction } from 'kysely'
 import { migrateToLatest } from '../../db/migrate'
 import type { DB } from '../../db/schema'
-import { runWithTenant } from '../../db/with-tenant'
+import { family } from '../../db/family'
 import type { DbPort } from '../../ports/db'
 
 /**
@@ -10,6 +10,7 @@ import type { DbPort } from '../../ports/db'
  */
 export function dbPortFor(db: Kysely<DB>): DbPort {
     return {
+        isolation: family.isolation,
         getDb() {
             return db
         },
@@ -17,7 +18,7 @@ export function dbPortFor(db: Kysely<DB>): DbPort {
             // Real databases are provisioned/migrated by the deploy pipeline, not lazily.
         },
         async withTenant<T>(tenantId: string, fn: (trx: Transaction<DB>) => Promise<T>): Promise<T> {
-            return runWithTenant(db, tenantId, fn)
+            return family.runWithTenant(db, tenantId, fn)
         },
         async migrateToLatest() {
             await migrateToLatest(db)

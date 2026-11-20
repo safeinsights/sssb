@@ -15,7 +15,7 @@ import type { DbPort } from '../ports/db'
 // TYPE-ONLY import (erased): keeps packages/kit/src/db free of a runtime @/adapters dependency — see WebhookDispatch.
 import type { WebhookDispatch } from '../server-lib/webhook-dispatch'
 import { recordAuditEvent } from './audit'
-import { jsonb } from './jsonb'
+import { family } from './family'
 
 /** timestamptz comes back from both engines as a Date; local (avoids a jobs.ts import cycle since
  *  jobs.ts imports enqueueWebhookEvent from here). */
@@ -57,7 +57,7 @@ export async function enqueueWebhookEvent(
                     tenant_id: input.tenantId,
                     endpoint_id: endpoint.id,
                     event_kind: input.kind,
-                    payload: jsonb(input.payload),
+                    payload: family.json(input.payload),
                     next_attempt_at: now,
                 })),
             )
@@ -164,7 +164,7 @@ async function deliverOne(
                     'e.enabled as enabled',
                 ])
                 .where('d.id', '=', delivery.id)
-                .forUpdate()
+                .$call(family.lockRow)
                 .executeTakeFirst()
             // Re-check under the lock: a concurrent tick may have delivered it, killed it, or advanced its
             // next_attempt_at past `now`.
@@ -338,7 +338,7 @@ export async function createEndpoint(
                 org_id: input.orgId,
                 url: input.url,
                 secret: input.secret,
-                event_kinds: jsonb(input.eventKinds),
+                event_kinds: family.json(input.eventKinds),
                 created_by: input.createdBy,
             })
             .returning('id')
