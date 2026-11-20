@@ -172,6 +172,24 @@ rds execute-statement --database "$DB" --include-result-metadata \
 - Check that `numberOfRecordsUpdated` for an `UPDATE … RETURNING` is the number of rows, as the emulator answers:
   `UPDATE tenants SET name = name WHERE slug = (SELECT slug FROM tenants LIMIT 1) RETURNING slug` should say 1.
 
+Then the result types the Data API refuses. AWS names none ("The Data API doesn't support all data types",
+its troubleshooting page, whose fix is a cast to `TEXT`), so the emulator refuses what has been seen refused, in
+`REFUSED_RESULT_TYPES`:
+
+```bash
+rds execute-statement --database "$DB" --sql "SELECT relkind FROM pg_class WHERE false"
+rds execute-statement --database "$DB" --sql "SELECT 'abc'::char(3) AS code"
+rds execute-statement --database "$DB" --sql "SELECT relkind::text AS kind, 'x'::name AS n, pg_sleep(0) AS v FROM pg_class LIMIT 1"
+```
+
+- The first must fail with `UnsupportedResultException` and "The result contains the unsupported data type "CHAR"",
+  with no rows to return: the refusal reads the columns. This is what stopped the migrator, whose first statement is
+  Kysely's introspection (`RdsDataIntrospector` in `packages/kit/src/adapters/real/rds-data-dialect.ts` casts it).
+- Record what the second does. The emulator refuses `char(n)` on inference (the same JDBC type, `CHAR`); if AWS
+  answers it, take `bpchar` out of `REFUSED_RESULT_TYPES` and the parity test's casts.
+- The third must succeed: the cast, a `name` (Kysely's introspection and the role reads return them) and a `void`
+  (the migrator's transaction lock returns one).
+
 Then a response over the 1 MiB cap, in rows that each stay under the 64 KB per row that AWS's
 troubleshooting page also lists, so that a failure is the cap's:
 

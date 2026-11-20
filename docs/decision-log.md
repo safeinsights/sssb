@@ -7326,3 +7326,30 @@ transport, because the handler imports the `pg` transport statically.
   well. CDK's own provider functions are not loaded: they need SDK clients the kit may not install, which the test's
   stand-in for the runtime's SDK lacks.
 - **A live first migrate is the only full proof**, a step in the `deploy-pipeline` cutover row.
+
+## The Data API refuses a `"char"` result, and the emulator does too (2026-11-20, `fix/data-api-char-columns`)
+
+On the Data API the Migrator failed on its first statement with `UnsupportedResultException: The result contains the
+unsupported data type "CHAR"`. Kysely's Migrator first asks its introspector whether its own tables exist, and Kysely's
+Postgres introspector selects `pg_class.relkind`, a one-byte `"char"`. The emulator returned it, so the contract run
+passed.
+
+- **The dialect supplies its own introspector** (`RdsDataIntrospector`, `packages/kit/src/adapters/real/rds-data-dialect.ts`):
+  Kysely 0.29's `getTables` query with `relkind::text`, and its `getSchemas` unchanged. The contract suite holds it to
+  Kysely's introspector on the same database. Rejected: a Kysely plugin rewriting `relkind` in Kysely's own query,
+  which ties the fix to that query's node shape. Rejected: a migration provider or a Migrator that skips
+  introspection, which Kysely's Migrator does not offer (it always checks for its tables). Rejected: casting in the
+  driver, which cannot know a column's type before the Data API has refused it.
+- **The emulator refuses a result whose columns include `"char"` or `char(n)`**, whole, with or without rows, with the
+  Data API's exception and message (`REFUSED_RESULT_TYPES`). AWS documents no list ("The Data API doesn't support all
+  data types", its troubleshooting page), so the map is evidence: `"char"` was refused live, for a result of no rows;
+  `char(n)` is the same JDBC type (`CHAR`) in PgJDBC, on which the Data API is built, and is refused by inference. A
+  type found refused live joins it. Rejected: refusing only `"char"`, which would let a `char(n)` column pass the
+  contract run and fail live on the same evidence. Rejected: guessing further types (`name`, `void`), which the
+  contract run reads through the Data API and nothing has seen refused.
+- **Every result type the contract run reads through the Data API was listed**: `text`, `uuid`, `_text`,
+  `timestamptz`, `name`, `bool`, `jsonb`, `int4`, `varchar`, `void`, `date`, `_date`, `int8`, `_int4`, `numeric`,
+  `float8`, `bytea`, `bit`, `_uuid`, an enum and its array, and `bpchar` and `_bpchar` in the parity test only. SSSB's
+  own catalog reads already cast (`rls-coverage.ts` reads `relkind::text`); the conformance suite's run on pglite only.
+- **The live proof is the `data-api` cutover row's smoke run**: the Migrator on an empty database, and the runbook's
+  reads of the refused types (`docs/runbooks/data-api.md`, step 3).

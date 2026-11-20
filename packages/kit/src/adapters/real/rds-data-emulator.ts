@@ -30,7 +30,9 @@ import type { RdsDataClientLike, RdsDataCommand } from './rds-data-dialect'
  * - a statement inside a transaction runs on that transaction's one connection, until Commit/Rollback;
  * - a response over 1 MiB is refused, and an unknown transaction id is TransactionNotFoundException;
  * - database errors come back as a message only, WITHOUT a SQLSTATE — the least the Data API is
- *   reported to give, so what is proven is that SSSB's error handling survives the worst case.
+ *   reported to give, so what is proven is that SSSB's error handling survives the worst case;
+ * - a result with a column of a type the Data API cannot return is refused whole, rows or none, with its
+ *   `UnsupportedResultException` (REFUSED_RESULT_TYPES says which, and on what evidence).
  *
  * What it cannot know is AWS's exact wire format (column `typeName`s, timestamp strings, error wording).
  * It follows PgJDBC's conventions, which the Data API is built on; the `data-api` cutover row is the live
@@ -43,6 +45,24 @@ export interface EmulatedCall {
 }
 
 const RESPONSE_LIMIT_BYTES = 1024 * 1024
+
+/**
+ * Result column types the Data API refuses, by `pg_type.typname`, with the name its error gives them. AWS lists none:
+ * "The Data API doesn't support all data types", and the fix it gives is a cast to TEXT (the Aurora User Guide's
+ * "Troubleshooting Amazon RDS Data API", "Unsupported result exception"). What is here is evidence:
+ *
+ * - `char`, Postgres's one-byte "char" (`pg_class.relkind`): refused live on Aurora PostgreSQL with
+ *   `UnsupportedResultException: The result contains the unsupported data type "CHAR"`, for a result of no rows (Kysely's
+ *   introspector, on a database with no tables yet), so the refusal reads the columns, not the values;
+ * - `bpchar`, `char(n)`: the same JDBC type, `CHAR`, in PgJDBC's type map, on which the Data API is built, so the same
+ *   error; inferred, not observed.
+ *
+ * A type found refused live joins this map, and the `data-api` cutover row's smoke run is where one would be found.
+ */
+const REFUSED_RESULT_TYPES: ReadonlyMap<string, string> = new Map([
+    ['char', 'CHAR'],
+    ['bpchar', 'CHAR'],
+])
 
 export class RdsDataEmulator implements RdsDataClientLike {
     /** Every call, in order — the contract suite asserts on the transaction sequence. */
@@ -161,6 +181,13 @@ export class RdsDataEmulator implements RdsDataClientLike {
                 client,
                 result.fields.map((field) => field.dataTypeID),
             )
+            const refused = result.fields.find((field) =>
+                REFUSED_RESULT_TYPES.has(typeNames.get(field.dataTypeID) ?? ''),
+            )
+            if (refused) {
+                const name = REFUSED_RESULT_TYPES.get(typeNames.get(refused.dataTypeID)!)
+                throw awsError('UnsupportedResultException', `The result contains the unsupported data type "${name}"`)
+            }
             const longAsString = input.resultSetOptions?.longReturnType === 'STRING'
             const columns: ColumnMetadata[] = result.fields.map((field) => ({
                 name: field.name,
