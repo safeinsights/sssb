@@ -153,4 +153,72 @@ describe('the in-process jobs runner', () => {
         expect(notified).toEqual([{ tenantId, jobId: lost.id, status: 'failed' }])
         expect(await jobs.sweep?.(new Date())).toBe(0)
     })
+    test('the sweep fails a job left queued past the lost-after window, whose start never ran, and notifies', async () => {
+        const { ports, notify, notified, createInProcessJobs, view, tenantId, orgId } = await harness()
+        const { IN_PROCESS_LOST_AFTER_MS } = await import('./jobs-in-process')
+        const { submitJob } = await import('../../db/jobs')
+        // The invocation ends between the row's commit and start(): modelled by a start that throws.
+        const dying = {
+            start: async () => {
+                throw new Error('invocation ended')
+            },
+        }
+        const orphan = submitJob(ports.db, dying, { tenantId, orgId, kind: 'export-dockets', payload: {} })
+        await expect(orphan).rejects.toThrow('invocation ended')
+        const queued = (await listOrgJobs(ports, tenantId, orgId)).filter((j) => j.status === 'queued')
+        expect(queued).toHaveLength(1)
+        const id = queued[0]!.id
+
+        const jobs = createInProcessJobs(ports, notify)
+        await jobs.sweep?.(new Date())
+        expect((await view(id)).status, 'a young queued job is left alone').toBe('queued')
+
+        await jobs.sweep?.(new Date(Date.now() + IN_PROCESS_LOST_AFTER_MS + 60_000))
+        expect((await view(id)).status).toBe('failed')
+        expect((await view(id)).error).toMatch(/^lost: never started/)
+        expect(notified).toContainEqual({ tenantId, jobId: id, status: 'failed' })
+    })
+
+    test("a schedule's job whose start() failed is failed by the sweep, never left queued", async () => {
+        const { ports, notify, notified, createInProcessJobs, view, tenantId, orgId } = await harness()
+        const { IN_PROCESS_LOST_AFTER_MS } = await import('./jobs-in-process')
+        const { runDueSchedules } = await import('../../db/schedules')
+        const schedule = await ports.db
+            .getDb()
+            .insertInto('job_schedules')
+            .values({
+                tenant_id: tenantId,
+                org_id: orgId,
+                kind: 'digest-email',
+                spec: { type: 'weekly', utcDay: 1, atUtcHour: 13, atUtcMinute: 0 },
+                next_run_at: new Date('2026-01-05T13:00:00Z'),
+                enabled: true,
+                created_by: 'test',
+            })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+        const before = new Set((await listOrgJobs(ports, tenantId, orgId)).map((j) => j.id))
+        const throttled = {
+            start: async (job: { payload: unknown }) => {
+                if ((job.payload as { scheduleId?: string }).scheduleId === schedule.id) {
+                    throw new Error('StartBuild throttled')
+                }
+            },
+        }
+        const fired = await runDueSchedules(ports.db, throttled, new Date('2026-01-05T13:00:30Z'))
+        expect(fired.failed).toBe(1)
+        const spawned = (await listOrgJobs(ports, tenantId, orgId)).filter((j) => !before.has(j.id))
+        expect(spawned.map((j) => j.status)).toEqual(['queued'])
+        const id = spawned[0]!.id
+
+        await createInProcessJobs(ports, notify).sweep?.(new Date(Date.now() + IN_PROCESS_LOST_AFTER_MS + 60_000))
+        expect((await view(id)).status).toBe('failed')
+        expect((await view(id)).error).toMatch(/^lost: never started/)
+        expect(notified).toContainEqual({ tenantId, jobId: id, status: 'failed' })
+    })
 })
+
+async function listOrgJobs(ports: { db: import('../../ports/db').DbPort }, tenantId: string, orgId: string) {
+    const { listJobs } = await import('../../db/jobs')
+    return listJobs(ports.db, tenantId, orgId)
+}
