@@ -8,6 +8,31 @@ export async function withPortErrors(fn: () => Promise<Response>): Promise<Respo
         if (error instanceof AuthRequiredError) return Response.json({ error: 'unauthorized' }, { status: 401 })
         if (error instanceof ForbiddenError) return Response.json({ error: 'forbidden' }, { status: 403 })
         if (error instanceof NotFoundError) return Response.json({ error: 'not found' }, { status: 404 })
+        if (error instanceof InvalidPayloadError) return Response.json({ error: 'invalid-payload' }, { status: 400 })
         throw error
     }
+}
+
+/** A request body that is not what the route reads: answered 400 `{ error: 'invalid-payload' }` by withPortErrors. */
+export class InvalidPayloadError extends Error {
+    constructor() {
+        super('invalid-payload')
+        this.name = 'InvalidPayloadError'
+    }
+}
+
+/**
+ * The request's JSON body as a plain object, or InvalidPayloadError (a 400): a body that does not parse,
+ * or parses to `null`, an array or a scalar, is the client's mistake, never a 500. Its fields are still
+ * `unknown`: check each one's type before using it.
+ */
+export async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
+    let body: unknown
+    try {
+        body = await request.json()
+    } catch {
+        throw new InvalidPayloadError()
+    }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new InvalidPayloadError()
+    return body as Record<string, unknown>
 }
