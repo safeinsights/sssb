@@ -300,10 +300,21 @@ describe("an app's own vendors (package.json sssb.vendors)", () => {
     // The dynamic half (import(), require(), a type import('…')) reads a package name, one followed by `/*`, and a
     // whole scope; the declaration half reads any gitignore pattern. Each entry below banned a declaration and let
     // import() through (or, `stripe/`, banned nothing), so the list refuses it, in package.json and in the option alike.
-    const UNREADABLE = ['@stripe/**', 'stripe-*', 'stripe*', 'stripe/**', '/stripe', 'Stripe', 'stripe/', '@stripe']
+    const UNREADABLE = [
+        '@stripe/**',
+        'stripe-*',
+        'stripe*',
+        'stripe/**',
+        '/stripe',
+        'Stripe',
+        'stripe/',
+        '@stripe',
+        'firebase/App',
+        'firebase/app/compat/x',
+    ]
     it.each(UNREADABLE)('refuses %j, which import() would get past', async (entry) => {
         await expect(sssb.configs.app({ root: withVendors(['stripe', entry]) })).rejects.toThrow(
-            `sssb.vendors holds ${JSON.stringify(entry)}: each entry is "name", "@scope/name", either followed by "/*", or "@scope/*"`,
+            `sssb.vendors holds ${JSON.stringify(entry)}: each entry is "name", "@scope/name", either with one subpath ("name/sub"), each optionally followed by "/*", or "@scope/*"`,
         )
         const appDir = scratchApp(
             `{ rules: { 'sssb/no-dynamic-vendor-import': ['error', { vendors: [${JSON.stringify(entry)}] }] } }`,
@@ -328,6 +339,24 @@ describe("an app's own vendors (package.json sssb.vendors)", () => {
         ])
         expect(withList.problems).toEqual([])
         expect(withList.probes - without.probes).toBe(vendors.length)
+    })
+
+    // One subpath of a package bans itself and what is under it, in both halves alike, and nothing beside it.
+    it('bans one subpath of a package both ways, and nothing beside it', async () => {
+        const appDir = withVendors(['firebase/app', '@acme/sdk/admin/*'])
+        const fired = async (specifier: string) => {
+            const code = `import * as v from '${specifier}'\nexport { v }\nexport const load = () => import('${specifier}')\n`
+            const rules = await lintIn(appDir, 'src/domain/billing.ts', code)
+            return [
+                rules.filter((rule) => rule === 'sssb/no-vendor-import').length,
+                rules.filter((rule) => rule === 'sssb/no-dynamic-vendor-import').length,
+            ]
+        }
+        for (const banned of ['firebase/app', 'firebase/app/x', '@acme/sdk/admin/users'])
+            expect(await fired(banned), banned).toEqual([1, 1])
+        for (const free of ['firebase/apple', 'firebase/auth', 'firebase', '@acme/sdk/admin', '@acme/sdk/public'])
+            expect(await fired(free), free).toEqual([0, 0])
+        expect((await checkFences({ appDir, ESLint })).problems).toEqual([])
     })
 
     it('refuses anything but a list of package patterns, and the old option', async () => {
