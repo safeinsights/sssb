@@ -1,3 +1,4 @@
+import { jobNotify } from '@sssb/app-config/jobs'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { Membership } from '../ports/auth'
@@ -76,6 +77,11 @@ async function expectNotified(listMembers: ReturnType<typeof vi.fn>, jobId: stri
     expect(listMembers).toHaveBeenCalledTimes(yes ? 1 : 0)
     expect(await inAppRows(jobId)).toEqual(yes ? [{ status }] : [])
 }
+
+test('the fixture seam sets what the table below assumes: one kind of each mode, and one that says nothing', () => {
+    expect(jobNotify).toEqual({ 'sweep-dockets': 'failure', 'quiet-dockets': 'never' })
+    expect(KINDS.map((k) => k.kind)).toEqual(['export-dockets', ...Object.keys(jobNotify)])
+})
 
 describe.each(CASES)('$kind ($mode) ending $status', ({ kind, mode, status }) => {
     const yes = expected(mode, status)
