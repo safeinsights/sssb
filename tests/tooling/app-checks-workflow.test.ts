@@ -165,6 +165,8 @@ describe('app-checks.yml, the reusable workflow', () => {
     // What a work step runs with is part of what it runs: an `APP` left pointing at one app runs every shard against
     // it with every shard name intact. So each work step's keys and environment are pinned, as all-checks' is, and no
     // job carries `defaults` (a `run.shell` there wraps every step) or checks out anything but the commit under test.
+    // Every checkout keeps no credentials: nothing after it pushes or fetches, and an adopter's install scripts and
+    // tests run in these jobs.
     it('pins each work step’s environment, all-checks’ step, and what every job checks out', () => {
         const ENV: Record<string, Record<string, string>> = {
             'lint-typecheck-unit': { APPS: '${{ inputs.apps }}' },
@@ -186,7 +188,9 @@ describe('app-checks.yml, the reusable workflow', () => {
             expect((job as Record<string, unknown>)['env'], id).toBeUndefined()
             for (const step of job.steps ?? []) {
                 if (step.uses?.startsWith('actions/checkout@')) {
-                    expect((step as Record<string, unknown>)['with'], `${id}: checkout`).toBeUndefined()
+                    expect((step as Record<string, unknown>)['with'], `${id}: checkout`).toEqual({
+                        'persist-credentials': false,
+                    })
                 }
             }
             const work = (job.steps ?? []).filter((step) => step.run?.trim().startsWith('pnpm exec sssb ci '))

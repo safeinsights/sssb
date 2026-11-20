@@ -179,9 +179,14 @@ export function planBypass(rulesets: Ruleset[], appId: number): BypassPlan {
     } else if (checks.target !== 'branch') {
         problems.push(`"${MAIN_CHECKS}" targets ${checks.target}, not branch`)
     } else {
-        if (!covers(checks, 'refs/heads/main')) {
+        // main ALONE, never "includes main": the App's bypass reaches every ref this ruleset covers. Held exactly, as
+        // the tag ruleset is below.
+        const { include = [], exclude = [] } = checks.conditions?.ref_name ?? {}
+        const mainOnly = include.length === 1 && [DEFAULT_BRANCH, 'refs/heads/main'].includes(include[0]!)
+        if (!mainOnly || exclude.length > 0) {
             problems.push(
-                `"${MAIN_CHECKS}" does not cover main (${JSON.stringify(checks.conditions?.ref_name ?? null)})`,
+                `"${MAIN_CHECKS}" must cover main alone: it covers ${JSON.stringify(checks.conditions?.ref_name ?? null)}; ` +
+                    `expected include exactly ["${DEFAULT_BRANCH}"] or ["refs/heads/main"], and no exclude`,
             )
         }
         // Only the bypass list and enforcement change; its rules are the checks and stay as they are. Anything
@@ -254,19 +259,6 @@ type OrgGate = {
 
 export type Gates = { org: OrgGate[]; problems: string[] }
 
-function globToRegExp(pattern: string): RegExp {
-    const source = pattern
-        .split('**')
-        .map((part) =>
-            part
-                .split('*')
-                .map((literal) => literal.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
-                .join('[^/]*'),
-        )
-        .join('.*')
-    return new RegExp(`^${source}$`)
-}
-
 /**
  * Whether a tag ruleset might apply to some release tag, judged generously: an include that does not start
  * `refs/tags/` (`~ALL`, `refs/**`) counts, as does one whose next character is `v` or a
@@ -279,15 +271,6 @@ function mayCoverReleaseTags(ruleset: RulesetBody): boolean {
         const rest = pattern.slice('refs/tags/'.length)
         return rest === '' || 'v*?['.includes(rest[0])
     })
-}
-
-function covers(ruleset: RulesetBody, ref: string): boolean {
-    const { include = [], exclude = [] } = ruleset.conditions?.ref_name ?? {}
-    const hit = (pattern: string) =>
-        pattern === '~ALL' ||
-        (pattern === DEFAULT_BRANCH && ref === 'refs/heads/main') ||
-        globToRegExp(pattern).test(ref)
-    return include.some(hit) && !exclude.some(hit)
 }
 
 /**

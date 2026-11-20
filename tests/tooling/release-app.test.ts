@@ -16,7 +16,7 @@ import {
     verifyCommand,
     type Deps,
 } from '../../scripts/release-app/commands'
-import { appJwt, redact, type GhResult } from '../../scripts/release-app/github'
+import { appJwt, ghList, redact, type GhResult, type GhRunner } from '../../scripts/release-app/github'
 import {
     RELEASE_APP_PERMISSIONS,
     appManifest,
@@ -157,6 +157,9 @@ function fakeGh(
         admin?: boolean
         failSecretSet?: number
         installations?: Record<string, unknown>[]
+        /** The `npm-publish` environment as GitHub answers it; `null` answers 404, as before it is created. */
+        npmPublish?: Record<string, unknown> | null
+        npmPublishPolicies?: Record<string, unknown>[]
     } = {},
 ) {
     const state = {
@@ -209,6 +212,17 @@ function fakeGh(
             })
         if (apiPath === `${REPO}/environments/release/deployment-branch-policies`)
             return ok({ branch_policies: [{ name: 'main', type: 'branch' }] })
+        if (apiPath === `${REPO}/environments/npm-publish`)
+            return options.npmPublish === null
+                ? { code: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' }
+                : ok(
+                      options.npmPublish ?? {
+                          can_admins_bypass: false,
+                          deployment_branch_policy: { custom_branch_policies: true, protected_branches: false },
+                      },
+                  )
+        if (apiPath === `${REPO}/environments/npm-publish/deployment-branch-policies`)
+            return ok({ branch_policies: options.npmPublishPolicies ?? [{ name: 'v*', type: 'tag' }] })
         if (apiPath === `${REPO}/environments/release/secrets`)
             return ok({ secrets: state.secrets.map((name) => ({ name })) })
         if (apiPath === `${REPO}/environments/release/variables`)
@@ -464,6 +478,16 @@ describe('release-app create', () => {
         expect(h.text()).toContain('is not an administrator of safeinsights/sssb')
     })
 
+    it('refuses before anything exists when the npm-publish environment is missing or not held to v* tags', async () => {
+        for (const options of [{ npmPublish: null }, { npmPublishPolicies: [{ name: 'main', type: 'branch' }] }]) {
+            const h = harness({ gh: fakeGh(options) })
+            expect(await createCommand(h.deps, { applyBypass: false })).toBe(1)
+            expect(h.text()).toMatch(/environment "npm-publish": its deployment refs|could not read the "npm-publish"/)
+            expect(h.http.calls).toEqual([])
+            expect(h.browser()).toBeUndefined()
+        }
+    })
+
     it('refuses without a terminal', async () => {
         const h = harness({ tty: false })
         expect(await createCommand(h.deps, { applyBypass: false })).toBe(1)
@@ -673,9 +697,105 @@ describe('release-app verify and bypass', () => {
         expect(h.text()).toContain('is installed on "all" repositories')
     })
 
+    // release.yml's header: `npm-publish` deploys from `v*` tags only, administrators not exempt. npm's trusted
+    // publisher binds the environment, not a ref, so verify must hold that rule as it holds `release`'s.
+    it.each([
+        [
+            'a branch policy instead of the tag',
+            { npmPublishPolicies: [{ name: 'main', type: 'branch' }] },
+            'expected only the tags v*',
+        ],
+        ['no policy at all', { npmPublishPolicies: [] }, 'its deployment refs are []'],
+        [
+            'an extra policy',
+            { npmPublishPolicies: [{ name: 'v*', type: 'tag' }, { name: 'main' }] },
+            'its deployment refs are ["tag:v*","branch:main"]',
+        ],
+        [
+            'administrators exempt',
+            {
+                npmPublish: {
+                    can_admins_bypass: true,
+                    deployment_branch_policy: { custom_branch_policies: true, protected_branches: false },
+                },
+            },
+            'administrators can bypass its rules',
+        ],
+        [
+            'no deployment rule',
+            { npmPublish: { can_admins_bypass: false, deployment_branch_policy: null } },
+            'does not restrict deployments',
+        ],
+        ['missing', { npmPublish: null }, 'could not read the "npm-publish" environment'],
+    ])('verify fails the npm-publish environment with %s, and names it', async (_what, options, expected) => {
+        const h = harness({ gh: fakeGh({ secret: true, variable: CLIENT_ID, ...options }) })
+        expect(await verifyCommand(h.deps, { appId: APP_ID })).toBe(1)
+        expect(h.text()).toContain('npm-publish')
+        expect(h.text()).toContain(expected)
+    })
+
+    it('verify passes the npm-publish environment on the tags v* alone', async () => {
+        const h = harness({ gh: fakeGh({ secret: true, variable: CLIENT_ID }) })
+        await verifyCommand(h.deps, { appId: APP_ID })
+        expect(h.text()).toContain('environment "npm-publish": v* tags only, admins not exempt')
+        expect(h.text()).not.toMatch(/✗[^\n]*npm-publish/)
+    })
+
     it('bypass --apply needs a terminal', async () => {
         const h = harness({ tty: false })
         expect(await bypassCommand(h.deps, { appId: APP_ID, apply: true })).toBe(1)
+    })
+})
+
+describe('one-page lists', () => {
+    const answering = (value: unknown) => {
+        const paths: string[] = []
+        const gh: GhRunner = async (args) => {
+            paths.push(args[1])
+            return { code: 0, stdout: JSON.stringify(value), stderr: '' }
+        }
+        return { gh, paths }
+    }
+    const many = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i + 1 }))
+
+    it('reads an array, or the array under a key, a page at a time', async () => {
+        const plain = answering(many(3))
+        expect(await ghList(plain.gh, 'repos/o/r/rulesets?includes_parents=true')).toEqual({
+            value: many(3),
+            error: '',
+        })
+        expect(plain.paths).toEqual(['repos/o/r/rulesets?includes_parents=true&per_page=100'])
+        const keyed = answering({ total_count: 2, secrets: many(2) })
+        expect(await ghList(keyed.gh, 'repos/o/r/secrets', 'secrets')).toEqual({ value: many(2), error: '' })
+        expect(keyed.paths).toEqual(['repos/o/r/secrets?per_page=100'])
+        expect((await ghList(answering({ total_count: 0 }).gh, 'x', 'secrets')).value).toEqual([])
+    })
+
+    it('refuses a full page, which may be cut off, rather than judge part of a list', async () => {
+        const full = await ghList(answering(many(100)).gh, 'repos/o/r/rulesets')
+        expect(full.value).toBeNull()
+        expect(full.error).toMatch(/full page of 100/)
+        const variables = await ghList(answering({ variables: many(30) }).gh, 'v', 'variables', 30)
+        expect(variables.value).toBeNull()
+        expect((await ghList(answering(many(99)).gh, 'repos/o/r/rulesets')).value).toHaveLength(99)
+    })
+
+    it.each([
+        [`${REPO}/rulesets`, () => many(100)],
+        ['orgs/safeinsights/installations', () => ({ total_count: 100, installations: many(100) })],
+        [`${REPO}/environments/npm-publish/deployment-branch-policies`, () => ({ branch_policies: many(100) })],
+    ])('verify fails, never passes, when %s comes back a full page', async (listPath, answer) => {
+        const inner = fakeGh({ secret: true, variable: CLIENT_ID })
+        const gh = {
+            ...inner,
+            gh: async (args: string[], input?: string): Promise<GhResult> =>
+                args[0] === 'api' && args[1]?.split('?')[0] === listPath
+                    ? { code: 0, stdout: JSON.stringify(answer()), stderr: '' }
+                    : inner.gh(args, input),
+        }
+        const h = harness({ gh })
+        expect(await verifyCommand(h.deps, { appId: APP_ID })).toBe(1)
+        expect(h.text()).toMatch(/full page of 100/)
     })
 })
 
@@ -744,7 +864,24 @@ describe('planBypass', () => {
     it('refuses a checks ruleset that excludes main', () => {
         const rulesets = liveRulesets()
         rulesets[1].conditions.ref_name.exclude = ['refs/heads/main']
-        expect(planBypass(rulesets, APP_ID).problems[0]).toMatch(/does not cover main/)
+        expect(planBypass(rulesets, APP_ID).problems[0]).toMatch(/must cover main alone/)
+    })
+
+    it('refuses a checks ruleset that covers more than main: the bypass would reach every ref it covers', () => {
+        const rulesets = liveRulesets()
+        rulesets[1].conditions.ref_name.include = ['~DEFAULT_BRANCH', 'refs/heads/integration', 'refs/heads/release/*']
+        const plan = planBypass(rulesets, APP_ID)
+        expect(plan.problems).toEqual([
+            `"${MAIN_CHECKS}" must cover main alone: it covers {"include":["~DEFAULT_BRANCH","refs/heads/integration","refs/heads/release/*"],"exclude":[]}; ` +
+                'expected include exactly ["~DEFAULT_BRANCH"] or ["refs/heads/main"], and no exclude',
+        ])
+        expect(plan.changes).toEqual([])
+        for (const include of [['~ALL'], ['refs/heads/*']]) {
+            rulesets[1].conditions.ref_name.include = include
+            expect(planBypass(rulesets, APP_ID).problems[0]).toMatch(/must cover main alone/)
+        }
+        rulesets[1].conditions.ref_name.include = ['refs/heads/main']
+        expect(planBypass(rulesets, APP_ID).problems).toEqual([])
     })
 
     it('refuses to bypass a main ruleset that carries more than the checks', () => {

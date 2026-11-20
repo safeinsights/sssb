@@ -374,8 +374,8 @@ rest of this repository's are SSSB's own: the second app's (`dev:starter`, `tick
 
 One gate is relaxed in the generated workspace. SSSB's knip workspace carries `includeEntryExports: true`, which
 means "every symbol SSSB PUBLISHES must have a consumer" — an invariant the showcase made true by using
-nearly all of it. A one-entity app does not: `apps/starter` imports 41 of SSSB's 142 published subpaths from its source (45
-counting its tests), so the same setting would start demanding you delete the other 101 — capabilities you merely have not
+nearly all of it. A one-entity app does not: `apps/starter` imports about 40 of SSSB's 140-odd published subpaths from its source (a
+few more counting its tests), so the same setting would start demanding you delete the hundred or so others — capabilities you merely have not
 reached yet, not dead code. The generated `knip.json` therefore leaves it off. knip keeps reporting unused
 files, and the declared `exports` surface goes back to being what it is without a rich consumer: a
 declaration. The generated `knip.json` carries a few narrow entries beside the app's entry files: at the root,
@@ -452,7 +452,7 @@ apps/<app>/config/            APP_SLUG and (optionally) deployment params
 apps/<app>/src/app/           Next route files (thin wrappers; framework routes live here too)
 apps/<app>/src/app-config/    THE SEAM — your registrations
 apps/<app>/src/components/    your screens/cards
-apps/<app>/src/domain/        your domain modules (not generated: create it when you need it)
+apps/<app>/src/domain/        your domain modules (generated with the Items slice's `db/items.ts`, which `sssb remove-items` takes out)
 apps/<app>/src/ports/         your own ports, for a vendor SSSB has no port for (docs/recipes/app-owned-adapter.md; not generated)
 apps/<app>/src/adapters/      their registry and fakes; adapters/real/ is the app's only vendor-SDK directory (not generated)
 apps/<app>/src/demo-static/   your half of the file:// demo twin (the framework half is SSSB's)

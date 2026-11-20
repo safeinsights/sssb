@@ -13,14 +13,15 @@ marketplace to (in SSSB's own repository, read its local showcase app instead).
 A tour is a scripted walkthrough: a ghost cursor drives the REAL screens while a bar narrates, so the single-file
 demo (`pnpm build:demo-static` builds it) can be watched instead of read about. The _engine_ is the framework's
 (`@sssb/kit/demo-static/tour/contracts` and `@sssb/kit/demo-static/tour/use-tours`, with the Simulator's Tours tab);
-each tour is app content. In a generated app the only Simulator is the static demo's, so that is where its tours
-run: `pnpm dev` has no panel (the server Simulator is SSSB's reference app's).
+each tour is app content. In a generated app the only Tours tab is the static demo's, so that is where its tours
+run: the Simulator on `pnpm dev` has People, Mail and Jobs but no Tours or Snapshots tab (the reference app's own
+panel has them).
 
 1. **Register** in `src/app-config/tours.ts`: add a `TourDefinition` (`@sssb/kit/demo-static/tour/contracts`) with
    `id`, `titleKey`, `summaryKey`, usually `snapshot: 'reset'` or the id of a demo preset (`presets` in
    `src/app-config/presets.ts`, written with `/sssb:new-preset`) when the story should open mid-shift. Both work on
    every host. A saved snapshot's name does not: snapshots are saved on a server, through the server Simulator's
-   Snapshots tab, which a generated app does not have, and such a tour fails the `file://` walkthrough gate. Then its
+   Snapshots tab, which a generated app's `pnpm dev` panel does not have, and such a tour fails the `file://` walkthrough gate. Then its
    steps. An app with no tours renders no Tours tab at all, so an empty `tours` is a real off-switch.
 2. **Narration** goes in the APP catalog (`messages/en.json` and `messages/es.json`, a `tours` namespace listed in
    `APP_NAMESPACES` in `src/app-config/messages.ts`), referenced by FULLY-QUALIFIED key (`tours.myTourStep1`). Both
@@ -42,7 +43,7 @@ run: `pnpm dev` has no panel (the server Simulator is SSSB's reference app's).
    `['panel', tab]`, which expands the panel if collapsed and is idempotent.
 5. **Assert as you go**: `['expect', sel]` and `['expectText', sel, text]` turn the tour into a test. Put one after
    every beat that produced something.
-6. **Reload safety** (the server host only, so only once the app has the reference's server Simulator): a snapshot
+6. **Reload safety** (the server host only, so only once the app has the reference's server Simulator glue): a snapshot
    restore, a feature-flag flip and a person switch all reload the page there. The engine resumes from a
    sessionStorage marker written at the `advance` boundary, so anything that reloads belongs in `advance`, and
    anything in a `script` must be safe to re-run. Writing tours this way from the start costs nothing in the static

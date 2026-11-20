@@ -10,21 +10,22 @@ an adopter keeps and the framework's falsifier, and its route tree shows it: the
 protected dashboard, `api/auth/{dev-signin,org,signout}` and one entity's route. It has none of the wiring
 the showcase uses to reach capabilities SSSB ships screens for:
 
-| Capability          | SSSB ships                                                   | Wiring that exists only in `apps/showcase`                                                                                            |
-| ------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Inviting someone    | `OrgScreen`, `sendOrgInvite` (`@sssb/kit/server-lib/invite`) | `apps/showcase/src/app/[locale]/(protected)/org/` and `apps/showcase/src/app/api/org/invite/route.ts`                                 |
-| Accepting an invite | the accept-invite screen                                     | `apps/showcase/src/app/[locale]/accept-invite/` and `apps/showcase/src/app/api/auth/accept-invite/route.ts`                           |
-| The Simulator panel | the panel, every tab, the replay code                        | `apps/showcase/src/app/[locale]/simulator-glue.tsx` (about 800 lines) and 32 route files under `apps/showcase/src/app/api/simulator/` |
+| Capability          | SSSB ships                                                                                          | Wiring that exists only in `apps/showcase`                                                                                            |
+| ------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Inviting someone    | `OrgScreen`, `sendOrgInvite` (`@sssb/kit/server-lib/invite`)                                        | `apps/showcase/src/app/[locale]/(protected)/org/` and `apps/showcase/src/app/api/org/invite/route.ts`                                 |
+| Accepting an invite | the accept-invite screen                                                                            | `apps/showcase/src/app/[locale]/accept-invite/` and `apps/showcase/src/app/api/auth/accept-invite/route.ts`                           |
+| The Simulator panel | the panel's other tabs (Messages, Events, Hooks, Errors, Snapshots, Tours, Actors), the replay code | `apps/showcase/src/app/[locale]/simulator-glue.tsx` (about 870 lines) and 33 route files under `apps/showcase/src/app/api/simulator/` |
 
-So **the Simulator is not reachable from the starter's own `pnpm dev`**: the glue the layout dynamic-imports
-in simulated mode exists only in the showcase (`apps/showcase/src/app/[locale]/layout.tsx`). Presets, tours
+So **the starter's own `pnpm dev` has only the Simulator's People, Mail and Jobs**: SSSB's `SimulatorHost`, which
+its locale layout mounts in simulated mode and `apps/starter/src/app/api/simulator/[...path]/route.ts` serves. The
+glue that adds the other tabs exists only in the showcase (`apps/showcase/src/app/[locale]/layout.tsx`). Presets, tours
 and every Snapshots feature are therefore reachable in the starter only through its static demo
 (`apps/starter/src/demo-static/app.tsx`), where the panel is the package's and needs no server. The
 registration seam is there (`apps/starter/src/app-config/presets.ts` and `tours.ts` register nothing today),
 and a server host for it is not.
 
 The consequence lands on the adopter the day after generating. A preset or tour written with `/sssb:new-preset` or
-`/sssb:new-tour` is watchable only in the static demo; `pnpm dev` has no panel to load it from, and no org screen
+`/sssb:new-tour` is watchable only in the static demo; `pnpm dev`'s panel has no Snapshots or Tours tab to load it from, and no org screen
 or accept route for an `invite` step to lead into.
 
 ## The question to decide

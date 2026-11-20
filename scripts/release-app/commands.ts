@@ -29,6 +29,7 @@ import {
     CLIENT_ID_VARIABLE,
     DEFAULT_APP_NAME,
     KEY_SECRET,
+    NPM_PUBLISH_ENVIRONMENT,
     RELEASE_APP_PERMISSIONS,
     RELEASE_ENVIRONMENT,
     RELEASE_REPO,
@@ -42,7 +43,7 @@ import {
     type InstallationSummary,
 } from './manifest'
 import { describeChange, externalGates, planBypass, type ActiveRule, type Ruleset } from './rulesets'
-import { appJwt, errorMessage, ghJson, githubRequest, redact, type FetchFn, type GhRunner } from './github'
+import { appJwt, errorMessage, ghJson, ghList, githubRequest, redact, type FetchFn, type GhRunner } from './github'
 
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
 const REPO = `${RELEASE_REPO.owner}/${RELEASE_REPO.repo}`
@@ -187,31 +188,46 @@ type Environment = {
     deployment_branch_policy?: { custom_branch_policies?: boolean; protected_branches?: boolean } | null
 }
 
+/** Each environment release.yml uses, and the one deployment ref its header says it allows. */
+const ENVIRONMENT_RULES = [
+    { name: RELEASE_ENVIRONMENT, ref: 'branch:main', described: 'the branch main' },
+    { name: NPM_PUBLISH_ENVIRONMENT, ref: 'tag:v*', described: 'the tags v*' },
+] as const
+
 /**
- * What is wrong with the `release` environment, as findings. release.yml's header says what it must be:
- * deployments from `main` only, administrators not exempt. A secret stored in an environment without that
- * rule is in reach of a workflow on any branch.
+ * What is wrong with one of release.yml's environments, as findings. release.yml's header says what each must be:
+ * `release` deploys from `main` only and `npm-publish` from `v*` tags only, administrators not exempt in either. A
+ * secret stored in, or a trusted publisher naming, an environment without that rule is in reach of a workflow on any
+ * ref. An environment that cannot be read (one not created yet included) is a finding too.
  */
-async function environmentFindings(gh: GhRunner): Promise<string[]> {
-    const base = `repos/${REPO}/environments/${RELEASE_ENVIRONMENT}`
+async function environmentFindings(gh: GhRunner, rule: (typeof ENVIRONMENT_RULES)[number]): Promise<string[]> {
+    const base = `repos/${REPO}/environments/${rule.name}`
     const env = await ghJson<Environment>(gh, base)
-    if (!env.value) return [`could not read the "${RELEASE_ENVIRONMENT}" environment: ${env.error}`]
+    if (!env.value) return [`could not read the "${rule.name}" environment: ${env.error}`]
     const findings: string[] = []
     if (env.value.can_admins_bypass !== false) findings.push('administrators can bypass its rules; they must not')
     const policy = env.value.deployment_branch_policy
     if (!policy || policy.custom_branch_policies !== true || policy.protected_branches !== false) {
-        findings.push('it does not restrict deployments to selected branches')
+        findings.push('it does not restrict deployments to selected branches and tags')
     } else {
-        const branches = await ghJson<{ branch_policies?: { name?: string; type?: string }[] }>(
+        const branches = await ghList<{ name?: string; type?: string }>(
             gh,
-            `${base}/deployment-branch-policies?per_page=100`,
+            `${base}/deployment-branch-policies`,
+            'branch_policies',
         )
-        const listed = (branches.value?.branch_policies ?? []).map((p) => `${p.type ?? 'branch'}:${p.name}`)
+        const listed = (branches.value ?? []).map((p) => `${p.type ?? 'branch'}:${p.name}`)
         if (!branches.value) findings.push(`could not read its deployment branches: ${branches.error}`)
-        else if (listed.length !== 1 || listed[0] !== 'branch:main')
-            findings.push(`its deployment refs are ${JSON.stringify(listed)}; expected only the branch main`)
+        else if (listed.length !== 1 || listed[0] !== rule.ref)
+            findings.push(`its deployment refs are ${JSON.stringify(listed)}; expected only ${rule.described}`)
     }
-    return findings.map((finding) => `environment "${RELEASE_ENVIRONMENT}": ${finding}`)
+    return findings.map((finding) => `environment "${rule.name}": ${finding}`)
+}
+
+/** Every environment's findings, in ENVIRONMENT_RULES' order. */
+async function allEnvironmentFindings(gh: GhRunner): Promise<string[]> {
+    const findings: string[] = []
+    for (const rule of ENVIRONMENT_RULES) findings.push(...(await environmentFindings(gh, rule)))
+    return findings
 }
 
 type Credentials = { secret: boolean; variable: string | null; error: string }
@@ -219,17 +235,15 @@ type Credentials = { secret: boolean; variable: string | null; error: string }
 /** Whether the environment holds the App's key (a name only: secrets cannot be read back) and client id. */
 async function readCredentials(gh: GhRunner): Promise<Credentials> {
     const base = `repos/${REPO}/environments/${RELEASE_ENVIRONMENT}`
-    const secrets = await ghJson<{ secrets?: { name?: string }[] }>(gh, `${base}/secrets?per_page=100`)
-    const variables = await ghJson<{ variables?: { name?: string; value?: string }[] }>(
-        gh,
-        `${base}/variables?per_page=30`,
-    )
+    const secrets = await ghList<{ name?: string }>(gh, `${base}/secrets`, 'secrets')
+    // Thirty is the most the variables endpoint answers in a page.
+    const variables = await ghList<{ name?: string; value?: string }>(gh, `${base}/variables`, 'variables', 30)
     if (!secrets.value || !variables.value) {
         return { secret: false, variable: null, error: secrets.error || variables.error }
     }
-    const variable = (variables.value.variables ?? []).find((v) => v.name === CLIENT_ID_VARIABLE)
+    const variable = variables.value.find((v) => v.name === CLIENT_ID_VARIABLE)
     return {
-        secret: (secrets.value.secrets ?? []).some((s) => s.name === KEY_SECRET),
+        secret: secrets.value.some((s) => s.name === KEY_SECRET),
         variable: typeof variable?.value === 'string' ? variable.value : null,
         error: '',
     }
@@ -253,7 +267,7 @@ async function preflight(deps: Deps): Promise<string[]> {
                 'App manager; GitHub will say so at the form if neither.\n',
         )
     }
-    findings.push(...(await environmentFindings(gh)))
+    findings.push(...(await allEnvironmentFindings(gh)))
     const credentials = await readCredentials(gh)
     if (credentials.error) findings.push(`could not read the environment's secrets and variables: ${credentials.error}`)
     if (credentials.secret || credentials.variable !== null) {
@@ -414,7 +428,7 @@ function report(io: Io, findings: string[]): void {
 
 /** Every ruleset that applies to the repository, the organisation's included, each read in full. */
 async function readRulesets(gh: GhRunner): Promise<{ rulesets: Ruleset[] | null; error: string }> {
-    const list = await ghJson<{ id: number }[]>(gh, `repos/${REPO}/rulesets?per_page=100&includes_parents=true`)
+    const list = await ghList<{ id: number }>(gh, `repos/${REPO}/rulesets?includes_parents=true`)
     if (!list.value) return { rulesets: null, error: list.error }
     const rulesets: Ruleset[] = []
     for (const entry of list.value) {
@@ -459,12 +473,9 @@ function vouchProblem(appId: number, installations: OrgInstallation[]): string |
  * another App's id must not become the bypass on main.
  */
 async function identifyApp(gh: GhRunner, appId: number, clientId: string | null): Promise<string[]> {
-    const listed = await ghJson<{ installations?: OrgInstallation[] }>(
-        gh,
-        `orgs/${RELEASE_REPO.owner}/installations?per_page=100`,
-    )
+    const listed = await ghList<OrgInstallation>(gh, `orgs/${RELEASE_REPO.owner}/installations`, 'installations')
     if (!listed.value) return [`could not list ${RELEASE_REPO.owner}'s App installations: ${listed.error}`]
-    const mine = (listed.value.installations ?? []).filter((installation) => installation.app_id === appId)
+    const mine = listed.value.filter((installation) => installation.app_id === appId)
     if (mine.length !== 1) {
         return [
             `App ${appId} has ${mine.length} installations in ${RELEASE_REPO.owner}; the release app has exactly one`,
@@ -538,7 +549,7 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
 
     // Everything else the push meets, read after any change above.
     const rulesets = (await readRulesets(gh)).rulesets
-    const active = await ghJson<ActiveRule[]>(gh, `repos/${REPO}/rules/branches/main?per_page=100`)
+    const active = await ghList<ActiveRule>(gh, `repos/${REPO}/rules/branches/main`)
     if (!rulesets || !active.value) {
         io.err(`\nCould not read the rules that apply to main: ${active.error || 'rulesets unreadable'}`)
         return false
@@ -571,14 +582,11 @@ async function bypassPhase(deps: Deps, appId: number, apply: boolean): Promise<b
     const vouchedActors = gates.org.flatMap((gate) => gate.vouched.map((entry) => ({ gate, ...entry })))
     let vouchesHold = true
     if (vouchedActors.length > 0) {
-        const listed = await ghJson<{ installations?: OrgInstallation[] }>(
-            gh,
-            `orgs/${RELEASE_REPO.owner}/installations?per_page=100`,
-        )
+        const listed = await ghList<OrgInstallation>(gh, `orgs/${RELEASE_REPO.owner}/installations`, 'installations')
         for (const { gate, actor, vouch } of vouchedActors) {
             const who = `${actor.actor_type} ${actor.actor_id} (${actor.bypass_mode}) on organisation ruleset "${gate.name}" (${gate.id})`
             const problem = listed.value
-                ? vouchProblem(vouch.actorId, listed.value.installations ?? [])
+                ? vouchProblem(vouch.actorId, listed.value)
                 : `could not list ${RELEASE_REPO.owner}'s App installations: ${listed.error}`
             if (problem === null) {
                 io.out(
@@ -781,14 +789,17 @@ export type VerifyOptions = { appId: number; privateKey?: string }
  */
 export async function verifyCommand(deps: Deps, options: VerifyOptions): Promise<number> {
     const { io, gh } = deps
-    const findings = await environmentFindings(gh)
+    const findings = await allEnvironmentFindings(gh)
     const credentials = await readCredentials(gh)
     if (credentials.error) findings.push(`could not read the environment's secrets and variables: ${credentials.error}`)
     if (!credentials.secret) findings.push(`the "${RELEASE_ENVIRONMENT}" environment has no secret ${KEY_SECRET}`)
     if (credentials.variable === null)
         findings.push(`the "${RELEASE_ENVIRONMENT}" environment has no variable ${CLIENT_ID_VARIABLE}`)
     if (findings.length === 0)
-        io.out(`  ✓ environment "${RELEASE_ENVIRONMENT}": main only, admins not exempt, key and client id present`)
+        io.out(
+            `  ✓ environment "${RELEASE_ENVIRONMENT}": main only, admins not exempt, key and client id present; ` +
+                `environment "${NPM_PUBLISH_ENVIRONMENT}": v* tags only, admins not exempt`,
+        )
     report(io, findings)
 
     const identity = await identifyApp(gh, options.appId, credentials.variable)
