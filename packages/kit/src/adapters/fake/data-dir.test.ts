@@ -26,6 +26,8 @@ test('the data root is a normalised absolute path, however APP_DATA_DIR is writt
     expect(dataRoot()).toBe(path.resolve('zz-e'))
     setDataRoot(`${path.sep}..${path.sep}..`)
     expect(dataRoot()).toBe(path.resolve(path.sep))
+    setDataRoot(path.join(process.cwd(), 'zz-a\\b'))
+    expect(dataRoot()).toBe(path.resolve('zz-a\\b'))
     setDataRoot(undefined)
     expect(dataRoot()).toBe(path.resolve('.data'))
 })

@@ -746,8 +746,11 @@ the showcase carries the same route over the same function.
 
     The answer is `{"ok":true,"spawned":0,"failed":0,"deliveries":{…}}`, which `pnpm tick` prints as one line. In a
     simulated world "now" is the Simulator's world clock (real time plus whatever offset a demo advanced), so a tick
-    honours a clock a demo moved. A schedule whose spawn failed, or a delivery that failed, shows in that line and is
-    retried by the next tick: the tick itself succeeded, so the exit code stays 0.
+    honours a clock a demo moved. A schedule whose spawn failed, or a delivery that failed, shows in that line; the tick
+    itself succeeded, so the exit code stays 0. The next tick retries a failed delivery, and a schedule whose failure
+    was inside its spawn transaction. A schedule that failed after that transaction committed is not retried: its job is
+    already queued and the schedule has moved on, so the in-process runner's sweep fails that job after five minutes,
+    and with another runner it stays queued.
 
 ## Cutover — from hermetic to real
 
