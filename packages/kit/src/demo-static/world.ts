@@ -561,19 +561,26 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
     }
 
     /**
-     * A job's terminal hop, the twin of what the server's recordJobStatus emits: the job.status_changed webhook to
-     * the JOB's org (not the viewer's), then the admin notification; both skip an org-less job. Every path that
-     * completes a job takes it: startJob, Run pending, and the actor drivers (through `jobCompletedRef`).
+     * The webhook half of a job's terminal hop, the twin of what the server's recordJobStatus emits: the
+     * job.status_changed webhook to the JOB's org (not the viewer's); an org-less job emits none. A service actor's
+     * completion takes only this half, as its server route calls recordJobStatus alone.
+     */
+    function emitJobWebhook(job: { id: string; kind: string; tenantSlug: string; orgSlug: string | null }) {
+        if (job.orgSlug === null) return
+        enqueueWebhookFor({ tenantSlug: job.tenantSlug, orgSlug: job.orgSlug }, 'job.status_changed', {
+            jobId: job.id,
+            jobKind: job.kind,
+            status: 'completed',
+            orgId: job.orgSlug,
+        })
+    }
+
+    /**
+     * A job's whole terminal hop: the webhook, then the admin notification, as the in-process runner, the fake jobs
+     * adapter and the builder's completion webhook do. startJob, Run pending and the builder actor take it.
      */
     function emitJobTerminal(job: { id: string; kind: string; tenantSlug: string; orgSlug: string | null }) {
-        if (job.orgSlug !== null) {
-            enqueueWebhookFor({ tenantSlug: job.tenantSlug, orgSlug: job.orgSlug }, 'job.status_changed', {
-                jobId: job.id,
-                jobKind: job.kind,
-                status: 'completed',
-                orgId: job.orgSlug,
-            })
-        }
+        emitJobWebhook(job)
         notifyJobTerminal(job)
     }
 
@@ -791,15 +798,16 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
     // The actor drivers read/write jobs through the stable ref + setter, so these factories never need
     // to change identity — an actor's tick closure can be rebuilt freely without restarting its loop.
     // A completed job's terminal hop reads the CURRENT endpoints and preferences, so the drivers reach it through a
-    // ref that every render points at this render's `emitJobTerminal`.
-    const jobCompletedRef = useRef(emitJobTerminal)
+    // ref that every render points at this render's emitters.
+    const jobCompletedRef = useRef({ webhook: emitJobWebhook, terminal: emitJobTerminal })
     useEffect(() => {
-        jobCompletedRef.current = emitJobTerminal
+        jobCompletedRef.current = { webhook: emitJobWebhook, terminal: emitJobTerminal }
     })
     const serviceDriver = useCallback(
         (scope: DemoServiceScope, log: ActorLog) =>
+            // The service route (POST /api/service/jobs/[id]/status) emits the webhook and notifies no one.
             createDemoServiceDriver(
-                { jobsRef, setJobs, log, onCompleted: (job) => jobCompletedRef.current(job) },
+                { jobsRef, setJobs, log, onCompleted: (job) => jobCompletedRef.current.webhook(job) },
                 scope,
             ),
         [],
@@ -807,7 +815,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
     const builderDriver = useCallback(
         (serviceManagedOrgSlugs: readonly string[], log: ActorLog) =>
             createDemoBuilderDriver(
-                { jobsRef, setJobs, log, onCompleted: (job) => jobCompletedRef.current(job) },
+                { jobsRef, setJobs, log, onCompleted: (job) => jobCompletedRef.current.terminal(job) },
                 serviceManagedOrgSlugs,
             ),
         [],

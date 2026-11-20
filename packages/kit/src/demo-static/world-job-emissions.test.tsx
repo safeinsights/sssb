@@ -8,9 +8,9 @@ import { mergeMessages } from '../i18n/messages'
 import { useDemoWorld } from './world'
 
 /**
- * A job's terminal hop emits what the server's recordJobStatus emits, for the JOB's org: the `job.status_changed`
- * webhook to that org's endpoints and the notification to its admins, whoever is looking and whichever path
- * completed it (Run pending, or an actor).
+ * A job's terminal hop emits what the server emits, for the JOB's org, whoever is looking: the `job.status_changed`
+ * webhook to that org's endpoints from every path, and the notification to its admins from every path but the
+ * service actor's (its server route calls recordJobStatus alone).
  */
 
 type World = ReturnType<typeof useDemoWorld>
@@ -71,7 +71,7 @@ describe('demo job terminal hop', () => {
         expect(deliveredTo()).toEqual([endpointOf('depot')])
     })
 
-    it('emits the webhook and the notification when a service actor completes the job', async () => {
+    it('emits the webhook, and notifies no one, when a service actor completes the job (as its route does)', async () => {
         const { world, job, endpointOf, deliveredTo, jobNotices } = await heldDepotJob()
         const before = jobNotices()
         const driver = world.current.serviceDriver({ tenantSlug: 'harbor', orgSlug: 'depot' }, () => {})
@@ -82,7 +82,7 @@ describe('demo job terminal hop', () => {
             expect(await driver.complete(job.id)).toBe('applied')
         })
         expect(deliveredTo()).toEqual([endpointOf('depot')])
-        expect(jobNotices()).toBeGreaterThan(before)
+        expect(jobNotices()).toBe(before)
     })
 
     it('emits them when the builder completes the job', async () => {

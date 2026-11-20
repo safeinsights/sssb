@@ -32,8 +32,9 @@ interface DemoDriverDeps {
     jobsRef: RefObject<DemoJob[]>
     setJobs: Dispatch<SetStateAction<DemoJob[]>>
     log: ActorLog
-    /** The world's terminal hop (the job.status_changed webhook and the admin notification), called once a job
-     *  this driver completed is completed, as the server's recordJobStatus emits them. */
+    /** What the world emits once a job this driver completed is completed, as the server route this driver stands
+     *  in for does: the service actor's, the job.status_changed webhook; the builder's, the webhook and the admin
+     *  notification. */
     onCompleted: (job: DemoJob) => void
 }
 
