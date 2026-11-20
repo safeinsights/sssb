@@ -57,6 +57,15 @@ export const params = {
         // storage-compatible-store)
         storage: 'none' as 's3' | 's3-compatible' | 'none',
     },
+    auth: {
+        // How sign-in places people; infra/ (SssbApp) sets AUTH_TENANCY from it. cutover: auth-tenancy
+        // 'multi': each user's tenant is the claim in their identity provider's public metadata (under
+        // `tenantMetadataKey`, `tenantSlug` when left out), and their orgs and roles are the provider's organizations.
+        // 'single' (add `tenantSlug` and `homeOrgSlug`): every user the provider signs in is placed in that tenant and
+        // org with role 'none', which grants nothing a membership would, so your own rules decide the rest. On a
+        // provider instance shared with another product, every user of that product can sign in to this one.
+        tenancy: 'multi' as const,
+    },
     clerk: {
         // cutover: auth-dev (development instance), auth-prod (production instance)
         publishableKeyName: 'PLACEHOLDER_CLERK_PUBLISHABLE_KEY_NAME',
