@@ -24,8 +24,8 @@ framework's; event kinds are vocabulary you register:
    hard-code them; receivers pin these names at integration time.
 4. **Test**: emit → drain → a caught delivery with a verifying signature (the reference app's
    `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app-config/webhooks.test.ts`). That test is the
-   server's proof: a generated app has no Simulator on `pnpm dev` (the server panel, with its Hooks tab, is the
-   reference app's) and no endpoint-management route. The static demo has both: its team screen registers
+   server's proof: a generated app's Simulator on `pnpm dev` has People, Mail and Jobs but no Hooks tab (that is the
+   reference app's own panel), and the app has no endpoint-management route. The static demo has both: its team screen registers
    endpoints and its panel's Hooks tab shows deliveries (its failure toggle exercises the retry path). If the demo
    world emits your kind, mirror the emit in `src/demo-static/app.tsx` with `world.enqueueWebhook(kind, payload)`
    and inspect it there. Finish with `pnpm verify`.
