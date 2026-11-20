@@ -6996,3 +6996,52 @@ left to the builder:
   the app declares its family in its `package.json`'s `sssb` block, which doctor already reads (the port slot), and the
   conformance suite holds that declaration to the port's `isolation`, so doctor never boots the adapter registry.
   Rejected: printing `rls` today, which reads as a choice the app made.
+
+## A job kind says when its end is notified (2026-11-19, `feat/job-notify-on`)
+
+The first adopter runs its maintenance as an hourly in-process job, each run idempotent and time-budgeted so that a
+cut-off run resumes the next hour. SSSB notified the home org's admins of every completed app job, so a routine job meant
+24 in-app notifications, refused email attempts and `listMembers` calls (an identity-provider call in real mode) a day.
+It asked for a kind to opt out, or to notify only on failure, and for job retries with backoff.
+
+- **The setting is an optional seam export, `jobNotify`, in `@sssb/app-config/jobs`**:
+  `Partial<Record<AppJobKind, 'always' | 'failure' | 'never'>>`. A kind it does not name, and an app that has no export,
+  is `always`: today's behaviour, so nothing changes for an existing kind. The framework's own kinds (`digest-email`)
+  still never notify, as before, and a `jobNotify` entry cannot turn that on (the type names app kinds only; an entry
+  for a framework kind is read by nothing). Rejected: **a `notify` field on each kind's registration**, as the brief
+  sketched it. The registration is two parallel things, a `appJobKinds` tuple and a `jobHandlers` map of bare functions,
+  and neither has a place for a field: making a handler `{ handler, notify }` changes the type every adopter's
+  `jobHandlers` declares and every kit reader of it, so every app would break on upgrade for a setting most will never
+  use. Rejected: **a property on the handler function** (`Object.assign(handler, { notify })`), which hides the setting
+  in a value and which a re-wrapped handler silently drops.
+- **It is optional as an export, read through the namespace**, as `db/seed.ts` reads `appSeedRows`:
+  `import * as jobsSeam` and `jobsSeam['jobNotify']`. The earlier decision (2026-11-19, optional real ports) rejected "a
+  new seam module" because a seam module cannot be optional; an optional export of an existing module can be, and this
+  is the second one. Rejected: **a required export**, which would fail the typecheck of every adopter that has not
+  added it, a `required` seam change for a setting whose default is the old behaviour.
+- **The check is in `notifyJobTerminal`, before the org is read**, so a refused run costs no `listMembers` call, no in-app
+  row and no email attempt. That function is the one hop every runner already ends in: the simulated runner, the
+  in-process runner and its sweep (which fails a lost job and notifies it), and the jobs webhook route the CodeBuild
+  runner completes through. Rejected: **gating in `runJobInProcess`**, which only two of the three runners run, so a
+  CodeBuild job would notify what an in-process job did not, the dev-versus-deployment gap the simulated world exists to
+  close.
+- **`failure` means a job that ended `failed`, whatever failed it**: a handler's error, a failed build, and a job the
+  sweep judges lost. Rejected: **`failure` excluding the sweep's**, which would silence the one failure nobody was
+  watching.
+- **A value that is not a mode counts as `always`.** The types refuse it, but a seam can be untyped, and the notification
+  layer is never load-bearing: a typo must not silence a kind. Rejected: failing at boot, which turns a typo in a
+  maintenance setting into an outage. Pinned in `server-lib/notify-opt-out.test.ts`, with the absent export and an entry
+  for another kind.
+- **The static demo takes the map as a `useDemoWorld` option, `jobNotify`**, and its twin skips a notification for
+  `failure` and `never`, since the twin only ever completes a job. It cannot read the seam: the `jobs` seam module imports
+  every server handler, and the twin deliberately does not (`world.ts`). The twin imports the type only. Rejected:
+  **calling the server's `notifiesOn` in the twin**, a value import of `core/jobs`, which reaches the seam. The showcase
+  sets no `jobNotify`, so it passes none; an adopter that sets one and starts the kind in its demo passes the same map.
+- **The fixture has a kind for each mode** (`export-dockets` says nothing, `sweep-dockets` is `failure`, `quiet-dockets`
+  is `never`), and `server-lib/notify-opt-out.test.ts` runs every kind to both ends on the simulated runner, the
+  in-process runner (and its sweep) and the CodeBuild runner's webhook sequence. Seen red first: with the check absent,
+  10 of 21 runner cases failed, each one a refused run that still called `listMembers`.
+- **The changeset files `minor`, Kind seam, Action optional**, as the brief asked, though Action `optional` could be a
+  patch: the seam module's contract grew. It names `@sssb/create` too, for the plugin's `/sssb:new-job`.
+- **Retries with backoff are recorded, not built**: `.claude/future-tasks/job-retries-with-backoff.md`. Its first
+  decision (a retry as the same row or a new one) turns on terminal states, which the jobs webhook's idempotency rests on.

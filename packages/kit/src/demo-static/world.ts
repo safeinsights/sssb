@@ -225,7 +225,13 @@ function seededMail(initial: DemoWorldOptions['initialMail']): MailItem[] {
 }
 
 export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
-    const { inboundHandlers = {}, digestBodies, onReset, presetOperations: appPresetOperationHalves = {} } = options
+    const {
+        inboundHandlers = {},
+        digestBodies,
+        onReset,
+        presetOperations: appPresetOperationHalves = {},
+        jobNotify = {},
+    } = options
     const route = useHashRoute()
     const tEmail = useTranslations('email')
     const tSimulator = useTranslations('simulator')
@@ -513,6 +519,11 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
      */
     function notifyJobTerminal(job: { id: string; kind: string; orgSlug: string | null }) {
         if (job.orgSlug === null) return
+        // The twin of the server's `jobNotify` check (server-lib/notify.ts): this world only ever completes a job (the
+        // server's runners also fail them), so a kind that notifies only a failure, or never, is silent here. The
+        // server's `notifiesOn` is a value import of core/jobs, which reaches the seam's handlers, so it is not used.
+        const mode = jobNotify[job.kind]
+        if (mode === 'failure' || mode === 'never') return
         notifyAdminsOf(job.orgSlug, 'job.completed', { jobId: job.id, jobKind: job.kind, status: 'completed' })
     }
 

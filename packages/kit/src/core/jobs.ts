@@ -35,6 +35,23 @@ export function isJobKind(value: string): value is JobKind {
     )
 }
 
+/**
+ * When a job kind's terminal state notifies the team's admins: `always` (a completion and a failure, what every app
+ * kind did before the setting existed, so the default), `failure` (only a failure) or `never`. An app says it per
+ * kind in the seam's optional `jobNotify` export (`@sssb/app-config/jobs`); the framework's own kinds never notify.
+ */
+export const JOB_NOTIFY_MODES = ['always', 'failure', 'never'] as const
+export type JobNotify = (typeof JOB_NOTIFY_MODES)[number]
+
+export function isJobNotify(value: unknown): value is JobNotify {
+    return (JOB_NOTIFY_MODES as readonly unknown[]).includes(value)
+}
+
+/** Whether a job that reached `status` is notified under `mode`. */
+export function notifiesOn(mode: JobNotify, status: 'completed' | 'failed'): boolean {
+    return mode === 'always' || (mode === 'failure' && status === 'failed')
+}
+
 export function isJobStatus(value: string): value is JobStatus {
     return (JOB_STATUSES as readonly string[]).includes(value)
 }
