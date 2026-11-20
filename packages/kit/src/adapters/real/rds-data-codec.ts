@@ -311,10 +311,24 @@ function serializeScalar(value: unknown): string {
     if (typeof value === 'boolean') return value ? 'true' : 'false'
     if (value instanceof Date) {
         if (Number.isNaN(value.getTime())) throw new TypeError('cannot send an invalid Date to the database')
-        return value.toISOString()
+        return postgresInstant(value)
     }
     if (value instanceof Uint8Array) return `\\x${Buffer.from(value).toString('hex')}`
     return JSON.stringify(value)
+}
+
+/**
+ * A Date as an instant Postgres's timestamp input reads. `toISOString` writes a year outside 1-9999 in its
+ * expanded form (`-000043-…`, `+010000-…`), which Postgres refuses ("time zone displacement out of range"), where
+ * node-postgres sends such a Date and Postgres stores it. So a year before 1 is written as its BC year (JavaScript's
+ * year 0 is 1 BC, -43 is 44 BC) with Postgres's ` BC` suffix, and a year after 9999 with its digits unpadded.
+ */
+function postgresInstant(value: Date): string {
+    const year = value.getUTCFullYear()
+    const iso = value.toISOString()
+    if (year >= 1 && year <= 9999) return iso
+    const rest = iso.slice(iso.indexOf('-', 1))
+    return year < 1 ? `${String(1 - year).padStart(4, '0')}${rest} BC` : `${year}${rest}`
 }
 
 function arrayLiteral(values: readonly unknown[]): string {

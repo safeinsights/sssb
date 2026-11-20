@@ -520,6 +520,20 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         expect(withoutKey(fromPg[0]!)).toEqual(withoutKey(fromPg[1]!))
     })
 
+    test('an instant before year 1 or after year 9999 is stored, as node-postgres stores it, not refused', async () => {
+        // Compared with the instant itself, not with the pg transport's read: node-postgres sends a Date in the
+        // process's local time, and for an ancient date a local zone's mean-time offset (Denver's is -06:59:56) is not
+        // a whole number of minutes, so pg itself shifts it outside UTC. Lambda runs in UTC, where the two agree.
+        for (const year of [-43, 0, 10000]) {
+            const at = new Date(Date.UTC(2000, 2, 15, 12, 0, 0))
+            at.setUTCFullYear(year)
+            const { rows } = await sql<{ at: Date; bc: boolean }>`
+                select ${at}::timestamptz as at, (${at}::timestamptz)::text like '% BC' as bc`.execute(dataApi.getDb())
+            expect(rows[0]?.at.getTime(), String(year)).toBe(at.getTime())
+            expect(rows[0]?.bc, String(year)).toBe(year < 1)
+        }
+    })
+
     test('a value too long for a domain is refused on both transports, never truncated', async () => {
         // data_api_parity and its domains exist: the parity test above created them.
         for (const [label, port] of [
