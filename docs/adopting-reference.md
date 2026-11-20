@@ -472,7 +472,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 142 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 75 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 77 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -680,9 +680,12 @@ Not yet. SSSB's own tables need Postgres: its migrations are Postgres DDL, its t
 proofs read Postgres's catalog. ADR-0015's second addendum accepts the design for more than one database, as families
 of adapters with Postgres the first, and builds it only when an adopter needs another. In that design each database
 adapter declares how it keeps tenants apart, the conformance suite runs that family's proofs, and a declaration with no
-mechanism behind it is not allowed. The candidates it names are row-level security, a database per tenant, a
-deployment that serves one tenant, and, chosen by name, a filter that nothing enforces. None of them is something your
-app can choose or declare today.
+mechanism behind it is not allowed. The declaration is already in the port: `DbPort.isolation`
+(`@sssb/kit/ports/db`), whose one value today is `'rls'`, row-level security, which every database adapter SSSB ships
+declares. A test double you type as `DbPort` declares it too, with the guarantee of the adapter it stands in for. The
+other candidates the design names are a database per tenant, a deployment that serves one tenant, and, chosen by name,
+a filter that nothing enforces; each joins the type only with a family that has the mechanism and proofs for it. None
+of them is something your app can choose or declare today.
 
 Meanwhile, if what you want from libsql or Turso is cost, scale to zero or a database outside a VPC, another Postgres
 host is the route ("Which Postgres" above). If you need another database, ask for it in SSSB's repository ("Changing

@@ -300,6 +300,7 @@ describe('recordAuditEvent detail', () => {
     // A DbPort that fails if anything opens: a refused detail must be refused before any transaction.
     const OPENED = 'stub: a transaction was opened'
     const unopenable: DbPort = {
+        isolation: 'rls',
         getDb: () => {
             throw new Error(OPENED)
         },

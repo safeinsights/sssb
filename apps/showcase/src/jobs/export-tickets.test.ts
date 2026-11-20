@@ -38,6 +38,7 @@ function stubDb(rows: TicketRow[]): DbPort {
     }
     const trx = { selectFrom: () => chain }
     return {
+        isolation: 'rls',
         getDb: () => {
             throw new Error('the export handler must not reach past withTenant')
         },
