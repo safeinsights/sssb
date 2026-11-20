@@ -53,6 +53,23 @@ describe('portForRoot', () => {
         }
     })
 
+    // Every built-in's derived band, slot by slot, is clear of every built-in's default: Ladle's used to start AT its
+    // own default, so one worktree in 200 shared :61000 with the main checkout's workshop.
+    it("keeps every built-in's derived ports, in every slot, off every built-in's default", () => {
+        const services = ['showcase', 'starter', 'ladle', 'contractPg'] as const
+        const defaults = new Set(services.map((service) => portForRoot(MAIN, service, {})))
+        const derived = new Map<string, Set<number>>(services.map((service) => [service, new Set()]))
+        for (let i = 0; i < 5000; i++) {
+            const root = path.join('/repos', 'sssb', '.claude', 'worktrees', `w${i}`)
+            for (const service of services) derived.get(service)?.add(portForRoot(root, service, {}))
+        }
+        for (const service of services) {
+            const ports = derived.get(service) ?? new Set()
+            expect(ports.size, service).toBe(200) // every slot reached, so the check below is over all of them
+            for (const port of ports) expect(defaults.has(port), `${service} derives ${port}`).toBe(false)
+        }
+    })
+
     it('lets an explicit env var win, which is the one-off isolated-run escape hatch', () => {
         expect(portForRoot(MAIN, 'showcase', { SHOWCASE_PORT: '3210' })).toBe(3210)
         expect(portForRoot(WORKTREE, 'showcase', { SHOWCASE_PORT: '3210' })).toBe(3210)

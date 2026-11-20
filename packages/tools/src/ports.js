@@ -68,7 +68,7 @@ const SLOTS = 200
 const SERVICES = {
     showcase: { env: 'SHOWCASE_PORT', fallback: 3000, derive: (slot) => 3200 + slot * 2 },
     starter: { env: 'STARTER_PORT', fallback: 3100, derive: (slot) => 3201 + slot * 2 },
-    ladle: { env: 'LADLE_PORT', fallback: 61000, derive: (slot) => 61000 + slot },
+    ladle: { env: 'LADLE_PORT', fallback: 61000, derive: (slot) => 61001 + slot },
     contractPg: { env: 'CONTRACT_PG_PORT', fallback: 5439, derive: (slot) => 5440 + slot },
 }
 
@@ -91,7 +91,7 @@ const slotFor = (root) => hashOf(root) % SLOTS
 /**
  * The band a custom slot's derived port comes from in a linked worktree: 10000 ports, so two custom slots of one
  * worktree collide about once in ten thousand (a loud EADDRINUSE, never a silent adoption). Clear of every built-in
- * default and derived band (3000, 3100, 3200-3599, 5439-5639, 61000-61199), and below Linux's ephemeral range (32768)
+ * default and derived band (3000, 3100, 3200-3599, 5439-5639, 61000-61200), and below Linux's ephemeral range (32768)
  * and macOS's (49152), so the OS never hands one of these to an outbound connection.
  */
 const CUSTOM_BAND = { start: 20000, size: 10000 }
