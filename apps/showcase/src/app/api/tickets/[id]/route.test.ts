@@ -8,6 +8,7 @@ import { DELETE, PATCH } from './route'
 const h = vi.hoisted(() => ({
     requireUser: vi.fn(),
     listMembers: vi.fn(),
+    getMember: vi.fn(),
     tenantIdForSlug: vi.fn(),
     orgIdForSlug: vi.fn(),
     ticketForOrg: vi.fn(),
@@ -18,7 +19,7 @@ const h = vi.hoisted(() => ({
     makeNotifyDeps: vi.fn(),
 }))
 vi.mock('@sssb/kit/adapters/index', () => ({
-    auth: { requireUser: h.requireUser, listMembers: h.listMembers },
+    auth: { requireUser: h.requireUser, listMembers: h.listMembers, getMember: h.getMember },
     db: {},
 }))
 vi.mock('@sssb/kit/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
@@ -77,6 +78,7 @@ beforeEach(() => {
     for (const fn of Object.values(h)) fn.mockReset()
     h.requireUser.mockResolvedValue(user())
     h.listMembers.mockResolvedValue([])
+    h.getMember.mockResolvedValue({ role: 'member' })
     h.tenantIdForSlug.mockResolvedValue('tenant-northwind')
     h.orgIdForSlug.mockImplementation(async (_db: unknown, _tenantId: string, slug: string) => ORG_IDS[slug] ?? null)
     h.ticketForOrg.mockResolvedValue(TICKET)
@@ -268,5 +270,23 @@ describe('a path id that cannot be a ticket, or a malformed body', () => {
             expect(response.status).toBe(400)
         }
         expect(h.updateTicket).not.toHaveBeenCalled()
+    })
+})
+
+describe('PATCH: the assignee must be a member of the active org', () => {
+    test('400 for an id that names nobody on the team, and nothing is written', async () => {
+        h.getMember.mockResolvedValue(null)
+        const response = await patch({ assigneeUserId: 'nobody-at-all-in-any-org' })
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({ error: 'invalid-assignee' })
+        expect(h.getMember).toHaveBeenCalledWith('frontline', 'nobody-at-all-in-any-org')
+        expect(h.updateTicket).not.toHaveBeenCalled()
+    })
+
+    test('unassigning (null) asks no one', async () => {
+        h.updateTicket.mockResolvedValue({ ...TICKET, assigneeUserId: null })
+        h.ticketForOrg.mockResolvedValue({ ...TICKET, assigneeUserId: 'person-staff' })
+        expect((await patch({ assigneeUserId: null })).status).toBe(200)
+        expect(h.getMember).not.toHaveBeenCalled()
     })
 })

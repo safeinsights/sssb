@@ -57,6 +57,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         // Authorization choke point: a restricted member may read the queue but not change it.
         authorize(user, orgId, 'update', { type: 'Ticket', orgId })
 
+        // A ticket is handed to someone on this team, never to an id that names nobody (or someone
+        // outside the org): checked against the auth port, the authority on membership, after the
+        // caller is authorized so a denied caller learns nothing about who is a member.
+        if (
+            typeof changes.assigneeUserId === 'string' &&
+            !(await auth.getMember(user.orgSlug, changes.assigneeUserId))
+        ) {
+            return Response.json({ error: 'invalid-assignee' }, { status: 400 })
+        }
+
         // An illegal status hop (open → open, or anything the machine forbids) throws
         // InvalidTransitionError inside the transaction → 409 via withPortErrors, and no row is written.
         const ticket = await applyTicketChanges(db, {
