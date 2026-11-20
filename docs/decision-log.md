@@ -6923,8 +6923,7 @@ in building it:
 - **Values that choose behaviour are checked where the adapter is built, and a wrong one fails at boot naming its
   variable**: `STORAGE_UPLOAD_TARGET` outside `post` and `none`, `STORAGE_FORCE_PATH_STYLE` outside `true` and `false`
   (an empty value is unset), `STORAGE_ENDPOINT` that is not an http(s) URL. Rejected: coercing (`TRUE`, `1`), which turns a
-  typo into the other behaviour. The check is not in `assertRealEnv`, which only reports what is missing and is held to
-  the committed snapshot of required names.
+  typo into the other behaviour. `assertRealEnv` runs the same checks (below), after it has reported what is missing.
 - **`STORAGE_FORCE_PATH_STYLE` unset leaves the SDK's own addressing**, never derived from the endpoint or the provider.
   MinIO needs `true`, and the adopter reference says so.
 - **With `none`, `createUploadTarget` throws a plain `Error` naming `STORAGE_UPLOAD_TARGET`**, as the absent port
@@ -6932,7 +6931,7 @@ in building it:
   `withPortErrors` maps, since a deployment's declaration is a misconfiguration to the route that hits it, not a request
   the client can fix.
 - **`SssbApp` sets only the switch for `s3-compatible`.** The endpoint, region and keys are the deployment's to add to
-  `app.server`, as an app's Mailgun or Anthropic key already is; the construct never handles a secret. Rejected: new
+  `app.server`, and the construct never handles a secret. Rejected: new
   `SssbApp` props for the store's settings, which would put the key in a stack's template.
 - **Three cutover rows**, two for the groups of settings the choice's `env` map names (`storage-compatible-store`,
   `storage-compatible-credentials`) and one for the live check (`storage-compatible-live`), which asks a round trip of

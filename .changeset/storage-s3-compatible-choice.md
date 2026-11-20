@@ -23,7 +23,7 @@ and grants no S3 access for it. `required-env.json` lists the choice, so this is
 
 **To adopt.** Nothing, unless you want it. To use R2, MinIO or B2: set `ports: { storage: 's3-compatible' }` in
 `apps/<app>/config/params.ts`, add the six settings to the server's environment from your infra (`app.server`; the
-key pair from your secret store), and work the three cutover rows. Switching a deployed stack from `s3` takes its bucket
+key pair kept out of the repository), and work the three cutover rows. Switching a deployed stack from `s3` takes its bucket
 out of the stack (retained in production, deleted elsewhere), as `none` does: copy the objects first. A store without
 presigned POST cannot take a browser upload through `createUploadTarget` yet.
 

@@ -50,8 +50,8 @@ configuration, not a new adapter.
 `createCompatibleStorage` in `packages/kit/src/adapters/real/storage.ts` building the S3 adapter on the endpoint, region
 and key pair, which the registry reads from `STORAGE_BUCKET`, `STORAGE_ENDPOINT`, `STORAGE_REGION`,
 `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY` and `STORAGE_UPLOAD_TARGET`, and optionally
-`STORAGE_FORCE_PATH_STYLE`. `SssbApp` builds no bucket and grants no S3 access for it (`params.ports.storage` is
-`s3` or `s3-compatible` or `none`); the required-environment snapshot gained the choice and nothing else changed.
+`STORAGE_FORCE_PATH_STYLE`. `SssbApp` builds a storage bucket for `s3` (or no `params.ports.storage`) alone, and for `s3-compatible` builds none and
+grants no S3 access; the required-environment snapshot gained the choice and nothing else changed.
 
 Decided here (and in `docs/decision-log.md`):
 
@@ -60,8 +60,11 @@ Decided here (and in `docs/decision-log.md`):
   upload) or of `none` (MinIO silently loses a feature it has).
 - **The compatible adapter is a new export beside `createRealStorage`, whose signature is unchanged.**
   Rejected: widening `createRealStorage`, which is the `s3` choice's and takes the AWS region.
-- **A value that is wrong fails at boot, naming its variable**: `STORAGE_UPLOAD_TARGET` outside `post` and `none`,
-  `STORAGE_FORCE_PATH_STYLE` outside `true` and `false` (empty is unset), `STORAGE_ENDPOINT` not an http(s) URL.
+- **A value that is wrong fails at boot, naming its variable**, and `sssb check-real-env` refuses it too:
+  `STORAGE_UPLOAD_TARGET` outside `post` and `none`, `STORAGE_FORCE_PATH_STYLE` outside `true` and `false` (empty is
+  unset), `STORAGE_ENDPOINT` not an http(s) URL or carrying a user or password (`storage-settings.ts`).
+- **The compatible client asks for checksums only where an operation requires one**, which stops the SDK's default CRC32
+  on `put`; `delete` still carries CRC32 and no Content-MD5, so the live row runs it against the real store.
 - **`STORAGE_FORCE_PATH_STYLE` unset leaves the SDK's own addressing**, never derived from the endpoint.
 - **The cutover rows are three**: `storage-compatible-store` and `storage-compatible-credentials` (the two groups of
   settings the choice's `env` map names) and `storage-compatible-live` (the round trip against a real bucket, which

@@ -708,8 +708,9 @@ first value, which is what real mode required before the switches existed.
   MinIO, Backblaze B2), through the same adapter and no code of yours. It is a choice of its own, so setting an
   endpoint under `s3` does nothing. `SssbApp` builds no bucket and grants no S3 access for it (the store is not in your
   stack), sets only `STORAGE_PROVIDER`, and you add the rest to the server's environment yourself (`app.server`), the
-  keys from your secret store: `STORAGE_BUCKET`, `STORAGE_ENDPOINT` (the store's S3 API URL, such as
-  `https://<account id>.r2.cloudflarestorage.com` for R2 or `https://s3.<region>.backblazeb2.com` for B2),
+  key pair kept out of the repository: `STORAGE_BUCKET`, `STORAGE_ENDPOINT` (the store's S3 API URL, such as
+  `https://<account id>.r2.cloudflarestorage.com` for R2 (Cloudflare's S3 get-started page) or
+  `https://s3.<region>.backblazeb2.com` for B2 (Backblaze's "call the S3-compatible API" page), both checked 2026-11-19),
   `STORAGE_REGION` (what the store signs for; R2 takes `auto`), `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY` and
   `STORAGE_UPLOAD_TARGET`. Real mode fails at boot naming each one that is missing. The AWS names are not used:
   `AWS_REGION` and the AWS key pair are the function's own, which Lambda reserves. `STORAGE_FORCE_PATH_STYLE=true`
