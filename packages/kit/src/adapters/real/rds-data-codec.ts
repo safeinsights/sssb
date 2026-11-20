@@ -67,7 +67,13 @@ export function sqlSegments(sql: string): SqlSegment[] {
             literal(blockCommentEnd(sql, i))
         } else if (ch === "'") {
             const escapes = (prev === 'E' || prev === 'e') && !IDENT_CHAR.test(i > 1 ? sql[i - 2]! : '')
-            literal(quotedEnd(sql, i, "'", escapes))
+            // Two string constants separated only by whitespace holding a newline are one constant, and a
+            // continued E-string keeps its backslash escapes: `E'a'<newline>'\' $1'` is one string.
+            let end = quotedEnd(sql, i, "'", escapes)
+            for (let gap = CONTINUATION.exec(sql.slice(end)); gap; gap = CONTINUATION.exec(sql.slice(end))) {
+                end = quotedEnd(sql, end + gap[0].length - 1, "'", escapes)
+            }
+            literal(end)
         } else if (ch === '"') {
             literal(quotedEnd(sql, i, '"', false))
         } else if (ch === '$' && !IDENT_CHAR.test(prev) && !/^\$\d/.test(sql.slice(i, i + 2))) {
@@ -87,6 +93,9 @@ export function sqlSegments(sql: string): SqlSegment[] {
     if (code) segments.push({ text: code, code: true })
     return segments
 }
+
+/** Whitespace holding at least one newline, then the `'` that continues a string constant. */
+const CONTINUATION = /^[ \t\f\r]*\n\s*'/
 
 const PLACEHOLDER = new RegExp(`(?<!${IDENT_CHAR.source})\\$(\\d+)`, 'g')
 

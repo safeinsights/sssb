@@ -336,3 +336,14 @@ describe('decodeField: an array of a type node-postgres has no parser for', () =
         expect(decodeField({ arrayValue: { longValues: [1, 2] } }, '_int4')).toEqual([1, 2])
     })
 })
+
+describe('rewritePlaceholders: a string constant continued on the next line is one string', () => {
+    it("an E-string's continuation keeps its backslash escapes, so a $1 inside it is not a placeholder", () => {
+        expect(rewritePlaceholders("select E'a'\n'\\' $1', $1", (n) => `<P${n}>`)).toBe("select E'a'\n'\\' $1', <P1>")
+    })
+
+    it('a plain continuation is one string too; on one line, two strings are two', () => {
+        expect(rewritePlaceholders("select 'a'\n  'b $1', $1", (n) => `<P${n}>`)).toBe("select 'a'\n  'b $1', <P1>")
+        expect(rewritePlaceholders("select 'a' 'b', $1", (n) => `<P${n}>`)).toBe("select 'a' 'b', <P1>")
+    })
+})
