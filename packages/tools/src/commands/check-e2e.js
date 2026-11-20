@@ -14,11 +14,12 @@
 // it to Node. So a bare specifier is FOLLOWED when its real path is outside node_modules (the app's own files, its `@/`
 // alias, a sibling workspace package and whatever that imports) or is framework source in any copy (its nearest named
 // package.json is `@sssb/kit`'s), and the seam always; every other package stays external. A `require()` esbuild can
-// see is followed like an import. A function made by `createRequire(...)` it cannot see through, so a followed file
-// outside the kit that names `createRequire` in its code and, as a string literal in its code, an `@sssb/kit`
-// specifier esbuild did not resolve (other than the entry and the kit's `package.json`) fails too; the file is read
-// by the app's own TypeScript parser, so a comment is not code. A computed specifier stays out of reach of any static
-// check.
+// see is followed like an import. A loader it cannot see through (a function made by `createRequire(...)`, a plain
+// `require` handed a variable that holds the specifier) is not, so a followed file outside the kit that writes, as a
+// string literal in its code, an `@sssb/kit` specifier esbuild did not resolve (other than the entry and the kit's
+// `package.json`, and other than an import or export declaration's or a type `import('…')`'s, which esbuild reads or
+// which load nothing) fails too; the file is read by the app's own TypeScript parser, so a comment is not code. A
+// computed specifier stays out of reach of any static check.
 //
 // WHICH FILES: Playwright is asked. Each Playwright config of the app (`playwright.config.*`,
 // `playwright.<name>.config.*` in its directory), plus each `--config <file>` given (repeatable, relative to the
@@ -54,7 +55,7 @@ import { isInRepoKit, seamOfKit } from './doctor-checks.js'
 
 const KIT = '@sssb/kit'
 const ENTRY = `${KIT}/testing/e2e`
-/** Kit specifiers beside `createRequire` that load no framework code. */
+/** Kit specifiers written in code that load no framework code. */
 const NOT_FRAMEWORK = new Set([ENTRY, `${KIT}/package.json`])
 const KEEP = /^@sssb\/(kit|app-config)(\/|$)/
 const PROBE = 'sssbCheckE2eProbe'
@@ -369,20 +370,22 @@ function chain(metafile, from, to) {
 const typescripts = new Map()
 
 /**
- * The `@sssb/kit` specifiers `file` writes as string literals in its CODE, when its code also names `createRequire`
- * (none otherwise). Read by the app's own TypeScript parser, as doctor reads the app's tsconfig: comments are not code.
+ * The `@sssb/kit` specifiers `file` writes as string literals in its CODE, outside the module specifier of an import or
+ * export declaration and a type `import('…')` (esbuild follows the first, and neither a type-only declaration nor a type
+ * import loads anything) and a `declare module` name. Read by the app's own TypeScript parser, as doctor reads the
+ * app's tsconfig: comments are not code.
  * @param {string} app
  * @param {string} file
  * @param {string} text
  * @returns {string[]}
  */
-function kitLiteralsBesideCreateRequire(app, file, text) {
+function kitLiteralsInCode(app, file, text) {
     let ts = typescripts.get(app)
     if (ts === undefined) {
         const resolved = resolveFromApp(
             app,
             'typescript',
-            'sssb check-e2e reads the files that name `createRequire` with',
+            'sssb check-e2e reads the files it follows for a kit specifier esbuild cannot see with',
         )
         ts = /** @type {typeof import('typescript')} */ (createRequire(import.meta.url)(resolved))
         typescripts.set(app, ts)
@@ -396,29 +399,34 @@ function kitLiteralsBesideCreateRequire(app, file, text) {
               : /^\.[cm]?ts$/.test(ext)
                 ? ts.ScriptKind.TS
                 : ts.ScriptKind.JS
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false, kind)
-    let creates = false
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind)
     /** @type {string[]} */
     const literals = []
     /** @param {import('typescript').Node} node */
     const visit = (node) => {
-        if (ts.isIdentifier(node) && node.text === 'createRequire') creates = true
-        else if (
+        if (
             (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
             /^@sssb\/kit(\/|$)/.test(node.text)
-        )
-            literals.push(node.text)
+        ) {
+            const parent = node.parent
+            const named =
+                ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) &&
+                    parent.moduleSpecifier === node) ||
+                (ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent)) ||
+                (ts.isModuleDeclaration(parent) && parent.name === node)
+            if (!named) literals.push(node.text)
+        }
         ts.forEachChild(node, visit)
     }
     visit(source)
-    return creates ? literals : []
+    return literals
 }
 
 /**
  * @typedef {{ file: string, error?: string, reached: { kitFile: string, via: string[] }[], count: number,
  *   unfollowed: string[], throughEntry: boolean }} SpecReach
  *   `reached`: the kit files outside the entry that the file enters the kit through (each with its import chain);
- *   `count`: every kit file outside the entry it reaches; `unfollowed`: a kit specifier named beside `createRequire`
+ *   `count`: every kit file outside the entry it reaches; `unfollowed`: a kit specifier named where esbuild cannot follow it
  *   that esbuild could not follow; `throughEntry`: whether it reaches the allowed entry at all
  */
 
@@ -511,18 +519,18 @@ export async function e2eReach(appDir, extraConfigs = []) {
                     input.imports.some((i) => i.path === key && !i.external),
             ),
         )
-        // What esbuild cannot see: a kit specifier beside `createRequire` in a followed file outside the kit.
+        // What esbuild cannot see: a kit specifier written in the code of a followed file outside the kit, which it did not
+        // resolve as an import (a `createRequire(...)` function, a `require` of a variable).
         /** @type {string[]} */
         const unfollowed = []
         for (const [key, input] of Object.entries(result.metafile.inputs)) {
             const source = realOf.get(key) ?? key
             if (!path.isAbsolute(source) || isKit(source) || underNodeModules(source)) continue
             const text = readFileSync(source, 'utf8')
-            if (!/\bcreateRequire\b/.test(text)) continue
             const seen = new Set(input.imports.map((i) => i.original))
-            for (const specifier of kitLiteralsBesideCreateRequire(app, source, text)) {
+            for (const specifier of kitLiteralsInCode(app, source, text)) {
                 if (!NOT_FRAMEWORK.has(specifier) && !seen.has(specifier))
-                    unfollowed.push(`${show(source)} names '${specifier}' beside createRequire`)
+                    unfollowed.push(`${show(source)} names '${specifier}' where esbuild cannot follow it`)
             }
         }
         reach.push({

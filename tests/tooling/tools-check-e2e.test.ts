@@ -359,9 +359,37 @@ describe('check-e2e against an installed kit (the entry is compiled)', () => {
         expect(bySpec['tests/e2e/required.spec.ts']).toMatchObject({ count: 1 })
         expect(bySpec['tests/e2e/created.spec.ts']).toMatchObject({
             count: 0,
-            unfollowed: ["tests/e2e/created.spec.ts names '@sssb/kit/core/state-machine' beside createRequire"],
+            unfollowed: [
+                "tests/e2e/created.spec.ts names '@sssb/kit/core/state-machine' where esbuild cannot follow it",
+            ],
         })
         expect(bySpec['tests/e2e/version.spec.ts']).toMatchObject({ count: 0, unfollowed: [] })
+    })
+
+    // Playwright compiles a spec to CommonJS, where a plain `require` exists: handed a variable, it loads what esbuild
+    // never saw, with no `createRequire` anywhere in the file.
+    it('names a kit specifier a plain require loads through a variable, and passes one that loads nothing', async () => {
+        const specs = {
+            'tests/e2e/variable.spec.ts':
+                "const k = '@sssb/kit/core/state-machine'\ntest('v', () => { console.log(require(k)) })\n",
+            'tests/e2e/typed.spec.ts':
+                "import type { Machine } from '@sssb/kit/core/state-machine'\nexport type T = import('@sssb/kit/core/state-machine').Machine | Machine\ntest('t', () => {})\n",
+            'tests/e2e/entry.spec.ts':
+                "// const k = '@sssb/kit/core/state-machine'\nconst e = '@sssb/kit/testing/e2e'\ntest('e', () => { console.log(e) })\n",
+        }
+        for (const [file, text] of Object.entries(specs))
+            write(path.join(app, file), `import { test } from '@playwright/test'\n${text}`)
+        const result = await e2eReach(app)
+        expect(result.configProblems).toEqual([])
+        const bySpec = Object.fromEntries(result.reach.map((r) => [r.file, r]))
+        expect(bySpec['tests/e2e/variable.spec.ts']).toMatchObject({
+            count: 0,
+            unfollowed: [
+                "tests/e2e/variable.spec.ts names '@sssb/kit/core/state-machine' where esbuild cannot follow it",
+            ],
+        })
+        expect(bySpec['tests/e2e/typed.spec.ts']).toMatchObject({ count: 0, unfollowed: [] })
+        expect(bySpec['tests/e2e/entry.spec.ts']).toMatchObject({ count: 0, unfollowed: [] })
     })
 
     it("fails the config when a spec reaches the kit's TypeScript source, which Playwright cannot load, naming the kit file", async () => {
