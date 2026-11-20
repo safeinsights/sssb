@@ -5,7 +5,7 @@
 
 ## What is true
 
-The user menu's sign-out (both reference apps' `src/app/[locale]/(protected)/header-glue.tsx`) posts to the app's
+The user menu's sign-out (`apps/starter/src/app/[locale]/(protected)/header-glue.tsx` and the showcase's) posts to the app's
 sign-out route, which calls the auth port's `signOut`. In real mode that is `revokeSession` on Clerk's server
 (`packages/kit/src/adapters/real/auth.ts`). The browser keeps Clerk's short-lived session token, which the middleware
 verifies locally until it lapses (about a minute by Clerk's default), so the page the glue navigates to can still see
