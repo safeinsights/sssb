@@ -452,7 +452,7 @@ apps/<app>/config/            APP_SLUG and (optionally) deployment params
 apps/<app>/src/app/           Next route files (thin wrappers; framework routes live here too)
 apps/<app>/src/app-config/    THE SEAM — your registrations
 apps/<app>/src/components/    your screens/cards
-apps/<app>/src/domain/        your domain modules (not generated: create it when you need it)
+apps/<app>/src/domain/        your domain modules (generated with the Items slice's `db/items.ts`, which `sssb remove-items` takes out)
 apps/<app>/src/ports/         your own ports, for a vendor SSSB has no port for (docs/recipes/app-owned-adapter.md; not generated)
 apps/<app>/src/adapters/      their registry and fakes; adapters/real/ is the app's only vendor-SDK directory (not generated)
 apps/<app>/src/demo-static/   your half of the file:// demo twin (the framework half is SSSB's)
