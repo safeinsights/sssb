@@ -1565,11 +1565,14 @@ describe('the database name', () => {
 })
 
 /**
- * Each Node.js Lambda this synth staged, loaded as Lambda loads it: the handler's module, imported fresh by Node, must
- * evaluate and export its handler. A module that throws as it loads fails every invocation, and nothing else here runs
- * a bundle: the Migrator's once threw `Dynamic require of "events" is not supported` on every deploy, from the `pg`
- * esbuild inlined into its ESM bundle. Lambda's Node runtime provides the AWS SDK v3, which the bundles leave external;
- * here the kit's installed copy stands in for it, linked beside each staged copy. Nothing is invoked.
+ * Each Node.js Lambda `SssbApp` builds in this synth, loaded the way Lambda's Node runtime loads it: the handler's
+ * module, found by Lambda's extension order and imported or required as Lambda would, must evaluate and export its
+ * handler. A module that throws as it loads fails every invocation, and nothing else here runs a bundle: the Migrator's
+ * once threw `Dynamic require of "events" is not supported` on every deploy, from the `pg` esbuild inlined into its ESM
+ * bundle. Lambda's runtime provides the AWS SDK v3, which the bundles leave external; here the kit's installed copy
+ * stands in for it, linked beside each staged copy. Two differences remain: the Node is this one, not the function's
+ * runtime version, and the SDK is only the clients the kit installs. So CDK's own provider functions (logical ids
+ * starting `Custom`), which need clients the kit may not have, are not loaded. Nothing is invoked.
  * @param {Resources} all
  * @param {string} assembly
  * @param {string} sdkDir the directory holding `@aws-sdk/*` packages
@@ -1583,11 +1586,14 @@ function lambdaLoadProblems(all, assembly, sdkDir) {
     for (const [id, r] of Object.entries(all)) {
         const props = /** @type {any} */ (r.Properties ?? {})
         if (r.Type !== 'AWS::Lambda::Function' || !String(props.Runtime ?? '').startsWith('nodejs')) continue
+        if (id.startsWith('Custom')) continue
         const key = props.Code?.S3Key
-        const [file, exported] = String(props.Handler ?? '').split('.')
-        if (typeof key !== 'string' || file === undefined || exported === undefined) continue
+        const handler = String(props.Handler ?? '')
+        const dot = handler.lastIndexOf('.')
+        if (typeof key !== 'string' || dot <= 0) continue
+        const [file, exported] = [handler.slice(0, dot), handler.slice(dot + 1)]
         const staged = path.join(assembly, `asset.${key.replace(/\.zip$/, '')}`)
-        const entry = ['.mjs', '.js', '.cjs']
+        const entry = ['.js', '.mjs', '.cjs']
             .map((ext) => `${file}${ext}`)
             .find((name) => existsSync(path.join(staged, name)))
         // A handler that is no module of the asset (the server's, run by the Web Adapter's run.sh) is not Node's to load.
@@ -1612,11 +1618,21 @@ function lambdaLoadProblems(all, assembly, sdkDir) {
             : `(await import('node:module')).createRequire(${JSON.stringify(url)})(${JSON.stringify(path.join(copy, entry))})`
         const script =
             `const m = ${load};` +
-            `if (typeof m[${JSON.stringify(exported)}] !== 'function') { console.error('exports no function'); process.exit(3) }`
-        const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: {} })
+            `if (typeof m[${JSON.stringify(exported)}] !== 'function') { console.error('exports no function'); process.exit(3) }` +
+            // Lambda freezes after init, so a handle a module opens as it loads (a timer, a socket) never ends a load
+            // there; here it would keep the child alive, so the child exits, and a hang is cut short.
+            'process.exit(0)'
+        const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+            encoding: 'utf8',
+            env: {},
+            timeout: 60_000,
+        })
         if (run.status === 0) loaded.push(id)
         else {
-            const reason = run.stderr.split('\n').find((line) => /Error|exports no function/.test(line)) ?? run.stderr
+            const reason =
+                run.error?.message ??
+                run.stderr.split('\n').find((line) => /Error|exports no function/.test(line)) ??
+                run.stderr
             problems.push(`${id}: ${entry} does not load: ${reason.trim()}`)
         }
     }
