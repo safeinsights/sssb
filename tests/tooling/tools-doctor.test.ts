@@ -1912,6 +1912,41 @@ describe.concurrent('sssb doctor with no --app, from the root of a workspace who
         E2E_TIMEOUT,
     )
 
+    // CI runs doctor from `sssb ci lint-typecheck-unit` with `--app` the first app, which used to hold the walk to that
+    // app alone: the same workspace failed a bare `sssb doctor` and passed CI's.
+    it(
+        'fails the same way in `sssb ci lint-typecheck-unit`, which holds the walk to every app it fans out over',
+        async () => {
+            const ws = doctorWorkspace('sssb-doctor-ci-dropped-', 'packed')
+            write(
+                path.join(ws, 'pnpm-workspace.yaml'),
+                'packages:\n    - apps/a\n    - apps/a/src/app-config\n    - packages/*\n',
+            )
+            // the job's own steps are not what is under test here: each a no-op
+            pkg(ws, {
+                name: 'ws',
+                private: true,
+                sssb: { apps: ['apps/a', 'apps/b'] },
+                scripts: { lint: 'node -e 0', typecheck: 'node -e 0', 'test:unit': 'node -e 0' },
+            })
+            const env = { ...process.env }
+            for (const key of Object.keys(env)) if (key.startsWith('VITEST')) delete env[key]
+            const ci = spawnSync(process.execPath, [SSSB, 'ci', 'lint-typecheck-unit'], {
+                cwd: ws,
+                env,
+                encoding: 'utf8',
+                maxBuffer: 16 * 1024 * 1024,
+            })
+            const out = `${ci.stdout}${ci.stderr}`
+            expect(ci.status, out).toBe(1)
+            expect(out).toMatch(
+                /sssb doctor --app apps\/a\n[\s\S]*FAIL +workspace walk: it does not reach every app the workspace names/,
+            )
+            expect(out).toMatch(/apps\/b is named by the workspace/)
+        },
+        E2E_TIMEOUT,
+    )
+
     it(
         "reports the adopter's own GitHub settings and plugin install, read-only, and never fails on them; skips them in CI",
         async () => {

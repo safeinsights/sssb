@@ -141,8 +141,18 @@ export function doctorApp(args, cwd = process.cwd()) {
 /** @param {string[]} args */
 export async function run(args) {
     const chosen = doctorApp(args)
-    const appDir = realpathSync(chosen.dir)
     if (args.length > 0) throw new UsageError(`sssb doctor: unknown argument ${args[0]} (usage: doctor [--app <dir>])`)
+    return doctorFor(chosen)
+}
+
+/**
+ * One doctor run, from `dir`, holding the walk to reach every app in `named` (absolute directories). `sssb ci` calls it
+ * with the apps it fans out over, so CI's doctor makes the same check as a bare `sssb doctor` at the root.
+ * @param {{ dir: string, defaulted: boolean, named: string[] }} chosen
+ * @returns {Promise<number>}
+ */
+export async function doctorFor(chosen) {
+    const appDir = realpathSync(chosen.dir)
     const root = realpathSync(workspaceRootOf(appDir))
     const rel = relativeTo(root)
     // Said before anything can fail on the app it chose, so a failure there is read with the reason it was picked.
