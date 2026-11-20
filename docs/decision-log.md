@@ -7290,8 +7290,12 @@ addendum of this date records the design; these are the calls, each with the rej
   restrict app rules to sessions, which would break an app's token and email paths that are meant to act.
 - **Real mode signs out through Clerk's client** (`RealAccountRefused`, `packages/kit/src/adapters/real/account-refused-form.tsx`),
   after both round-one reviewers found that the server-side revocation alone leaves the browser's short-lived session
-  token, so the reload would land on the same refused screen. It ends this one session (`sessionId`). Rejected: making
-  the server's sign-out tolerate a second, already-revoked call, which hides the symptom.
+  token, so the reload would land on the same refused screen. It ends this one session (`sessionId`) and returns to the
+  page through Clerk's own `redirectUrl`, and does nothing (and says so) until Clerk has loaded and knows the session,
+  since before then Clerk only queues the call and with no session id it would end every session on the device, as
+  round two found. Its module is a form the conformance check `real-auth-provider` looks for. Rejected: making the
+  server's sign-out tolerate a second, already-revoked call, which hides the symptom. The user menu's sign-out has the
+  same gap and is recorded as `.claude/future-tasks/header-sign-out-stale-session-token.md`.
 - **The sign-out route takes JSON only**, in both reference apps (`refuseNonJson`), and its callers send it. The route
   is older than this change, but a page on a sibling subdomain, the topology of a shared instance, could post a plain
   form to it with the session cookie and sign a person out of both products with no click. A JSON post from another

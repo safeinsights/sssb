@@ -31,6 +31,7 @@ import type { CheckImpl } from './types'
 const FORMS: ReadonlySet<string> = new Set([
     '@sssb/kit/adapters/real/sign-in-form',
     '@sssb/kit/adapters/real/accept-invite-form',
+    '@sssb/kit/adapters/real/account-refused-form',
 ])
 const PROVIDER = '@sssb/kit/adapters/real/providers'
 /**
