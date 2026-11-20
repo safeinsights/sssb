@@ -360,7 +360,7 @@ describe('check-e2e against an installed kit (the entry is compiled)', () => {
         expect(bySpec['tests/e2e/created.spec.ts']).toMatchObject({
             count: 0,
             unfollowed: [
-                "tests/e2e/created.spec.ts names '@sssb/kit/core/state-machine' where esbuild cannot follow it",
+                "tests/e2e/created.spec.ts names '@sssb/kit/core/state-machine' where esbuild cannot follow it: reach the kit through @sssb/kit/testing/e2e, or keep the specifier out of code a spec loads",
             ],
         })
         expect(bySpec['tests/e2e/version.spec.ts']).toMatchObject({ count: 0, unfollowed: [] })
@@ -390,7 +390,7 @@ describe('check-e2e against an installed kit (the entry is compiled)', () => {
         expect(bySpec['tests/e2e/variable.spec.ts']).toMatchObject({
             count: 0,
             unfollowed: [
-                "tests/e2e/variable.spec.ts names '@sssb/kit/core/state-machine' where esbuild cannot follow it",
+                "tests/e2e/variable.spec.ts names '@sssb/kit/core/state-machine' where esbuild cannot follow it: reach the kit through @sssb/kit/testing/e2e, or keep the specifier out of code a spec loads",
             ],
         })
         expect(bySpec['tests/e2e/typed.spec.ts']).toMatchObject({ count: 0, unfollowed: [] })
