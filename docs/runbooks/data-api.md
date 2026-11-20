@@ -220,18 +220,20 @@ model of AWS.)
     `packages/kit/src/db/migrations/index.ts` plus those of the app's own, such as
     `apps/showcase/src/app-config/db/migrations/index.ts`. That one run proves on AWS what only the emulator has shown: DDL in
     one Data API transaction, the describe step for the migrator's bookkeeping inserts inside it, and
-    0001's `DO` block.
+    the `DO` blocks of 0001 and 0015.
 
 - **The `DO` block, asked on its own.** AWS refuses multistatements. Whether that check looks inside a
-  dollar-quoted body, where 0001's `;` sits, is not documented:
+  dollar-quoted body, where the `;`s of 0001 and 0015 sit, is not documented:
 
     ```bash
     rds execute-statement --database "$DB" --sql 'DO $$ BEGIN PERFORM 1; PERFORM 2; END $$'
     ```
 
-    Pass when it succeeds. If AWS refuses it, SSSB changes 0001, not the migrator: the migration checks
-    `pg_roles` for `app_user` from its TypeScript and sends `CREATE ROLE app_user NOLOGIN` alone, one
-    statement per call. 0001's is the only dollar-quoted body in SSSB's migrations and both apps'. An
+    Pass when it succeeds. If AWS refuses it, SSSB changes 0001 and 0015, not the migrator, each moving its
+    checks into its TypeScript and sending one statement per call: 0001 checks `pg_roles` for `app_user` and
+    sends `CREATE ROLE app_user NOLOGIN` alone; 0015 runs its `pg_has_role` and membership queries, sends the
+    one `GRANT` they call for, and raises its own error when that is refused. Those two are the only
+    dollar-quoted bodies in SSSB's migrations and both apps'. An
     adopter's PL/pgSQL function would meet the same refusal, and its migration could run only on the `pg`
     shape: on `data-api` nothing but the Data API reaches the database (the first bullet above).
 
