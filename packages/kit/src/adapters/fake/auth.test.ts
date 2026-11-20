@@ -77,6 +77,20 @@ describe('acceptInvite — Simulator dynamic people (Bob lifecycle)', () => {
         await expect(acceptInvite(membership.id, { name: '   ' })).rejects.toThrow(/name is required/)
     })
 
+    test.each(['x'.repeat(257), { a: 1 }, 42])('refuses the name %j and leaves the invite pending', async (name) => {
+        const { fakeAuth, acceptInvite } = await import('./auth')
+        const membership = await fakeAuth.createInvite({
+            email: 'bad-name@example.test',
+            role: 'member',
+            orgSlug: 'depot',
+            acceptPageUrl: 'http://localhost:3000/en/accept-invite',
+        })
+        const profile = { name } as unknown as { name: string }
+        await expect(acceptInvite(membership.id, profile)).rejects.toThrow('invalid name')
+        const invited = (await fakeAuth.listMembers('depot')).filter((m) => m.id === membership.id)
+        expect(invited.map((m) => m.status)).toEqual(['invited'])
+    })
+
     test('creates a person, removes the invite, signs them in, and sets the viewpoint cookie', async () => {
         const { fakeAuth, acceptInvite, findInvite, listAllPeople } = await import('./auth')
         const membership = await fakeAuth.createInvite({
