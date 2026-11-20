@@ -630,7 +630,7 @@ describe('release-app verify and bypass', () => {
     const VOUCHED_LINE =
         '✓ Integration 4038189 (always) on organisation ruleset "require-pr" (7484436): vouched for as unable to reach ' +
         'safeinsights/sssb: a release bot of another repository, installed on one other repository only, so it ' +
-        'cannot push to safeinsights/sssb (JP, 2026-11-18)'
+        'cannot push to safeinsights/sssb (look the App up by its id) (JP, 2026-11-18)'
 
     it('verify passes beside an organisation bypass actor someone vouched for, and says who and why', async () => {
         const { code, text } = await withOrgActors([BOT])

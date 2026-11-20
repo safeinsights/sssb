@@ -65,7 +65,7 @@ export const VOUCHED_ORG_BYPASSES: readonly VouchedBypass[] = [
         actorType: 'Integration',
         actorId: 4038189,
         name: 'a release bot of another repository',
-        reason: 'installed on one other repository only, so it cannot push to safeinsights/sssb',
+        reason: 'installed on one other repository only, so it cannot push to safeinsights/sssb (look the App up by its id)',
         vouchedBy: 'JP',
         on: '2026-11-18',
     },

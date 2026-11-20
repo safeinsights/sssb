@@ -726,7 +726,7 @@ function scaffold() {
     shapeConsole(appDir('console'))
     shapeLedger(appDir('ledger'))
 
-    // A sibling package that does not use the framework (an adopter's `packages/gate`, say), only @sssb/tools' helper.
+    // A sibling package that does not use the framework (as an adopter's sibling package might), only @sssb/tools' helper.
     writeJson(path.join(WS, 'packages/gate/package.json'), {
         name: 'gate',
         private: true,
