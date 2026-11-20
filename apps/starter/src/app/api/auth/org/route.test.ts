@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { POST } from './route'
 
-const h = vi.hoisted(() => ({ setActiveOrg: vi.fn() }))
-vi.mock('@sssb/kit/adapters/index', () => ({ auth: { setActiveOrg: h.setActiveOrg } }))
+import { AuthRequiredError } from '@sssb/kit/ports/errors'
+
+const h = vi.hoisted(() => ({ setActiveOrg: vi.fn(), requireUser: vi.fn() }))
+vi.mock('@sssb/kit/adapters/index', () => ({ auth: { setActiveOrg: h.setActiveOrg, requireUser: h.requireUser } }))
 
 function post(body: string): Promise<Response> {
     return POST(new Request('http://localhost/api/auth/org', { method: 'POST', body }))
@@ -10,6 +12,8 @@ function post(body: string): Promise<Response> {
 
 beforeEach(() => {
     h.setActiveOrg.mockReset()
+    h.requireUser.mockReset()
+    h.requireUser.mockResolvedValue({ id: 'user-one' })
 })
 
 describe('POST /api/auth/org', () => {
@@ -27,4 +31,12 @@ describe('POST /api/auth/org', () => {
             expect(h.setActiveOrg).not.toHaveBeenCalled()
         },
     )
+})
+
+describe('POST /api/auth/org, signed out', () => {
+    test.each([['{'], [JSON.stringify({ orgSlug: 5 })]])('401 before the body %s is read', async (body) => {
+        h.requireUser.mockRejectedValue(new AuthRequiredError())
+        expect((await post(body)).status).toBe(401)
+        expect(h.setActiveOrg).not.toHaveBeenCalled()
+    })
 })

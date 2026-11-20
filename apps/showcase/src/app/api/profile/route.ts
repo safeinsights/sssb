@@ -13,6 +13,8 @@ const MAX_NAME_LENGTH = 120
  */
 export async function POST(request: Request): Promise<Response> {
     return withPortErrors(async () => {
+        // Signed in first: a signed-out caller hears 401, never a 400 about a body it had no right to send.
+        await auth.requireUser()
         const body = await readJsonObject(request)
         let name: string | undefined
         if (body.name !== undefined) {
