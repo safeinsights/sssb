@@ -26,13 +26,28 @@ describe('the proxy', () => {
         },
     )
 
-    it.each(['/_next/static/chunk.js', '/favicon.ico', '/_vercel/insights', '/apiary'])('is not run on %s', (path) => {
+    it.each(['/_next/static/chunk.js', '/favicon.ico', '/_vercel/insights'])('is not run on %s', (path) => {
         expect(unstable_doesMiddlewareMatch({ config, url: path })).toBe(false)
+    })
+
+    // A prefix the pattern leaves out ends at a slash: a page whose name only begins with one is still a page.
+    it.each(['/apiary', '/api-docs/x', '/_nextgen', '/_vercelish'])('is run on the page %s', (path) => {
+        expect(unstable_doesMiddlewareMatch({ config, url: path })).toBe(true)
+    })
+
+    it.each(['/api', '/api/x', '/_next/x', '/en/report.csv'])('leaves %s out of the page pattern', (path) => {
+        const pages = { matcher: [config.matcher[0]!] }
+        expect(unstable_doesMiddlewareMatch({ config: pages, url: path })).toBe(false)
     })
 
     it('hands a page to the locale routing', async () => {
         const response = await run('/projects')
         expect(response?.headers.get('location')).toBe('http://localhost:3100/en/projects')
+    })
+
+    it('hands a page whose name begins with api to the locale routing', async () => {
+        const response = await run('/apiary')
+        expect(response?.headers.get('location')).toBe('http://localhost:3100/en/apiary')
     })
 
     it('passes an API route through untouched', async () => {
