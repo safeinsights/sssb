@@ -1,6 +1,7 @@
 'use client'
 
 import { PeoplePicker, type PickerPerson } from '@sssb/kit/components/auth/people-picker'
+import { sameOriginPath } from '@sssb/kit/core/same-origin-path'
 
 export function PickerGlue({ people, returnTo }: { people: PickerPerson[]; returnTo: string }) {
     return (
@@ -12,7 +13,7 @@ export function PickerGlue({ people, returnTo }: { people: PickerPerson[]; retur
                     headers: { 'content-type': 'application/json' },
                     body: JSON.stringify({ personId }),
                 }).then((response) => {
-                    if (response.ok) window.location.assign(returnTo)
+                    if (response.ok) window.location.assign(sameOriginPath(returnTo) ?? '/')
                 })
             }}
         />

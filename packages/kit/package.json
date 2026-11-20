@@ -93,6 +93,7 @@
         "./core/notifications": "./src/core/notifications.ts",
         "./core/presets": "./src/core/presets.ts",
         "./core/roles": "./src/core/roles.ts",
+        "./core/same-origin-path": "./src/core/same-origin-path.ts",
         "./core/schedules": "./src/core/schedules.ts",
         "./core/state-machine": "./src/core/state-machine.ts",
         "./core/webhook-events": "./src/core/webhook-events.ts",
