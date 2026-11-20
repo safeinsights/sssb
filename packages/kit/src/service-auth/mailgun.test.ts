@@ -3,7 +3,7 @@ import { makeTestTmpDir } from '../testing/tmp-dir'
 import { devWebhookSecret } from '../adapters/fake/service-auth'
 import { mailgunSignature } from '../core/webhook-signing'
 import { AuthRequiredError } from '../ports/errors'
-import { __resetMailgunReplayGuard, verifyMailgunWebhook } from './mailgun'
+import { __resetMailgunReplayGuard, forgetMailgunToken, verifyMailgunWebhook } from './mailgun'
 
 // isSimulated is the one thing from '../adapters/index' mailgun.ts touches (real import trips server-only in a
 // test env). Mutable so the env-key real-mode branch is exercisable too — the webhook.test.ts pattern.
@@ -77,6 +77,30 @@ describe('verifyMailgunWebhook (real mode, env key)', () => {
         delete process.env['MAILGUN_WEBHOOK_SIGNING_KEY']
         const token = uniqueToken()
         const signature = mailgunSignature('whatever', TS, token)
+        expect(() => verifyMailgunWebhook({ timestamp: TS, token, signature }, NOW)).toThrow(AuthRequiredError)
+    })
+})
+
+describe('replay guard vs a sender whose clock runs ahead of ours', () => {
+    test('a token is refused for as long as its signature is still fresh', () => {
+        // The sender's clock is 4 minutes ahead (inside the 5-minute tolerance, both directions).
+        const firstSeen = new Date((Number(TS) - 240) * 1000)
+        const token = uniqueToken()
+        const signature = mailgunSignature(devWebhookSecret(), TS, token)
+        verifyMailgunWebhook({ timestamp: TS, token, signature }, firstSeen)
+        // 5m01s later by OUR clock, but the timestamp is only 61s old: the signature is still fresh.
+        const replayAt = new Date(firstSeen.getTime() + 301_000)
+        expect(() => verifyMailgunWebhook({ timestamp: TS, token, signature }, replayAt)).toThrow(AuthRequiredError)
+    })
+})
+
+describe('forgetMailgunToken', () => {
+    test('a forgotten token (its handler failed) verifies again, so the retry is processed', () => {
+        const token = uniqueToken()
+        const signature = mailgunSignature(devWebhookSecret(), TS, token)
+        verifyMailgunWebhook({ timestamp: TS, token, signature }, NOW)
+        forgetMailgunToken(token)
+        expect(() => verifyMailgunWebhook({ timestamp: TS, token, signature }, NOW)).not.toThrow()
         expect(() => verifyMailgunWebhook({ timestamp: TS, token, signature }, NOW)).toThrow(AuthRequiredError)
     })
 })
