@@ -125,6 +125,21 @@ describe('@sssb/kit/core stays framework-free outside declarations', () => {
         expect(fired(findings, CORE_DYNAMIC)).toBe(0)
     })
 
+    // `/// <reference types="react" />` pulls React's global types into core with no import at all.
+    it.each([
+        ['react', 1],
+        ['next', 1],
+        ['@mantine/core', 1],
+        ['node', 0],
+        ['vitest/globals', 0],
+    ])('nor by a triple-slash reference types=%j', async (name, expected) => {
+        const findings = await lint(CORE, `/// <reference types="${name}" />\nexport const x = 1\n`)
+        expect(fired(findings, CORE_DYNAMIC)).toBe(expected)
+        expect(
+            fired(await lint('packages/kit/src/server-lib/kv.ts', `/// <reference types="${name}" />\n`), CORE_DYNAMIC),
+        ).toBe(0)
+    })
+
     it('a library that is not a framework is fine', async () => {
         const code = "export const load = () => import('./pure')\nexport type Schema = import('zod').ZodType\n"
         expect(fired(await lint(CORE, code), CORE_DYNAMIC)).toBe(0)
@@ -324,6 +339,40 @@ describe('a path into app code crosses the framework/app fence too', () => {
         const findings = await lint(KIT[0] as string, `import { r } from ${to}\nexport { r }\n`)
         expect(fired(findings, ABSOLUTE_IN_PACKAGE)).toBe(1)
         expect(fired(findings, OUT_OF_PACKAGE_PATH) + fired(findings, UNSHIPPED_PATH)).toBe(0)
+    })
+
+    // A triple-slash reference makes the compiler load a file just as an import does: into app code it is this
+    // fence's finding, as it is the package-edge rule's for every other landing (until both read comments, only
+    // typescript-eslint's triple-slash-reference, which is not a fence, stood in the way).
+    it.each([
+        ['an app', 'apps/showcase/src/domain/tickets.ts'],
+        ['the seed package', 'packages/seed/src/index.ts'],
+    ])('through a triple-slash reference path into %s', async (_target, target) => {
+        for (const file of [...KIT, FIXTURE]) {
+            const code = `/// <reference path=${JSON.stringify(pathFrom(file, target))} />\nexport const x = 1\n`
+            const findings = await lint(file, code)
+            expect(fired(findings, APP_CODE_PATH), file).toBe(1)
+            expect(fired(findings, OUT_OF_PACKAGE_PATH), file).toBe(0)
+        }
+    })
+
+    // A specifier with a `?` or `#` has two readings, as written (the compiler's) and cut at it (Vite's and Vitest's),
+    // and both path rules judge both: the package-edge rule cuts the query and leaves a landing in app code to this
+    // rule, so this rule has to see where the cut reading lands, and the other rule where the written one does.
+    describe.each(['?', '#'])('a specifier with a %s has two readings', (mark) => {
+        const file = KIT[0] as string
+        it('cut, it lands in an app (as written, back inside the package): the app fence reports it', async () => {
+            const intoApp = pathFrom(file, 'apps/showcase/src/domain/tickets')
+            const back = '../'.repeat(intoApp.split('/').length - 1)
+            const written = `${intoApp}${mark}/${back}${pathFrom(file, 'packages/kit/src/core/index')}`
+            const findings = await lint(file, `export const load = () => import(${JSON.stringify(written)})\n`)
+            expect(fired(findings, APP_CODE_PATH), written).toBe(1)
+        })
+        it('as written, it lands out of the package (cut, inside): the package-edge rule reports it', async () => {
+            const out = `../core${mark}/../../../../../scripts/release.mjs`
+            const findings = await lint(file, `export const load = () => import(${JSON.stringify(out)})\n`)
+            expect(fired(findings, OUT_OF_PACKAGE_PATH), out).toBe(1)
+        })
     })
 
     // What ships is packages/kit/package.json's `files`, not the whole directory: a shipped file that reaches a test, a
