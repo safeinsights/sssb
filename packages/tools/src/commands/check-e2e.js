@@ -534,7 +534,9 @@ export async function e2eReach(appDir, extraConfigs = []) {
             const seen = new Set(input.imports.map((i) => i.original))
             for (const specifier of kitLiteralsInCode(app, source, text)) {
                 if (!loadsNoFramework(specifier) && !seen.has(specifier))
-                    unfollowed.push(`${show(source)} names '${specifier}' where esbuild cannot follow it`)
+                    unfollowed.push(
+                        `${show(source)} names '${specifier}' where esbuild cannot follow it: reach the kit through ${ENTRY}, or keep the specifier out of code a spec loads`,
+                    )
             }
         }
         reach.push({

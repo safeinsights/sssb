@@ -456,18 +456,30 @@ const throughNodeModules = new RegExp(nodeModulesPathPattern.regex, 'iu')
 // Where `target` really is: symlinks resolved through its deepest existing ancestor, because a specifier names a
 // module without its extension, or one that does not exist yet.
 const RESOLVED_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.d.ts', '.js', '.jsx', '.mjs', '.cjs']
-const realPathOf = (target) => {
-    // A specifier names a module without its extension (`./roles` for `roles.ts`), so a target that does not exist as
-    // written is tried with each extension the compiler and the bundlers resolve, `.d.ts` included: a FILE symlink
-    // (`zzkit.ts` pointing into another package) is followed only when its own name is found. The extension added is
-    // taken off again, so the landing reads as the specifier did.
-    if (!existsSync(target)) {
-        for (const ext of RESOLVED_EXTENSIONS) {
-            if (!existsSync(`${target}${ext}`)) continue
-            const real = realpathSync(`${target}${ext}`)
-            return real.endsWith(ext) ? real.slice(0, -ext.length) : real
-        }
+// A `.js` specifier names its TypeScript source to the compiler and the bundlers (`./roles.js` for `roles.ts`).
+const TYPESCRIPT_TWINS = {
+    '.js': ['.ts', '.tsx', '.d.ts'],
+    '.jsx': ['.tsx'],
+    '.mjs': ['.mts', '.d.mts'],
+    '.cjs': ['.cts', '.d.cts'],
+}
+const isFileAt = (file) => {
+    try {
+        return statSync(file).isFile()
+    } catch {
+        return false
     }
+}
+const isDirectoryAt = (file) => {
+    try {
+        return statSync(file).isDirectory()
+    } catch {
+        return false
+    }
+}
+// Where `target` really is when nothing of it is a file to follow: symlinks resolved through its deepest existing
+// ancestor, because a specifier can name a module that does not exist yet.
+const realPathThroughAncestors = (target) => {
     const missing = []
     let existing = target
     while (!existsSync(existing) && dirname(existing) !== existing) {
@@ -476,6 +488,43 @@ const realPathOf = (target) => {
     }
     return join(realpathSync(existing), ...missing)
 }
+/**
+ * EVERY file a resolver could load for `target`, real paths, in the order resolvers try them: the file itself; the name
+ * with each extension (a module is named without one, and a resolver prefers `zz.ts` to a directory `zz/`); a
+ * directory's `index` with each extension; a missing `.js` name's TypeScript twin (`roles.js` for `roles.ts`). The
+ * extension a probe added to the name is taken off again, so a landing reads as the specifier did. When none exists,
+ * the target itself, through its deepest existing ancestor. A path rule judges every one: resolvers differ in which
+ * they pick, and a symlink at any of them (`zz.ts` beside a real `zz/`, `yy/index.ts`, `zzkit.ts` named `zzkit.js`)
+ * would otherwise go unseen.
+ * @param {string} target
+ * @returns {string[]}
+ */
+const landingsOf = (target) => {
+    if (isFileAt(target)) return [realpathSync(target)]
+    /** @type {string[]} */
+    const landings = []
+    for (const ext of RESOLVED_EXTENSIONS) {
+        if (!isFileAt(`${target}${ext}`)) continue
+        const real = realpathSync(`${target}${ext}`)
+        landings.push(real.endsWith(ext) ? real.slice(0, -ext.length) : real)
+    }
+    if (isDirectoryAt(target)) {
+        for (const ext of RESOLVED_EXTENSIONS) {
+            const index = join(target, `index${ext}`)
+            if (isFileAt(index)) landings.push(realpathSync(index))
+        }
+    } else {
+        const ext = /\.[cm]?jsx?$/.exec(target)?.[0]
+        for (const twin of (ext && TYPESCRIPT_TWINS[ext]) ?? []) {
+            const file = `${target.slice(0, -ext.length)}${twin}`
+            if (isFileAt(file)) landings.push(realpathSync(file))
+        }
+    }
+    landings.push(realPathThroughAncestors(target))
+    return [...new Set(landings)]
+}
+/** The first of landingsOf(target): the file a resolver loads, for a rule that judges one landing. */
+const realPathOf = (target) => landingsOf(target)[0]
 // The file a path specifier names: a `file:` URL's (Node loads one as the absolute path it names), or a relative or
 // absolute path resolved against the importer. Anything else is not a path.
 const pathTarget = (filename, specifier) => {
@@ -716,14 +765,21 @@ const pathIntoKit = {
             if (reading.startsWith('@/')) return appSrc === undefined ? undefined : resolve(appSrc, reading.slice(2))
             return pathTarget(context.filename, reading)
         }
+        /** @type {Map<string, string[]>} each target's landings, for this file: every relative specifier is probed */
+        const landingsCache = new Map()
+        const landingsFor = (target) => {
+            if (!landingsCache.has(target)) landingsCache.set(target, landingsOf(target))
+            return /** @type {string[]} */ (landingsCache.get(target))
+        }
         const finding = (specifier) => {
             if (NODE_MODULES_SEGMENT.test(specifier)) return { messageId: 'nodeModules', landing: '' }
             for (const reading of readingsOf(specifier)) {
                 const target = targetOf(reading)
                 if (!target) continue
-                const landing = realPathOf(target)
-                const kitRoot = kitRootAbove(dirname(landing))
-                if (kitRoot && !isUnderDir(importer, kitRoot)) return { messageId: 'kit', landing }
+                for (const landing of landingsFor(target)) {
+                    const kitRoot = kitRootAbove(dirname(landing))
+                    if (kitRoot && !isUnderDir(importer, kitRoot)) return { messageId: 'kit', landing }
+                }
             }
             return undefined
         }
@@ -737,16 +793,33 @@ const pathIntoKit = {
             const specifier = literalSpecifier(node)
             if (typeof specifier === 'string') report({ node }, specifier)
         }
+        // A module resolver's `.resolve`: `require.resolve`, `import.meta.resolve`, `createRequire(…).resolve` (also
+        // `module.createRequire(…).resolve`).
+        const isModuleResolver = (callee) => {
+            const object = callee.object
+            if (object.type === 'Identifier') return object.name === 'require'
+            if (object.type === 'MetaProperty') return object.meta.name === 'import' && object.property.name === 'meta'
+            if (object.type !== 'CallExpression') return false
+            const made = object.callee
+            return (
+                (made.type === 'Identifier' && made.name === 'createRequire') ||
+                (made.type === 'MemberExpression' &&
+                    made.property.type === 'Identifier' &&
+                    made.property.name === 'createRequire')
+            )
+        }
         return {
             ...declarationVisitors((_declaration, source) => check(source)),
             ...declarationlessVisitors(check),
             // vitest/jest mock a module by specifier, which resolves exactly like an import.
             'CallExpression[callee.object.name=/^(vi|jest)$/][callee.property.name=/^(mock|doMock|unmock)$/]': (node) =>
                 check(node.arguments[0]),
-            // `require.resolve('…')`, `createRequire(…).resolve('…')`, `import.meta.resolve('…')`: a path the caller
-            // then reads or loads.
-            'CallExpression[callee.type="MemberExpression"][callee.property.name="resolve"]': (node) =>
-                check(node.arguments[0]),
+            // `require.resolve('…')`, `createRequire(…).resolve('…')`, `import.meta.resolve('…')`: a module the caller
+            // then reads or loads. Any other `.resolve(…)` (`path.resolve`, `Promise.resolve`) is not judged at all: its
+            // string need not be a module, and `path.resolve` reads it against the working directory, not this file.
+            'CallExpression[callee.type="MemberExpression"][callee.property.name="resolve"]': (node) => {
+                if (isModuleResolver(node.callee)) check(node.arguments[0])
+            },
             // `/// <reference path="…" />` makes the compiler load the file just as an import does.
             Program: () => {
                 for (const { loc, value } of referenceDirectives(context)) report({ loc }, value)
