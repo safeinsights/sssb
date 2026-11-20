@@ -470,7 +470,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 142 subpaths your app may
+lists the 143 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 78 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
@@ -518,7 +518,9 @@ file when it loads its config, so restart your editor's ESLint server after you 
 
 **A vendor SDK your app owns an adapter for** (`docs/recipes/app-owned-adapter.md`) is added to the vendor ban by
 your app, not by editing SSSB's list: name it in your app's `package.json`, `"sssb": { "vendors": ["stripe",
-"stripe/*"] }`, in the gitignore-style patterns SSSB's own list uses. The preset reads it, and so does
+"stripe/*"] }`. Each entry is a package name (`stripe`, `@stripe/stripe-js`) or one subpath of it (`firebase/app`),
+either followed by `/*`, or a whole scope (`@stripe/*`): the shapes the ban reads alike for an import declaration and
+for `import()`. Anything else, an uppercase name included, fails the lint config. The preset reads the list, and so does
 `checkFences`, which compares the vendor rules' options with it exactly. A pattern that starts with `!` is refused:
 your list adds to SSSB's and cannot take a vendor off it.
 

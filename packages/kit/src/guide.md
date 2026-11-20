@@ -10,8 +10,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - The app extends the framework only through the `@sssb/app-config/*` seam, the modules in `src/app-config/`.
   Register new subjects, jobs, event kinds, tables and migrations there. Never edit or patch a framework base union or
   registry.
-- Import `@sssb/kit` only by a published subpath, a key of its `exports` map. Everything else in the package is
-  internal.
+- Import `@sssb/kit` only by a published subpath, a key of its `exports` map, never by a path into the package
+  (`sssb/no-path-into-kit`). Everything else in the package is internal.
 
 ## Vendors, environment and parameters
 
@@ -92,8 +92,16 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   release). The conformance suite's `authz-mutations` check reads each handler: a string, a
   comment, a dead branch or a helper in another module does not count. Neither does a call whose denial cannot stop
   the handler: in an `async` helper or a callback whose promise the handler neither awaits nor returns, in a callback
-  handed to a function the route file defines, or in a `try` whose `catch` does not rethrow. `await` the helper that
-  authorizes, and let `withPortErrors` answer the 403.
+  handed to a function the route file defines, in a callback a timer, a listener, `after()` or a `.catch`/`.finally`
+  runs, or in a `try` whose `catch` does not rethrow. `await` the helper that authorizes, and let `withPortErrors`
+  answer the 403. Over many items, `await Promise.all(items.map(...))`; `Promise.allSettled` does not count, and
+  neither does a `.then(...)` chained after it.
+- The check proves that a handler can reach `authorize(...)`, not that every path through it does, nor that it
+  comes before the mutation. Call it first, unconditionally, before any `try`.
+- A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
+  with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
+  app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named
+  `route.<ext>` the check does not read (`route.mts`, a custom `pageExtensions`) fails it.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
   `src/app/api`), with a reason and a `mustMatch` gate. A mutating route outside `src/app/api` can match no
   exemption.
