@@ -7323,5 +7323,6 @@ transport, because the handler imports the `pg` transport statically.
   under it.
 - **Only the Migrator is a `NodejsFunction`.** The body-hash Lambda@Edge and the scheduled tick are plain ES modules
   shipped as written (`Code.fromAsset`), and the server is the deploy pipeline's zip; the test loads the first two as
-  well, and CDK's own auto-delete provider.
+  well. CDK's own provider functions are not loaded: they need SDK clients the kit may not install, which the test's
+  stand-in for the runtime's SDK lacks.
 - **A live first migrate is the only full proof**, a step in the `deploy-pipeline` cutover row.
