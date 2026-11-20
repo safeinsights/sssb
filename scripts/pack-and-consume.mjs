@@ -5,9 +5,9 @@
 // directory, are also what a release candidate attaches (ADR-0014 P7: checks.yml keeps them as the run's artifact).
 // Two shapes:
 //
-//   pnpm pack-and-consume [--shape pages|generated] [--dir <path>] [--skip-build-and-e2e] [--update-lockfile]
+//   pnpm pack-and-consume [--shape multi-app|generated] [--dir <path>] [--skip-build-and-e2e] [--update-lockfile]
 //
-//   pages      (shape 1) the Pages-shaped multi-app workspace below, built on the generator's output, and this
+//   multi-app  (shape 1) the multi-app workspace below, built on the generator's output, and this
 //              script's own checks over it. CI's `pack-and-consume` job.
 //   generated  (shape 2) the generator's output and NOTHING else: not one file of it is edited (the run fails if one
 //              changed), and the workspace's OWN gates run: `pnpm verify`, the unit tests and `pnpm test:contract` (on
@@ -17,14 +17,14 @@
 //              commit, which holds the plugin, and that `sssb doctor` says they match. Then it runs `sssb remove-items --drop-migrations` on the app (after the untouched
 //              check, which it would trip, and before the partial installs) and the gates again over what is left. CI's `adoption-probe`
 //              job, a required check. A failure here is the generator's to fix, never this script's.
-//   (neither)  both, the pages shape first.
+//   (neither)  both, the multi-app shape first.
 //
 // Inside this repo every tool reaches the framework through workspace links and per-app aliases, which
 // hide exactly what an adopter hits: a file the package does not ship, an @types package only this
 // repo's root declares, a seam that only an alias resolves. Here nothing resolves the seam but pnpm's
 // link of the app's own `@sssb/app-config` into its own copy of the framework.
 //
-// The pages shape, laid out like the first adopter's (safeinsights/pages). The generator writes the workspace with
+// The multi-app shape, laid out like an adopter's workspace with two apps. The generator writes the workspace with
 // its first app (`--slug console`); the second app is written by `sssb add-app ledger`, as an adopter adds one: the
 // packed @sssb/create's starter, renamed, on a port slot of its own, named in the root's `sssb.apps`, the one list of
 // apps the generated Vitest configs read. Everything else below is the shape's own code and this script's
@@ -56,7 +56,7 @@
 // writes each of them.
 //
 // Both shapes install from ONE committed lockfile seed (scripts/pack-and-consume/consumer-lock.yaml), written from the
-// pages shape: the generated shape's importers (the root, apps/console, apps/console/infra) are a subset of it, so its
+// multi-app shape: the generated shape's importers (the root, apps/console, apps/console/infra) are a subset of it, so its
 // resolution is the seed's too, and a third-party release cannot turn either check red on a PR that did not cause it.
 //
 // The workspaces are left in place after a run, so a failure can be inspected; the next run wipes them.
@@ -136,12 +136,13 @@ const SKIP_BUILD_AND_E2E = args.includes('--skip-build-and-e2e')
 // Resolve afresh and write the result back as the committed seed (scripts/pack-and-consume/consumer-lock.yaml).
 const UPDATE_LOCKFILE = args.includes('--update-lockfile')
 const SHAPE = valueOf('--shape')
-if (SHAPE !== null && SHAPE !== 'pages' && SHAPE !== 'generated') fail(`--shape ${SHAPE}: expected pages or generated`)
-const RUN_PAGES = SHAPE !== 'generated'
-const RUN_GENERATED = SHAPE !== 'pages'
-// The seed is the pages shape's resolution (a superset of the generated shape's importers).
-if (UPDATE_LOCKFILE && !RUN_PAGES)
-    fail('--update-lockfile writes the seed from the pages shape: drop --shape generated')
+if (SHAPE !== null && SHAPE !== 'multi-app' && SHAPE !== 'generated')
+    fail(`--shape ${SHAPE}: expected multi-app or generated`)
+const RUN_MULTI_APP = SHAPE !== 'generated'
+const RUN_GENERATED = SHAPE !== 'multi-app'
+// The seed is the multi-app shape's resolution (a superset of the generated shape's importers).
+if (UPDATE_LOCKFILE && !RUN_MULTI_APP)
+    fail('--update-lockfile writes the seed from the multi-app shape: drop --shape generated')
 
 /** Marks a directory as this script's, so a re-run wipes only what an earlier run made. */
 const MARKER = '.sssb-pack-and-consume'
@@ -159,7 +160,7 @@ writeFileSync(path.join(BASE_ARG, MARKER), '')
 // whose module graph resolves under two spellings loads two copies of `next/headers` (the adoption
 // probe's lesson).
 const BASE = realpathSync(BASE_ARG)
-/** The pages shape's workspace. */
+/** The multi-app shape's workspace. */
 const WS = path.join(BASE, 'workspace')
 /** The generated shape's workspace: the generator's output, untouched. */
 const GEN = path.join(BASE, 'generated')
@@ -167,7 +168,7 @@ const GEN = path.join(BASE, 'generated')
 const TARBALLS = path.join(BASE, 'tarballs')
 /** The packed @sssb/create, extracted: the generator both shapes run. */
 const CREATE = path.join(BASE, 'create')
-/** The packed @sssb/tools, extracted: the `sssb add-app` the pages shape runs before its install. */
+/** The packed @sssb/tools, extracted: the `sssb add-app` the multi-app shape runs before its install. */
 const TOOLS = path.join(BASE, 'tools')
 const REPORTS = path.join(BASE, 'reports')
 const LOCK_SEED = path.join(REPO, 'scripts/pack-and-consume/consumer-lock.yaml')
@@ -380,7 +381,7 @@ function checkInstalledTarballs(dir) {
 const appDir = (app) => path.join(WS, 'apps', app)
 
 /**
- * The pages shape's instruments in one app (none of them a fix to what the generator wrote): the strict-flag config
+ * The multi-app shape's instruments in one app (none of them a fix to what the generator wrote): the strict-flag config
  * the strict typecheck runs, every published @sssb/kit module in the app's type program, and a test proving the
  * framework the app installed reads the app's own seam.
  * @param {string} app the app's slug, which is its directory's name
@@ -437,7 +438,7 @@ const FOREIGN_MIGRATIONS = {
 
 /** The console: an app-owned adapter, and a seam module that imports through the app's `@/` alias. */
 function shapeConsole(/** @type {string} */ dir) {
-    // An app-owned lint exception (#51's lint-exceptions.mjs), as safeinsights/pages has one: the module it names may
+    // An app-owned lint exception (#51's lint-exceptions.mjs), as an adopter's app may have one: the module it names may
     // take the raw db handle, and `sssb check-fences` proves a sibling beside it may not.
     write(
         path.join(dir, 'src/domain/maintenance.ts'),
@@ -461,7 +462,7 @@ export const systemHandle = (db: DbPort) => db.getDb()
     ]
     writeJson(path.join(dir, 'package.json'), manifest)
 
-    // docs/recipes/app-owned-adapter.md's layout, as safeinsights/pages' console has it for S3.
+    // docs/recipes/app-owned-adapter.md's layout, as an adopter's app may have it for S3.
     write(
         path.join(dir, 'src/ports/object-store.ts'),
         `/** An app-owned port: SSSB has no port for this vendor (docs/recipes/app-owned-adapter.md). */
@@ -674,7 +675,7 @@ function checkAddedLedger() {
 }
 
 /**
- * Builds the pages shape under WS, on the generator's output: the workspace and its first app as `@sssb/create`
+ * Builds the multi-app shape under WS, on the generator's output: the workspace and its first app as `@sssb/create`
  * writes them, the second app as it writes one, then the shape's own code and this script's instruments.
  */
 function scaffold() {
@@ -702,7 +703,7 @@ function scaffold() {
         { cwd: WS },
     )
     checkAddedLedger()
-    // ...and the sibling package's tests join the root's Vitest run, as Pages' packages/gate does.
+    // ...and the sibling package's tests join the root's Vitest run, as an adopter's sibling package does.
     replaceOnce(
         path.join(WS, 'vitest.config.ts'),
         "projects: await workspaceAppProjects({ root: at('.') }),",
@@ -725,7 +726,7 @@ function scaffold() {
     shapeConsole(appDir('console'))
     shapeLedger(appDir('ledger'))
 
-    // A sibling package that does not use the framework (Pages' packages/gate), only @sssb/tools' helper.
+    // A sibling package that does not use the framework (as an adopter's sibling package might), only @sssb/tools' helper.
     writeJson(path.join(WS, 'packages/gate/package.json'), {
         name: 'gate',
         private: true,
@@ -1454,7 +1455,7 @@ function registryRecipe() {
  * one workspace package, the URLs pointed at a local server holding the same files, and nothing else of SSSB's: no
  * `overrides`, and pnpm's default `blockExoticSubdeps` (on in pnpm 11). A package installed by URL that depended on
  * another SSSB package by version would fail here, looked for in the registry or, overridden to a URL, refused as an
- * exotic subdependency (pages' finding on v0.2.0-rc.1). The workspace keeps the generated one's supply-chain guard
+ * exotic subdependency (an adopter's finding on v0.2.0-rc.1). The workspace keeps the generated one's supply-chain guard
  * (`minimumReleaseAge`); `@sssb/cdk`'s peer must resolve to the package's own `@sssb/tools`. Only a release candidate
  * has these notes (`candidateNotes` refuses any other version), so past pre mode (P14) the step says it is skipped;
  * a plain release's install lines (from npm, by version) are `registryRecipe`'s proof.
@@ -1581,7 +1582,7 @@ function generateWorkspace() {
 
 /**
  * The seed, then `pnpm install`, as an adopter installs a workspace whose lockfile is committed. No `.npmrc` guard as in
- * the pages shape: that would be a file the generator did not write, and every @sssb package is a `file:` tarball in
+ * the multi-app shape: that would be a file the generator did not write, and every @sssb package is a `file:` tarball in
  * the package that takes it (no SSSB package depends on another), which the lockfile check below holds.
  */
 function installGenerated() {
@@ -1590,7 +1591,7 @@ function installGenerated() {
     const lockText = checkInstalledTarballs(GEN)
     seedOf(lockText)
     checkSeamLinks(lockText, [GEN_APP])
-    // The seed's importers are a superset of this workspace's (the pages shape's second app and sibling package go,
+    // The seed's importers are a superset of this workspace's (the multi-app shape's second app and sibling package go,
     // and pnpm moves some `optional` flags with them), so what says the resolution left the seed is a package version
     // the seed does not hold.
     const beyond = packagesBeyondSeed(seedText(), lockText)
@@ -1895,7 +1896,7 @@ const notesPort = await freePort()
 const registryPort = await freePort()
 const generatedContractPort = await freePort()
 console.log(
-    `pack and consume (${[RUN_PAGES && 'pages', RUN_GENERATED && 'generated'].filter(Boolean).join(' and ')}): ${BASE}`,
+    `pack and consume (${[RUN_MULTI_APP && 'multi-app', RUN_GENERATED && 'generated'].filter(Boolean).join(' and ')}): ${BASE}`,
 )
 
 /** The PACKED manifest, as the consumer installs it. @type {{ name?: string, exports: Record<string, string>, dependencies?: Record<string, string>, peerDependencies?: Record<string, string>, peerDependenciesMeta?: Record<string, unknown> }} */
@@ -2007,7 +2008,7 @@ step('pack every @sssb package, and extract @sssb/create', () => {
     rmSync(CREATE, { recursive: true, force: true })
     mkdirSync(CREATE, { recursive: true })
     run('tar', ['-xzf', create, '-C', CREATE], { cwd: BASE })
-    // The packed @sssb/tools, extracted too: the pages shape runs its `sssb add-app` before the workspace is installed.
+    // The packed @sssb/tools, extracted too: the multi-app shape runs its `sssb add-app` before the workspace is installed.
     rmSync(TOOLS, { recursive: true, force: true })
     mkdirSync(TOOLS, { recursive: true })
     run('tar', ['-xzf', tarballs['@sssb/tools'], '-C', TOOLS], { cwd: BASE })
@@ -2037,9 +2038,9 @@ step('pack every @sssb package, and extract @sssb/create', () => {
     }
 })
 
-if (RUN_PAGES) {
-    step('pages: generate the workspace (two apps) and shape it', scaffold)
-    step('pages: install the tarballs', () => {
+if (RUN_MULTI_APP) {
+    step('multi-app: generate the workspace (two apps) and shape it', scaffold)
+    step('multi-app: install the tarballs', () => {
         run('pnpm', ['install', '--no-frozen-lockfile'], { cwd: WS })
         const lock = path.join(WS, 'pnpm-lock.yaml')
         const lockText = checkInstalledTarballs(WS)
@@ -2058,27 +2059,30 @@ if (RUN_PAGES) {
             )
         }
     })
-    step('pages: layout: seam links, one instance per app', checkLayout)
-    step("pages: the release notes' install recipe, by URL, with no overrides and blockExoticSubdeps on", notesRecipe)
-    step('pages: a release installed by version from a registry, as the generator writes it', registryRecipe)
-    step('pages: the packed package ships and imports only what it declares', checkDeclaredImports)
-    step('pages: typecheck at the ES2022 floor', typecheck)
-    step('pages: typecheck with the strict-flag set', typecheckStrict)
-    step('pages: unit tests and the conformance suite, from the workspace root', unitTests)
-    step('pages: contract tests on embedded Postgres, from the workspace root', contractTests)
-    step('pages: migrator bundles, with no alias and no tsconfig', migratorBundles)
-    step('pages: sssb doctor and sssb check-e2e, in each app', doctorAndCheckE2e)
-    step('pages: Playwright loads every console spec (--list: no server, no browser)', playwrightLoadsSpecs)
-    step('pages: negative fixture: an importer with no seam, which sssb doctor names', negativeFixture)
-    step('pages: the compiled e2e entry loads under plain Node, with no seam', e2eEntryUnderNode)
-    step('pages: the dev:real preflight, through esbuild from each app', realEnvPreflight)
-    step('pages: lint from the workspace root and from each app, and sssb check-fences', lint)
+    step('multi-app: layout: seam links, one instance per app', checkLayout)
+    step(
+        "multi-app: the release notes' install recipe, by URL, with no overrides and blockExoticSubdeps on",
+        notesRecipe,
+    )
+    step('multi-app: a release installed by version from a registry, as the generator writes it', registryRecipe)
+    step('multi-app: the packed package ships and imports only what it declares', checkDeclaredImports)
+    step('multi-app: typecheck at the ES2022 floor', typecheck)
+    step('multi-app: typecheck with the strict-flag set', typecheckStrict)
+    step('multi-app: unit tests and the conformance suite, from the workspace root', unitTests)
+    step('multi-app: contract tests on embedded Postgres, from the workspace root', contractTests)
+    step('multi-app: migrator bundles, with no alias and no tsconfig', migratorBundles)
+    step('multi-app: sssb doctor and sssb check-e2e, in each app', doctorAndCheckE2e)
+    step('multi-app: Playwright loads every console spec (--list: no server, no browser)', playwrightLoadsSpecs)
+    step('multi-app: negative fixture: an importer with no seam, which sssb doctor names', negativeFixture)
+    step('multi-app: the compiled e2e entry loads under plain Node, with no seam', e2eEntryUnderNode)
+    step('multi-app: the dev:real preflight, through esbuild from each app', realEnvPreflight)
+    step('multi-app: lint from the workspace root and from each app, and sssb check-fences', lint)
     if (SKIP_BUILD_AND_E2E) {
         console.log('\n--skip-build-and-e2e: next build, e2e and the static demo were NOT run')
     } else {
-        step('pages: next build (console)', nextBuild)
-        step('pages: e2e (console)', () => e2e(port))
-        step('pages: static demo: build, size, e2e (console)', staticDemo)
+        step('multi-app: next build (console)', nextBuild)
+        step('multi-app: e2e (console)', () => e2e(port))
+        step('multi-app: static demo: build, size, e2e (console)', staticDemo)
     }
 }
 
@@ -2110,7 +2114,7 @@ if (stale.length > 0) fail(`registered workarounds no site applies (remove them)
 const total = Math.round((Date.now() - started) / 1000)
 const workarounds = Object.entries(WORKAROUNDS)
 const summary = [
-    `## pack and consume: ${[RUN_PAGES && 'the pages shape', RUN_GENERATED && 'the generated shape'].filter(Boolean).join(' and ')}`,
+    `## pack and consume: ${[RUN_MULTI_APP && 'the multi-app shape', RUN_GENERATED && 'the generated shape'].filter(Boolean).join(' and ')}`,
     '',
     `Green in ${total}s${SKIP_BUILD_AND_E2E ? ' (build and e2e SKIPPED)' : ''}.`,
     '',

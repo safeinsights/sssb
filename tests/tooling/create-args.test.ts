@@ -21,9 +21,9 @@ describe('@sssb/create: arguments', () => {
             'ws',
             '--slug',
             'console',
-            '--name=Pages Console',
+            '--name=Portal Console',
             '--repo',
-            'acme/pages',
+            'acme/portal',
             '--owner',
             'jdoe',
             '--owner=@acme/devs',
@@ -36,8 +36,8 @@ describe('@sssb/create: arguments', () => {
         ])
         expect(options).toMatchObject({
             slug: 'console',
-            name: 'Pages Console',
-            repo: 'acme/pages',
+            name: 'Portal Console',
+            repo: 'acme/portal',
             owners: ['@jdoe', '@acme/devs'],
             sssb: '0.2.0',
             workflowRef: ref,

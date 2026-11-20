@@ -533,8 +533,8 @@ export class SssbApp extends Construct {
                 // (next/dist/build/utils.js). Pinned to that default: the Web Adapter calls the server on 127.0.0.1,
                 // so an inherited HOSTNAME naming another address would leave it nothing to call, and with 127.0.0.1
                 // itself Next names itself `localhost` to the proxy but `127.0.0.1` when it routes, so a rewrite the
-                // proxy makes (Clerk's, on every request) looks external and Next fetches it over the network (pages,
-                // 2026-11-18). No wider than that: on pg the server's security group admits nothing, and on data-api
+                // proxy makes (Clerk's, on every request) looks external and Next fetches it over the network (an adopter's
+                // finding, 2026-11-18). No wider than that: on pg the server's security group admits nothing, and on data-api
                 // it is in no VPC. A run.sh that exports HOSTNAME overrides this; the deploy pipeline's must not.
                 HOSTNAME: '0.0.0.0',
                 APP_MODE: 'real',

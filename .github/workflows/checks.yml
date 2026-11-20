@@ -336,11 +336,11 @@ jobs:
                       ${{ runner.temp }}/adoption-probe/generated/apps/*/playwright-report/
                   retention-days: 7
 
-    # ADR-0014 rule 5 (P2): the framework as an adopter gets it, in the first adopter's shape. Packs every @sssb
+    # ADR-0014 rule 5 (P2): the framework as an adopter gets it, in a multi-app adopter's shape. Packs every @sssb
     # package and generates a workspace outside this checkout with the PACKED @sssb/create, then shapes it like
-    # safeinsights/pages: two apps with different seams linked by `link:` (the second one the generator's too), an
+    # a multi-app adopter's: two apps with different seams linked by `link:` (the second one the generator's too), an
     # app-owned adapter, a sibling package, and a seamless importer that must fail. It installs the TARBALLS and runs
-    # the script's checks over that workspace (`--shape pages`): typecheck with the strict flags, the unit and contract
+    # the script's checks over that workspace (`--shape multi-app`): typecheck with the strict flags, the unit and contract
     # suites from the root, doctor, check-e2e, the fences, the migrator bundles, next build and e2e. Inside this repo
     # workspace links and per-app aliases resolve the framework and the seam, which hides exactly what an adopter would
     # hit; every step's logic is in scripts/pack-and-consume.mjs, so `pnpm pack-and-consume` reproduces this job, and
@@ -370,7 +370,7 @@ jobs:
                   EVENT_NAME: ${{ github.event_name }}
             - name: Skipped (docs-only change)
               if: steps.docs.outputs.docs-only == 'true'
-              run: echo "The pull request changes only documentation (docs-only.sh), so this job skips the pages-shaped workspace and its checks."
+              run: echo "The pull request changes only documentation (docs-only.sh), so this job skips the multi-app workspace and its checks."
             - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
               if: steps.docs.outputs.docs-only != 'true'
             - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -401,7 +401,7 @@ jobs:
             - name: install the kit's dependencies, for its prepack build, and the cdk's workspace link
               if: steps.docs.outputs.docs-only != 'true'
               run: pnpm install --frozen-lockfile --ignore-scripts --filter @sssb/kit --filter @sssb/cdk
-            - run: node scripts/pack-and-consume.mjs --shape pages --dir "$RUNNER_TEMP/pack-and-consume"
+            - run: node scripts/pack-and-consume.mjs --shape multi-app --dir "$RUNNER_TEMP/pack-and-consume"
               if: steps.docs.outputs.docs-only != 'true'
             # ADR-0014 P7: on a push to main, the tarballs this job just packed and tested are this run's artifact. A
             # release candidate's tag run (release.yml's `candidate`) waits for this run to pass on the release commit

@@ -16,7 +16,7 @@ row closes.
 
 ## The fix, sketched
 
-When `SssbApp` takes a custom domain (a `domainNames` + `certificate` pair, or the escape hatch the first adopter
+When `SssbApp` takes a custom domain (a `domainNames` + `certificate` pair, or the escape hatch one adopter
 uses), it should set `minimumProtocolVersion: SecurityPolicyProtocol.TLS_V1_2_2021` (or the newest CloudFront offers
 then) and `sslSupportMethod: SNI`. A test should check that a distribution with a certificate never synthesizes an
-older policy. The first adopter already sets `TLSv1.2_2021` on its own distribution.
+older policy. One adopter already sets `TLSv1.2_2021` on its own distribution.

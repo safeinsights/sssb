@@ -178,7 +178,7 @@ edit. A `CODEOWNERS` naming an account GitHub cannot resolve makes every PR unme
 Code Owners" is on.
 
 **`--repo` names the repository, which is not the app's slug.** An app called `console` can live in a repo called
-`pages`, and a link that says `…/console/security/advisories/new` 404s while looking right.
+`portal`, and a link that says `…/console/security/advisories/new` 404s while looking right.
 
 Filling in the owner and repository is necessary and not sufficient: **every one of those links depends on a
 repository setting that is off by default.** `/security/advisories/new` resolves for a non-maintainer only once
