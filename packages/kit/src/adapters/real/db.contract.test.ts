@@ -224,7 +224,7 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                 () => null,
                 (error: unknown) => String(error),
             )
-            expect(failure).toMatch(new RegExp(`keel: role ${second} cannot switch to app_user`))
+            expect(failure).toMatch(new RegExp(`SSSB: role ${second} cannot switch to app_user`))
             // Kysely runs every pending migration in one transaction, so nothing of the run survives: no
             // migration recorded, and no table the earlier migrations created.
             const executed = await sql<{ n: number }>`SELECT count(*)::int AS n FROM kysely_migration`.execute(ownerDb)
