@@ -7047,9 +7047,18 @@ design; these are the calls made building it, each with the rejected alternative
   registry, the fake job runner and the conformance replay, after review found job handlers and notifications in
   simulated single mode still on the bare fake. It is read on first use, so real mode, which imports the fakes too,
   reports a misconfigured switch through the boot check.
-- **An unreadable tenant claim is refused, and a refused person is signed out.** Absent, null or empty is no claim. A
-  non-string is not a slug, and admitting it would let a malformed claim through the tenant guard. Signing the person
-  out keeps them from being stuck signed in to the provider with no way out from the app. Rejected: a refusal page,
-  which is UI for a state a correct deployment never reaches.
+- **An unreadable tenant claim is refused.** Absent, null or empty is no claim. A non-string is not a slug, and
+  admitting it would let a malformed claim through the tenant guard.
+- **A refused person is not signed out**, reversing a first fix. Signing them out inside `getCurrentUser` changed a
+  cookie while server components render, which Next refuses (every page failed in simulated single mode), and on
+  Clerk it revoked the shared session on every call, so a link to this app would have ended the person's session in
+  the other product. Rejected: that sign-out, and a refusal page with its own sign-out, left as a follow-up for a
+  state a correct deployment does not reach.
+- **The conformance preset replay runs the simulated auth, single mode included**: a preset that invites someone or
+  signs in a person of another tenant describes a world single-tenant auth cannot reach, and that check exists to
+  say so. Rejected: replaying on the bare fake, which would pass presets the deployment cannot replay.
+- **Known and left open, from the security review's second round:** the showcase's `[id]` routes read a row before
+  they authorize, so a `none` user can tell an existing id from a missing one (no data returned, ids opaque); and the
+  authorization scan still exempts GET handlers. Both are recorded for a later change.
 - **Single mode's seeded people keep a membership in the home org**, documented, rather than making the fake's session
   code work without one: the simulated sign-in resolves a membership, and a dev-only edge is not worth reworking it.

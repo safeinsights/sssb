@@ -19,7 +19,7 @@ export const AUTH_TENANCY_CHOICES = ['multi', 'single']
 
 const KEYS = ['tenancy', 'tenantSlug', 'homeOrgSlug', 'tenantMetadataKey']
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const METADATA_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
+const METADATA_KEY = /^(?!(?:__proto__|constructor|prototype)$)[A-Za-z_][A-Za-z0-9_]*$/
 
 /**
  * The server's settings for an app's `params.auth`, or a thrown error naming what is wrong.

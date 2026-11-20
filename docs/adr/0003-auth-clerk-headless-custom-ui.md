@@ -172,7 +172,7 @@ configured tenant and org with role `none`; `getMember` answers the same for an 
 credential is judged as a session); `listMembers` is empty, since listing the provider's users would enumerate another
 product's users on a shared instance; `createInvite` is refused, since membership is implicit; the home org is the only
 org. A user whose metadata claims a different tenant under the key, or holds there something that is not a slug, is
-refused and signed out, so the mode switched on for a multi-tenant instance by mistake cannot merge its tenants. The
+refused, so the mode switched on for a multi-tenant instance by mistake cannot merge its tenants. The
 fake runs the same wrapper wherever the simulated world reaches people (`packages/kit/src/adapters/fake/simulated-auth.ts`:
 the registry, the fake job runner, the conformance suite's preset replay).
 

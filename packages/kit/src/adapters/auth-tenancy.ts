@@ -26,7 +26,7 @@ export const AUTH_TENANCY_CHOICES = ['multi', 'single'] as const
 
 const DEFAULT_TENANT_METADATA_KEY = 'tenantSlug'
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const METADATA_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
+const METADATA_KEY = /^(?!(?:__proto__|constructor|prototype)$)[A-Za-z_][A-Za-z0-9_]*$/
 
 /** The settings single mode requires, each mapped to its cutover row. */
 const SINGLE_TENANT_ENV: Readonly<Record<string, string>> = {

@@ -274,6 +274,12 @@ export interface Ability {
 }
 
 /**
+ * An active-org id no org has: what the app's rules are shown for a person without standing (`hasStanding`). Org ids
+ * are database uuids, so no subject's org field can hold it.
+ */
+const NO_STANDING_ORG = '\u0000no-standing'
+
+/**
  * Compile the rule table for one actor. The framework rules (deny by default):
  * - manageAll → allow everything (held by a member acting AS the app's operator org; see above).
  * - Job:        read = sameOrg;  create              = !restricted && sameOrg.
@@ -294,9 +300,6 @@ export interface Ability {
  * one is ever needed it intersects here, `can(...) && withinCeiling(actor.credential, action, subject)`,
  * so every caller of `can` honours it.
  */
-/** An active-org id no org has: what the app's rules are shown for a person without standing (`hasStanding`). */
-const NO_STANDING_ORG = '\u0000no-standing'
-
 export function defineAbilitiesFor(actor: Actor): Ability {
     // Same org iff the subject is org-scoped AND its org is the one the actor is acting in.
     const sameOrg: SameOrg = (subject) => subject.orgId != null && subject.orgId === actor.activeOrgId

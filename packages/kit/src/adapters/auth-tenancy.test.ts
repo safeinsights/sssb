@@ -35,6 +35,7 @@ describe('the auth tenancy settings', () => {
         ],
         ['a single-mode setting on a multi deployment', { AUTH_TENANT_SLUG: 'harbor' }, /AUTH_TENANCY is multi/],
         ['a key that is not an identifier', { AUTH_TENANT_METADATA_KEY: 'a.b' }, /plain identifier/],
+        ["a key naming an object's own machinery", { AUTH_TENANT_METADATA_KEY: '__proto__' }, /plain identifier/],
     ])('refuses %s', (_, env, message) => {
         expect(() => authTenancy(env)).toThrow(message)
     })

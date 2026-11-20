@@ -841,7 +841,7 @@ Left out, it is multi-tenant, as every deployment was before the setting existed
   do beyond their own profile, notifications and agreements is your rules' to grant. In this mode the members list is
   empty, invitations are refused (anyone the provider signs in is already placed in the org), and the home org is the
   only org. A user whose metadata names a different tenant under the key, or holds there something that is not a
-  slug, is refused and signed out, so this mode switched on for a multi-tenant instance by mistake does not merge its
+  slug, is refused, so this mode switched on for a multi-tenant instance by mistake does not merge its
   tenants. That guard reads the metadata key: a multi-tenant deployment that used `tenantMetadataKey` keeps it when
   it switches. Real mode seeds nothing: create the tenant and org rows the two slugs name (cutover row
   `auth-tenancy`).
@@ -854,9 +854,9 @@ and check yours before you switch the mode on.
 **A shared identity provider admits all its users.** In single mode, everyone who can sign in to the provider
 instance is a signed-in person of your app. If that instance also serves another product, every user of that product
 signs in to yours. They get the role `none`, so SSSB grants them nothing, but anything your app shows to any signed-in
-person, they see. Decide that before you share an instance. Two writes reach the shared account too: the profile
+person, they see. Decide that before you share an instance. A refused user stays signed in to the provider and is simply no user here; they can sign out from the other product. Two writes reach the shared account too: the profile
 screen renames the person (Clerk's first and last name) and stores their locale under `publicMetadata.locale`, and
-signing out ends their Clerk session, in the other product as well.
+signing out ends their Clerk session, in the other product as well. And a person with the role `none` can still write what is theirs: accepting the terms records an audit event in the home org, and notification preferences are stored there.
 
 The same mode runs in `pnpm dev` when your dev environment sets `AUTH_TENANCY=single` and the two slugs: the
 simulated world then places its seeded people the same way. Seed them in that tenant, each still with a membership in

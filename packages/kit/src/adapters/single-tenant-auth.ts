@@ -36,12 +36,13 @@ export interface ProviderIdentitySource {
  *
  * What each method means here, and why:
  * - `getCurrentUser`: the configured tenant and home org, role `none`, restricted. A person whose account names a
- *   different tenant under the metadata key, or holds there something that is not a slug, is no user at all, and is
- *   signed out: that is a multi-tenant instance switched to this mode by mistake, and admitting them would put another
- *   tenant's people in this one.
+ *   different tenant under the metadata key, or holds there something that is not a slug, is no user at all: that is a
+ *   multi-tenant instance switched to this mode by mistake, and admitting them would put another tenant's people in
+ *   this one.
  * - `requireRole`: as ever, so every role-gated action is refused to `none`.
  * - `getMember`: the same standing, `none`, for an account the provider still has in the home org; null for any other
- *   org, an unknown or banned account, or one claiming another tenant. A credential is judged as a session is.
+ *   org, an unknown or banned account, or one whose claim names another tenant or is not a slug. A credential is
+ *   judged as a session is.
  * - `listMembers`: empty. Membership is implicit, and listing the provider's users would enumerate everyone on the
  *   instance, another product's users included. So nobody is an admin, and a notification fanned out to an org's
  *   admins reaches no one.
@@ -57,13 +58,9 @@ export function singleTenantAuth(base: AuthPort, tenancy: SingleTenancy, source:
     const port: AuthPort = {
         async getCurrentUser(): Promise<AuthUser | null> {
             const identity = await source.current()
-            if (!identity) return null
-            if (!sameTenant(identity.tenantClaim)) {
-                // Refused, and signed out, so the person is not left signed in to the provider with no way out of it
-                // from here (the app's sign-out lives in pages a refused person never reaches).
-                await base.signOut()
-                return null
-            }
+            // Refused without signing out: this runs while server components render, where a session cookie cannot be
+            // changed, and once per call. The person stays signed in to the provider and is no user here.
+            if (!identity || !sameTenant(identity.tenantClaim)) return null
             return {
                 id: identity.id,
                 name: identity.name,

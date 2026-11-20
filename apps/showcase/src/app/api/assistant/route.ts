@@ -1,5 +1,6 @@
 import { ASSISTANT_COMPOSE_SYSTEM, assistantComposePurpose, assistantConfig } from '@sssb/app-config/assistant'
 import { analytics, auth, db, llm } from '@sssb/kit/adapters/index'
+import { authorize } from '@sssb/kit/authz/authorize'
 import { assistantExecutor } from '@sssb/kit/server-lib/assistant'
 import { resolveOrgContext } from '../org-context'
 import { withPortErrors } from '../respond'
@@ -40,6 +41,8 @@ export async function POST(request: Request): Promise<Response> {
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
+        // The tools read the org's tickets, so the caller must be allowed to read them: not only unrestricted.
+        authorize(user, orgId, 'read', { type: 'Ticket', orgId })
 
         // Pass 1. Wrap the seam's executor so the route can keep what the tools actually returned —
         // the answer's sources. The wrapper only OBSERVES: it never edits a result on its way back to

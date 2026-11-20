@@ -73,10 +73,11 @@ describe('single-tenant auth', () => {
         }
     })
 
-    it('is no user at all for an account that claims another tenant, and signs it out', async () => {
+    it('is no user at all for an account that claims another tenant, and changes no session while it says so', async () => {
         const { auth, base } = setup({ ...NOBODY_SPECIAL, tenantClaim: 'lakeside' })
         expect(await auth.getCurrentUser()).toBeNull()
-        expect(base.signOut).toHaveBeenCalled()
+        // Server components call this while they render, where a session cookie cannot be changed.
+        expect(base.signOut).not.toHaveBeenCalled()
         await expect(auth.requireUser()).rejects.toBeInstanceOf(AuthRequiredError)
         expect(await auth.listMyOrgs()).toEqual([])
     })
