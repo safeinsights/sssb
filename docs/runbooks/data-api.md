@@ -19,7 +19,7 @@ proven. The dialect is `packages/kit/src/adapters/real/rds-data-dialect.ts`. It 
 - Your shell can call `rds-data:*` on the cluster and `secretsmanager:GetSecretValue` on its secret.
 - For steps 1–4, at least one tenant with rows in a tenant-scoped table (`jobs` is in every app).
 - `DB` is the app's database: its slug with each dash as an underscore (`acme-corp` is `acme_corp`), the
-  `DATABASE_NAME` its server function runs with (`databaseNameFor` in `packages/cdk/src/sssb-app.js`).
+  `DATABASE_NAME` its server function runs with (`databaseNameFor` in `packages/cdk/src/database-name.js`).
 
 ```bash
 export CLUSTER=arn:aws:rds:REGION:ACCOUNT:cluster:NAME
@@ -208,7 +208,7 @@ model of AWS.)
 - **On an EMPTY database.** On the `data-api` network shape the Data API is the migrator's only way in, so
   every migration must be seen to go through it: deploy staging with `params.database.transport` set to
   `'data-api'` (so `DATABASE_TRANSPORT=data-api`) as a new stack, whose new cluster's database (named
-  `APP_SLUG` by the `SssbApp` construct, `packages/cdk/src/sssb-app.js`) no migrator has touched. Point `$CLUSTER`, `$SECRET` and `$DB` at that
+  from `APP_SLUG`, each dash an underscore, by `databaseNameFor` in `packages/cdk/src/database-name.js`) no migrator has touched. Point `$CLUSTER`, `$SECRET` and `$DB` at that
   cluster, its secret and that database for the rest of this step. Invoke the migrator Lambda. It must
   return `{ ok: true }`, and then
 
