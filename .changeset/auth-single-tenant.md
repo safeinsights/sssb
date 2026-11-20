@@ -29,19 +29,27 @@
 
 **To adopt.**
 
-- **Every app.** Code that branches on `Role` must handle `'none'`. In `appAbilityRules`, grant org-scoped access
-  through the `sameOrg` you are handed, never because a role is not some other role, which would grant `none` too. An
-  app that never turns the mode on sees no `none` user.
+- **Every app.**
+    - Code that branches on `Role` must handle `'none'`.
+    - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never because a role is not
+      some other role, which would grant `none` too.
+    - Authorize org-scoped reads, as the starter's items GET now does (`authorize(user, orgId, 'read', …)`); a route
+      that lists an org's data by the session's org alone shows it to anyone placed there.
+
+    An app that never turns the mode on sees no `none` user.
+
 - **Pages (one tenant per deployment):**
-    1. In `apps/<app>/config/params.ts`, set `auth` to `{ tenancy: 'single', tenantSlug, homeOrgSlug }`, with your
+    1. **Before switching:** audit every route and screen that reads org-scoped data by the session's org
+       (`user.orgSlug`), and authorize each read or check your publishers list there. Every Clerk user, Canopy's
+       included on the shared instance, will be placed in your home org.
+    2. In `apps/<app>/config/params.ts`, set `auth` to `{ tenancy: 'single', tenantSlug, homeOrgSlug }`, with your
        tenant's and org's slugs.
-    2. Check that the tenant and org rows those slugs name exist in the deployed database.
-    3. Remove the tenant claim you filled into Clerk metadata (`tenantSlug`) and the Clerk organization you created only
+    3. Check that the tenant and org rows those slugs name exist in the deployed database.
+    4. Remove the tenant claim you filled into Clerk metadata (`tenantSlug`) and the Clerk organization you created only
        so sign-in would work.
-    4. Grant your publishers through your own rules: every Clerk user, Canopy's included on the shared instance, now
-       signs in with role `none` and nothing more.
-    5. For `pnpm dev` to match, set `AUTH_TENANCY=single` and the two slugs in your dev environment, with your seeded
-       people in that tenant.
+    5. Grant your publishers through your own rules: everyone signs in with role `none` and nothing more.
+    6. For `pnpm dev` to match, set `AUTH_TENANCY=single` and the two slugs in your dev environment, with your seeded
+       people in that tenant, each still with a membership in the home org.
 
 **Now deletable.**
 

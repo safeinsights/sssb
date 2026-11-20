@@ -97,9 +97,13 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
   `src/app/api`), with a reason and a `mustMatch` gate. A mutating route outside `src/app/api` can match no
   exemption.
-- In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone. The role
-  `none` (single-tenant auth gives it to every signed-in user: `params.auth`) has no standing, `sameOrg` is false for
-  it, and a rule that grants because a role is not some other role would grant it too.
+- A route or screen that reads org-scoped data authorizes the read too, as `src/app/api/items/route.ts`'s GET does
+  (`authorize(user, orgId, 'read', …)`): the session's org says where a person is placed, not that they may read there.
+  The role `none` (single-tenant auth gives it to every signed-in user: `params.auth`) is placed in the home org with
+  no standing in it.
+- In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
+  false for a person without standing, and a rule that grants because a role is not some other role would grant
+  `none` too.
 
 ## UI
 

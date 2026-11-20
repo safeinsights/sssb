@@ -7032,3 +7032,24 @@ design; these are the calls made building it, each with the rejected alternative
   `none` gets nothing from the framework's rules and a false `sameOrg` in the app's, and the guide says how app rules
   must grant. Rejected: a conformance check running every app subject past a `none` actor, which would fail apps that
   rightly grant a person their own records.
+- **Org-scoped reads authorize**, after the security review found that the reference apps' GET routes scope by the
+  session's org after `requireUser()` alone, which in single mode would show the home org's items, tickets, jobs,
+  attachments, escalations and webhook endpoints to every user of a shared Clerk instance. The starter's items GET and
+  the showcase's org-scoped GETs now call `authorize(user, orgId, 'read', …)`, and the guide makes it a rule.
+  Rejected: refusing a person without standing in the showcase's `resolveOrgContext`, which self-only routes share
+  (accepting the terms among them), so a `none` user could not get past the agreement gate; and taking the home org
+  off the session, which leaves the app's UI and its token credentials with no org. Not closed: the authorization scan
+  still exempts GET handlers, so an app's own reads are held to this by the guide alone.
+- **The app's rules see a person without standing as active in no org** (a sentinel no org id equals), so a rule that
+  compares org ids itself, as the showcase's two-sided `Escalation` does, cannot grant `none`. Rejected: fixing only
+  the showcase's rule, which leaves the pattern open to every app that copies it.
+- **The simulated auth is one memoized function** (`packages/kit/src/adapters/fake/simulated-auth.ts`) shared by the
+  registry, the fake job runner and the conformance replay, after review found job handlers and notifications in
+  simulated single mode still on the bare fake. It is read on first use, so real mode, which imports the fakes too,
+  reports a misconfigured switch through the boot check.
+- **An unreadable tenant claim is refused, and a refused person is signed out.** Absent, null or empty is no claim. A
+  non-string is not a slug, and admitting it would let a malformed claim through the tenant guard. Signing the person
+  out keeps them from being stuck signed in to the provider with no way out from the app. Rejected: a refusal page,
+  which is UI for a state a correct deployment never reaches.
+- **Single mode's seeded people keep a membership in the home org**, documented, rather than making the fake's session
+  code work without one: the simulated sign-in resolves a membership, and a dev-only edge is not worth reworking it.

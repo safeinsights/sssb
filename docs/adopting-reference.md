@@ -472,7 +472,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 142 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 80 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 81 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -835,22 +835,32 @@ Left out, it is multi-tenant, as every deployment was before the setting existed
   (ADR-0003).
 - **`tenancy: 'single'`, with `tenantSlug` and `homeOrgSlug`**: for an app with one tenant per deployment. Every user
   the identity provider signs in is placed in that tenant and that org with the role `none`, and no provider
-  organization or tenant metadata is needed. `none` grants nothing a membership would: SSSB's rules let it read or
-  write nothing org-scoped, never let it wield the staff org's manage-all (even when the home org is the staff org),
-  and hand your own rules a `sameOrg` that is false for it. What a signed-in person may do beyond their own profile,
-  notifications and agreements is your rules' to grant. In this mode the members list is empty, invitations are
-  refused (anyone the provider signs in is already placed in the org), and the home org is the only org. A user
-  whose metadata names a different tenant under the key is refused, so this mode switched on for a multi-tenant
-  instance by mistake does not merge its tenants. Real mode seeds nothing: create the tenant and org rows the two
-  slugs name (cutover row `auth-tenancy`).
+  organization or tenant metadata is needed. `none` grants nothing a membership would in SSSB's ability rules: no
+  org-scoped read or write, never the staff org's manage-all (even when the home org is the staff org), and your own
+  rules see it as active in no org (`sameOrg` is false, and its active org matches none). What a signed-in person may
+  do beyond their own profile, notifications and agreements is your rules' to grant. In this mode the members list is
+  empty, invitations are refused (anyone the provider signs in is already placed in the org), and the home org is the
+  only org. A user whose metadata names a different tenant under the key, or holds there something that is not a
+  slug, is refused and signed out, so this mode switched on for a multi-tenant instance by mistake does not merge its
+  tenants. That guard reads the metadata key: a multi-tenant deployment that used `tenantMetadataKey` keeps it when
+  it switches. Real mode seeds nothing: create the tenant and org rows the two slugs name (cutover row
+  `auth-tenancy`).
+
+**Your routes must authorize reads.** A `none` user's session names the home org, and a route that lists the org's
+data by the session's org alone (`orgIdForSlug(db, tenantId, user.orgSlug)` and a query) shows it to them. Authorize
+every org-scoped read, as the starter's `apps/starter/src/app/api/items/route.ts` GET does (`authorize(user, orgId, 'read', …)`),
+and check yours before you switch the mode on.
 
 **A shared identity provider admits all its users.** In single mode, everyone who can sign in to the provider
 instance is a signed-in person of your app. If that instance also serves another product, every user of that product
 signs in to yours. They get the role `none`, so SSSB grants them nothing, but anything your app shows to any signed-in
-person, they see. Decide that before you share an instance.
+person, they see. Decide that before you share an instance. Two writes reach the shared account too: the profile
+screen renames the person (Clerk's first and last name) and stores their locale under `publicMetadata.locale`, and
+signing out ends their Clerk session, in the other product as well.
 
 The same mode runs in `pnpm dev` when your dev environment sets `AUTH_TENANCY=single` and the two slugs: the
-simulated world then places its seeded people the same way, so seed them in that tenant.
+simulated world then places its seeded people the same way. Seed them in that tenant, each still with a membership in
+the home org, which the simulated sign-in needs.
 
 ### What `SssbApp`'s distribution decides for you
 
