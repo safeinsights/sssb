@@ -56,7 +56,7 @@ async function until(condition: () => boolean, what: string) {
 
 /** Starts the wrapper in its own process group, so a signal reaches it alone, as a `kill <pid>` would. */
 function serve(app: string, port: number) {
-    const env = { ...process.env, PORT: String(port) }
+    const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(port) }
     for (const key of Object.keys(env)) if (key.startsWith('VITEST')) delete env[key]
     const wrapper = spawn(process.execPath, [SSSB, 'serve-standalone'], {
         cwd: app,
