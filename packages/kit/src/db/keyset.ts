@@ -82,9 +82,8 @@ export type KeysetTableName = {
  * What the types cannot say is that the column is a `timestamptz`: the schema has no nominal
  * timestamp type, so `created_at: Generated<string>` is the same TypeScript type as a text column
  * such as `JobsTable.status`, and this type admits both. That half is enforced at the SQL boundary
- * instead, the family's (`keysetSlice`, ./family.ts). In Postgres the column goes in through `sql.ref` — a quoted
- * identifier, never an interpolated string —
- * and is then fed to `to_char(… at time zone 'UTC', …)` and compared against a `::timestamptz`
+ * instead, by the family's `keysetSlice` (./family.ts). In Postgres the column goes in through `sql.ref` (a quoted
+ * identifier, never an interpolated string), and is then fed to `to_char(… at time zone 'UTC', …)` and compared against a `::timestamptz`
  * parameter, so naming a non-timestamp column fails with a Postgres type error on the first page.
  * It is loud, not a silently wrong order.
  */

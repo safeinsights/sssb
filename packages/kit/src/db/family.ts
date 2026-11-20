@@ -20,10 +20,8 @@ import { runWithTenant } from './with-tenant'
  *  - its ISOLATION, the guarantee every one of its transports declares as `DbPort.isolation`;
  *  - its TENANT SCOPE, the mechanism behind `DbPort.withTenant` that every one of its transports runs;
  *  - its MIGRATIONS (`./migrations/`) and its MIGRATOR (`./migrate.ts`), which reads the engine's own bookkeeping;
- *  - its ISOLATION PROOFS: the framework's half (`./rls-proofs.ts`, `./rls-coverage.ts`, `./owner-pass.ts`, composed
- *    by `./rls-proof-runner.ts`) and the app's half. An app's own proofs (`src/app-config/db/rls-proofs.ts`, through
- *    the seam) belong to its family too: they switch roles and set the tenant the way this family's scope does, so an
- *    app on another database writes its proofs for that database;
+ *  - its ISOLATION PROOFS, the framework's half and the app's (`./family-suite.ts` says what each is, and why the
+ *    app's belongs to its family too);
  *  - its catalog-reading tooling (`./app-roles.ts`, the conformance suite's schema reads, the contract server).
  *
  * The family comes in two halves, by who imports them. This module is the RUNTIME half: the data modules and the

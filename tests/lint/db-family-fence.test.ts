@@ -23,7 +23,8 @@ import { describe, expect, it } from 'vitest'
  * (`client.query('BEGIN')`), which only the family's transports and their emulator do. It is a fence against the
  * framework's logic drifting back into one engine's SQL, not a proof that it cannot.
  *
- * Scope: every module under `packages/kit/src` that ships. Tests and stories do not (`@sssb/kit`'s `files`), and a
+ * Scope: every source module under `packages/kit/src` that ships (a declaration file holds no code). Tests and
+ * stories do not ship (`@sssb/kit`'s `files`), and a
  * test of the family's own SQL has to write it. An app's code is the app's: its queries are written for its family
  * too, and nothing here reaches `apps/*`.
  *

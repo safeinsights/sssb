@@ -46,7 +46,8 @@ Turso.
 
 ## Left by the groundwork (2026-11-19)
 
-The Postgres family is `packages/kit/src/db/family.ts`; this family is a second object of its `DbFamily` shape. What
+The Postgres family is `packages/kit/src/db/family.ts` and `packages/kit/src/db/family-suite.ts`; this family is a
+second pair of objects of their `DbFamily` and `DbFamilySuite` shapes. What
 the groundwork did not do, and this task does:
 
 - Choose the family: today `family` is Postgres. A proposal is in `docs/decision-log.md` ("The Postgres family's

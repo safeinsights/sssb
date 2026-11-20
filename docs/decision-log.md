@@ -6913,11 +6913,16 @@ Accepted in part; the work it starts is seven briefs under `.claude/future-tasks
 ADR-0015's second addendum, point 3, built from `db-postgres-family-groundwork.md`. Decisions its "proposed" details
 left to the builder:
 
-- **The family is one internal module, `packages/kit/src/db/family.ts`**: a `DbFamily` interface and
-  `postgresFamily`, its dialect helpers (`json`, `lockRow`, `currentTime`, `keysetSlice`), its `isolation`, its tenant
-  scope (`runWithTenant`) and loaders for its migrations, migrator and proof runner. It references today's modules
-  where they stand. Not in `exports`. Rejected: a published subpath, which no adopter needs before a second family,
-  and adding one is a deliberate act (`sssb/public-surface`).
+- **The family is two internal modules, split by who imports them.** The runtime half,
+  `packages/kit/src/db/family.ts` (`DbFamily`, exported as `family`): the dialect helpers (`json`, `lockRow`,
+  `currentTime`, `keysetSlice`), the `isolation` and the tenant scope (`runWithTenant`), which the data modules and the
+  transports import on the request path. The suite half, `packages/kit/src/db/family-suite.ts` (`DbFamilySuite`,
+  `familySuite`): loaders for the migrations, the migrator and the proof runner, imported only by the conformance
+  suite and the contract runner. Both reference today's modules where they stand. Rejected: the loaders on the runtime
+  object, as first built: a bundler follows a literal `import()`, so a server build took in the proof suite and the
+  app's own `rls-proofs.ts`, which review measured on the starter's module graph. Neither is in `exports`. Rejected: a
+  published subpath, which no adopter needs before a second family, and adding one is a deliberate act
+  (`sssb/public-surface`).
 - **The data modules reach the family through a module-level `family`, which is Postgres.** Rejected: a `family`
   member on `DbPort` now, a second break for every double before a second family exists to need it. Choosing the
   family from the app's declaration arrives with the second family, which may move it onto the port.
@@ -6932,14 +6937,16 @@ left to the builder:
   declare a guarantee with no mechanism or proof behind it.
 - **The fence is a repository test, `tests/lint/db-family-fence.test.ts`**, reading every module `@sssb/kit` ships
   with the TypeScript parser: a raw `sql` (by any name, re-export, namespace or dynamic import of `kysely`),
-  `CompiledQuery`, a row lock, the jsonb module. Exempt by exact path, each with its reason; a stale exemption fails.
-  Tests and stories are out of scope: they do not ship, and a test of the family's SQL has to write it. Rejected: a
+  `CompiledQuery`, a row lock (called, destructured or named), the jsonb module. Exempt by exact path, each with its
+  reason; a stale exemption fails. It also holds the runtime half's import closure to Kysely, `jsonb.ts` and
+  `with-tenant.ts` (a computed `import()` fails it), and the suite half to its two importers. Tests and stories are out
+  of scope: they do not ship, and a test of the family's SQL has to write it. Rejected: a
   `sssb/*` rule in `@sssb/eslint-plugin`, which ships to every adopter for a fence that holds only this repository's
   framework tree.
 - **The SQL is shown unchanged two ways**: `packages/kit/src/db/family.test.ts` compiles each helper's query beside
   the inline form its call site wrote and compares text and parameters; and the 407 distinct statements pglite
   received across the kit's db tests, the conformance suites and both apps' route and domain tests were recorded
-  before and after the change, and were identical.
+  before the change and at its final commit, and were identical.
 - **`sssb doctor` does not print the isolation yet.** With one family it is a constant. Proposed for the second family:
   the app declares its family in its `package.json`'s `sssb` block, which doctor already reads (the port slot), and the
   conformance suite holds that declaration to the port's `isolation`, so doctor never boots the adapter registry.
