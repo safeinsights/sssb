@@ -58,6 +58,10 @@ describe('POST /api/org/invite', () => {
         'a@b@example.test',
         'no-at-sign.example.test',
         'nobody@localhost',
+        'a<b@c.d>',
+        'Name <b@c.d>',
+        '"b"@c.d',
+        'b@c.d(comment)',
     ])('400 for %j, which is not exactly one address', async (email) => {
         const response = await post(JSON.stringify({ email, role: 'member' }))
         expect(response.status).toBe(400)
