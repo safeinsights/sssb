@@ -33,8 +33,8 @@
   through the `sameOrg` you are handed, never because a role is not some other role, which would grant `none` too. An
   app that never turns the mode on sees no `none` user.
 - **Pages (one tenant per deployment):**
-    1. In `apps/<app>/config/params.ts`, set `auth: { tenancy: 'single', tenantSlug: '<your tenant>', homeOrgSlug: '<your
-org>' }`.
+    1. In `apps/<app>/config/params.ts`, set `auth` to `{ tenancy: 'single', tenantSlug, homeOrgSlug }`, with your
+       tenant's and org's slugs.
     2. Check that the tenant and org rows those slugs name exist in the deployed database.
     3. Remove the tenant claim you filled into Clerk metadata (`tenantSlug`) and the Clerk organization you created only
        so sign-in would work.
