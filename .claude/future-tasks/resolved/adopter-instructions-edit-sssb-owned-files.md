@@ -1,6 +1,6 @@
 # Instructions that have an adopter edit a file an upstream merge will change
 
-**Priority:** P2 · **Status:** open
+**Priority:** P2 · **Status:** obsolete (2026-11-20)
 **Found by:** the adopter-merge-friction sweep, 2026-11-16 (`fix/adopter-merge-friction`), after an adopter's
 second upstream merge hit two of them.
 
@@ -38,3 +38,11 @@ superseded at P15).
 
 Each row decided, and the ones that stay open moved to their own file. Nothing here is a bug in a gate: every
 gate is green in an adopted tree, which is why the class only shows up at the second merge.
+
+## Obsolete, 2026-11-20
+
+Closed without work when the backlog moved to GitHub issues: every row assumes the fork-and-merge model, which
+ADR-0014 replaced (ADR-0013 is Superseded; `init-app` went in P12). An adopter's workspace is now generated and takes
+SSSB as packages, so its docs are its own (`docs/adopting-reference.md`, "Keeping the docs honest"), and SSSB's logs,
+future tasks and runbooks are not copied into it. The two logs carry `merge=union` in `.gitattributes`. The recipes row
+lives on as the issue for rewriting the vendor recipes for app-owned ports.

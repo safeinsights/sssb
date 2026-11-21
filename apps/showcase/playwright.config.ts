@@ -61,7 +61,7 @@ export default defineConfig({
     //
     // So parallelism is bought where the worlds are genuinely separate — across apps locally, across
     // shards on CI — never inside one server. Raising this number requires per-worker world
-    // isolation first: .claude/future-tasks/e2e-shared-world-blocks-parallelism.md.
+    // isolation first: safeinsights/sssb#99.
     workers: 1,
     reporter: process.env.CI ? 'github' : 'list',
     use: {
