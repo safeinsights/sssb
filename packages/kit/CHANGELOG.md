@@ -1,5 +1,84 @@
 # @sssb/kit
 
+## 0.6.1
+
+### Patch Changes
+
+- 7990d2d: ### Under a fixed org source, grant your own people before denying on `restricted`
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** The guide and the adopter reference now say what a fixed org source means for an app's rules.
+    Everyone it signs in has the role `none` (or `restricted`), and both are restricted, so `restricted` is `true` for
+    everyone and cannot tell an app's own admins from anyone else. `none` stays restricted on purpose, so nothing opens
+    silently.
+
+    **To adopt.** If you use a fixed org source (`params.auth.orgSource: 'fixed'`), check every rule in `appAbilityRules`,
+    and every route or screen that reads `user.restricted`. Each must grant your own people from your own data before it
+    denies on `restricted`. A check that denies on `restricted` first locks everyone out, your own admins included.
+
+    - Key the grant on `actor.userId`, never on an email.
+    - If only the person at the keyboard should have it, also check `actor.credential?.kind === 'session'`: an API token or
+      an inbound email reaches your rules with the same `userId`.
+    - Your rules see `none` in no org (`sameOrg` is false), so a grant scoped to the home org needs
+      `defaultRole: 'restricted'`.
+
+- 7990d2d: ### A fixed org source names its home org by the org row
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** Under a fixed org source, the org switcher (`listMyOrgs`) showed the home org's slug. It now shows
+    the org row's name, read per call, and still shows the slug when the row is missing.
+
+- 7990d2d: ### A person the tenant guard refuses can see why
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** Under a single tenancy, a person whose identity-provider account names another tenant (or holds a
+    tenant claim that is not a slug) is refused.
+    Before, they saw the sign-in form again while still signed in to the provider, with nothing saying why.
+
+    - The auth port gains an optional `refusal()`, which answers `{ reason: 'other-tenant' }` for such a person, and null
+      otherwise.
+    - A new framework screen, `AccountRefused` (`@sssb/kit/components/auth/account-refused`), says the account belongs
+      to another site. It offers one sign-out button, and says first that signing out also signs the person out of other
+      sites that share the sign-in. Nothing signs them out on its own.
+    - Its real-mode form, `RealAccountRefused` (`@sssb/kit/adapters/real/account-refused-form`), signs out through Clerk's
+      client. Without that, the browser's short-lived session token would bring the same screen back.
+
+    **To adopt.** In your sign-in page, after the `getCurrentUser` redirect, check `await auth.refusal?.()`. When it
+    answers, show the screen instead of the sign-in form:
+
+    - in real mode, `RealAccountRefused`, loaded with `import()`;
+    - in simulated mode, a small client glue that renders `AccountRefused` and posts JSON to your sign-out route.
+
+    The starter's `src/app/[locale]/signin/page.tsx` and `refused-glue.tsx` show both.
+
+- ba4c09d: ### The Migrator runs on the RDS Data API
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** On the Data API transport (`DATABASE_TRANSPORT=data-api`) the Migrator failed on its first
+    statement with `UnsupportedResultException: The result contains the unsupported data type "CHAR"`. That statement is
+    Kysely's introspection, which selects `pg_class.relkind`, a one-byte `"char"` the Data API cannot return. The Data API
+    dialect now gives Kysely an introspector that reads the same thing with `relkind` cast to text. The Data API emulator
+    that `pnpm test:contract` runs on now refuses a result with a `"char"` column, as the Data API does, and also a
+    `char(n)` column and arrays of either, which the Data API very likely refuses too (the same JDBC type, unconfirmed). So a
+    statement the contract run sends that returns one fails there instead of live. Nothing changes on the `pg` transport.
+
+    **To adopt.** If your Migrator failed this way on the Data API, upgrade `@sssb/kit`, redeploy, and invoke the Migrator
+    again; it migrates from where the database stands. On the Data API transport, cast a `"char"` or `char(n)` column you
+    select to text (`code::text`). The contract run checks only the statements it sends (the migrations and the isolation
+    proofs), not every query your app makes.
+
 ## 0.6.0
 
 ### Minor Changes
