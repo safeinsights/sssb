@@ -59,7 +59,7 @@ again. None of this reaches production: real builds ship zero Simulator client c
 In the showcase all of it runs on `pnpm dev`. An app the generator writes has the whole Simulator in its single-file
 static demo from the start, and on its own `pnpm dev` the People, Mail and Jobs tabs with the world clock, served by
 SSSB behind one route file; the other tabs, presets and tours follow in stages
-(`.claude/future-tasks/starter-starting-points.md`).
+([safeinsights/sssb#126](https://github.com/safeinsights/sssb/issues/126)).
 
 ### 2. The boundaries are enforced by the build, not by documentation
 
@@ -177,7 +177,7 @@ checks the seam. Expect a straight answer, not a fast one.
 - `apps/<app>/src/` — **an app**: routes (`apps/<app>/src/app`), the registration seam
   (`apps/<app>/src/app-config`), domain modules, product cards, the static demo twin
 - [docs/README.md](docs/README.md) — the map of the doc set: binding doctrine (path-gated), dated records,
-  and `.claude/future-tasks/`
+  and where the backlog lives
 - [docs/development-approach.md](docs/development-approach.md) — the engineering philosophy, and why
 - `docs/adr/` — the architecture decisions: 0001–0012 and 0014 Accepted, 0013 Superseded by 0014, 0015 Accepted in part (the design is decided, not aspirational)
 - `docs/cutover-checklist.md` — every deferred item that needs real credentials, and the proof each owes

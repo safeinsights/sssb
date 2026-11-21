@@ -8,7 +8,7 @@ import { copyFile, rename, unlink, writeFile } from 'node:fs/promises'
  *
  * WHY this exists: every fake adapter persists its state as a flat file, and under concurrent
  * requests two writers can land on the SAME file at once (see
- * .claude/future-tasks/e2e-shared-world-blocks-parallelism.md). Plain `writeFileSync`/`writeFile`
+ * safeinsights/sssb#99). Plain `writeFileSync`/`writeFile`
  * TRUNCATE the file and then stream the new bytes in — so if writer A (shorter payload) and writer
  * B (longer payload) interleave, a reader can observe B's truncate landing after A has already
  * written, leaving A's shorter content followed by the tail of B's longer content: neither writer's

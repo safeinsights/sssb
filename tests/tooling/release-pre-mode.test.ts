@@ -313,9 +313,11 @@ describe("this repository's own tree", () => {
             mkdirSync(path.dirname(path.join(root, f)), { recursive: true })
             copyFileSync(path.join(REPO, f), path.join(root, f))
         }
-        // Right after a release the tree holds no pending changeset, and `prepare` then has nothing to release, which
-        // used to end this case before anything was checked. A fixture changeset keeps the release path under test.
-        if (readChangesets(root).length === 0) {
+        // Right after a release the tree holds no pending changeset that bumps a package (none at all, or only empty
+        // ones), and `prepare` then has nothing to release, which used to end this case before anything was checked. A
+        // fixture changeset keeps the release path under test.
+        const bumps = (text: string) => /^['"]@sssb\/[^'"]+['"]:\s*(patch|minor|major)\s*$/m.test(text)
+        if (!readChangesets(root).some((c: { text: string }) => bumps(c.text))) {
             writeFileSync(
                 path.join(root, '.changeset/zz-fixture.md'),
                 "---\n'@sssb/kit': patch\n---\n\n### A fixture change\n\n**Kind.** none\n\n**Action.** none\n\n" +
