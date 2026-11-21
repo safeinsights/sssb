@@ -76,7 +76,7 @@ test('bump ToS → interstitial → accept → audit + profile; advisory banner 
 
     // Advisory: a pinebrook person sees the (non-blocking) banner and can still use the app. Sign out
     // first — the signin page redirects an already-authenticated user straight past the person picker.
-    await page.request.post('/api/auth/signout')
+    await page.request.post('/api/auth/signout', { headers: { 'content-type': 'application/json' } })
     await signInAs(page, 'person-guest')
     await page.goto('/en/dashboard')
     await expect(page.getByTestId('agreement-advisory-banner')).toBeVisible()

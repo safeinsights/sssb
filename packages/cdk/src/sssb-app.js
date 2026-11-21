@@ -245,6 +245,13 @@ export const HSTS_MAX_AGE_SECONDS = 31_536_000
 /** AWS's managed SecurityHeadersPolicy (CloudFront's guide, "Use managed response headers policies"). */
 export const MANAGED_SECURITY_HEADERS_POLICY_ID = '67f7725c-6f97-4210-82d7-5512b31e9d03'
 
+/**
+ * The first line of the Migrator's ESM bundle: a `require` for the CommonJS code esbuild inlines. Under its own name, so
+ * a bundled module's `createRequire` import cannot collide with it.
+ */
+const MIGRATOR_REQUIRE_BANNER =
+    "import { createRequire as __sssbCreateRequire } from 'node:module'; const require = __sssbCreateRequire(import.meta.url);"
+
 /** After every tag aspect: CDK's own run at `AspectPriority.MUTATING` (200) or the default (500). */
 const MIRROR_PRIORITY = 900
 
@@ -577,6 +584,10 @@ export class SssbApp extends Construct {
                 : { DATABASE_TRANSPORT: 'pg', DB_SECRET_ARN: secret.secretArn, DATABASE_NAME: databaseName },
             bundling: {
                 format: aws_lambda_nodejs.OutputFormat.ESM,
+                // An ESM bundle has no `require`, and esbuild's stand-in for the CommonJS packages it inlines (`pg`,
+                // whose `require('events')` runs when the handler module loads, on either transport) throws "Dynamic
+                // require of ... is not supported". So the bundle defines one, Node's own, for its own path.
+                banner: MIGRATOR_REQUIRE_BANNER,
                 // pg's optional native/cloudflare shims must stay external or esbuild chokes
                 externalModules: ['@aws-sdk/*', 'pg-native', 'cloudflare:sockets'],
                 esbuildArgs: { '--alias:@sssb/app-config': migratorSource.seamDir },

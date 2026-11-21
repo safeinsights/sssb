@@ -7250,3 +7250,115 @@ build notes, ADR bodies, release notes, changelogs, resolved tasks, the adoption
 - **No automated gate.** A check that fails on a named adopter must contain the name, which is the mention it forbids,
   and the bare word "pages" is also Next's term, paging and web pages, so a precise pattern does not exist. The house
   rule and review carry it.
+
+## A fixed org source in first use: restricted people, the refused account, the home org's name (2026-11-20, `fix/auth-fixed-source-followups`)
+
+An adopter running a single tenancy with a fixed org source, default role `none`, found three gaps. ADR-0003's second
+addendum of this date records the design; these are the calls, each with the rejected alternative.
+
+- **`none` stays restricted, and the guide says how an app grants its own people.** Under a fixed org source everyone
+  is `none` (or `restricted`), so an app rule that denies on `restricted` before anything else locks out everyone,
+  the app's own admins included. The fix is the order of the app's own checks: grant from the app's own data first,
+  then deny on `restricted`. The guide, the adopter reference and the release note say so, and
+  `packages/kit/src/core/abilities-fixed-grants.test.ts` pins the grant-first order and that `none` is still restricted.
+  Rejected: **`none` no longer implying `restricted`**. SSSB's own rules would grant nothing more (each also needs
+  `sameOrg` or the person themself), but every person on a shared identity-provider instance would turn unrestricted
+  in the next release. Any app code that gates on `!restricted` alone (a rule against the guide, a route's `if (user.restricted)`,
+  a screen hiding a feature) would open to them, including code written against 0.6.0. Fail-closed is kept: the
+  lockout is visible at once and the app fixes it in its own rule; the opening would be silent. Rejected: **a seam
+  hook that lifts a person's role from the app's data**. It is a second way to raise people that the auth port would
+  have to read on every request, for what the app's own rule already expresses.
+- **A refused person is told why on the sign-in page, and signs out only by choosing to.** The auth port gains an
+  optional `refusal()`, answered by the configured port from the same identity read as its guard, and read on the
+  sign-in page only. The framework's `AccountRefused` says the account belongs to another site, warns before the click
+  that signing out reaches other sites sharing the sign-in, and signs out on the click: in simulated mode through the
+  app's sign-out route, in real mode through Clerk's client (below). Rejected: a
+  separate refusal page reached from the protected layout, as the future task sketched, which reads the refusal on
+  every protected request when every refused person already lands on the sign-in page; a distinct return value from
+  `getCurrentUser`, which every caller would have to tell apart from null; and signing out automatically.
+- **`refusal` is optional on the port.** Only a port that refuses people has one, and an app's stand-in `AuthPort`
+  keeps compiling. The sign-in page calls `auth.refusal?.()`.
+- **The home org is named by its org row, read through a lookup the port's builder hands it**
+  (`orgNameForSlugs`, `packages/kit/src/db/org-lookup.ts`). The configured port is built where the database is
+  (`real/index.ts`, `fake/simulated-auth.ts`), so `configured-auth.ts` still imports no database. It is read per
+  `listMyOrgs` call, so a rename shows at once; the slug stands in when the row is missing. Rejected: a
+  `homeOrgName` setting, a second copy of the name that drifts from the row; reading the database inside
+  `configured-auth.ts`; and caching the name for the process.
+- **The app's own grant is keyed on `userId` and, for what only the person at the keyboard may do, on a session**,
+  after the round-one Fable reviewer found that every person credential reaches an app's rules. Under a fixed org source
+  `getMember` gives an admin's API token or inbound email the same `userId`, so a grant made before the restricted
+  denial would reach them too. The guide, the adopter reference and the test say so. Rejected: having the framework
+  restrict app rules to sessions, which would break an app's token and email paths that are meant to act.
+- **Real mode signs out through Clerk's client** (`RealAccountRefused`, `packages/kit/src/adapters/real/account-refused-form.tsx`),
+  after both round-one reviewers found that the server-side revocation alone leaves the browser's short-lived session
+  token, so the reload would land on the same refused screen. It ends this one session (`sessionId`) and returns to the
+  page through Clerk's own `redirectUrl`, and does nothing (and says so) until Clerk has loaded and knows the session,
+  since before then Clerk only queues the call and with no session id it would end every session on the device, as
+  round two found. Its module is a form the conformance check `real-auth-provider` looks for. Rejected: making the
+  server's sign-out tolerate a second, already-revoked call, which hides the symptom. The user menu's sign-out has the
+  same gap and is recorded as `.claude/future-tasks/header-sign-out-stale-session-token.md`.
+- **The sign-out route takes JSON only**, in both reference apps (`refuseNonJson`), and its callers send it. The route
+  is older than this change, but a page on a sibling subdomain, the topology of a shared instance, could post a plain
+  form to it with the session cookie and sign a person out of both products with no click. A JSON post from another
+  origin needs a preflight, which fails. Rejected: an `Origin` check, which needs the app's public origin, which the
+  server does not reliably know behind `SssbApp`.
+- **A failed home-org name lookup falls back to the slug.** The lookup now runs on every protected page, and a display
+  name must not turn a database hiccup into a failed page.
+
+## The Migrator's ESM bundle defines `require` (2026-11-20, `fix/cdk-migrator-bundle`)
+
+`SssbApp`'s Migrator crashed on load in Lambda with `Dynamic require of "events" is not supported`: esbuild inlines
+`pg` (CommonJS) into the handler's ESM bundle, and its `require('events')` runs as the handler module loads, on either
+transport, because the handler imports the `pg` transport statically.
+
+- **A `createRequire` banner on the Migrator's bundle**, under its own import name (`__sssbCreateRequire`) so it cannot
+  collide with a bundled module's. Rejected: `format: CJS`, which changes the deployed artifact's format for no gain
+  today and would fail on any ES-module-only code the kit adds (top-level `await`, `import.meta`). Rejected: keeping
+  `pg` out of the Data API path's bundle, which leaves the `pg` transport, `SssbApp`'s default, crashing; and esbuild
+  without code splitting inlines a dynamic `import()` anyway, so a lazy import alone would only defer the crash to the
+  first `pg` migrate.
+- **The test loads every Node.js Lambda the synth staged in a child `node` process**, as Lambda's runtime loads it (an
+  `.mjs` by import, a CommonJS `.js` by require), with the kit's installed AWS SDK v3 standing in for the runtime's.
+  Rejected: `import()` inside Vitest, whose module runner supplies a `require`: the crashing bundle loaded cleanly
+  under it.
+- **Only the Migrator is a `NodejsFunction`.** The body-hash Lambda@Edge and the scheduled tick are plain ES modules
+  shipped as written (`Code.fromAsset`), and the server is the deploy pipeline's zip; the test loads the first two as
+  well. CDK's own provider functions are not loaded: they need SDK clients the kit may not install, which the test's
+  stand-in for the runtime's SDK lacks.
+- **A live first migrate is the only full proof**, a step in the `deploy-pipeline` cutover row.
+
+## The Data API refuses a `"char"` result, and the emulator does too (2026-11-20, `fix/data-api-char-columns`)
+
+On the Data API the Migrator failed on its first statement with `UnsupportedResultException: The result contains the
+unsupported data type "CHAR"`. Kysely's Migrator first asks its introspector whether its own tables exist, and Kysely's
+Postgres introspector selects `pg_class.relkind`, a one-byte `"char"`. The emulator returned it, so the contract run
+passed.
+
+- **The dialect supplies its own introspector** (`RdsDataIntrospector`, `packages/kit/src/adapters/real/rds-data-dialect.ts`):
+  Kysely 0.29's `getTables` query with `relkind::text`, and its `getSchemas` unchanged. The contract suite holds it to
+  Kysely's introspector on the same database. Rejected: a Kysely plugin rewriting `relkind` in Kysely's own query,
+  which ties the fix to that query's node shape. Rejected: a migration provider or a Migrator that skips
+  introspection, which Kysely's Migrator does not offer (it always checks for its tables). Rejected: casting in the
+  driver, which cannot know a column's type before the Data API has refused it.
+- **The emulator refuses a result whose columns include `"char"`, `char(n)` or an array of either**, whole, with or
+  without rows, with the exception and message the Data API gave for `"char"` (`REFUSED_RESULT_TYPES`). AWS documents
+  no list ("The Data API doesn't support all data types", its troubleshooting page), so the map is evidence, read
+  strictly: `"char"` was refused live, for a result of no rows; `char(n)` is the same JDBC type (`CHAR`) in PgJDBC, on
+  which the Data API is built, and the arrays carry those elements, so both are refused by inference (wrong if the
+  error's "CHAR" is the type's own name upper-cased). The runbook's step 3 records what AWS does with each, and the map
+  follows it. Rejected: refusing only `"char"`, which would let a `char(n)` column pass the contract run and fail live
+  on the worse reading of the same evidence. Rejected: guessing further types (`name`, `void`), which the contract run
+  reads through the Data API and nothing has seen refused. The emulator refuses after the statement has run, so a
+  refused `RETURNING` keeps its write; whether AWS does is also step 3's to record.
+- **Every result type the contract run reads through the Data API was listed**: `text`, `uuid`, `_text`,
+  `timestamptz`, `name`, `bool`, `jsonb`, `int4`, `varchar`, `void`, `date`, `_date`, `int8`, `_int4`, `numeric`,
+  `float8`, `bytea`, `bit`, `_uuid`, an enum and its array, and `bpchar` and `_bpchar` in the parity test only. SSSB's
+  own catalog reads already cast (`rls-coverage.ts` reads `relkind::text`); the conformance suite's run on pglite only.
+- **A known limit, Kysely's and now visible**: the Migrator's introspection returns one row per column of every table
+  the role can see, three or four times a run, and on the Data API a response over 1 MiB is refused. Far beyond SSSB's
+  apps (a few thousand columns, estimated), so recorded, not worked around.
+- **The gate covers what the contract run sends**: the migrations, the isolation proofs and the owner pass, through the
+  Data API. The framework's runtime queries return only its tables' columns, none of them `char`, and an app's own
+  queries are the app's, which the changeset tells adopters.
+- **The live proof is the `data-api` cutover row's smoke run**: the Migrator on an empty database, and the runbook's
+  reads of the refused types (`docs/runbooks/data-api.md`, step 3).

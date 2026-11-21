@@ -470,7 +470,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 143 subpaths your app may
+lists the 145 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 82 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
@@ -846,7 +846,14 @@ mode seeds nothing: create the tenant and org rows the slugs below name (cutover
   whatever `orgSource` says. A user whose metadata names a different tenant under the key, or holds there something
   that is not a slug, is refused, in session and as a token or email sender, so this mode switched on for a
   multi-tenant instance by mistake does not merge its tenants (the guard reads the key, so keep `tenantMetadataKey` if
-  you used one). A refused user stays signed in to the provider and is simply no user here.
+  you used one). A refused user stays signed in to the provider and is no user here. Your sign-in page asks the auth
+  port why (`auth.refusal?.()`, as the starter's `apps/starter/src/app/[locale]/signin/page.tsx` does) and shows
+  `AccountRefused` (`@sssb/kit/components/auth/account-refused`): the account belongs to another site, and one
+  explicit sign-out button, which says first that it also signs the person out of other sites sharing the sign-in.
+  Nothing signs them out on its own. In real mode the page loads `RealAccountRefused`
+  (`@sssb/kit/adapters/real/account-refused-form`, with `import()`), which signs out through Clerk's client: the
+  server-side sign-out alone leaves the browser's short-lived session token, so the page would come back refused. Your
+  sign-out route takes JSON only (`refuseNonJson`), so a page on a sibling subdomain cannot sign anyone out.
 
 **Where orgs and roles come from: `orgSource`.**
 
@@ -867,7 +874,11 @@ mode seeds nothing: create the tenant and org rows the slugs below name (cutover
       endpoints and its members list, which is empty here) and writes nothing org-scoped through SSSB's rules. It has standing, so a home org that is your staff org (`staffOrgSlug`) with `'restricted'`
       is refused at boot: everyone would wield manage-all.
 
-    What a signed-in person may do beyond that is your rules' to grant, for the people your app knows. In this mode:
+    What a signed-in person may do beyond that is your rules' to grant, for the people your app knows. Both roles are
+    restricted (`restricted` is `true` for everyone), so grant your own people (your admins, say) from your own data,
+    by `userId` and, for what only the person at the keyboard may do, through a session only, before anything denies
+    on `restricted`, or that denial locks them out too; the guide's Authorization section says how. Your rules see `none` in no org, so a grant scoped to the home org needs `'restricted'`. The header names the
+    home org by its org row's name (the slug if the row is missing). In this mode:
     - the members list is empty, since listing the provider's users would enumerate everyone on the instance;
     - invitations are refused, since anyone the provider signs in is already placed in the org;
     - the home org is the only org;

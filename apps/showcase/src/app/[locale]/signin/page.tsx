@@ -7,6 +7,7 @@ import { findTenant } from '@app/seed'
 import { SignInScreen } from '@sssb/kit/components/auth/sign-in-screen'
 import { sameOriginPath } from '@sssb/kit/core/same-origin-path'
 import { PickerGlue } from './picker-glue'
+import { RefusedGlue } from './refused-glue'
 
 export default async function SignInPage({
     params,
@@ -23,6 +24,15 @@ export default async function SignInPage({
 
     const user = await auth.getCurrentUser()
     if (user) redirect(target as Route)
+    // Signed in to the identity provider but refused here (an account of another tenant): say why, and let the person
+    // choose to sign out, rather than show a sign-in form they are already past.
+    if (await auth.refusal?.()) {
+        // Real mode signs out through the provider's client, which also clears the session token the page would
+        // otherwise still see; simulated mode through the app's sign-out route.
+        if (isSimulated) return <SignInScreen body={<RefusedGlue />} />
+        const { RealAccountRefused } = await import('@sssb/kit/adapters/real/account-refused-form')
+        return <SignInScreen body={<RealAccountRefused />} />
+    }
 
     let body
     if (isSimulated) {

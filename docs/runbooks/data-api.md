@@ -172,6 +172,30 @@ rds execute-statement --database "$DB" --include-result-metadata \
 - Check that `numberOfRecordsUpdated` for an `UPDATE … RETURNING` is the number of rows, as the emulator answers:
   `UPDATE tenants SET name = name WHERE slug = (SELECT slug FROM tenants LIMIT 1) RETURNING slug` should say 1.
 
+Then the result types the Data API refuses. AWS names none ("The Data API doesn't support all data types",
+its troubleshooting page, whose fix is a cast to `TEXT`), so the emulator refuses what has been seen refused, and
+what that evidence implies, in `REFUSED_RESULT_TYPES`:
+
+```bash
+rds execute-statement --database "$DB" --sql "SELECT relkind FROM pg_class WHERE false"
+rds execute-statement --database "$DB" --sql "SELECT 'abc'::char(3) AS code"
+rds execute-statement --database "$DB" --sql "SELECT ARRAY['ab']::char(3)[] AS codes, ARRAY['r']::\"char\"[] AS kinds"
+rds execute-statement --database "$DB" --sql "SELECT relkind::text AS kind, 'x'::name AS n, pg_sleep(0) AS v FROM pg_class LIMIT 1"
+```
+
+- The first must fail with `UnsupportedResultException` and "The result contains the unsupported data type "CHAR"",
+  with no rows to return: the refusal reads the columns. This is what stopped the migrator, whose first statement is
+  Kysely's introspection (`RdsDataIntrospector` in `packages/kit/src/adapters/real/rds-data-dialect.ts` casts it).
+- Record what the second and third do. The emulator refuses `char(n)` and the arrays on inference (the same JDBC
+  type, `CHAR`); for each that AWS answers, take it out of `REFUSED_RESULT_TYPES` and the parity test's casts.
+- Record whether a refused statement's write stays: in a transaction you then roll back (`--transaction-id`, as in
+  step 1), run
+  `INSERT INTO tenants (slug, name) VALUES ('char-probe', 'x') RETURNING 'r'::"char"` (refused), then
+  `SELECT count(*) FROM tenants WHERE slug = 'char-probe'` in the same transaction. The emulator runs the statement
+  before refusing its result, so it answers 1.
+- The last must succeed: the cast, a `name` (Kysely's introspection and the role reads return them) and a `void`
+  (the migrator's transaction lock returns one).
+
 Then a response over the 1 MiB cap, in rows that each stay under the 64 KB per row that AWS's
 troubleshooting page also lists, so that a failure is the cap's:
 

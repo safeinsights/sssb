@@ -80,6 +80,15 @@ export interface CreatedInvite extends Membership {
 }
 
 /**
+ * Why a person the identity provider has signed in is not a user here. `other-tenant`: their account names another
+ * tenant under the deployment's metadata key, or holds there something that is not a slug (a single tenancy's guard),
+ * so it is taken to belong to another site.
+ */
+export interface AuthRefusal {
+    reason: 'other-tenant'
+}
+
+/**
  * Server-side auth port (ADR-0003). Sized to what the app needs — never to Clerk's API.
  * The custom Mantine auth UI is the ONLY auth UI; both adapters sit behind it.
  */
@@ -112,4 +121,11 @@ export interface AuthPort {
     listMyOrgs(): Promise<OrgRef[]>
     /** @throws ForbiddenError when the user has no membership in that org */
     setActiveOrg(orgSlug: string): Promise<void>
+    /**
+     * Why the person signed in to the identity provider on this request is refused here, or null when nobody is
+     * signed in or nobody is refused: what tells a refused person apart from a signed-out one, which `getCurrentUser`
+     * answers alike (null). Optional: only a port that refuses people has it (a single tenancy's guard). The sign-in
+     * page reads it to say why, and to offer an explicit sign-out (`@sssb/kit/components/auth/account-refused`).
+     */
+    refusal?(): Promise<AuthRefusal | null>
 }

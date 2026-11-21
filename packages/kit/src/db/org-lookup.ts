@@ -102,3 +102,21 @@ export async function listOrgsInTenant(
         .orderBy('name', 'asc')
         .execute()
 }
+
+/**
+ * An org's display name, by its tenant's slug and its own: the same RLS-free raw read of the `organizations` infra
+ * table as the lookups above. The auth port's fixed org source names its home org with it (`listMyOrgs`), since the
+ * port knows the org only by slug. Null when the tenant has no such org.
+ */
+export async function orgNameForSlugs(db: DbPort, tenantSlug: string, orgSlug: string): Promise<string | null> {
+    await db.ready()
+    const row = await db
+        .getDb()
+        .selectFrom('organizations')
+        .innerJoin('tenants', 'tenants.id', 'organizations.tenant_id')
+        .select('organizations.name as name')
+        .where('tenants.slug', '=', tenantSlug)
+        .where('organizations.slug', '=', orgSlug)
+        .executeTakeFirst()
+    return row?.name ?? null
+}

@@ -159,7 +159,8 @@ export const realAuth: AuthPort = {
     },
 
     async signOut(): Promise<void> {
-        // Server-side revocation; the client additionally calls Clerk's signOut for local state.
+        // Server-side revocation only: the browser keeps its short-lived session token until it lapses, so a page that must
+        // show the person signed out at once also signs out through Clerk's client (./account-refused-form.tsx does).
         const { sessionId } = await auth()
         if (!sessionId) return
         const client = await clerkClient()

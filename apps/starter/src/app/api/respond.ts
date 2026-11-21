@@ -38,11 +38,12 @@ export async function readJsonObject(request: Request): Promise<Record<string, u
 }
 
 /**
- * The json-only guard of a simulated-mode-only POST: 415 `{ error: 'json-only' }` unless the request says
- * `content-type: application/json`, else null. These routes sign a browser in as anyone or change the simulated world,
- * and a page on another origin can send a simple POST (text/plain or a form, no preflight) to a developer's localhost
- * or a hosted simulated demo. Asking for JSON makes such a browser request preflight, and the preflight fails because
- * nothing here sends `Access-Control-Allow-Origin`. Call it right after the handler's opening simulated-mode 404.
+ * The json-only guard of a POST another page must not be able to send: 415 `{ error: 'json-only' }` unless the request
+ * says `content-type: application/json`, else null. The simulated-mode routes sign a browser in as anyone or change the
+ * simulated world, and the sign-out route ends a session. A page on another origin can send a simple POST (text/plain
+ * or a form, no preflight), to a developer's localhost, a hosted simulated demo, or from a sibling subdomain with the
+ * session cookie. Asking for JSON makes such a browser request preflight, and the preflight fails because nothing here
+ * sends `Access-Control-Allow-Origin`. In a simulated-mode route, call it right after the opening simulated-mode 404.
  */
 export function refuseNonJson(request: Request): Response | null {
     if (request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) return null

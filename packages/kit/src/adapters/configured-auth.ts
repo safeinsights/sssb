@@ -1,6 +1,6 @@
 import { isRestricted } from '../core/roles'
 import type { Locale } from '../core/locale'
-import type { AuthPort, AuthUser, CreatedInvite, MemberStanding, Membership, OrgRef } from '../ports/auth'
+import type { AuthPort, AuthRefusal, AuthUser, CreatedInvite, MemberStanding, Membership, OrgRef } from '../ports/auth'
 import { AuthRequiredError, ForbiddenError } from '../ports/errors'
 import { type AuthSettings, fixedOrgProblem } from './auth-tenancy'
 
@@ -42,7 +42,8 @@ export interface ProviderIdentitySource {
  * slug, is no user at all, and has no standing anywhere as a credential (`getMember`): that is a multi-tenant instance
  * switched to this mode by mistake, and admitting them would put another tenant's people in this one. Refused without
  * signing out: this runs while server components render, where a session cookie cannot be changed, and on a shared
- * instance it would end their session in the other product. Over the provider's organizations, every method is
+ * instance it would end their session in the other product. `refusal` says why to the sign-in page, which offers the
+ * person an explicit sign-out (`@sssb/kit/components/auth/account-refused`). Over the provider's organizations, every method is
  * otherwise the adapter's, with its organizations, roles, members and invitations; the ones that act for the signed-in
  * person (`updateProfile`, `createInvite`, `listMyOrgs`, `setActiveOrg`) run the tenant guard first, and `getMember`
  * runs it after the provider's membership.
@@ -60,7 +61,8 @@ export interface ProviderIdentitySource {
  *   needs a non-restricted member), so such a job is one the app's own rules let the person start.
  * - `createInvite`: refused. Anyone the provider signs in is already placed in the home org; an app adds people through
  *   its provider's own sign-up.
- * - `listMyOrgs`: the home org alone, named by its slug (this module reads no database). `setActiveOrg`: the home org
+ * - `listMyOrgs`: the home org alone, named by its org row's name, which the caller supplies a lookup for (`orgName`;
+ *   the slug when the row is missing). `setActiveOrg`: the home org
  *   is accepted and changes nothing; any other is refused.
  *
  * `signInPath` and `signOut` are always the adapter's, and `updateProfile` writes through it after the guard.
@@ -70,6 +72,11 @@ export function configuredAuth(
     settings: AuthSettings,
     source: ProviderIdentitySource,
     staffOrgSlug: string,
+    /**
+     * The display name of an org, by its tenant's slug and its own, or null when there is no such row: how a fixed org
+     * source names its home org, since this module knows it only by slug. Left out (a test), the slug is the name.
+     */
+    orgName?: (tenantSlug: string, orgSlug: string) => Promise<string | null>,
 ): AuthPort {
     const { tenancy, orgSource } = settings
     if (tenancy.kind === 'multi' && orgSource.kind === 'provider') return base
@@ -169,8 +176,21 @@ export function configuredAuth(
         async listMyOrgs(): Promise<OrgRef[]> {
             const user = await port.getCurrentUser()
             if (!user) return []
-            if (fixed) return [{ slug: fixed.homeOrgSlug, name: fixed.homeOrgSlug, role: fixed.role }]
+            if (fixed) {
+                // The org row's name, read per call (a rename shows at once); the slug when the row is missing,
+                // which the cutover row `auth-tenancy` says to create.
+                // A failed read falls back too: a display name never takes the page down.
+                const name =
+                    (await orgName?.(user.tenantSlug, fixed.homeOrgSlug).catch(() => null)) ?? fixed.homeOrgSlug
+                return [{ slug: fixed.homeOrgSlug, name, role: fixed.role }]
+            }
             return base.listMyOrgs()
+        },
+
+        async refusal(): Promise<AuthRefusal | null> {
+            // The guard's own reason, from the same identity read. Its callers are the sign-in pages, not every request.
+            const identity = await source.current()
+            return identity && !admitted(identity.tenantClaim) ? { reason: 'other-tenant' } : null
         },
 
         async setActiveOrg(orgSlug: string): Promise<void> {
