@@ -262,7 +262,7 @@ export const realAuth: AuthPort = {
      *
      * The page goes to Clerk as a PATH, which Clerk's `redirectUrl` accepts ("The full URL or path"), never as the
      * absolute URL it arrives as: that is built from the request's URL, whose host behind `SssbApp` is the server's own
-     * (`localhost`), not the app's (.claude/future-tasks/request-url-is-not-the-public-url.md in SSSB's repository).
+     * (`localhost`), not the app's (safeinsights/sssb#131).
      */
     async createInvite(invite: InviteInput): Promise<CreatedInvite> {
         const { userId } = await auth()

@@ -810,8 +810,8 @@ first value, which is what real mode required before the switches existed.
   presigned POST, which Cloudflare documents R2 as not supporting (MinIO accepts one). So `STORAGE_UPLOAD_TARGET` is
   required, never guessed from the endpoint: `post` if the store accepts a presigned POST, `none` if it does not, and
   with `none` `createUploadTarget` fails with an error that names the setting, while every other method works. An app
-  that must take browser uploads into R2 waits for a PUT form of the upload target (a future task,
-  `.claude/future-tasks/storage-upload-target-put-form.md` in SSSB's repository); until then it sends the file through
+  that must take browser uploads into R2 waits for a PUT form of the upload target (an open SSSB issue,
+  [safeinsights/sssb#134](https://github.com/safeinsights/sssb/issues/134)); until then it sends the file through
   its own server and calls `put`. Switching a deployed stack from `s3` to `s3-compatible` takes the bucket out of the
   stack, as `none` does (above); copy the objects to the new store first.
 - **`jobs: 'in-process'` needs no CodeBuild project.** Each job's handler runs in the server, from the request or the

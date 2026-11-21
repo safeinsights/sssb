@@ -383,7 +383,7 @@ extraction cheap when it came: the panel now lives in the framework package
 world for free rather than re-deriving it. A shape worth knowing for future surfaces: per-person world state today is
 mail + continuity (last path, active tenant, mail-seen), while Events/Errors/Snapshots are global — a
 genuinely per-person surface would sketch a "person's desktop" the People could one day drill into (see
-`.claude/future-tasks/persons-desktop.md`). The first candidate to land, SMS, took the global shape instead — the fake
+[safeinsights/sssb#162](https://github.com/safeinsights/sssb/issues/162)). The first candidate to land, SMS, took the global shape instead — the fake
 channel is a flat catch-store with no per-recipient inbox to browse the way mail has — so that
 reorganization still awaits a channel that is actually per-person.
 
@@ -566,9 +566,8 @@ closed, and the two-way door (this written plan) cost a page.
   amend it by appending a dated addendum, never by editing what it said.
 - **`docs/decision-log.md`** — unplanned decisions a plan didn't anticipate, with rationale.
 - **`docs/build-notes.md`** — lessons and gotchas learned while building ("wish someone had told me").
-- **`.claude/future-tasks/`** — designed-but-unbuilt work, one file per item with an `index.md` carrying
-  priorities. These are agent-actionable, so they live beside the other agent state rather than in the
-  human doc set. Mark one RESOLVED with an implementation summary rather than deleting it.
+- **GitHub issues** — designed-but-unbuilt work, one issue per item, carrying its design, a priority label and
+  a rank on the backlog Project. Close one with the PR that does the work; the issue and its PR are the record.
 - **This document** — the operating philosophy behind all of the above.
 - **`CLAUDE.md`** — the terse, enforceable rules that fall out of this philosophy; read it first when
   writing code.

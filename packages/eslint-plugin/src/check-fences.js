@@ -20,7 +20,7 @@
 //
 // What it cannot see: config code written to deceive (it behaves differently when it detects which tool loaded it,
 // a parser borrows another's name, the preset's blocks are rebound to a look-alike plugin, a module the rules read is
-// rewritten; see .claude/future-tasks/check-fences-real-file-probes.md); the app's lint command's own flags, except
+// rewritten; see safeinsights/sssb#154); the app's lint command's own flags, except
 // that any fence finding in the app's files is reported here whatever the command does with it.
 // Reported instead: a symlinked directory holding a file the preset lints (ESLint does not enter it). Typed linting
 // (parserOptions.project or projectService) cannot parse the probe files, which are not in the app's TypeScript
