@@ -193,10 +193,17 @@ describe('the budget', () => {
         const first = outcome(h.run('select 2'))
         await vi.advanceTimersByTimeAsync(10_000)
         const second = outcome(h.run('select 3'))
-        await vi.advanceTimersByTimeAsync(60_000)
+        await vi.advanceTimersByTimeAsync(9000)
         expect((await first).error).toBeInstanceOf(DatabaseUnavailableError)
+        // The first has given up; the wait goes on for the second, and a third still joins it.
+        const third = outcome(h.run('select 4'))
+        await vi.advanceTimersByTimeAsync(60_000)
         expect((await second).error).toBeUndefined()
-        expect(h.sent('select 3')).toBe(1)
+        expect((await third).error).toBeUndefined()
+        expect([h.sent('select 3'), h.sent('select 4')]).toEqual([1, 1])
+        const probes = h.at('probe')
+        expect(new Set(probes).size).toBe(probes.length)
+        expect(probes.at(-1)).toBe(21_000)
     })
 
     it('a wait that failed is over: the polling stops, and the next call starts afresh', async () => {
