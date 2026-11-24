@@ -7424,3 +7424,24 @@ and a resume or a throttle the dialect did not wait out reached the app as an AW
   anyway.
 - **`normalizeDatabaseError` is unchanged**, and a SQL error's text is never read for "is resuming": Postgres quotes row
   text in it.
+## Avatar initials are the first and last letter-words (2026-11-24, `fix/avatar-initials`)
+
+`safeinsights/sssb#182`: Mantine's `Avatar` `name` prop shows the first character of each of the first two words (the
+first two characters of a one-word name), so `Ana (Bea) Cruz` showed `A(`. `UserMenu` and `PreviewRow` now pass the `Avatar` children from
+`avatarInitials(name, fallback)` (`packages/kit/src/components/auth/initials.ts`).
+
+- **The rule**: the first letter of the first and the last word that starts with a letter (`\p{L}`), uppercased; one
+  such word gives one letter. Rejected: the first two letter-words (`AB`), which shows a middle name where a surname
+  belongs and differs from the rule an adopter already uses. Rejected: Mantine's own rule with punctuation stripped, which
+  would keep the first two words, not the last.
+- **No letter-word falls back to the first letter, or digit, of the `fallback`**: the email in the user menu, the title
+  in `PreviewRow` where a caller names none (a team called `3M` shows `3`, not an icon). With neither, the children are
+  empty and `Avatar` draws its placeholder icon. Rejected: the email's first character whatever it is, which would show
+  `.` or `_` for an address that opens with one.
+- **Not exported.** `PreviewRow` is internal, `UserMenu` and `OrgSwitcher` are the screens that show initials, and an
+  app's own avatar is one `Avatar` with its own children. An `exports` entry is a promise, and nothing asks for one; it
+  takes an entry and a changeset of Kind `seam` the day an app's screen needs it. Rejected: exporting now.
+- **A new `fallback` prop on `PreviewRow`** (optional, internal). Rejected: reading the email out of `subtitle`, a
+  `ReactNode`.
+- `ß` uppercases to `SS`, the language's own `toUpperCase`; a letter outside the BMP is kept whole (`Array.from`),
+  which the unit test pins.
