@@ -12,7 +12,7 @@ import { authRequiredEnv, authSettings, fixedOrgProblem } from '../auth-tenancy'
 import { configuredAuth } from '../configured-auth'
 import { orgNameForSlugs } from '../../db/org-lookup'
 import { clerkIdentitySource, realAuth } from './auth'
-import { DATABASE_ENV, databaseTransport } from './database-transport'
+import { DATABASE_ENV, databaseResumeBudgetMs, databaseTransport } from './database-transport'
 import { noAnalytics } from './no-analytics'
 import { optionalPortsEnv, portChoice } from './optional-ports'
 import { assertEndpoint, parseForcePathStyle, parseUploadTarget } from './storage-settings'
@@ -74,6 +74,13 @@ export function assertRealEnv(): void {
             throw new CutoverPendingError(['storage-compatible-store'], (error as Error).message)
         }
     }
+    if (transport === 'data-api') {
+        try {
+            databaseResumeBudgetMs()
+        } catch (error) {
+            throw new CutoverPendingError(['data-api'], (error as Error).message)
+        }
+    }
     // The auth settings: an unknown choice, a malformed slug, key or role, a setting its choice does not use, or a fixed
     // org source that would hand everyone the staff org's manage-all.
     let problem: string | null
@@ -126,6 +133,7 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
                   secretArn: need('DATABASE_SECRET_ARN'),
                   database: need('DATABASE_NAME'),
                   region: need('AWS_REGION'),
+                  resumeBudgetMs: databaseResumeBudgetMs(),
               })
             : (await import('./db')).createRealDb(need('DATABASE_URL'))
     // Clerk, placed as the auth settings say (../auth-tenancy.ts), and Clerk itself on the defaults. Every port that

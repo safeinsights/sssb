@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { handler } from './migrate-handler'
 
-const h = vi.hoisted(() => ({ secret: {} as Record<string, unknown>, urls: [] as string[] }))
+const h = vi.hoisted(() => ({ secret: {} as Record<string, unknown>, urls: [] as string[], dataApi: [] as object[] }))
 vi.mock('@aws-sdk/client-secrets-manager', () => ({
     SecretsManagerClient: class {
         async send(): Promise<{ SecretString: string }> {
@@ -16,10 +16,17 @@ vi.mock('./db', () => ({
         return { migrateToLatest: async () => undefined }
     },
 }))
+vi.mock('./db-data-api', () => ({
+    createRealDataApiDb: (config: object) => {
+        h.dataApi.push(config)
+        return { migrateToLatest: async () => undefined }
+    },
+}))
 
 afterEach(() => {
     vi.unstubAllEnvs()
     h.urls.length = 0
+    h.dataApi.length = 0
 })
 
 describe('the migrator handler (pg transport)', () => {
@@ -31,5 +38,19 @@ describe('the migrator handler (pg transport)', () => {
         expect(await handler()).toEqual({ ok: true })
         expect(h.urls).toEqual(['postgres://own%40er:p%3Aw%2Fd@db.internal:5432/app%2Fstage%3Fx%23y%25z'])
         expect(new URL(h.urls[0] ?? '').pathname).toBe('/app%2Fstage%3Fx%23y%25z')
+    })
+})
+
+describe('the migrator handler (Data API transport)', () => {
+    test('waits longer for a paused cluster than the server does, whatever the server is set to', async () => {
+        vi.stubEnv('DATABASE_TRANSPORT', 'data-api')
+        vi.stubEnv('DATABASE_CLUSTER_ARN', 'cluster')
+        vi.stubEnv('DATABASE_SECRET_ARN', 'secret')
+        vi.stubEnv('DATABASE_NAME', 'app')
+        vi.stubEnv('DATABASE_RESUME_BUDGET_MS', '1000')
+        expect(await handler()).toEqual({ ok: true })
+        expect(h.dataApi).toEqual([
+            { resourceArn: 'cluster', secretArn: 'secret', database: 'app', resumeBudgetMs: 120_000 },
+        ])
     })
 })

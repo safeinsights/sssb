@@ -238,3 +238,13 @@ apps send.
   `timestamptz` string, error wording);
 - that PREPARE and `pg_prepared_statements` work through the Data API;
 - the retry on a paused Serverless v2's `DatabaseResumingException`.
+
+## Addendum (2026-11-24): the Data API's wait for a paused cluster
+
+This replaces two statements of the addendum above: the dialect stopped retrying a resume after about 15 seconds, and
+`DatabaseResumingException` was all it retried. Now a process makes one wait for a resume, 18 seconds per call by default
+and set with `DATABASE_RESUME_BUDGET_MS`, and `BeginTransaction`, which runs no statement, is also sent again after a
+throttle. A statement is still sent again only after `DatabaseResumingException`, and in a transaction only before its
+first statement has succeeded. What outlasts the wait, and the database errors that are not retried, reach the app as
+`DatabaseUnavailableError` (`@sssb/kit/ports/errors`). `docs/decision-log.md` (2026-11-24) has the reasons and AWS's
+wording. Still owed live by the `data-api` row: step 6 of `docs/runbooks/data-api.md`.
