@@ -159,19 +159,18 @@ export class ResumeWait {
             await sleep(PROBE_DELAYS_MS[Math.min(attempt, PROBE_DELAYS_MS.length - 1)])
             if (wake.waiters === 0) return
             let over = false
+            let inTurn = true
+            // Ends the wait also when this probe outlasted its turn and a later one is in flight.
+            const finish = (): void => {
+                over = true
+                this.#finish(wake)
+            }
             const probed = Promise.resolve()
                 .then(() => this.probe())
-                .then(
-                    () => {
-                        over = true
-                        // Also when this probe outlasted its turn and a later one is in flight.
-                        this.#finish(wake)
-                    },
-                    (error: unknown) => {
-                        over = !unavailableReason(error)
-                        if (!over) this.#saw(wake, error)
-                    },
-                )
+                .then(finish, (error: unknown) => {
+                    if (!unavailableReason(error)) finish()
+                    else if (inTurn) this.#saw(wake, error)
+                })
             let timer: ReturnType<typeof setTimeout> | undefined
             await Promise.race([
                 probed,
@@ -180,6 +179,7 @@ export class ResumeWait {
                 }),
             ])
             clearTimeout(timer)
+            inTurn = false
             if (over) return
         }
     }

@@ -244,6 +244,15 @@ describe('the budget', () => {
         expect(vi.getTimerCount()).toBe(0)
     })
 
+    it('a call made just after everyone left a wait is sent at once', async () => {
+        const h = harness(until(1500, resuming), 1500)
+        const first = outcome(h.run('select 2'))
+        await vi.advanceTimersByTimeAsync(1500)
+        expect((await first).error).toBeInstanceOf(DatabaseUnavailableError)
+        await h.run('select 3')
+        expect(h.now()).toBe(1500)
+    })
+
     it('the poll of a wait everyone left does not end the next one', async () => {
         let answer = (): void => {}
         let probes = 0
@@ -296,19 +305,43 @@ describe('a probe that does not answer', () => {
         expect(took).toEqual([5000, 2500, 0, 0])
     })
 
-    it('ends the wait when it answers late', async () => {
+    /** The probe settles 2.8 s after it is sent: past its turn. */
+    const late = (settle: (at: number) => Promise<unknown>) => {
         const t0 = Date.now()
         const send = (command: RdsDataCommand): Promise<unknown> => {
-            if (kindOf(command) === 'probe') return new Promise((resolve) => setTimeout(() => resolve({}), 2800))
-            return Date.now() - t0 < 2000 ? Promise.reject(resuming()) : Promise.resolve({ records: [] })
+            const at = Date.now() - t0
+            if (kindOf(command) === 'probe') {
+                return new Promise((resolve, reject) => {
+                    setTimeout(() => void settle(at).then(resolve, reject), 2800)
+                })
+            }
+            return at < 2000 ? Promise.reject(resuming()) : Promise.resolve({ records: [] })
         }
-        const db = database(send)
-        const done = sql
-            .raw('select 2')
-            .execute(db)
-            .then(() => Date.now() - t0)
+        const now = () => Date.now() - t0
+        return { db: database(send), now }
+    }
+
+    it.each([
+        ['it answers late', () => Promise.resolve({})],
+        ['it fails late for another reason', () => Promise.reject(named('InternalServerErrorException'))],
+    ])('ends the wait when %s', async (_label, settle) => {
+        const { db, now } = late(settle)
+        const done = sql.raw('select 2').execute(db).then(now)
         await vi.advanceTimersByTimeAsync(60_000)
         expect(await done).toBe(3800)
+    })
+
+    it('says nothing about the wait when it is refused late', async () => {
+        let probes = 0
+        const send = (command: RdsDataCommand): Promise<unknown> => {
+            if (kindOf(command) !== 'probe') return Promise.reject(resuming())
+            probes += 1
+            if (probes > 1) return Promise.reject(throttled())
+            return new Promise((_resolve, reject) => setTimeout(() => reject(resuming()), 16_500))
+        }
+        const done = outcome(sql.raw('select 2').execute(database(send)))
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect((await done).error).toMatchObject({ reason: 'throttled' })
     })
 })
 
