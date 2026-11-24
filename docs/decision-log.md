@@ -7365,8 +7365,8 @@ passed.
 
 ## Avatar initials are the first and last letter-words (2026-11-24, `fix/avatar-initials`)
 
-`safeinsights/sssb#182`: Mantine's `Avatar` `name` prop shows the first character of the first two words, so
-`Ana (Bea) Cruz` showed `A(`. `UserMenu` and `PreviewRow` now pass the `Avatar` children from
+`safeinsights/sssb#182`: Mantine's `Avatar` `name` prop shows the first character of each of the first two words (the
+first two characters of a one-word name), so `Ana (Bea) Cruz` showed `A(`. `UserMenu` and `PreviewRow` now pass the `Avatar` children from
 `avatarInitials(name, fallback)` (`packages/kit/src/components/auth/initials.ts`).
 
 - **The rule**: the first letter of the first and the last word that starts with a letter (`\p{L}`), uppercased; one
