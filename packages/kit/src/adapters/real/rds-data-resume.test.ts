@@ -418,13 +418,19 @@ describe('what is sent again, and what never is', () => {
     )
 
     it('a SQL error whose text mentions a resume is still a SQL error', async () => {
-        const message =
-            'ERROR: duplicate key value violates unique constraint "k" Detail: Key (a)=(db is resuming) exists.'
-        for (const name of ['DatabaseErrorException', 'BadRequestException']) {
-            const h = harness(() => named(name, message, resuming()))
-            const { error } = await outcome(h.run('insert into t default values'))
-            expect(error).toMatchObject({ name: 'RdsDataDatabaseError', code: '23505' })
-            expect(h.calls).toHaveLength(1)
+        const duplicate = 'duplicate key value violates unique constraint "k" Detail: Key (a)=(db is resuming) exists.'
+        for (const message of [
+            `ERROR: ${duplicate}`,
+            duplicate,
+            'something failed: "db is resuming"; SQLState: 22P02',
+            'ERROR: invalid input syntax for type uuid: "db is resuming"',
+        ]) {
+            for (const name of ['DatabaseErrorException', 'BadRequestException']) {
+                const h = harness(() => named(name, message, resuming()))
+                const { error } = await outcome(h.run('insert into t default values'))
+                expect(error).toMatchObject({ name: 'RdsDataDatabaseError', message })
+                expect(h.calls).toHaveLength(1)
+            }
         }
     })
 

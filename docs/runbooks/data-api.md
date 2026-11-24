@@ -296,7 +296,7 @@ and the first request after that wakes it.
 paused for more than a day
 ([auto-pause](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2-auto-pause.html)).
 Measured on 2026-11-21, before this wait was reworked: the cluster resumed in 12 to 14 seconds, and the cold request
-took 26.0 seconds of the server's 30. A request makes one wait, however many calls it makes: the dialect polls with
+took 26.0 seconds of the server's 30. A request makes one wait, however many calls it makes, unless it carries on after one has run out: the dialect polls with
 `SELECT 1` after 1, 2 and 4 seconds and then every second, and every call of the process waits on that one poll
 (`packages/kit/src/adapters/real/rds-data-resume.ts`).
 

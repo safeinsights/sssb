@@ -9,7 +9,7 @@
 **Action.** required
 
 **What changed.** On the `data-api` transport, a request that wakes a paused Aurora Serverless v2 cluster now makes one
-wait, shared by every call of the process and polled every second, instead of a growing backoff in each call. A call waits
+wait, shared by every call of the process and polled about every second, instead of a growing backoff in each call. A call waits
 18 seconds by default. A `BeginTransaction` that is throttled joins the wait; a statement is still sent again only after
 `DatabaseResumingException`, and never once another statement has succeeded in its transaction. When the wait runs out,
 or the Data API throttles a statement, times it out or has no writer, the error is now `DatabaseUnavailableError`

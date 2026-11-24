@@ -7384,7 +7384,7 @@ and a resume or a throttle the dialect did not wait out reached the app as an AW
   Rejected: retrying a throttled statement on the SDK guide's sentence, which a write would pay for if it is wrong.
 - **`BeginTransaction` is sent again after a throttle or a `BadRequestException` that says resuming as well.** It runs no
   statement, so this needs no promise from AWS: at worst an empty transaction stays open until its three idle minutes
-  end. `withTenant` and the describe step both open with one, so most first calls of a request are covered. Rejected:
+  end. `withTenant` and the describe step both open with one, so a request that starts with either is covered. Rejected:
   only while this process knows of a resume, which leaves a second cold process, whose first answer is the throttle, with
   an immediate failure. The cost is that a throttle for real load also waits, one probe a second for the process. It
   holds up only the calls that were throttled: a call not yet sent waits only once the database has said it is resuming.
@@ -7395,7 +7395,7 @@ and a resume or a throttle the dialect did not wait out reached the app as an AW
   CommitTransaction does not list the exception. A rollback answered with a resume
   counts as done, so it does not replace the error that caused it.
 - **The wait polls with `SELECT 1`, not with the waiting call.** Safe to repeat after any failure, so a throttle during
-  the poll is part of the resume, and a write is sent once before it and once after. It ends when nobody waits, so a
+  the poll is part of the resume, and a write is sent before it and after it, not during. It ends when nobody waits, so a
   wait that failed holds no later call. A probe that has not answered in 2 s is left behind and the next one sent (the SDK's
   client has no request timeout, and one dead connection would otherwise hold every call that joined, database up or not);
   if it answers late, that still ends the wait. Rejected: a request timeout on the SDK's client, which would cut off

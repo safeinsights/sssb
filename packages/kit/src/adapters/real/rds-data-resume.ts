@@ -1,17 +1,18 @@
 import { DatabaseUnavailableError, type DatabaseUnavailableReason } from '../../ports/errors'
+import { normalizeDatabaseError, RdsDataDatabaseError } from './rds-data-codec'
 
 /**
- * What the Data API's "the database can't serve this now" errors are, which of them may be retried, and the one wait a
- * process makes while a paused cluster resumes. Pure: no AWS SDK, so ./rds-data-dialect.ts decides by command, and the
- * tests by error name.
+ * What the Data API's "the database can't serve this now" errors are, and the one wait a process makes while a paused
+ * cluster resumes. No AWS SDK at run time: errors are read by name. Which command may be sent again is
+ * ./rds-data-dialect.ts's to say (`mayResend`).
  */
 
 /**
  * How long one call waits for a resuming cluster before it fails: 18 seconds, inside SssbApp's 30 s server timeout.
- * AWS puts a typical resume at about 15 s, and measured ones took 12 to 14 s. The measured cold request took 26 s of
- * which the wait was 15, so up to 11 s went elsewhere (the failed calls themselves, a fresh database's first queries):
- * 18 leaves 12. A resume after more than 24 hours paused can take 30 s or longer (AWS's auto-pause page), which no
- * budget inside 30 s covers. docs/runbooks/data-api.md says how to change it.
+ * AWS puts a typical resume at about 15 s, and measured ones took 12 to 14 s. The measured cold request took 26 s,
+ * when one call's wait was 15 at most, so as much as 11 s went elsewhere (the failed calls themselves, a second wait, a
+ * fresh database's first queries): 18 leaves 12. A resume after more than 24 hours paused can take 30 s or longer
+ * (AWS's auto-pause page), which no budget inside 30 s covers. docs/runbooks/data-api.md says how to change it.
  */
 export const RESUME_BUDGET_MS = 18_000
 
@@ -47,15 +48,20 @@ export function unavailableReason(error: unknown): DatabaseUnavailableReason | u
         seen.add(link)
         const reason = Object.hasOwn(REASONS, link.name) ? REASONS[link.name] : undefined
         if (reason) return reason
-        // "This exception is deprecated" (the API reference), and an older form of the resuming answer. Postgres's own
-        // errors, which quote row text, open with ERROR: or state a SQLSTATE.
+        // "This exception is deprecated" (the API reference); an adopter's app treats one that says "is resuming" as a
+        // resume, and no AWS page confirms or denies it. A SQL error's text quotes rows, so it is never read for that.
         if (link.name === 'BadRequestException') {
-            const aboutSql = /\bERROR:|SQLState:/.test(link.message)
+            const aboutSql = /\bERROR:/.test(link.message) || isSqlError(link)
             return !aboutSql && /\bis resuming\b/i.test(link.message) ? 'resuming' : undefined
         }
         if (link.name === 'DatabaseErrorException') return undefined
     }
     return undefined
+}
+
+function isSqlError(error: Error): boolean {
+    const normalized = normalizeDatabaseError(error)
+    return normalized instanceof RdsDataDatabaseError && normalized.code !== undefined
 }
 
 /** The one failure AWS documents as cancelled, not run. The error itself, never a cause: a wrapper may be a later one. */
@@ -81,7 +87,7 @@ interface Wake {
 }
 
 /**
- * One wait per process for a resuming cluster. The first call that finds it resuming starts a poll of `probe`; every
+ * One wait for a resuming cluster, for the driver that makes it (the db port builds one per process). The first call that finds it resuming starts a poll of `probe`; every
  * call that joins before the poll ends waits on the same one, each for no longer than its own deadline. The poll ends
  * when the probe answers or fails for another reason (the joined calls then go and get their own answers), or when
  * nobody waits for it any more. A probe that does not answer holds up the next for `PROBE_TIMEOUT_MS`. A poll that has ended, and one nobody waits on, is never joined.

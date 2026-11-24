@@ -568,7 +568,7 @@ class RdsDataDriver implements Driver {
      *
      * - A BeginTransaction runs no statement: at worst the failed attempt left an empty transaction, which the Data API
      *   rolls back after three idle minutes. So it is sent again after any answer that the database is resuming, and
-     *   after a throttle, which a cluster that has just resumed also answers.
+     *   after a throttle, which has been seen while a cluster resumes.
      * - A statement only after `DatabaseResumingException` itself, which AWS documents as cancelled. AWS's Data API
      *   pages do not say that a throttled statement did not run, so a throttled one is not sent again.
      * - In a transaction, only until a statement has succeeded in it. After that the session existed, and a pause has

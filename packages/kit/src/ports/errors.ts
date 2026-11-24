@@ -36,7 +36,7 @@ export class PreconditionFailedError extends Error {
 
 /**
  * Why the database can't serve a call now. `resuming`: a paused cluster is starting. `throttled`: it refused the call
- * for load, which a cluster that has just resumed also does. `timed-out`: a statement ran past the transport's limit.
+ * for load, which has been seen while a cluster resumes. `timed-out`: a statement ran past the transport's limit.
  * `unavailable`: there is no writer to reach.
  */
 export type DatabaseUnavailableReason = 'resuming' | 'throttled' | 'timed-out' | 'unavailable'
