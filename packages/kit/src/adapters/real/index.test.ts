@@ -133,6 +133,27 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
         expect(typeof ports.db.withTenant).toBe('function')
     })
 
+    it('DATABASE_RESUME_BUDGET_MS reaches the Data API transport, and a malformed one fails at boot', async () => {
+        const createRealDataApiDb = vi.fn().mockReturnValue({})
+        vi.doMock('./db-data-api', () => ({ createRealDataApiDb }))
+        stubEnv({ DATABASE_TRANSPORT: 'data-api', ...DATA_API_ENV, DATABASE_RESUME_BUDGET_MS: '9000' })
+        const { assertRealEnv, createRealPorts } = await import('./index')
+        await createRealPorts(HOOKS)
+        expect(createRealDataApiDb).toHaveBeenLastCalledWith(expect.objectContaining({ resumeBudgetMs: 9000 }))
+        for (const unset of [undefined, '']) {
+            stubEnv({ DATABASE_RESUME_BUDGET_MS: unset })
+            await createRealPorts(HOOKS)
+            expect(createRealDataApiDb).toHaveBeenLastCalledWith(expect.objectContaining({ resumeBudgetMs: undefined }))
+        }
+        for (const bad of ['18s', '-1', '1.5', '900001']) {
+            stubEnv({ DATABASE_RESUME_BUDGET_MS: bad })
+            expect(() => assertRealEnv()).toThrow(/data-api.*DATABASE_RESUME_BUDGET_MS must be/s)
+        }
+        // A pg deployment does not read it.
+        stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
+        expect(() => assertRealEnv()).not.toThrow()
+    })
+
     it('an unknown transport fails instead of falling back to pg', async () => {
         stubEnv({ DATABASE_TRANSPORT: 'mysql', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
         const { createRealPorts } = await import('./index')

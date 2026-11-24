@@ -18,6 +18,8 @@ export interface DataApiDbConfig {
     client?: RdsDataClientLike
     /** How long inferred parameter types are trusted; the dialect's `TYPE_CACHE_TTL_MS` when omitted. */
     typeCacheTtlMs?: number
+    /** How long a call waits for a paused cluster to resume; the dialect's `RESUME_BUDGET_MS` when omitted. */
+    resumeBudgetMs?: number | undefined
 }
 
 /**
@@ -29,8 +31,8 @@ export interface DataApiDbConfig {
  * deployment never loads the RDS Data SDK; ./index.test.ts proves it.
  *
  * `maxAttempts: 1` turns the SDK's automatic retries off, on AWS's own advice: a statement whose call
- * timed out may still have finished, and retrying it can write twice. The one failure that is safe to
- * retry (a paused Serverless v2 resuming) is retried by the dialect itself.
+ * timed out may still have finished, and retrying it can write twice. What is safe to
+ * send again while a paused Serverless v2 resumes, the dialect sends again itself.
  */
 export function createRealDataApiDb(config: DataApiDbConfig): DbPort {
     const client =
@@ -42,6 +44,7 @@ export function createRealDataApiDb(config: DataApiDbConfig): DbPort {
         secretArn: config.secretArn,
         database: config.database,
         typeCacheTtlMs: config.typeCacheTtlMs,
+        resumeBudgetMs: config.resumeBudgetMs,
     })
     const db = new Kysely<DB>({ dialect })
     return {

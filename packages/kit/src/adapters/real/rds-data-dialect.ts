@@ -40,6 +40,8 @@ import {
     toSqlParameter,
     unsupportedStatement,
 } from './rds-data-codec'
+import { DatabaseUnavailableError } from '../../ports/errors'
+import { RESUME_BUDGET_MS, ResumeWait, unavailable, unavailableReason, wasCancelledUnrun } from './rds-data-resume'
 
 /** The four calls this dialect makes. `RDSDataClient` satisfies it, and so does the test emulator. */
 export type RdsDataCommand =
@@ -59,6 +61,11 @@ export interface RdsDataDialectConfig {
     database: string
     /** How long a SQL shape's inferred parameter types are trusted; `TYPE_CACHE_TTL_MS` when omitted. */
     typeCacheTtlMs?: number | undefined
+    /**
+     * How long one call waits for a paused cluster to resume, in milliseconds, counted from its first refusal or its
+     * first wait; `RESUME_BUDGET_MS` when omitted, and 0 to fail at once. It bounds the wait, not the calls themselves.
+     */
+    resumeBudgetMs?: number | undefined
 }
 
 /**
@@ -266,21 +273,21 @@ const TYPE_CACHE_LIMIT = 2000
  */
 const TYPE_CACHE_TTL_MS = 5 * 60 * 1000
 
-/**
- * A paused Aurora Serverless v2 (min capacity 0, as SSSB's non-production stack runs) answers the first
- * call with DatabaseResumingException: the request was cancelled, not run, so retrying it is safe. Every
- * other failure is NOT retried — the SDK's own retries are off (`maxAttempts: 1` in ./db-data-api.ts) because AWS
- * warns that a retried statement whose first attempt actually finished can write twice.
- */
-const RESUME_DELAYS_MS = [1000, 2000, 4000, 8000]
-
 class RdsDataDriver implements Driver {
     readonly #types = new Map<string, { readonly types: readonly string[]; readonly at: number }>()
+
+    /** Transactions in which a statement has run, so their sessions have existed. */
+    readonly #usedTransactions = new Set<string>()
+    readonly #resume: ResumeWait
 
     private readonly config: RdsDataDialectConfig
 
     constructor(config: RdsDataDialectConfig) {
         this.config = config
+        const { client, resourceArn, secretArn, database } = config
+        this.#resume = new ResumeWait(() =>
+            client.send(new ExecuteStatementCommand({ resourceArn, secretArn, database, sql: 'SELECT 1' })),
+        )
     }
 
     async init(): Promise<void> {}
@@ -367,8 +374,10 @@ class RdsDataDriver implements Driver {
         } catch (error) {
             // Already gone means already rolled back: the Data API rolls a transaction back itself when it
             // idles for three minutes or reaches an hour, and a failed commit ends it too. Rethrowing would
-            // only replace the error that made Kysely roll back with one that says nothing about it.
+            // only replace the error that made Kysely roll back with one that says nothing about it. A cluster that
+            // answers that it is resuming was paused, and a paused one has no open transaction.
             if (isTransactionGone(error)) return
+            if (error instanceof DatabaseUnavailableError && error.reason === 'resuming') return
             throw error
         }
     }
@@ -514,19 +523,66 @@ class RdsDataDriver implements Driver {
         )) as ExecuteStatementCommandOutput
     }
 
+    /**
+     * Sends a command, waiting out a cluster that is resuming (SSSB's non-production stack pauses: min capacity 0). A
+     * call outside a transaction that has not been sent yet waits first if a resume is known to be under way. What may
+     * be sent again is `mayResend`'s to say; nothing else is, here or in the SDK (`maxAttempts: 1` in ./db-data-api.ts): AWS
+     * warns that a retried statement whose first attempt actually finished can write twice.
+     */
     private async call(command: RdsDataCommand): Promise<unknown> {
-        for (let attempt = 0; ; attempt += 1) {
+        let deadline: number | undefined
+        const wait = (error?: unknown): Promise<void> => {
+            deadline ??= Date.now() + (this.config.resumeBudgetMs ?? RESUME_BUDGET_MS)
+            return this.#resume.join(deadline, error)
+        }
+        const opensWork = transactionIdOf(command) === undefined
+        for (;;) {
+            while (opensWork && this.#resume.resuming) await wait()
             try {
-                return await this.config.client.send(command)
+                return await this.send(command)
             } catch (error) {
-                const resuming = error instanceof Error && error.name === 'DatabaseResumingException'
-                if (resuming && attempt < RESUME_DELAYS_MS.length) {
-                    await new Promise((resolve) => setTimeout(resolve, RESUME_DELAYS_MS[attempt]))
+                if (this.mayResend(command, error)) {
+                    await wait(error)
                     continue
                 }
-                throw normalizeDatabaseError(error)
+                const reason = unavailableReason(error)
+                throw reason ? unavailable(reason, error) : normalizeDatabaseError(error)
             }
         }
+    }
+
+    private async send(command: RdsDataCommand): Promise<unknown> {
+        const transactionId = transactionIdOf(command)
+        const runsStatement = command instanceof ExecuteStatementCommand
+        try {
+            const answer = await this.config.client.send(command)
+            if (transactionId && runsStatement) this.#usedTransactions.add(transactionId)
+            return answer
+        } finally {
+            if (transactionId && !runsStatement) this.#usedTransactions.delete(transactionId)
+        }
+    }
+
+    /**
+     * Whether sending `command` again can't repeat anything.
+     *
+     * - A BeginTransaction runs no statement: at worst the failed attempt left an empty transaction, which the Data API
+     *   rolls back after three idle minutes. So it is sent again after any answer that the database is resuming, and
+     *   after a throttle, which an adopter's log shows while a cluster resumes (docs/decision-log.md, 2026-11-24).
+     * - A statement only after `DatabaseResumingException` itself, which AWS documents as cancelled. AWS's Data API
+     *   pages do not say that a throttled statement did not run, so a throttled one is not sent again.
+     * - In a transaction, only until a statement has succeeded in it. After that the session existed, and a pause has
+     *   ended it and the work in it: there is no transaction left to go on with.
+     * - A commit or a rollback, never.
+     */
+    private mayResend(command: RdsDataCommand, error: unknown): boolean {
+        if (command instanceof BeginTransactionCommand) {
+            const reason = unavailableReason(error)
+            return reason === 'resuming' || reason === 'throttled'
+        }
+        if (!(command instanceof ExecuteStatementCommand) || !wasCancelledUnrun(error)) return false
+        const { transactionId } = command.input
+        return transactionId === undefined || !this.#usedTransactions.has(transactionId)
     }
 }
 
@@ -580,6 +636,10 @@ function asConnection(connection: DatabaseConnection): RdsDataConnection {
 function isTransactionGone(error: unknown): boolean {
     if (!(error instanceof Error)) return false
     return error.name === 'TransactionNotFoundException' || /transaction\b.*\bnot found/i.test(error.message)
+}
+
+function transactionIdOf(command: RdsDataCommand): string | undefined {
+    return 'transactionId' in command.input ? command.input.transactionId : undefined
 }
 
 function quoteIdent(name: string): string {
