@@ -7386,15 +7386,20 @@ and a resume or a throttle the dialect did not wait out reached the app as an AW
   statement, so this needs no promise from AWS: at worst an empty transaction stays open until its three idle minutes
   end. `withTenant` and the describe step both open with one, so most first calls of a request are covered. Rejected:
   only while this process knows of a resume, which leaves a second cold process, whose first answer is the throttle, with
-  an immediate failure. The cost is that a throttle for real load also waits, one probe a second for the process.
+  an immediate failure. The cost is that a throttle for real load also waits, one probe a second for the process. It
+  holds up only the calls that were throttled: a call not yet sent waits only once the database has said it is resuming.
 - **In a transaction, only until a statement has succeeded in it.** A cluster with an open connection does not pause
   (AWS's auto-pause page), so a resume answered after that means the session, and the transaction's work, is gone:
   nothing is left to go on with, and a resend would at best fail. A transaction's first statement is still resent, since
   nothing documents that a begun transaction has reached the database. Commits and rollbacks are never sent again;
-  CommitTransaction does not list the exception.
+  CommitTransaction does not list the exception. A rollback answered with a resume
+  counts as done, so it does not replace the error that caused it.
 - **The wait polls with `SELECT 1`, not with the waiting call.** Safe to repeat after any failure, so a throttle during
   the poll is part of the resume, and a write is sent once before it and once after. It ends when nobody waits, so a
-  wait that failed holds no later call. Rejected: the first caller's own command as the probe, which cannot go on past
+  wait that failed holds no later call. A probe that has not answered in 2 s is left behind and the next one sent (the SDK's
+  client has no request timeout, and one dead connection would otherwise hold every call that joined, database up or not);
+  if it answers late, that still ends the wait. Rejected: a request timeout on the SDK's client, which would cut off
+  statements too. Rejected: the first caller's own command as the probe, which cannot go on past
   a throttle when it is a statement. Rejected: `BeginTransaction` as the probe, which leaves a transaction to roll back
   and, if it does not reach the database, reports a resume that has not happened.
 - **After 1, 2 and 4 seconds, a probe every second.** The issue proposed keeping the 8 s step and polling after it. The

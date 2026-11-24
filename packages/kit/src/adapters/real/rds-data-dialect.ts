@@ -40,6 +40,7 @@ import {
     toSqlParameter,
     unsupportedStatement,
 } from './rds-data-codec'
+import { DatabaseUnavailableError } from '../../ports/errors'
 import { RESUME_BUDGET_MS, ResumeWait, unavailable, unavailableReason, wasCancelledUnrun } from './rds-data-resume'
 
 /** The four calls this dialect makes. `RDSDataClient` satisfies it, and so does the test emulator. */
@@ -373,8 +374,10 @@ class RdsDataDriver implements Driver {
         } catch (error) {
             // Already gone means already rolled back: the Data API rolls a transaction back itself when it
             // idles for three minutes or reaches an hour, and a failed commit ends it too. Rethrowing would
-            // only replace the error that made Kysely roll back with one that says nothing about it.
+            // only replace the error that made Kysely roll back with one that says nothing about it. A cluster that
+            // answers that it is resuming was paused, and a paused one has no open transaction.
             if (isTransactionGone(error)) return
+            if (error instanceof DatabaseUnavailableError && error.reason === 'resuming') return
             throw error
         }
     }
@@ -534,7 +537,7 @@ class RdsDataDriver implements Driver {
         }
         const opensWork = transactionIdOf(command) === undefined
         for (;;) {
-            while (opensWork && this.#resume.underWay) await wait()
+            while (opensWork && this.#resume.resuming) await wait()
             try {
                 return await this.send(command)
             } catch (error) {

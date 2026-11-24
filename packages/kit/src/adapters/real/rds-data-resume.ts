@@ -21,6 +21,12 @@ export const RESUME_BUDGET_MS = 18_000
  */
 const PROBE_DELAYS_MS = [1000, 2000, 4000, 1000] as const
 
+/**
+ * How long one probe holds up the next. The SDK's client has no request timeout, so without this a probe on a dead
+ * connection (a Lambda frozen with one in flight) would hold every call that joined, with the database up.
+ */
+const PROBE_TIMEOUT_MS = 2000
+
 /** The Data API's exceptions that mean the database can't serve the call now, by name. */
 const REASONS: Readonly<Record<string, DatabaseUnavailableReason>> = {
     DatabaseResumingException: 'resuming',
@@ -67,15 +73,18 @@ export function unavailable(reason: DatabaseUnavailableReason, error: unknown): 
 
 interface Wake {
     readonly ended: Promise<void>
+    readonly end: () => void
     waiters: number
     lastError: unknown
+    /** The database has said it is resuming, where a wait may also have been started by a throttle. */
+    resuming: boolean
 }
 
 /**
  * One wait per process for a resuming cluster. The first call that finds it resuming starts a poll of `probe`; every
  * call that joins before the poll ends waits on the same one, each for no longer than its own deadline. The poll ends
  * when the probe answers or fails for another reason (the joined calls then go and get their own answers), or when
- * nobody waits for it any more. A poll that has ended, and one nobody waits on, is never joined.
+ * nobody waits for it any more. A probe that does not answer holds up the next for `PROBE_TIMEOUT_MS`. A poll that has ended, and one nobody waits on, is never joined.
  */
 export class ResumeWait {
     #current: Wake | undefined
@@ -87,15 +96,17 @@ export class ResumeWait {
         this.probe = probe
     }
 
-    get underWay(): boolean {
-        return this.#current !== undefined
+    /** A wait is under way for a database that said it is resuming: a call not sent yet would only be refused. */
+    get resuming(): boolean {
+        return this.#current?.resuming === true
     }
 
     /** Waits until the database answers; throws DatabaseUnavailableError at `deadline` (a `Date.now()` time). */
     async join(deadline: number, error?: unknown): Promise<void> {
         const remaining = deadline - Date.now()
-        if (remaining <= 0) throw this.#expired(error)
-        const wake = this.#current ?? this.#start(error)
+        if (remaining <= 0) throw this.#expired(error ?? this.#current?.lastError)
+        const wake = this.#current ?? this.#start()
+        if (error !== undefined) this.#saw(wake, error)
         wake.waiters += 1
         let timer: ReturnType<typeof setTimeout> | undefined
         try {
@@ -117,39 +128,63 @@ export class ResumeWait {
         return unavailable(unavailableReason(error) ?? 'resuming', error)
     }
 
+    #saw(wake: Wake, error: unknown): void {
+        wake.lastError = error
+        if (unavailableReason(error) === 'resuming') wake.resuming = true
+    }
+
     #forget(wake: Wake): void {
         if (this.#current === wake) this.#current = undefined
     }
 
-    #start(error: unknown): Wake {
+    #finish(wake: Wake): void {
+        this.#forget(wake)
+        wake.end()
+    }
+
+    #start(): Wake {
         let end: () => void = () => {}
-        const wake: Wake = {
-            ended: new Promise((resolve) => {
-                end = resolve
-            }),
-            waiters: 0,
-            lastError: error,
-        }
-        this.#current = wake
-        void this.#poll(wake).finally(() => {
-            this.#forget(wake)
-            end()
+        const ended = new Promise<void>((resolve) => {
+            end = resolve
         })
+        const wake: Wake = { ended, end, waiters: 0, lastError: undefined, resuming: false }
+        this.#current = wake
+        void this.#poll(wake).finally(() => this.#finish(wake))
         return wake
     }
 
+    /** Ends when the database answers, or fails a probe for another reason, or nobody waits any more. */
     async #poll(wake: Wake): Promise<void> {
         for (let attempt = 0; ; attempt += 1) {
-            const delay = PROBE_DELAYS_MS[Math.min(attempt, PROBE_DELAYS_MS.length - 1)]
-            await new Promise((resolve) => setTimeout(resolve, delay))
+            await sleep(PROBE_DELAYS_MS[Math.min(attempt, PROBE_DELAYS_MS.length - 1)])
             if (wake.waiters === 0) return
-            try {
-                await this.probe()
-                return
-            } catch (error) {
-                if (!unavailableReason(error)) return
-                wake.lastError = error
-            }
+            let over = false
+            const probed = Promise.resolve()
+                .then(() => this.probe())
+                .then(
+                    () => {
+                        over = true
+                        // Also when this probe outlasted its turn and a later one is in flight.
+                        this.#finish(wake)
+                    },
+                    (error: unknown) => {
+                        over = !unavailableReason(error)
+                        if (!over) this.#saw(wake, error)
+                    },
+                )
+            let timer: ReturnType<typeof setTimeout> | undefined
+            await Promise.race([
+                probed,
+                new Promise((resolve) => {
+                    timer = setTimeout(resolve, PROBE_TIMEOUT_MS)
+                }),
+            ])
+            clearTimeout(timer)
+            if (over) return
         }
     }
+}
+
+function sleep(ms: number | undefined): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms))
 }

@@ -38,6 +38,17 @@ function kindOf(command: RdsDataCommand): Kind {
     return command.input.sql === PROBE ? 'probe' : 'statement'
 }
 
+function database(send: (command: RdsDataCommand) => Promise<unknown>, resumeBudgetMs?: number) {
+    const dialect = new RdsDataDialect({
+        client: { send },
+        resourceArn: 'r',
+        secretArn: 's',
+        database: 'd',
+        resumeBudgetMs,
+    })
+    return new Kysely<Record<string, never>>({ dialect })
+}
+
 /** A client that answers what `fail` does not throw at, and records every call with the time it was made. */
 function harness(fail: (call: Call, nth: number) => Error | undefined, resumeBudgetMs?: number) {
     const started = Date.now()
@@ -218,25 +229,86 @@ describe('the budget', () => {
         expect(h.calls.filter((call) => call.sql === 'select 3').map((call) => call.at)).toEqual([38_500, 41_500])
     })
 
-    it('a call whose wait is held by a probe that never answers still fails on time, and holds no later call', async () => {
-        const answered: string[] = []
-        let hang = true
-        const send = async (command: RdsDataCommand): Promise<unknown> => {
-            const text = command instanceof ExecuteStatementCommand ? command.input.sql! : ''
-            if (hang && text === PROBE) return new Promise(() => {})
-            if (hang) throw resuming()
-            answered.push(text)
-            return { records: [] }
+    it('fails at the last answer’s reason, not the first', async () => {
+        const h = harness((call) => (call.at < 4000 ? resuming() : throttled()))
+        const done = outcome(h.run('select 2'))
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect((await done).error).toMatchObject({ reason: 'throttled', cause: { name: 'ThrottlingException' } })
+    })
+
+    it('leaves no timer behind after a wait that ended well', async () => {
+        const h = harness(until(2500, resuming))
+        const done = h.run('select 2')
+        await vi.advanceTimersByTimeAsync(3000)
+        await done
+        expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('the poll of a wait everyone left does not end the next one', async () => {
+        let answer = (): void => {}
+        let probes = 0
+        const send = (command: RdsDataCommand): Promise<unknown> => {
+            if (kindOf(command) !== 'probe') return Promise.reject(resuming())
+            probes += 1
+            return probes === 1 ? new Promise((resolve) => (answer = () => resolve({}))) : Promise.reject(resuming())
         }
-        const db = new Kysely<Record<string, never>>({
-            dialect: new RdsDataDialect({ client: { send }, resourceArn: 'r', secretArn: 's', database: 'd' }),
-        })
+        const db = database(send, 1500)
         const first = outcome(sql.raw('select 2').execute(db))
-        await vi.advanceTimersByTimeAsync(RESUME_BUDGET_MS)
+        await vi.advanceTimersByTimeAsync(1500)
         expect((await first).error).toBeInstanceOf(DatabaseUnavailableError)
-        hang = false
-        await sql.raw('select 3').execute(db)
-        expect(answered).toEqual(['select 3'])
+        const second = outcome(sql.raw('select 3').execute(db))
+        await vi.advanceTimersByTimeAsync(500)
+        answer()
+        await vi.advanceTimersByTimeAsync(100)
+        // Still the second's wait: a third joins it rather than starting another, so both see one probe.
+        const third = outcome(sql.raw('select 4').execute(db))
+        await vi.advanceTimersByTimeAsync(1400)
+        expect(probes).toBe(2)
+        await vi.advanceTimersByTimeAsync(5000)
+        expect((await second).error).toBeInstanceOf(DatabaseUnavailableError)
+        expect((await third).error).toBeInstanceOf(DatabaseUnavailableError)
+    })
+})
+
+describe('a probe that does not answer', () => {
+    it('holds up the next for two seconds, and no call after that, however many overlap', async () => {
+        let probes = 0
+        const t0 = Date.now()
+        const send = (command: RdsDataCommand): Promise<unknown> => {
+            if (kindOf(command) === 'probe' && ++probes === 1) return new Promise(() => {})
+            return Date.now() - t0 < 2000 ? Promise.reject(resuming()) : Promise.resolve({ records: [] })
+        }
+        const db = database(send)
+        const took: number[] = []
+        const run = async (): Promise<void> => {
+            const from = Date.now()
+            await sql.raw('select 2').execute(db)
+            took.push(Date.now() - from)
+        }
+        const calls = [run()]
+        for (let i = 0; i < 3; i += 1) {
+            await vi.advanceTimersByTimeAsync(2500)
+            calls.push(run())
+        }
+        await vi.advanceTimersByTimeAsync(60_000)
+        await Promise.all(calls)
+        // The first probe at 1 s, its turn over at 3 s, the next at 5 s.
+        expect(took).toEqual([5000, 2500, 0, 0])
+    })
+
+    it('ends the wait when it answers late', async () => {
+        const t0 = Date.now()
+        const send = (command: RdsDataCommand): Promise<unknown> => {
+            if (kindOf(command) === 'probe') return new Promise((resolve) => setTimeout(() => resolve({}), 2800))
+            return Date.now() - t0 < 2000 ? Promise.reject(resuming()) : Promise.resolve({ records: [] })
+        }
+        const db = database(send)
+        const done = sql
+            .raw('select 2')
+            .execute(db)
+            .then(() => Date.now() - t0)
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(await done).toBe(3800)
     })
 })
 
@@ -330,6 +402,58 @@ describe('what is sent again, and what never is', () => {
         await done
         expect(h.sent('insert into t default values')).toBe(2)
         expect(h.at('commit')).toEqual([1000])
+    })
+
+    it('a transaction id that has ended is forgotten', async () => {
+        const seen: string[] = []
+        let nth = 0
+        const send = async (command: RdsDataCommand): Promise<unknown> => {
+            const kind = kindOf(command)
+            seen.push(kind)
+            if (kind === 'begin') return { transactionId: 'same' }
+            if (kind === 'commit') return { transactionStatus: 'Transaction Committed' }
+            if (kind === 'statement' && ++nth === 2) throw resuming()
+            return { records: [] }
+        }
+        const db = database(send)
+        const once = () => db.transaction().execute(async (trx) => sql.raw('select 2').execute(trx))
+        await once()
+        const again = once()
+        await vi.advanceTimersByTimeAsync(5000)
+        await again
+        expect(seen.filter((kind) => kind === 'statement')).toHaveLength(3)
+    })
+
+    it('a rollback answered with a resume is done, and the error that caused it survives', async () => {
+        const h = harness((call) => (call.kind === 'rollback' ? resuming() : undefined))
+        const mine = new Error('mine')
+        const { error } = await outcome(h.db.transaction().execute(() => Promise.reject(mine)))
+        expect(error).toBe(mine)
+        expect(h.at('rollback')).toHaveLength(1)
+    })
+
+    it('a throttled BeginTransaction holds up no other call; a resume it finds does', async () => {
+        const h = harness((call) => (call.kind === 'begin' && call.at < 2000 ? throttled() : undefined))
+        const begun = h.db.transaction().execute(async (trx) => sql.raw('select 2').execute(trx))
+        await vi.advanceTimersByTimeAsync(500)
+        await h.run('select 3')
+        expect(h.now()).toBe(500)
+        await vi.advanceTimersByTimeAsync(5000)
+        await begun
+
+        const woken = harness((call) =>
+            call.kind === 'begin' && call.at < 1500
+                ? throttled()
+                : call.kind === 'probe' && call.at < 2500
+                  ? resuming()
+                  : undefined,
+        )
+        const waiting = woken.db.transaction().execute(async (trx) => sql.raw('select 2').execute(trx))
+        await vi.advanceTimersByTimeAsync(1500)
+        const held = woken.run('select 3').then(() => woken.now())
+        await vi.advanceTimersByTimeAsync(5000)
+        await waiting
+        expect(await held).toBe(3000)
     })
 
     it('a later one is not: the pause ended the transaction, and the whole of it fails', async () => {
