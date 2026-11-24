@@ -2397,9 +2397,8 @@ passing. This records what ran live and what is still held by tests alone. It cl
 (and `data-api` is still open until its runbook has run end to end).
 
 - **`deploy-pipeline`: the first deploy and the Migrator, on the Data API shape.** `cdk deploy` of the stack succeeded, and
-  the Migrator, invoked on an empty database, returned `{"ok":true}` with the framework's migrations 0001-0017 and the
-  app's 1001-1005 applied. So the Migrator bundle loads in Lambda and migrates over the Data API: until now only
-  `packages/cdk/src/sssb-app.test.js` showed that it loads. **Not reported:** the `pg` network shape's first migration, a PR preview
+  the Migrator, invoked on an empty database, returned `{"ok":true}` with the framework's migrations (through 0017) and the app's 1001-1005 applied. So the Migrator bundle loads in Lambda and migrates over the Data API: until now only
+  `packages/cdk/src/sssb-app.test.js:1642` showed that it loads. **Not reported:** the `pg` network shape's first migration, a PR preview
   and its teardown, `Content-Type` of uploaded static files, and a stack outside us-east-1
   ([safeinsights/sssb#133](https://github.com/safeinsights/sssb/issues/133)).
 - **`data-api`: the server, the Migrator, the app's own provisioning Lambda and the scheduled tick all ran over the Data
@@ -2412,18 +2411,18 @@ passing. This records what ran live and what is still held by tests alone. It cl
   in and was placed in the tenant, and an app route answered with the role the app's own bootstrap rule gives. **Not run
   live:** a user whose metadata names another tenant (the adopter knew of none), so the refusal view and its
   sign-out are proven by tests only. The `multi` default, `getCurrentUser`'s read count against Clerk's rate limits
-  and a Clerk instance shared with another product being admitted into the home org were not reported either.
+  and the decision the row asks for about a Clerk instance shared with another product (its users are placed in the home org) were not reported either.
 - **`auth-dev`: `AUTH_ORG_SOURCE=fixed` with `AUTH_DEFAULT_ROLE=none` ran against a real Clerk instance.** The same user,
   with no Clerk organization membership, signed in, landed on the dashboard, and acted through the app's own rules (a
   publish, a user lookup, and an approved sign-in of another kind of client whose token then published and was revoked); the header named the
-  tenant slug. The cutover row said `withAuthProxy` had never run against a real instance; this run took signed-in requests through it, a page and an API route. Whether Clerk's handshake redirect fired was not recorded.
+  tenant slug. The cutover row said `withAuthProxy` had never run against a real instance; this run took signed-in requests through it, a page and an app route. Whether Clerk's handshake redirect fired was not recorded.
   **Not run live:** a second user the app's rules refuse (the adopter had one test user), so a person with the role `none` being
   refused is proven by tests only. Nothing in the report covers `CLERK_JWT_KEY`, the accept-invite round trip,
   `listMembers`' `Membership.id`, `getMember` or the auth port's contract suite against the real provider.
 
 **A cold first request took 26.0 s on Aurora at minimum capacity 0 ACU**, the cluster itself resuming in 12-14 s, which
 is 2.3 s short of `SssbApp`'s 30 s server timeout. The dialect retries `DatabaseResumingException` after 1, 2, 4 and 8 s and
-each call backs off on its own, so a request that makes more than one call in the cold window can run out of time.
+each call backs off on its own (`call` in `packages/kit/src/adapters/real/rds-data-dialect.ts`), so a request that makes more than one call in the cold window can run out of time.
 It is filed as [safeinsights/sssb#183](https://github.com/safeinsights/sssb/issues/183), which also holds what the
 runbook and the `data-api` row should say about it. Until it lands, an app that scales to zero keeps database calls out of
 its first paint, as this adopter did (no call before first paint, one after).
