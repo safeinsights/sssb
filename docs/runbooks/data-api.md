@@ -313,12 +313,15 @@ It bounds the wait alone, so leave room under the server's timeout for the rest 
 is what removes the wait. The migrator waits two minutes whatever the server is set to.
 
 **What an app sees.** `DatabaseUnavailableError` (`@sssb/kit/ports/errors`), whose `reason` is `resuming`, `throttled`,
-`timed-out` or `unavailable` and whose `cause` is AWS's own error. The starter's `withPortErrors`
+`timed-out` or `unavailable` and whose `cause` is AWS's own error. `unavailable` is AWS saying that the writer or the
+service is not available. A few answers that the database is resuming fail at once, as `resuming`, without a wait: to a
+commit, whose outcome is then unknown, so never assume that it failed; to a statement after another has succeeded in
+its transaction; and to a statement as a `BadRequestException`. The starter's `withPortErrors`
 (`apps/starter/src/app/api/respond.ts`) answers it with a 503, `Retry-After: 5` and
-`{ error: 'database-unavailable', reason }`, and logs a warning. Let the browser repeat a GET by itself. Send a write again only when the person asks:
-treat a throttled or timed-out statement as if it may have run (AWS says a timed-out one is cancelled, and nothing of a
-throttled one). A page rendered on the server is not covered by `withPortErrors`: keep database calls out of what it
-needs for its first paint, or catch the error there.
+`{ error: 'database-unavailable', reason }`, and logs a warning. Let the browser repeat a GET by itself. Send a write
+again only when the person asks: treat a throttled or timed-out statement or commit as if it may have run (AWS says a timed-out one is cancelled, and
+nothing of a throttled one). A page rendered on the server is not covered by `withPortErrors`: keep database calls out
+of what it needs for its first paint, or catch the error there.
 
 **Check it live.** Let the cluster pause, then:
 

@@ -37,16 +37,19 @@ export class PreconditionFailedError extends Error {
 /**
  * Why the database can't serve a call now. `resuming`: a paused cluster is starting. `throttled`: it refused the call
  * for load, as it may while a cluster resumes. `timed-out`: a statement ran past the transport's limit. `unavailable`:
- * there is no writer, or no database service, to reach.
+ * the writer or the database service is not available.
  */
 export type DatabaseUnavailableReason = 'resuming' | 'throttled' | 'timed-out' | 'unavailable'
 
 /**
- * Thrown when the database can't serve a call now and may soon: a paused cluster that outlasted the transport's wait
- * or ended a transaction, a throttled or timed-out call, no writer. Route glue answers a 503 with
- * `Retry-After: retryAfterSeconds`. It does not say the work did not happen: treat a throttled or timed-out statement as if it may
- * have run. So a caller repeats a read by itself, and a write only when a person, or an idempotent request, asks for
- * it again. `cause` is the vendor's error. Raised by the RDS Data API transport; `pg` has no equivalent today.
+ * Thrown when the database can't serve a call now and may soon: a paused cluster that outlasted the transport's wait,
+ * a throttled or timed-out call, a writer or a database service that is not available. On the RDS Data API a few
+ * answers that the database is resuming throw it at once, as `resuming`, without a wait: to a commit, whose outcome is
+ * then unknown, so never assume that it failed; to a statement after another has succeeded in its transaction; and to
+ * a statement as a `BadRequestException`. Route glue answers a 503 with `Retry-After: retryAfterSeconds`. It does not
+ * say the work did not happen: treat a throttled or timed-out statement or commit as if it may have run. So a caller
+ * repeats a read by itself, and a write only when a person, or an idempotent request, asks for it again. `cause` is
+ * the vendor's error. Raised by the RDS Data API transport; `pg` has no equivalent today.
  */
 export class DatabaseUnavailableError extends Error {
     readonly reason: DatabaseUnavailableReason
