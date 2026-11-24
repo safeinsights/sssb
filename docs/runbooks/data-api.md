@@ -302,7 +302,7 @@ and 4 seconds and then every second, every call that waits shares that poll, and
 not yet sent waits for a known resume first (`packages/kit/src/adapters/real/rds-data-resume.ts`).
 
 **Setting the budget.** A call waits 18 seconds by default, then fails. `DATABASE_RESUME_BUDGET_MS` on the server
-changes it (a whole number of milliseconds, 0 to fail at once, at most 900000). In the app's `infra/app.ts`, with the
+changes it (a whole number of milliseconds, 0 to fail at once, at most 900000). In `apps/<app>/infra/app.ts`, with the
 construct kept (`const sssbApp = new SssbApp(...)`), before `app.synth()`:
 
 ```ts
