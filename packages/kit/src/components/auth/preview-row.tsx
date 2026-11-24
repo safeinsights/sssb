@@ -2,6 +2,7 @@
 
 import { Avatar, Group, Stack, Text } from '@mantine/core'
 import type { ReactNode } from 'react'
+import { avatarInitials } from './initials'
 
 // Avatars are a dark filled neutral (white initials on near-black): the hash-colored
 // `color="initials"` variants — and even Mantine's default gray placeholder — land at ~3.7–4.4:1 for
@@ -15,6 +16,7 @@ import type { ReactNode } from 'react'
  */
 export function PreviewRow({
     name,
+    fallback,
     title,
     subtitle,
     badge,
@@ -23,6 +25,9 @@ export function PreviewRow({
 }: {
     /** Seeds the initials avatar (org name or person name). */
     name: string
+    /** Where the initials come from when `name` has no word that starts with a letter (a person's email).
+     *  The title when omitted. */
+    fallback?: string
     title: string
     subtitle?: ReactNode
     badge?: ReactNode
@@ -34,7 +39,6 @@ export function PreviewRow({
     return (
         <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
             <Avatar
-                name={name}
                 radius={rounded ? 'xl' : 'sm'}
                 size={dim}
                 // Decorative: the title beside it already says the name, so assistive tech skips the
@@ -43,7 +47,9 @@ export function PreviewRow({
                 styles={{
                     placeholder: { color: '#fff', background: 'var(--mantine-color-dark-6)' },
                 }}
-            />
+            >
+                {avatarInitials(name, fallback ?? title)}
+            </Avatar>
             <Stack gap={2} style={{ minWidth: 0 }}>
                 <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
                     {/* Explicit dark color: inside Mantine's Menu.Label (user menu header) an
