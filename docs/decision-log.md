@@ -7424,6 +7424,7 @@ and a resume or a throttle the dialect did not wait out reached the app as an AW
   anyway.
 - **`normalizeDatabaseError` is unchanged**, and a SQL error's text is never read for "is resuming": Postgres quotes row
   text in it.
+
 ## Avatar initials are the first and last letter-words (2026-11-24, `fix/avatar-initials`)
 
 `safeinsights/sssb#182`: Mantine's `Avatar` `name` prop shows the first character of each of the first two words (the

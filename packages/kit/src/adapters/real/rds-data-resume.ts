@@ -64,7 +64,7 @@ function isSqlError(error: Error): boolean {
     return normalized instanceof RdsDataDatabaseError && normalized.code !== undefined
 }
 
-/** The one failure AWS documents as cancelled, not run. The error itself, never a cause: a wrapper may be a later one. */
+/** The one failure AWS documents as cancelled. The error itself, never a cause: a wrapper may be a later failure. */
 export function wasCancelledUnrun(error: unknown): boolean {
     return error instanceof Error && error.name === 'DatabaseResumingException'
 }
@@ -87,10 +87,11 @@ interface Wake {
 }
 
 /**
- * One wait for a resuming cluster, for the driver that makes it (the db port builds one per process). The first call that finds it resuming starts a poll of `probe`; every
- * call that joins before the poll ends waits on the same one, each for no longer than its own deadline. The poll ends
- * when the probe answers or fails for another reason (the joined calls then go and get their own answers), or when
- * nobody waits for it any more. A probe that does not answer holds up the next for `PROBE_TIMEOUT_MS`. A poll that has ended, and one nobody waits on, is never joined.
+ * One wait for a resuming cluster, for the driver that makes it (the db port builds one per process). The first call
+ * that finds it resuming starts a poll of `probe`; every call that joins before the poll ends waits on the same one, each
+ * for no longer than its own deadline. The poll ends when the probe answers or fails for another reason (the joined
+ * calls then go and get their own answers), or when nobody waits for it any more. A probe that does not answer holds up
+ * the next for `PROBE_TIMEOUT_MS`. A poll that has ended, and one nobody waits on, is never joined.
  */
 export class ResumeWait {
     #current: Wake | undefined
