@@ -20,8 +20,8 @@ export async function withPortErrors(fn: () => Promise<Response>): Promise<Respo
             return Response.json({ error: 'invalid-transition', from: error.from, to: error.to }, { status: 409 })
         }
         if (error instanceof DatabaseUnavailableError) {
-            // Waking up or overloaded, not broken: logged, and the client may ask again. Repeat a GET by itself; a write
-            // may have happened, so let the person decide.
+            // It may serve soon (a paused database waking, say): logged, and the client may ask again. Repeat a GET by
+            // itself; a write may have happened, so let the person decide.
             console.warn(`database unavailable (${error.reason}): ${error.message}`)
             return Response.json(
                 { error: 'database-unavailable', reason: error.reason },

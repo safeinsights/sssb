@@ -2,7 +2,7 @@
 '@sssb/create': minor
 ---
 
-### `withPortErrors` answers a database that is waking up with a 503
+### `withPortErrors` answers a database that is unavailable for now with a 503
 
 **Kind.** scaffold
 

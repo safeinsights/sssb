@@ -9,11 +9,12 @@
 **Action.** required
 
 **What changed.** On the `data-api` transport, a request that wakes a paused Aurora Serverless v2 cluster now makes one
-wait, shared by every call of the process and polled about every second, instead of a growing backoff in each call. A call waits
-18 seconds by default. A `BeginTransaction` that is throttled joins the wait; a statement is still sent again only after
-`DatabaseResumingException`, and never once another statement has succeeded in its transaction. When the wait runs out,
-or the Data API throttles a statement, times it out or has no writer, the error is now `DatabaseUnavailableError`
-(`@sssb/kit/ports/errors`), with AWS's error as its `cause`. A `pg` deployment is unchanged.
+wait, shared by every call that waits and polled about every second, instead of a growing backoff in each call. A call
+waits 18 seconds by default. A `BeginTransaction` that is throttled joins the wait; a statement is still sent again
+only after `DatabaseResumingException`, and never once another statement has succeeded in its transaction. When the
+wait runs out, the pause ended a transaction, or the Data API throttles a statement, times it out or has no writer, the
+error is now `DatabaseUnavailableError` (`@sssb/kit/ports/errors`), with AWS's error as its `cause`. A `pg` deployment
+is unchanged.
 
 **To adopt.** On `pg`, nothing. On `data-api`, answer the error as you would a busy service; the starter's
 `withPortErrors` does it (the scaffold entry of this release). Code that matched the thrown error's `name` against
@@ -28,9 +29,10 @@ if (error instanceof DatabaseUnavailableError) {
 }
 ```
 
-Repeat a read by itself if you like, and a write only when the person asks: a throttled or timed-out statement may have
-run. The wait is set on the server, in milliseconds, and checked at boot; 0 fails at once. Leave room for the rest of the
-request under the server's 30-second timeout:
+Repeat a read by itself if you like, and a write only when the person asks: treat a throttled or timed-out statement as
+if it may have run. The wait is set on the server, in milliseconds, and checked at boot; 0 fails at once. Leave room
+for the rest of the request under the server's 30-second timeout. In `infra/app.ts`, with the construct kept
+(`const sssbApp = new SssbApp(...)`), before `app.synth()`:
 
 ```ts
 sssbApp.server.addEnvironment('DATABASE_RESUME_BUDGET_MS', '10000')

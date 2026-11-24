@@ -7373,15 +7373,19 @@ and a resume or a throttle the dialect did not wait out reached the app as an AW
   ([ExecuteStatement](https://docs.aws.amazon.com/rdsdataservice/latest/APIReference/API_ExecuteStatement.html), read
   2026-11-24), so it did not run. `ThrottlingException` is in none of the error lists of ExecuteStatement,
   BeginTransaction and CommitTransaction, and neither the troubleshooting page nor the limitations page mentions
-  throttling. The [SDK guide](https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html) says in general
-  that a throttled request was "actively rejected", but says nothing of whether this service's throttle for "insufficient
-  resources on the database" precedes the statement. A `BadRequestException` is only "an error in the call or in a SQL
-  statement", deprecated; no page read ties it to a resume. `StatementTimeoutException`: the
-  [timeouts page](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/data-api-timeouts.html) says an operation over
-  45 seconds is cancelled and its data not inserted, and warns that retrying one whose SDK call timed out "might insert
-  duplicate data", so it is not sent again. A statement is therefore sent again after `DatabaseResumingException` alone,
-  and only when it is the error itself: one found in a cause chain may belong to an earlier attempt under a later error.
-  Rejected: retrying a throttled statement on the SDK guide's sentence, which a write would pay for if it is wrong.
+  throttling. The [SDK guide](https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html) says in
+  general that a throttled request was "actively rejected", but says nothing of whether this service's throttle
+  precedes the statement. (An adopter reported, 2026-11-24, that its log showed the throttle while a cluster woke, as
+  "The request was throttled because of insufficient resources on the database", and that its app also takes a
+  `BadRequestException` saying "is resuming" as a resume. Nothing was run against AWS to check either.) A
+  `BadRequestException` is only "an error in the call or in a SQL statement", deprecated; no page read ties it to a
+  resume. `StatementTimeoutException`: the
+  [timeouts page](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/data-api-timeouts.html) says an operation over 45
+  seconds is cancelled and its data not inserted, and warns that retrying one whose SDK call timed out "might insert
+  duplicate data", so it is not sent again. A statement is therefore sent again after `DatabaseResumingException`
+  alone, and only when it is the error itself: one found in a cause chain may belong to an earlier attempt under a
+  later error. Rejected: retrying a throttled statement on the SDK guide's sentence, which a write would pay for if it
+  is wrong.
 - **`BeginTransaction` is sent again after a throttle or a `BadRequestException` that says resuming as well.** It runs no
   statement, so this needs no promise from AWS: at worst an empty transaction stays open until its three idle minutes
   end. `withTenant` and the describe step both open with one, so a request that starts with either is covered. Rejected:
@@ -7404,12 +7408,13 @@ and a resume or a throttle the dialect did not wait out reached the app as an AW
   and, if it does not reach the database, reports a resume that has not happened.
 - **After 1, 2 and 4 seconds, a probe every second.** The issue proposed keeping the 8 s step and polling after it. The
   measured resumes took 12 to 14 s, which fall inside that step and would still be seen at 15, so it is gone.
-- **The default budget is 18 seconds per call.** The measured cold request took 26 s, of which one call's wait was at most
-  15, so up to 11 s went elsewhere. 18 leaves 12 under the server's 30 and covers AWS's "approximately 15 seconds". A
-  Lambda's init is billed and measured beside the request (1.7 s there), and fits in that too. Rejected: 25 s, to reach
-  further into the 30 s or longer of a day's pause, which no budget inside the timeout covers, at the price of a Lambda
-  timeout instead of an answer. Each call has its own deadline, so a call that joins late is not failed by one that
-  joined early. The migrator waits 120 s: nobody is waiting on it and its Lambda has five minutes.
+- **The default budget is 18 seconds per call.** The measured cold request took 26 s; the 12 to 14 s resume was seen at
+  15 on the old schedule, so about 11 s went elsewhere. 18 leaves 12 under the server's 30 and covers AWS's
+  "approximately 15 seconds". A Lambda's init (1.7 s there) is billed but comes before the invoke phase the timeout
+  limits. Rejected: 25 s, to reach further into the 30 s or longer of a day's pause, which no budget inside the timeout
+  covers, at the price of a Lambda timeout instead of an answer. Each call has its own deadline, so a call that joins
+  late is not failed by one that joined early. The migrator waits 120 s: nobody is waiting on it and its Lambda has
+  five minutes.
 - **`DATABASE_RESUME_BUDGET_MS` sets it, checked at boot.** The app never builds the dialect, so a config option alone
   could not be reached. Rejected: a key in `params.database`, which would make every app's `config/params.ts` carry it
   (both hold the same keys) and the construct set it, for a number most deployments leave alone.
@@ -7419,11 +7424,11 @@ and a resume or a throttle the dialect did not wait out reached the app as an AW
   adds, `DatabaseUnavailableException` and `ServiceUnavailableError`, as well as the resume, the throttle and the
   timeout, so an app that matched the thrown error's `name` (not its cause's) must change: hence the minor. Rejected: a
   flag saying whether the work may have run. One request makes many calls, so it could not speak for the request.
-- **Both apps' `withPortErrors` answers it with a 503, `Retry-After: 5` and a logged warning.** That function is the app's, so
-  an adopter applies it by hand (its own changeset). Five seconds because a client that asks again joins or starts a wait
-  anyway.
-- **`normalizeDatabaseError` is unchanged**, and a SQL error's text is never read for "is resuming": Postgres quotes row
-  text in it.
+- **Both apps' `withPortErrors` answers it with a 503, `Retry-After: 5` and a logged warning.** That function is the
+  app's, so an adopter applies it by hand (its own changeset). Five seconds because, after a resume, a client that asks
+  again joins or starts a wait anyway.
+- **`normalizeDatabaseError` is unchanged**, and the text of an error recognised as SQL (`ERROR:`, a SQLSTATE, or a
+  Postgres message it knows) is never read for "is resuming": Postgres quotes row text in it.
 
 ## Avatar initials are the first and last letter-words (2026-11-24, `fix/avatar-initials`)
 

@@ -525,9 +525,9 @@ class RdsDataDriver implements Driver {
 
     /**
      * Sends a command, waiting out a cluster that is resuming (SSSB's non-production stack pauses: min capacity 0). A
-     * call that has not been sent yet waits first if a resume is under way. Nothing else is retried, here or in the SDK
-     * (`maxAttempts: 1` in ./db-data-api.ts): AWS warns that a retried statement whose first attempt actually finished
-     * can write twice.
+     * call outside a transaction that has not been sent yet waits first if a resume is known to be under way. What may
+     * be sent again is `mayResend`'s to say; nothing else is, here or in the SDK (`maxAttempts: 1` in ./db-data-api.ts): AWS
+     * warns that a retried statement whose first attempt actually finished can write twice.
      */
     private async call(command: RdsDataCommand): Promise<unknown> {
         let deadline: number | undefined
@@ -568,7 +568,7 @@ class RdsDataDriver implements Driver {
      *
      * - A BeginTransaction runs no statement: at worst the failed attempt left an empty transaction, which the Data API
      *   rolls back after three idle minutes. So it is sent again after any answer that the database is resuming, and
-     *   after a throttle, which has been seen while a cluster resumes.
+     *   after a throttle, which an adopter's log shows while a cluster resumes (docs/decision-log.md, 2026-11-24).
      * - A statement only after `DatabaseResumingException` itself, which AWS documents as cancelled. AWS's Data API
      *   pages do not say that a throttled statement did not run, so a throttled one is not sent again.
      * - In a transaction, only until a statement has succeeded in it. After that the session existed, and a pause has

@@ -34,9 +34,9 @@ export function databaseTransport(): DatabaseTransport {
 }
 
 /**
- * DATABASE_RESUME_BUDGET_MS, optional and read on `data-api` only: how long a call waits for a paused cluster to resume
- * (docs/runbooks/data-api.md, step 6). Undefined when unset or empty, so that the dialect's default holds. At most 15
- * minutes, the longest a Lambda runs.
+ * DATABASE_RESUME_BUDGET_MS, optional and read on `data-api` only: how long a call waits for a paused cluster to
+ * resume (docs/runbooks/data-api.md, step 6). Undefined when unset or empty, so that the dialect's default holds. At
+ * most 15 minutes, far past any server's timeout, so that a wrong unit fails at boot.
  */
 export function databaseResumeBudgetMs(): number | undefined {
     const value = process.env['DATABASE_RESUME_BUDGET_MS']

@@ -495,7 +495,7 @@ describe('what is sent again, and what never is', () => {
         expect(await held).toBe(3000)
     })
 
-    it('a later one is not: the pause ended the transaction, and the whole of it fails', async () => {
+    it('a later statement of a transaction is not sent again: the pause ended it, and the whole of it fails', async () => {
         const h = harness((call) => (call.sql === 'update t set a = 1' ? resuming() : undefined))
         const done = outcome(
             h.db.transaction().execute(async (trx) => {

@@ -9,10 +9,10 @@ import { normalizeDatabaseError, RdsDataDatabaseError } from './rds-data-codec'
 
 /**
  * How long one call waits for a resuming cluster before it fails: 18 seconds, inside SssbApp's 30 s server timeout.
- * AWS puts a typical resume at about 15 s, and measured ones took 12 to 14 s. The measured cold request took 26 s,
- * when one call's wait was 15 at most, so as much as 11 s went elsewhere (the failed calls themselves, a second wait, a
- * fresh database's first queries): 18 leaves 12. A resume after more than 24 hours paused can take 30 s or longer
- * (AWS's auto-pause page), which no budget inside 30 s covers. docs/runbooks/data-api.md says how to change it.
+ * AWS puts a typical resume at about 15 s, and measured ones took 12 to 14 s. The measured cold request took 26 s; a
+ * 12 to 14 s resume was then seen at 15, so about 11 s went elsewhere (the failed calls themselves, a fresh database's
+ * first queries): 18 leaves 12. A resume after more than 24 hours paused can take 30 s or longer (AWS's auto-pause
+ * page), which no budget inside 30 s covers. docs/runbooks/data-api.md says how to change it.
  */
 export const RESUME_BUDGET_MS = 18_000
 
@@ -39,8 +39,8 @@ const REASONS: Readonly<Record<string, DatabaseUnavailableReason>> = {
 
 /**
  * Why the database can't serve a call, read from the error or the first error in its cause chain that says; undefined
- * when the failure is something else. An error about the SQL itself ends the search, so that nothing under it, and no
- * text of its own, makes a failed statement look like a paused database.
+ * when the failure is something else. An error recognised as being about the SQL ends the search, so
+ * that neither its text, which can quote a row, nor anything under it makes it look like a paused database.
  */
 export function unavailableReason(error: unknown): DatabaseUnavailableReason | undefined {
     const seen = new Set<unknown>()
@@ -48,8 +48,8 @@ export function unavailableReason(error: unknown): DatabaseUnavailableReason | u
         seen.add(link)
         const reason = Object.hasOwn(REASONS, link.name) ? REASONS[link.name] : undefined
         if (reason) return reason
-        // "This exception is deprecated" (the API reference); an adopter's app treats one that says "is resuming" as a
-        // resume, and no AWS page confirms or denies it. A SQL error's text quotes rows, so it is never read for that.
+        // "This exception is deprecated" (the API reference); taken as a resume when it says "is resuming",
+        // which no AWS page confirms or denies. One recognised as a SQL error is not read: its text can quote a row.
         if (link.name === 'BadRequestException') {
             const aboutSql = /\bERROR:/.test(link.message) || isSqlError(link)
             return !aboutSql && /\bis resuming\b/i.test(link.message) ? 'resuming' : undefined

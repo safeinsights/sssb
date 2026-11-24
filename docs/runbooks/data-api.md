@@ -296,12 +296,14 @@ and the first request after that wakes it.
 paused for more than a day
 ([auto-pause](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2-auto-pause.html)).
 Measured on 2026-11-21, before this wait was reworked: the cluster resumed in 12 to 14 seconds, and the cold request
-took 26.0 seconds of the server's 30. A request makes one wait, however many calls it makes, unless it carries on after one has run out: the dialect polls with
-`SELECT 1` after 1, 2 and 4 seconds and then every second, and every call of the process waits on that one poll
-(`packages/kit/src/adapters/real/rds-data-resume.ts`).
+took 26.0 seconds of the server's 30. A request makes one wait, however many calls it makes, unless it carries on after
+one has run out or the database refuses again after answering the poll: the dialect polls with `SELECT 1` after 1, 2
+and 4 seconds and then every second, every call that waits shares that poll, and a call outside a transaction that is
+not yet sent waits for a known resume first (`packages/kit/src/adapters/real/rds-data-resume.ts`).
 
-**Setting the budget.** A call waits 18 seconds by default, then fails. `DATABASE_RESUME_BUDGET_MS` on the server changes
-it (a whole number of milliseconds, 0 to fail at once, at most 900000). On the app's `SssbApp` construct:
+**Setting the budget.** A call waits 18 seconds by default, then fails. `DATABASE_RESUME_BUDGET_MS` on the server
+changes it (a whole number of milliseconds, 0 to fail at once, at most 900000). In the app's `infra/app.ts`, with the
+construct kept (`const sssbApp = new SssbApp(...)`), before `app.synth()`:
 
 ```ts
 sssbApp.server.addEnvironment('DATABASE_RESUME_BUDGET_MS', '10000')
@@ -313,16 +315,17 @@ is what removes the wait. The migrator waits two minutes whatever the server is 
 **What an app sees.** `DatabaseUnavailableError` (`@sssb/kit/ports/errors`), whose `reason` is `resuming`, `throttled`,
 `timed-out` or `unavailable` and whose `cause` is AWS's own error. The starter's `withPortErrors`
 (`apps/starter/src/app/api/respond.ts`) answers it with a 503, `Retry-After: 5` and
-`{ error: 'database-unavailable', reason }`, and logs a warning. Let the browser repeat a GET by itself. Send a write
-again only when the person asks: a throttled or timed-out statement may have run. A page rendered on the server is not
-covered by `withPortErrors`: keep database calls out of what it needs for its first paint, or catch the error there.
+`{ error: 'database-unavailable', reason }`, and logs a warning. Let the browser repeat a GET by itself. Send a write again only when the person asks:
+treat a throttled or timed-out statement as if it may have run (AWS says a timed-out one is cancelled, and nothing of a
+throttled one). A page rendered on the server is not covered by `withPortErrors`: keep database calls out of what it
+needs for its first paint, or catch the error there.
 
 **Check it live.** Let the cluster pause, then:
 
-- Open a tenant-scoped screen, and record how long the request took. It must succeed, or answer a 503 that a second
-  request a few seconds later does not.
-- Read the RDS event log for the pause and the resume, and record the time between them, and the same for a cluster
-  paused for more than a day.
+- Open a tenant-scoped screen, and record how long its API request took. That request must succeed, or answer a 503
+  that a second one a few seconds later does not.
+- Read the RDS event log, and record the time between the resume's start and its end, and the same for a cluster paused
+  for more than a day.
 - Send `rds begin-transaction --database "$DB"` and `rds execute-statement --database "$DB" --sql "SELECT 1"` once a second
   while a fresh pause ends, recording each exception's name and message. The dialect takes `DatabaseResumingException`
   as cancelled, and sends a `BeginTransaction` again after a throttle too. Record whether a `BeginTransaction` ever

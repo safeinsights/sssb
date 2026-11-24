@@ -10,8 +10,8 @@ export async function withPortErrors(fn: () => Promise<Response>): Promise<Respo
         if (error instanceof NotFoundError) return Response.json({ error: 'not found' }, { status: 404 })
         if (error instanceof InvalidPayloadError) return Response.json({ error: 'invalid-payload' }, { status: 400 })
         if (error instanceof DatabaseUnavailableError) {
-            // Waking up or overloaded, not broken: logged, and the client may ask again. Repeat a GET by itself; a write
-            // may have happened, so let the person decide.
+            // It may serve soon (a paused database waking, say): logged, and the client may ask again. Repeat a GET by
+            // itself; a write may have happened, so let the person decide.
             console.warn(`database unavailable (${error.reason}): ${error.message}`)
             return Response.json(
                 { error: 'database-unavailable', reason: error.reason },

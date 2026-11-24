@@ -42,7 +42,7 @@ describe('the migrator handler (pg transport)', () => {
 })
 
 describe('the migrator handler (Data API transport)', () => {
-    test('waits longer for a paused cluster than the server does, whatever the server is set to', async () => {
+    test('waits two minutes for a paused cluster, whatever the server is set to', async () => {
         vi.stubEnv('DATABASE_TRANSPORT', 'data-api')
         vi.stubEnv('DATABASE_CLUSTER_ARN', 'cluster')
         vi.stubEnv('DATABASE_SECRET_ARN', 'secret')
