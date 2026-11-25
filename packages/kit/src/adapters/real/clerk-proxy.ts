@@ -1,6 +1,7 @@
 import { createPublicKey } from 'node:crypto'
 import { clerkMiddleware } from '@clerk/nextjs/server'
 import { NextRequest, type NextFetchEvent, type NextProxy } from 'next/server'
+import { clerkAuthorizedParties } from './clerk-authorized-parties'
 
 /**
  * Real mode's half of `withAuthProxy` (../proxy.ts): the app's proxy run inside Clerk's `clerkMiddleware`, which the
@@ -24,11 +25,18 @@ import { NextRequest, type NextFetchEvent, type NextProxy } from 'next/server'
  * - A session token whose key id Clerk has not cached, which makes Clerk fetch its signing keys. `CLERK_JWT_KEY` stops
  *   that: Clerk does not read it from the environment, so it is passed on here as `jwtKey`, and Clerk then verifies
  *   every session token locally.
+ *
+ * `CLERK_AUTHORIZED_PARTIES`, the app's own origins, is passed on as `authorizedParties` the same way (Clerk does not
+ * read it from the environment either), and refused at once if it is malformed (./clerk-authorized-parties.ts). With
+ * it, Clerk refuses a session token minted for any other origin, or naming none. This is the one place SSSB verifies a Clerk session
+ * token: the auth adapter's `auth()` and `currentUser()` (./auth.ts) read what this middleware decided, from the
+ * request headers it writes over any a client sent, and verify nothing again.
  */
 export function withClerk(
     proxy: NextProxy,
 ): (request: NextRequest, event: NextFetchEvent) => Promise<Response | null | undefined | void> {
     const jwtKey = clerkJwtKey(process.env['CLERK_JWT_KEY'])
+    const authorizedParties = clerkAuthorizedParties(process.env['CLERK_AUTHORIZED_PARTIES'])
     // Clerk hands its handler the request it was given, which may be the copy: the app's proxy gets the original. What
     // the handler learns (whether the app's proxy listed the headers to forward) decides whether Authorization is put
     // back.
@@ -41,7 +49,7 @@ export function withClerk(
             state.proxyListed = Boolean(response?.headers.get(OVERRIDE))
             return response
         },
-        jwtKey ? { jwtKey } : {},
+        { ...(jwtKey && { jwtKey }), ...(authorizedParties && { authorizedParties }) },
     )
     return async (request, event) => {
         const authorization = request.headers.get('authorization')

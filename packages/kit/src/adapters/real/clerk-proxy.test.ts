@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { NextRequest, NextResponse, type NextFetchEvent } from 'next/server'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 // Clerk's middleware, faked after @clerk/nextjs 7.10 (`clerkMiddleware`, and `decorateRequest` with
 // `setRequestHeadersOnNextResponse` in its server utils), with no network and no keys. It hands its handler the very
@@ -97,6 +97,12 @@ function serviceCall(path = '/api/service/jobs') {
         body: '{}',
     })
 }
+
+beforeEach(() => {
+    // The tests below set the Clerk settings they need; none comes from the shell running them.
+    vi.stubEnv('CLERK_JWT_KEY', undefined)
+    vi.stubEnv('CLERK_AUTHORIZED_PARTIES', undefined)
+})
 
 afterEach(() => {
     vi.unstubAllEnvs()
@@ -196,5 +202,24 @@ describe('withClerk', () => {
     ])('refuses a CLERK_JWT_KEY that is %s, rather than signing everyone out', (_kind, value) => {
         vi.stubEnv('CLERK_JWT_KEY', value)
         expect(() => withClerk(() => undefined)).toThrow(/CLERK_JWT_KEY is not a 2048-bit RSA public key/)
+    })
+
+    test('passes CLERK_AUTHORIZED_PARTIES on as authorizedParties, beside jwtKey, and nothing when it is unset', () => {
+        vi.stubEnv('CLERK_AUTHORIZED_PARTIES', 'https://app.example.org, https://preview.example.org')
+        withClerk(() => undefined)
+        vi.stubEnv('CLERK_JWT_KEY', pem)
+        withClerk(() => undefined)
+        vi.stubEnv('CLERK_AUTHORIZED_PARTIES', undefined)
+        withClerk(() => undefined)
+        const authorizedParties = ['https://app.example.org', 'https://preview.example.org']
+        expect(h.options).toEqual([{ authorizedParties }, { jwtKey: pem, authorizedParties }, { jwtKey: pem }])
+    })
+
+    test('refuses a malformed CLERK_AUTHORIZED_PARTIES when it loads, rather than turn the check off', () => {
+        vi.stubEnv('CLERK_AUTHORIZED_PARTIES', '')
+        expect(() => withClerk(() => undefined)).toThrow(/CLERK_AUTHORIZED_PARTIES: "" is empty/)
+        vi.stubEnv('CLERK_AUTHORIZED_PARTIES', 'https://app.example.org/')
+        expect(() => withClerk(() => undefined)).toThrow(/CLERK_AUTHORIZED_PARTIES: .* is not a bare origin/)
+        expect(h.options).toEqual([])
     })
 })
