@@ -92,7 +92,7 @@ export function assertRealEnv(): void {
     }
     if (problem) throw new CutoverPendingError(['auth-tenancy'], problem)
     // The origins Clerk accepts session tokens from, optional: Clerk's middleware refuses a malformed list when it loads
-    // (./clerk-proxy.ts), and the preflight refuses it here first.
+    // (./clerk-proxy.ts), and this refuses it too, so `sssb check-real-env` reports it before a deploy.
     try {
         clerkAuthorizedParties(process.env['CLERK_AUTHORIZED_PARTIES'])
     } catch (error) {

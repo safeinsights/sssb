@@ -49,7 +49,7 @@ function sessionToken(azp: string | undefined, key: Parameters<ReturnType<typeof
 /**
  * A page request coming back from Clerk's handshake: the `__clerk_handshake` query parameter, a token signed by the
  * instance whose `handshake` claim holds the cookies to set, the session token among them. Clerk verifies that session
- * token too, and it is the one it takes from somewhere other than the request's own session cookie.
+ * token too, though it comes from the query rather than the request's own session cookie.
  */
 function handshakeRequest(token: { token: string; iat: number }) {
     const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'ins_test' }))

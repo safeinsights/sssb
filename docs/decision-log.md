@@ -7460,21 +7460,25 @@ the instance signed passed, whatever its `azp` claim said. `CLERK_AUTHORIZED_PAR
 standing rule for these sessions: decide, and record the rejected alternative.
 
 - **What Clerk does with the list** (read in the installed @clerk/backend 3.29 and @clerk/nextjs 7.10).
-  `assertAuthorizedPartiesClaim` runs inside `verifyJwt`, after the signature check and before the expiry checks, on
-  every session token `authenticateRequest` verifies: the cookie's, the one a refresh returns, and the one a handshake
-  sets. With a non-empty list, a token whose `azp` is not exactly one of the strings is refused, and so is a token with
+  `assertAuthorizedPartiesClaim` (`@clerk/backend/dist/internal.js:795`) runs inside `verifyJwt` (`:1014`), after the
+  signature check and before the expiry checks, on every session token `authenticateRequest` verifies: the cookie's
+  (`:8303`), the one a refresh returns (`:8083`), and the one a handshake sets (`:7735`). With a non-empty list, a token whose `azp` is not exactly one of the strings is refused, and so is a token with
   no `azp` (`!azp`); unset, or `[]`, there is no check, and a token with no `azp` is accepted with a one-time warning
-  that a later Clerk will refuse it. The comparison is `Array.includes` on strings: no origin parsing, case folding or
-  slash trimming. A refusal is `token-invalid-authorized-parties`, which `handleSessionTokenError` answers with
-  signed-out and no handshake (only expiry-type reasons handshake), so a wrong list signs everyone out quietly rather
-  than looping. `clerkMiddleware` spreads its options into `authenticateRequest`'s, so the list reaches every path.
-  The test that drives Clerk's real middleware offline (`clerk-proxy.clerk.test.ts`) pins all of this for the session
-  cookie and for a handshake's token (refused, Clerk logs it and goes on with no session: signed out), but not the
-  refresh path, which needs Clerk's API (round-1 review asked for the handshake case).
+  that a later Clerk will refuse it (`:8307`). The comparison is `Array.includes` on strings: no origin parsing, case folding or
+  slash trimming. A refusal is `token-invalid-authorized-parties`, which `handleSessionTokenError` (`:8350`) answers
+  with signed-out and no handshake (only expiry-type reasons handshake), so a wrong list signs everyone out quietly rather
+  than looping. `clerkMiddleware` spreads its options into `authenticateRequest`'s
+  (`@clerk/nextjs/dist/esm/server/clerkMiddleware.js:79` and `:249`), so the list reaches every path.
+  The test that drives Clerk's real middleware offline (`clerk-proxy.clerk.test.ts`) pins, for the session cookie, the
+  refusal of an unlisted `azp`, of none and of the listed origin with a trailing slash, and the unset list accepting
+  all three; and the refusal of a handshake's token (Clerk logs it and goes on with no session: signed out). Dropping
+  `authorizedParties` from `withClerk`'s options turns those four tests red. The refresh path, which needs Clerk's API,
+  is read, not tested (round-1 review asked for the handshake case).
 - **One place verifies a Clerk session token: Clerk's middleware, in `withClerk`.** The auth adapter's `auth()` and
   `currentUser()` (`packages/kit/src/adapters/real/auth.ts`) read the middleware's verdict from the `x-clerk-auth-*`
-  request headers it writes over any a client sent, check the token header's HMAC against the secret key, and decode
-  the token without verifying it again (`getSessionAuthDataFromRequest`). Its other Clerk calls are Backend API calls
+  request headers it writes over any a client sent, check the token header's HMAC against the secret key
+  (`assertTokenSignature`, `@clerk/nextjs/dist/esm/server/utils.js:122`), and decode the token without verifying it
+  again (`getSessionAuthDataFromRequest`, `data/getAuthDataFromRequest.js:40`). Its other Clerk calls are Backend API calls
   with the secret key. So the list goes to the middleware alone. Machine tokens never reach Clerk (`withClerk` strips
   `Authorization`), so `azp` is about session tokens only.
 - **An environment value, not `params.auth`.** The origins differ per deployment (staging, production, each preview,

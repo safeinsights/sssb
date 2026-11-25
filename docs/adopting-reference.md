@@ -910,17 +910,19 @@ role `none` can still write what is theirs: accepting the terms records an audit
 notification preferences are stored there.
 
 **Name the origins whose session tokens your app accepts: `CLERK_AUTHORIZED_PARTIES`.** Every Clerk session token
-carries the origin it was minted for (its `azp` claim). Unset, your app accepts any token the instance signed, so a
-product sharing the instance, which holds its own users' tokens, could present them here. Set the server's
-`CLERK_AUTHORIZED_PARTIES` to your app's own origins, comma-separated (`https://app.example.org,https://staging.example.org`),
-and Clerk's middleware signs out a request whose token names any other origin, or none. It does not change who can
-sign in: a user of the other product who signs in on your app gets a token for your origin. It is per environment, so
-it lives in the environment, beside `CLERK_JWT_KEY`, not in `params.ts`. **A wrong list signs everyone out**, with no
-error page: Clerk compares exact strings, so list every origin each deployment is served from (its custom domain, its
-CloudFront host `<id>.cloudfront.net` while people use it, each preview host), each as the browser's `Origin` header
-names it (scheme, lower-case host and any port, with no path or trailing slash), and `http` only for `localhost`, `127.0.0.1` or `[::1]`. A malformed list (a path, a trailing slash, upper case, a
-wildcard, a duplicate, an empty entry or an empty value) fails the server's first request and `sssb check-real-env`,
-naming the entry; unset it to turn the check off. Verify it under cutover row `auth-dev`.
+carries the origin it was minted for (its `azp` claim: the `Origin` of the browser request that obtained it, per Clerk's
+session-token reference). Unset, your app accepts any token the instance signed, so a product sharing the instance,
+which holds its own users' tokens, could present them here. Set the server's `CLERK_AUTHORIZED_PARTIES` to your app's
+own origins, comma-separated (`https://app.example.org,https://staging.example.org`), and Clerk's middleware signs out a
+request whose token names any other origin, or none. It does not change who can sign in: a user of the other product who
+signs in on your app gets a token for your origin. It is per environment, so it lives in the environment, beside
+`CLERK_JWT_KEY`, not in `params.ts`. **A wrong list signs everyone out**, with no error page: Clerk compares exact
+strings, so list every origin each deployment is served from (its custom domain, its CloudFront host
+`<id>.cloudfront.net` while people use it, each preview host), each as the browser's `Origin` header names it (scheme,
+lower-case host and any port, with no path or trailing slash), and `http` only for `localhost`, `127.0.0.1` or `[::1]`.
+A malformed list (a path, a trailing slash, upper case, a wildcard, a duplicate, an empty entry or an empty value) fails
+every request the server answers, and `sssb check-real-env`, naming the entry; unset it to turn the check off. Verify it
+under cutover row `auth-dev`.
 
 The same settings run in `pnpm dev` when your dev environment sets `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and their slugs:
 the simulated world then places its seeded people the same way. With a single tenancy, seed them in that tenant; with a

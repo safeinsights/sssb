@@ -28,9 +28,9 @@ import { clerkAuthorizedParties } from './clerk-authorized-parties'
  *
  * `CLERK_AUTHORIZED_PARTIES`, the app's own origins, is passed on as `authorizedParties` the same way (Clerk does not
  * read it from the environment either), and refused at once if it is malformed (./clerk-authorized-parties.ts). With
- * it, Clerk refuses a session token minted for any other origin, or naming none. This is the one place SSSB verifies a Clerk session
- * token: the auth adapter's `auth()` and `currentUser()` (./auth.ts) read what this middleware decided, from the
- * request headers it writes over any a client sent, and verify nothing again.
+ * it, Clerk refuses a session token minted for any other origin, or naming none. This is the one place SSSB verifies a
+ * Clerk session token: the auth adapter's `auth()` and `currentUser()` (./auth.ts) read what this middleware decided,
+ * from the request headers it writes over any a client sent, and do not verify the token again.
  */
 export function withClerk(
     proxy: NextProxy,
