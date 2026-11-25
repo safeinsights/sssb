@@ -44,7 +44,6 @@ export default async function SignInPage({
             password: t('passwordLabel'),
             submit: t('signInButton'),
             genericError: t('signInError'),
-            mfaNotImplemented: t('mfaNotImplemented'),
         }
         return <SignInScreen body={<RealSignInForm returnTo={target} labels={labels} />} />
     }

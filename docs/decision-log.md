@@ -7451,3 +7451,141 @@ first two characters of a one-word name), so `Ana (Bea) Cruz` showed `A(`. `User
   `ReactNode`.
 - `ß` uppercases to `SS`, the language's own `toUpperCase`; a letter outside the BMP is kept whole (`Array.from`),
   which the unit test pins.
+
+## Signing in with an enrolled second factor (2026-11-25, `feat/second-factor-sign-in`)
+
+`safeinsights/sssb#186`: the real sign-in form met Clerk's `needs_second_factor` with a message that it was not built, so
+an instance that requires a second factor could not use the form. What Clerk offers was read from `@clerk/nextjs` 7.10.0's types
+and from clerk-js's source (clerk/javascript, `SignIn.ts`, read that day; clerk-js itself is loaded from Clerk, not
+installed). Nothing here has run against a real instance (`auth-dev`).
+
+- **Four kinds of code: authenticator app, text message, email, backup code.** The sent ones cost two calls that take no
+  argument (`mfa.sendPhoneCode`, `mfa.sendEmailCode`), so they are in. Rejected: TOTP and backup codes alone, which would
+  leave out an account whose only code is a sent one.
+- **Passkeys and emailed links are left out.** A passkey is a WebAuthn ceremony with no code to type, and an emailed link
+  needs a landing page that tells the waiting tab. An account that offers only those gets the unsupported message on
+  the password step; one that also offers a code gets the code. `safeinsights/sssb#195` has them.
+- **Device trust is the same step.** `needs_client_trust` is answered by the same `signIn.mfa` calls, so it shows the same
+  step with a lead of its own. Rejected: the unsupported message, which would shut out every person on a new browser
+  wherever an instance has the check on.
+- **Every other status has a rule.** `needs_identifier` and `needs_first_factor` (Clerk did not take the password) are the
+  generic error, as before. Anything else, a status a later Clerk adds included, is the unsupported message, which says to
+  ask whoever manages the account: the generic error told people with the right password to check it. Only `complete`
+  reaches `finalize`, on the password step and the code step alike.
+- **Clerk's order, with backup codes last.** The issue says to preselect the first factor the provider reports. A backup
+  code is spent by use, so it is never preselected while the account offers another. Rejected: the order of Clerk's own
+  UI (a passkey, then an authenticator, then a phone: `determineStartingSignInSecondFactor` in clerk/javascript), which the
+  issue did not ask for.
+- **One choice per kind, naming Clerk's first number or address.** `sendPhoneCode` and `sendEmailCode` send to the first the
+  attempt lists and take no id, so a second number could be shown but not used. Rejected: the older `prepareSecondFactor`,
+  which takes an id but is not the signals API the form is written in.
+- **The step opens by sending, then waits 30 seconds between sends of a kind.** Going to another factor and back inside that sends
+  nothing. A send that failed has no wait. Clerk's own rate limit is what protects the number; the cooldown saves a
+  person from pressing twice.
+- **One error for a refused, expired or rate-limited code, a thrown call and a failed `finalize`**, with every choice and the way
+  back still open. Rejected: telling them apart, as the password step does not either.
+- **A `finalize` that fails after the code was accepted is retried without verifying again**: the code is spent, so verifying
+  would refuse it for ever. Only once Clerk accepted the step's code, and only while the attempt is complete. Rejected:
+  finalizing any complete attempt, which would let a refused code stand in for an accepted one.
+- **The step keeps the attempt its password opened** and makes every call on it, never on the hook's `signIn`, which a client
+  update replaces: another tab's sign-in, a code sent before the person went back, or the empty attempt a `finalize` that
+  fails half-way leaves. Rejected: the hook's object with the attempt's id checked against it, which a review round showed
+  verifying the spent code against the empty attempt. A password submitted before clerk-js has loaded holds the
+  hook's placeholder instead, which follows the hook, so there that case is still open and the way out is back. There a dropped password also counts as taken, so the form acts on
+  an attempt the client already held (no factor is skipped: Clerk verifies it). Recorded, with a session that a failed
+  `finalize` leaves after the person goes back, as `safeinsights/sssb#198`.
+- **A password or a sent code Clerk never answered is an error.** Where clerk-js takes the browser to be offline (or not a
+  browser: its test includes the user agent, so some in-app browsers fail it) it drops a failed request and answers no
+  error. So a call is taken when it answers no error and anything about the attempt changed: its id, its status, its
+  verification object, or that object's status, strategy or expiry. A first
+  password moves the status, so a build that stopped rebuilding the verification could not refuse it; a later one, at the
+  same status, is told by the new attempt's id (which Clerk's server assigns; not seen live) or by the verification. A
+  sent code moves neither. If it worked and the check missed it, the person reads that it could not be sent, and can still
+  enter it: verifying does not ask the check. Rejected: the verification object alone, which made every
+  sign-in depend on it. Rejected: `navigator.onLine`, which is only part of clerk-js's test.
+- **The verification was read in the builds, not only the source.** `@clerk/nextjs` 7.10.0 loads clerk-js by major: `versionSelector` in
+  `@clerk/shared` 4.45.1 answers `6`, its package version 6.43.1's major. From npm, `dist/clerk.browser.js` of 6.0.0,
+  6.43.1 and 6.47.0 (npm's `latest` on 2026-11-25): in each, `SignIn.fromJSON` sets `id` and `status` and makes a
+  new second-factor verification object from every response that has data, `_baseMutate` (which the password and the code calls go
+  through) calls it, the hook's `secondFactorVerification` reads the resource's, `password` posts to the collection, and a
+  failed request the browser test calls offline returns null with no error. Which 6.x Clerk serves is Clerk's to say.
+- **The second click of a double click is ignored on the choices and the way back** (500 ms): the buttons move under the pointer when
+  a factor is chosen, and the next one could send a text or drop the attempt. Rejected: every factor always listed, the
+  chosen one included, which puts as many buttons as factors between the person and the field.
+- **The step is a framework component that knows no vendor**, `SecondFactorStep`, with callbacks for sending and verifying, as
+  `AccountRefused` is under its real form. That is what makes it a Ladle story and lets a client-side auth port
+  (`safeinsights/sssb#102`) render it unchanged. It reads the catalog itself rather than take `labels`: twenty more
+  required labels would break every adopter's sign-in page to say what the framework already says. It is not exported;
+  nothing outside the kit renders it.
+- **`mfaNotImplemented` is gone from `SignInLabels` and the catalog**, so an adopter's page drops one line. Rejected: keeping the key as
+  the unsupported message, under a name that says the opposite.
+- **No twin in the static demo or simulated mode.** Both sign in by picking a person, with no password for a second step to follow;
+  a step there would accept anything and show a security check that checks nothing. The story is where it is seen.
+  `safeinsights/sssb#102` wants demo twins for enrollment, which has state to show.
+- **`axe-core` is a development dependency of the repository**, for the step's own accessibility test. The e2e sweep
+  reaches only pages simulated mode serves, and this is not one. Colour contrast needs a layout engine and is not in it, so
+  it was run once by hand in Chromium, on Mantine's default colours with a primary shade of 8: it found the code in Mantine's error red too pale, which
+  the step now overrides.
+- **Not done: the accept-invite form.** Its ticket sign-in for an existing account meets the same statuses and still ends in its generic
+  error (`safeinsights/sssb#194`).
+
+## Authorized parties for Clerk session tokens (2026-11-25, `feat/clerk-authorized-parties`)
+
+`safeinsights/sssb#185`: a deployment could not name the origins whose Clerk session tokens it accepts, so any token
+the instance signed passed, whatever its `azp` claim said. `CLERK_AUTHORIZED_PARTIES` now reaches Clerk's middleware as
+`authorizedParties` (`packages/kit/src/adapters/real/clerk-authorized-parties.ts`, read in `clerk-proxy.ts`). JP's
+standing rule for these sessions: decide, and record the rejected alternative.
+
+- **What Clerk does with the list** (read in the installed @clerk/backend 3.29 and @clerk/nextjs 7.10).
+  `assertAuthorizedPartiesClaim` (`@clerk/backend/dist/internal.js:795`) runs inside `verifyJwt` (`:1014`), after the
+  signature check and before the expiry checks, on every session token `authenticateRequest` verifies: the cookie's
+  (`:8303`), the one a refresh returns (`:8083`), and the one a handshake sets (`:7735`). With a non-empty list, a token whose `azp` is not exactly one of the strings is refused, and so is a token with
+  no `azp` (`!azp`); unset, or `[]`, there is no check, and a token with no `azp` is accepted with a one-time warning
+  that a later Clerk will refuse it (`:8307`). The comparison is `Array.includes` on strings: no origin parsing, case folding or
+  slash trimming. A refusal is `token-invalid-authorized-parties`, which `handleSessionTokenError` (`:8350`) answers
+  with signed-out and no handshake (only expiry-type reasons handshake), so a wrong list signs everyone out quietly rather
+  than looping. `clerkMiddleware` spreads its options into `authenticateRequest`'s
+  (`@clerk/nextjs/dist/esm/server/clerkMiddleware.js:79` and `:249`), so the list reaches every path.
+  The test that drives Clerk's real middleware offline (`clerk-proxy.clerk.test.ts`) pins, for the session cookie, the
+  refusal of an unlisted `azp`, of none and of the listed origin with a trailing slash, and the unset list accepting
+  all three; and the refusal of a handshake's token (Clerk logs it and goes on with no session: signed out). Dropping
+  `authorizedParties` from `withClerk`'s options turns those four tests red. The refresh path, which needs Clerk's API,
+  is read, not tested (round-1 review asked for the handshake case).
+- **One place verifies a Clerk session token: Clerk's middleware, in `withClerk`.** The auth adapter's `auth()` and
+  `currentUser()` (`packages/kit/src/adapters/real/auth.ts`) read the middleware's verdict from the `x-clerk-auth-*`
+  request headers it writes over any a client sent, check the token header's HMAC against the secret key
+  (`assertTokenSignature`, `@clerk/nextjs/dist/esm/server/utils.js:122`), and decode the token without verifying it
+  again (`getSessionAuthDataFromRequest`, `data/getAuthDataFromRequest.js:40`). Its other Clerk calls are Backend API calls
+  with the secret key. So the list goes to the middleware alone. Machine tokens never reach Clerk (`withClerk` strips
+  `Authorization`), so `azp` is about session tokens only.
+- **An environment value, not `params.auth`.** The origins differ per deployment (staging, production, each preview,
+  the CloudFront host that exists only once deployed), and `params.ts` holds one value per app. Clerk's other values
+  (`CLERK_SECRET_KEY`, `CLERK_JWT_KEY`) are set in the server's environment by the operator, not by `SssbApp`. Rejected:
+  **`params.auth.authorizedParties`**, which would need a per-environment shape `params.ts` does not have, a key in
+  both apps' params, and `SssbApp` plumbing; and having `SssbApp` fill in its own distribution's host, which the
+  server's environment cannot name without a dependency cycle (the distribution's origin is the server's URL).
+- **Every entry must be exactly its own origin** (`new URL(entry).origin === entry`), `https`, or `http` for the
+  loopback hosts `localhost`, `127.0.0.1` and `[::1]`; a wildcard, a duplicate and an empty entry are refused, and the error names each bad entry and,
+  where it parses, the origin to write instead. Since Clerk compares strings, any other form would match nothing and
+  sign everyone out. Rejected: **normalising** an entry (lower-casing, dropping a slash or path), which would hide that
+  the value written is not what Clerk compares, and would accept a path that may mean someone listed a page rather than
+  a site. Rejected: **`http` for `localhost` alone** (the first cut), which refused a developer serving `dev:real` on
+  `127.0.0.1` or `[::1]`, whose `azp` Clerk would match (round-1 review); and **`http` for any `*.localhost`**, which
+  no SSSB command serves.
+- **An empty value fails, unlike `CLERK_JWT_KEY`'s.** An empty `CLERK_JWT_KEY` means unset, and unset costs a Clerk
+  request at worst. An empty list turns a security check off (Clerk treats `[]` as no check), and an empty value usually
+  comes from a template whose input went missing. So the only way to turn the check off is to unset the variable.
+  Rejected: **treating `''` as unset**, which fails open on exactly that mistake.
+- **Refused in two places, with the same function**: when `withClerk` loads (the first real request, as
+  `CLERK_JWT_KEY`; `withAuthProxy` forgets a failed load, so every request fails until it is fixed), and in
+  `assertRealEnv`, as a `CutoverPendingError` naming row `auth-dev`, so `sssb check-real-env` reports it before a
+  deploy and `createRealPorts` at boot. Optional: not in `REQUIRED_ENV`, so the required-environment snapshot is
+  unchanged.
+- **No warning when real mode has no list.** `sssb doctor` reads the workspace and the conformance suite runs in unit
+  tests; neither sees a deployment's environment, so neither can tell. `sssb check-real-env` can, but has no warning
+  channel today; that is `safeinsights/sssb#192`. Rejected: **a log line on every real boot without the list**,
+  noise for a deployment on an instance of its own, where the list adds little.
+- **Documented in the adopting reference, not the app guide**: it is an optional per-deployment setting, not a rule
+  every app follows. The cutover checklist's `auth-dev` row gains one sentence (a sibling change edits the same row).
+- **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
+  that does not set it.
