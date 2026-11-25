@@ -196,12 +196,13 @@ describe('RealSignInForm', () => {
         },
     )
 
-    it('shows no old error while it tries again', async () => {
+    it('shows no old error while it tries again, and takes no second submit', async () => {
         signIn.password.mockResolvedValueOnce(refused)
         await submit('/en/dashboard')
         signIn.password.mockReturnValueOnce(new Promise(() => {}))
         await submitForm()
         expect(alertText()).toBeUndefined()
+        expect(container.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled).toBe(true)
     })
 
     it.each(['needs_identifier', 'needs_first_factor'])('shows the generic error at %s', async (status) => {
