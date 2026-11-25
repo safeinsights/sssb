@@ -18,7 +18,7 @@ export const RESEND_COOLDOWN_SECONDS = 30
 /** Milliseconds on a clock that a change of the date or time does not move. */
 const clock = () => performance.now()
 
-/** The second click of a double click: the buttons move under the pointer as a factor is chosen. */
+/** How soon after a choice a click is the second of a double click: choosing a factor moves the buttons. */
 const DOUBLE_CLICK_MS = 500
 
 /** A long address, or a longer language, wraps at phone width rather than being cut off. */
@@ -41,8 +41,8 @@ const COPY = {
  *   `RESEND_COOLDOWN_SECONDS` have passed since the last one that went.
  * - `onVerify` answers whether the caller took it from here: `true` keeps the spinner (the page is navigating, or the
  *   caller replaces this step), and `false`, or a rejection, shows the one generic error and leaves the person here
- *   with every choice still open. A refused, expired or rate-limited code all read the same on purpose.
- * - `onBack` returns to the password, always offered but while a code is being verified.
+ *   with every choice still open. A refused, expired or rate-limited code all read the same.
+ * - `onBack` returns to the password, offered whenever no code is being verified or has been taken.
  *
  * Opening the step moves focus to its code field, inside a group named and described by the heading and the lead, so a
  * screen reader hears the step change; a code's sending is told through a status region and an error as an alert.

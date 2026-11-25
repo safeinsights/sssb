@@ -7481,11 +7481,24 @@ installed). Nothing here has run against a real instance (`auth-dev`).
 - **The step opens by sending, then waits 30 seconds between sends of a kind.** Going to another factor and back inside that sends
   nothing. A send that failed has no wait. Clerk's own rate limit is what protects the number; the cooldown saves a
   person from pressing twice.
-- **One error for a refused, expired or rate-limited code and for a thrown call**, with every choice and the way back still open.
-  Rejected: telling them apart, which tells someone guessing codes which guesses were close.
+- **One error for a refused, expired or rate-limited code, a thrown call and a failed `finalize`**, with every choice and the way
+  back still open. Rejected: telling them apart, as the password step does not either.
 - **A `finalize` that fails after the code was accepted is retried without verifying again**: the code is spent, so verifying
-  would refuse it for ever. Only for the attempt whose code Clerk accepted (by its id), and only while Clerk still calls that
-  attempt complete. Rejected: finalizing any complete attempt, which would let a code not yet checked stand in for one.
+  would refuse it for ever. Only once Clerk accepted the step's code, and only while the attempt is complete. Rejected:
+  finalizing any complete attempt, which would let a refused code stand in for an accepted one.
+- **The step keeps the attempt its password opened** and makes every call on it, never on the hook's `signIn`, which a client
+  update replaces: another tab's sign-in, a code sent before the person went back, or the empty attempt a `finalize` that
+  fails half-way leaves. Rejected: the hook's object with the attempt's id checked against it, which a review round showed
+  verifying the spent code against the empty attempt. A password submitted before clerk-js has loaded holds the
+  hook's placeholder instead, which follows the hook, so there that case is still open and the way out is back.
+- **A password or a sent code Clerk never answered is an error.** Where clerk-js takes the browser to be offline (or not a
+  browser: its test includes the user agent, so some in-app browsers fail it) it drops a failed request and answers no
+  error. Each answer rebuilds the attempt's verification object, so one that is unchanged means none came. Rejected:
+  `navigator.onLine`, which is only part of clerk-js's test. If a later clerk-js stopped rebuilding it, every password would
+  be refused, which the first live sign-in shows.
+- **The second click of a double click is ignored on the choices and the way back** (500 ms): the buttons move under the pointer when
+  a factor is chosen, and the next one could send a text or drop the attempt. Rejected: every factor always listed, the
+  chosen one included, which puts as many buttons as factors between the person and the field.
 - **The step is a framework component that knows no vendor**, `SecondFactorStep`, with callbacks for sending and verifying, as
   `AccountRefused` is under its real form. That is what makes it a Ladle story and lets a client-side auth port
   (`safeinsights/sssb#102`) render it unchanged. It reads the catalog itself rather than take `labels`: twenty more

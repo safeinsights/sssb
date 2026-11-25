@@ -163,9 +163,10 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
 /** What the code step answers, and the factors the account offered for it when the step opened. */
 interface Step {
     /**
-     * The attempt the password opened, which every call of the step is made on. Never the hook's `signIn`, which a
-     * client update can replace: another tab's attempt, a code sent before the person went back, or the empty attempt
-     * `finalize` leaves when it fails half-way.
+     * The attempt the password opened, which every call of the step is made on, rather than the hook's current `signIn`,
+     * which a client update can replace: another tab's attempt, a code sent before the person went back, or the empty
+     * attempt `finalize` can leave when it fails half-way. (A password submitted before clerk-js has loaded is the
+     * exception: what the hook answers then is a placeholder that follows its current attempt.)
      */
     attempt: SignIn
     status: 'needs_second_factor' | 'needs_client_trust'
