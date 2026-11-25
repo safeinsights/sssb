@@ -2388,3 +2388,41 @@ test that loads it (`packages/cdk/src/sssb-app.test.js`, "every Node.js Lambda S
 against that very bundle: Vitest runs an `import()` through its own module runner, which supplies a `require` that
 plain Node does not. Loading in a child `node` (`spawnSync(process.execPath, ['--input-type=module', '-e', …])`) went
 red at once. A test that claims "it loads in Node" has to load it in Node.
+
+## The first live run of four cutover rows (2026-11-21, SSSB 0.6.1, `docs/live-proofs-0-6-1`)
+
+An adopter ran SSSB 0.6.1 in its own sandbox: a `SssbApp` stack on the Data API transport, no VPC, an Aurora Serverless v2
+database, and a Clerk sandbox instance shared with other uses. It reported four rows of `docs/cutover-checklist.md` as
+passing. This records what ran live and what is still held by tests alone. It closes no row: each adopter closes its own
+(and `data-api` is still open until its runbook has run end to end).
+
+- **`deploy-pipeline`: the first deploy and the Migrator, on the Data API shape.** `cdk deploy` of the stack succeeded, and
+  the Migrator, invoked on an empty database, returned `{"ok":true}` with the framework's migrations (through 0017) and the app's 1001-1005 applied. So the Migrator bundle loads in Lambda and migrates over the Data API: until now only
+  `packages/cdk/src/sssb-app.test.js:1642` showed that it loads. **Not reported:** the `pg` network shape's first migration, a PR preview
+  and its teardown, `Content-Type` of uploaded static files, and a stack outside us-east-1
+  ([safeinsights/sssb#133](https://github.com/safeinsights/sssb/issues/133)).
+- **`data-api`: the server, the Migrator, the app's own provisioning Lambda and the scheduled tick all ran over the Data
+  API.** Provisioning wrote a tenant, its home org and a `job_schedules` row, and ran `SET LOCAL ROLE app_user` (and the
+  app's own role) inside a transaction; the tick returned `{ok:true, spawned:1}` and the in-process job ran to completion.
+  This is the transport's first run outside its emulator, including the paused-cluster resume, and it is a report, not the
+  row's runbook: nothing here says the runbook's step-by-step reads (the refused result types, the wire format, a unique
+  violation's error format, `db-role-not-superuser` on the secret's user) were run one by one. The cold-start cost is below.
+- **`auth-tenancy`: `AUTH_TENANCY=single` ran against a real Clerk instance.** A real user with no tenant metadata signed
+  in and was placed in the tenant, and an app route answered with the role the app's own bootstrap rule gives. **Not run
+  live:** a user whose metadata names another tenant (the adopter knew of none), so the refusal view and its
+  sign-out are proven by tests only. The `multi` default, `getCurrentUser`'s read count against Clerk's rate limits
+  and the decision the row asks for about a Clerk instance shared with another product (its users are placed in the home org) were not reported either.
+- **`auth-dev`: `AUTH_ORG_SOURCE=fixed` with `AUTH_DEFAULT_ROLE=none` ran against a real Clerk instance.** The same user,
+  with no Clerk organization membership, signed in, landed on the dashboard, and acted through the app's own rules (a
+  publish, a user lookup, and an approved sign-in of another kind of client whose token then published and was revoked); the header named the
+  tenant slug. The cutover row said `withAuthProxy` had never run against a real instance; this run took signed-in requests through it, a page and an app route. Whether Clerk's handshake redirect fired was not recorded.
+  **Not run live:** a second user the app's rules refuse (the adopter had one test user), so a person with the role `none` being
+  refused is proven by tests only. Nothing in the report covers `CLERK_JWT_KEY`, the accept-invite round trip,
+  `listMembers`' `Membership.id`, `getMember` or the auth port's contract suite against the real provider.
+
+**A cold first request took 26.0 s on Aurora at minimum capacity 0 ACU**, the cluster itself resuming in 12-14 s, which
+is 2.3 s short of `SssbApp`'s 30 s server timeout. The dialect retries `DatabaseResumingException` after 1, 2, 4 and 8 s and
+each call backs off on its own (`call` in `packages/kit/src/adapters/real/rds-data-dialect.ts`), so a request that makes more than one call in the cold window can run out of time.
+It is filed as [safeinsights/sssb#183](https://github.com/safeinsights/sssb/issues/183), which also holds what the
+runbook and the `data-api` row should say about it. Until it lands, an app that scales to zero keeps database calls out of
+its first paint, as this adopter did (no call before first paint, one after).

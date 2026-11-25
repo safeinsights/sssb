@@ -7362,3 +7362,92 @@ passed.
   queries are the app's, which the changeset tells adopters.
 - **The live proof is the `data-api` cutover row's smoke run**: the Migrator on an empty database, and the runbook's
   reads of the refused types (`docs/runbooks/data-api.md`, step 3).
+
+## One wait for a paused cluster, and a typed error after it (2026-11-24, `fix/data-api-resume`)
+
+safeinsights/sssb#183: a cold Data API request could spend most of the server's 30 seconds waiting for a paused cluster,
+and a resume or a throttle the dialect did not wait out reached the app as an AWS error name.
+
+- **What AWS says about each error, and so what is sent again.** `DatabaseResumingException`: "A request was cancelled
+  because the Aurora Serverless DB instance was paused [...] Wait a few seconds and try again"
+  ([ExecuteStatement](https://docs.aws.amazon.com/rdsdataservice/latest/APIReference/API_ExecuteStatement.html), read
+  2026-11-24), so it did not run. `ThrottlingException` is in none of the error lists of ExecuteStatement,
+  BeginTransaction and CommitTransaction, and neither the troubleshooting page nor the limitations page mentions
+  throttling. The [SDK guide](https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html) says in
+  general that a throttled request was "actively rejected", but says nothing of whether this service's throttle
+  precedes the statement. (An adopter reported, 2026-11-24, that its log showed the throttle while a cluster woke, as
+  "The request was throttled because of insufficient resources on the database", and that its app also takes a
+  `BadRequestException` saying "is resuming" as a resume. Nothing was run against AWS to check either.) A
+  `BadRequestException` is only "an error in the call or in a SQL statement", deprecated; no page read ties it to a
+  resume. `StatementTimeoutException`: the
+  [timeouts page](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/data-api-timeouts.html) says an operation over 45
+  seconds is cancelled and its data not inserted, and warns that retrying one whose SDK call timed out "might insert
+  duplicate data", so it is not sent again. A statement is therefore sent again after `DatabaseResumingException`
+  alone, and only when it is the error itself: one found in a cause chain may belong to an earlier attempt under a
+  later error. Rejected: retrying a throttled statement on the SDK guide's sentence, which a write would pay for if it
+  is wrong.
+- **`BeginTransaction` is sent again after a throttle or a `BadRequestException` that says resuming as well.** It runs no
+  statement, so this needs no promise from AWS: at worst an empty transaction stays open until its three idle minutes
+  end. `withTenant` and the describe step both open with one, so a request that starts with either is covered. Rejected:
+  only while this process knows of a resume, which leaves a second cold process, whose first answer is the throttle, with
+  an immediate failure. The cost is that a throttle for real load also waits, one probe a second for the process. It
+  holds up only the calls that were throttled: a call not yet sent waits only once the database has said it is resuming.
+- **In a transaction, only until a statement has succeeded in it.** A cluster with an open connection does not pause
+  (AWS's auto-pause page), so a resume answered after that means the session, and the transaction's work, is gone:
+  nothing is left to go on with, and a resend would at best fail. A transaction's first statement is still resent, since
+  nothing documents that a begun transaction has reached the database. Commits and rollbacks are never sent again;
+  CommitTransaction does not list the exception. A rollback answered with a resume
+  counts as done, so it does not replace the error that caused it.
+- **The wait polls with `SELECT 1`, not with the waiting call.** Safe to repeat after any failure, so a throttle during
+  the poll is part of the resume, and a write is sent before it and after it, not during. It ends when nobody waits, so a
+  wait that failed holds no later call. A probe that has not answered in 2 s is left behind and the next one sent (the SDK's
+  client has no request timeout, and one dead connection would otherwise hold every call that joined, database up or not);
+  if it answers late, that still ends the wait. Rejected: a request timeout on the SDK's client, which would cut off
+  statements too. Rejected: the first caller's own command as the probe, which cannot go on past
+  a throttle when it is a statement. Rejected: `BeginTransaction` as the probe, which leaves a transaction to roll back
+  and, if it does not reach the database, reports a resume that has not happened.
+- **After 1, 2 and 4 seconds, a probe every second.** The issue proposed keeping the 8 s step and polling after it. The
+  measured resumes took 12 to 14 s, which fall inside that step and would still be seen at 15, so it is gone.
+- **The default budget is 18 seconds per call.** The measured cold request took 26 s; the 12 to 14 s resume was seen at
+  15 on the old schedule, so about 11 s went elsewhere. 18 leaves 12 under the server's 30 and covers AWS's
+  "approximately 15 seconds". A Lambda's init (1.7 s there) is billed but comes before the invoke phase the timeout
+  limits. Rejected: 25 s, to reach further into the 30 s or longer of a day's pause, which no budget inside the timeout
+  covers, at the price of a Lambda timeout instead of an answer. Each call has its own deadline, so a call that joins
+  late is not failed by one that joined early. The migrator waits 120 s: nobody is waiting on it and its Lambda has
+  five minutes.
+- **`DATABASE_RESUME_BUDGET_MS` sets it, checked at boot.** The app never builds the dialect, so a config option alone
+  could not be reached. Rejected: a key in `params.database`, which would make every app's `config/params.ts` carry it
+  (both hold the same keys) and the construct set it, for a number most deployments leave alone.
+- **`DatabaseUnavailableError` is a port error (`@sssb/kit/ports/errors`),** beside the ones `withPortErrors` maps, with a
+  `reason` in no vendor's words and AWS's error as its `cause`. Rejected: a kind on `RdsDataDatabaseError`, which no
+  published subpath exports and whose `code` means a SQLSTATE. It replaces the thrown error for the two AWS names it
+  adds, `DatabaseUnavailableException` and `ServiceUnavailableError`, as well as the resume, the throttle and the
+  timeout, so an app that matched the thrown error's `name` (not its cause's) must change: hence the minor. Rejected: a
+  flag saying whether the work may have run. One request makes many calls, so it could not speak for the request.
+- **Both apps' `withPortErrors` answers it with a 503, `Retry-After: 5` and a logged warning.** That function is the
+  app's, so an adopter applies it by hand (its own changeset). Five seconds because, after a resume, a client that asks
+  again joins or starts a wait anyway.
+- **`normalizeDatabaseError` is unchanged**, and the text of an error recognised as SQL (`ERROR:`, a SQLSTATE, or a
+  Postgres message it knows) is never read for "is resuming": Postgres quotes row text in it.
+
+## Avatar initials are the first and last letter-words (2026-11-24, `fix/avatar-initials`)
+
+`safeinsights/sssb#182`: Mantine's `Avatar` `name` prop shows the first character of each of the first two words (the
+first two characters of a one-word name), so `Ana (Bea) Cruz` showed `A(`. `UserMenu` and `PreviewRow` now pass the `Avatar` children from
+`avatarInitials(name, fallback)` (`packages/kit/src/components/auth/initials.ts`).
+
+- **The rule**: the first letter of the first and the last word that starts with a letter (`\p{L}`), uppercased; one
+  such word gives one letter. Rejected: the first two letter-words (`AB`), which shows a middle name where a surname
+  belongs and differs from the rule an adopter already uses. Rejected: Mantine's own rule with punctuation stripped, which
+  would keep the first two words, not the last.
+- **No letter-word falls back to the first letter, or digit, of the `fallback`**: the email in the user menu, the title
+  in `PreviewRow` where a caller names none (a team called `3M` shows `3`, not an icon). With neither, the children are
+  empty and `Avatar` draws its placeholder icon. Rejected: the email's first character whatever it is, which would show
+  `.` or `_` for an address that opens with one.
+- **Not exported.** `PreviewRow` is internal, `UserMenu` and `OrgSwitcher` are the screens that show initials, and an
+  app's own avatar is one `Avatar` with its own children. An `exports` entry is a promise, and nothing asks for one; it
+  takes an entry and a changeset of Kind `seam` the day an app's screen needs it. Rejected: exporting now.
+- **A new `fallback` prop on `PreviewRow`** (optional, internal). Rejected: reading the email out of `subtitle`, a
+  `ReactNode`.
+- `ß` uppercases to `SS`, the language's own `toUpperCase`; a letter outside the BMP is kept whole (`Array.from`),
+  which the unit test pins.

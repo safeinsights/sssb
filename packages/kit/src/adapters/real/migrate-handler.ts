@@ -2,6 +2,9 @@ import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-sec
 import { databaseTransport } from './database-transport'
 import { createRealDb } from './db'
 
+/** How long the migrator waits for a paused cluster: no user is waiting, and its Lambda has five minutes (SssbApp). */
+const MIGRATOR_RESUME_BUDGET_MS = 120_000
+
 /**
  * Migrator Lambda handler (ADR-0001): runs the same migration registry the app, unit tests, and
  * contract tests use. Invoked by the CD pipeline before each release shifts traffic.
@@ -36,6 +39,7 @@ export async function handler(): Promise<{ ok: true }> {
             resourceArn: DATABASE_CLUSTER_ARN,
             secretArn: DATABASE_SECRET_ARN,
             database: DATABASE_NAME,
+            resumeBudgetMs: MIGRATOR_RESUME_BUDGET_MS,
         })
         await db.migrateToLatest()
         return { ok: true }

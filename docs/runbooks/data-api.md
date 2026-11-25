@@ -286,5 +286,50 @@ refuses a multistatement itself before calling; the third request checks the emu
 - Sign in and use a tenant-scoped screen. Then sign in as a member of the second tenant and confirm none
   of the first tenant's rows appear. The database the first bullet migrated starts with no tenants (no
   migration creates one): give it two, each with a member, and rows for the first, before this check.
-- Let a Serverless v2 cluster with minimum capacity 0 pause. The next request must still succeed, after
-  the dialect's `DatabaseResumingException` retries, and the logs should show the retry.
+
+## 6. A paused cluster
+
+SSSB's own non-production stack runs at minimum capacity 0 (`packages/cdk/src/sssb-app.js`), so its cluster pauses,
+and the first request after that wakes it.
+
+**What it costs.** AWS gives a typical resume as about 15 seconds, and 30 seconds or longer once a cluster has been
+paused for more than a day
+([auto-pause](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2-auto-pause.html)).
+Measured on 2026-11-21, before this wait was reworked: the cluster resumed in 12 to 14 seconds, and the cold request
+took 26.0 seconds of the server's 30. A request makes one wait, however many calls it makes, unless it carries on after
+one has run out or the database refuses again after answering the poll: the dialect polls with `SELECT 1` after 1, 2
+and 4 seconds and then every second, every call that waits shares that poll, and a call outside a transaction that is
+not yet sent waits for a known resume first (`packages/kit/src/adapters/real/rds-data-resume.ts`).
+
+**Setting the budget.** A call waits 18 seconds by default, then fails. `DATABASE_RESUME_BUDGET_MS` on the server
+changes it (a whole number of milliseconds, 0 to fail at once, at most 900000). In `apps/<app>/infra/app.ts`, with the
+construct kept (`const sssbApp = new SssbApp(...)`), before `app.synth()`:
+
+```ts
+sssbApp.server.addEnvironment('DATABASE_RESUME_BUDGET_MS', '10000')
+```
+
+It bounds the wait alone, so leave room under the server's timeout for the rest of the request. Minimum capacity above 0
+is what removes the wait. The migrator waits two minutes whatever the server is set to.
+
+**What an app sees.** `DatabaseUnavailableError` (`@sssb/kit/ports/errors`), whose `reason` is `resuming`, `throttled`,
+`timed-out` or `unavailable` and whose `cause` is AWS's own error. `unavailable` is AWS saying that the writer or the
+service is not available. A few answers that the database is resuming fail at once, as `resuming`, without a wait: to a
+commit, whose outcome is then unknown, so never assume that it failed; to a statement after another has succeeded in
+its transaction; and to a statement as a `BadRequestException`. The starter's `withPortErrors`
+(`apps/starter/src/app/api/respond.ts`) answers it with a 503, `Retry-After: 5` and
+`{ error: 'database-unavailable', reason }`, and logs a warning. Let the browser repeat a GET by itself. Send a write
+again only when the person asks: treat a throttled or timed-out statement or commit as if it may have run (AWS says a timed-out one is cancelled, and
+nothing of a throttled one). A page rendered on the server is not covered by `withPortErrors`: keep database calls out
+of what it needs for its first paint, or catch the error there.
+
+**Check it live.** Let the cluster pause, then:
+
+- Open a tenant-scoped screen, and record how long its API request took. That request must succeed, or answer a 503
+  that a second one a few seconds later does not.
+- Read the RDS event log, and record the time between the resume's start and its end, and the same for a cluster paused
+  for more than a day.
+- Send `rds begin-transaction --database "$DB"` and `rds execute-statement --database "$DB" --sql "SELECT 1"` once a second
+  while a fresh pause ends, recording each exception's name and message. The dialect takes `DatabaseResumingException`
+  as cancelled, and sends a `BeginTransaction` again after a throttle too. Record whether a `BeginTransaction` ever
+  succeeds while a statement in it still answers that the database is resuming.

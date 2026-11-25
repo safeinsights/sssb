@@ -3,6 +3,7 @@
 import { Avatar, Menu, UnstyledButton, VisuallyHidden } from '@mantine/core'
 import { useTranslations } from 'next-intl'
 import { SignOutIcon, UserIcon } from './auth-icons'
+import { avatarInitials } from './initials'
 import { PreviewRow } from './preview-row'
 
 export interface MenuUser {
@@ -38,16 +39,23 @@ export function UserMenu({
                 <UnstyledButton data-testid="user-menu">
                     <VisuallyHidden>{t('userMenuLabel', { name: user.name.trim() || user.email })}</VisuallyHidden>
                     <Avatar
-                        name={user.name}
                         aria-hidden
                         radius="xl"
                         styles={{ placeholder: { color: '#fff', background: 'var(--mantine-color-dark-6)' } }}
-                    />
+                    >
+                        {avatarInitials(user.name, user.email)}
+                    </Avatar>
                 </UnstyledButton>
             </Menu.Target>
             <Menu.Dropdown>
                 <Menu.Label>
-                    <PreviewRow name={user.name} title={user.name} subtitle={user.email} rounded />
+                    <PreviewRow
+                        name={user.name}
+                        fallback={user.email}
+                        title={user.name}
+                        subtitle={user.email}
+                        rounded
+                    />
                 </Menu.Label>
                 <Menu.Divider />
                 {onProfile ? (
