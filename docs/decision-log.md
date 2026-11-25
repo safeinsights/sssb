@@ -7451,3 +7451,53 @@ first two characters of a one-word name), so `Ana (Bea) Cruz` showed `A(`. `User
   `ReactNode`.
 - `ß` uppercases to `SS`, the language's own `toUpperCase`; a letter outside the BMP is kept whole (`Array.from`),
   which the unit test pins.
+
+## Signing in with an enrolled second factor (2026-11-25, `feat/second-factor-sign-in`)
+
+`safeinsights/sssb#186`: the real sign-in form met Clerk's `needs_second_factor` with a message that it was not built, so
+an instance that requires a second factor could not use the form. What Clerk offers was read from `@clerk/nextjs` 7.10.0's types
+and from clerk-js's source (clerk/javascript, `SignIn.ts`, read that day; clerk-js itself is loaded from Clerk, not
+installed). Nothing here has run against a real instance (`auth-dev`).
+
+- **Four kinds of code: authenticator app, text message, email, backup code.** The sent ones cost two calls that take no
+  argument (`mfa.sendPhoneCode`, `mfa.sendEmailCode`), so they are in. Rejected: TOTP and backup codes alone, which would
+  leave out Clerk's device check, whose usual factor is an emailed code.
+- **Passkeys and emailed links are left out.** A passkey is a WebAuthn ceremony with no code to type, and an emailed link
+  needs a landing page that tells the waiting tab. An account that offers only those gets the unsupported message on
+  the password step; one that also offers a code gets the code. `safeinsights/sssb#195` has them.
+- **Device trust is the same step.** `needs_client_trust` is answered by the same `signIn.mfa` calls, so it shows the same
+  step with a lead of its own. Rejected: the unsupported message, which would shut out every person on a new browser
+  wherever an instance has the check on.
+- **Every other status has a rule.** `needs_identifier` and `needs_first_factor` (Clerk did not take the password) are the
+  generic error, as before. Anything else, a status a later Clerk adds included, is the unsupported message, which says to
+  ask whoever manages the account: the generic error told people with the right password to check it. Only `complete`
+  reaches `finalize`, on the password step and the code step alike.
+- **Clerk's order, with backup codes last.** The issue says to preselect the first factor the provider reports. A backup
+  code is spent by use, so it is never preselected while the account offers another. Rejected: Clerk's own UI's order
+  (an authenticator first), since an instance's order is an operator's to set.
+- **One choice per kind, naming Clerk's first number or address.** `sendPhoneCode` and `sendEmailCode` send to the first the
+  attempt lists and take no id, so a second number could be shown but not used. Rejected: the older `prepareSecondFactor`,
+  which takes an id but is not the signals API the form is written in.
+- **The step opens by sending, then waits 30 seconds between sends of a kind.** Going to another factor and back inside that sends
+  nothing. A send that failed has no wait. Clerk's own rate limit is what protects the number; the cooldown saves a
+  person from pressing twice.
+- **One error for a refused, expired or rate-limited code and for a thrown call**, with every choice and the way back still open.
+  Rejected: telling them apart, which tells someone guessing codes which guesses were close.
+- **A `finalize` that fails after the code was accepted is retried without verifying again**: the code is spent, so verifying
+  would refuse it for ever. Only for the attempt whose code Clerk accepted (by its id), and only while Clerk still calls that
+  attempt complete. Rejected: finalizing any complete attempt, which would let a code not yet checked stand in for one.
+- **The step is a framework component that knows no vendor**, `SecondFactorStep`, with callbacks for sending and verifying, as
+  `AccountRefused` is under its real form. That is what makes it a Ladle story and lets a client-side auth port
+  (`safeinsights/sssb#102`) render it unchanged. It reads the catalog itself rather than take `labels`: twenty more
+  required labels would break every adopter's sign-in page to say what the framework already says. It is not exported;
+  nothing outside the kit renders it.
+- **`mfaNotImplemented` is gone from `SignInLabels` and the catalog**, so an adopter's page drops one line. Rejected: keeping the key as
+  the unsupported message, under a name that says the opposite.
+- **No twin in the static demo or simulated mode.** Both sign in by picking a person, with no password for a second step to follow;
+  a step there would accept anything and show a security check that checks nothing. The story is where it is seen.
+  `safeinsights/sssb#102` wants demo twins for enrollment, which has state to show.
+- **`axe-core` is a development dependency of the repository**, for the step's own accessibility test. The e2e sweep
+  reaches only pages simulated mode serves, and this is not one. Colour contrast needs a layout engine and is not in it; the step's
+  colours are the ones the swept screens use.
+- **Not done: the accept-invite form.** Its ticket sign-in for an existing account meets the same statuses and still ends in its generic
+  error (`safeinsights/sssb#194`).
