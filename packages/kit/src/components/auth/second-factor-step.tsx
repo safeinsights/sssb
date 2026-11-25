@@ -15,6 +15,15 @@ export type SecondFactor =
 /** How long a person waits before a sent code can be sent again. */
 export const RESEND_COOLDOWN_SECONDS = 30
 
+/** Milliseconds on a clock that a change of the date or time does not move. */
+const clock = () => performance.now()
+
+/** The second click of a double click: the buttons move under the pointer as a factor is chosen. */
+const DOUBLE_CLICK_MS = 500
+
+/** A long address, or a longer language, wraps at phone width rather than being cut off. */
+const WRAPS = { h: 'auto', mih: 36, styles: { label: { whiteSpace: 'normal', overflowWrap: 'anywhere' } } } as const
+
 const COPY = {
     authenticator: { label: 'codeLabelAuthenticator', choice: 'codeChoiceAuthenticator' },
     phone: { label: 'codeLabelPhone', choice: 'codeChoicePhone' },
@@ -77,8 +86,8 @@ export function SecondFactorStep({
         const last = Math.max(0, ...Object.values(resendAt))
         if (last === 0) return
         const timer = setInterval(() => {
-            setNow(Date.now())
-            if (Date.now() >= last) clearInterval(timer)
+            setNow(clock())
+            if (clock() >= last) clearInterval(timer)
         }, 1000)
         return () => clearInterval(timer)
     }, [resendAt])
@@ -94,13 +103,12 @@ export function SecondFactorStep({
         }
         setBusy(null)
         if (sent) {
-            const at = Date.now()
+            const at = clock()
             setNow(at)
             setResendAt((before) => ({ ...before, [target]: at + RESEND_COOLDOWN_SECONDS * 1000 }))
         } else {
             setError('send')
         }
-        input.current?.focus()
     }
 
     // The code for the factor the step opens on. Once: a development double-run of effects must not send two.
@@ -114,7 +122,11 @@ export function SecondFactorStep({
         sendFirst()
     }, [])
 
+    const chosenAt = useRef(-Infinity)
     function choose(next: SecondFactor) {
+        const at = clock()
+        if (at - chosenAt.current < DOUBLE_CLICK_MS) return
+        chosenAt.current = at
         setFactor(next)
         setCode('')
         setError(null)
@@ -171,7 +183,7 @@ export function SecondFactorStep({
                 <Text role="status" size="sm" c="gray.7" data-testid="second-factor-status">
                     {busy === 'sending'
                         ? t('codeSending')
-                        : sends && sentUntil !== undefined
+                        : sends && sentUntil !== undefined && error !== 'send'
                           ? t('codeSent', { destination: factor.destination })
                           : null}
                 </Text>
@@ -180,14 +192,19 @@ export function SecondFactorStep({
                         {t(error === 'code' ? 'codeError' : 'codeSendError')}
                     </Text>
                 ) : null}
-                <Button type="submit" loading={busy === 'verifying'} disabled={busy === 'sending'}>
+                <Button type="submit" {...WRAPS} loading={busy === 'verifying'} disabled={busy === 'sending'}>
                     {t('codeVerify')}
                 </Button>
                 {sends ? (
                     <Button
                         variant="default"
+                        {...WRAPS}
                         disabled={busy !== null || wait > 0}
-                        onClick={() => void send(kind)}
+                        onClick={() => {
+                            // This button is about to be disabled; the code goes in the field.
+                            input.current?.focus()
+                            void send(kind)
+                        }}
                         data-testid="second-factor-resend"
                     >
                         {wait > 0 ? t('codeResendIn', { seconds: wait }) : t('codeResend')}
@@ -197,9 +214,7 @@ export function SecondFactorStep({
                     <Button
                         key={other.kind}
                         variant="default"
-                        h="auto"
-                        mih={36}
-                        styles={{ label: { whiteSpace: 'normal' } }}
+                        {...WRAPS}
                         disabled={busy !== null}
                         onClick={() => choose(other)}
                         data-testid={`second-factor-choose-${other.kind}`}
@@ -209,6 +224,7 @@ export function SecondFactorStep({
                 ))}
                 <Button
                     variant="subtle"
+                    {...WRAPS}
                     disabled={busy === 'verifying'}
                     onClick={onBack}
                     data-testid="second-factor-back"

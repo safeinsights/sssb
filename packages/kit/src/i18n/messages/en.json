@@ -31,7 +31,7 @@
         "codeResend": "Send a new code",
         "codeResendIn": "Send a new code in {seconds} s",
         "codeVerify": "Verify code",
-        "codeError": "That code was not accepted. Check it and try again, or go back and sign in again.",
+        "codeError": "That did not work. Check the code and try again, or go back and sign in again.",
         "userMenuLabel": "{name}, account menu",
         "profileLink": "Profile",
         "signOut": "Sign out",

@@ -16,7 +16,7 @@ const ok: Answer = { error: null }
 const refused: Answer = { error: { code: 'form_code_incorrect' } }
 
 const signIn = {
-    id: 'sia_1' as string | undefined,
+    secondFactorVerification: {},
     status: 'needs_identifier' as string,
     supportedSecondFactors: [] as readonly Offered[],
     password: vi.fn<() => Promise<Answer>>(),
@@ -32,7 +32,9 @@ const signIn = {
     },
 }
 
-vi.mock('@clerk/nextjs', () => ({ useSignIn: () => ({ signIn, fetchStatus: 'idle' }) }))
+/** What the hook answers: `signIn`, until a client update puts another attempt in its place. */
+const hook = { signIn }
+vi.mock('@clerk/nextjs', () => ({ useSignIn: () => ({ signIn: hook.signIn, fetchStatus: 'idle' }) }))
 
 const LABELS = { email: 'email', password: 'password', submit: 'submit', genericError: 'error' }
 const copy = enFramework.auth
@@ -54,9 +56,10 @@ let root: Root
 let container: HTMLElement
 let assign: ReturnType<typeof vi.fn>
 
-/** A Clerk call that succeeds and leaves the attempt at `status`. */
+/** A Clerk call that succeeds and leaves the attempt at `status`, its verification rebuilt as by every answer. */
 const leaves = (status: string) => async (): Promise<Answer> => {
     signIn.status = status
+    signIn.secondFactorVerification = {}
     return ok
 }
 const refuses = async (): Promise<Answer> => refused
@@ -66,7 +69,8 @@ const throws = async (): Promise<Answer> => {
 
 beforeEach(() => {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-    signIn.id = 'sia_1'
+    hook.signIn = signIn
+    signIn.secondFactorVerification = {}
     signIn.status = 'needs_identifier'
     signIn.supportedSecondFactors = []
     signIn.password.mockReset().mockImplementation(leaves('complete'))
@@ -191,6 +195,14 @@ describe('RealSignInForm', () => {
             expect(step()).toBeNull()
         },
     )
+
+    it('shows no old error while it tries again', async () => {
+        signIn.password.mockResolvedValueOnce(refused)
+        await submit('/en/dashboard')
+        signIn.password.mockReturnValueOnce(new Promise(() => {}))
+        await submitForm()
+        expect(alertText()).toBeUndefined()
+    })
 
     it.each(['needs_identifier', 'needs_first_factor'])('shows the generic error at %s', async (status) => {
         await reachStep([TOTP], status)
@@ -387,6 +399,13 @@ describe('between one step and the next', () => {
         expect(document.activeElement).toBe(input('input[type="password"]'))
     })
 
+    it('leaves the password ready while a code is still being sent', async () => {
+        signIn.mfa.sendPhoneCode.mockReturnValue(new Promise(() => {}))
+        await reachStep([PHONE])
+        await click('back')
+        expect(container.querySelector<HTMLButtonElement>('[type="submit"]')!.disabled).toBe(false)
+    })
+
     it.each([
         ['rejects', throws],
         [
@@ -401,6 +420,92 @@ describe('between one step and the next', () => {
         await click('back')
         expect(step()).toBeNull()
         expect(alertText()).toBeUndefined()
+    })
+})
+
+describe('the attempt a step is on', () => {
+    /** Another attempt takes the first one's place in the hook, as clerk-js does, and the form renders again. */
+    async function replaceAttempt(status: string): Promise<typeof signIn> {
+        const other = {
+            ...signIn,
+            status,
+            finalize: vi.fn<() => Promise<Answer>>().mockResolvedValue(ok),
+            mfa: { ...signIn.mfa, verifyTOTP: vi.fn<() => Promise<Answer>>().mockResolvedValue(ok) },
+        }
+        hook.signIn = other
+        await render('/en/dashboard')
+        return other
+    }
+
+    it.each(['needs_identifier', 'needs_second_factor', 'complete'])(
+        'is the one its password opened, whatever took its place (%s)',
+        async (status) => {
+            await reachStep([TOTP])
+            const other = await replaceAttempt(status)
+            await enterCode()
+            expect(signIn.mfa.verifyTOTP).toHaveBeenCalledTimes(1)
+            expect(signIn.finalize).toHaveBeenCalledTimes(1)
+            expect(other.mfa.verifyTOTP).not.toHaveBeenCalled()
+            expect(other.finalize).not.toHaveBeenCalled()
+            expect(assign).toHaveBeenCalledTimes(1)
+        },
+    )
+
+    it('is still the one finalized when a finalize failed half-way and left the hook an empty one', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        await reachStep([TOTP])
+        await enterCode()
+        const other = await replaceAttempt('needs_identifier')
+        await submitForm()
+        expect(signIn.mfa.verifyTOTP).toHaveBeenCalledTimes(1)
+        expect(other.mfa.verifyTOTP).not.toHaveBeenCalled()
+        expect(signIn.finalize).toHaveBeenCalledTimes(2)
+        expect(assign).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('an offline browser, where clerk-js answers no error to a request it dropped', () => {
+    const dropped = async (): Promise<Answer> => ok
+    beforeEach(() => {
+        vi.stubGlobal('navigator', { ...window.navigator, onLine: false })
+    })
+
+    it.each(['complete', 'needs_second_factor'])(
+        'acts on no attempt left at %s by an earlier password',
+        async (status) => {
+            signIn.status = status
+            signIn.supportedSecondFactors = [TOTP]
+            signIn.password.mockImplementation(dropped)
+            await submit('/en/dashboard')
+            expect(alertText()).toBe('error')
+            expect(step()).toBeNull()
+            expectNotSignedIn()
+        },
+    )
+
+    it.each([
+        ['phone', PHONE, signIn.mfa.sendPhoneCode],
+        ['email', EMAIL, signIn.mfa.sendEmailCode],
+    ] as const)('never says a code was sent: %s', async (_, factor, sendCode) => {
+        sendCode.mockImplementation(dropped)
+        await reachStep([factor])
+        expect(alertText()).toBe(copy.codeSendError)
+        expect(stepButton('resend').disabled).toBe(false)
+    })
+
+    it('believes an answer that did come, whatever the browser says', async () => {
+        signIn.mfa.sendPhoneCode.mockImplementation(leaves('needs_second_factor'))
+        await reachStep([PHONE])
+        expect(alertText()).toBeUndefined()
+        expect(container.textContent).toContain('+1*******99')
+    })
+
+    it('signs nobody in on a code that was dropped', async () => {
+        signIn.mfa.verifyTOTP.mockImplementation(dropped)
+        await reachStep([TOTP])
+        await enterCode()
+        expect(alertText()).toBe(copy.codeError)
+        expectNotSignedIn()
     })
 })
 
@@ -421,15 +526,11 @@ describe('a finalize that fails after the code was accepted', () => {
         expect(assign).toHaveBeenCalledTimes(1)
     })
 
-    it.each([
-        ['another attempt took its place', () => void (signIn.id = 'sia_2')],
-        ['the attempt is no longer complete', () => void (signIn.status = 'needs_second_factor')],
-        ['the attempt has lost its id', () => void (signIn.id = undefined)],
-    ])('verifies again when %s', async (_, change) => {
+    it('verifies again when the attempt is no longer complete', async () => {
         signIn.finalize.mockResolvedValueOnce(refused)
         await reachStep([TOTP])
         await enterCode()
-        change()
+        signIn.status = 'needs_second_factor'
         signIn.mfa.verifyTOTP.mockResolvedValueOnce(refused)
         await submitForm()
         expect(signIn.mfa.verifyTOTP).toHaveBeenCalledTimes(2)

@@ -174,6 +174,13 @@ describe('the code', () => {
         expect(alertText(container)).toBeUndefined()
     })
 
+    it('is selected after an error, for the next one to replace', async () => {
+        onVerify.mockResolvedValueOnce(false)
+        const container = await render([AUTHENTICATOR])
+        await enter(container, '123456')
+        expect([field(container).selectionStart, field(container).selectionEnd]).toEqual([0, 6])
+    })
+
     it('loses its error when another factor is chosen', async () => {
         onVerify.mockResolvedValueOnce(false)
         const container = await render([AUTHENTICATOR, BACKUP])
@@ -232,22 +239,76 @@ describe('a code that is sent', () => {
         expect(onSend).toHaveBeenCalledTimes(2)
         expect(alertText(container)).toBeUndefined()
         expect(statusText(container)).toContain('+1*******99')
+        // A later one that fails does not leave the earlier one's success beside it.
+        await pass(RESEND_COOLDOWN_SECONDS)
+        onSend.mockImplementationOnce(answer)
+        await click(button(container, 'resend'))
+        expect(alertText(container)).toBe(copy.codeSendError)
+        expect(statusText(container)).toBe('')
+    })
+
+    it('waits no longer when the clock is set back', async () => {
+        const container = await render([PHONE])
+        vi.setSystemTime(Date.now() - 3_600_000)
+        await pass(RESEND_COOLDOWN_SECONDS)
+        expect(button(container, 'resend').disabled).toBe(false)
+    })
+
+    it('leaves no timer running once the wait is over, or the step is gone', async () => {
+        await render([PHONE])
+        expect(vi.getTimerCount()).toBe(1)
+        await pass(RESEND_COOLDOWN_SECONDS)
+        expect(vi.getTimerCount()).toBe(0)
+        await render([PHONE])
+        expect(vi.getTimerCount()).toBe(1)
+        for (const unmount of unmounts.splice(0)) act(unmount)
+        expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('does not pull focus back from where the person went while it was being sent', async () => {
+        let sent: (value: boolean) => void = () => {}
+        onSend.mockReturnValue(new Promise((resolve) => (sent = resolve)))
+        const container = await render([PHONE])
+        button(container, 'back').focus()
+        await act(async () => sent(true))
+        expect(document.activeElement).toBe(button(container, 'back'))
+    })
+
+    it('cannot be asked for while a code is being verified', async () => {
+        onVerify.mockReturnValue(new Promise(() => {}))
+        const container = await render([PHONE])
+        await pass(RESEND_COOLDOWN_SECONDS)
+        await enter(container, '123456')
+        expect(button(container, 'resend').disabled).toBe(true)
     })
 
     it('goes when its factor is chosen, and not again while it is fresh', async () => {
         const container = await render([AUTHENTICATOR, PHONE])
         await click(button(container, 'choose-phone'))
         expect(onSend.mock.calls).toEqual([['phone']])
-        await pass(5)
+        await pass(4)
         await click(button(container, 'choose-authenticator'))
+        await pass(1)
         await click(button(container, 'choose-phone'))
         expect(onSend).toHaveBeenCalledTimes(1)
         expect(button(container, 'resend').textContent).toContain(`in ${RESEND_COOLDOWN_SECONDS - 5} s`)
+        await pass(1)
         // The cooldown runs on while another factor is showing.
         await click(button(container, 'choose-authenticator'))
         await pass(RESEND_COOLDOWN_SECONDS)
         await click(button(container, 'choose-phone'))
         expect(onSend).toHaveBeenCalledTimes(2)
+    })
+
+    it('is not sent by the second click of a double click, on the button that took the first one its place', async () => {
+        const container = await render([AUTHENTICATOR, PHONE, BACKUP])
+        await pass(1)
+        await click(button(container, 'choose-backup'))
+        await click(button(container, 'choose-phone'))
+        expect(onSend).not.toHaveBeenCalled()
+        await pass(1)
+        await click(button(container, 'choose-phone'))
+        expect(onSend).toHaveBeenCalledTimes(1)
     })
 
     it('has a cooldown of its own for each factor', async () => {

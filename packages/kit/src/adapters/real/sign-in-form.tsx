@@ -34,15 +34,17 @@ type SignIn = ReturnType<typeof useSignIn>['signIn']
  * `/<tab>/evil.example` pass a `startsWith('/')` check and leave the origin).
  */
 export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; returnTo: string }) {
-    const { signIn, fetchStatus } = useSignIn()
+    const { signIn } = useSignIn()
     const t = useTranslations('auth')
     const [formError, setFormError] = useState<string | null>(null)
+    // Not the hook's `fetchStatus`, which a code still being sent holds after the person has gone back from the step.
+    const [busy, setBusy] = useState(false)
     const [step, setStep] = useState<Step | null>(null)
     const form = useForm({ initialValues: { email: '', password: '' } })
 
-    // The attempt whose code Clerk accepted, kept for a `finalize` that fails after it: a code is spent once verified,
-    // so trying again finalizes that same attempt, while it is still complete, and verifies nothing.
-    const [accepted, setAccepted] = useState<string | null>(null)
+    // Clerk accepted the step's code, kept for a `finalize` that fails after it: a code is spent once verified, so
+    // trying again finalizes the same attempt, while it is still complete, and verifies nothing.
+    const [accepted, setAccepted] = useState(false)
 
     // Leaving the step puts focus back where the person types next.
     const password = useRef<HTMLInputElement>(null)
@@ -76,9 +78,9 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
                 const factors = supportedFactors(attempt)
                 if (factors) {
                     form.setFieldValue('password', '')
-                    setAccepted(null)
+                    setAccepted(false)
                     setLeftStep(false)
-                    setStep({ status, factors })
+                    setStep({ attempt, status, factors })
                 } else {
                     leaveStep(t('signInUnsupported'))
                 }
@@ -92,35 +94,41 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
 
     const submit = form.onSubmit(async (values) => {
         setFormError(null)
+        setBusy(true)
         // A Clerk call that throws (the network, not a refused password) is shown as the same generic error, never left
         // as an unhandled rejection with nothing on screen.
         try {
-            const { error } = await signIn.password({ identifier: values.email, password: values.password })
-            if (error || !(await proceed(signIn, null))) setFormError(labels.genericError)
+            const taken = await succeeds(signIn, () =>
+                signIn.password({ identifier: values.email, password: values.password }),
+            )
+            if (!taken || !(await proceed(signIn, null))) setFormError(labels.genericError)
         } catch {
             setFormError(labels.genericError)
+        } finally {
+            setBusy(false)
         }
     })
 
     if (step) {
+        const { attempt } = step
         return (
             <SecondFactorStep
                 key={step.status}
                 factors={step.factors}
                 newDevice={step.status === 'needs_client_trust'}
-                onSend={async (kind) => {
-                    const { error } =
-                        kind === 'phone' ? await signIn.mfa.sendPhoneCode() : await signIn.mfa.sendEmailCode()
-                    return !error
-                }}
+                onSend={(kind) =>
+                    succeeds(attempt, () =>
+                        kind === 'phone' ? attempt.mfa.sendPhoneCode() : attempt.mfa.sendEmailCode(),
+                    )
+                }
                 // A throw (the network) is the step's to show, as a code Clerk refused is.
                 onVerify={async (kind, code) => {
-                    if (accepted !== signIn.id || signIn.status !== 'complete') {
-                        const { error } = await verifyCode(signIn, kind, code)
+                    if (!accepted || attempt.status !== 'complete') {
+                        const { error } = await verifyCode(attempt, kind, code)
                         if (error) return false
-                        setAccepted(signIn.id ?? null)
+                        setAccepted(true)
                     }
-                    return proceed(signIn, step)
+                    return proceed(attempt, step)
                 }}
                 onBack={() => {
                     leaveStep(null)
@@ -139,7 +147,7 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
             <Stack>
                 <TextInput label={labels.email} type="email" required {...form.getInputProps('email')} />
                 <PasswordInput label={labels.password} required ref={password} {...form.getInputProps('password')} />
-                <Button type="submit" loading={fetchStatus === 'fetching'}>
+                <Button type="submit" loading={busy}>
                     {labels.submit}
                 </Button>
                 {formError ? (
@@ -152,10 +160,27 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
     )
 }
 
-/** The status the code step answers, and the factors the account offered for it when the step opened. */
+/** What the code step answers, and the factors the account offered for it when the step opened. */
 interface Step {
+    /**
+     * The attempt the password opened, which every call of the step is made on. Never the hook's `signIn`, which a
+     * client update can replace: another tab's attempt, a code sent before the person went back, or the empty attempt
+     * `finalize` leaves when it fails half-way.
+     */
+    attempt: SignIn
     status: 'needs_second_factor' | 'needs_client_trust'
     factors: [SecondFactor, ...SecondFactor[]]
+}
+
+/**
+ * Whether Clerk took a call. In an offline browser clerk-js drops a failed request and answers no error, with the
+ * attempt as it was: an accepted password, or a code sent, that never left. Every answer Clerk does give rebuilds the
+ * attempt's verification, so one that is the same object, offline, means there was none.
+ */
+async function succeeds(attempt: SignIn, call: () => Promise<{ error: unknown }>): Promise<boolean> {
+    const before = attempt.secondFactorVerification
+    const { error } = await call()
+    return !error && (navigator.onLine || attempt.secondFactorVerification !== before)
 }
 
 /**

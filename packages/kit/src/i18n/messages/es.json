@@ -31,7 +31,7 @@
         "codeResend": "Enviar un código nuevo",
         "codeResendIn": "Enviar un código nuevo en {seconds} s",
         "codeVerify": "Verificar código",
-        "codeError": "No se aceptó ese código. Revísalo e inténtalo de nuevo, o vuelve e inicia sesión otra vez.",
+        "codeError": "Eso no funcionó. Revisa el código e inténtalo de nuevo, o vuelve e inicia sesión otra vez.",
         "userMenuLabel": "{name}, menú de la cuenta",
         "profileLink": "Perfil",
         "signOut": "Cerrar sesión",
