@@ -7512,7 +7512,7 @@ installed). Nothing here has run against a real instance (`auth-dev`).
   `safeinsights/sssb#102` wants demo twins for enrollment, which has state to show.
 - **`axe-core` is a development dependency of the repository**, for the step's own accessibility test. The e2e sweep
   reaches only pages simulated mode serves, and this is not one. Colour contrast needs a layout engine and is not in it, so
-  it was run once by hand in Chromium, on Mantine's default theme: it found the code in Mantine's error red too pale, which
+  it was run once by hand in Chromium, on Mantine's default colours with a primary shade of 8: it found the code in Mantine's error red too pale, which
   the step now overrides.
 - **Not done: the accept-invite form.** Its ticket sign-in for an existing account meets the same statuses and still ends in its generic
   error (`safeinsights/sssb#194`).

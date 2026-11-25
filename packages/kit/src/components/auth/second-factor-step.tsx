@@ -22,7 +22,11 @@ const clock = () => performance.now()
 const DOUBLE_CLICK_MS = 500
 
 /** A long address, or a longer language, wraps at phone width rather than being cut off. */
-const WRAPS = { h: 'auto', mih: 36, styles: { label: { whiteSpace: 'normal', overflowWrap: 'anywhere' } } } as const
+const WRAPS = {
+    h: 'auto',
+    mih: 36,
+    styles: { label: { whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.4 } },
+} as const
 
 const COPY = {
     authenticator: { label: 'codeLabelAuthenticator', choice: 'codeChoiceAuthenticator' },
