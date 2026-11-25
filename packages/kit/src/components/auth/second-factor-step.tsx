@@ -86,8 +86,9 @@ export function SecondFactorStep({
         const last = Math.max(0, ...Object.values(resendAt))
         if (last === 0) return
         const timer = setInterval(() => {
-            setNow(clock())
-            if (clock() >= last) clearInterval(timer)
+            const at = clock()
+            setNow(at)
+            if (at >= last) clearInterval(timer)
         }, 1000)
         return () => clearInterval(timer)
     }, [resendAt])
@@ -109,6 +110,8 @@ export function SecondFactorStep({
         } else {
             setError('send')
         }
+        // Pressing a button that was disabled meanwhile leaves focus nowhere. Anywhere else, it is where the person went.
+        if (document.activeElement === document.body) input.current?.focus()
     }
 
     // The code for the factor the step opens on. Once: a development double-run of effects must not send two.
@@ -123,10 +126,16 @@ export function SecondFactorStep({
     }, [])
 
     const chosenAt = useRef(-Infinity)
+    /** Whether a click comes too soon after a choice to be meant for the button now under it. Keeps focus on the field. */
+    function isSecondClick(): boolean {
+        if (clock() - chosenAt.current >= DOUBLE_CLICK_MS) return false
+        input.current?.focus()
+        return true
+    }
+
     function choose(next: SecondFactor) {
-        const at = clock()
-        if (at - chosenAt.current < DOUBLE_CLICK_MS) return
-        chosenAt.current = at
+        if (isSecondClick()) return
+        chosenAt.current = clock()
         setFactor(next)
         setCode('')
         setError(null)
@@ -226,7 +235,9 @@ export function SecondFactorStep({
                     variant="subtle"
                     {...WRAPS}
                     disabled={busy === 'verifying'}
-                    onClick={onBack}
+                    onClick={() => {
+                        if (!isSecondClick()) onBack()
+                    }}
                     data-testid="second-factor-back"
                 >
                     {t('secondFactorBack')}

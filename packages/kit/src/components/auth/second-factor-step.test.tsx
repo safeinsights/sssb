@@ -265,6 +265,15 @@ describe('a code that is sent', () => {
         expect(vi.getTimerCount()).toBe(0)
     })
 
+    it('gets focus back when the pressed button was disabled under it', async () => {
+        let sent: (value: boolean) => void = () => {}
+        onSend.mockReturnValue(new Promise((resolve) => (sent = resolve)))
+        const container = await render([PHONE])
+        field(container).blur()
+        await act(async () => sent(true))
+        expect(document.activeElement).toBe(field(container))
+    })
+
     it('does not pull focus back from where the person went while it was being sent', async () => {
         let sent: (value: boolean) => void = () => {}
         onSend.mockReturnValue(new Promise((resolve) => (sent = resolve)))
@@ -304,11 +313,19 @@ describe('a code that is sent', () => {
         const container = await render([AUTHENTICATOR, PHONE, BACKUP])
         await pass(1)
         await click(button(container, 'choose-backup'))
+        button(container, 'choose-phone').focus()
         await click(button(container, 'choose-phone'))
         expect(onSend).not.toHaveBeenCalled()
+        expect(document.activeElement).toBe(field(container))
+        // Nor is the step lost, when it is the way back that moved under the pointer.
+        await click(button(container, 'back'))
+        expect(onBack).not.toHaveBeenCalled()
         await pass(1)
         await click(button(container, 'choose-phone'))
         expect(onSend).toHaveBeenCalledTimes(1)
+        await pass(1)
+        await click(button(container, 'back'))
+        expect(onBack).toHaveBeenCalledTimes(1)
     })
 
     it('has a cooldown of its own for each factor', async () => {

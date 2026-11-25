@@ -76,7 +76,7 @@ beforeEach(() => {
     signIn.password.mockReset().mockImplementation(leaves('complete'))
     signIn.finalize.mockReset().mockResolvedValue(ok)
     signIn.reset.mockReset().mockResolvedValue(ok)
-    for (const call of Object.values(signIn.mfa)) call.mockReset().mockResolvedValue(ok)
+    for (const call of Object.values(signIn.mfa)) call.mockReset().mockImplementation(() => leaves(signIn.status)())
     for (const call of Object.values(VERIFY)) call.mockImplementation(leaves('complete'))
     container = document.createElement('div')
     document.body.append(container)
@@ -465,11 +465,8 @@ describe('the attempt a step is on', () => {
     })
 })
 
-describe('an offline browser, where clerk-js answers no error to a request it dropped', () => {
+describe('a request clerk-js dropped, which it answers with no error', () => {
     const dropped = async (): Promise<Answer> => ok
-    beforeEach(() => {
-        vi.stubGlobal('navigator', { ...window.navigator, onLine: false })
-    })
 
     it.each(['complete', 'needs_second_factor'])(
         'acts on no attempt left at %s by an earlier password',
@@ -492,13 +489,6 @@ describe('an offline browser, where clerk-js answers no error to a request it dr
         await reachStep([factor])
         expect(alertText()).toBe(copy.codeSendError)
         expect(stepButton('resend').disabled).toBe(false)
-    })
-
-    it('believes an answer that did come, whatever the browser says', async () => {
-        signIn.mfa.sendPhoneCode.mockImplementation(leaves('needs_second_factor'))
-        await reachStep([PHONE])
-        expect(alertText()).toBeUndefined()
-        expect(container.textContent).toContain('+1*******99')
     })
 
     it('signs nobody in on a code that was dropped', async () => {
