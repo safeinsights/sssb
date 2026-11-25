@@ -4,6 +4,7 @@ import { AccountRefused } from './account-refused'
 import { OrgSwitcher } from './org-switcher'
 import { PeoplePicker } from './people-picker'
 import { PreviewRow } from './preview-row'
+import { SecondFactorStep, type SecondFactor } from './second-factor-step'
 import { SignInScreen } from './sign-in-screen'
 import { UserMenu } from './user-menu'
 
@@ -16,6 +17,32 @@ export const SignIn = () => <SignInScreen body={<PeoplePicker people={people} on
 
 /** A person the provider signed in whose account names another tenant: why, and an explicit sign-out. */
 export const SignInRefused = () => <SignInScreen body={<AccountRefused onSignOut={() => {}} />} />
+
+const secondFactorStep = (factors: readonly [SecondFactor, ...SecondFactor[]], newDevice = false) => (
+    <SignInScreen
+        body={
+            <SecondFactorStep
+                factors={factors}
+                newDevice={newDevice}
+                onSend={async () => true}
+                onVerify={async () => false}
+                onBack={() => {}}
+            />
+        }
+    />
+)
+
+/** The step after the password, for an account with a second factor: every kind offered, each code refused. */
+export const SignInSecondFactor = () =>
+    secondFactorStep([
+        { kind: 'authenticator' },
+        { kind: 'phone', destination: '+1*******99' },
+        { kind: 'email', destination: 'a***r@example.test' },
+        { kind: 'backup' },
+    ])
+
+/** The step for a device the provider does not know: a code sent as it opens, and the resend cooldown. */
+export const SignInNewDevice = () => secondFactorStep([{ kind: 'email', destination: 'a***r@example.test' }], true)
 
 /** The shared identity row behind the switcher and the user menu — org (squared) and user (round). */
 export const IdentityRows = () => (

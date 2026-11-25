@@ -60,7 +60,6 @@ export default async function SignInPage({
                     password: t('passwordLabel'),
                     submit: t('signInButton'),
                     genericError: t('signInError'),
-                    mfaNotImplemented: t('mfaNotImplemented'),
                 }}
             />
         )

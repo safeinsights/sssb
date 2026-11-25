@@ -56,12 +56,12 @@ For each new capability, work these six steps in order:
 
 | Clerk component                                                               | House surface                                   | Status  | Notes / the Clerk API a seam would call                                   |
 | ----------------------------------------------------------------------------- | ----------------------------------------------- | ------- | ------------------------------------------------------------------------- |
-| `<SignIn>`                                                                    | `SignInScreen` + `RealSignInForm` (labels slot) | done    | Clerk v7 signals API; MFA branch is a seam (below)                        |
+| `<SignIn>`                                                                    | `SignInScreen` + `RealSignInForm` (labels slot) | done    | Clerk v7 signals API; second step in `SecondFactorStep`                   |
 | `<UserButton>`                                                                | `UserMenu` + `PreviewRow`                       | done    | avatar trigger → preview-row header + account actions                     |
 | `<OrganizationSwitcher>`                                                      | `OrgSwitcher` + `PreviewRow`                    | done    | trigger + membership popover with role sub-lines + active check           |
 | `<OrganizationProfile>`                                                       | `OrgScreen` (members + pending sections)        | partial | member roles/removal + revoke-invite are future seams                     |
 | `<UserProfile>`                                                               | `ProfileScreen` (Profile + Security sections)   | partial | Security section is a named seam for the three below                      |
-| — MFA                                                                         | Security section                                | seam    | `user.createTOTP()` / `user.verifyTOTP()`; rides the gate seam (ADR-0003) |
+| — MFA enrollment                                                              | Security section                                | seam    | `user.createTOTP()` / `user.verifyTOTP()`; rides the gate seam (ADR-0003) |
 | — Password reset                                                              | sign-in / Security                              | seam    | `signIn.create({ strategy: 'reset_password_email_code' })` …              |
 | — Avatar upload                                                               | Profile section                                 | seam    | `user.setProfileImage({ file })`                                          |
 | `<SignUp>`                                                                    | accept-invite today; open sign-up later         | seam    | `signUp.*`; today only ticket-strategy accept-invite exists               |

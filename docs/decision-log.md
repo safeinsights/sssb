@@ -7452,6 +7452,83 @@ first two characters of a one-word name), so `Ana (Bea) Cruz` showed `A(`. `User
 - `ß` uppercases to `SS`, the language's own `toUpperCase`; a letter outside the BMP is kept whole (`Array.from`),
   which the unit test pins.
 
+## Signing in with an enrolled second factor (2026-11-25, `feat/second-factor-sign-in`)
+
+`safeinsights/sssb#186`: the real sign-in form met Clerk's `needs_second_factor` with a message that it was not built, so
+an instance that requires a second factor could not use the form. What Clerk offers was read from `@clerk/nextjs` 7.10.0's types
+and from clerk-js's source (clerk/javascript, `SignIn.ts`, read that day; clerk-js itself is loaded from Clerk, not
+installed). Nothing here has run against a real instance (`auth-dev`).
+
+- **Four kinds of code: authenticator app, text message, email, backup code.** The sent ones cost two calls that take no
+  argument (`mfa.sendPhoneCode`, `mfa.sendEmailCode`), so they are in. Rejected: TOTP and backup codes alone, which would
+  leave out an account whose only code is a sent one.
+- **Passkeys and emailed links are left out.** A passkey is a WebAuthn ceremony with no code to type, and an emailed link
+  needs a landing page that tells the waiting tab. An account that offers only those gets the unsupported message on
+  the password step; one that also offers a code gets the code. `safeinsights/sssb#195` has them.
+- **Device trust is the same step.** `needs_client_trust` is answered by the same `signIn.mfa` calls, so it shows the same
+  step with a lead of its own. Rejected: the unsupported message, which would shut out every person on a new browser
+  wherever an instance has the check on.
+- **Every other status has a rule.** `needs_identifier` and `needs_first_factor` (Clerk did not take the password) are the
+  generic error, as before. Anything else, a status a later Clerk adds included, is the unsupported message, which says to
+  ask whoever manages the account: the generic error told people with the right password to check it. Only `complete`
+  reaches `finalize`, on the password step and the code step alike.
+- **Clerk's order, with backup codes last.** The issue says to preselect the first factor the provider reports. A backup
+  code is spent by use, so it is never preselected while the account offers another. Rejected: the order of Clerk's own
+  UI (a passkey, then an authenticator, then a phone: `determineStartingSignInSecondFactor` in clerk/javascript), which the
+  issue did not ask for.
+- **One choice per kind, naming Clerk's first number or address.** `sendPhoneCode` and `sendEmailCode` send to the first the
+  attempt lists and take no id, so a second number could be shown but not used. Rejected: the older `prepareSecondFactor`,
+  which takes an id but is not the signals API the form is written in.
+- **The step opens by sending, then waits 30 seconds between sends of a kind.** Going to another factor and back inside that sends
+  nothing. A send that failed has no wait. Clerk's own rate limit is what protects the number; the cooldown saves a
+  person from pressing twice.
+- **One error for a refused, expired or rate-limited code, a thrown call and a failed `finalize`**, with every choice and the way
+  back still open. Rejected: telling them apart, as the password step does not either.
+- **A `finalize` that fails after the code was accepted is retried without verifying again**: the code is spent, so verifying
+  would refuse it for ever. Only once Clerk accepted the step's code, and only while the attempt is complete. Rejected:
+  finalizing any complete attempt, which would let a refused code stand in for an accepted one.
+- **The step keeps the attempt its password opened** and makes every call on it, never on the hook's `signIn`, which a client
+  update replaces: another tab's sign-in, a code sent before the person went back, or the empty attempt a `finalize` that
+  fails half-way leaves. Rejected: the hook's object with the attempt's id checked against it, which a review round showed
+  verifying the spent code against the empty attempt. A password submitted before clerk-js has loaded holds the
+  hook's placeholder instead, which follows the hook, so there that case is still open and the way out is back. There a dropped password also counts as taken, so the form acts on
+  an attempt the client already held (no factor is skipped: Clerk verifies it). Recorded, with a session that a failed
+  `finalize` leaves after the person goes back, as `safeinsights/sssb#198`.
+- **A password or a sent code Clerk never answered is an error.** Where clerk-js takes the browser to be offline (or not a
+  browser: its test includes the user agent, so some in-app browsers fail it) it drops a failed request and answers no
+  error. So a call is taken when it answers no error and anything about the attempt changed: its id, its status, its
+  verification object, or that object's status, strategy or expiry. A first
+  password moves the status, so a build that stopped rebuilding the verification could not refuse it; a later one, at the
+  same status, is told by the new attempt's id (which Clerk's server assigns; not seen live) or by the verification. A
+  sent code moves neither. If it worked and the check missed it, the person reads that it could not be sent, and can still
+  enter it: verifying does not ask the check. Rejected: the verification object alone, which made every
+  sign-in depend on it. Rejected: `navigator.onLine`, which is only part of clerk-js's test.
+- **The verification was read in the builds, not only the source.** `@clerk/nextjs` 7.10.0 loads clerk-js by major: `versionSelector` in
+  `@clerk/shared` 4.45.1 answers `6`, its package version 6.43.1's major. From npm, `dist/clerk.browser.js` of 6.0.0,
+  6.43.1 and 6.47.0 (npm's `latest` on 2026-11-25): in each, `SignIn.fromJSON` sets `id` and `status` and makes a
+  new second-factor verification object from every response that has data, `_baseMutate` (which the password and the code calls go
+  through) calls it, the hook's `secondFactorVerification` reads the resource's, `password` posts to the collection, and a
+  failed request the browser test calls offline returns null with no error. Which 6.x Clerk serves is Clerk's to say.
+- **The second click of a double click is ignored on the choices and the way back** (500 ms): the buttons move under the pointer when
+  a factor is chosen, and the next one could send a text or drop the attempt. Rejected: every factor always listed, the
+  chosen one included, which puts as many buttons as factors between the person and the field.
+- **The step is a framework component that knows no vendor**, `SecondFactorStep`, with callbacks for sending and verifying, as
+  `AccountRefused` is under its real form. That is what makes it a Ladle story and lets a client-side auth port
+  (`safeinsights/sssb#102`) render it unchanged. It reads the catalog itself rather than take `labels`: twenty more
+  required labels would break every adopter's sign-in page to say what the framework already says. It is not exported;
+  nothing outside the kit renders it.
+- **`mfaNotImplemented` is gone from `SignInLabels` and the catalog**, so an adopter's page drops one line. Rejected: keeping the key as
+  the unsupported message, under a name that says the opposite.
+- **No twin in the static demo or simulated mode.** Both sign in by picking a person, with no password for a second step to follow;
+  a step there would accept anything and show a security check that checks nothing. The story is where it is seen.
+  `safeinsights/sssb#102` wants demo twins for enrollment, which has state to show.
+- **`axe-core` is a development dependency of the repository**, for the step's own accessibility test. The e2e sweep
+  reaches only pages simulated mode serves, and this is not one. Colour contrast needs a layout engine and is not in it, so
+  it was run once by hand in Chromium, on Mantine's default colours with a primary shade of 8: it found the code in Mantine's error red too pale, which
+  the step now overrides.
+- **Not done: the accept-invite form.** Its ticket sign-in for an existing account meets the same statuses and still ends in its generic
+  error (`safeinsights/sssb#194`).
+
 ## Authorized parties for Clerk session tokens (2026-11-25, `feat/clerk-authorized-parties`)
 
 `safeinsights/sssb#185`: a deployment could not name the origins whose Clerk session tokens it accepts, so any token

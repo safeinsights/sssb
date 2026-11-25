@@ -227,3 +227,12 @@ First use of a single tenancy with a fixed org source found three gaps, closed o
 - **The home org is named by its org row.** The configured port is handed a lookup by its builder
   (`packages/kit/src/adapters/real/index.ts`, `packages/kit/src/adapters/fake/simulated-auth.ts`), so the module itself
   still reads no database.
+
+## Addendum (2026-11-25): sign-in takes an enrolled second factor
+
+The Decision calls MFA a documented seam, and the sign-in form met `needs_second_factor` with a message that it was not
+built. The sign-in half now is: the real form shows a second step for a factor the person already has
+(`packages/kit/src/adapters/real/sign-in-form.tsx`, over the vendor-free `packages/kit/src/components/auth/second-factor-step.tsx`).
+Enrolling, removing and requiring a factor remain the seam the Decision and the Consequences describe, gate included,
+and the `auth` port has not grown: the step runs wholly in Clerk's client, as the password does, and nothing server-side
+asks about factors yet. `safeinsights/sssb#102` plans those. The step has not run against a real Clerk instance (`auth-dev`).
