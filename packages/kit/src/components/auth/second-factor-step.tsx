@@ -183,6 +183,8 @@ export function SecondFactorStep({
                     value={code}
                     onChange={(event) => setCode(event.currentTarget.value)}
                     error={error === 'code'}
+                    // Mantine's error red is too pale for text; the border, aria-invalid and the alert say it is wrong.
+                    styles={{ input: { color: 'var(--mantine-color-text)' } }}
                     // A backup code is no one-time-code: a password manager would fill the authenticator's instead.
                     autoComplete={kind === 'backup' ? 'off' : 'one-time-code'}
                     inputMode={kind === 'backup' ? 'text' : 'numeric'}

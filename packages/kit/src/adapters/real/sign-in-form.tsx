@@ -174,10 +174,10 @@ interface Step {
 }
 
 /**
- * Whether Clerk took a call. Where clerk-js takes the browser to be offline (or not a browser it trusts), it drops a
+ * Whether Clerk took a call. Where clerk-js takes the browser to be offline (its test includes the user agent), it drops a
  * failed request and answers no error, with the attempt as it was: an accepted password, or a code sent, that never
- * left. Every answer Clerk does give rebuilds the attempt's verification (`SignIn.fromJSON`), so one that is still the
- * same object means there was none.
+ * left. Every success Clerk does answer rebuilds the attempt's verification (clerk-js's `SignIn.fromJSON`), so one that is
+ * still the same object means there was none.
  */
 async function succeeds(attempt: SignIn, call: () => Promise<{ error: unknown }>): Promise<boolean> {
     const before = attempt.secondFactorVerification

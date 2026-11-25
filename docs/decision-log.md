@@ -7461,7 +7461,7 @@ installed). Nothing here has run against a real instance (`auth-dev`).
 
 - **Four kinds of code: authenticator app, text message, email, backup code.** The sent ones cost two calls that take no
   argument (`mfa.sendPhoneCode`, `mfa.sendEmailCode`), so they are in. Rejected: TOTP and backup codes alone, which would
-  leave out Clerk's device check, whose usual factor is an emailed code.
+  leave out an account whose only code is a sent one.
 - **Passkeys and emailed links are left out.** A passkey is a WebAuthn ceremony with no code to type, and an emailed link
   needs a landing page that tells the waiting tab. An account that offers only those gets the unsupported message on
   the password step; one that also offers a code gets the code. `safeinsights/sssb#195` has them.
@@ -7473,8 +7473,9 @@ installed). Nothing here has run against a real instance (`auth-dev`).
   ask whoever manages the account: the generic error told people with the right password to check it. Only `complete`
   reaches `finalize`, on the password step and the code step alike.
 - **Clerk's order, with backup codes last.** The issue says to preselect the first factor the provider reports. A backup
-  code is spent by use, so it is never preselected while the account offers another. Rejected: Clerk's own UI's order
-  (an authenticator first), since an instance's order is an operator's to set.
+  code is spent by use, so it is never preselected while the account offers another. Rejected: the order of Clerk's own
+  UI (a passkey, then an authenticator, then a phone: `determineStartingSignInSecondFactor` in clerk/javascript), which the
+  issue did not ask for.
 - **One choice per kind, naming Clerk's first number or address.** `sendPhoneCode` and `sendEmailCode` send to the first the
   attempt lists and take no id, so a second number could be shown but not used. Rejected: the older `prepareSecondFactor`,
   which takes an id but is not the signals API the form is written in.
@@ -7493,7 +7494,7 @@ installed). Nothing here has run against a real instance (`auth-dev`).
   hook's placeholder instead, which follows the hook, so there that case is still open and the way out is back.
 - **A password or a sent code Clerk never answered is an error.** Where clerk-js takes the browser to be offline (or not a
   browser: its test includes the user agent, so some in-app browsers fail it) it drops a failed request and answers no
-  error. Each answer rebuilds the attempt's verification object, so one that is unchanged means none came. Rejected:
+  error. Each successful answer rebuilds the attempt's verification object, so one that is unchanged means none came. Rejected:
   `navigator.onLine`, which is only part of clerk-js's test. If a later clerk-js stopped rebuilding it, every password would
   be refused, which the first live sign-in shows.
 - **The second click of a double click is ignored on the choices and the way back** (500 ms): the buttons move under the pointer when
@@ -7510,8 +7511,9 @@ installed). Nothing here has run against a real instance (`auth-dev`).
   a step there would accept anything and show a security check that checks nothing. The story is where it is seen.
   `safeinsights/sssb#102` wants demo twins for enrollment, which has state to show.
 - **`axe-core` is a development dependency of the repository**, for the step's own accessibility test. The e2e sweep
-  reaches only pages simulated mode serves, and this is not one. Colour contrast needs a layout engine and is not in it; the step's
-  colours are the ones the swept screens use.
+  reaches only pages simulated mode serves, and this is not one. Colour contrast needs a layout engine and is not in it, so
+  it was run once by hand in Chromium, on Mantine's default theme: it found the code in Mantine's error red too pale, which
+  the step now overrides.
 - **Not done: the accept-invite form.** Its ticket sign-in for an existing account meets the same statuses and still ends in its generic
   error (`safeinsights/sssb#194`).
 
