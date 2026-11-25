@@ -11,7 +11,7 @@
 **What changed.** A new optional server setting, `CLERK_AUTHORIZED_PARTIES`: the app's own origins, comma-separated,
 handed to Clerk's middleware as `authorizedParties`. With it set, a request whose session token was minted for another
 origin, or names none, is signed out. Unset, nothing changes. A malformed value (a path, a trailing slash, upper case,
-a wildcard, a duplicate, `http` other than for `localhost`, an empty entry or an empty value) fails the server's first
+a wildcard, a duplicate, `http` other than for `localhost`, `127.0.0.1` or `[::1]`, an empty entry or an empty value) fails the server's first
 request and `sssb check-real-env`, naming the entry and cutover row `auth-dev`.
 
 **To adopt.** If your app shares its Clerk instance with another product, or your policy requires the check, set

@@ -46,6 +46,22 @@ function sessionToken(azp: string | undefined, key: Parameters<ReturnType<typeof
     return { token: `${header}.${payload}.${base64url(signature)}`, iat: now - 5 }
 }
 
+/**
+ * A page request coming back from Clerk's handshake: the `__clerk_handshake` query parameter, a token signed by the
+ * instance whose `handshake` claim holds the cookies to set, the session token among them. Clerk verifies that session
+ * token too, and it is the one it takes from somewhere other than the request's own session cookie.
+ */
+function handshakeRequest(token: { token: string; iat: number }) {
+    const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'ins_test' }))
+    const payload = base64url(
+        JSON.stringify({ handshake: [`__session=${token.token}; Path=/`, `__client_uat=${token.iat}; Path=/`] }),
+    )
+    const signature = createSign('RSA-SHA256').update(`${header}.${payload}`).sign(privateKey)
+    return new NextRequest(`${APP}/en?__clerk_handshake=${header}.${payload}.${base64url(signature)}`, {
+        headers: { 'sec-fetch-dest': 'document', accept: 'text/html' },
+    })
+}
+
 /** A signed-in request to the app: the session cookie, and the client cookie Clerk pairs it with. */
 function signedInRequest(token: { token: string; iat: number }) {
     return new NextRequest(`${APP}/api/items`, {
@@ -117,5 +133,29 @@ describe("withClerk around Clerk's own middleware", () => {
             status: 'signed-out',
             reason: 'token-invalid-authorized-parties',
         })
+    })
+
+    test('with CLERK_AUTHORIZED_PARTIES set, takes a listed token from a handshake, and refuses any other', async () => {
+        vi.stubEnv('CLERK_AUTHORIZED_PARTIES', APP)
+        expect(await routeIsTold(handshakeRequest(sessionToken(APP)))).toEqual({ status: 'signed-in', reason: null })
+        // Clerk logs the refused handshake and goes on as if there were none: no session cookie, so signed out.
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+        try {
+            for (const azp of [OTHER, undefined]) {
+                expect(await routeIsTold(handshakeRequest(sessionToken(azp)))).toEqual({
+                    status: 'signed-out',
+                    reason: 'session-token-and-uat-missing',
+                })
+            }
+            const refusals = logged.mock.calls.map((call) => String(call.join(' ')))
+            expect(refusals).toEqual([
+                expect.stringMatching(
+                    /unable to resolve handshake.*Authorized party claim \(azp\) "https:\/\/other-product/,
+                ),
+                expect.stringMatching(/unable to resolve handshake.*Authorized party claim \(azp\) undefined/),
+            ])
+        } finally {
+            logged.mockRestore()
+        }
     })
 })

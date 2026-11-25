@@ -7468,8 +7468,9 @@ standing rule for these sessions: decide, and record the rejected alternative.
   slash trimming. A refusal is `token-invalid-authorized-parties`, which `handleSessionTokenError` answers with
   signed-out and no handshake (only expiry-type reasons handshake), so a wrong list signs everyone out quietly rather
   than looping. `clerkMiddleware` spreads its options into `authenticateRequest`'s, so the list reaches every path.
-  The test that drives Clerk's real middleware offline (`clerk-proxy.clerk.test.ts`) pins all of this but the refresh
-  and handshake paths, which need Clerk's API.
+  The test that drives Clerk's real middleware offline (`clerk-proxy.clerk.test.ts`) pins all of this for the session
+  cookie and for a handshake's token (refused, Clerk logs it and goes on with no session: signed out), but not the
+  refresh path, which needs Clerk's API (round-1 review asked for the handshake case).
 - **One place verifies a Clerk session token: Clerk's middleware, in `withClerk`.** The auth adapter's `auth()` and
   `currentUser()` (`packages/kit/src/adapters/real/auth.ts`) read the middleware's verdict from the `x-clerk-auth-*`
   request headers it writes over any a client sent, check the token header's HMAC against the secret key, and decode
@@ -7482,13 +7483,14 @@ standing rule for these sessions: decide, and record the rejected alternative.
   **`params.auth.authorizedParties`**, which would need a per-environment shape `params.ts` does not have, a key in
   both apps' params, and `SssbApp` plumbing; and having `SssbApp` fill in its own distribution's host, which the
   server's environment cannot name without a dependency cycle (the distribution's origin is the server's URL).
-- **Every entry must be exactly its own origin** (`new URL(entry).origin === entry`), `https`, or `http` for
-  `localhost` alone; a wildcard, a duplicate and an empty entry are refused, and the error names each bad entry and,
+- **Every entry must be exactly its own origin** (`new URL(entry).origin === entry`), `https`, or `http` for the
+  loopback hosts `localhost`, `127.0.0.1` and `[::1]`; a wildcard, a duplicate and an empty entry are refused, and the error names each bad entry and,
   where it parses, the origin to write instead. Since Clerk compares strings, any other form would match nothing and
   sign everyone out. Rejected: **normalising** an entry (lower-casing, dropping a slash or path), which would hide that
   the value written is not what Clerk compares, and would accept a path that may mean someone listed a page rather than
-  a site. Rejected: **`http` for `127.0.0.1` and `[::1]`**: `localhost` covers `dev:real`, and a wider rule is easy to
-  add if someone needs it.
+  a site. Rejected: **`http` for `localhost` alone** (the first cut), which refused a developer serving `dev:real` on
+  `127.0.0.1` or `[::1]`, whose `azp` Clerk would match (round-1 review); and **`http` for any `*.localhost`**, which
+  no SSSB command serves.
 - **An empty value fails, unlike `CLERK_JWT_KEY`'s.** An empty `CLERK_JWT_KEY` means unset, and unset costs a Clerk
   request at worst. An empty list turns a security check off (Clerk treats `[]` as no check), and an empty value usually
   comes from a template whose input went missing. So the only way to turn the check off is to unset the variable.

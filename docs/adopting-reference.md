@@ -918,7 +918,7 @@ sign in: a user of the other product who signs in on your app gets a token for y
 it lives in the environment, beside `CLERK_JWT_KEY`, not in `params.ts`. **A wrong list signs everyone out**, with no
 error page: Clerk compares exact strings, so list every origin each deployment is served from (its custom domain, its
 CloudFront host `<id>.cloudfront.net` while people use it, each preview host), each as the browser's `Origin` header
-names it (scheme, lower-case host and any port, with no path or trailing slash), and `http` only for `localhost`. A malformed list (a path, a trailing slash, upper case, a
+names it (scheme, lower-case host and any port, with no path or trailing slash), and `http` only for `localhost`, `127.0.0.1` or `[::1]`. A malformed list (a path, a trailing slash, upper case, a
 wildcard, a duplicate, an empty entry or an empty value) fails the server's first request and `sssb check-real-env`,
 naming the entry; unset it to turn the check off. Verify it under cutover row `auth-dev`.
 

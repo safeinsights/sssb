@@ -15,6 +15,14 @@ describe('clerkAuthorizedParties (CLERK_AUTHORIZED_PARTIES)', () => {
         ).toEqual(['https://app.example.org', 'https://preview.example.org:8443', 'http://localhost:3000'])
     })
 
+    test('takes http for the loopback hosts alone', () => {
+        expect(clerkAuthorizedParties('http://localhost:3000,http://127.0.0.1:3000,http://[::1]:3000')).toEqual([
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'http://[::1]:3000',
+        ])
+    })
+
     test.each([
         ['an empty value', '', /"" is empty/],
         ['a value of spaces', '  ', /"" is empty/],
@@ -26,7 +34,8 @@ describe('clerkAuthorizedParties (CLERK_AUTHORIZED_PARTIES)', () => {
         ['space-separated origins', 'https://a.example.org https://b.example.org', /is not a URL/],
         ['plain http', 'http://app.example.org', /is not https/],
         ['another scheme', 'ftp://app.example.org', /is not https/],
-        ['http for 127.0.0.1', 'http://127.0.0.1:3000', /is not https/],
+        ['http for another address', 'http://10.0.0.5:3000', /is not https/],
+        ['http for a subdomain of localhost', 'http://app.localhost:3000', /is not https/],
         [
             'a trailing slash',
             'https://app.example.org/',

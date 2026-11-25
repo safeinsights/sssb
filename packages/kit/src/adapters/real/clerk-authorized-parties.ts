@@ -14,7 +14,7 @@
  *
  * Refused, with the reason: an empty value or entry, a wildcard (Clerk has none), anything that is not exactly its own
  * origin (a path, a query, a trailing slash, upper case, a default port, user info), a scheme other than `https`, but
- * `http` for `localhost`, and a duplicate.
+ * `http` for the loopback hosts (`localhost`, `127.0.0.1`, `[::1]`), and a duplicate.
  */
 export function clerkAuthorizedParties(value: string | undefined): string[] | undefined {
     if (value === undefined) return undefined
@@ -34,6 +34,9 @@ export function clerkAuthorizedParties(value: string | undefined): string[] | un
     return entries
 }
 
+/** The hosts a browser reaches on the machine itself, the only ones served over plain `http` in a real run. */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
+
 function originProblem(entry: string): string | null {
     if (entry === '') return 'is empty (an empty list would turn the check off)'
     if (entry.includes('*')) return 'is a wildcard, which Clerk does not expand: list each origin'
@@ -43,8 +46,8 @@ function originProblem(entry: string): string | null {
     } catch {
         return 'is not a URL'
     }
-    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && url.hostname === 'localhost')) {
-        return 'is not https (http is for localhost only)'
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOOPBACK.has(url.hostname))) {
+        return 'is not https (http is for localhost, 127.0.0.1 and [::1] only)'
     }
     if (url.origin !== entry) return `is not a bare origin: write it as ${url.origin}`
     return null
