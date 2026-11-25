@@ -1,5 +1,56 @@
 # @sssb/kit
 
+## 0.8.0
+
+### Minor Changes
+
+- f05a2d0: ### Name the origins whose Clerk session tokens a deployment accepts
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** A new optional server setting, `CLERK_AUTHORIZED_PARTIES`: the app's own origins, comma-separated,
+    handed to Clerk's middleware as `authorizedParties`. With it set, a request whose session token was minted for another
+    origin, or names none, is signed out. Unset, nothing changes. A malformed value (a path, a trailing slash, upper case, a
+    wildcard, a duplicate, `http` other than for `localhost`, `127.0.0.1` or `[::1]`, an empty entry or an empty value)
+    fails every request the server answers, naming the entry, and `sssb check-real-env` reports it on cutover row
+    `auth-dev`.
+
+    **To adopt.** If your app shares its Clerk instance with another product, or your policy requires the check, set
+    `CLERK_AUTHORIZED_PARTIES` in each deployment's server environment to every origin that deployment is served from,
+    custom domain, CloudFront host and preview hosts included, each written as a bare origin:
+    `CLERK_AUTHORIZED_PARTIES=https://app.example.org,https://d1234abcd.cloudfront.net`. Then sign in and check a page
+    and an API route still see you signed in: a wrong list signs everyone out. SSSB's adopting reference, "How sign-in
+    places people", has the details.
+
+- 4126c2d: ### Sign in with an enrolled second factor
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** `RealSignInForm` (`@sssb/kit/adapters/real/sign-in-form`) now signs in a person whose account has a
+    second factor: after the password it asks for a code from an authenticator app, a text message, an email or a set of
+    backup codes, whichever the account offers, with a choice and a resend. It does the same for the provider's check of a
+    new device. It used to stop there with a message that it was not built. A factor it takes no code for (a passkey, an
+    emailed link), and any other status it does not know, gets a message that says so.
+    `SignInLabels` loses `mfaNotImplemented`, and the framework catalog loses `auth.mfaNotImplemented`.
+
+    **To adopt.** Delete this line from your sign-in page's `labels` (`src/app/[locale]/signin/page.tsx`); with it left in,
+    a page that writes the labels inline no longer typechecks, and any other logs a missing message:
+
+    ```ts
+    mfaNotImplemented: t('mfaNotImplemented'),
+    ```
+
+    The form reads the rest of its copy from the framework's catalog, so it
+    must render under `NextIntlClientProvider`, as `SignInScreen` must. Once you have tried it on your provider's development
+    instance (the `auth-dev` row of SSSB's cutover checklist), an operator whose provider requires a second factor can use
+    SSSB's form. It signs in with a factor a person already has: enrolling one still happens outside SSSB.
+
+    **Now deletable.** A sign-in form of your own written to handle a second factor or a new-device check.
+
 ## 0.7.0
 
 ### Minor Changes
