@@ -7501,3 +7501,64 @@ installed). Nothing here has run against a real instance (`auth-dev`).
   colours are the ones the swept screens use.
 - **Not done: the accept-invite form.** Its ticket sign-in for an existing account meets the same statuses and still ends in its generic
   error (`safeinsights/sssb#194`).
+
+## Authorized parties for Clerk session tokens (2026-11-25, `feat/clerk-authorized-parties`)
+
+`safeinsights/sssb#185`: a deployment could not name the origins whose Clerk session tokens it accepts, so any token
+the instance signed passed, whatever its `azp` claim said. `CLERK_AUTHORIZED_PARTIES` now reaches Clerk's middleware as
+`authorizedParties` (`packages/kit/src/adapters/real/clerk-authorized-parties.ts`, read in `clerk-proxy.ts`). JP's
+standing rule for these sessions: decide, and record the rejected alternative.
+
+- **What Clerk does with the list** (read in the installed @clerk/backend 3.29 and @clerk/nextjs 7.10).
+  `assertAuthorizedPartiesClaim` (`@clerk/backend/dist/internal.js:795`) runs inside `verifyJwt` (`:1014`), after the
+  signature check and before the expiry checks, on every session token `authenticateRequest` verifies: the cookie's
+  (`:8303`), the one a refresh returns (`:8083`), and the one a handshake sets (`:7735`). With a non-empty list, a token whose `azp` is not exactly one of the strings is refused, and so is a token with
+  no `azp` (`!azp`); unset, or `[]`, there is no check, and a token with no `azp` is accepted with a one-time warning
+  that a later Clerk will refuse it (`:8307`). The comparison is `Array.includes` on strings: no origin parsing, case folding or
+  slash trimming. A refusal is `token-invalid-authorized-parties`, which `handleSessionTokenError` (`:8350`) answers
+  with signed-out and no handshake (only expiry-type reasons handshake), so a wrong list signs everyone out quietly rather
+  than looping. `clerkMiddleware` spreads its options into `authenticateRequest`'s
+  (`@clerk/nextjs/dist/esm/server/clerkMiddleware.js:79` and `:249`), so the list reaches every path.
+  The test that drives Clerk's real middleware offline (`clerk-proxy.clerk.test.ts`) pins, for the session cookie, the
+  refusal of an unlisted `azp`, of none and of the listed origin with a trailing slash, and the unset list accepting
+  all three; and the refusal of a handshake's token (Clerk logs it and goes on with no session: signed out). Dropping
+  `authorizedParties` from `withClerk`'s options turns those four tests red. The refresh path, which needs Clerk's API,
+  is read, not tested (round-1 review asked for the handshake case).
+- **One place verifies a Clerk session token: Clerk's middleware, in `withClerk`.** The auth adapter's `auth()` and
+  `currentUser()` (`packages/kit/src/adapters/real/auth.ts`) read the middleware's verdict from the `x-clerk-auth-*`
+  request headers it writes over any a client sent, check the token header's HMAC against the secret key
+  (`assertTokenSignature`, `@clerk/nextjs/dist/esm/server/utils.js:122`), and decode the token without verifying it
+  again (`getSessionAuthDataFromRequest`, `data/getAuthDataFromRequest.js:40`). Its other Clerk calls are Backend API calls
+  with the secret key. So the list goes to the middleware alone. Machine tokens never reach Clerk (`withClerk` strips
+  `Authorization`), so `azp` is about session tokens only.
+- **An environment value, not `params.auth`.** The origins differ per deployment (staging, production, each preview,
+  the CloudFront host that exists only once deployed), and `params.ts` holds one value per app. Clerk's other values
+  (`CLERK_SECRET_KEY`, `CLERK_JWT_KEY`) are set in the server's environment by the operator, not by `SssbApp`. Rejected:
+  **`params.auth.authorizedParties`**, which would need a per-environment shape `params.ts` does not have, a key in
+  both apps' params, and `SssbApp` plumbing; and having `SssbApp` fill in its own distribution's host, which the
+  server's environment cannot name without a dependency cycle (the distribution's origin is the server's URL).
+- **Every entry must be exactly its own origin** (`new URL(entry).origin === entry`), `https`, or `http` for the
+  loopback hosts `localhost`, `127.0.0.1` and `[::1]`; a wildcard, a duplicate and an empty entry are refused, and the error names each bad entry and,
+  where it parses, the origin to write instead. Since Clerk compares strings, any other form would match nothing and
+  sign everyone out. Rejected: **normalising** an entry (lower-casing, dropping a slash or path), which would hide that
+  the value written is not what Clerk compares, and would accept a path that may mean someone listed a page rather than
+  a site. Rejected: **`http` for `localhost` alone** (the first cut), which refused a developer serving `dev:real` on
+  `127.0.0.1` or `[::1]`, whose `azp` Clerk would match (round-1 review); and **`http` for any `*.localhost`**, which
+  no SSSB command serves.
+- **An empty value fails, unlike `CLERK_JWT_KEY`'s.** An empty `CLERK_JWT_KEY` means unset, and unset costs a Clerk
+  request at worst. An empty list turns a security check off (Clerk treats `[]` as no check), and an empty value usually
+  comes from a template whose input went missing. So the only way to turn the check off is to unset the variable.
+  Rejected: **treating `''` as unset**, which fails open on exactly that mistake.
+- **Refused in two places, with the same function**: when `withClerk` loads (the first real request, as
+  `CLERK_JWT_KEY`; `withAuthProxy` forgets a failed load, so every request fails until it is fixed), and in
+  `assertRealEnv`, as a `CutoverPendingError` naming row `auth-dev`, so `sssb check-real-env` reports it before a
+  deploy and `createRealPorts` at boot. Optional: not in `REQUIRED_ENV`, so the required-environment snapshot is
+  unchanged.
+- **No warning when real mode has no list.** `sssb doctor` reads the workspace and the conformance suite runs in unit
+  tests; neither sees a deployment's environment, so neither can tell. `sssb check-real-env` can, but has no warning
+  channel today; that is `safeinsights/sssb#192`. Rejected: **a log line on every real boot without the list**,
+  noise for a deployment on an instance of its own, where the list adds little.
+- **Documented in the adopting reference, not the app guide**: it is an optional per-deployment setting, not a rule
+  every app follows. The cutover checklist's `auth-dev` row gains one sentence (a sibling change edits the same row).
+- **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
+  that does not set it.

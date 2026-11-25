@@ -105,6 +105,7 @@ beforeEach(() => {
         AUTH_HOME_ORG_SLUG: undefined,
         AUTH_DEFAULT_ROLE: undefined,
         AUTH_TENANT_METADATA_KEY: undefined,
+        CLERK_AUTHORIZED_PARTIES: undefined,
     })
 })
 
@@ -255,6 +256,16 @@ describe('the auth settings (AUTH_TENANCY, AUTH_ORG_SOURCE)', () => {
         })
         expect(() => assertRealEnv()).toThrow(/auth-tenancy.*manage-all/s)
         stubEnv({ AUTH_DEFAULT_ROLE: 'none' })
+        expect(() => assertRealEnv()).not.toThrow()
+    })
+
+    it('a malformed CLERK_AUTHORIZED_PARTIES fails the preflight, naming the auth-dev row; it is optional', async () => {
+        const { assertRealEnv } = await import('./index')
+        stubEnv({ ...PG, CLERK_AUTHORIZED_PARTIES: 'https://app.example.org/' })
+        expect(() => assertRealEnv()).toThrow(/auth-dev.*CLERK_AUTHORIZED_PARTIES: .* is not a bare origin/s)
+        stubEnv({ CLERK_AUTHORIZED_PARTIES: 'https://app.example.org' })
+        expect(() => assertRealEnv()).not.toThrow()
+        stubEnv({ CLERK_AUTHORIZED_PARTIES: undefined })
         expect(() => assertRealEnv()).not.toThrow()
     })
 })

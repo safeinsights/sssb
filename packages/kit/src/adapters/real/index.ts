@@ -12,6 +12,7 @@ import { authRequiredEnv, authSettings, fixedOrgProblem } from '../auth-tenancy'
 import { configuredAuth } from '../configured-auth'
 import { orgNameForSlugs } from '../../db/org-lookup'
 import { clerkIdentitySource, realAuth } from './auth'
+import { clerkAuthorizedParties } from './clerk-authorized-parties'
 import { DATABASE_ENV, databaseResumeBudgetMs, databaseTransport } from './database-transport'
 import { noAnalytics } from './no-analytics'
 import { optionalPortsEnv, portChoice } from './optional-ports'
@@ -90,6 +91,13 @@ export function assertRealEnv(): void {
         problem = (error as Error).message
     }
     if (problem) throw new CutoverPendingError(['auth-tenancy'], problem)
+    // The origins Clerk accepts session tokens from, optional: Clerk's middleware refuses a malformed list when it loads
+    // (./clerk-proxy.ts), and this refuses it too, so `sssb check-real-env` reports it before a deploy.
+    try {
+        clerkAuthorizedParties(process.env['CLERK_AUTHORIZED_PARTIES'])
+    } catch (error) {
+        throw new CutoverPendingError(['auth-dev'], (error as Error).message)
+    }
 }
 
 /**
