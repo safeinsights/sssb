@@ -176,13 +176,29 @@ interface Step {
 /**
  * Whether Clerk took a call. Where clerk-js takes the browser to be offline (its test includes the user agent), it drops a
  * failed request and answers no error, with the attempt as it was: an accepted password, or a code sent, that never
- * left. Every success Clerk does answer rebuilds the attempt's verification (clerk-js's `SignIn.fromJSON`), so one that is
- * still the same object means there was none.
+ * left. So a call is taken when it answers no error and anything about the attempt has changed. A password moves its
+ * status, or starts an attempt with another id, so no password depends on what clerk-js does with the verification; a
+ * sent code moves neither, and there the verification says (clerk-js rebuilds it from every success).
  */
 async function succeeds(attempt: SignIn, call: () => Promise<{ error: unknown }>): Promise<boolean> {
-    const before = attempt.secondFactorVerification
+    const before = fingerprint(attempt)
     const { error } = await call()
-    return !error && attempt.secondFactorVerification !== before
+    const after = fingerprint(attempt)
+    return !error && after.some((value, index) => !Object.is(value, before[index]))
+}
+
+/** What a Clerk answer changes about an attempt. */
+function fingerprint(attempt: SignIn): unknown[] {
+    const { id, status, secondFactorVerification: verification } = attempt
+    return [
+        id,
+        status,
+        verification,
+        // Its values too, for one updated in place. Optional, so that a build without one cannot break the password.
+        verification?.status,
+        verification?.strategy,
+        verification?.expireAt?.getTime(),
+    ]
 }
 
 /**

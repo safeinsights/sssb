@@ -7494,9 +7494,18 @@ installed). Nothing here has run against a real instance (`auth-dev`).
   hook's placeholder instead, which follows the hook, so there that case is still open and the way out is back.
 - **A password or a sent code Clerk never answered is an error.** Where clerk-js takes the browser to be offline (or not a
   browser: its test includes the user agent, so some in-app browsers fail it) it drops a failed request and answers no
-  error. Each successful answer rebuilds the attempt's verification object, so one that is unchanged means none came. Rejected:
-  `navigator.onLine`, which is only part of clerk-js's test. If a later clerk-js stopped rebuilding it, every password would
-  be refused, which the first live sign-in shows.
+  error. So a call is taken when it answers no error and anything about the attempt changed: its id, its status, its
+  verification object, or that object's status, strategy or expiry. A password moves the status or starts an attempt of
+  another id, so it never depends on the verification, and a build that stopped rebuilding it could not refuse every
+  password. A sent code moves neither. If it worked and the check missed it, the person reads that it could not be sent,
+  and can still enter it: verifying does not ask the check. Rejected: the verification object alone, which made every
+  sign-in depend on it. Rejected: `navigator.onLine`, which is only part of clerk-js's test.
+- **The verification was read in the builds, not only the source.** `@clerk/nextjs` 7.10.0 loads clerk-js by major: `versionSelector` in
+  `@clerk/shared` 4.45.1 answers `6`, its package version 6.43.1's major. From npm, `dist/clerk.browser.js` of 6.0.0,
+  6.43.1 and 6.47.0 (npm's `latest` on 2026-11-25): in each, `SignIn.fromJSON` sets `id` and `status` and makes a
+  new second-factor verification object from every response that has data, `_baseMutate` (which the password and the code calls go
+  through) calls it, the hook's `secondFactorVerification` reads the resource's, `password` posts to the collection, and a
+  failed request the browser test calls offline returns null with no error. Which 6.x Clerk serves is Clerk's to say.
 - **The second click of a double click is ignored on the choices and the way back** (500 ms): the buttons move under the pointer when
   a factor is chosen, and the next one could send a text or drop the attempt. Rejected: every factor always listed, the
   chosen one included, which puts as many buttons as factors between the person and the field.

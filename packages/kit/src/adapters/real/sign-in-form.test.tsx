@@ -11,12 +11,14 @@ import enFramework from '../../i18n/messages/en.json'
  * whatever the page passed. Never run against a real Clerk instance (cutover row `auth-dev`).
  */
 type Answer = { error: { code: string } | null }
+type Verification = { strategy?: string; status?: string; expireAt?: Date }
 type Offered = { strategy: string; safeIdentifier?: string }
 const ok: Answer = { error: null }
 const refused: Answer = { error: { code: 'form_code_incorrect' } }
 
 const signIn = {
-    secondFactorVerification: {},
+    id: 'sia_1' as string | undefined,
+    secondFactorVerification: {} as Verification | undefined,
     status: 'needs_identifier' as string,
     supportedSecondFactors: [] as readonly Offered[],
     password: vi.fn<() => Promise<Answer>>(),
@@ -70,6 +72,7 @@ const throws = async (): Promise<Answer> => {
 beforeEach(() => {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     hook.signIn = signIn
+    signIn.id = 'sia_1'
     signIn.secondFactorVerification = {}
     signIn.status = 'needs_identifier'
     signIn.supportedSecondFactors = []
@@ -191,6 +194,21 @@ describe('RealSignInForm', () => {
             signIn.status = status
             signIn.password.mockResolvedValueOnce(refused)
             await submit('/en/dashboard')
+            expectNotSignedIn()
+            expect(step()).toBeNull()
+        },
+    )
+
+    it.each(['complete', 'needs_second_factor'])(
+        'goes nowhere on a refused password that moved the attempt to %s',
+        async (status) => {
+            signIn.supportedSecondFactors = [TOTP]
+            signIn.password.mockImplementationOnce(async () => {
+                await leaves(status)()
+                return refused
+            })
+            await submit('/en/dashboard')
+            expect(alertText()).toBe('error')
             expectNotSignedIn()
             expect(step()).toBeNull()
         },
@@ -350,6 +368,13 @@ describe('the factors offered', () => {
 
     it.each([
         ['refused', refuses],
+        [
+            'refused, with the attempt changed',
+            async () => {
+                await leaves('needs_second_factor')()
+                return refused
+            },
+        ],
         ['answered with a throw', throws],
     ])('says so when the sending is %s', async (_, answer) => {
         signIn.mfa.sendPhoneCode.mockImplementationOnce(answer)
@@ -491,12 +516,70 @@ describe('a request clerk-js dropped, which it answers with no error', () => {
         expect(stepButton('resend').disabled).toBe(false)
     })
 
+    it('lets a code in anyway, if one did arrive and only the sending looked dropped', async () => {
+        signIn.mfa.sendPhoneCode.mockImplementation(dropped)
+        await reachStep([PHONE])
+        expect(alertText()).toBe(copy.codeSendError)
+        await enterCode()
+        expect(assign).toHaveBeenCalledTimes(1)
+    })
+
     it('signs nobody in on a code that was dropped', async () => {
         signIn.mfa.verifyTOTP.mockImplementation(dropped)
         await reachStep([TOTP])
         await enterCode()
         expect(alertText()).toBe(copy.codeError)
         expectNotSignedIn()
+    })
+})
+
+describe('a clerk-js that never rebuilds the verification', () => {
+    const inPlace = (change: () => void) => async (): Promise<Answer> => {
+        change()
+        return ok
+    }
+
+    it.each([{}, undefined])('still takes a password that moves the status, verification %j', async (verification) => {
+        signIn.secondFactorVerification = verification
+        signIn.password.mockImplementation(inPlace(() => (signIn.status = 'complete')))
+        expect(await signInWith('/en/dashboard')).toBe('/en/dashboard')
+    })
+
+    it.each(['complete', 'needs_second_factor'])(
+        'still takes a password that starts another attempt at the same status (%s)',
+        async (status) => {
+            signIn.status = status
+            signIn.supportedSecondFactors = [TOTP]
+            signIn.password.mockImplementation(inPlace(() => (signIn.id = 'sia_2')))
+            await submit('/en/dashboard')
+            expect(alertText()).toBeUndefined()
+            if (status === 'complete') expect(assign).toHaveBeenCalledTimes(1)
+            else expect(step()).not.toBeNull()
+        },
+    )
+
+    it('still refuses a password that answers no error and changes nothing', async () => {
+        signIn.status = 'complete'
+        signIn.password.mockResolvedValue(ok)
+        await submit('/en/dashboard')
+        expect(alertText()).toBe('error')
+        expectNotSignedIn()
+    })
+
+    it.each([
+        ['strategy', { strategy: 'phone_code' }],
+        ['status', { status: 'unverified' }],
+        ['expiry', { expireAt: new Date(2) }],
+    ])('still sees a code sent by its %s', async (_, change) => {
+        signIn.secondFactorVerification = { strategy: 'totp', status: 'x', expireAt: new Date(1) }
+        signIn.password.mockImplementation(inPlace(() => (signIn.status = 'needs_second_factor')))
+        signIn.mfa.sendPhoneCode.mockImplementation(
+            inPlace(() => Object.assign(signIn.secondFactorVerification ?? {}, change)),
+        )
+        signIn.supportedSecondFactors = [PHONE]
+        await submit('/en/dashboard')
+        expect(step()).not.toBeNull()
+        expect(alertText()).toBeUndefined()
     })
 })
 
