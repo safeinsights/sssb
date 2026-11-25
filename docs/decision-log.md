@@ -7491,14 +7491,17 @@ installed). Nothing here has run against a real instance (`auth-dev`).
   update replaces: another tab's sign-in, a code sent before the person went back, or the empty attempt a `finalize` that
   fails half-way leaves. Rejected: the hook's object with the attempt's id checked against it, which a review round showed
   verifying the spent code against the empty attempt. A password submitted before clerk-js has loaded holds the
-  hook's placeholder instead, which follows the hook, so there that case is still open and the way out is back.
+  hook's placeholder instead, which follows the hook, so there that case is still open and the way out is back. There a dropped password also counts as taken, so the form acts on
+  an attempt the client already held (no factor is skipped: Clerk verifies it). Recorded, with a session that a failed
+  `finalize` leaves after the person goes back, as `safeinsights/sssb#198`.
 - **A password or a sent code Clerk never answered is an error.** Where clerk-js takes the browser to be offline (or not a
   browser: its test includes the user agent, so some in-app browsers fail it) it drops a failed request and answers no
   error. So a call is taken when it answers no error and anything about the attempt changed: its id, its status, its
-  verification object, or that object's status, strategy or expiry. A password moves the status or starts an attempt of
-  another id, so it never depends on the verification, and a build that stopped rebuilding it could not refuse every
-  password. A sent code moves neither. If it worked and the check missed it, the person reads that it could not be sent,
-  and can still enter it: verifying does not ask the check. Rejected: the verification object alone, which made every
+  verification object, or that object's status, strategy or expiry. A first
+  password moves the status, so a build that stopped rebuilding the verification could not refuse it; a later one, at the
+  same status, is told by the new attempt's id (which Clerk's server assigns; not seen live) or by the verification. A
+  sent code moves neither. If it worked and the check missed it, the person reads that it could not be sent, and can still
+  enter it: verifying does not ask the check. Rejected: the verification object alone, which made every
   sign-in depend on it. Rejected: `navigator.onLine`, which is only part of clerk-js's test.
 - **The verification was read in the builds, not only the source.** `@clerk/nextjs` 7.10.0 loads clerk-js by major: `versionSelector` in
   `@clerk/shared` 4.45.1 answers `6`, its package version 6.43.1's major. From npm, `dist/clerk.browser.js` of 6.0.0,

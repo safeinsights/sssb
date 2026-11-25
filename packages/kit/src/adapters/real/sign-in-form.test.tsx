@@ -11,7 +11,7 @@ import enFramework from '../../i18n/messages/en.json'
  * whatever the page passed. Never run against a real Clerk instance (cutover row `auth-dev`).
  */
 type Answer = { error: { code: string } | null }
-type Verification = { strategy?: string; status?: string; expireAt?: Date }
+type Verification = { strategy?: string; status?: string; expireAt?: Date | string | null }
 type Offered = { strategy: string; safeIdentifier?: string }
 const ok: Answer = { error: null }
 const refused: Answer = { error: { code: 'form_code_incorrect' } }
@@ -539,11 +539,14 @@ describe('a clerk-js that never rebuilds the verification', () => {
         return ok
     }
 
-    it.each([{}, undefined])('still takes a password that moves the status, verification %j', async (verification) => {
-        signIn.secondFactorVerification = verification
-        signIn.password.mockImplementation(inPlace(() => (signIn.status = 'complete')))
-        expect(await signInWith('/en/dashboard')).toBe('/en/dashboard')
-    })
+    it.each([{}, undefined, { expireAt: null }, { expireAt: 'soon' }])(
+        'still takes a password that moves the status, verification %j',
+        async (verification) => {
+            signIn.secondFactorVerification = verification
+            signIn.password.mockImplementation(inPlace(() => (signIn.status = 'complete')))
+            expect(await signInWith('/en/dashboard')).toBe('/en/dashboard')
+        },
+    )
 
     it.each(['complete', 'needs_second_factor'])(
         'still takes a password that starts another attempt at the same status (%s)',

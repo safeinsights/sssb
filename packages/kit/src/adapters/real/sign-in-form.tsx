@@ -177,8 +177,10 @@ interface Step {
  * Whether Clerk took a call. Where clerk-js takes the browser to be offline (its test includes the user agent), it drops a
  * failed request and answers no error, with the attempt as it was: an accepted password, or a code sent, that never
  * left. So a call is taken when it answers no error and anything about the attempt has changed. A password moves its
- * status, or starts an attempt with another id, so no password depends on what clerk-js does with the verification; a
- * sent code moves neither, and there the verification says (clerk-js rebuilds it from every success).
+ * status or, posted to Clerk's collection of attempts, is answered with another id, so no password depends on the
+ * verification alone; a sent code moves neither, and there the verification says (clerk-js rebuilds it from every
+ * success). Before clerk-js has loaded, every read is a default, so a call made then counts as taken whenever it answers
+ * no error (safeinsights/sssb#198).
  */
 async function succeeds(attempt: SignIn, call: () => Promise<{ error: unknown }>): Promise<boolean> {
     const before = fingerprint(attempt)
@@ -194,10 +196,10 @@ function fingerprint(attempt: SignIn): unknown[] {
         id,
         status,
         verification,
-        // Its values too, for one updated in place. Optional, so that a build without one cannot break the password.
+        // Its values too, for one updated in place, read so that nothing a build answers can throw and break the password.
         verification?.status,
         verification?.strategy,
-        verification?.expireAt?.getTime(),
+        Number(verification?.expireAt),
     ]
 }
 
