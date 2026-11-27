@@ -338,7 +338,9 @@ Measured on 2026-11-21, before this wait was reworked: the cluster resumed in 12
 took 26.0 seconds of the server's 30. A request makes one wait, however many calls it makes, unless it carries on after
 one has run out or the database refuses again after answering the poll: the dialect polls with `SELECT 1` after 1, 2
 and 4 seconds and then every second, every call that waits shares that poll, and a call outside a transaction that is
-not yet sent waits for a known resume first (`packages/kit/src/adapters/real/rds-data-resume.ts`).
+not yet sent waits for a known resume first (`packages/kit/src/adapters/real/rds-data-resume.ts`). A probe that has not
+answered in two seconds is left running while the next is sent, and is aborted after six, so a wait that never hears from
+the database keeps at most three requests out.
 
 **Setting the budget.** A call waits 18 seconds by default, then fails. `DATABASE_RESUME_BUDGET_MS` on the server
 changes it (a whole number of milliseconds, 0 to fail at once, at most 900000). In `apps/<app>/infra/app.ts`, with the
