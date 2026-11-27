@@ -239,6 +239,92 @@ describe('replay', () => {
         expect((await guarded(message())).status).toBe(401) // stale now, so the claim may go
     })
 
+    test('a replay whose body arrives slowly is judged by the clock after the body, not before it', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] })
+        const start = new Date('2026-11-27T12:00:00Z')
+        vi.setSystemTime(start)
+        const guarded = guard()
+        const timestamp = Math.floor(start.getTime() / 1000)
+        const body = '{"n":1}'
+        expect((await guarded(signed(devSecret(), { id: 'msg_slow', timestamp, body }))).status).toBe(200)
+
+        // Just inside the window, a replay whose body takes five seconds to arrive.
+        vi.setSystemTime(start.getTime() + 5 * 60_000 - 500)
+        const slowBody = new ReadableStream<Uint8Array>(
+            {
+                pull(controller) {
+                    vi.setSystemTime(Date.now() + 5_000)
+                    controller.enqueue(new TextEncoder().encode(body))
+                    controller.close()
+                },
+            },
+            { highWaterMark: 0 },
+        )
+        const replay = new Request('http://localhost/api/webhooks/partner', {
+            method: 'POST',
+            headers: {
+                'webhook-id': 'msg_slow',
+                'webhook-timestamp': String(timestamp),
+                'webhook-signature': signStandardWebhook(devSecret(), 'msg_slow', timestamp, body),
+            },
+            body: slowBody,
+            duplex: 'half',
+        } as RequestInit)
+        expect((await guarded(replay)).status).toBe(401)
+    })
+
+    test('a request the headers alone condemn is refused without reading its body', async () => {
+        const guarded = guard()
+        let read = false
+        // A high-water mark of 0, so the stream pulls only when someone reads it.
+        const body = new ReadableStream<Uint8Array>(
+            {
+                pull(controller) {
+                    read = true
+                    controller.close()
+                },
+            },
+            { highWaterMark: 0 },
+        )
+        const stale = new Request('http://localhost/api/webhooks/partner', {
+            method: 'POST',
+            headers: { 'webhook-id': 'msg_x', 'webhook-timestamp': '1000', 'webhook-signature': 'v1,AAAA' },
+            body,
+            duplex: 'half',
+        } as RequestInit)
+        expect((await guarded(stale)).status).toBe(401)
+        expect(read).toBe(false)
+    })
+
+    test('a store that fails to release does not hide the handler’s error', async () => {
+        const store: StandardWebhookReplayStore = {
+            claim: () => true,
+            release: () => {
+                throw new Error('store down')
+            },
+        }
+        const guarded = withStandardWebhookSignature(
+            async () => {
+                throw new Error('handler failed')
+            },
+            { secretEnv: 'PARTNER_WEBHOOK_SECRET', replayStore: store },
+        )
+        await expect(guarded(signed(devSecret()))).rejects.toThrow('handler failed')
+    })
+
+    test('a leading byte-order mark stays in webhook.body, as it was signed', async () => {
+        let seenBody = ''
+        const guarded = withStandardWebhookSignature(
+            async ({ webhook }) => {
+                seenBody = webhook.body
+                return Response.json({ ok: true })
+            },
+            { secretEnv: 'PARTNER_WEBHOOK_SECRET' },
+        )
+        expect((await guarded(signed(devSecret(), { body: '\uFEFF{"n":1}' }))).status).toBe(200)
+        expect(seenBody).toBe('\uFEFF{"n":1}')
+    })
+
     test('a handler that throws or answers 5xx releases the message, so its resend is processed', async () => {
         let answer: 'throw' | 503 | 200 = 'throw'
         const guarded = withStandardWebhookSignature(
@@ -343,5 +429,42 @@ describe('options', () => {
 
     test('signStandardWebhook refuses a secret that is not base64', () => {
         expect(() => signStandardWebhook('whsec_###', 'msg', 1, '')).toThrow(TypeError)
+    })
+
+    test.each([Number.NaN, Number.POSITIVE_INFINITY, 0, -1])(
+        'a toleranceMs of %s throws, never disables freshness',
+        (t) => {
+            expect(() =>
+                withStandardWebhookSignature(ok, { secretEnv: 'PARTNER_WEBHOOK_SECRET', toleranceMs: t }),
+            ).toThrow(TypeError)
+            expect(() =>
+                verifyStandardWebhookSignature({
+                    ...SPEC,
+                    body: SPEC.body,
+                    secrets: [SPEC.secret],
+                    now: SPEC_NOW,
+                    toleranceMs: t,
+                }),
+            ).toThrow(TypeError)
+        },
+    )
+
+    test('a key shorter than 16 bytes is no secret: it verifies nothing and signs nothing', () => {
+        const short = 'whsec_' + Buffer.from('fifteen bytes!!').toString('base64')
+        const sixteen = 'whsec_' + Buffer.from('sixteen bytes!!!').toString('base64')
+        expect(() => signStandardWebhook(short, 'msg', 1, '')).toThrow(TypeError)
+        const signature = signStandardWebhook(sixteen, 'msg', Number(SPEC.timestamp), '{}')
+        const verify = (secret: string) =>
+            verifyStandardWebhookSignature({
+                id: 'msg',
+                timestamp: SPEC.timestamp,
+                signature,
+                body: '{}',
+                secrets: [secret],
+                now: SPEC_NOW,
+            })
+        expect(verify(sixteen)).toEqual({ ok: true })
+        // The same 16 bytes less one cannot be the key, whatever the sender signed with.
+        expect(verify(short)).toEqual({ ok: false, reason: 'signature' })
     })
 })

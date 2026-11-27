@@ -94,12 +94,18 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 const UNIX_SECONDS = /^\d{1,15}$/
 const encoder = new TextEncoder()
 
-/** The HMAC key a `whsec_…` secret carries, or null when it is not one. */
+/**
+ * The shortest key accepted, in bytes. The specification recommends 24 to 64; 16 (128 bits) is the floor below which a
+ * guessable value (`changeme` is six bytes of valid base64) would pass for a secret.
+ */
+const MIN_KEY_BYTES = 16
+
+/** The HMAC key a `whsec_…` secret carries, or null when it is not one, or is shorter than MIN_KEY_BYTES. */
 function secretKey(secret: string): Buffer | null {
     const encoded = secret.startsWith(SECRET_PREFIX) ? secret.slice(SECRET_PREFIX.length) : secret
     if (!BASE64.test(encoded)) return null
     const key = Buffer.from(encoded, 'base64')
-    return key.length > 0 ? key : null
+    return key.length >= MIN_KEY_BYTES ? key : null
 }
 
 function bodyBytes(body: string | Uint8Array): Uint8Array {
@@ -121,7 +127,8 @@ export function signStandardWebhook(
     body: string | Uint8Array,
 ): string {
     const key = secretKey(secret)
-    if (!key) throw new TypeError('a Standard Webhooks secret is whsec_ and the base64 of its key')
+    if (!key)
+        throw new TypeError(`a Standard Webhooks secret is whsec_ and the base64 of a key of ${MIN_KEY_BYTES}+ bytes`)
     return `v1,${hmac(key, id, String(timestampSec), bodyBytes(body)).toString('base64')}`
 }
 
@@ -129,7 +136,8 @@ export function signStandardWebhook(
  * The pure check, no replay state: the fields are present and the timestamp is whole seconds (`malformed`), within
  * `toleranceMs` of `now` either way (`stale`), and some `v1` signature in the space-separated `signature` list equals
  * the HMAC under some secret in `secrets`, compared in constant time (`signature`). A secret that is not
- * `whsec_`-and-base64 matches nothing. Signatures of another version (`v1a`, asymmetric) are ignored, never accepted.
+ * `whsec_`-and-base64 of at least 16 bytes matches nothing. A `toleranceMs` that is not positive and finite throws a
+ * TypeError. Signatures of another version (`v1a`, asymmetric) are ignored, never accepted.
  */
 export function verifyStandardWebhookSignature(params: {
     id: string | null | undefined
@@ -144,7 +152,7 @@ export function verifyStandardWebhookSignature(params: {
     if (!id || !timestamp || !signature || !UNIX_SECONDS.test(timestamp)) return { ok: false, reason: 'malformed' }
 
     const nowMs = params.now?.getTime() ?? Date.now()
-    const toleranceMs = params.toleranceMs ?? WEBHOOK_REPLAY_TOLERANCE_MS
+    const toleranceMs = toleranceOf(params)
     if (Math.abs(nowMs - Number(timestamp) * 1000) > toleranceMs) return { ok: false, reason: 'stale' }
 
     const presented: Buffer[] = []
@@ -169,8 +177,18 @@ export function verifyStandardWebhookSignature(params: {
     return matched ? { ok: true } : { ok: false, reason: 'signature' }
 }
 
-/** The env var names `options.secretEnv` gives, each checked (./secret-env.ts); at least one. */
+/** The tolerance, checked: a NaN or infinite one would turn the freshness check off. */
+function toleranceOf(options: { toleranceMs?: number | undefined }): number {
+    const toleranceMs = options.toleranceMs ?? WEBHOOK_REPLAY_TOLERANCE_MS
+    if (!Number.isFinite(toleranceMs) || toleranceMs <= 0) {
+        throw new TypeError(`toleranceMs must be a positive, finite number of milliseconds, got ${toleranceMs}`)
+    }
+    return toleranceMs
+}
+
+/** The env var names `options.secretEnv` gives, each checked (./secret-env.ts); at least one. Checks the tolerance too. */
 function secretEnvNames(options: StandardWebhookOptions): readonly string[] {
+    toleranceOf(options)
     const names = typeof options.secretEnv === 'string' ? [options.secretEnv] : options.secretEnv
     if (names.length === 0) throw new TypeError('secretEnv must name at least one environment variable')
     return names.map((name) => serverSecretEnvName(name, 'secretEnv'))
@@ -189,20 +207,19 @@ function configuredSecrets(envNames: readonly string[]): string[] {
 /** key -> the moment its signature stops being fresh (max(now, timestamp) + tolerance), as Mailgun's token guard. */
 const seen = new Map<string, number>()
 
-const inProcessReplayStore: StandardWebhookReplayStore = {
-    claim(key, expiresAtMs) {
-        const nowMs = Date.now()
-        // Prune first, so the map cannot grow without bound across a long-lived process.
-        for (const [held, expiry] of seen) {
-            if (expiry <= nowMs) seen.delete(held)
-        }
-        if (seen.has(key)) return false
-        seen.set(key, expiresAtMs)
-        return true
-    },
-    release(key) {
-        seen.delete(key)
-    },
+/**
+ * The in-process claim, at the instant `nowMs`. The verifier passes the same instant its freshness check used, so a
+ * message is never both fresh and forgotten: a claim is pruned only strictly after its expiry, and at its expiry the
+ * signature still verifies.
+ */
+function claimInProcess(key: string, expiresAtMs: number, nowMs: number): boolean {
+    // Prune first, so the map cannot grow without bound across a long-lived process.
+    for (const [held, expiry] of seen) {
+        if (expiry < nowMs) seen.delete(held)
+    }
+    if (seen.has(key)) return false
+    seen.set(key, expiresAtMs)
+    return true
 }
 
 /** Test-only: forget every claim the in-process store holds. */
@@ -225,8 +242,7 @@ async function verifyAndClaim(
     envNames: readonly string[],
     options: StandardWebhookOptions,
 ): Promise<Verified> {
-    // The server's clock, never one a caller passes: the in-process store prunes by it too.
-    const now = new Date()
+    const toleranceMs = toleranceOf(options)
     const secrets = configuredSecrets(envNames)
     if (secrets.length === 0) throw new AuthRequiredError()
 
@@ -234,32 +250,35 @@ async function verifyAndClaim(
     const names = standard ? STANDARD_WEBHOOK_HEADERS : SVIX_WEBHOOK_HEADERS
     const id = request.headers.get(names.id)
     const timestamp = request.headers.get(names.timestamp)
+    const signature = request.headers.get(names.signature)
+    // Refuse what the headers alone condemn (absent, malformed, stale) before reading a body nobody signed.
+    const headersOnly = { id, timestamp, signature, body: '', secrets: [], toleranceMs, now: new Date() }
+    const early = verifyStandardWebhookSignature(headersOnly)
+    if (!early.ok && early.reason !== 'signature') throw new AuthRequiredError()
+
     // A clone, so the handler can still read the request's own body.
     const bytes = new Uint8Array(await request.clone().arrayBuffer())
 
-    const toleranceMs = options.toleranceMs ?? WEBHOOK_REPLAY_TOLERANCE_MS
-    const result = verifyStandardWebhookSignature({
-        id,
-        timestamp,
-        signature: request.headers.get(names.signature),
-        body: bytes,
-        secrets,
-        toleranceMs,
-        now,
-    })
+    // The clock is read AFTER the body has arrived, and nothing awaits between this freshness check and the in-process
+    // claim, which uses the same instant: a body sent slowly cannot carry a replay past the claim's expiry.
+    const now = new Date()
+    const result = verifyStandardWebhookSignature({ id, timestamp, signature, body: bytes, secrets, toleranceMs, now })
     if (!result.ok || !id || !timestamp) throw new AuthRequiredError()
 
     const seconds = Number(timestamp)
     const key = claimKey(id, seconds)
-    const store = options.replayStore ?? inProcessReplayStore
     // Remembered until the signature stops verifying: the timestamp may run up to the tolerance AHEAD of the clock.
     const expiresAtMs = Math.max(now.getTime(), seconds * 1000) + toleranceMs
-    if (!(await store.claim(key, expiresAtMs))) throw new AuthRequiredError()
+    const store = options.replayStore
+    const claimed = store ? await store.claim(key, expiresAtMs) : claimInProcess(key, expiresAtMs, now.getTime())
+    if (!claimed) throw new AuthRequiredError()
 
     return {
-        webhook: { id, timestamp: seconds, body: new TextDecoder().decode(bytes) },
+        // ignoreBOM keeps a leading byte-order mark in the text, as it was signed; the request carries the exact bytes.
+        webhook: { id, timestamp: seconds, body: new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes) },
         release: async () => {
-            await store.release(key)
+            if (store) await store.release(key)
+            else seen.delete(key)
         },
     }
 }
@@ -306,7 +325,8 @@ export function withStandardWebhookSignature(
             if (response.status >= 500) await verified.release()
             return response
         } catch (error) {
-            await verified.release()
+            // The handler's error is the one to see: a store that also fails to release must not replace it.
+            await verified.release().catch(() => {})
             throw error
         }
     }
