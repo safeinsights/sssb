@@ -39,29 +39,15 @@ export default defineConfig({
     timeout: 60_000,
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 2 : 1,
-    // ONE WORKER, AND NOT BECAUSE OF MEMORY.
+    // ONE WORKER BY DEFAULT, AND NOT BECAUSE OF MEMORY. Measured 2026-07-31 on a 10-core/64GB machine, the flake
+    // count rose with parallelism over the same 56 tests (workers=1 → 0, 2 → 1, 3 → 2, 4 → 2), with memory to spare:
+    // every worker drove ONE server holding ONE `.data`, so specs mutated each other's state.
     //
-    // This was long justified by "the dev VM has 10GB RAM; parallel Chromium renderers get
-    // OOM-killed". Measured 2026-07-31 on a 10-core/64GB machine, where memory cannot be the limit,
-    // the flake count still rose monotonically with parallelism over the SAME 56 tests:
-    //
-    //     workers=1 → 0 flaky      workers=3 → 2 flaky
-    //     workers=2 → 1 flaky      workers=4 → 2 flaky
-    //
-    // The cause is the shared world, not the renderers: every worker drives ONE dev server holding
-    // ONE `.data`, so specs mutate each other's state. At 5 workers it USED TO degrade further into
-    // outright corruption — concurrent non-atomic writeFileSync calls interleaved and left a
-    // half-overwritten file ("Unexpected non-whitespace character after JSON at position 751",
-    // observed on a 821-byte invites.json). That half is fixed: adapters/fake/atomic-write.ts writes
-    // via a colocated temp file + rename, so a reader never sees a spliced file. It does NOT fix lost
-    // updates, which is why this number stays at 1. The repeat offenders are the specs that write shared
-    // state: tenancy.spec.ts and the demo-banner flag — and tenancy.spec.ts is the very test
-    // docs/build-notes.md:296 records as a recurring CI flake, which is this same bug, since CI
-    // runs the default worker count.
-    //
-    // So parallelism is bought where the worlds are genuinely separate — across apps locally, across
-    // shards on CI — never inside one server. Raising this number requires per-worker world
-    // isolation first: safeinsights/sssb#99.
+    // That is what ./tests/e2e/support/worlds.ts ends (safeinsights/sssb#99): on a production build, `E2E_WORKERS=<n>`
+    // gives each worker a server and a world of its own, and the suite was green at 2 and 4 workers in every CI run
+    // (six of each shard, 2026-11-27). It stays 1 by default because it does not pay on CI, where a pull request waits
+    // on lint-typecheck-unit (6 to 10 min) and the e2e shards take under 3 min whatever their worker count; the decision
+    // log has the numbers. Under `next dev` it is always 1: Next allows one dev server per app directory.
     workers: E2E_WORKERS,
     reporter: process.env.CI ? 'github' : 'list',
     use: {

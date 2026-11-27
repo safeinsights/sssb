@@ -2440,3 +2440,18 @@ its first paint, as this adopter did (no call before first paint, one after).
 - **`rejectUnauthorized: false` turns off the host check too**, not only the chain: Node acts on `checkServerIdentity`'s verdict only
   when it rejects unauthorized certificates. Weakening the option in `db.ts` turns both of the contract test's refusal
   cases red, which is how the test was seen to fail.
+
+## A world per Playwright worker, from the config alone (2026-11-27, `fix/e2e-worker-worlds`)
+
+- **Each Playwright worker process loads the config itself, with `TEST_PARALLEL_INDEX` already set** (checked on
+  1.65.1 with a three-worker throwaway project: three config loads, one per index, each test answered by its own
+  worker's server). So a config can compute `use.baseURL` per worker from the variable, and a module a spec imports can
+  resolve that worker's data directory at load time, with no fixture and no edit to a spec's imports. The runner's own
+  load sees no index (world 0). An index is kept by a worker that replaces one that failed, so a retry lands in the same
+  world.
+- **`webServer` entries start one after another, each once the one before it answers** (the same project: a server
+  that took 3 s to listen, and the next started 3.9 s after it). That is what lets one entry build and every later one
+  only serve the build: each `sssb serve-standalone` has copied its static assets before any test sends a request, so
+  the copy into the one shared server directory never races a request.
+- **`next dev` cannot do this**: Next 16 allows one dev server per app directory (safeinsights/sssb#113's first attempt
+  died on "Another next dev server is already running"), so the worlds are a production-build feature.
