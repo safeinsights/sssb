@@ -7614,6 +7614,7 @@ them. Decisions the issue left open:
   call is one of its readers.
 - **No `tours` or `presets` registration is needed for the tab to be right**: an app with none gets no Tours tab and
   no presets section (both are the seam's off-switches already), and a reset is the one world start every host has.
+
 ## The webhook secret's variable, and a Standard Webhooks verifier (2026-11-27, `feat/webhook-verifier`)
 
 Issues `safeinsights/sssb#121` and `safeinsights/sssb#122`, built as one change: both come from the same migrated
