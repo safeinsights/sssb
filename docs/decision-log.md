@@ -6422,6 +6422,9 @@ Decisions, each with the alternative rejected:
   for a kit with no stamp, one of the two causes of a refusal), a candidate's notes still name the commit (`sha`), and `docs/adopting.md`'s step 4
   says the same. `docs/releases/v0.2.0.md`, a dated record, still carries the hand edit. Rejected: keeping the hand edit
   beside the command, which would be two ways to do it in every release's notes.
+- **At the new budgets**, five more runs of the destructive shard on CI (one push and four reruns, 2026-11-27): 16 passed
+  each time, in 1.5 to 1.9 min, none flaky. Locally under `next dev` at load ~330, the destructive project passed 16 of
+  16 in 5.8 min.
 - **Not done here:** the generator's own text in a workspace's `README.md` and `CLAUDE.md` (`packages/create/src/files.js`,
   "Raise the pin when you upgrade") still says to raise the pins without naming the command; it stays true, and changing it
   changes what `@sssb/create` writes, so it is a separate change.
@@ -8113,6 +8116,46 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
   scanners read alike are `E'\\'` and `chr(92)` for one backslash (a plain `'\\'` is two, so it is no substitute for `ESCAPE`).
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
   the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
+
+## The starter's e2e on a production build, and the destructive suite's budgets from CI's numbers (2026-11-27, `fix/e2e-prod-build`)
+
+`safeinsights/sssb#109` and `safeinsights/sssb#100`. SSSB's reusable workflow sets `E2E_BUILD=1` on every e2e shard, and
+only the showcase read it: the starter's shard ran `next dev`, so CI never ran `next build` for the app adopters get. And
+the destructive project's budgets were still the ones sized for `next dev` on a CI runner.
+
+- **The starter reads the flag** (`build:e2e`, `start:e2e`, and the `webServer` branch in its `playwright.config.ts`),
+  as the showcase does, and a generated app inherits both through the template; nothing in `app-checks.yml` or
+  `sssb ci` changes. Seen to fail: a server component that calls `useState`, on a route no spec visits, failed the
+  suite under `E2E_BUILD=1` at `next build` ("You're importing a module that depends on `useState` into a React Server
+  Component module") and passed it under `next dev` (4 passed). Rejected: **a shared Playwright preset** for the two
+  configs, to state the branch once: jscpd reads only `src` (`.jscpd.json`), so the two copies trip no gate, the
+  starter's config is copied into every adopter's tree, where a preset would be one more thing to pin, and the branch is
+  three lines.
+- **Measured on CI, not locally** (this machine's load average was 60 to 300 that day). A temporary reporter printed
+  each test's duration and its four slowest waits; five runs of the destructive shard on PR #233 (one push and four
+  reruns, 80 test runs, no retry, no failure): slowest test 16.0 to 16.3 s (`actors.spec.ts`, the autonomous drain,
+  paced by the actors' 3 s timer), then 9.7 to 10.9 s (`simulator-snapshots.spec.ts`, save/restore/reset), every other
+  under 9 s; the shard 90 to 115 s in all. Twenty earlier green runs of the shard, under the old budgets: 16 passed in
+  1.5 to 2.0 min each, none flaky. Build and start: the showcase 26 to 39 s, the starter 28 s. The starter's shard, by Playwright's own total
+  (server start included): 45.0 s on `next dev` (an earlier run of the same day), 34.9 s with the production build (its 4 tests in 6.4 s
+  after a 28 s build, where under `next dev` they took 35 s compiling as they went).
+- **The budgets** (`apps/showcase/tests/e2e/support/budgets.ts`, read by the config and the specs): on a production
+  build a destructive test gets 60 s (3.7x the slowest) and an assertion 10 s (every wait over 2.1 s has a budget of its
+  own but one, a tour resuming after a preset load, 2.3 s, now on the default through `coldRoute`; the slowest action, a
+  click, took 6.1 s, inside the test's budget); the web server 180 s in both apps (4.6x the
+  slowest build and start). Under `next dev` every budget is what it was (120 s, 15 s, 180 s for the presets test), since
+  a loaded local machine has been measured near a CI runner's dev numbers (`docs/build-notes.md`, "A cold dev server at
+  load ~250"). Removed: the nine `test.setTimeout(120_000)` calls, which only restated the project's dev budget and would
+  have overridden the production one, and the three 90 s `page.goto` caps, which bound nothing a test's own budget does
+  not. The six 60 s waits right after a navigation become `coldRoute(60_000)`, the project's assertion budget on a
+  production build. Kept as they are, because they wait for the app's own work and are 5 to 13 times what it took: the
+  actor polls (30 and 60 s; the actors back off to 15 s a tick after an error), the snapshot restore and preset waits
+  (20 and 45 s), the job and mail waits (15 s), the `toPass` retries (45 s). Three of the actor polls (60 s) now equal
+  the test's own budget, so a hang there reports as a test timeout rather than with the poll's message; that test took
+  16 s.
+- **Not done here:** the chromium project's budgets (60 s, 15 s) are still the dev ones on CI too; that is
+  safeinsights/sssb#235. A per-spec world (#99, #161) is what would end the destructive suite's shared-state class of
+  failure; the ten repeat runs above found none to file.
 
 ## A stream's failure after text is visible, and the replays can fail the same way (2026-11-27, `fix/stream-failure-visible`)
 

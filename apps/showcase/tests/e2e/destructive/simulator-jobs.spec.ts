@@ -60,10 +60,6 @@ async function addTicket(page: Page, text: string) {
 test('held world: an exported job stays queued until Simulator runs it forward, then the download appears', async ({
     page,
 }) => {
-    // The held-flag toggle triggers a full reload (banner-style RSC re-read), and the Jobs tab lazily
-    // compiles on first hit in a fresh dev server — generous room over the default.
-    test.setTimeout(120_000)
-
     await signInAs(page, 'person-admin')
 
     // Flip jobs-held ON via the Snapshots tab. Its onChange full-reloads the SAME url, so a URL wait
