@@ -8128,7 +8128,10 @@ failed inside its transaction stayed due and took a turn every tick.
     - **its build ended that long ago** with any status but IN_PROGRESS, the job still open. That includes SUCCEEDED:
       the job's result was never recorded, so a kind that retries runs again;
     - **CodeBuild has no record of the build** (`buildsNotFound`);
-    - **it was left `starting` that long**: StartBuild never returned, or the build id was never written.
+    - **CodeBuild refused its StartBuild** (a client fault: no permission, no such project, a limit), marked `refused`;
+    - **it was left `starting` for an hour** (`CODEBUILD_STARTING_LOST_AFTER_MS`): StartBuild never returned, failed in
+      a way that may have started a build, or the build id was never written. An hour, not five minutes, because with
+      no id the sweep cannot ask CodeBuild, and a build that did start should get to report its own end first.
 
     A build still IN_PROGRESS is never judged, however long it runs: CodeBuild's own timeout ends it, and a later sweep
     sees the result. A lost job is failed through `recordJobStatus`, which arms a retry, and its end notifies as the jobs
@@ -8159,7 +8162,10 @@ failed inside its transaction stayed due and took a turn every tick.
   transaction, a transaction of its own (under the row lock, and only while the schedule is still enabled and due)
   counts it and keeps the message.
     - **A spec that does not parse can never spawn, so the schedule is DISABLED,** with a `schedule.disabled` audit event
-      holding the error. Someone must fix the spec and enable it again.
+      whose detail is the reason alone. The error, which echoes whatever the stored spec holds (an address or a token
+      the audit log refuses), is the schedule's `last_error`, kept to 500 code points, never half a surrogate pair.
+      Someone must fix the spec and enable it again. The Simulator's schedule view lists such a row with `spec: null`
+      rather than failing on it.
     - **Any other failure may be passing (an insert the database refused for a moment), so the schedule BACKS OFF:**
       `next_run_at` moves to the failure plus the webhook deliveries' backoff for that many failures in a row (one
       minute, five, thirty, two hours, then six hours on). A schedule that fails every time therefore takes a bounded,
@@ -8178,15 +8184,36 @@ failed inside its transaction stayed due and took a turn every tick.
 
 - **Proofs.**
     - `adapters/real/jobs.test.ts` covers: a build that ended unreported, for each ended status; one still running; one
-      that ended within the grace; one CodeBuild no longer knows; a start that never recorded a build; a job too recent to
-      judge, one without a ref, and one already reported; a webhook racing the sweep; a sweep that cannot read builds;
-      batches of 100; and a lost build of a kind that retries whose next attempt starts a new build and completes.
-    - `real/index.test.ts` pins the registry handing the runner its database and handler.
+      that ended within the grace; one CodeBuild no longer knows; a start that never recorded a build, judged only after
+      the hour; a StartBuild refused (judged after five minutes) beside one that may have started a build (left for the
+      hour); a job a service caller or webhook moved to running; a job too recent to judge, one without a ref, and one
+      already reported; a webhook racing the sweep; a sweep that cannot read builds; batches of 100; and a lost build of
+      a kind that retries whose next attempt starts a new build and completes.
+    - `real/index.test.ts` pins the registry handing the runner its database and handler; `adapters/fail-lost-job.test.ts`
+      drives the registry's handler itself (fails, arms the retry, notifies; leaves a job that ended meanwhile).
     - `db/schedules.test.ts` covers: an unparseable spec turned off with its audit event; a failing insert backed off for
       one minute, then five, then cleared by a spawn that commits; a healthy schedule spawning beside more stuck ones than
-      the listing takes, both disabled and backed off; and a failure after the commit left uncounted.
+      the listing takes, both disabled and backed off; a failure after the commit left uncounted; a long, many-byte error
+      clipped with the audit still written and the world view listing the row; and an address-shaped spec whose audit
+      carries the reason alone.
     - Removing the IN_PROGRESS skip, the webhook grace, the not-found or `starting` rules, the quiet filter, the batching,
-      or the build id's recording turns them red. So does removing the disabling, the backoff, its escalation, the reset
-      on success, or the failure policy itself.
+      the build id's recording, the `running` status, the hour's grace, the `refused` marker, or the handler's notify or
+      race check turns them red. So does removing the disabling, the backoff, its escalation, the reset on success, the
+      failure policy itself, the clipping, the world view's null spec, or the audit's reason-only detail.
     - The failure recorder's re-check under the lock (a schedule another tick fired or turned off meanwhile) is argued
       here, not tested.
+- **What review changed** (two review rounds on Opus, then a check of the second round's fixes as a diff).
+    - **The Simulator's schedule list no longer throws** on a schedule whose spec does not parse: the very rows this
+      change turns off. It shows them with `spec: null`.
+    - **A job left `starting` gets an hour**, so a build whose id went unrecorded is not failed while it runs.
+    - **A StartBuild CodeBuild refused is marked `refused`** and failed after five minutes, not the hour, since no build
+      started.
+    - **The `schedule.disabled` audit carries the reason alone**, so a spec holding an address or a token cannot get it
+      refused.
+    - **The registry's lost-job handler is its own module** (`adapters/fail-lost-job.ts`, lazy imports), tested as the
+      runner calls it.
+- **Limitations accepted.**
+    - **If the `starting` write itself fails,** `submitJob` rejects before StartBuild and the job stays queued with no
+      ref, never judged. That is the state a failed start left before this change, and the caller is told.
+    - **The sweep has no bound of its own.** It runs at the tick's start, so a mass loss spends part of the drains'
+      windows; the next tick carries on.

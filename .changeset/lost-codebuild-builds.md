@@ -11,7 +11,8 @@
 **What changed.** A CodeBuild job whose build ended without posting the jobs webhook used to stay queued for ever, and
 a kind that retries never retried it. The runner now records each job's build id, and the scheduled tick's sweep asks
 CodeBuild (`BatchGetBuilds`) about each job still open and quiet for five minutes. It fails as lost a job whose build
-ended that long ago, a job whose build CodeBuild no longer knows, and a job whose start never recorded a build. A
+ended that long ago, a job whose build CodeBuild no longer knows, a job whose StartBuild CodeBuild refused, and, after an hour, a job
+whose start never recorded a build. A
 failure arms the next attempt of a kind whose `jobRetry` allows one, and notifies as the jobs webhook does. A build
 still in progress is left alone. Jobs written before this release, which have no recorded build, are never judged.
 
