@@ -18,11 +18,17 @@ wrote. A new rule in the app preset, `sssb/no-raw-request-origin`, fails a modul
   `CF-Connecting-IP`, `Forwarded`, `Host`, the other `X-Forwarded-*`);
 - takes the `origin`, `host`, `hostname` or `href` of `new URL(request.url)` or of `request.nextUrl`, by member or
   destructuring;
-- builds `new URL(path, request.url)` (or on `request.nextUrl`), a redirect included, but in the app's own
+- builds `new URL(path, request.url)` (or on `request.nextUrl`), a redirect included, except in the app's own
   `src/proxy.ts` (or `src/middleware.ts`), where Next relativizes a same-origin redirect or rewrite and nowhere else: a
   route handler's `NextResponse.redirect(new URL('/en/dashboard', request.url))` sends the visitor to the server's bind
   address;
 - passes `baseUrl: request.url`.
+
+"The request" is an object named `req`, `request` or `nextRequest` (with or without a leading `_`), or a `.req` or
+`.request` member (`ctx.request`): the `url` of a webhook, a row or a form field is someone else's, and reading its
+origin is correct code. The rule reads names, not types, so a request held under another name gets past it, as does
+the request's URL stored in a variable and used later, or a `request.nextUrl.clone()` handed to a redirect
+(safeinsights/sssb#242).
 
 **To adopt.** Run `pnpm lint` after upgrading. For each finding:
 

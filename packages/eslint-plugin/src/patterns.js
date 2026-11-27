@@ -317,7 +317,9 @@ export const a11yLiteralSelector = {
 //   same-origin redirect only when the proxy answers it (`next/dist/server/web/adapter.js`): a route handler's
 //   `NextResponse.redirect(new URL('/en', request.url))` sends the visitor to the server's bind address;
 // - `baseUrl: <x>.url`, the argument SSSB's own `sendOrgInvite` and `applyDemoPreset` take.
-// Path and search parameters of the same URLs are right and stay allowed.
+// In the three URL forms `<x>` must be named like the request (`requestNamed` below): another object's `.url` is not the
+// server's. Path and search parameters of the same URLs are right and stay allowed. Redirects, clones and strings of the
+// request's URL, and the URL through a variable, are not caught yet (safeinsights/sssb#242).
 const VISITOR_HEADER =
     '/^(host|forwarded|x-forwarded-(for|host|proto|port)|x-real-ip|x-client-ip|cf-connecting-ip|true-client-ip|' +
     'cloudfront-viewer-address|x-sssb-viewer-address)$/i'
@@ -336,17 +338,27 @@ export const visitorHeaderSelector = {
         '@sssb/kit/adapters/edge-headers, never from a forwarded header: behind CloudFront the first X-Forwarded-For ' +
         "entry, X-Real-IP and CF-Connecting-IP hold what the visitor wrote, and Host is the server's own.",
 }
+// The request, by its name: `req`, `request`, `nextRequest` (an optional leading underscore), or a `.req`/`.request`
+// member (`ctx.request`). A `.url` or `.nextUrl` on anything else (a webhook's, a row's, a form field's) is someone
+// else's URL, and reading its origin, or building on it, is correct code.
+const REQUEST_IDENTIFIER = '/^_?(req|request|nextRequest)$/i'
+const REQUEST_MEMBER = '/^(req|request)$/'
+const requestNamed = (at) =>
+    `:matches([${at}.type="Identifier"][${at}.name=${REQUEST_IDENTIFIER}], ` +
+    `[${at}.type="MemberExpression"][${at}.property.name=${REQUEST_MEMBER}])`
 const REQUEST_URL = (at) =>
     `:matches([${at}.type="NewExpression"][${at}.callee.name="URL"][${at}.arguments.length=1]` +
-    `[${at}.arguments.0.property.name="url"], [${at}.property.name="nextUrl"])`
+    `[${at}.arguments.0.property.name="url"]${requestNamed(`${at}.arguments.0.object`)}, ` +
+    `[${at}.property.name="nextUrl"]${requestNamed(`${at}.object`)})`
 const ORIGIN_PART = '/^(origin|host|hostname|href)$/'
 const URL_ON_REQUEST =
-    'NewExpression[callee.name="URL"][arguments.length=2][arguments.1.property.name=/^(url|nextUrl)$/]'
+    'NewExpression[callee.name="URL"][arguments.length=2][arguments.1.property.name=/^(url|nextUrl)$/]' +
+    requestNamed('arguments.1.object')
 const requestOriginSelectorWith = (urlOnRequest) =>
     `:matches(MemberExpression[property.name=${ORIGIN_PART}]${REQUEST_URL('object')}, ` +
     `VariableDeclarator${REQUEST_URL('init')} > ObjectPattern > Property[key.name=${ORIGIN_PART}], ` +
     `${urlOnRequest}, ` +
-    'Property[key.name="baseUrl"][value.type="MemberExpression"][value.property.name="url"])'
+    `Property[key.name="baseUrl"][value.type="MemberExpression"][value.property.name="url"]${requestNamed('value.object')})`
 /**
  * The file Next runs as the app's proxy, where a same-origin redirect or rewrite is relativized: `proxy.*` or
  * `middleware.*` in a directory named `src`, as the app's `src/proxy.ts` is (the rule runs on the app's `src/` alone). A `middleware.ts` elsewhere, a route
