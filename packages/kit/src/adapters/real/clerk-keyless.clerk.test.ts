@@ -134,7 +134,7 @@ describe("a forged x-clerk-auth request, outside a production build, on a path C
         expect((await auth()).userId).toBe('user_victim')
     })
 
-    it("is refused by SSSB's Clerk adapter before it reads the session", async () => {
+    it("is refused by SSSB's Clerk adapter", async () => {
         const { realAuth } = await import('./auth')
         await expect(realAuth.getCurrentUser()).rejects.toThrow(/NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/)
     })

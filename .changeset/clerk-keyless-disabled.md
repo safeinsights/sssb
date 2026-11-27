@@ -10,7 +10,7 @@
 
 **What changed.** Outside a production build, Clerk's keyless fallback let a request on a path the proxy matcher skips
 carry forged `x-clerk-auth-*` headers that Clerk's `auth()` accepted as anyone. SSSB's Clerk adapter now refuses to
-read a session outside a production build unless `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` is `1` (or `true`) and
+read a session or call Clerk's Backend API outside a production build unless `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` is `1` (or `true`) and
 `CLERK_SECRET_KEY` is set, and its error names the variable. A production build (`next build`, then `next start`) is
 unchanged.
 

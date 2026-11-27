@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { clerkKeylessProblem } from './clerk-keyless'
 
 /**
- * When SSSB's Clerk adapter refuses to read a session (safeinsights/sssb#193): outside a production build, unless a
- * secret (or encryption) key is set and keyless mode is disabled by a value Clerk honours. ./clerk-keyless.clerk.test.ts
+ * When SSSB's Clerk adapter refuses to read a session or call Clerk (safeinsights/sssb#193): outside a production
+ * build, unless the secret key is set and keyless mode is disabled by a value Clerk honours. ./clerk-keyless.clerk.test.ts
  * drives the same refusal through Clerk's real `auth()`.
  */
 const READY = { NODE_ENV: 'development', CLERK_SECRET_KEY: 'sk_test_1', NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: '1' }

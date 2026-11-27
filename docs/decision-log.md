@@ -7596,22 +7596,24 @@ safeinsights/sssb#200, #193 and #180, together because all three are SSSB's real
 
 - **#200: a per-render memo, not a cross-request cache or session claims.** `getCurrentUser` and `listMyOrgs` share
   two reads (the account, the memberships) through React's `cache`, which gives each server render its own store and
-  is a pass-through anywhere else. So a page render makes at most two Backend API calls (a page per 100 orgs more),
+  is a pass-through anywhere else. So reading the signed-in person costs a page render at most two Backend API calls
+  (a page per 100 orgs more; other calls, such as a team's members, are not shared),
   and nothing outlives the request: a role change, a removal or a ban shows on the next one, with no bound to
   document beyond that. Writes the adapter makes (`updateProfile`, `setActiveOrg`) drop the person's reads, so the rest
   of the render sees them. Rejected: **a time-bounded cache per user**, which on a deployment of several server
   instances serves a stale org right after a switch (the switcher reloads the page; another instance answers it) and
   cannot be invalidated across instances; and **custom session claims** (the role and metadata in the token), which
   need a Clerk dashboard change per instance, SSSB's role lives on the membership rather than in Clerk's active-org
-  claim, and the claims lag a switch until the token refreshes. Both need a live measurement first: filed as a follow-up.
-  Route handlers are not memoized (React's `cache` has no store there); they call the port once in practice. Proven
+  claim, and the claims lag a switch until the token refreshes. Both need a live measurement first: filed as safeinsights/sssb#214.
+  Route handlers are not memoized (React's `cache` has no store there), and read on each call. Proven
   with React's `cache` simulated in `auth.test.ts`, never in a real Next render.
 - **#193: the adapter refuses to read a session while Clerk's keyless fallback can be reached.** Clerk decrypts the
   request data its middleware writes under a published key outside a production build (when no secret key is set, or,
   in keyless mode, after the real key fails) and then trusts the secret key that data names to check the token header.
   On a path the proxy skips, nothing overwrites a caller's headers, so anyone could be signed in. `clerk-keyless.ts`
-  is asked before every `auth()` in `auth.ts`: outside `NODE_ENV=production` it requires a secret (or encryption) key
-  and `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` `1` or `true`, a subset of what Clerk's `isTruthy` reads as set. Stricter
+  is asked before every `auth()` and `clerkClient()` in `auth.ts` (Clerk's client decrypts the same data and takes
+  its API URL from it): outside `NODE_ENV=production` it requires `CLERK_SECRET_KEY` itself (with an encryption key
+  alone, Clerk checks the token header against an empty key) and `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` `1` or `true`, a subset of what Clerk's `isTruthy` reads as set. Stricter
   than Clerk on purpose: it ignores Clerk's CI exemption and holds under `NODE_ENV=test`, so it copies none of Clerk's
   environment lists. The showcase's `dev:real` sets the variable. `clerk-keyless.clerk.test.ts` drives Clerk's real
   `auth()` with forged headers: signed in as Clerk ships, refused by the adapter, and refused by Clerk once the variable

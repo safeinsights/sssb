@@ -35,8 +35,9 @@ import { assertClerkKeylessClosed } from './clerk-keyless'
  * What a request costs (safeinsights/sssb#200): reading the session (`auth()`) is local, since Clerk's middleware
  * verified the token; the person's account (`currentUser()`) and their memberships
  * (`users.getOrganizationMembershipList`, a page per 100 orgs) are Backend API calls. Each is read at most once per
- * server render (`requestReads`), however many layouts, pages and components ask, so a render makes at most two calls
- * (more only for a person in over 100 orgs) and `listMyOrgs` adds none. Nothing outlives the request: a role change, a
+ * server render (`requestReads`), however many layouts, pages and components ask, so reading the signed-in person
+ * costs a render at most two calls (more only for a person in over 100 orgs) and `listMyOrgs` adds none. Every other
+ * call (a team's members, another person's account or standing, an invitation) is made each time it is asked. Nothing outlives the request: a role change, a
  * removal from an org or a ban shows on the next one (a banned account is read as no one, though its session token
  * still verifies until it lapses). A route handler is not a render, and reads on each call.
  */

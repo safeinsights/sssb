@@ -470,7 +470,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 145 subpaths your app may
+lists the 146 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 87 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
@@ -774,7 +774,8 @@ rather than restated. Read it once for the level of detail each row deserves bef
 a production build (the showcase's `dev:real` in SSSB's repository does). Outside one, Clerk's keyless fallback
 would read request data under a key Clerk publishes, so on a path your proxy's matcher skips a forged
 `x-clerk-auth-*` header could sign anyone in (safeinsights/sssb#193); SSSB's Clerk adapter refuses to read a
-session there until the variable is set, and names it when it refuses. A production build (`next build`, then
+session or call Clerk's Backend API there until the variable and `CLERK_SECRET_KEY` are set, and names what is
+missing when it refuses. A production build (`next build`, then
 `next start`) needs nothing.
 
 ### Ports your app does not use

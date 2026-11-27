@@ -8,9 +8,9 @@
  * the token, its signature) under a key of its own choosing is signed in as anyone. A production build never falls
  * back (@clerk/nextjs 7.10, `decryptClerkRequestData`).
  *
- * The Clerk adapter (./auth.ts) asks this before every read of the session, and refuses to read one while the
- * fallback can be reached: outside a production build, a secret key (or encryption key) must be set AND keyless mode
- * disabled. That is stricter than Clerk's own condition on purpose (it ignores the CI exemption and holds under
+ * The Clerk adapter (./auth.ts) asks this before every read of the session and before building Clerk's Backend API
+ * client, which decrypts the same request data, and refuses while the fallback can be reached: outside a production
+ * build, the secret key itself must be set AND keyless mode disabled. That is stricter than Clerk's own condition on purpose (it ignores the CI exemption and holds under
  * `NODE_ENV=test` too), so it does not depend on Clerk's list of CI variables. `dev:real` sets the variable.
  *
  * Clerk reads `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` with its own `isTruthy` (`true` in any case, untrimmed, or a positive
