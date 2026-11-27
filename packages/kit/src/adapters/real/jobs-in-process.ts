@@ -41,8 +41,9 @@ export const IN_PROCESS_LOST_AFTER_MS = 5 * 60_000
  * job carries no claim, so age alone decides, and that is sound for this runner only: with `JOBS_RUNNER=in-process`
  * every job is this runner's, and `start` claims it in the invocation that committed it, within that invocation's
  * 30-second limit, so a job queued for minutes will never start. It is failed, never run: a handler is written to run
- * at most once, and the request or tick that submitted it may have reported it already. The CodeBuild runner has no
- * sweep (a build may wait in CodeBuild's own queue), and neither does the simulated world, whose held jobs stay
+ * at most once, and the request or tick that submitted it may have reported it already. The CodeBuild runner's sweep
+ * (./jobs.ts) judges a job by its build's state instead, not by age (a build may wait in CodeBuild's own queue), and the
+ * simulated world has no sweep, its held jobs staying
  * `queued` on purpose.
  *
  * Retries (safeinsights/sssb#135). A retry still waiting out its delay (`queued` with `run_after` set) is the
