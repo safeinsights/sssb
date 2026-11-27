@@ -3,7 +3,7 @@
 import { presets } from '@sssb/app-config/presets'
 import { useTranslations } from 'next-intl'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type {
     SimulatorAgreements,
     SimulatorAudit,
@@ -23,7 +23,8 @@ import { sameOriginPath } from '../../core/same-origin-path'
 import { useTours } from '../../demo-static/tour/use-tours'
 import type { ScrubResult } from './errors-app'
 import type { InboundComposeInput } from './inbound-app'
-import { SimulatorPanel, type SimulatorNotice } from './simulator-panel'
+import type { DevTickerLike } from './jobs-app'
+import { SimulatorPanel, type SimulatorExtraTab, type SimulatorNotice } from './simulator-panel'
 
 const EMPTY_SUMMARY: SimulatorSummary = { viewpoint: null, signedIn: false, people: [] }
 const EMPTY_MAIL: SimulatorMail = { emails: [], mailSeenAt: null, allCount: 0 }
@@ -37,6 +38,25 @@ const EMPTY_MESSAGES: SimulatorMessages = { messages: [] }
 const EMPTY_EVENTS: SimulatorEvents = { events: [] }
 const EMPTY_AUDIT: SimulatorAudit = { audit: [] }
 const EMPTY_HOOKS: SimulatorHooks = { endpoints: [], deliveries: [], failingEndpointIds: [] }
+/** What the app's own `api/simulator/ticker` route answers: the dev ticker's status, which the control shows as it is. */
+type TickerStatus = Omit<DevTickerLike, 'onStart' | 'onStop'>
+
+/**
+ * What the host shares with an app's own Simulator tab (`extraTabs`): the world's jobs, as the Jobs tab shows them,
+ * refreshed while that tab is open. Provisional, as `extraTabs` is, until safeinsights/sssb#152 decides how an app's
+ * tabs reach the host.
+ */
+export interface SimulatorWorld {
+    jobs: SimulatorJobs
+}
+
+const SimulatorWorldContext = createContext<SimulatorWorld>({ jobs: EMPTY_JOBS })
+
+/** The host's world, for an app's own tab rendered through `SimulatorHost`'s `extraTabs`. */
+export function useSimulatorWorld(): SimulatorWorld {
+    return useContext(SimulatorWorldContext)
+}
+
 const EXPANDED_POLL_MS = 4_000
 const COLLAPSED_POLL_MS = 15_000
 const NOTICE_MS = 6_000
@@ -139,11 +159,26 @@ function readStoredScope(): 'person' | 'all' | null {
  * is not given; the rest, the app's own tabs included, are later stages of the same host. An app that needs one of
  * them today keeps a glue of its own instead of this component.
  *
+ * Two parts of the Simulator stay the app's until safeinsights/sssb#152 decides them, and the host only renders what the
+ * app hands it. An app's own tabs (the Actors tab) come in as `extraTabs`, the panel's own type; their content reads the
+ * world's jobs with `useSimulatorWorld()`. The Jobs tab's dev ticker shows only where the app's own route,
+ * `src/app/api/simulator/ticker/route.ts`, answers `ticker` (a static segment, so it wins over the catch-all, which
+ * answers 404 there): once it answers 404, the host asks no more while it is mounted. Both are provisional.
+ *
  * Polling, never a stream: the summary (the pill's unread badge) on a slow beat while the panel is collapsed, and
  * the open tab's data on a faster one while it is expanded. Every acknowledgement is a notice inside the panel,
  * never the app's own toast.
  */
-export function SimulatorHost({ locale, children }: { locale: string; children: ReactNode }) {
+export function SimulatorHost({
+    locale,
+    extraTabs,
+    children,
+}: {
+    locale: string
+    /** An app's own Simulator tabs, built by the app (ADR-0006). Provisional until safeinsights/sssb#152. */
+    extraTabs?: SimulatorExtraTab[]
+    children: ReactNode
+}) {
     const t = useTranslations('simulator')
     // A demo preset's title is a key into the app's catalog, from its root.
     const tRoot = useTranslations()
@@ -166,6 +201,9 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     const [eventsData, setEventsData] = useState<SimulatorEvents>(EMPTY_EVENTS)
     const [auditData, setAuditData] = useState<SimulatorAudit>(EMPTY_AUDIT)
     const [hooksData, setHooksData] = useState<SimulatorHooks>(EMPTY_HOOKS)
+    // Null until the app's ticker route answers, and never asked again once it answers 404 (no such route).
+    const [tickerData, setTickerData] = useState<TickerStatus | null>(null)
+    const tickerOffered = useRef(true)
     const [notices, setNotices] = useState<SimulatorNotice[]>([])
     const noticeSeq = useRef(0)
     const prevUnread = useRef<Map<string, number> | null>(null)
@@ -283,6 +321,17 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         ])
     }, [eventsTickets, auditTickets])
 
+    const refreshTicker = useCallback(async () => {
+        if (!tickerOffered.current) return
+        const response = await fetch(`${API}/ticker`)
+        if (response.status === 404) {
+            tickerOffered.current = false
+            setTickerData(null)
+            return
+        }
+        if (response.ok) setTickerData((await response.json()) as TickerStatus)
+    }, [])
+
     const refreshHooks = useCallback(async () => {
         const ticket = hooksTickets.take()
         const next = await getJson<SimulatorHooks>('webhooks')
@@ -299,9 +348,25 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         }
         if (activeTab === 'messages') void refreshMessages()
         if (activeTab === 'events') void refreshEvents()
-        if (activeTab === 'jobs') void refreshJobs()
+        if (activeTab === 'jobs') {
+            void refreshJobs()
+            void refreshTicker()
+        }
+        // An app's own tab reads the world's jobs (`useSimulatorWorld`), so they are polled while it is open too.
+        if (extraTabs?.some((tab) => tab.id === activeTab)) void refreshJobs()
         if (activeTab === 'hooks') void refreshHooks()
-    }, [expanded, activeTab, refreshMail, refreshInbound, refreshMessages, refreshEvents, refreshJobs, refreshHooks])
+    }, [
+        expanded,
+        activeTab,
+        extraTabs,
+        refreshMail,
+        refreshInbound,
+        refreshMessages,
+        refreshEvents,
+        refreshJobs,
+        refreshTicker,
+        refreshHooks,
+    ])
 
     useEffect(() => {
         // Fetch on mount, and restore the remembered mail scope: syncing with external systems (the server, the
@@ -416,6 +481,43 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
             void refresh()
             pushNotice(t('noticeMailCleared'))
         })
+    }
+
+    /**
+     * The ticker's route answers its status on every outcome (with `error` on a refusal), so the control always shows
+     * what the server holds, and the notice says what happened to the click. A 404 means the app has no such route.
+     */
+    async function postTicker(request: { action: 'start'; seconds: number } | { action: 'stop' }) {
+        const response = await post('ticker', request).catch(() => null)
+        if (!response) return null
+        if (response.status === 404) {
+            tickerOffered.current = false
+            setTickerData(null)
+            return null
+        }
+        const body = (await response.json().catch(() => null)) as (TickerStatus & { error?: string }) | null
+        // A body without the status (a 500 while the route compiles, say) leaves the control as it was.
+        if (typeof body?.running !== 'boolean') return null
+        // Stored whole, `error` and all (the control ignores it, and the next GET replaces it).
+        setTickerData(body)
+        return { error: body.error, status: body }
+    }
+
+    async function handleStartTicker(seconds: number) {
+        const result = await postTicker({ action: 'start', seconds })
+        if (!result) return
+        if (result.error === 'invalid-interval') {
+            pushNotice(t('noticeTickerInvalid', { min: result.status.minSeconds, max: result.status.maxSeconds }))
+        } else if (result.error === 'running-elsewhere') {
+            pushNotice(t('noticeTickerElsewhere'))
+        } else if (result.status.running && result.status.seconds !== null) {
+            pushNotice(t('noticeTickerStarted', { seconds: result.status.seconds }))
+        }
+    }
+
+    async function handleStopTicker() {
+        const result = await postTicker({ action: 'stop' })
+        if (result && !result.status.running) pushNotice(t('noticeTickerStopped'))
     }
 
     function handleComposeInbound(input: InboundComposeInput) {
@@ -605,90 +707,98 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         window.location.assign(sameOriginPath(swapped) ?? `/${next}`)
     }
 
+    const world = useMemo<SimulatorWorld>(() => ({ jobs: jobsData }), [jobsData])
+
     return (
         <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
             <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
-            <SimulatorPanel
-                people={summary.people}
-                viewpoint={summary.viewpoint}
-                signedIn={summary.signedIn}
-                onSelect={handleSelect}
-                onRefresh={refresh}
-                onExpandedChange={(value) => {
-                    setExpanded(value)
-                    if (value) void refresh()
-                }}
-                onTabChange={setActiveTab}
-                onLocaleChange={handleLocaleChange}
-                notices={notices}
-                mail={{
-                    emails: mail.emails,
-                    scope: effectiveMailScope,
-                    onScopeChange: handleScopeChange,
-                    personEmail,
-                    mailSeenAt: mail.mailSeenAt,
-                    allCount: mail.allCount,
-                    onOpenLink: handleOpenLink,
-                    onSeen: handleMailSeen,
-                    onClear: handleClearMail,
-                    onCopyLink: handleCopyLink,
-                }}
-                // Inbound mail is for an app that registers a handler (`@sssb/app-config/inbound-email`): with none,
-                // nothing the form sends could reach the app, so the Mail tab shows no compose form.
-                inbound={
-                    inboundData.handlers.length > 0
-                        ? {
-                              inbound: inboundData.inbound,
-                              orgs: inboundData.orgs,
-                              people: inboundData.people,
-                              handlers: inboundData.handlers,
-                              domain: inboundData.domain,
-                              onCompose: handleComposeInbound,
-                          }
-                        : undefined
-                }
-                messages={messagesData.messages}
-                events={eventsData.events}
-                audit={auditData.audit}
-                hooks={{
-                    endpoints: hooksData.endpoints,
-                    deliveries: hooksData.deliveries,
-                    failingEndpointIds: hooksData.failingEndpointIds,
-                    onToggleFail: handleToggleFail,
-                    onRunDue: handleRunDueDeliveries,
-                }}
-                runServerErrorScenario={handleServerErrorScenario}
-                jobs={{
-                    jobs: jobsData.jobs,
-                    held: jobsData.held,
-                    onRunPending: handleRunPending,
-                    schedules: schedulesData.schedules,
-                    clock: {
-                        offsetMs: schedulesData.clockOffsetMs,
-                        worldNow: schedulesData.worldNow,
-                        onAdvance: handleAdvanceClock,
-                        onReset: handleResetClock,
-                        onRunDue: handleRunDue,
-                    },
-                }}
-                snapshots={{
-                    snapshots: snapshotsData.snapshots,
-                    onReset: () => void handleReset(),
-                    onSave: handleSaveSnapshot,
-                    onRestore: (name) => void handleRestoreSnapshot(name),
-                    onDelete: handleDeleteSnapshot,
-                    busy: snapshotsBusy,
-                    busySnapshot,
-                    flags: flagsData.flags,
-                    onToggleFlag: handleToggleFlag,
-                    agreements: agreementsData.agreements,
-                    onBumpAgreement: handleBumpAgreement,
-                    busyAgreement,
-                    onLoadPreset: (id) => void handleLoadPreset(id),
-                    busyPreset,
-                }}
-                tours={tours.tab}
-            />
+            <SimulatorWorldContext.Provider value={world}>
+                <SimulatorPanel
+                    people={summary.people}
+                    viewpoint={summary.viewpoint}
+                    signedIn={summary.signedIn}
+                    onSelect={handleSelect}
+                    onRefresh={refresh}
+                    onExpandedChange={(value) => {
+                        setExpanded(value)
+                        if (value) void refresh()
+                    }}
+                    onTabChange={setActiveTab}
+                    onLocaleChange={handleLocaleChange}
+                    notices={notices}
+                    mail={{
+                        emails: mail.emails,
+                        scope: effectiveMailScope,
+                        onScopeChange: handleScopeChange,
+                        personEmail,
+                        mailSeenAt: mail.mailSeenAt,
+                        allCount: mail.allCount,
+                        onOpenLink: handleOpenLink,
+                        onSeen: handleMailSeen,
+                        onClear: handleClearMail,
+                        onCopyLink: handleCopyLink,
+                    }}
+                    // Inbound mail is for an app that registers a handler (`@sssb/app-config/inbound-email`): with none,
+                    // nothing the form sends could reach the app, so the Mail tab shows no compose form.
+                    inbound={
+                        inboundData.handlers.length > 0
+                            ? {
+                                  inbound: inboundData.inbound,
+                                  orgs: inboundData.orgs,
+                                  people: inboundData.people,
+                                  handlers: inboundData.handlers,
+                                  domain: inboundData.domain,
+                                  onCompose: handleComposeInbound,
+                              }
+                            : undefined
+                    }
+                    messages={messagesData.messages}
+                    events={eventsData.events}
+                    audit={auditData.audit}
+                    hooks={{
+                        endpoints: hooksData.endpoints,
+                        deliveries: hooksData.deliveries,
+                        failingEndpointIds: hooksData.failingEndpointIds,
+                        onToggleFail: handleToggleFail,
+                        onRunDue: handleRunDueDeliveries,
+                    }}
+                    runServerErrorScenario={handleServerErrorScenario}
+                    jobs={{
+                        jobs: jobsData.jobs,
+                        held: jobsData.held,
+                        onRunPending: handleRunPending,
+                        schedules: schedulesData.schedules,
+                        clock: {
+                            offsetMs: schedulesData.clockOffsetMs,
+                            worldNow: schedulesData.worldNow,
+                            onAdvance: handleAdvanceClock,
+                            onReset: handleResetClock,
+                            onRunDue: handleRunDue,
+                        },
+                        ticker: tickerData
+                            ? { ...tickerData, onStart: handleStartTicker, onStop: handleStopTicker }
+                            : undefined,
+                    }}
+                    extraTabs={extraTabs}
+                    snapshots={{
+                        snapshots: snapshotsData.snapshots,
+                        onReset: () => void handleReset(),
+                        onSave: handleSaveSnapshot,
+                        onRestore: (name) => void handleRestoreSnapshot(name),
+                        onDelete: handleDeleteSnapshot,
+                        busy: snapshotsBusy,
+                        busySnapshot,
+                        flags: flagsData.flags,
+                        onToggleFlag: handleToggleFlag,
+                        agreements: agreementsData.agreements,
+                        onBumpAgreement: handleBumpAgreement,
+                        busyAgreement,
+                        onLoadPreset: (id) => void handleLoadPreset(id),
+                        busyPreset,
+                    }}
+                    tours={tours.tab}
+                />
+            </SimulatorWorldContext.Provider>
             {tours.overlay}
         </div>
     )

@@ -18,6 +18,14 @@ const NOT_JSON: Record<string, string> = {
 }
 
 const API = path.dirname(fileURLToPath(import.meta.url))
+/** How many there are today: a walk that lost some would still find a few. */
+const ROUTE_FLOOR = 6
+/**
+ * The Simulator's catch-all reads its path from Next's context, so it is handed one of SSSB's host's POST paths; the
+ * host's own tests hold every one of its POSTs to the same rule (`@sssb/kit/server-lib/simulator-api`). Every other
+ * route ignores the argument.
+ */
+const CONTEXT = { params: Promise.resolve({ path: ['reset'] }) }
 function routeFiles(dir: string): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
         const full = path.join(dir, entry.name)
@@ -51,8 +59,9 @@ it('misses no simulated-only POST: every route file that reads isSimulated and e
 })
 
 it('finds the simulated-only POST routes (a walk that found none would pass vacuously)', () => {
-    expect(ROUTES.length).toBeGreaterThanOrEqual(21)
-    expect(ROUTES).toContain('simulator/reset/route.ts')
+    expect(ROUTES.length).toBeGreaterThanOrEqual(ROUTE_FLOOR)
+    expect(ROUTES).toContain('simulator/[...path]/route.ts')
+    expect(ROUTES).toContain('simulator/ticker/route.ts')
     expect(ROUTES).toContain('auth/dev-signin/route.ts')
 })
 
@@ -73,7 +82,10 @@ describe('simulated-mode-only POSTs answer 415 to a cross-origin simple request'
         ]
         for (const request of requests) {
             const contentType = request.headers.get('content-type') ?? 'no content-type'
-            const response = await (POST as (request: Request) => Promise<Response>)(request)
+            const response = await (POST as (request: Request, context: typeof CONTEXT) => Promise<Response>)(
+                request,
+                CONTEXT,
+            )
             expect(response.status, `${rel} with ${contentType}`).toBe(415)
             expect(await response.json()).toEqual({ error: 'json-only' })
         }
