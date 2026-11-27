@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { AppHeader } from '@sssb/kit/components/app-header'
 import { AppNav } from '@/components/app-nav'
 import { OrgSwitcher, type SwitcherOrg } from '@sssb/kit/components/auth/org-switcher'
@@ -13,14 +13,20 @@ import { NotificationBell, type NotificationItem } from '@sssb/kit/components/no
  *  faster panel cadence — 30s is plenty for a product bell, plus a refetch on navigation). */
 const NOTIFICATIONS_POLL_MS = 30_000
 
+/**
+ * The framework header, wired to this app. `userMenu` is the layout's real-mode menu, which signs out through the auth
+ * provider's client; without one, the menu here signs out through the app's sign-out route.
+ */
 export function HeaderGlue({
     user,
+    userMenu,
     orgs,
     activeSlug,
     tenantName,
     locale,
 }: {
     user: MenuUser
+    userMenu?: ReactNode
     orgs: SwitcherOrg[]
     activeSlug: string
     tenantName: string
@@ -90,18 +96,20 @@ export function HeaderGlue({
                             })
                         }}
                     />
-                    <UserMenu
-                        user={user}
-                        onProfile={() => window.location.assign(`/${locale}/profile`)}
-                        onSignOut={() => {
-                            void fetch('/api/auth/signout', {
-                                method: 'POST',
-                                headers: { 'content-type': 'application/json' },
-                            }).then((response) => {
-                                if (response.ok) window.location.assign(`/${locale}`)
-                            })
-                        }}
-                    />
+                    {userMenu ?? (
+                        <UserMenu
+                            user={user}
+                            onProfile={() => window.location.assign(`/${locale}/profile`)}
+                            onSignOut={() => {
+                                void fetch('/api/auth/signout', {
+                                    method: 'POST',
+                                    headers: { 'content-type': 'application/json' },
+                                }).then((response) => {
+                                    if (response.ok) window.location.assign(`/${locale}`)
+                                })
+                            }}
+                        />
+                    )}
                 </>
             }
         />

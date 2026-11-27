@@ -7662,3 +7662,140 @@ waited behind every other tenant's backlog. Both drains now go through `packages
   whose POSTs each take ten seconds of the tick's clock, and another tenant's single row still served in the same tick,
   with what was left served once in later ticks); `db.contract.test.ts` runs the bounded schedules drain on real
   Postgres under RLS. Removing the round-robin, the shuffle of tenants or of rows, or the deadline check turns tests red.
+## An SSL mode for the pg transport (2026-11-27, `fix/pg-ssl-mode`)
+
+`safeinsights/sssb#96`: neither the server's `pg` adapter nor the Migrator set TLS, so a connection was encrypted only
+if `DATABASE_URL` asked for it (SssbApp's never did), and the URL the Migrator builds from the secret carried none. Now
+both connect with one explicit mode, read by one function (`databaseSsl` in
+`packages/kit/src/adapters/real/database-transport.ts`) and applied by `createRealDb`, whose `ssl` argument is required.
+
+- **The default is `verify-full`**, and an unset or empty `DATABASE_SSL_MODE` means it: TLS, the chain checked
+  (`rejectUnauthorized`) and the host checked against the certificate's names (Node's `checkServerIdentity`, given the
+  host by `pg`). Empty is the default here, unlike `CLERK_AUTHORIZED_PARTIES`'s, because the default is the strict
+  value: a template whose input went missing fails closed. Rejected: **`require`** as the default or a mode (TLS that
+  accepts any certificate stops a passive listener, not an active one, and the RDS roots are at hand), **`prefer`**
+  (falls back to plaintext), and **`verify-ca`** (trusts the CA and not the host, which on a public CA trusts anyone
+  it issued). The modes are `verify-full` and `disable`, nothing between.
+- **The roots are a file, `DATABASE_SSL_ROOT_CERT`** (an absolute path, libpq's `sslrootcert`): when set, its
+  certificates are the only roots that one connection trusts (`ca`); unset, Node's own (its bundled roots and
+  `NODE_EXTRA_CA_CERTS`), which suits a host whose certificate chains to a public root. Aurora's chain to Amazon RDS's
+  roots, which Node does not trust. **How the CA reaches a Lambda:** the Lambda Node.js runtime from Node 20 carries
+  the Amazon CA certificates, RDS's among them, at `/var/runtime/ca-cert.pem`, and no longer loads them (AWS Lambda's
+  guide, "Using AWS Lambda with Amazon RDS"). `SssbApp` points `DATABASE_SSL_ROOT_CERT` at that file on both Lambdas,
+  which run on `NODEJS_22_X`. Rejected: **`NODE_EXTRA_CA_CERTS`** pointing at the same file (widens every TLS
+  connection the process makes, and AWS notes that loading the whole bundle at start slows a cold start), and
+  **shipping the RDS bundle in `@sssb/kit`** (a CA file SSSB would have to track through AWS's rotations; the
+  runtime's is AWS's to keep current). A Lambda built from a container image may not have that file: an adopter on one
+  puts the RDS bundle in the image and sets the path to it.
+- **Not a `config/params.ts` key.** `SssbApp` always builds Aurora, which always offers TLS, so there is no deployment
+  of the construct that should choose anything but `verify-full` against the runtime's bundle; a key would be a choice
+  with one right answer, in every app's params and `tests/tooling/app-scaffold.test.ts`'s same-keys rule. The
+  variables are the override, for a deployment of the adopter's own (another Postgres host) and a local real-mode run;
+  `SssbApp` sets them, as it sets `DATABASE_TRANSPORT`. Rejected: **an optional `params.database.ssl`**, which no
+  `SssbApp` deployment could set to anything else safely.
+- **The URL may not carry TLS of its own.** `pg` merges what it parses from the URL over the config it is given, so
+  `?sslmode=disable` (or `no-verify`, or an `sslrootcert`) would silently replace the mode. `createRealDb` refuses a
+  URL with any parameter named `ssl*` or `uselibpqcompat`, read as `pg-connection-string` reads it, and names the
+  parameters, never the URL. Rejected: **stripping them**, which answers a URL that asked for something with something
+  else, and **honouring the URL when the variable is unset**, which is the implicit default the issue is about. A
+  `DATABASE_URL` of an adopter's own that sets `sslmode` fails at boot after the upgrade, with the fix in the message;
+  the changeset says so.
+- **Local and contract runs use `disable`.** `pnpm dev` is simulated (pglite, no `pg` at all), so it is untouched. The
+  contract runner's embedded Postgres and CI's service container have no TLS, so `startContractServer` connects with
+  `{ mode: 'disable' }` (`CONTRACT_SSL`); a `CONTRACT_DATABASE_URL` carrying `sslmode` is now refused like any other
+  URL (a contract server that requires TLS would need a mode of its own, which nobody has asked for). TLS itself is
+  proven by `packages/kit/src/adapters/real/db-tls.contract.test.ts`, which starts an embedded Postgres of its own
+  with a certificate it makes with `openssl`, answering TCP only over TLS: `verify-full` migrates and serves
+  (`pg_stat_ssl.ssl` is true), `disable` is refused, and an untrusted root or a host the certificate does not name is
+  refused. Breaking the mode's verification turns two of its cases red.
+- **The Data API is unaffected**: it speaks HTTPS through the AWS SDK, which checks AWS's certificate. `assertRealEnv`
+  checks on `pg` only (row `db-tls`, a `CutoverPendingError`) the variables' shape and a `DATABASE_URL` that would
+  override them, and reads no file, since the path SssbApp sets exists only on Lambda and `sssb check-real-env` runs
+  anywhere; SssbApp sets neither variable on `data-api`.
+- **Required environment unchanged** (both variables are optional), so no release snapshot moves. The changeset still
+  files `minor`, Action required: a deployment of the adopter's own whose host has no TLS, or whose certificate chains
+  to a root Node does not trust, breaks until it sets the variables.
+- **Not done here: forcing TLS on the cluster** (`rds.force_ssl` in a cluster parameter group SssbApp would add). It
+  is the server-side half, and it changes a stateful resource of every deployed stack; filed as
+  `safeinsights/sssb#207`.
+- **Refused as well, from review**: a root file holding no PEM certificate (Node takes an empty `ca` as none and
+  trusts its own roots, so an empty or truncated bundle would quietly widen trust), and `NODE_PG_FORCE_NATIVE` (`pg`'s
+  native client passes libpq only `sslmode` and file keys from the `ssl` option, so every mode would reach it as
+  libpq's default, `prefer`). Rejected: **a warning when `disable` names a host that is not loopback** (a reviewer's
+  suggestion): a compose network's `db` is not loopback either, and the docs and the cutover row already confine
+  `disable` to a server with no TLS.
+
+## The Clerk adapter: one read per render, the keyless fallback closed, a client sign-out (2026-11-27, `fix/clerk-adapter`)
+
+safeinsights/sssb#200, #193 and #180, together because all three are SSSB's real Clerk adapter.
+
+- **#200: a per-render memo, not a cross-request cache or session claims.** `getCurrentUser` and `listMyOrgs` share
+  two reads (the account, the memberships) through React's `cache`, which gives each server render its own store and
+  is a pass-through anywhere else. So reading the signed-in person costs a page render at most two Backend API calls
+  (a page per 100 orgs more; other calls, such as a team's members, are not shared),
+  and nothing outlives the request: a role change, a removal or a ban shows on the next one, with no bound to
+  document beyond that. Writes the adapter makes (`updateProfile`, `setActiveOrg`) drop the person's reads, so the rest
+  of the render sees them. Rejected: **a time-bounded cache per user**, which on a deployment of several server
+  instances serves a stale org right after a switch (the switcher reloads the page; another instance answers it) and
+  cannot be invalidated across instances; and **custom session claims** (the role and metadata in the token), which
+  need a Clerk dashboard change per instance, SSSB's role lives on the membership rather than in Clerk's active-org
+  claim, and the claims lag a switch until the token refreshes. Both need a live measurement first: filed as safeinsights/sssb#214.
+  Route handlers are not memoized (React's `cache` has no store there), and read on each call. Proven
+  with React's `cache` simulated in `auth.test.ts`, never in a real Next render.
+- **#193: the adapter refuses to read a session while Clerk's keyless fallback can be reached.** Clerk decrypts the
+  request data its middleware writes under a published key outside a production build (when no secret key is set, or,
+  in keyless mode, after the real key fails) and then trusts the secret key that data names to check the token header.
+  On a path the proxy skips, nothing overwrites a caller's headers, so anyone could be signed in. `clerk-keyless.ts`
+  is asked before every `auth()` and `clerkClient()` in `auth.ts` (Clerk's client decrypts the same data and takes
+  its API URL from it): outside `NODE_ENV=production` it requires `CLERK_SECRET_KEY` itself (with an encryption key
+  alone, Clerk checks the token header against an empty key) and `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` `1` or `true`, a subset of what Clerk's `isTruthy` reads as set. Stricter
+  than Clerk on purpose: it ignores Clerk's CI exemption and holds under `NODE_ENV=test`, so it copies none of Clerk's
+  environment lists. The showcase's `dev:real` sets the variable. `clerk-keyless.clerk.test.ts` drives Clerk's real
+  `auth()` with forged headers: signed in as Clerk ships, refused by the adapter, and refused by Clerk once the variable
+  is set. Rejected: **only setting the variable in scripts**, which an adopter's own `next dev` would miss silently;
+  **re-checking the token header's HMAC against `CLERK_SECRET_KEY` in the adapter**, which copies Clerk's header names
+  and signature scheme; **a marker header from `withClerk`**, which needs a secret shared between the proxy and the
+  route and breaks where the proxy runs apart from the server; and **guarding `withAuthProxy`**, which a skipped path
+  never reaches. The matcher's dot rule stays (the guide says a page path has none); this closes the hole whatever the
+  matcher skips.
+- **#180: `RealUserMenu`, rendered by the server layout and handed to the client header glue.** The layout loads it by
+  `import()` in real mode, as the sign-in page loads `RealSignInForm`, and passes it as a `userMenu` node; its props are
+  plain data (`profileHref`, `signedOutHref`) because a function cannot cross from a server component. It signs out
+  through Clerk's client by session id, and falls back to the sign-out route (the framework's `auth/signout`, which
+  revokes the server-read session alone) until Clerk has loaded or if Clerk's sign-out fails, rather than signing
+  nobody out as `RealAccountRefused` does: a menu has no place to say so. Added to the `real-auth-provider` check's forms.
+
+## The secret scan reads the commits it is asked about, not every branch (2026-11-27, `fix/secret-scan-scope`)
+
+`safeinsights/sssb#106`: `secret-scan` ran `gitleaks git` with no `--log-opts`, which gitleaks 8.30.1 turns into
+`git log -p -U0 --full-history --all`, and the `fetch-depth: 0` checkout puts every branch of the remote in the clone.
+One branch's secret-like string failed the scan on every other open pull request. The range is now picked by
+`.github/scripts/secret-scan-range.sh` from the event, and the generator's workflow and root files carry both.
+
+- **The range.** `pull_request`: `<base sha>..<head sha>` from the event payload, so a commit the pull request added and
+  deleted again is still read. `push` (only `main` triggers `checks.yml`): `HEAD`, the pushed branch's full history, so
+  what reaches `main` is scanned in full. Any other event exits non-zero with no output: a new trigger decides its range
+  in review. Rejected: **a default of `HEAD`**, which would scan a `workflow_dispatch` or merge-queue run's whole
+  history under a name that says it scanned the change; **no default**, which is the bug. Rejected: **the merge
+  commit's parents (`HEAD^1..HEAD^2`)**, which `docs-only.sh` uses and which names the base tip at the time the run
+  started rather than at the event; the issue's design reads the event's shas, and a base that moved on makes the range
+  larger (the commits the branch merged in that the stale base does not reach), never smaller, so it fails toward
+  scanning more. A re-run reads the same payload.
+- **Quoting.** gitleaks splits `--log-opts` on spaces and warns about a value with quotes in it, so the script prints one
+  space-free line and the step passes it as `--log-opts="$range"`, the shell removing the quotes. The step takes the range
+  in a statement of its own (`range=$(...)`): a failed command substitution inside another command's arguments does not
+  stop a `bash -e` step, and gitleaks would run with an empty value, which is `--all` again. `${range:?}` is the second
+  guard. The shas arrive as environment variables, never interpolated into the script text, and the script accepts only
+  a full 40 or 64 digit id that is a commit in the clone (a ref name, an option or a range would otherwise reach
+  `git log` as one).
+- **Scope of the copy.** A generated workspace's `checks.yml` had the same job, so the generator writes the same step and
+  copies the script as it is (`ROOT_FILES`); a changeset for `@sssb/create` (Kind scaffold, optional: the old scan keeps
+  working, with the old bug) says how an existing workspace takes it. `app-checks.yml` and `sssb ci` have no scan.
+- **What is no longer scanned early.** A commit pushed straight to a branch that is not `main` (an `int-*` branch, say)
+  used to fail every pull request's scan; now it is read when it reaches `main`, in the pull request into `main` and
+  then the push. A pull request into that branch does not read it either: it is reachable from the base. With
+  `--log-opts` set, gitleaks 8.30.1 drops its own `--full-history` and `--diff-filter=tuxdb` (debug output:
+  `git log -p -U0 HEAD`, against `git log -p -U0 --full-history --all --diff-filter=tuxdb` without it); a pull request
+  that deletes a file holding a secret already on its base still reports nothing, as before (throwaway repository).
+- **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
+  stopword behaviour (named out of scope in the issue).

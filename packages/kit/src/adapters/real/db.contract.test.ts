@@ -1,6 +1,6 @@
 import { type Kysely, type KyselyPlugin, RawNode, sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, onTestFinished, test, vi } from 'vitest'
-import { startContractServer, type ContractServer } from './contract-postgres'
+import { CONTRACT_SSL, startContractServer, type ContractServer } from './contract-postgres'
 import { randomUUID } from 'node:crypto'
 import { migrateToLatest } from '../../db/migrate'
 import { up as grantAppUser } from '../../db/migrations/0015_app_user_grant'
@@ -46,7 +46,7 @@ beforeAll(async () => {
     // Not migrated yet: the non-superuser pass below runs FIRST, so on a fresh server the owner's own
     // migration 0001 is what creates `app_user`, exactly as on a new Aurora cluster. The superuser pass
     // migrates `sssb_contract` when its turn comes.
-    realDb = createRealDb(url.toString())
+    realDb = createRealDb(url.toString(), CONTRACT_SSL)
 }, 120_000)
 
 afterAll(async () => {
@@ -93,7 +93,7 @@ function connect(login: { database: string; user: string; password: string }) {
     url.username = encodeURIComponent(login.user)
     url.password = encodeURIComponent(login.password)
     url.pathname = `/${login.database}`
-    return createRealDb(url.toString()).getDb()
+    return createRealDb(url.toString(), CONTRACT_SSL).getDb()
 }
 
 describe('SSSB fixture seam on real Postgres, through the real adapter (contract)', () => {
@@ -837,7 +837,7 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         const url = new URL(serverUrl)
         url.pathname = `/${DATABASE}`
         url.searchParams.set('application_name', 'sssb_idle_probe')
-        const probe = createRealDb(url.toString())
+        const probe = createRealDb(url.toString(), CONTRACT_SSL)
         const admin = connect({
             database: new URL(serverUrl).pathname.slice(1) || 'postgres',
             user: decodeURIComponent(new URL(serverUrl).username),
@@ -871,7 +871,7 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         const url = new URL(serverUrl)
         url.pathname = `/${DATABASE}`
         url.searchParams.set('application_name', 'sssb_busy_probe')
-        const probe = createRealDb(url.toString())
+        const probe = createRealDb(url.toString(), CONTRACT_SSL)
         const admin = connect({
             database: new URL(serverUrl).pathname.slice(1) || 'postgres',
             user: decodeURIComponent(new URL(serverUrl).username),
