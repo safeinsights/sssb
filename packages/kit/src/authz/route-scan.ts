@@ -564,7 +564,7 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
     if (required && !gateHolds(required.mustMatch, handler.facts)) {
         return `${where} must also satisfy: ${describeGate(required.mustMatch)}. ${required.reason}`
     }
-    // A read that calls nothing but globals reads no data, so it has nothing to authorize, wherever it sits.
+    // A read that names nothing but inert values and its request reads no data, so it has nothing to authorize.
     const read = isReadVerb(handler.verb)
     if (!handler.facts.reachesAuthorize && read && handler.facts.readsNothing) return undefined
     if (!handler.facts.reachesAuthorize && exemption) {
@@ -1976,6 +1976,7 @@ const INERT_GLOBALS: ReadonlySet<string> = new Set([
  */
 const INERT_IMPORTS: Readonly<Record<string, readonly string[]>> = {
     'next/server': ['NextResponse'],
+    'next/navigation': ['notFound', 'permanentRedirect', 'redirect'],
     '@sssb/kit/adapters/index': ['appMode', 'isSimulated'],
 }
 
@@ -1989,7 +1990,8 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
  *
  * - a global in INERT_GLOBALS (`Response`, `new Date`, `URL`, `JSON`), which the file does not assign to;
  * - an import INERT_IMPORTS names, imported under its exported name (`NextResponse`, `appMode`);
- * - a `const` of this file bound to a literal value (`isLiteralValue`: `const HEADERS = { allow: 'GET' }`).
+ * - a `const` of this file bound to a primitive literal (`isPrimitiveLiteral`: `const ALLOW = 'GET'`); an object or
+ *   array is not one, since the file can fill it.
  *
  * So the only data in reach is those, literals, and the handler's own parameters (the request), and any method may be
  * called on them: `new URL(request.url).searchParams.get('x')` and `await request.json()` read the request, not a
@@ -2025,7 +2027,7 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
             ts.isVariableDeclaration(decl) &&
             isConst(decl) &&
             decl.initializer !== undefined &&
-            isLiteralValue(src, decl.initializer)
+            isPrimitiveLiteral(decl.initializer)
         )
     }
     const allowedReference = (id: ts.Identifier): boolean => {
@@ -2044,6 +2046,8 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
     const visit = (node: ts.Node): void => {
         if (reads) return
         // A type runs nothing, and names nothing the handler reads.
+        // An instantiation expression (`load<T>`) is an ExpressionWithTypeArguments, which is a type node holding a value.
+        if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression)
         if (ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) return
         if (
             ts.isClassLike(node) ||
@@ -2051,6 +2055,8 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
             (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
             (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
             (ts.isPropertyAccessExpression(node) && ESCAPE_MEMBERS.has(node.name.text)) ||
+            (ts.isBindingElement(node) &&
+                ESCAPE_MEMBERS.has((node.propertyName ?? node.name).getText(sf).replace(/^['"]|['"]$/g, ''))) ||
             (ts.isElementAccessExpression(node) &&
                 ts.isStringLiteralLike(node.argumentExpression) &&
                 ESCAPE_MEMBERS.has(node.argumentExpression.text))
@@ -2066,6 +2072,32 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
     }
     visit(fn)
     return !reads
+}
+
+/**
+ * A primitive literal: a string, a number (signed), a bigint, a boolean, `null`, `undefined` or a template with no
+ * substitutions. An object or array literal is not one: `const` fixes the binding, not the contents, which any code in
+ * the file (`cache[org] = await load(org)`) can fill.
+ */
+function isPrimitiveLiteral(expression: ts.Expression): boolean {
+    const e = unwrap(expression)
+    switch (e.kind) {
+        case ts.SyntaxKind.StringLiteral:
+        case ts.SyntaxKind.NumericLiteral:
+        case ts.SyntaxKind.BigIntLiteral:
+        case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+        case ts.SyntaxKind.TrueKeyword:
+        case ts.SyntaxKind.FalseKeyword:
+        case ts.SyntaxKind.NullKeyword:
+            return true
+    }
+    if (ts.isPrefixUnaryExpression(e)) {
+        return (
+            (e.operator === ts.SyntaxKind.MinusToken || e.operator === ts.SyntaxKind.PlusToken) &&
+            ts.isNumericLiteral(unwrap(e.operand))
+        )
+    }
+    return ts.isIdentifier(e) && e.text === 'undefined'
 }
 
 /**

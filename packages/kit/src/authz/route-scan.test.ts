@@ -1916,7 +1916,7 @@ describe('a read that reads nothing (safeinsights/sssb#103)', () => {
         expect(only('export const HEAD = () => new Response(null, { status: 204 })', 'HEAD')).toBe(true)
         expect(
             only(
-                "const CORS = { allow: 'GET' }\nexport function OPTIONS() { return new Response(null, { headers: CORS }) }",
+                "const ALLOW = 'GET'\nexport function OPTIONS() { return new Response(null, { headers: { allow: ALLOW } }) }",
                 'OPTIONS',
             ),
         ).toBe(true)
@@ -2022,6 +2022,62 @@ describe('a read that reads nothing (safeinsights/sssb#103)', () => {
         expect(
             only('export async function GET() { using r = { [Symbol.dispose]() {} }; return Response.json({}) }'),
         ).toBe(false)
+    })
+
+    it('holds for the named imports and inert names a probe or a redirect uses', () => {
+        expect(
+            only(
+                "import { isSimulated } from '@sssb/kit/adapters/index'\n" +
+                    "export function GET() { if (!isSimulated) throw new Error('real'); return Response.json({}) }",
+            ),
+        ).toBe(true)
+        expect(only("import { redirect } from 'next/navigation'\nexport function GET() { redirect('/sign-in') }")).toBe(
+            true,
+        )
+        expect(
+            only(
+                'export function GET() { type T = string; interface I { a: T } const x: I = { a: "" }; return Response.json(x) }',
+            ),
+        ).toBe(true)
+        expect(only('export function GET() { outer: for (;;) { break outer } return Response.json({}) }')).toBe(true)
+    })
+
+    it('fails a const whose contents the file can fill, a let, a namespace import, a const after the handler', () => {
+        expect(
+            only(
+                "import { loadDockets } from './db'\nconst cache: Record<string, string[]> = {}\n" +
+                    "export async function POST() { cache['x'] = await loadDockets(); return new Response(null) }\n" +
+                    "export async function GET() { return Response.json(cache['x'] ?? []) }",
+            ),
+        ).toBe(false)
+        expect(only('const recent: string[] = []\nexport async function GET() { return Response.json(recent) }')).toBe(
+            false,
+        )
+        expect(only("let ALLOW = 'GET'\nexport function GET() { return Response.json({ ALLOW }) }")).toBe(false)
+        expect(
+            only("import * as db from './db'\nexport async function GET() { return Response.json(await db.load()) }"),
+        ).toBe(false)
+        expect(
+            only(
+                "import { load } from './db'\nexport async function GET() { return Response.json(x) }\nconst x = load()",
+            ),
+        ).toBe(false)
+    })
+
+    it('fails an instantiation expression, whose value a type-only skip would hide', () => {
+        expect(
+            only(`${IMPORT}export async function GET() { const f = load<never>; return Response.json(await f()) }`),
+        ).toBe(false)
+        expect(only("export async function GET() { const f = fetch<never>; return f('http://data') }")).toBe(false)
+    })
+
+    it('fails a destructured constructor, the Function constructor by another name', () => {
+        expect(
+            only("export function GET() { const { constructor: F } = Object; return Response.json(F('return 1')()) }"),
+        ).toBe(false)
+        expect(only("export function GET() { const { 'constructor': F } = Object; return Response.json(F) }")).toBe(
+            false,
+        )
     })
 
     it('never holds for a wrapper, whose code runs on every request out of sight', () => {
