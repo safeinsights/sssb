@@ -7876,6 +7876,7 @@ does not: one bit of existence, against the routes' own comments.
 - **No conformance check.** The authorization scan proves a handler may reach `authorize`, not the order of calls, and
   it cannot tell which call is the row lookup in an app's own code, so an order check would be a guess about names.
   The guide says to pin the rule with a route test, as the showcase's routes now do.
+
 ## Two edges of real sign-in: before Clerk loads, and a session a failed finalize left (2026-11-27, `fix/sign-in-edges`)
 
 safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
