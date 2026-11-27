@@ -86,7 +86,8 @@ export function worldPath(...segments: string[]): string {
  * MAX_WORKERS ports derived from `base`'s port, so each checkout (whose app port `@sssb/tools/ports` already derives)
  * has a band of its own: 10000 to 19999, clear of the app ports (3000-3599), contract Postgres (5439-5639), the custom
  * slots (20000-29999), Ladle (61000 and up) and the ports the OS hands out on its own (Linux from 32768, macOS from
- * 49152). The main checkout's 3000 and every derived 3200-3598 land on bands of their own (14000, 15600 to 18784).
+ * 49152). The main checkout's 3000 and every derived 3200-3598 land on bands of their own: 14001 to 14007, and
+ * 15601 up to 18791.
  */
 export function worldOrigin(base: string, index = worldIndex()): string {
     if (index === 0) return base

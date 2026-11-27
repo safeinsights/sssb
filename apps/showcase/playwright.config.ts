@@ -63,12 +63,12 @@ export default defineConfig({
         // The `dependencies` link below orders the two projects for a bare `playwright test`, but it
         // does NOT serialize the destructive specs against EACH OTHER, and all nine of them mutate the
         // same shared world (.data): snapshot resets, mail clears, webhook failure toggles, world-clock
-        // jumps. `mode: 'serial'` inside a file only orders that file. Locally `workers: 1` hid this
-        // completely; in CI, where workers default to the core count, destructive spec FILES run in
-        // parallel and one spec's "reset world" can pull the floor out from under another's signed-in
-        // page. Playwright has no per-project worker count, so `pnpm test:e2e` runs two passes and
-        // pins the destructive one to a single worker (`--no-deps`, since the script already ordered
-        // them). Run the projects individually and you get the same order for free.
+        // jumps. `mode: 'serial'` inside a file only orders that file. In ONE world, destructive spec FILES run in
+        // parallel would let one spec's "reset world" pull the floor out from under another's signed-in page
+        // (seen on CI when it ran Playwright's default worker count). Playwright has no per-project worker count,
+        // so `pnpm test:e2e` runs two passes and pins the destructive one to a single worker (`--no-deps`, since
+        // the script already ordered them), as `sssb ci e2e --project destructive` does on CI. With a world per
+        // worker (./tests/e2e/support/worlds.ts) that pin could go; it stays while `workers` is 1 by default.
         { name: 'chromium', use: { ...devices['Desktop Chrome'] }, testIgnore: '**/destructive/**' },
         {
             name: 'destructive',
