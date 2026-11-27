@@ -8117,6 +8117,43 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
   the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
 
+## A reads-only gate for public and inert reads (2026-11-27, `fix/authz-public-reads`)
+
+safeinsights/sssb#220. The design and what it accepts are ADR-0012's later 2026-11-27 addendum; the calls it did not
+settle:
+
+- **One gate kind for all three shapes**, not one allowance each. A public feed, a preflight sharing a headers object
+  and a handshake GET differ only in which names they read; a `reads-only` gate lists them, and the scan checks the
+  rest of the handler reads nothing. Rejected: **a second key space for any gate outside `src/app/api`** (a `calls`
+  gate proves only that one call is reached, not that a read outside `api/` does nothing else) and **app entries of
+  any kind under a framework prefix** (a mutation there must keep the framework's gate).
+- **Reads only, by the gate and by the lookup.** The gate never holds for a mutation, and `exemptionFor` skips a
+  `reads-only` entry for a mutating verb, so a POST beside a reads-only GET under `webhooks/` is still judged by
+  `withWebhookSecret`, and one outside `src/app/api` can match no exemption, as before.
+- **An exact entry still wins over its prefix for a read.** A GET under a `reads-only` entry that is also wrapped by the
+  prefix's guard is judged by the entry and fails if it names more; rejected: passing a read on either gate, which made
+  a prefix's gate override every exact entry beneath it (an existing test caught it in the first draft).
+- **`names` are identifiers**, not dotted names: an import's exported name (never a default import, whose local name the author picks), never a
+  value of the route's own file (below). A namespace import is refused outright, since it names the whole module, and so is
+  an aliased one (`import { headers as cors }`), as for every gate.
+- **Narrowed in review.** The first draft let a listed declaration of the file excuse whatever it held (an alias of an
+  import, a helper reading the database, a `declare`d `fetch`): the first fix had the scan read a listed `const` or
+  function and count its names, and refuse an ambient, exported, mutable or import-equals binding. It allowed a reads-only file
+  under `simulator/` too, which the issue did not ask for and whose 404-in-real guarantee such a read does not keep:
+  `webhooks/` only. A listed name nobody reads is a problem. The second round found a listed `const` that the file
+  fills elsewhere (`cache.set(…)` in a POST): a listed declaration used anywhere outside the read is now refused.
+  The third found the same thing through a sibling destructured binding (`const { get, set } = …`). Three rounds of
+  one shape meant following declarations of the file was the wrong tool. A fourth found a literal `const` filled
+  through the handler itself (code of the file calling `GET()` and writing to what it returns). So no value of the
+  route's own file can be listed at all, only imports; a shared headers object goes in a module. Rejected:
+  **following a listed declaration of the file and checking every write to it**, which four rounds showed cannot be
+  closed by syntax.
+  Review also found route groups and parallel-route slots escaping path-keyed rules (`api/(g)/service/…`,
+  `api/@s/service/…` past the `service/` gate), older than this change; the scan now matches by URL, and refuses an
+  intercepting route, whose URL a path cannot tell. That can fail an app that passed, hence `minor`, Action required.
+- **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
+  own, in its own PR.
+
 ## Lost CodeBuild builds, and schedules that keep failing (2026-11-27, `fix/lost-builds-and-failing-schedules`)
 
 Two fixes in one change. safeinsights/sssb#231: a CodeBuild job whose build died without posting its webhook stayed
