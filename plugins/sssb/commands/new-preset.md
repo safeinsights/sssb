@@ -15,7 +15,7 @@ the server through the same code the product runs (`@sssb/kit/server-lib/demo-pr
 demo through its in-memory twin (`@sssb/kit/demo-static/world`). A tour can start from it. A preset loads from
 **Simulator → Snapshots → Start from a preset** on both: the Simulator on the app's own `pnpm dev` (SSSB's host, behind
 `src/app/api/simulator/[...path]/route.ts`) and the static demo's (`pnpm build:demo-static`); the conformance suite
-holds the server replay to the registry as well (step 8). The contract and every operation kind's rules
+exercises the server replay too (step 8). The contract and every operation kind's rules
 are in `@sssb/kit/core/presets`; the reference app's presets are the worked examples
 (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app-config/presets`).
 

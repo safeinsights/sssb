@@ -215,8 +215,8 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         setSchedulesData(nextSchedules)
     }, [jobsTickets])
 
-    // The Snapshots tab is fetched when it opens and after each of its own actions, never polled: nothing else changes
-    // it but a flag, which reloads the page.
+    // The Snapshots tab is fetched when it opens and after each of its own actions, never polled: its own actions
+    // refetch or reload, and a change made elsewhere (an agreement edited on an app page) shows when it next opens.
     const refreshSnapshots = useCallback(async () => {
         const next = await getJson<SimulatorSnapshots>('snapshots')
         if (next) setSnapshotsData(next)

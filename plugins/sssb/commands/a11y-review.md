@@ -25,7 +25,7 @@ read its local showcase app instead).
     - Focus management after a team switch and after form submits: focus must not silently reset to `body`.
     - Semantics: one `h1` per page, no skipped heading levels, landmarks present, the app's tables have real
       headers, async feedback (sent, saved, failed) is announced through `aria-live` or `role=status`. Check the
-      Simulator panel's tables on `pnpm dev` (People, Mail, Jobs, Snapshots, Tours) and the static demo's other tabs
+      Simulator panel's tables on `pnpm dev` (People, Mail, Jobs, Snapshots, and Tours when the app registers any) and the static demo's other tabs
       (`pnpm build:demo-static`).
     - Contrast judgment on EVERY tenant theme the seed defines (`src/seed/index.ts`) and BOTH locales. SSSB's theme
       uses `primaryShade: 8` because shade 6 failed WCAG; an app that overrides the theme re-checks it.

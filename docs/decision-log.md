@@ -7602,8 +7602,9 @@ them. Decisions the issue left open:
   record no client reads, and the tab takes its list from `events`), which ties the Snapshots tab to the Events tab's
   route and would be the one path whose shape differs between the two.
 - **The Snapshots tab is fetched when it opens and after each of its own actions, never polled**, as the showcase's
-  glue does: nothing else changes it except a flag, and a flag reloads the page. Rejected: **adding it to the open-tab
-  poll**, which reads every tenant's agreements every four seconds for a list that cannot have moved.
+  glue does: the tab's own actions refetch it or reload the page, and a change made elsewhere (an agreement edited on an
+  app's page) shows the next time it opens. Rejected: **adding it to the open-tab poll**, which reads every tenant's
+  agreements every four seconds (`EXPANDED_POLL_MS`) for a list that rarely moves while the tab is open.
 - **A snapshot's name is judged by the snapshot store, not the route**: a missing or non-string name is a 400, and a
   name outside the world-start pattern, or one that `reset` or a registered preset already means, is the store's 403,
   as the showcase's routes answer. Rejected: **checking the pattern in the route first** (a 400), which would answer a

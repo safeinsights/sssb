@@ -20,7 +20,7 @@ each tour is app content. A tour runs from the Tours tab on both of a generated 
    `id`, `titleKey`, `summaryKey`, usually `snapshot: 'reset'` or the id of a demo preset (`presets` in
    `src/app-config/presets.ts`, written with `/sssb:new-preset`) when the story should open mid-shift. Both work on
    every host. A saved snapshot's name does not: snapshots are saved on a server, through the Snapshots tab on
-   `pnpm dev`, the static demo has none, and such a tour fails the `file://` walkthrough gate. Then its
+   `pnpm dev`; the static demo's Snapshots tab saves none, and such a tour fails the `file://` walkthrough gate. Then its
    steps. An app with no tours renders no Tours tab at all, so an empty `tours` is a real off-switch.
 2. **Narration** goes in the APP catalog (`messages/en.json` and `messages/es.json`, a `tours` namespace listed in
    `APP_NAMESPACES` in `src/app-config/messages.ts`), referenced by FULLY-QUALIFIED key (`tours.myTourStep1`). Both
