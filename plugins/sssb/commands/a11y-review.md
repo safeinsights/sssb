@@ -17,7 +17,7 @@ read its local showcase app instead).
    (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/tests/e2e/support`: `signInAs`,
    `openSimulatorPanel`), which a generated app lacks: sign in through the people picker as
    `tests/e2e/items.spec.ts` does, and point the reference's Simulator-panel pass at the tabs a generated app's
-   `pnpm dev` panel has (People, Mail, Jobs), opening it by its pill as `tests/e2e/simulator.spec.ts` does. Fix any violations first: axe findings are never "noise". If Playwright complains about a missing
+   `pnpm dev` panel has (every tab but Actors, and Tours until the app registers one), opening it by its pill as `tests/e2e/simulator.spec.ts` does. Fix any violations first: axe findings are never "noise". If Playwright complains about a missing
    browser, run `pnpm --filter <app> exec playwright install chromium` once, then retry.
 2. With `pnpm dev` up, go beyond axe using Playwright or browser tools:
     - Keyboard-only pass across sign-in → dashboard → team switch and the app's own flows: tab order matches visual
@@ -25,7 +25,7 @@ read its local showcase app instead).
     - Focus management after a team switch and after form submits: focus must not silently reset to `body`.
     - Semantics: one `h1` per page, no skipped heading levels, landmarks present, the app's tables have real
       headers, async feedback (sent, saved, failed) is announced through `aria-live` or `role=status`. Check the
-      Simulator panel's tables on `pnpm dev` (People, Mail, Jobs) and the static demo's other tabs
+      Simulator panel's tables on `pnpm dev` (every tab but Actors, and Tours only when the app registers any) and the static demo's panel
       (`pnpm build:demo-static`).
     - Contrast judgment on EVERY tenant theme the seed defines (`src/seed/index.ts`) and BOTH locales. SSSB's theme
       uses `primaryShade: 8` because shade 6 failed WCAG; an app that overrides the theme re-checks it.

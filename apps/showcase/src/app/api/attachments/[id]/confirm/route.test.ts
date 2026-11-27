@@ -9,10 +9,15 @@ const h = vi.hoisted(() => ({
     orgIdForSlug: vi.fn(),
     attachmentForOrg: vi.fn(),
     confirmAttachment: vi.fn(),
-    get: vi.fn(),
+    head: vi.fn(),
+    remove: vi.fn(),
     recordAuditEvent: vi.fn(),
 }))
-vi.mock('@sssb/kit/adapters/index', () => ({ auth: { requireUser: h.requireUser }, db: {}, storage: { get: h.get } }))
+vi.mock('@sssb/kit/adapters/index', () => ({
+    auth: { requireUser: h.requireUser },
+    db: {},
+    storage: { head: h.head, delete: h.remove },
+}))
 vi.mock('@sssb/kit/db/tenant-lookup', () => ({ tenantIdForSlug: h.tenantIdForSlug }))
 vi.mock('@sssb/kit/db/org-lookup', () => ({ orgIdForSlug: h.orgIdForSlug }))
 vi.mock('@sssb/kit/db/audit', () => ({ recordAuditEvent: h.recordAuditEvent }))
@@ -51,7 +56,8 @@ beforeEach(() => {
         storageKey: 'attachments/tenant-northwind/uuid/a.txt',
         status: 'pending',
     })
-    h.get.mockResolvedValue({ body: new Uint8Array([1, 2, 3, 4]), contentType: 'text/plain' })
+    h.head.mockResolvedValue({ size: 4, contentType: 'text/plain', etag: '"e"', lastModified: new Date(0) })
+    h.remove.mockResolvedValue(undefined)
     h.confirmAttachment.mockResolvedValue(1)
 })
 
@@ -60,7 +66,7 @@ describe('POST /api/attachments/[id]/confirm', () => {
         const response = await confirm()
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ attachmentId: 'a0000000-0000-4000-8000-000000000001' })
-        // Size comes from the STORED bytes (4), never the client.
+        // Size comes from what the store reports (4), never the client.
         expect(h.confirmAttachment).toHaveBeenCalledWith(
             {},
             'tenant-northwind',
@@ -83,6 +89,31 @@ describe('POST /api/attachments/[id]/confirm', () => {
         expect(h.recordAuditEvent).not.toHaveBeenCalled()
     })
 
+    test('a READY attachment is idempotent without touching storage: no head, and never a delete', async () => {
+        h.attachmentForOrg.mockResolvedValue({
+            id: 'a0000000-0000-4000-8000-000000000001',
+            storageKey: 'attachments/tenant-northwind/uuid/a.txt',
+            status: 'ready',
+        })
+        // Even an object now over the ceiling (a lowered limit, or an overwrite) is not deleted by a re-confirm.
+        h.head.mockResolvedValue({
+            size: 5 * 1024 * 1024 + 1,
+            contentType: 'text/plain',
+            etag: '"e"',
+            lastModified: new Date(0),
+        })
+        const response = await confirm()
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            attachmentId: 'a0000000-0000-4000-8000-000000000001',
+            idempotent: true,
+        })
+        expect(h.head).not.toHaveBeenCalled()
+        expect(h.remove).not.toHaveBeenCalled()
+        expect(h.confirmAttachment).not.toHaveBeenCalled()
+        expect(h.recordAuditEvent).not.toHaveBeenCalled()
+    })
+
     test("404 when the id is not one of the active org's attachments (indistinguishable from missing)", async () => {
         h.attachmentForOrg.mockResolvedValue(null)
         expect((await confirm('ghost')).status).toBe(404)
@@ -90,9 +121,35 @@ describe('POST /api/attachments/[id]/confirm', () => {
     })
 
     test('400 when the upload never landed in storage (no dead download links)', async () => {
-        h.get.mockResolvedValue(null)
+        h.head.mockResolvedValue(null)
         expect((await confirm()).status).toBe(400)
         expect(h.confirmAttachment).not.toHaveBeenCalled()
+    })
+
+    test('400 and the object deleted when it is over the ceiling: a PUT store that ignored the signed length', async () => {
+        h.head.mockResolvedValue({
+            size: 5 * 1024 * 1024 + 1,
+            contentType: 'text/plain',
+            etag: '"e"',
+            lastModified: new Date(0),
+        })
+        const response = await confirm()
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({ error: 'too-large' })
+        expect(h.remove).toHaveBeenCalledWith(['attachments/tenant-northwind/uuid/a.txt'])
+        expect(h.confirmAttachment).not.toHaveBeenCalled()
+        expect(h.recordAuditEvent).not.toHaveBeenCalled()
+    })
+
+    test('an object of exactly the ceiling is confirmed, and nothing is deleted', async () => {
+        h.head.mockResolvedValue({
+            size: 5 * 1024 * 1024,
+            contentType: 'text/plain',
+            etag: '"e"',
+            lastModified: new Date(0),
+        })
+        expect((await confirm()).status).toBe(200)
+        expect(h.remove).not.toHaveBeenCalled()
     })
 
     test('403 when a restricted member tries to finalize an upload', async () => {

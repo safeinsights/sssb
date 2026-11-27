@@ -46,7 +46,10 @@ export function ErrorsApp({ runServerScenario }: { runServerScenario?: () => Pro
                             variant="default"
                             data-testid="throw-server-error"
                             onClick={() => {
-                                runServerScenario().then(setResult)
+                                // A server that could not answer leaves the last result showing.
+                                runServerScenario()
+                                    .then(setResult)
+                                    .catch(() => undefined)
                             }}
                         >
                             {t('throwServer')}

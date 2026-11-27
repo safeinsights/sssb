@@ -1127,8 +1127,8 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
         }),
     ]
     const viewpoint = person ? `person:${person.id}` : invitedViewpoint
-    // Mirrors the real glue's derivation (simulator-glue.tsx): resolve the viewpoint's email from
-    // the same people list the People tab renders, rather than re-deriving it a second way.
+    // Mirrors the server host's derivation (../components/simulator/simulator-host.tsx): resolve the viewpoint's email
+    // from the same people list the People tab renders, rather than re-deriving it a second way.
     const personEmail = peopleRows.find((p) => p.key === viewpoint)?.email ?? null
     const scopedEmails =
         mailScope === 'all' || !personEmail ? emails : emails.filter((email) => email.to === personEmail)

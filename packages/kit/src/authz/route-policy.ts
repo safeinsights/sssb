@@ -50,9 +50,12 @@ export const EXEMPT_PREFIXES: Readonly<Record<string, Exemption>> = {
     'webhooks/': {
         reason:
             'authenticated by a machine caller, not a user session — a shared webhook secret ' +
-            '(withWebhookSecret) or the Mailgun inbound signature (withMailgunSignature) — so no ' +
-            'per-actor ability applies',
-        mustMatch: { kind: 'wrapped-by', callees: ['withWebhookSecret', 'withMailgunSignature'] },
+            '(withWebhookSecret), the Mailgun inbound signature (withMailgunSignature) or a Standard Webhooks ' +
+            'signature (withStandardWebhookSignature) — so no per-actor ability applies',
+        mustMatch: {
+            kind: 'wrapped-by',
+            callees: ['withWebhookSecret', 'withMailgunSignature', 'withStandardWebhookSignature'],
+        },
     },
     'simulator/': {
         reason: 'simulated-world surface, simulated-mode-gated (404 in real) — never a product mutation path',
@@ -96,7 +99,7 @@ export const EXEMPT_FILES: Readonly<Record<string, Exemption>> = {
     },
     'storage-upload/route.ts': {
         reason:
-            'simulated-mode-only (404 in real) multipart upload endpoint — the local twin of an S3 presigned POST, ' +
+            'simulated-mode-only (404 in real) upload endpoint — the local twin of an S3 presigned POST (multipart) and of a presigned PUT, ' +
             'authenticated by the server-signed HMAC upload-target fields (like the webhook secret), NOT a user ' +
             'session; the upload TARGET was already authorized by the app route that minted it',
         mustMatch: SIMULATED_404,

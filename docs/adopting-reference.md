@@ -470,9 +470,9 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 145 subpaths your app may
+lists the 147 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 86 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 90 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -640,6 +640,14 @@ the tenant for the transaction; each tenant table's policy compares the row's `t
     exemption: every table it reads through `withTenant` is tenant-scoped, so keep data that every tenant shares in code,
     or a copy per tenant.
 
+    A route may create, rename and delete teams inside `withTenant`: `organizations` is readable across tenants, but its
+    writes are confined to the request's tenant, and `authorize(...)` decides who may make them. A request sets a new
+    team's tenant, slug and name and may change its name; its slug (how the auth provider and its inbound mail address
+    name it) and its id are not a request's to change, and a slug another tenant's team holds is refused. A table of yours that
+    must keep its org in its own tenant can say so in Postgres with a composite foreign key,
+    `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)`; a plain `org_id` reference accepts
+    another tenant's team.
+
 - **What it cannot check for you.** A role with `SUPERUSER` or `BYPASSRLS` skips row-level security outright, so the
   role your server connects as must have neither: the `db-role-not-superuser` row of your cutover checklist. `SssbApp`
   connects with the database's master credentials, which own every table, so `FORCE` is what holds that connection to
@@ -752,6 +760,38 @@ the showcase carries the same route over the same function.
     already queued and the schedule has moved on, so the in-process runner's sweep fails that job after five minutes,
     and with another runner it stays queued.
 
+## Webhooks your app receives
+
+A route under `apps/<app>/src/app/api/webhooks/` is called by a machine, not a person, so the authorization scan exempts
+it from `authorize(...)` only when its handler IS a call to one of the signature wrappers the exemption names,
+imported under that name: `export const POST = withWebhookSecret(…)`, `withStandardWebhookSignature(…)`, or a
+`withMailgunSignature(…)` your app defines (SSSB's showcase has one). Each answers an opaque 401 before your handler
+runs.
+
+- **A shared secret** (`withWebhookSecret`, `@sssb/kit/service-auth/webhook`): the caller sends the secret in
+  `x-sssb-webhook-secret`. Real mode reads it from `WEBHOOK_SECRET`, which every deployment sets (the cron route and the
+  jobs webhook use it). A sender that already holds a secret deployed under another name keeps it:
+  `withWebhookSecret(handler, { secretEnv: 'PARTNER_HOOK_SECRET' })`. That name is yours to set on the server and to
+  list in your cutover checklist; `sssb check-real-env` and the server's startup check know only `WEBHOOK_SECRET`, so
+  an unset name of your own is not reported, and the route refuses every request until it is set.
+- **A signed sender** that follows [Standard Webhooks](https://www.standardwebhooks.com) (Svix and the services that
+  send through it sign this way): `withStandardWebhookSignature(handler, { secretEnv: 'PARTNER_WEBHOOK_SECRET' })`
+  (`@sssb/kit/service-auth/standard-webhooks`). The variable holds the `whsec_…` secret the sender gives you (a key
+  shorter than 16 bytes never verifies). The
+  wrapper checks the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers (or Svix's `svix-*` names) over
+  the exact body: a timestamp within five minutes either way (`toleranceMs` changes it), a signature that matches in
+  constant time, and a message not seen before. Your handler gets `{ request, webhook: { id, timestamp, body } }`.
+  To rotate, put the new secret beside the old one, space-separated in the same variable or in a second one
+  (`secretEnv: ['PARTNER_WEBHOOK_SECRET', 'PARTNER_WEBHOOK_SECRET_NEXT']`); either verifies until you remove the old.
+  A sender retries a delivery with a new timestamp, so a retry reaches your handler: treat `webhook.id` as the
+  idempotency key and answer 2xx for one you have already processed. Make the handler idempotent even so: the guard
+  against the same signed message sent twice is in memory, per server instance, and `SssbApp` runs your server on
+  Lambda, where every concurrent execution environment is an instance of its own; and when your handler throws or
+  answers 5xx the message is released, so a copy of it can run the handler again. `replayStore` (a `claim` and a
+  `release` over a table of your own) makes the guard hold across instances; SSSB does not ship one yet
+  (safeinsights/sssb#205). In `pnpm dev` both wrappers verify against the per-checkout dev secret instead of the
+  variable.
+
 ## Cutover — from hermetic to real
 
 Everything needing credentials, accounts or money is a row in your workspace's `docs/cutover-checklist.md` —
@@ -806,13 +846,21 @@ first value, which is what real mode required before the switches existed.
   applies. Whatever the store, `getSignedDownloadUrl`, `put`, `get`, `head`, `list`, `copy` (with `ifMatch`) and `delete` are
   S3's calls, so what the store implements of them decides what works: run the cutover row `storage-compatible-live`
   against a real bucket before you rely on it.
-  **What it cannot do yet: a browser upload on a store without presigned POST.** `createUploadTarget` mints an S3
-  presigned POST, which Cloudflare documents R2 as not supporting (MinIO accepts one). So `STORAGE_UPLOAD_TARGET` is
-  required, never guessed from the endpoint: `post` if the store accepts a presigned POST, `none` if it does not, and
-  with `none` `createUploadTarget` fails with an error that names the setting, while every other method works. An app
-  that must take browser uploads into R2 waits for a PUT form of the upload target (an open SSSB issue,
-  [safeinsights/sssb#134](https://github.com/safeinsights/sssb/issues/134)); until then it sends the file through
-  its own server and calls `put`. Switching a deployed stack from `s3` to `s3-compatible` takes the bucket out of the
+  **A browser upload on a store without presigned POST.** `createUploadTarget` mints an S3 presigned POST, which
+  Cloudflare documents R2 as not supporting (MinIO accepts one), and a presigned PUT, which R2 does. So
+  `STORAGE_UPLOAD_TARGET` is required, never guessed from the endpoint: `post` if the store accepts a presigned POST,
+  `put` if it takes a presigned PUT instead (R2), `none` if the app takes no browser upload, and with `none`
+  `createUploadTarget` fails with an error that names the setting, while every other method works. The target is
+  an `UploadTarget` (`@sssb/kit/ports/storage`), a POST of `fields` then the file, or a PUT of the file as the body
+  with the `headers` it names, and the browser code switches on `target.method` (the showcase's
+  `send-to-upload-target.ts` is the whole of it). **A PUT has no size policy**, so its URL signs the file's exact
+  `Content-Length` and `Content-Type` instead: the app passes the client's claimed size as `sizeBytes` beside
+  `maxBytes` (refusing one over `maxBytes` first, as the showcase's mint route does), and the store refuses a body of
+  another length if it honours a signed length (AWS S3 does; for R2 that is for the cutover row
+  `storage-compatible-store` to measure, and is not assumed). So a route that must hold the ceiling whatever the
+  store does runs `head` on the object when it confirms the upload and `delete`s one over `maxBytes`, as the showcase's
+  confirm route does (the check is a moment: the URL lives 15 minutes, so on a store that ignores the signed length a later PUT can still replace the object; staging under another key and `copy`ing to the final one, with `ifMatch`, closes that). The bucket's CORS rules must allow a browser `PUT` from the app's origin with the `Content-Type`
+  header, which a presigned URL does not grant by itself (for R2, the bucket's CORS policy: the app's origin, the `PUT` method and the `Content-Type` header). Switching a deployed stack from `s3` to `s3-compatible` takes the bucket out of the
   stack, as `none` does (above); copy the objects to the new store first.
 - **`jobs: 'in-process'` needs no CodeBuild project.** Each job's handler runs in the server, from the request or the
   scheduled tick that started it, and its status is recorded before that call returns. It shares that invocation's
@@ -942,11 +990,30 @@ addendum of that date.
       stack of its own, `edge-<region>-…`, carrying your stack's tags, so bootstrap us-east-1 too.
     - Deploy by naming your stack, which deploys that one first, or with `--all`.
     - A request body is capped at 1 MB; a larger one answers 413.
-- **The visitor's host.** CloudFront sends the server the Function URL's own `Host`. A CloudFront Function therefore
-  sets `x-forwarded-host` (and `x-forwarded-port`) from the request the visitor made, overwriting anything the visitor
-  sent. Clerk, Next's server-action origin check and next-intl read it. Next's own `request.url` does not: it names the
-  server's own address (`localhost` and its port). So build an absolute URL for a visitor from the forwarded headers,
-  never from `request.url`.
+- **The visitor's host and address.** CloudFront sends the server the Function URL's own `Host`. A CloudFront Function
+  therefore sets `x-forwarded-host` (and `x-forwarded-port`) from the request the visitor made, and
+  `x-sssb-viewer-address` from the address CloudFront took from the connection, overwriting anything the visitor sent;
+  and `SssbApp` sets `SSSB_EDGE=cloudfront` on the server, which tells SSSB to believe them. Clerk, Next's server-action
+  origin check and next-intl read `x-forwarded-host`. Next's own `request.url` does not: it names the server's own
+  address (`localhost` and its port). And the first `X-Forwarded-For` entry is whatever the visitor wrote there. So read
+  both through `@sssb/kit/adapters/edge-headers` (`sssb/no-raw-request-origin` flags a direct read):
+    - **`publicOrigin(request)`**, for an absolute URL a visitor follows (a link in an email, a URL you store). It is
+      the server's `PUBLIC_ORIGIN` when you set it, then `https://` and `x-forwarded-host` behind `SssbApp`, then
+      `request.url`'s origin anywhere else (`pnpm dev`). Set `PUBLIC_ORIGIN` (`https://app.example.org`, a bare origin)
+      once the deployment has a custom domain, so links name it rather than whichever host the visitor came in on, and
+      wherever you build a link outside a request: a job, or the cron route the scheduled tick calls, which invokes the
+      server without crossing the distribution. There it throws without one. A redirect needs neither: Next's
+      `redirect('/path')`, a relative URL, and in your proxy a `NextResponse.redirect(new URL(path, request.url))`
+      (Next relativizes a redirect the proxy answers, and no other) are right as they are.
+    - **`clientAddress(request)`**, for what keys on the visitor's address: a rate limit, a lockout, an audit record's
+      "from". It is `undefined` off `SssbApp` (in `pnpm dev`, or on a host of your own) and on a request that did not
+      cross the distribution; treat that as unknown, never as a free pass. It never reads `X-Forwarded-For`,
+      `X-Real-IP`, `CF-Connecting-IP` or `Forwarded`.
+
+    `SSSB_EDGE` is `SssbApp`'s: the server refuses it off Lambda (with no `AWS_LAMBDA_FUNCTION_NAME`), so a deployment's
+    environment copied into a local `dev:real` does not make it believe headers any client writes. On a host of your
+    own, leave it unset and set `PUBLIC_ORIGIN`; `clientAddress` is then `undefined`.
+
 - **HTTPS and security headers.** Every behavior redirects HTTP to HTTPS and carries AWS's managed
   SecurityHeadersPolicy:
     - HSTS for a year;
@@ -966,7 +1033,9 @@ addendum of that date.
 - **A behavior you add.** A behavior you add to `sssbApp.distribution` gets none of this unless you give it all three:
     - `viewerProtocolPolicy: REDIRECT_TO_HTTPS`;
     - `responseHeadersPolicy: sssbApp.responseHeadersPolicy`;
-    - for one that reaches the server, `sssbApp.forwardedHost` on `viewer-request`.
+    - for one that reaches the server, `sssbApp.forwardedHost` on `viewer-request`, or `cdk synth` fails: without it, a
+      visitor would write the host and address the server believes. The check covers every distribution in the
+      construct's stack, and an origin group with the server among its members.
 
 ## Upgrading, step by step
 
