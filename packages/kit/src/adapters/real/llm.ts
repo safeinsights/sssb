@@ -59,8 +59,8 @@ export function createRealLlm(apiKey: string, options: RealLlmOptions = {}): Llm
             try {
                 return await call()
             } catch (error) {
-                const wait = retry < maxRetries ? retryWaitMs(error, retry) : undefined
-                if (wait === undefined || wait >= deadline.remainingMs()) throw error
+                const wait = retry < maxRetries ? retryWaitMs(error, retry, deadline) : undefined
+                if (wait === undefined || !deadline.fits(wait)) throw error
                 await deadline.pause(wait)
             }
         }
@@ -110,14 +110,16 @@ export function createRealLlm(apiKey: string, options: RealLlmOptions = {}): Llm
                                 yield chunk.delta.text
                             }
                         }
-                        // The SDK ends the iteration quietly, with no error, when the signal aborts while the consumer
-                        // is busy between chunks: a stream cut off by the deadline must not read as a complete one.
-                        if (stream.aborted) throw new Anthropic.APIUserAbortError()
+                        // The SDK ends the iteration quietly, with no error, when the stream fails or the signal aborts
+                        // while the consumer is busy between chunks (it rejects only a reader already waiting): a stream
+                        // cut off by the deadline, an overload or a dropped connection must not read as a complete one.
+                        // `done()` throws what ended it, and returns only for a stream that finished.
+                        await stream.done()
                         return
                     } catch (error) {
                         // Only a stream that has delivered nothing can start again: a consumer has the rest.
-                        const wait = delivered || retry >= maxRetries ? undefined : retryWaitMs(error, retry)
-                        if (wait === undefined || wait >= deadline.remainingMs()) throw error
+                        const wait = delivered || retry >= maxRetries ? undefined : retryWaitMs(error, retry, deadline)
+                        if (wait === undefined || !deadline.fits(wait)) throw error
                         await deadline.pause(wait)
                     }
                 }
@@ -210,7 +212,8 @@ interface Deadline {
     readonly limits: CallLimits
     readonly ms: number
     readonly expired: boolean
-    remainingMs(): number
+    /** Whether a wait of `wait` ms leaves a retry at least as long as the wait: a longer one answers at once instead. */
+    fits(wait: number): boolean
     /** Resolves after `ms`, or at once when the deadline passes or the call is released. */
     pause(ms: number): Promise<void>
     /** `promise`'s outcome, or a rejection with the SDK's abort error when the deadline passes first. */
@@ -236,7 +239,7 @@ function startDeadline(ms: number): Deadline {
         get expired() {
             return expired
         },
-        remainingMs: () => ms - (Date.now() - startedAt),
+        fits: (wait) => wait * 2 < ms - (Date.now() - startedAt),
         pause: (wait) =>
             new Promise<void>((resolve) => {
                 if (signal.aborted) return resolve()
@@ -278,21 +281,24 @@ function reasonOf(error: APIError): LlmUnavailableReason | undefined {
 function providerWaitMs(error: APIError): number | undefined {
     const ms = Number(error.headers?.get('retry-after-ms'))
     if (Number.isFinite(ms) && ms > 0) return ms
-    const seconds = Number(error.headers?.get('retry-after'))
-    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined
+    const header = error.headers?.get('retry-after')
+    if (!header) return undefined
+    const seconds = Number(header)
+    // `Retry-After` is a number of seconds or an HTTP date.
+    const wait = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - Date.now()
+    return wait > 0 ? wait : undefined
 }
 
 /**
  * How long to wait before repeating a call that failed with `error`, or `undefined` when it is not worth repeating: the
  * provider's own wait, else 0.5 s doubling to 8 s. Worth repeating is what the SDK's own policy repeats: 408, 409, 429
  * and 5xx, and a connection that dropped, plus a provider's rate limit or overload however it arrived. Never a call
- * that timed out or was aborted, which is the deadline, and never one the provider marked `x-should-retry: false`.
+ * that was aborted or whose deadline has passed, and never one the provider marked `x-should-retry: false`.
  */
-function retryWaitMs(error: unknown, retry: number): number | undefined {
-    if (error instanceof Anthropic.APIUserAbortError || error instanceof Anthropic.APIConnectionTimeoutError) {
-        return undefined
-    }
+function retryWaitMs(error: unknown, retry: number, deadline: Deadline): number | undefined {
+    if (error instanceof Anthropic.APIUserAbortError || deadline.expired) return undefined
     const backoff = Math.min(500 * 2 ** retry, 8000)
+    // The SDK reports any connect or socket timeout as a timeout too; only the deadline's own is not worth repeating.
     if (error instanceof Anthropic.APIConnectionError) return backoff
     if (!(error instanceof Anthropic.APIError)) return undefined
     if (error.headers?.get('x-should-retry') === 'false') return undefined

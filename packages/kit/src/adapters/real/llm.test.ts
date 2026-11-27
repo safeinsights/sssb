@@ -76,12 +76,12 @@ describe('createRealLlm: what the provider says', () => {
         expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'overloaded', retryAfterSeconds: 10 })
     })
 
-    it('clamps a Retry-After to two minutes, and ignores one that is not a number of seconds', async () => {
+    it('clamps a Retry-After to two minutes, and ignores one that is neither seconds nor a date', async () => {
         stubFetch(() => json(429, errorBody('rate_limit_error'), { 'retry-after': '86400' }))
         expect(await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))).toMatchObject({
             retryAfterSeconds: 120,
         })
-        stubFetch(() => json(429, errorBody('rate_limit_error'), { 'retry-after': 'Wed, 21 Oct 2099 07:28:00 GMT' }))
+        stubFetch(() => json(429, errorBody('rate_limit_error'), { 'retry-after': 'soon' }))
         expect(await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))).toMatchObject({
             retryAfterSeconds: 10,
         })
@@ -379,5 +379,104 @@ describe('createRealLlm: runToolLoop', () => {
             }),
         )
         expect(error).toBe(boom)
+    })
+})
+
+describe('createRealLlm: what ends a stream, and which refusals are repeated', () => {
+    const sse = (event: string, data: object) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+    const opening = (text: string) =>
+        sse('message_start', {
+            type: 'message_start',
+            message: { ...messageBody([]), content: [], stop_reason: null },
+        }) +
+        sse('content_block_start', {
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'text', text: '' },
+        }) +
+        sse('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } })
+    const overload = sse('error', errorBody('overloaded_error'))
+    /** A stream that sends `first`, then `rest` after `afterMs`, and ends. */
+    const streamOf = (first: string, rest: string, afterMs: number) => () => {
+        const encoder = new TextEncoder()
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode(first))
+                setTimeout(() => {
+                    controller.enqueue(encoder.encode(rest))
+                    controller.close()
+                }, afterMs)
+            },
+        })
+        return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    }
+    const consume = async (llm: ReturnType<typeof createRealLlm>, busyMs: number, timeoutMs?: number) => {
+        const received: string[] = []
+        const error = await rejection(
+            (async () => {
+                for await (const chunk of llm.stream({ ...request, ...(timeoutMs ? { timeoutMs } : {}) })) {
+                    received.push(chunk)
+                    await new Promise((resolve) => setTimeout(resolve, busyMs))
+                }
+            })(),
+        )
+        return { received, error }
+    }
+
+    it('does not let an overload that arrives while the consumer is busy read as a complete stream', async () => {
+        stubFetch(streamOf(opening('partial '), overload, 20))
+        const { received, error } = await consume(createRealLlm('key'), 100)
+        expect(received).toEqual(['partial '])
+        expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'overloaded' })
+    })
+
+    it('never starts a stream again once it has delivered text, so no text is sent twice', async () => {
+        const fetchMock = stubFetch(streamOf(opening('partial '), overload, 20))
+        const { received, error } = await consume(createRealLlm('key'), 0)
+        expect(received).toEqual(['partial '])
+        expect(error).toMatchObject({ reason: 'overloaded' })
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('answers at once, with the provider`s figure, when its Retry-After only just fits the deadline', async () => {
+        const fetchMock = stubFetch(() => json(429, errorBody('rate_limit_error'), { 'retry-after-ms': '280' }))
+        const started = Date.now()
+        const error = await rejection(createRealLlm('key').complete({ ...request, timeoutMs: 300 }))
+        expect(error).toMatchObject({ reason: 'rate-limited', retryAfterSeconds: 1 })
+        expect(Date.now() - started).toBeLessThan(150)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('reads a Retry-After that is an HTTP date', async () => {
+        stubFetch(() =>
+            json(429, errorBody('rate_limit_error'), { 'retry-after': new Date(Date.now() + 90_000).toUTCString() }),
+        )
+        const error = (await rejection(
+            createRealLlm('key', { maxRetries: 0 }).complete(request),
+        )) as LlmUnavailableError
+        expect(error.retryAfterSeconds).toBeGreaterThanOrEqual(88)
+        expect(error.retryAfterSeconds).toBeLessThanOrEqual(91)
+    })
+
+    it('repeats a 408 and a connect timeout, but not a 500 the provider marked x-should-retry: false', async () => {
+        const timedOut = stubFetch((_init, call) =>
+            call === 1 ? json(408, errorBody('api_error'), { 'retry-after-ms': '1' }) : json(200, textMessage('ok')),
+        )
+        expect(await createRealLlm('key').complete(request)).toEqual({ text: 'ok' })
+        expect(timedOut).toHaveBeenCalledTimes(2)
+        const connect = stubFetch((_init, call) =>
+            call === 1 ? Promise.reject(new Error('connect ETIMEDOUT 203.0.113.7:443')) : json(200, textMessage('ok')),
+        )
+        expect(await createRealLlm('key').complete(request)).toEqual({ text: 'ok' })
+        expect(connect).toHaveBeenCalledTimes(2)
+        const final = stubFetch(() => json(500, errorBody('api_error'), { 'x-should-retry': 'false' }))
+        await rejection(createRealLlm('key').complete(request))
+        expect(final).toHaveBeenCalledTimes(1)
+    })
+
+    it('refuses a maxRetries that is not a non-negative integer', () => {
+        for (const bad of [-1, 1.5, Number.NaN])
+            expect(() => createRealLlm('key', { maxRetries: bad })).toThrow(RangeError)
+        expect(() => createRealLlm('key', { maxRetries: 0 })).not.toThrow()
     })
 })
