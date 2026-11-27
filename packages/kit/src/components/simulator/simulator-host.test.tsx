@@ -6,7 +6,8 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import enFramework from '../../i18n/messages/en.json'
 import { mergeMessages } from '../../i18n/messages'
-import { SimulatorHost } from './simulator-host'
+import { SimulatorHost, useSimulatorWorld } from './simulator-host'
+import type { SimulatorExtraTab } from './simulator-panel'
 
 /**
  * The Snapshots and Tours wiring of the kit's Simulator host, against a stubbed server: each control posts to its path
@@ -37,6 +38,7 @@ const AGREEMENT = {
 type Answer = { status?: number; body?: unknown; text?: string }
 let answers: Record<string, Answer>
 const posts: Array<{ path: string; body: unknown }> = []
+const gets: string[] = []
 const assign = vi.fn()
 const reload = vi.fn()
 
@@ -47,6 +49,7 @@ function respond({ status = 200, body, text }: Answer): Response {
 
 beforeEach(() => {
     posts.length = 0
+    gets.length = 0
     assign.mockReset()
     reload.mockReset()
     answers = {
@@ -58,6 +61,7 @@ beforeEach(() => {
     vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
         const path = input.replace('/api/simulator/', '')
         const method = init?.method ?? 'GET'
+        if (method === 'GET') gets.push(path)
         if (method === 'POST') {
             expect(new Headers(init?.headers).get('content-type')).toBe('application/json')
             posts.push({ path, body: JSON.parse(String(init?.body)) })
@@ -85,23 +89,29 @@ async function settle() {
     for (let i = 0; i < 5; i++) await act(async () => await new Promise((resolve) => setTimeout(resolve, 0)))
 }
 
-async function renderHost(): Promise<HTMLElement> {
+let rerender: (extraTabs?: SimulatorExtraTab[]) => Promise<void> = async () => {}
+
+async function renderHost(extraTabs?: SimulatorExtraTab[]): Promise<HTMLElement> {
     const messages = mergeMessages(enFramework, await loadAppMessages('en'))
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
-    await act(async () => {
+    const draw = (tabs?: SimulatorExtraTab[]) =>
         root.render(
             <NextIntlClientProvider locale="en" messages={messages} onError={() => {}}>
                 <MantineProvider>
-                    <SimulatorHost locale="en">
+                    <SimulatorHost locale="en" extraTabs={tabs}>
                         <main />
                     </SimulatorHost>
                 </MantineProvider>
             </NextIntlClientProvider>,
         )
-    })
+    await act(async () => draw(extraTabs))
+    rerender = async (tabs) => {
+        await act(async () => draw(tabs))
+        await settle()
+    }
     unmounts.push(() => {
         root.unmount()
         container.remove()
@@ -355,5 +365,76 @@ describe('SimulatorHost: the subsystem tabs', () => {
         answers['GET error-scenario'] = { status: 500, body: { error: 'boom' } }
         await click(container, 'throw-server-error')
         expect(byTestId(container, 'error-scrubbed')).toBeTruthy()
+    })
+})
+
+describe('SimulatorHost: what the app hands in', () => {
+    const TICKER = {
+        running: false,
+        seconds: null,
+        ticks: 0,
+        lastTickAt: null,
+        lastError: null,
+        elsewhere: null,
+        minSeconds: 5,
+        maxSeconds: 3600,
+        defaultSeconds: 30,
+    }
+
+    beforeEach(() => {
+        Object.assign(answers, {
+            'GET jobs': { body: { jobs: [], held: true } },
+            'GET schedules': { body: { schedules: [], clockOffsetMs: 0, worldNow: '2026-11-27T12:00:00.000Z' } },
+            'POST schedules/run-due': { body: { ok: true, spawned: 0 } },
+        } satisfies Record<string, Answer>)
+        window.localStorage.setItem('app-simulator-tab', 'jobs')
+    })
+
+    it('shows no ticker where the app has no ticker route, and asks once', async () => {
+        const container = await renderHost()
+        expect(container.querySelector('[data-testid="simulator-ticker"]')).toBeNull()
+        // Leave the Jobs tab and come back: opening it refreshes it, but the ticker is not asked again.
+        await click(container, 'simulator-tab-people')
+        await click(container, 'simulator-tab-jobs')
+        expect(gets.filter((path) => path === 'jobs').length).toBeGreaterThan(1)
+        expect(gets.filter((path) => path === 'ticker')).toHaveLength(1)
+    })
+
+    it("shows the app's ticker, and starting it posts to the app's route and says so", async () => {
+        answers['GET ticker'] = { body: TICKER }
+        answers['POST ticker'] = { body: { ...TICKER, running: true, seconds: 30 } }
+        const container = await renderHost()
+        expect(byTestId(container, 'simulator-ticker')).toBeTruthy()
+        await click(container, 'simulator-ticker-toggle')
+        expect(posts).toEqual([{ path: 'ticker', body: { action: 'start', seconds: 30 } }])
+        expect(notices(container).join(' ')).toContain('30')
+    })
+
+    it("renders an app's own tab, which reads the world's jobs and has them polled while it is open", async () => {
+        function WorldProbe() {
+            const { jobs } = useSimulatorWorld()
+            return <p data-testid="probe">{jobs.held ? 'held' : 'running'}</p>
+        }
+        window.localStorage.setItem('app-simulator-tab', 'probe')
+        const container = await renderHost([{ id: 'probe', label: 'Probe', content: <WorldProbe /> }])
+        expect(byTestId(container, 'simulator-tab-probe')).toBeTruthy()
+        expect(byTestId(container, 'probe').textContent).toBe('held')
+        expect(gets).toContain('jobs')
+
+        // An app that builds the array afresh on every render must not restart the polling.
+        const before = gets.length
+        for (let i = 0; i < 3; i++) await rerender([{ id: 'probe', label: 'Probe', content: <WorldProbe /> }])
+        expect(gets.length).toBe(before)
+    })
+
+    it("keeps an app's tab's jobs fresh when the schedules cannot answer", async () => {
+        function WorldProbe() {
+            const { jobs } = useSimulatorWorld()
+            return <p data-testid="probe">{jobs.held ? 'held' : 'running'}</p>
+        }
+        answers['GET schedules'] = { status: 500, body: { error: 'boom' } }
+        window.localStorage.setItem('app-simulator-tab', 'probe')
+        const container = await renderHost([{ id: 'probe', label: 'Probe', content: <WorldProbe /> }])
+        expect(byTestId(container, 'probe').textContent).toBe('held')
     })
 })

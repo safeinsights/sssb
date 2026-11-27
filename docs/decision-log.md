@@ -7864,3 +7864,35 @@ Decisions the issue left open:
   form's default, `note`, is no app's: the reference app registers `support` and `feedback`).
 - **A failed Errors scenario leaves the tab as it was**: `ErrorsApp` now catches the promise it is handed. The
   reference app's glue rejects it too when its server has stopped, and nothing caught that either.
+
+## The showcase runs on the kit's Simulator host (2026-11-27, `feat/simulator-host-showcase`)
+
+`safeinsights/sssb#129`: the showcase mounts `api/simulator/[...path]/route.ts` and renders SSSB's `SimulatorHost` from
+its locale layout, and its 873-line `simulator-glue.tsx`, 17 of its 21 `api/simulator/` route directories and two
+helper modules are gone. The issue asked for this once `safeinsights/sssb#127`, `#128` and `#152` served every path the
+glue called; `#152` (the dev ticker and an app's own tabs) is undecided and unowned, so this lands without it, by the
+manager's call, and leaves `#152`'s question open:
+
+- **What stays the showcase's**: the server half of the dev ticker (`api/simulator/ticker`, whose policy builds on
+  `@sssb/tools`, which the kit may not import), the routes the Actors tab's drivers call (`actors/*`,
+  `service-token`, `webhook-secret`), the actor pages, and a short glue that hands the host the Actors tab and keeps the
+  panel out of the actor frames. Next routes each static segment before the catch-all, so those route files win.
+- **The ticker's client control moved into the host**, shown only where the app's own `ticker` route answers (the
+  catch-all answers 404 there, and the host then stops asking, as the glue did). That moves no policy: the server half
+  is still the app's, so `#152`'s three options for it stand. Rejected: **keeping the control in the showcase's glue**,
+  which would have to own the Jobs tab, and with it the whole panel again.
+- **`SimulatorHost` takes `extraTabs`** (the panel's own `SimulatorExtraTab[]`), and an app's tab content reads the
+  world's jobs with `useSimulatorWorld()`, from the same subpath. Both are provisional public surface until `#152`
+  decides how an app's tabs reach the host, and say so where they are declared. They are named exports of subpaths
+  already published (`@sssb/kit/components/simulator/simulator-host` and `.../simulator-panel`), so the `exports` map
+  does not change. Rejected: **a render-function prop** handed the host's state, which cannot call hooks (the Actors tab
+  needs translations), and **a hook passed as a prop**, which breaks the rules of hooks the React Compiler checks.
+- **The mail-link check moved into the kit** (`packages/kit/src/components/simulator/mail-link.ts`, not published), with
+  its tests, and the host's link handler uses it; the showcase's copy and its `server-redirect` helper (`sameOriginPath`
+  on a body's `redirectTo`, which the host does inline) are deleted.
+- **The route tests that only asserted the real-mode 404** are covered by the kit host's dispatch tests; the ones with
+  more (jobs held, run-pending, mail seen for a person and an invite, the viewpoint's remembered path) have kit
+  equivalents in `packages/kit/src/server-lib/simulator-api.test.ts`.
+- **jscpd, re-measured as the issue asked** (2026-11-27, `pnpm jscpd` with the repository's `.jscpd.json`): 41 clones,
+  654 duplicated lines (1.40%) on this branch, against 50 clones and 758 lines (1.57%) on `int-platform` before it.
+  Nine fewer clones in all, which counts the showcase-and-starter pairs `safeinsights/sssb#114` tracks among them.

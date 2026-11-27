@@ -69,17 +69,17 @@ the app's `pnpm dev` panel takes app tabs, which SSSB's host does not yet: the r
    in the card). Run it with `pnpm build:demo-static && pnpm e2e:demo-static`. The runtime adds to the single-file
    demo, so run `pnpm check:demo-size` too, then finish with `pnpm verify`.
 
-**The server host, only once the app's `pnpm dev` panel takes app tabs.** On `pnpm dev` an actor runs in a page the
-server panel embeds, driving the app's real HTTP surfaces. A generated app's `SimulatorHost` has no Actors tab and no
-actor routes. The reference app's server Simulator is its own panel glue
-(`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/[locale]/simulator-glue.tsx`, mounted from
-its locale layout in place of `SimulatorHost`), the `/api/simulator/*` routes the panel and the actor pages call
-(`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app/api/simulator`) and, for a service-shaped
-actor, the `/api/service/*` routes
-(`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app/api/service`). Adding it means porting that
-glue, which replaces the layout's `SimulatorHost` mount, and each route it calls that SSSB's catch-all
-`src/app/api/simulator/[...path]/route.ts` does not answer (a route file of the app's own beside the catch-all wins for
-its path). That is its own piece of work and not this command's. Once the app has it:
+**The server host.** On `pnpm dev` an actor runs in a page the server panel embeds, driving the app's real HTTP
+surfaces. A generated app's `SimulatorHost` has no Actors tab and no actor routes, but it takes the app's own tabs:
+`extraTabs` (the panel's `SimulatorExtraTab`), whose content reads the world's jobs with `useSimulatorWorld()`, both
+from `@sssb/kit/components/simulator/simulator-host` and both provisional until SSSB settles how an app's tabs reach the host. The reference app's is a short glue
+(`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/[locale]/simulator-glue.tsx`, mounted from its
+locale layout in place of `SimulatorHost`): it hands `SimulatorHost` the Actors tab and keeps the panel out of the actor
+frames. Beside it come the routes the actor pages call that SSSB's catch-all `src/app/api/simulator/[...path]/route.ts`
+does not answer (a route file of the app's own beside the catch-all wins for its path;
+`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app/api/simulator`) and, for a service-shaped
+actor, the `/api/service/*` routes (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app/api/service`).
+That is its own piece of work and not this command's. Once the app has it:
 
 - **The actor page**: create `src/app/[locale]/simulator/actors/[actor]/` from the reference's
   (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app/[locale]/simulator/actors/[actor]`: a page,

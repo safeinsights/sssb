@@ -1,4 +1,4 @@
-import { sameOriginPath } from '@sssb/kit/core/same-origin-path'
+import { sameOriginPath } from '../../core/same-origin-path'
 
 /** What the Simulator does with a link in a caught email: follow `path`, or say why not. */
 export type MailLinkTarget = { path: string } | { refused: 'origin'; origin: string } | { refused: 'unusable' }

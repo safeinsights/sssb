@@ -42,8 +42,8 @@ each tour is app content. A tour runs from the Tours tab on both of a generated 
    `['panel', tab]`, which expands the panel if collapsed and is idempotent.
 5. **Assert as you go**: `['expect', sel]` and `['expectText', sel, text]` turn the tour into a test. Put one after
    every beat that produced something.
-6. **Reload safety** (the server host only, so only once the app has the reference's server Simulator glue): a snapshot
-   restore, a feature-flag flip and a person switch all reload the page there. The engine resumes from a
+6. **Reload safety** (the server host only, the Simulator on `pnpm dev`): a snapshot restore, a feature-flag flip and a
+   person switch all reload the page there. The engine resumes from a
    sessionStorage marker written at the `advance` boundary, so anything that reloads belongs in `advance`, and
    anything in a `script` must be safe to re-run. Writing tours this way from the start costs nothing in the static
    demo.

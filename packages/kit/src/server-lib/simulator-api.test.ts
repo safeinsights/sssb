@@ -205,6 +205,11 @@ describe('an invited person', () => {
         expect(await response.json()).toEqual({ redirectTo: '/es' })
         const after = (await (await call('summary')).json()) as SimulatorSummary
         expect(after).toMatchObject({ signedIn: false, viewpoint: `invited:${id}` })
+
+        // Their inbox is marked seen like an account's.
+        expect((await call('mail/seen', { json: { person: `invited:${id}` } })).status).toBe(200)
+        const { readSimulatorState } = await import('../adapters/fake/simulator')
+        expect(readSimulatorState().people[`invited:${id}`]?.mailSeenAt).toEqual(expect.any(String))
     })
 })
 
@@ -233,6 +238,15 @@ describe('mail', () => {
         expect(((await (await call('mail?all=1')).json()) as SimulatorMail).emails).toEqual([])
     })
 
+    test.each(['{', 'null'])('mail/seen answers a body of %j with 400, never a 500', async (body) => {
+        const response = await call('mail/seen', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+        })
+        expect(response.status).toBe(400)
+    })
+
     test('mail/seen refuses a key that names no one in the world, and writes nothing for it', async () => {
         expect((await call('mail/seen', { json: { person: 'everyone' } })).status).toBe(400)
         expect((await call('mail/seen', { json: { person: 'person:nobody' } })).status).toBe(400)
@@ -256,8 +270,19 @@ describe('jobs and the clock', () => {
         const { JOBS_HELD_FLAG } = await import('../adapters/fake/jobs')
         setFlag(JOBS_HELD_FLAG, true)
         expect(await (await call('jobs')).json()).toMatchObject({ held: true })
+        // A job held at queued, then run: run-pending says how many ran.
+        const { fakeDb } = await import('../adapters/fake/db')
+        const { fakeJobs } = await import('../adapters/fake/jobs')
+        const { submitJob } = await import('../db/jobs')
+        const tenant = await fakeDb
+            .getDb()
+            .selectFrom('tenants')
+            .select('id')
+            .where('slug', '=', 'harbor')
+            .executeTakeFirstOrThrow()
+        await submitJob(fakeDb, fakeJobs, { tenantId: tenant.id, orgId: null, kind: 'export-dockets', payload: {} })
         setFlag(JOBS_HELD_FLAG, false)
-        expect((await call('jobs/run-pending', { json: {} })).status).toBe(200)
+        expect(await (await call('jobs/run-pending', { json: {} })).json()).toEqual({ ran: 1 })
 
         expect((await call('clock', { json: { action: 'advance', deltaMs: 367 * 86_400_000 } })).status).toBe(400)
         expect((await call('clock', { json: { action: 'advance', deltaMs: -1 } })).status).toBe(400)
