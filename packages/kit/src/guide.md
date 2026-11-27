@@ -108,8 +108,18 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   answer the 403. Over many items, `await Promise.all(items.map(...))`; `Promise.allSettled` does not count, and
   neither does a `.then(...)` chained after it.
 - The check proves that a handler can reach `authorize(...)`, not that every path through it does, nor that it
-  comes before the mutation. Call it before the mutation and before any `try`, on a path every request takes: after
-  `auth.requireUser()` and the lookups that give it the org, never inside a condition or a loop.
+  comes before the mutation. Call it before the mutation and before any `try` (but the one below, whose `catch`
+  rethrows), on a path every request takes: after `auth.requireUser()` and the lookups that give it the org, never
+  inside a condition or a loop.
+- A route that acts on one row by id gives a person who may not act the same answer, status and body, whether or not
+  the id names a row, so no id can be probed. Look the row up scoped to the active org, so another org's row is
+  missing too. When the subject's org is the active org the session resolves to, authorize before that lookup: a
+  refusal is then the same 403 for any id. When the subject's orgs come from the row (a two-sided subject, a requester
+  and a responder), the lookup comes first, and the refusal is answered as a missing row is:
+  `try { authorize(…) } catch (error) { throw error instanceof ForbiddenError ? new NotFoundError() : error }`, with both
+  errors from `@sssb/kit/ports/errors`. That `catch` always rethrows, so the check still counts the call. The check
+  cannot see the order of a lookup and an `authorize`, so this rule is kept by hand; pin it with a route test that sends
+  an existing id and a missing one as a person who may not act, and expects identical answers.
 - A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
   with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
   app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named
