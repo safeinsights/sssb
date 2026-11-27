@@ -101,7 +101,8 @@ interface Wake {
  * that finds it resuming starts a poll of `probe`; every call that joins before the poll ends waits on the same one, each
  * for no longer than its own deadline. The poll ends when the probe answers or fails for another reason (the joined
  * calls then go and get their own answers), or when nobody waits for it any more. A probe that does not answer holds up
- * the next for `PROBE_TIMEOUT_MS`, and is aborted after `PROBE_ABORT_MS`, or when the poll ends, whichever is first: a
+ * the next for `PROBE_TIMEOUT_MS`, and is aborted after `PROBE_ABORT_MS`, or when the poll ends or loses its last waiter
+ * (whichever is first): a
  * probe the client never answers does not keep one of its sockets. A poll that has ended, and one nobody waits on, is
  * never joined.
  */
@@ -142,7 +143,11 @@ export class ResumeWait {
         } finally {
             clearTimeout(timer)
             wake.waiters -= 1
-            if (wake.waiters === 0) this.#forget(wake)
+            // Nobody waits for it any more: it is never joined again, and the probes it has out are nobody's.
+            if (wake.waiters === 0) {
+                this.#forget(wake)
+                this.#abortProbes(wake)
+            }
         }
     }
 
@@ -162,7 +167,12 @@ export class ResumeWait {
     #finish(wake: Wake): void {
         this.#forget(wake)
         wake.end()
-        // No answer is wanted from a probe still out: end it, and the client's socket with it.
+        // No answer is wanted from a probe still out.
+        this.#abortProbes(wake)
+    }
+
+    /** Ends the probes still out, and the client's sockets with them. */
+    #abortProbes(wake: Wake): void {
         for (const probe of wake.inFlight) probe.abort()
         wake.inFlight.clear()
     }

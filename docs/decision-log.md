@@ -8226,8 +8226,8 @@ catchRequests })`), which the conformance check uses so it never touches an app'
 
 ## The Data API's rollback keeps the work's error, and its resume probes are bounded (2026-11-27, `fix/data-api-rollback-and-probes`)
 
-safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183, "DatabaseUnavailableError" and the
-18 s `DATABASE_RESUME_BUDGET_MS` above).
+safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183, "One wait for a paused cluster, and a typed
+error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
 
 - **#189: kept in the framework's own transactions, not in the dialect.** Kysely's `execute()` catches the work's error, awaits
   `driver.rollbackTransaction`, and rethrows the work's error; if the rollback throws, that replaces it. A controlled
@@ -8247,7 +8247,7 @@ safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183
   SDK's `{ abortSignal }`, which `RDSDataClient.send` accepts (the SDK's own request option, which closes the socket).
   A probe is sent every 3 s at the soonest (its 2 s turn plus the 1 s wait), so 6 s (`PROBE_ABORT_MS`) leaves at most
   three out, and a probe that is slow but answers inside it still ends the wait, as before. The wait aborts every probe
-  still out when it ends, by an answer or by nobody waiting. A rejection after an abort is ours and is read as nothing: it
+  still out when it ends, by an answer, or when its last caller gives up, at once. A rejection after an abort is ours and is read as nothing: it
   neither ends the wait nor counts as the database's answer. Rejected: **keeping at most a few in flight by not sending**,
   which would hold up a wait the probes in flight may never end. The SDK's pool size was not read; the bound does not
   depend on it.

@@ -371,12 +371,12 @@ describe('a probe that does not answer', () => {
     it('leaves at most three in flight under continuous traffic, however long no probe answers', async () => {
         const { counts, send } = silent()
         const done = outcome(sql.raw('select 2').execute(database(send, 120_000)))
-        await vi.advanceTimersByTimeAsync(130_000)
+        await vi.advanceTimersByTimeAsync(120_000)
         expect((await done).error).toMatchObject({ name: 'DatabaseUnavailableError', reason: 'resuming' })
         // It kept probing the whole wait (one every three seconds or so), and kept three at most out.
         expect(counts.sent).toBeGreaterThan(30)
         expect(counts.peak).toBeLessThanOrEqual(3)
-        // None is left behind once the wait is over.
+        // None is left behind the moment the call gave up: not for the poll's next wake, nor a probe's own abort.
         expect(counts.inFlight).toBe(0)
         expect(counts.aborted).toBe(counts.sent)
     })
