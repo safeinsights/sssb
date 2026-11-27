@@ -7614,6 +7614,59 @@ them. Decisions the issue left open:
   call is one of its readers.
 - **No `tours` or `presets` registration is needed for the tab to be right**: an app with none gets no Tours tab and
   no presets section (both are the seam's off-switches already), and a reset is the one world start every host has.
+## Teams are writable inside their tenant, and an exempt table declares its writes (2026-11-27, `feat/org-write-rls`)
+
+`safeinsights/sssb#124`: `app_user` held `SELECT` only on `organizations`, so a route that created, renamed or deleted
+a team failed with `permission denied`, and the coverage check could only hold an exempt table to `SELECT`-only.
+
+- **The writes are tenant-scoped by row-level security; the read stays open.** Migration 0018 grants `INSERT`,
+  `UPDATE` and `DELETE` (as column grants, next item), enables RLS on `organizations`, and adds one policy per command: `SELECT` is `USING (true)`
+  (callers are resolved before a tenant context exists, and a request joins another team of its own tenant), and each
+  write compares `tenant_id` with `app.current_tenant`, in `WITH CHECK` for `INSERT` and `UPDATE` and in `USING` for
+  `UPDATE` and `DELETE`. Rejected: **the issue's proposal, the grant with no row-level security**, leaving who may write
+  to `authorize(...)`. A team is not a hostile boundary, but the tenant is, and with no policy a request in one tenant
+  could rename or delete every other tenant's teams through the sanctioned `withTenant`, which is the cross-tenant
+  write the coverage check exists to refuse on every other table. With the policies, `authorize(...)` decides only
+  which person may write which team of their own tenant.
+- **Column grants: `INSERT (tenant_id, slug, name)`, `UPDATE (name)`, `DELETE`.** A request names a new team's
+  tenant, slug and name, and renames it by its name. The slug is how the auth provider and the inbound mail address
+  (`<org-slug>+<handler>@`) name a team, and the id is what every other table holds, so neither is a request's to set
+  or change. Rejected: **table-level `INSERT, UPDATE`**, which round-1 review showed let a request change a team's
+  slug or mint an id another tenant's deleted team once had.
+- **A new team's slug may not be one another tenant's team holds** (a `NOT EXISTS` in the INSERT policy). Inbound
+  mail resolves the slug across every tenant and refuses two matches, so without it one tenant could silence another
+  team's mail by taking its slug (round-1 Fable review). It is a policy, not a constraint: two tenants creating the
+  same new slug at once can both pass, a slug freed by a delete is free to any tenant, and the owner bypasses it.
+  Rejected here: **a global unique index on `slug`**, whose migration fails on any database already holding one slug
+  in two tenants; the real fix, resolving the tenant from the recipient, is `safeinsights/sssb#211`.
+- **ENABLE, not FORCE.** FORCE would hold the table's owner to the write policies too, and the owner seeds
+  teams with no tenant context (`packages/kit/src/db/seed.ts`). An app's routes do not write as the owner: `getDb()`
+  is banned in an app's `src` bar the exceptions it names, and `withTenant` switches to `app_user`. Rejected: **FORCE with
+  an owner-only policy**, which would need the owner's role name in a framework migration, which differs per
+  deployment. A dedicated non-owner app role (the cutover checklist's `db-role-not-superuser`) is held to the
+  policies, which is the safer side: its raw reads are unchanged (`USING (true)`), and it had no write before.
+- **`TRUNCATE` is not granted, and cannot be declared**: it ignores row-level security, so it would empty every
+  tenant's teams.
+- **The coverage check: an exempt entry declares `writes`, and a declared write is proved, not trusted.**
+  `RLS_EXEMPT` entries became `{ reason, writes? }`, `writes` drawn from `INSERT`, `UPDATE`, `DELETE`. A table with no
+  declaration is still held to `SELECT`-only; a declared write must be held (else a stale declaration), on a table with
+  RLS enabled, admitted by some permissive policy, and every permissive policy admitting it (its command's or `ALL`)
+  must read the tenant setting in each expression that command evaluates (an absent one admits every row). The
+  pinned list carries the declared writes (`public.organizations (DELETE, INSERT, UPDATE)`), so a new declaration is
+  a two-file edit with `SECURITY.md`, as a new exemption already was. Rejected: **a declaration that only silences the
+  `SELECT`-only failure**, which would let a later `FOR ALL USING (true)` policy, or a disabled RLS, open every
+  tenant's teams with the gate green. A declared write also fails when `app_user` holds the owner's privileges (a
+  member of the owning role), which skip every policy that is not forced (round-1 review). The policy text is read as
+  the tenant tables' is (it mentions the setting), with the same limit: a policy that mentions it and filters nothing
+  passes; the behavioural proofs are what show 0018 isolates, and `safeinsights/sssb#212` would read the predicate.
+- **The composite uniqueness constraint is taken**: `organizations_tenant_id_id_unique` over `(tenant_id, id)`, so an
+  app table can declare `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)` and Postgres refuses
+  a row whose team is another tenant's. It costs one index on a small table and rejects nothing the primary key
+  accepts. SSSB's own tables keep their plain `org_id` references, so another tenant can still hold a team's id and
+  block its deletion; moving them is `safeinsights/sssb#213`.
+- **A `DELETE` succeeds only for a team nothing references**: every framework table that names an org holds a plain
+  foreign key with no cascade, and the audit trail is append-only, so a request cannot delete a team with history.
+  That is the intended posture, not a gap: an app that retires teams records that in a table of its own.
 
 ## The upload target's PUT form (2026-11-27, `feat/storage-put-upload`, `safeinsights/sssb#134`)
 

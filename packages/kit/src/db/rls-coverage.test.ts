@@ -80,3 +80,88 @@ describe('the RLS coverage check, one policy at a time', () => {
         expect(failures).toBe('')
     }, 60_000)
 })
+
+/**
+ * The exempt relations (`tenants`, `organizations`, `service_keys`) are SELECT-only unless their entry declares a
+ * write, and `organizations` declares INSERT, UPDATE and DELETE (0018_organizations_write). Each case breaks one thing
+ * the declaration rests on, on top of the real migrations.
+ */
+describe('the RLS coverage check, on the exempt relations', () => {
+    it('passes the migrations as they are', async () => {
+        expect(await coverageFailures(async () => {})).toBe('')
+    }, 60_000)
+
+    it('fails a write on an exempt relation that declares none', async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql`GRANT UPDATE (name) ON tenants TO app_user`.execute(db)
+        })
+        expect(failures).toContain('UPDATE (column-level) on the exempt relation public.tenants')
+    }, 60_000)
+
+    it('fails TRUNCATE on organizations, which no declaration can cover', async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql`GRANT TRUNCATE ON organizations TO app_user`.execute(db)
+        })
+        expect(failures).toContain('TRUNCATE (table-level) on the exempt relation public.organizations')
+    }, 60_000)
+
+    it('fails a declared write that a tenant-blind permissive policy admits', async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql`CREATE POLICY rename_anywhere ON organizations FOR UPDATE USING (true)`.execute(db)
+        })
+        expect(failures).toContain('declares UPDATE, and its permissive policy `rename_anywhere`')
+        expect(failures).not.toContain('declares INSERT')
+    }, 60_000)
+
+    it('fails every declared write that a tenant-blind ALL policy admits', async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql`CREATE POLICY anything_goes ON organizations USING (true)`.execute(db)
+        })
+        for (const write of ['INSERT', 'UPDATE', 'DELETE']) {
+            expect(failures).toContain(`declares ${write}, and its permissive policy \`anything_goes\``)
+        }
+    }, 60_000)
+
+    it('fails an isolating USING beside a WITH CHECK that lets an UPDATE move a row to another tenant', async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql
+                .raw(
+                    `CREATE POLICY move_anywhere ON organizations FOR UPDATE USING (tenant_id = ${TENANT}) WITH CHECK (true)`,
+                )
+                .execute(db)
+        })
+        expect(failures).toContain('`move_anywhere`')
+    }, 60_000)
+
+    it('fails declared writes on a relation whose row-level security is off', async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql`ALTER TABLE organizations DISABLE ROW LEVEL SECURITY`.execute(db)
+        })
+        expect(failures).toContain('declares DELETE on public.organizations, which has no ROW LEVEL SECURITY')
+    }, 60_000)
+
+    it('fails a declared write that app_user no longer holds', async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql`REVOKE DELETE ON organizations FROM app_user`.execute(db)
+        })
+        expect(failures).toContain('declares DELETE on public.organizations, which app_user does not hold')
+    }, 60_000)
+
+    it('fails a declared write that no permissive policy admits', async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql`DROP POLICY organizations_tenant_insert ON organizations`.execute(db)
+        })
+        expect(failures).toContain('no permissive policy admits INSERT')
+    }, 60_000)
+})
+
+describe('the RLS coverage check, on who owns an exempt relation', () => {
+    it("fails declared writes when app_user holds the owner's privileges, which skip non-forced policies", async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql`CREATE ROLE probe_owner NOLOGIN`.execute(db)
+            await sql`ALTER TABLE organizations OWNER TO probe_owner`.execute(db)
+            await sql`GRANT probe_owner TO app_user`.execute(db)
+        })
+        expect(failures).toContain("declares INSERT on public.organizations, whose owner's privileges app_user holds")
+    }, 60_000)
+})

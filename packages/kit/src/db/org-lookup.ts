@@ -2,7 +2,7 @@ import type { DbPort } from '../ports/db'
 
 /**
  * Resolves an org slug (what sessions carry) to its uuid, scoped to the tenant it belongs to. Reads
- * the RLS-free `organizations` infra table — the same legitimate raw read as tenant-lookup. Org slugs
+ * the `organizations` infra table, readable across tenants, — the same legitimate raw read as tenant-lookup. Org slugs
  * are unique per tenant, so the tenant scope keeps the lookup unambiguous even if two tenants ever
  * reuse a slug.
  */
@@ -50,7 +50,7 @@ export async function orgIdentityForSlug(db: DbPort, tenantId: string, orgSlug: 
 }
 
 /**
- * Resolves an org uuid back to its slug + name — the reverse of orgIdForSlug, same RLS-free raw read.
+ * Resolves an org uuid back to its slug + name — the reverse of orgIdForSlug, same cross-tenant raw read.
  * Used by the scheduled digest handler, which knows its job's org_id but needs the slug to
  * list the org's members (`auth.listMembers`) and the name for the digest copy. Null when the org is gone.
  */
@@ -84,7 +84,7 @@ export async function listOrgsForWorld(db: DbPort): Promise<{ slug: string; name
 }
 
 /**
- * All orgs (teams) in one tenant, for the cross-org request target picker. Reads the RLS-free
+ * All orgs (teams) in one tenant, for the cross-org request target picker. Reads the cross-tenant-readable
  * `organizations` infra table — the same legitimate raw read as orgIdForSlug — so it lists every team
  * in the caller's tenant regardless of which one they're acting in. The route strips the active org
  * from the result (you don't request from yourself); the table CHECK is the backstop.
@@ -104,7 +104,7 @@ export async function listOrgsInTenant(
 }
 
 /**
- * An org's display name, by its tenant's slug and its own: the same RLS-free raw read of the `organizations` infra
+ * An org's display name, by its tenant's slug and its own: the same cross-tenant raw read of the `organizations` infra
  * table as the lookups above. The auth port's fixed org source names its home org with it (`listMyOrgs`), since the
  * port knows the org only by slug. Null when the tenant has no such org.
  */
