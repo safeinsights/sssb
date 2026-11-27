@@ -1,5 +1,6 @@
 import { worldNow } from '../adapters/fake/clock'
 import { db, isSimulated, jobs } from '../adapters/index'
+import { DEFAULT_DRAIN_MAX_ITEMS, DELIVERIES_WINDOW_MS, SCHEDULES_WINDOW_MS } from '../db/drain-budget'
 import { runDueSchedules } from '../db/schedules'
 import { runDueDeliveries } from '../db/webhooks'
 import { dispatchWebhook } from './webhook-dispatch'
@@ -20,6 +21,11 @@ import { dispatchWebhook } from './webhook-dispatch'
  *
  * The same tick drains due webhook deliveries: a scheduled digest that spawns a job whose status change
  * enqueues a delivery, and any retry whose backoff has elapsed, both fire from one tick.
+ *
+ * A tick is BOUNDED (safeinsights/sssb#97): each drain starts at most a set number of rows and none after its window,
+ * taking each tenant's due rows in turn so one tenant's backlog or slow endpoint cannot starve the rest
+ * (../db/drain-budget.ts). What a tick leaves stays due and the next tick takes it; the result says how much was left
+ * (`deferred`) and why (`stoppedBy`), for schedules and for deliveries.
  */
 export interface ScheduledTickResult {
     /** Jobs spawned from due schedules. */
@@ -30,11 +36,59 @@ export interface ScheduledTickResult {
      * its job is already queued and the schedule has moved to its next slot (../db/schedules.ts, "Fault isolation").
      */
     failed: number
-    /** What the delivery drain did (`runDueDeliveries`'s own result). */
+    /** Due schedules this tick listed and left for the next one (a lower bound: ../db/drain-budget.ts). */
+    deferred: number
+    /** What stopped the schedules drain early: `'items'` (its row bound), `'time'` (its window), or null. */
+    stoppedBy: 'items' | 'time' | null
+    /** What the delivery drain did, and left (`runDueDeliveries`'s own result). */
     deliveries: Awaited<ReturnType<typeof runDueDeliveries>>
 }
 
-export async function runScheduledTick(): Promise<ScheduledTickResult> {
+/**
+ * How much one tick may start (../db/drain-budget.ts, safeinsights/sssb#97). The defaults suit SSSB's deployment, a
+ * server with a 30-second limit: change them only for a server whose limit differs, or to drain less per tick.
+ */
+export interface TickBudget {
+    /** The most due schedules one tick spawns. */
+    maxSchedules: number
+    /** The most due webhook deliveries one tick attempts. */
+    maxDeliveries: number
+    /** Milliseconds from the tick's start after which no schedule is spawned. */
+    schedulesWindowMs: number
+    /** Milliseconds from the tick's start after which no delivery is attempted. */
+    deliveriesWindowMs: number
+}
+
+const DEFAULT_TICK_BUDGET: TickBudget = {
+    maxSchedules: DEFAULT_DRAIN_MAX_ITEMS,
+    maxDeliveries: DEFAULT_DRAIN_MAX_ITEMS,
+    schedulesWindowMs: SCHEDULES_WINDOW_MS,
+    deliveriesWindowMs: DELIVERIES_WINDOW_MS,
+}
+
+/**
+ * Runs one tick: the jobs port's sweep, then the due schedules, then the due deliveries, each drain bounded by
+ * `options.budget` (the defaults, for any value left out) and fair across tenants. `options.clock` is the wall clock
+ * the windows are read against, `Date.now` unless a test passes its own; it never sets "now" for what is due. `options.random`
+ * is the draws that shuffle the tenants and their rows, `Math.random` unless a test passes its own.
+ */
+export async function runScheduledTick(
+    options: {
+        budget?: { [K in keyof TickBudget]?: TickBudget[K] | undefined }
+        clock?: () => number
+        random?: () => number
+    } = {},
+): Promise<ScheduledTickResult> {
+    const clock = options.clock ?? Date.now
+    const startedAt = clock()
+    // Field by field, so a field given as `undefined` (an unset environment value, say) means the default, never a hole.
+    const given = options.budget ?? {}
+    const budget: TickBudget = {
+        maxSchedules: given.maxSchedules ?? DEFAULT_TICK_BUDGET.maxSchedules,
+        maxDeliveries: given.maxDeliveries ?? DEFAULT_TICK_BUDGET.maxDeliveries,
+        schedulesWindowMs: given.schedulesWindowMs ?? DEFAULT_TICK_BUDGET.schedulesWindowMs,
+        deliveriesWindowMs: given.deliveriesWindowMs ?? DEFAULT_TICK_BUDGET.deliveriesWindowMs,
+    }
     const now = isSimulated ? worldNow() : new Date()
     // A runner that can lose a job mid-run (JOBS_RUNNER=in-process) fails the lost ones first; its own count is not
     // reported here, the failed jobs' errors say it.
@@ -46,7 +100,19 @@ export async function runScheduledTick(): Promise<ScheduledTickResult> {
             `SSSB tick: the jobs port's sweep failed: ${error instanceof Error ? error.message : String(error)}`,
         )
     }
-    const { spawned, failed } = await runDueSchedules(db, jobs, now)
-    const deliveries = await runDueDeliveries(db, now, dispatchWebhook)
-    return { spawned, failed, deliveries }
+    // Both windows run from the tick's start, so the sweep and the schedules count against the deliveries' window too,
+    // and deliveries keep the part of it that schedules leave.
+    const { spawned, failed, deferred, stoppedBy } = await runDueSchedules(db, jobs, now, {
+        maxItems: budget.maxSchedules,
+        deadline: startedAt + budget.schedulesWindowMs,
+        clock,
+        ...(options.random && { random: options.random }),
+    })
+    const deliveries = await runDueDeliveries(db, now, dispatchWebhook, {
+        maxItems: budget.maxDeliveries,
+        deadline: startedAt + budget.deliveriesWindowMs,
+        clock,
+        ...(options.random && { random: options.random }),
+    })
+    return { spawned, failed, deferred, stoppedBy, deliveries }
 }
