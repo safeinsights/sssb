@@ -1,3 +1,4 @@
+import { jobRetry } from '@sssb/app-config/jobs'
 import { describe, expect, test, vi } from 'vitest'
 import { InvalidTransitionError } from './state-machine'
 import {
@@ -74,6 +75,10 @@ describe('job retries (safeinsights/sssb#135)', () => {
         expect([1, 2, 3, 4].map((failed) => retryDelayMs(retry, failed))).toEqual([1_000, 5_000, 5_000, 5_000])
         expect(retryDelayMs({ attempts: 3 }, 1)).toBe(backoffDelayMs(1))
         expect(retryDelayMs({ attempts: 3, delaysMs: [] }, 2)).toBe(backoffDelayMs(2))
+    })
+
+    test('the fixture seam sets what these tests and db/job-retries.test.ts assume: one kind that retries', () => {
+        expect(jobRetry).toEqual({ 'flaky-dockets': { attempts: 3, delaysMs: [60_000, 600_000] } })
     })
 
     test("reads the fixture seam's entry, and runs once a kind it leaves out and every framework kind", () => {
