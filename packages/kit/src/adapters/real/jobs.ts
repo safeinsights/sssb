@@ -5,7 +5,7 @@ import {
     StartBuildCommand,
 } from '@aws-sdk/client-codebuild'
 import type { DbPort } from '../../ports/db'
-import type { JobsPort } from '../../ports/jobs'
+import type { JobsPort, SubmittedJob } from '../../ports/jobs'
 
 /**
  * Fails one job the sweep judged lost, and notifies its end: true when it was failed, false when it had reached an end
@@ -17,13 +17,19 @@ export type FailLostJob = (input: { tenantId: string; jobId: string; error: stri
 
 /**
  * How long a CodeBuild job may sit unreported before the sweep judges it lost: after its build ENDED (time for the
- * build's final webhook to arrive), or after the runner marked it `starting` without recording a build. Five minutes,
+ * build's final webhook to arrive), or after CodeBuild refused to start it (`refused`). Five minutes,
  * the scheduled tick's default period, so a webhook in flight is not taken for a lost one.
  */
 export const CODEBUILD_LOST_AFTER_MS = 5 * 60_000
 
 /** The `runner_ref` written before StartBuild is called, replaced by the build's id once it returns. */
 export const CODEBUILD_STARTING = 'starting'
+
+/**
+ * The `runner_ref` of a job whose StartBuild CodeBuild refused (a client fault: no permission, no such project, a
+ * limit), so no build started: the sweep fails it after `CODEBUILD_LOST_AFTER_MS`, as it fails a build that ended.
+ */
+export const CODEBUILD_REFUSED = 'refused'
 
 /**
  * How long a job may stay `starting` before the sweep takes its start for one that never reached CodeBuild: an hour.
@@ -62,8 +68,9 @@ const ENDED = new Set(['SUCCEEDED', 'FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'])
  * - a job whose build ENDED (any status but IN_PROGRESS) at least that long ago without the job reaching an end: its
  *   webhook never came. A SUCCEEDED build counts: the job's result was never recorded.
  * - a job whose build CodeBuild has no record of (`buildsNotFound`).
- * - a job left `starting` for `CODEBUILD_STARTING_LOST_AFTER_MS` (an hour): its StartBuild never returned, or the
- *   build's id was never recorded.
+ * - a job whose StartBuild CodeBuild refused (`refused`, a client fault), that long after.
+ * - a job left `starting` for `CODEBUILD_STARTING_LOST_AFTER_MS` (an hour): its StartBuild never returned (or failed
+ *   in a way that may have started a build), or the build's id was never recorded.
  *
  * A build still IN_PROGRESS is left alone, however long: CodeBuild's own timeout ends it, and a later sweep sees that.
  * Failing a lost job is `failLost`'s (the registry's: `recordJobStatus`, so a kind whose `jobRetry` has attempts left
@@ -75,6 +82,7 @@ const ENDED = new Set(['SUCCEEDED', 'FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'])
  */
 export function createRealJobs(project: string, region: string, db: DbPort, failLost?: FailLostJob): JobsPort {
     const client = new CodeBuildClient({ region })
+    const startBuild = startBuildFor(project)
 
     const setRef = (tenantId: string, jobId: string, ref: string) =>
         db.withTenant(tenantId, (trx) =>
@@ -84,23 +92,17 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
     const port: JobsPort = {
         async start(job) {
             await setRef(job.tenantId, job.id, CODEBUILD_STARTING)
-            const started = await client.send(
-                new StartBuildCommand({
-                    projectName: project,
-                    environmentVariablesOverride: [
-                        { name: 'JOB_ID', value: job.id, type: 'PLAINTEXT' },
-                        { name: 'JOB_KIND', value: job.kind, type: 'PLAINTEXT' },
-                        { name: 'JOB_TENANT_ID', value: job.tenantId, type: 'PLAINTEXT' },
-                        { name: 'JOB_ORG_ID', value: job.orgId ?? '', type: 'PLAINTEXT' },
-                        { name: 'JOB_PAYLOAD', value: JSON.stringify(job.payload ?? {}), type: 'PLAINTEXT' },
-                        { name: 'JOB_ATTEMPT', value: String(job.attempt ?? 1), type: 'PLAINTEXT' },
-                        { name: 'JOB_FIRST_ID', value: job.firstJobId ?? job.id, type: 'PLAINTEXT' },
-                    ],
-                }),
-            )
+            const started = await client.send(startBuild(job)).catch(async (error: unknown) => {
+                // A client fault is CodeBuild saying no build started; anything else (a timeout, a server fault) may
+                // have started one, so the job stays `starting` and gets the longer wait.
+                if ((error as { $fault?: unknown }).$fault === 'client') {
+                    await setRef(job.tenantId, job.id, CODEBUILD_REFUSED).catch(() => undefined)
+                }
+                throw error
+            })
             const buildId = started.build?.id
             if (!buildId) {
-                // Left `starting`: the sweep fails it as lost once CODEBUILD_LOST_AFTER_MS has passed.
+                // Left `starting`: the sweep fails it as lost once CODEBUILD_STARTING_LOST_AFTER_MS has passed.
                 console.warn(`SSSB jobs: CodeBuild started job ${job.id} but returned no build id`)
                 return
             }
@@ -144,16 +146,30 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                     continue
                 }
                 const lost: { id: string; error: string }[] = open
-                    .filter(
-                        (job) =>
-                            job.runner_ref === CODEBUILD_STARTING &&
-                            new Date(job.updated_at as string | Date).getTime() <
-                                now.getTime() - CODEBUILD_STARTING_LOST_AFTER_MS,
-                    )
-                    .map((job) => ({ id: job.id, error: 'lost: its CodeBuild build was never recorded as started' }))
+                    .filter((job) => job.runner_ref === CODEBUILD_REFUSED)
+                    .map((job) => ({ id: job.id, error: 'lost: CodeBuild refused to start its build' }))
+                lost.push(
+                    ...open
+                        .filter(
+                            (job) =>
+                                job.runner_ref === CODEBUILD_STARTING &&
+                                new Date(job.updated_at as string | Date).getTime() <
+                                    now.getTime() - CODEBUILD_STARTING_LOST_AFTER_MS,
+                        )
+                        .map((job) => ({
+                            id: job.id,
+                            error: 'lost: its CodeBuild build was never recorded as started',
+                        })),
+                )
                 const byBuild = new Map<string, string>()
                 for (const job of open) {
-                    if (job.runner_ref && job.runner_ref !== CODEBUILD_STARTING) byBuild.set(job.runner_ref, job.id)
+                    if (
+                        job.runner_ref &&
+                        job.runner_ref !== CODEBUILD_STARTING &&
+                        job.runner_ref !== CODEBUILD_REFUSED
+                    ) {
+                        byBuild.set(job.runner_ref, job.id)
+                    }
                 }
                 const ids = [...byBuild.keys()]
                 for (let i = 0; i < ids.length; i += BATCH_GET_BUILDS_MAX) {
@@ -193,6 +209,23 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
             return failed
         },
     }
+}
+
+/** The StartBuild call for `job`: the project, and the job's context as the build's environment. */
+function startBuildFor(project: string) {
+    return (job: SubmittedJob) =>
+        new StartBuildCommand({
+            projectName: project,
+            environmentVariablesOverride: [
+                { name: 'JOB_ID', value: job.id, type: 'PLAINTEXT' },
+                { name: 'JOB_KIND', value: job.kind, type: 'PLAINTEXT' },
+                { name: 'JOB_TENANT_ID', value: job.tenantId, type: 'PLAINTEXT' },
+                { name: 'JOB_ORG_ID', value: job.orgId ?? '', type: 'PLAINTEXT' },
+                { name: 'JOB_PAYLOAD', value: JSON.stringify(job.payload ?? {}), type: 'PLAINTEXT' },
+                { name: 'JOB_ATTEMPT', value: String(job.attempt ?? 1), type: 'PLAINTEXT' },
+                { name: 'JOB_FIRST_ID', value: job.firstJobId ?? job.id, type: 'PLAINTEXT' },
+            ],
+        })
 }
 
 function messageOf(error: unknown): string {

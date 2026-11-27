@@ -193,12 +193,6 @@ async function spawnInTransaction(
 /** How many characters (code points) of a failure's message a schedule keeps in `last_error`. */
 const LAST_ERROR_MAX = 500
 
-/**
- * How many of them the `schedule.disabled` audit event carries: few enough that, JSON-escaped, the detail stays under
- * the audit log's byte limit (./audit.ts, `AUDIT_DETAIL_MAX_BYTES`) whatever the characters are.
- */
-const AUDIT_ERROR_MAX = 120
-
 /** The first `max` code points of `text`: never half a surrogate pair. */
 function clip(text: string, max: number): string {
     return Array.from(text).slice(0, max).join('')
@@ -210,7 +204,8 @@ function clip(text: string, max: number): string {
  * its own, under the row lock, this counts the failure and keeps its message (`failure_count`, `last_error`), then:
  *
  * - a spec that does not parse can never spawn, so the schedule is DISABLED and an audit event (`schedule.disabled`,
- *   with the error) says why. Someone must fix the spec and enable it again.
+ *   saying so) records it; the
+ *   error is the schedule's `last_error`. Someone must fix the spec and enable it again.
  * - any other failure may pass (an insert the database refused for a moment), so the schedule BACKS OFF: its
  *   `next_run_at` moves to `now` plus the webhook deliveries' backoff for that many failures in a row (one minute, then
  *   five, thirty, two hours, six hours, and six hours on). A schedule that fails every time is therefore due ever less
@@ -265,7 +260,9 @@ async function recordSpawnFailure(
             action: 'schedule.disabled',
             subjectType: 'JobSchedule',
             subjectId: schedule.id,
-            detail: { reason: 'spec does not parse', error: clip(message, AUDIT_ERROR_MAX) },
+            // The reason alone: the error echoes the stored spec, whatever it holds, which the audit log may refuse (an
+            // address, a token). The error itself is the schedule's `last_error`.
+            detail: { reason: 'spec does not parse' },
         })
     } catch (failure) {
         console.warn(

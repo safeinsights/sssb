@@ -15,6 +15,8 @@ const codebuild = vi.hoisted(() => ({
     builds: new Map<string, { buildStatus: string; endTime?: Date }>(),
     batchCalls: [] as string[][],
     batchFails: false,
+    /** When set, the next StartBuild throws an SDK-shaped error with this fault. */
+    startFault: undefined as 'client' | 'server' | undefined,
 }))
 vi.mock('@aws-sdk/client-codebuild', () => {
     class StartBuildCommand {
@@ -35,6 +37,11 @@ vi.mock('@aws-sdk/client-codebuild', () => {
         CodeBuildClient: class {
             async send(command: unknown) {
                 if (command instanceof StartBuildCommand) {
+                    if (codebuild.startFault) {
+                        const fault = codebuild.startFault
+                        codebuild.startFault = undefined
+                        throw Object.assign(new Error(`StartBuild failed (${fault})`), { $fault: fault })
+                    }
                     codebuild.started.push(command.input)
                     const id =
                         codebuild.nextIds.length > 0 ? codebuild.nextIds.shift() : `proj:${codebuild.started.length}`
@@ -77,6 +84,7 @@ beforeEach(async () => {
     codebuild.builds.clear()
     codebuild.batchCalls.length = 0
     codebuild.batchFails = false
+    codebuild.startFault = undefined
 })
 
 const MINUTE = 60_000
@@ -252,6 +260,40 @@ describe('the CodeBuild jobs runner: the sweep for lost builds (safeinsights/sss
         expect((await row(unstarted)).status).toBe('queued')
         expect(await jobs.sweep!(new Date(Date.now() + 31 * MINUTE))).toBe(1)
         expect((await row(unstarted)).error).toBe('lost: its CodeBuild build was never recorded as started')
+    })
+
+    test('a StartBuild CodeBuild refused is failed after five minutes; one that may have started a build waits the hour', async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { jobs } = await runner()
+        const { submitJob } = await import('../../db/jobs')
+        const submit = () => submitJob(fakeDb, jobs, { tenantId, orgId, kind: 'export-dockets', payload: {} })
+        codebuild.startFault = 'client'
+        await expect(submit()).rejects.toThrow(/StartBuild failed/)
+        codebuild.startFault = 'server'
+        await expect(submit()).rejects.toThrow(/StartBuild failed/)
+        const rows = await fakeDb
+            .getDb()
+            .selectFrom('jobs')
+            .select(['id', 'runner_ref'])
+            .where('status', '=', 'queued')
+            .where('runner_ref', 'in', ['refused', 'starting'])
+            .orderBy('created_at', 'asc')
+            .execute()
+        expect(rows.map((r) => r.runner_ref)).toEqual(['refused', 'starting'])
+        await fakeDb
+            .getDb()
+            .updateTable('jobs')
+            .set({ updated_at: new Date(Date.now() - 10 * MINUTE).toISOString() })
+            .where(
+                'id',
+                'in',
+                rows.map((r) => r.id),
+            )
+            .execute()
+
+        expect(await jobs.sweep!(new Date())).toBe(1)
+        expect((await row(rows[0]!.id)).error).toBe('lost: CodeBuild refused to start its build')
+        expect((await row(rows[1]!.id)).status).toBe('queued')
     })
 
     test('judges a job its webhook walked to running, or a service caller did, as it judges a queued one', async () => {

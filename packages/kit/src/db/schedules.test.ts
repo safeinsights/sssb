@@ -359,7 +359,8 @@ describe('a schedule whose spawn keeps failing (safeinsights/sssb#215)', () => {
         const { runDueSchedules, listSchedulesForWorld } = await import('./schedules')
         const { fakeDb } = await import('../adapters/fake/db')
         const now = new Date('2016-03-01T00:00:00.000Z')
-        // The parse error echoes the type, so the stored error is long and four bytes a character.
+        // The parse error echoes the type, so the stored error is long, four bytes a character, and shaped like nothing
+        // the audit log would refuse; the audit event carries the reason alone.
         const id = await insertSchedule({
             nextRunAt: new Date('2016-02-01T00:00:00.000Z'),
             spec: { type: '\u{1F600}'.repeat(400) } as unknown as ScheduleSpec,
@@ -375,9 +376,29 @@ describe('a schedule whose spawn keeps failing (safeinsights/sssb#215)', () => {
             .executeTakeFirst()
         expect(audit, 'the audit event was written despite the error').toBeDefined()
         const stored = (await scheduleRow(id)).last_error!
-        expect(stored.isWellFormed?.() ?? true).toBe(true)
+        // No half of a surrogate pair left at the cut.
+        expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(stored)).toBe(false)
         const world = (await listSchedulesForWorld(fakeDb)).find((s) => s.id === id)
         expect(world).toMatchObject({ spec: null, enabled: false, failureCount: 1 })
+    })
+
+    test('a spec whose type the audit log would refuse (an address) still gets its audit event', async () => {
+        const { runDueSchedules } = await import('./schedules')
+        const { fakeDb } = await import('../adapters/fake/db')
+        const id = await insertSchedule({
+            nextRunAt: new Date('2015-02-01T00:00:00.000Z'),
+            spec: { type: 'ops@example.com' } as unknown as ScheduleSpec,
+        })
+        await runDueSchedules(fakeDb, stubJobs().port, new Date('2015-03-01T00:00:00.000Z'))
+        const audit = await fakeDb
+            .getDb()
+            .selectFrom('audit_events')
+            .select('detail')
+            .where('subject_id', '=', id)
+            .where('action', '=', 'schedule.disabled')
+            .executeTakeFirst()
+        expect(audit?.detail).toEqual({ reason: 'spec does not parse' })
+        expect((await scheduleRow(id)).last_error).toContain('ops@example.com')
     })
 
     test('any other failure backs off, longer each time, and the next spawn that commits clears it', async () => {
