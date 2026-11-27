@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 import { originFor } from '@sssb/tools/ports'
 import { assertNoLiveDevTicker } from '@sssb/tools/ticker-marker'
 import { DESTRUCTIVE_EXPECT_TIMEOUT, DESTRUCTIVE_TEST_TIMEOUT, E2E_BUILD } from './tests/e2e/support/budgets'
+import { E2E_WORKERS, workerServers, worldOrigin } from './tests/e2e/support/worlds'
 
 // A dev server started with `DEV_TICK_SECONDS` set would be ADOPTED by `reuseExistingServer` below and tick under the
 // suite; the ticker leaves a marker while it runs, and this refuses to load past it (@sssb/tools/ticker-marker).
@@ -61,10 +62,11 @@ export default defineConfig({
     // So parallelism is bought where the worlds are genuinely separate — across apps locally, across
     // shards on CI — never inside one server. Raising this number requires per-worker world
     // isolation first: safeinsights/sssb#99.
-    workers: 1,
+    workers: E2E_WORKERS,
     reporter: process.env.CI ? 'github' : 'list',
     use: {
-        baseURL: BASE_URL,
+        // Each worker's own server (./tests/e2e/support/worlds.ts): BASE_URL itself for worker 0, and with one worker.
+        baseURL: worldOrigin(BASE_URL),
         trace: 'on-first-retry',
     },
     projects: [
@@ -96,15 +98,19 @@ export default defineConfig({
             expect: { timeout: DESTRUCTIVE_EXPECT_TIMEOUT },
         },
     ],
-    webServer: {
-        command: E2E_BUILD ? 'pnpm run build:e2e && pnpm run start:e2e' : 'pnpm dev',
-        url: BASE_URL,
-        reuseExistingServer: !process.env.CI,
-        // `pnpm dev` ticks the scheduler on a timer when DEV_TICK_SECONDS is set (`sssb dev-tick`). The e2e suite expects a
-        // scheduler that does nothing until a test asks, so whatever is in the caller's shell, the server it starts is not ticked.
-        env: { DEV_TICK_SECONDS: '' },
-        // A production build has to compile before it can serve; dev serves immediately and compiles
-        // per-route as tests hit it. Build and start took 26 to 39 s on CI (five runs, 2026-11-27): 180 s is 4.6x that.
-        timeout: E2E_BUILD ? 180_000 : 120_000,
-    },
+    webServer: [
+        {
+            command: E2E_BUILD ? 'pnpm run build:e2e && pnpm run start:e2e' : 'pnpm dev',
+            url: BASE_URL,
+            reuseExistingServer: !process.env.CI,
+            // `pnpm dev` ticks the scheduler on a timer when DEV_TICK_SECONDS is set (`sssb dev-tick`). The e2e suite expects a
+            // scheduler that does nothing until a test asks, so whatever is in the caller's shell, the server it starts is not ticked.
+            env: { DEV_TICK_SECONDS: '' },
+            // A production build has to compile before it can serve; dev serves immediately and compiles
+            // per-route as tests hit it. Build and start took 26 to 39 s on CI (five runs, 2026-11-27): 180 s is 4.6x that.
+            timeout: E2E_BUILD ? 180_000 : 120_000,
+        },
+        // A server and a world for each further worker, serving the build the one above made.
+        ...workerServers(BASE_URL),
+    ],
 })

@@ -1,8 +1,8 @@
 import { rmSync } from 'node:fs'
-import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import { openSimulatorPanel } from './support/simulator'
 import { signInAs } from './support/people'
+import { worldPath } from './support/worlds'
 
 async function openSimulatorTab(
     page: import('@playwright/test').Page,
@@ -16,7 +16,7 @@ async function openSimulatorTab(
 // bleed into other suites or reruns, even if a test fails before restoring it.
 test.afterAll(() => {
     try {
-        rmSync(path.resolve(__dirname, '../../.data/analytics/flags.json'))
+        rmSync(worldPath('analytics', 'flags.json'))
     } catch {
         // never existed / already gone — fine
     }
