@@ -206,6 +206,16 @@ describe('summarizeTick', () => {
         expect(tickDidWork({ ok: true, spawned: 0, failed: 0, deliveries: { delivered: 0, failed: 1, dead: 0 } })).toBe(
             true,
         )
+        // A tick its bound stopped before it started anything still speaks: work was left.
+        expect(
+            tickDidWork({
+                ok: true,
+                spawned: 0,
+                failed: 0,
+                stoppedBy: null,
+                deliveries: { delivered: 0, failed: 0, dead: 0, deferred: 0, stoppedBy: 'time' },
+            }),
+        ).toBe(true)
     })
 })
 

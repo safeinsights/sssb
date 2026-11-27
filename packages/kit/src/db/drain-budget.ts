@@ -133,6 +133,7 @@ export async function drainFairly<T>(
     run: (row: T, tenantId: string) => Promise<void>,
 ): Promise<DrainLeft> {
     const queues: TenantQueue<T>[] = []
+    const bounded = Number.isFinite(budget.maxItems) || Number.isFinite(budget.deadline)
     let cutShort = false
     for (const tenant of shuffled(tenants, budget, (t) => t.id)) {
         if (!beforeDeadline(budget)) {
@@ -140,9 +141,10 @@ export async function drainFairly<T>(
             break
         }
         const rows = await listOne(tenant.id)
-        // A tenant's own rows are shuffled too, so one that fails every time without advancing (and so is listed first
-        // every tick, being the oldest) does not take that tenant's turn tick after tick.
-        if (rows.length > 0) queues.push({ tenantId: tenant.id, rows: shuffled(rows, budget, rowKey) })
+        // Under a bound a tenant's own rows are shuffled too, so one that fails every time without advancing (and so is
+        // listed first every tick, being the oldest) does not take that tenant's turn tick after tick. With no bound
+        // every row runs, so they keep their oldest-first order.
+        if (rows.length > 0) queues.push({ tenantId: tenant.id, rows: bounded ? shuffled(rows, budget, rowKey) : rows })
     }
     const left = await runRoundRobin(queues, budget, run)
     // A listing the deadline cut short left tenants unlisted: say so even when every listed row was started.

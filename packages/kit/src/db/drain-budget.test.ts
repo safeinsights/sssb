@@ -242,6 +242,22 @@ describe('drainFairly', () => {
     })
 })
 
+describe('drainFairly with no bound', () => {
+    test("keeps each tenant's rows oldest first, since every row runs", async () => {
+        const ran: string[] = []
+        await drainFairly(
+            [{ id: 't' }],
+            resolveDrainBudget(undefined),
+            async () => ['t-0', 't-1', 't-2', 't-3'],
+            (row) => row,
+            async (row) => {
+                ran.push(row)
+            },
+        )
+        expect(ran).toEqual(['t-0', 't-1', 't-2', 't-3'])
+    })
+})
+
 describe('resolveDrainBudget, listingLimit and beforeDeadline', () => {
     test('no budget is no bound, which lists every row', () => {
         const budget = resolveDrainBudget(undefined)
