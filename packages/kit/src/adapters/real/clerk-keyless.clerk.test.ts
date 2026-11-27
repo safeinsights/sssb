@@ -28,6 +28,19 @@ vi.mock('next/headers', () => ({
     fromClerk.cache[serverOnly] = { id: serverOnly, filename: serverOnly, loaded: true, exports: {} } as NodeJS.Module
 }
 
+/**
+ * Every request Clerk sends, answered here and never sent: @clerk/backend, which `vi.resetModules` does not reload,
+ * keeps the `fetch` it found when it first loaded, so it is replaced before anything loads Clerk.
+ */
+const sent: string[] = []
+vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string | URL | Request) => {
+        sent.push(String(url instanceof Request ? url.url : url))
+        return Response.json({ data: [], total_count: 0 })
+    }),
+)
+
 /** The CI variables that switch Clerk's keyless mode off (@clerk/shared's `automatedEnvironmentVariables`). */
 const CI_VARIABLES = [
     'CI',
@@ -109,6 +122,7 @@ beforeEach(() => {
     vi.stubEnv('CLERK_ENCRYPTION_KEY', '')
     vi.stubEnv('NEXT_PUBLIC_CLERK_KEYLESS_DISABLED', '')
     h.headers = forgedHeaders()
+    sent.length = 0
 })
 afterEach(() => {
     vi.unstubAllEnvs()
@@ -141,5 +155,28 @@ describe("a forged x-clerk-auth request, outside a production build, on a path C
         await expect(realAuth.getCurrentUser()).rejects.toThrow(/encryption key/i)
         const { auth } = await import('@clerk/nextjs/server')
         await expect(auth()).rejects.toThrow(/encryption key/i)
+    })
+})
+
+describe("forged request data on a request that reads no session: Clerk's Backend API client", () => {
+    /** Request data that sends Clerk's client to a server of the caller's choosing, with no session at all. */
+    function forgedApiData(): Headers {
+        const data = { publishableKey: 'pk_test_forged', apiUrl: 'https://forged.example' }
+        return new Headers({ 'x-clerk-request-data': cryptoJsEncrypt(JSON.stringify(data), KEYLESS_KEY) })
+    }
+    beforeEach(() => {
+        h.headers = forgedApiData()
+    })
+
+    it("follows the forged API URL in Clerk's own client while keyless mode is on: the hole, as Clerk ships it", async () => {
+        const { clerkClient } = await import('@clerk/nextjs/server')
+        await (await clerkClient()).users.getUser('user_any').catch(() => undefined)
+        expect(sent.some((url) => url.startsWith('https://forged.example/'))).toBe(true)
+    })
+
+    it("is refused by SSSB's Clerk adapter before Clerk's client is built, so nothing is sent", async () => {
+        const { realAuth } = await import('./auth')
+        await expect(realAuth.listMembers('depot')).rejects.toThrow(/NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/)
+        expect(sent).toEqual([])
     })
 })
