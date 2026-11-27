@@ -103,10 +103,11 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 
 ## Authorization
 
-- Every exported mutating route handler (POST, PUT, PATCH, DELETE) in a `route.ts` anywhere under `src/app`, not only
-  under `src/app/api`, calls `authorize(...)` from `@sssb/kit/authz/authorize` on its own path, as
-  `src/app/api/items/route.ts` does (the generated app's; once you have removed it, read it in SSSB's repository at your
-  release). The conformance suite's `authz-mutations` check reads each handler: a string, a
+- Every exported route handler in a `route.ts` anywhere under `src/app`, not only under `src/app/api`, calls
+  `authorize(...)` from `@sssb/kit/authz/authorize` on its own path: a mutation (POST, PUT, PATCH, DELETE) and a read
+  (GET, HEAD, OPTIONS) alike, as `src/app/api/items/route.ts` does for both (the generated app's; once you have removed
+  it, read it in SSSB's repository at your release). The conformance suite's `authz-mutations` check reads each
+  handler: a string, a
   comment, a dead branch or a helper in another module does not count. Neither does a call whose denial cannot stop
   the handler: in an `async` helper or a callback whose promise the handler neither awaits nor returns, in a callback
   handed to a function the route file defines, in a callback a timer, a listener, `after()` or a `.catch`/`.finally`
@@ -121,12 +122,21 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named
   `route.<ext>` the check does not read (`route.mts`, a custom `pageExtensions`) fails it.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
-  `src/app/api`), with a reason and a `mustMatch` gate. A mutating route outside `src/app/api` can match no
-  exemption.
+  `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names, each judged on
+  its own. A route outside `src/app/api` can match no exemption.
 - A route or screen that reads org-scoped data authorizes the read too, as `src/app/api/items/route.ts`'s GET does
   (`authorize(user, orgId, 'read', …)`): the session's org says where a person is placed, not that they may read there.
   The role `none` (a fixed org source gives it to every signed-in user by default: `params.auth`) is placed in the home
-  org with no standing in it.
+  org with no standing in it. The check enforces it for route handlers (a screen and a metadata route such as
+  `sitemap.ts` or `opengraph-image.tsx` are kept by hand), and does not guess which reads are org-scoped: a read
+  handler that names an import (other than those below), a helper, `fetch` or `process.env` authorizes. A
+  read of the caller's own things authorizes its self-only subject (`Notification`, `NotificationPref`), and a service
+  caller its machine actor. A read handler that reads nothing passes without it: it names nothing from outside itself
+  but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (not an object or
+  array), `NextResponse`, `redirect`, `permanentRedirect` and `notFound` from `next/navigation`, and SSSB's `appMode`
+  and `isSimulated`, so it works only on its request, as a liveness probe does, or a CORS preflight whose headers are
+  written inline. Any other read that is genuinely not org-scoped (a public one)
+  names an exemption.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant
   `none` too.

@@ -39,7 +39,7 @@ generated it: its subject in `src/app-config/abilities.ts`, its table in
    queries only inside `db.withTenant()`; `getDb()` is banned (`sssb/no-raw-db-handle`).
 4. **Vocabulary**: audit actions in `AppAuditAction` (`src/app-config/audit.ts`); notification and webhook kinds
    with `/sssb:new-notification-kind` and `/sssb:new-webhook-event` if the entity emits them.
-5. **Routes** that mutate MUST call `authorize(...)` from `@sssb/kit/authz/authorize` (the conformance suite's
-   `authz-mutations` check reads every handler).
+5. **Routes** MUST call `authorize(...)` from `@sssb/kit/authz/authorize`, the list's GET with `'read'` as well as
+   each mutation (the conformance suite's `authz-mutations` check reads every handler).
 6. Finish with `pnpm verify`. You touched a migration, so make sure `pnpm test:contract` ran too (a generated
    workspace's `verify` runs it; SSSB's own repository's does not).

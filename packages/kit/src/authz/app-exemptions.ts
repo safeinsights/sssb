@@ -35,7 +35,7 @@ import {
  * An entry FAILS (and is not applied) when it is malformed, when it overlaps a framework entry (same key, under one
  * of the framework's prefixes, or a prefix over one of its keys — an app cannot weaken a framework gate, the
  * `service/` gate above all), when it is a prefix nested in another of the app's prefixes (both fail: a route under
- * both would get one gate and silently lose the other), or when it matches no mutating route in the app's own tree: an app exemption is
+ * both would get one gate and silently lose the other), or when it matches no judged route (one that exports a handler) in the app's own tree: an app exemption is
  * measured against the app, so a deleted route's exemption cannot wait for a new route at the same path.
  */
 
@@ -173,29 +173,29 @@ function policyWithApp(app: AppExemptions): ScanPolicy {
     }
 }
 
-/** App exemptions that match no mutating route in the app's own tree (`mutatingRels`, relative to its `src/app/api`). */
-function staleAppExemptions(app: AppExemptions, mutatingRels: readonly string[], label: string): string[] {
+/** App exemptions that match no judged route in the app's own tree (`judgedRels`, relative to its `src/app/api`). */
+function staleAppExemptions(app: AppExemptions, judgedRels: readonly string[], label: string): string[] {
     return [
         ...Object.keys(app.files)
-            .filter((rel) => !mutatingRels.includes(rel))
-            .map((rel) => `${label}: files \`${rel}\` is stale — the app's src/app/api has no mutating route there`),
+            .filter((rel) => !judgedRels.includes(rel))
+            .map((rel) => `${label}: files \`${rel}\` is stale — the app's src/app/api has no route handler there`),
         ...Object.keys(app.prefixes)
-            .filter((prefix) => !mutatingRels.some((rel) => rel.startsWith(prefix)))
+            .filter((prefix) => !judgedRels.some((rel) => rel.startsWith(prefix)))
             .map(
                 (prefix) =>
-                    `${label}: prefixes \`${prefix}\` is stale — it covers no mutating route in the app's src/app/api`,
+                    `${label}: prefixes \`${prefix}\` is stale — it covers no route handler in the app's src/app/api`,
             ),
     ]
 }
 
 export interface AppScan {
     root: ScanRoot
-    /** Every route file under the app's `src/app`, mutating or not. Empty when there is no `src/app`. */
+    /** Every route file under the app's `src/app`, whether or not it exports a handler. Empty when there is no `src/app`. */
     routes: ScannedRoute[]
     /** Every Server Action under the app's `src`. */
     actions: ScannedAction[]
     /**
-     * One message per mutating handler or Server Action that fails (`<root>: <rel> <VERB> …why`), and one for each
+     * One message per route handler or Server Action that fails (`<root>: <rel> <VERB> …why`), and one for each
      * Pages Router API directory the app has, which the scan cannot read.
      */
     failures: string[]
@@ -217,8 +217,8 @@ const PAGES_API_DIRS = ['pages/api', 'src/pages/api']
 
 /**
  * The authorization scan over ONE app: every `route.*` under `<appDir>/src/app` (Next serves one from anywhere
- * there, so not only `api/`, and through a symbolic link too), judged against the framework's policy plus the app's
- * own exemptions, which are measured from `<appDir>/src/app/api` (so a mutating route outside `api/` can match no
+ * there, so not only `api/`, and through a symbolic link too), each exported handler, read or mutation, judged against the framework's policy plus the app's
+ * own exemptions, which are measured from `<appDir>/src/app/api` (so a route outside `api/` can match no
  * exemption and must call `authorize(...)` itself). Every Server Action under `<appDir>/src` (a `'use server'` file's
  * exports, and each function whose body opens with `'use server'`) is judged as a POST is, and can match no
  * exemption. A Pages Router API directory fails outright: SSSB apps are App Router, and the scan reads no
@@ -237,14 +237,14 @@ export async function scanApp(appDir: string): Promise<AppScan> {
     }
     const { exemptions, problems } = await readAppExemptions(appDir)
     const routes = existsSync(root.dir) ? scanRoutes([root]) : []
-    const mutating = routes.filter((route) => route.handlers.length > 0)
+    const judged = routes.filter((route) => route.handlers.length > 0)
     const policy = policyWithApp(exemptions)
     const srcDir = path.join(appDir, 'src')
     const actions = existsSync(srcDir) ? scanServerActions({ ...root, dir: srcDir, exemptDir: srcDir }) : []
     const outsideUnreadable = new Map<string, string>()
     const outsideActionFiles = serverActionFilesOutsideSrc(appDir, outsideUnreadable)
     const failures = [
-        ...mutating.flatMap((route) => route.handlers.flatMap((handler) => judge(route, handler, policy) ?? [])),
+        ...judged.flatMap((route) => route.handlers.flatMap((handler) => judge(route, handler, policy) ?? [])),
         ...actions.flatMap((action) => judgeServerAction(action) ?? []),
         ...(isDirectory(path.join(appDir, 'app'))
             ? [
@@ -288,7 +288,7 @@ export async function scanApp(appDir: string): Promise<AppScan> {
             ...problems,
             ...staleAppExemptions(
                 exemptions,
-                mutating.map((route) => route.rel),
+                judged.map((route) => route.rel),
                 label,
             ),
         ],
