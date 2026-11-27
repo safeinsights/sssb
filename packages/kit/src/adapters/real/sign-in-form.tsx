@@ -38,10 +38,12 @@ type SignIn = ReturnType<typeof useSignIn>['signIn']
  *   load, `useSignIn` answers a placeholder that follows the hook's current attempt and reads every value as a
  *   default, so the form could not tell a dropped request from a taken one, and could act on an attempt the client
  *   already held: send its account a code, or finalize it.
- * - Once Clerk has accepted the step's code, the session exists on the browser's client, though `finalize` may then
- *   fail. Going back from the step then signs that session out through Clerk's client (`createdSessionId`, this one
- *   session only), which brings the browser back to this page signed out, so the next page load cannot come up signed
- *   in for someone who believes they are not. A reset alone is local.
+ * - Once an attempt is complete (the password alone, or a code Clerk accepted), its session is on the browser's client,
+ *   though `finalize` may then fail. The form keeps that session's id from the moment it sees it (`held`), since a
+ *   `finalize` that fails half-way can empty the attempt. While it is held, going back from the step, or the sign-out
+ *   button the password form then shows, signs it out through Clerk's client (by id, and only while the client still
+ *   holds it), which brings the browser back to this page signed out. A reset alone is local, and would leave the next
+ *   page load signed in for someone who believes they are not. A sign-out Clerk refuses says so, and can be tried again.
  */
 export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; returnTo: string }) {
     const { signIn } = useSignIn()
@@ -56,6 +58,29 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
     // Clerk accepted the step's code, kept for a `finalize` that fails after it: a code is spent once verified, so
     // trying again finalizes the same attempt, while it is still complete, and verifies nothing.
     const [accepted, setAccepted] = useState(false)
+
+    // The session of an attempt this form saw complete and has not finished signing in (above), and whether the last try
+    // to sign it out failed.
+    const [held, setHeld] = useState<string | null>(null)
+    const [signOutFailed, setSignOutFailed] = useState(false)
+
+    /** Signs the held session out, back to this page; a session the client no longer holds is only forgotten. */
+    async function endHeld(sessionId: string): Promise<void> {
+        setBusy(true)
+        setSignOutFailed(false)
+        try {
+            if (!clerk.client?.sessions.some((session) => session.id === sessionId)) {
+                setHeld(null)
+                setBusy(false)
+                return
+            }
+            // Clerk takes the browser back to this page, so the form stays busy.
+            await clerk.signOut({ sessionId, redirectUrl: window.location.href })
+        } catch {
+            setSignOutFailed(true)
+            setBusy(false)
+        }
+    }
 
     // Leaving the step puts focus back where the person types next.
     const password = useRef<HTMLInputElement>(null)
@@ -75,6 +100,8 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
         const { status } = attempt
         switch (status) {
             case 'complete': {
+                // From here the session is on the browser's client, whether or not `finalize` succeeds.
+                if (attempt.createdSessionId) setHeld(attempt.createdSessionId)
                 const { error } = await attempt.finalize()
                 if (error) return false
                 window.location.assign(sameOriginPath(returnTo) ?? '/')
@@ -104,8 +131,8 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
     }
 
     const submit = form.onSubmit(async (values) => {
-        // Held until clerk-js has loaded (above); the button cannot be pressed before then, and nor can this run.
-        if (!clerk.loaded) return
+        // Held until clerk-js has loaded (above), and while a session is held: the button cannot be pressed then either.
+        if (!clerk.loaded || held) return
         setFormError(null)
         setBusy(true)
         // A Clerk call that throws (the network, not a refused password) is shown as the same generic error, never left
@@ -145,14 +172,9 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
                 }}
                 onBack={() => {
                     leaveStep(null)
-                    // Once the attempt has a session (Clerk accepted the code) it is already on the browser's client:
-                    // sign it out (above), back to this page. Should Clerk refuse, the person is told they are still
-                    // signed in.
-                    const sessionId = attempt.createdSessionId
-                    if (sessionId) {
-                        void Promise.resolve()
-                            .then(() => clerk.signOut({ sessionId, redirectUrl: window.location.href }))
-                            .catch(() => setFormError(t('refusedSignOutError')))
+                    // A session Clerk created for this attempt is signed out (above), back to this page.
+                    if (held) {
+                        void endHeld(held)
                         return
                     }
                     // Clerk's attempt is dropped too (local state only, no request). The next password starts a new one
@@ -170,13 +192,23 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
             <Stack>
                 <TextInput label={labels.email} type="email" required {...form.getInputProps('email')} />
                 <PasswordInput label={labels.password} required ref={password} {...form.getInputProps('password')} />
-                <Button type="submit" loading={busy || !clerk.loaded}>
+                <Button type="submit" loading={busy || !clerk.loaded} disabled={held !== null}>
                     {labels.submit}
                 </Button>
-                {formError ? (
+                {signOutFailed || formError ? (
                     <Text c="red.8" role="alert">
-                        {formError}
+                        {signOutFailed ? t('refusedSignOutError') : formError}
                     </Text>
+                ) : null}
+                {held ? (
+                    <Button
+                        variant="default"
+                        loading={busy}
+                        onClick={() => void endHeld(held)}
+                        data-testid="sign-in-sign-out"
+                    >
+                        {t('signOut')}
+                    </Button>
                 ) : null}
             </Stack>
         </form>
