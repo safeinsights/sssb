@@ -8371,6 +8371,7 @@ spec or helper that reads or writes its world on disk).
 - **The starter keeps one worker and no worlds**: its suite is four tests in under 30 s, and the guide's rule
   ("Playwright's `workers` stays 1") stays true for an adopter's app, which has no `worlds.ts`. Nothing that ships
   changes but a comment in `serve-standalone.js` (an empty changeset).
+
 ## A dropped connection is `connection-lost`; the demo replays a default entry's conversation (2026-11-27, `fix/llm-replay-and-terminated`)
 
 `safeinsights/sssb#230` and `safeinsights/sssb#241`, two leftovers of the `#98` and `#145` work.
