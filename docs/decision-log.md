@@ -8139,6 +8139,7 @@ safeinsights/sssb#192 and #104, two small changes to the real adapters' edges.
   stateful client's default, which this is not), so the request is aborted, and the adapter races
   the read against the same bound, so the page is held to it whatever the client does. Late answers and failures are
   dropped. Not measured against a live PostHog (cutover row `analytics`).
+
 ## A stream's failure after text is visible, and the replays can fail the same way (2026-11-27, `fix/stream-failure-visible`)
 
 `safeinsights/sssb#145`: when a stream fails after some of its text was delivered, the consumer must be able to tell.
