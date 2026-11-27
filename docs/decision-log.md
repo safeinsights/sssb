@@ -7905,6 +7905,7 @@ reason }` and a logged warning,** the shape of the database's answer. That funct
   nothing breaks on is required.)
 - **Not done here.** The `llm-key` cutover row still holds the live check; its verification list gains nothing, since a
   live 429 or a slow call is not something to provoke on purpose.
+
 ## The Data API emulator reads a plain literal's backslash as the Data API does (2026-11-27, `fix/emulator-backslash`)
 
 `safeinsights/sssb#201`: an app's query with `ESCAPE '\'` and a parameter after it passed the contract run, and the real
