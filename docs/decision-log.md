@@ -7676,12 +7676,13 @@ safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
   on what `GET /client` returns after a reload, the issue's open question. A clerk-js that never loads leaves the
   button busy: there is nothing to sign in with then.
 - **The form holds the session from the moment an attempt is complete** (`held`, `attempt.createdSessionId`, read
-  before `finalize`, since a `finalize` that fails half-way can empty the attempt). That covers both routes to a
+  before `finalize`, rather than later from an attempt a failed `finalize` may have changed). That covers both routes to a
   complete attempt: the password alone and an accepted code. While a session is held, Back from the step, or a
-  "Sign out" button on the password form (the existing `auth.signOut` copy), signs it out through Clerk's client by id,
-  and only while `client.signedInSessions` still has it; one the client no longer holds is only forgotten. The
-  password cannot be submitted while a session is held. Clerk's `redirectUrl` to this page is a soft navigation under
-  the app router, which keeps the form, so the form resets itself once the sign-out answers and the client no longer
+  "Sign out" button on the password form (the existing `auth.signOut` copy), signs it out with Clerk's `signOut`
+  (`useClerk()`) by id, and only while `clerk.client.signedInSessions` still has it; one the client no longer holds is only forgotten. The
+  password cannot be submitted while a session is held. Under the app router Clerk navigates with the router's `push`
+  (@clerk/nextjs 7.10, `useAwaitablePush`; that `signOut`'s `redirectUrl` goes through it is clerk-js's, unread here),
+  which keeps the form, so the form resets itself, its error included, once the sign-out answers and the client no longer
   holds the session; a sign-out that fails, or answers but leaves the session, shows the existing
   `refusedSignOutError` copy with the button still there. A finished sign-in clears `held` and keeps the form busy
   while the browser leaves. Rejected: **reading the session at Back time** (round-1 review: an emptied attempt signs

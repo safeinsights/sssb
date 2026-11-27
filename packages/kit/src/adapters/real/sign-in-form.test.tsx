@@ -8,8 +8,8 @@ import enFramework from '../../i18n/messages/en.json'
 /**
  * The real sign-in form with Clerk's hook replaced: where it sends the browser once sign-in completes, and the second
  * step Clerk asks for. `returnTo` comes from the URL, so a value that would leave the origin goes to `/` instead,
- * whatever the page passed. Nothing is submitted before clerk-js has loaded, and going back after Clerk accepted a code
- * signs that session out (safeinsights/sssb#198). Never run against a real Clerk instance (cutover row `auth-dev`).
+ * whatever the page passed. Nothing is submitted before clerk-js has loaded, and a session Clerk created for an attempt
+ * whose `finalize` failed is signed out on Back or from the form's Sign out button (safeinsights/sssb#198). Never run against a real Clerk instance (cutover row `auth-dev`).
  */
 type Answer = { error: { code: string } | null }
 type Verification = { strategy?: string; status?: string; expireAt?: Date | string | null }
@@ -673,7 +673,7 @@ describe('a password submitted before clerk-js has loaded (safeinsights/sssb#198
 })
 
 describe('going back after Clerk accepted the code (safeinsights/sssb#198)', () => {
-    it("signs out the session the code created, this one only, back to this page, through Clerk's client", async () => {
+    it("signs out the session the code created, this one only, with Clerk's signOut", async () => {
         signIn.finalize.mockResolvedValueOnce(refused)
         await reachStep([TOTP])
         await enterCode()
@@ -727,6 +727,7 @@ describe('a session the form saw created, when signing in does not finish (safei
         expect(submitButton().disabled).toBe(true)
         await act(async () => signOutButton()!.click())
         expect(clerk.signOut).toHaveBeenCalledWith({ sessionId: 'sess_1', redirectUrl: window.location.href })
+        expect([signOutButton(), submitButton().disabled, alertText()]).toEqual([null, false, undefined])
     })
 
     it('can be tried again when Clerk refuses the sign-out', async () => {

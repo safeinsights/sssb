@@ -38,14 +38,16 @@ type SignIn = ReturnType<typeof useSignIn>['signIn']
  *   load, `useSignIn` answers a placeholder that follows the hook's current attempt and reads every value as a
  *   default, so the form could not tell a dropped request from a taken one, and could act on an attempt the client
  *   already held: send its account a code, or finalize it.
- * - Once an attempt is complete (the password alone, or a code Clerk accepted), its session is on the browser's client,
- *   though `finalize` may then fail. The form keeps that session's id from the moment it sees it (`held`), since a
- *   `finalize` that fails half-way can empty the attempt. While it is held, going back from the step, or the sign-out
- *   button the password form then shows, signs it out through Clerk's client (by id, and only while the client still
- *   holds it signed in), and the form is then ready to sign in again: Clerk's redirect to this page is a soft
- *   navigation, which keeps the form. A reset alone is local, and would leave the next page load signed in for someone
- *   who believes they are not. A sign-out that fails, or leaves the session on the client, says so and can be tried
- *   again. While a session is held the password cannot be submitted: Clerk would refuse it beside the session.
+ * - Once an attempt is complete (the password alone, or a code Clerk accepted), Clerk has created its session
+ *   (`createdSessionId`), though `finalize` may then fail. The form keeps that session's id from the moment it sees it
+ *   (`held`), rather than reading the attempt later, which a failed `finalize` may have changed. While it is held, going
+ *   back from the step, or the sign-out button the password form then shows, signs it out with Clerk's `signOut`
+ *   (`useClerk()`, by id, and only while `clerk.client.signedInSessions` still has it), and the form then resets itself
+ *   to sign in again: it does not count on a reload, since under the app router Clerk navigates with the router's
+ *   `push` (@clerk/nextjs's `useAwaitablePush`), which keeps the form. A reset alone is local, and would leave the next
+ *   page load signed in for someone who believes they are not. A sign-out that fails, or leaves the session signed in,
+ *   says so and can be tried again. While a session is held the password cannot be submitted: that session is ended
+ *   first.
  */
 export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; returnTo: string }) {
     const { signIn } = useSignIn()
@@ -81,6 +83,7 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
             if (holds(sessionId)) await clerk.signOut({ sessionId, redirectUrl: window.location.href })
             if (holds(sessionId)) throw new Error('the client still holds the session')
             setHeld(null)
+            setFormError(null)
         } catch {
             setSignOutFailed(true)
         } finally {
