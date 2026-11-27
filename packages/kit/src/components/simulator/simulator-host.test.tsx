@@ -383,7 +383,7 @@ describe('SimulatorHost: the subsystem tabs', () => {
     })
 
     it('the Mail tab has no compose form for an app that registers no inbound handler', async () => {
-        const offered = answers['GET inbound']!.body as Record<string, unknown>
+        const offered = (answers['GET inbound'] as Answer).body as Record<string, unknown>
         answers['GET inbound'] = { body: { ...offered, handlers: [] } }
         const container = await openTab('mail')
         expect(container.querySelector('[data-testid="simulator-inbound"]')).toBeNull()
