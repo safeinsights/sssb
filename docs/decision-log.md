@@ -7635,6 +7635,7 @@ takes a PUT end to end (mint, browser, the fake's endpoint, confirm). What was d
   comment says so and names the staging answer, and it is filed as an issue to do once R2's behaviour is measured.
   Confirm of a row that is already `ready` now returns idempotently before reading storage, because it would otherwise
   reach the delete and remove a good object (a later, lower ceiling does the same).
+
 ## The webhook secret's variable, and a Standard Webhooks verifier (2026-11-27, `feat/webhook-verifier`)
 
 Issues `safeinsights/sssb#121` and `safeinsights/sssb#122`, built as one change: both come from the same migrated
