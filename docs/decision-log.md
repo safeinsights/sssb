@@ -8251,6 +8251,7 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   neither ends the wait nor counts as the database's answer. Rejected: **keeping at most a few in flight by not sending**,
   which would hold up a wait the probes in flight may never end. The SDK's pool size was not read; the bound does not
   depend on it.
+
 ## A dropped connection is `connection-lost`; the demo replays a default entry's conversation (2026-11-27, `fix/llm-replay-and-terminated`)
 
 `safeinsights/sssb#230` and `safeinsights/sssb#241`, two leftovers of the `#98` and `#145` work.
