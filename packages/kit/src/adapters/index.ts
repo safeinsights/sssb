@@ -106,7 +106,12 @@ if (isSimulated && process.env.NODE_ENV === 'production') {
 
 const real =
     appMode === 'real'
-        ? await (await import('./real/index')).createRealPorts({ inProcessJobs: buildInProcessJobs })
+        ? await (
+              await import('./real/index')
+          ).createRealPorts({
+              inProcessJobs: buildInProcessJobs,
+              failLostJob: failLostJobFromRegistry,
+          })
         : null
 
 // The simulated world runs the deployment's auth tenancy when its environment sets one (./fake/simulated-auth.ts).
@@ -130,6 +135,27 @@ async function buildInProcessJobs(
     return lazyJobs(async () =>
         (await import('./real/jobs-in-process')).createInProcessJobs(ports, notifyJobTerminalFromRegistry),
     )
+}
+
+/**
+ * The CodeBuild runner's sweep, failing a job whose build was lost (./real/jobs.ts, safeinsights/sssb#231): the failure
+ * goes through `recordJobStatus` (which arms a retry for a kind that retries) and the job's end notifies as the jobs
+ * webhook route's does. Loaded when a job is failed, as `notifyJobTerminalFromRegistry` is, never while this module is
+ * evaluated. False when the job reached an end meanwhile.
+ */
+async function failLostJobFromRegistry(input: { tenantId: string; jobId: string; error: string; now: Date }) {
+    const [{ recordJobStatus }, { InvalidTransitionError }] = await Promise.all([
+        import('../db/jobs'),
+        import('../core/state-machine'),
+    ])
+    try {
+        await recordJobStatus(db, input.tenantId, input.jobId, 'failed', { error: input.error, now: input.now })
+    } catch (error) {
+        if (error instanceof InvalidTransitionError) return false
+        throw error
+    }
+    await notifyJobTerminalFromRegistry({ tenantId: input.tenantId, jobId: input.jobId, status: 'failed' })
+    return true
 }
 
 async function notifyJobTerminalFromRegistry(input: {

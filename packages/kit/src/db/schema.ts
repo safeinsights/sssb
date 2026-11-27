@@ -38,6 +38,8 @@ interface JobsTable {
     retry_of: Generated<string | null>
     /** When a retry waiting out its backoff may run; null on every other row (0019_job_attempts). */
     run_after: Generated<Date | string | null>
+    /** The runner's own id for the run (a CodeBuild build id, or `starting`); null when none recorded one (0020). */
+    runner_ref: Generated<string | null>
     created_at: Generated<string>
     updated_at: Generated<string>
 }

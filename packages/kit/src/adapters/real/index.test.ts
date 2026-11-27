@@ -58,7 +58,13 @@ const DATA_API_ENV = {
 }
 
 /** What the registry hands createRealPorts: an in-process runner that says what it was built with. */
-const HOOKS = { inProcessJobs: async (ports: object) => ({ start: async () => {}, kind: 'in-process', ports }) }
+const failLostJob = async () => true
+const HOOKS = {
+    inProcessJobs: async (ports: object) => ({ start: async () => {}, kind: 'in-process', ports }),
+    failLostJob,
+}
+/** The arguments the CodeBuild runner was built with, the last time it was. */
+const codebuildArgs = vi.hoisted(() => ({ last: [] as unknown[] }))
 
 function stubEnv(env: Record<string, string | undefined>): void {
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
@@ -92,7 +98,12 @@ beforeEach(() => {
     })
     vi.doMock('./jobs', () => {
         loaded.codebuild += 1
-        return { createRealJobs: () => ({ kind: 'codebuild' }) }
+        return {
+            createRealJobs: (...args: unknown[]) => {
+                codebuildArgs.last = args
+                return { kind: 'codebuild' }
+            },
+        }
     })
     vi.doMock('./storage', () => {
         loaded.storage += 1
@@ -354,6 +365,9 @@ describe('the optional ports follow their switches, and a port switched off is a
             { kind: 'codebuild' },
             { kind: 's3' },
         ])
+        // The CodeBuild runner gets the database it records builds in and the registry's handler for a lost one
+        // (safeinsights/sssb#231), without which it would have no sweep.
+        expect(codebuildArgs.last.slice(2)).toEqual([ports.db, failLostJob])
         await ports.db.getDb().destroy()
     })
 

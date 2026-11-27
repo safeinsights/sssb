@@ -5,6 +5,7 @@ import type { DbPort } from '../../ports/db'
 import type { EmailPort } from '../../ports/email'
 import { CutoverPendingError } from '../../ports/errors'
 import type { JobsPort } from '../../ports/jobs'
+import type { FailLostJob } from './jobs'
 import type { LlmPort } from '../../ports/llm'
 import type { StoragePort } from '../../ports/storage'
 import { absentEmail, absentJobs, absentLlm, absentStorage } from './absent'
@@ -128,6 +129,12 @@ export function assertRealEnv(): void {
  * selects the in-process runner without handing one in.
  */
 interface RealPortsHooks {
+    /**
+     * How the CodeBuild runner's sweep fails a job whose build was lost (safeinsights/sssb#231): handed in for the same
+     * reason as `inProcessJobs` (failing a job reaches the job modules and the app's seam). Without it the runner has
+     * no sweep, as before.
+     */
+    failLostJob?: FailLostJob
     inProcessJobs?: (ports: {
         db: DbPort
         storage: StoragePort
@@ -194,7 +201,12 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
     const runner = portChoice('jobs')
     const jobs =
         runner === 'codebuild'
-            ? (await import('./jobs')).createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION'))
+            ? (await import('./jobs')).createRealJobs(
+                  need('JOBS_CODEBUILD_PROJECT'),
+                  need('AWS_REGION'),
+                  db,
+                  hooks.failLostJob,
+              )
             : runner === 'in-process'
               ? await inProcessJobs(hooks, { db, storage, email, llm, auth })
               : absentJobs
