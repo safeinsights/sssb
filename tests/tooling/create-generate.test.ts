@@ -103,6 +103,7 @@ describe('@sssb/create: the generated workspace', () => {
                 '.editorconfig',
                 '.github/ISSUE_TEMPLATE/bug_report.yml',
                 '.github/ISSUE_TEMPLATE/config.yml',
+                '.github/scripts/secret-scan-range.sh',
                 '.github/workflows/checks.yml',
                 '.gitignore',
                 '.gitleaks.toml',
@@ -375,6 +376,32 @@ describe('@sssb/create: the generated workspace', () => {
         expect(at('sha256sum -c -')).toBeLessThan(at('tar -xzf'))
         expect(at('tar -xzf')).toBeLessThan(at('./gitleaks git'))
         expect(step).not.toMatch(/\| *tar/)
+    })
+
+    // The scan reads a pull request's own commits, not every branch on the remote (safeinsights/sssb#106). The script
+    // that picks the range is SSSB's own file, copied as it is, and the step must call it as SSSB's does: captured on a
+    // line of its own, so a failed script stops the step instead of running gitleaks with no range (`--all`).
+    it("scopes the secret scan to the range SSSB's script picks, as SSSB's own workflow does", () => {
+        const stepOf = (text: string) => {
+            const workflow = parseYaml(text) as {
+                jobs: Record<string, { steps: { name?: string; env?: unknown; run?: string }[] }>
+            }
+            return workflow.jobs['secret-scan']?.steps.find((s) => s.name?.startsWith('gitleaks'))
+        }
+        const ours = stepOf(readFileSync(path.join(REPO, '.github/workflows/checks.yml'), 'utf8'))
+        const generated = stepOf(read(ws, '.github/workflows/checks.yml'))
+        expect(generated?.env).toEqual(ours?.env)
+        const tail = (run: string | undefined) =>
+            (run ?? '')
+                .trim()
+                .split('\n')
+                .slice(-2)
+                .map((line) => line.trim())
+        expect(tail(generated?.run)).toEqual(tail(ours?.run))
+        expect(tail(generated?.run)[0]).toBe('range=$(bash .github/scripts/secret-scan-range.sh)')
+        expect(read(ws, '.github/scripts/secret-scan-range.sh')).toBe(
+            readFileSync(path.join(REPO, '.github/scripts/secret-scan-range.sh'), 'utf8'),
+        )
     })
 
     it("enables SSSB's Claude Code plugin from its marketplace, pinned to the workflow's commit", () => {
