@@ -163,7 +163,7 @@ rds execute-statement --database "$DB" --sql "SELECT length('\\') AS n"
 
 What is proven and what is inferred, so a result can correct the right line:
 
-- **Observed once (2026-11-24, an app's query; the statement's full text was not kept):** a plain literal
+- **Observed once (2026-11-24, an app's query; the issue records the error and the `ESCAPE '\'`, not the statement's full text):** a plain literal
   ending in a backslash, a parameter after it, `syntax error at or near ":"`. `a` repeats it.
 - **Inferred, and what the emulator does about it:** that the Data API's scanner treats `\'` as an escaped
   quote in every plain literal, so the literal runs on to the next quote and a `:name` inside that stretch is

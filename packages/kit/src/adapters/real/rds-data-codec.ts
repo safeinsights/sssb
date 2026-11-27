@@ -50,9 +50,9 @@ export interface SqlSegment {
  * `dataApiReading` is how the RDS Data API's own scanner, which finds the `:name` parameters before Postgres sees the
  * statement, appears to read a plain `'…'` literal: a backslash escapes the next character there too, so the `'` in
  * `'\'` does not close it, and the literal runs on to the next quote. Postgres, with `standard_conforming_strings` on
- * (the default), reads `'\'` as a complete one-character literal. Live, on 2026-11-24, `ESCAPE '\'` followed by a
- * parameter was refused with `syntax error at or near ":"`: the parameter was left in what the Data API took for a
- * literal, so Postgres got a bare `:kp1`. That is the whole observation; the escape rule, and that it reaches every
+ * (the default), reads `'\'` as a complete one-character literal. Live, on 2026-11-24, an app's query with `ESCAPE '\'`
+ * was refused with `syntax error at or near ":"` (safeinsights/sssb#201): a `:` reached Postgres, which a parameter
+ * left in what the Data API took for a literal would explain (Postgres gets a bare `:kp1`). That is the whole observation; the escape rule, and that it reaches every
  * plain literal, is inferred from it (docs/runbooks/data-api.md, step 2, says how to check). The dialect never uses
  * this reading: it rewrites `$n` by Postgres's rules, which are what the SQL was written for.
  */

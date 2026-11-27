@@ -7635,12 +7635,12 @@ reads `'\'` as a complete literal; the Data API finds `:name` parameters with a 
 - **What the emulator does.** Its parameter scan (`toPositional`) now reads SQL with `sqlSegments(sql, { dataApiReading:
 true })`, in which a backslash escapes the next character in a plain `'…'` literal too, so `'\'` does not close and the
   literal runs on to the next quote. A `:name` in that stretch is left in the text; Postgres is handed a bare `:kp1` and
-  answers `syntax error at or near ":"`, the same message and kind of error (`DatabaseErrorException`) as live. The
+  answers `syntax error at or near ":"`, the message the live Data API gave; the emulator wraps it as `DatabaseErrorException`, as it does any database error. The
   dialect keeps Postgres's rules for `$n` (`rewritePlaceholders`): it rewrites the SQL the app wrote for node-postgres.
   A statement is refused only when a `:name` falls in the stretch where the two readings differ, which is exactly the
   evidence. The SQL text Postgres receives is otherwise unchanged.
 - **Proven and inferred.** One live observation: a plain literal ending in a backslash, a parameter after it, that error
-  (the statement's full text was not kept). Inferred: that the Data API treats `\'` as an escaped quote in every plain
+  (the issue records the error and the `ESCAPE '\'`, not the statement's full text). Inferred: that the Data API treats `\'` as an escaped quote in every plain
   literal (so the escaped-quote reading, and the way it shifts every later literal, follow from one rule); not known: a
   statement with no parameter after the literal, or only before it, which is not refused; `E'…'`, `--` and `$$` are
   assumed read as Postgres reads them (the runbook's step 2 checks the first two). The runbook's step 2 now ends with the
@@ -7654,4 +7654,4 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
   production refusal on an inferred rule is a decision for the owner; the emulator is test-only. The spellings both
   scanners read alike are `E'\\'` and `chr(92)` for one backslash (a plain `'\\'` is two, so it is no substitute for `ESCAPE`).
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
-  the seed for a backslash in SQL; the `escapeLike` helpers escape a bound value, not a literal).
+  the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
