@@ -4,15 +4,17 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { EXEMPT_FILES, EXEMPT_PREFIXES, FRAMEWORK_POLICY as POLICY, isGate, REQUIRED_ALONGSIDE } from './route-policy'
-import { type ScanRoot, exemptionFor, judge, scanRoutes } from './route-scan'
+import { type ScanRoot, exemptionFor, isReadVerb, judge, scanRoutes } from './route-scan'
 
 /**
  * Bypass-catcher for the authorization choke point. Subject orgIds are handler-derived, so
- * authorize(...) can't be a route wrapper — it's an explicit call inside each mutating handler. This
- * build-time scan makes "every mutating product route is authorized" a checked invariant rather than
- * a discipline: it judges EACH exported mutating handler (POST/PUT/PATCH/DELETE) on its own: the handler
- * must reach authorize(...) on its own path, or its route must sit in the justified exemption map AND the
- * handler must pass that exemption's gate. GET-only files never have to authorize. "Reach" is may-reach: the scan
+ * authorize(...) can't be a route wrapper — it's an explicit call inside each handler. This
+ * build-time scan makes "every product route is authorized" a checked invariant rather than a discipline: it
+ * judges EACH exported handler on its own, a read (GET/HEAD/OPTIONS) as well as a mutation (POST/PUT/PATCH/DELETE):
+ * the handler must reach authorize(...) on its own path, or its route must sit in the justified exemption map AND
+ * the handler must pass that exemption's gate. A read handler may instead read nothing, naming nothing from outside
+ * itself but inert globals, primitive consts, a few named imports and its request (./route-scan.ts `readsNothing`,
+ * safeinsights/sssb#103). "Reach" is may-reach: the scan
  * does not prove that every path authorizes, or that it does so before mutating (./route-scan.ts, "What it does
  * not prove").
  *
@@ -63,11 +65,11 @@ const ROOTS: ScanRoot[] = [
     },
 ]
 
-describe('every mutating API route is authorized', () => {
+describe('every API route handler is authorized', () => {
     const routes = scanRoutes(ROOTS)
-    const mutating = routes.filter((route) => route.handlers.length > 0)
-    /** Mutating routes contributed by the FIXTURE root — what the exemption map is checked against. */
-    const fixture = mutating.filter((route) => route.root === 'packages/kit/test-fixture')
+    const judged = routes.filter((route) => route.handlers.length > 0)
+    /** Judged routes contributed by the FIXTURE root — what the exemption map is checked against. */
+    const fixture = judged.filter((route) => route.root === 'packages/kit/test-fixture')
     const fixtureRels = new Set(fixture.map((route) => route.rel))
 
     it.each(ROOTS.map((root) => root.label))('%s is really walked (guards against a broken walk)', (label) => {
@@ -77,13 +79,13 @@ describe('every mutating API route is authorized', () => {
         expect(routes.filter((route) => route.root === label).length, label).toBeGreaterThan(0)
     })
 
-    it('the fixture root contributes mutating routes (nothing below is vacuous)', () => {
+    it('the fixture root contributes judged routes (nothing below is vacuous)', () => {
         expect(fixtureRels.size).toBeGreaterThan(0)
     })
 
     it('the fixture tree still carries a route for every invariant this scan asserts', () => {
         // Named explicitly so a rename inside the fixture cannot quietly retire an invariant: an
-        // authorized product mutation, a file whose two verbs are judged separately (one through a same-file
+        // authorized product mutation and read, a read that reads nothing (the liveness probe), a file whose two verbs are judged separately (one through a same-file
         // helper), a framework membership mutation, a MACHINE mutation (a service caller, authorized with its
         // machine actor rather than exempted), and one route per gated prefix. The exemption-staleness cases
         // below cover the EXEMPT_FILES half.
@@ -94,24 +96,55 @@ describe('every mutating API route is authorized', () => {
             'service/jobs/route.ts',
             'webhooks/jobs/route.ts',
             'simulator/reset/route.ts',
+            'simulator/world/route.ts',
+            'health/route.ts',
         ]) {
             expect([...fixtureRels], rel).toContain(rel)
         }
-        const perVerb = fixture.find((route) => route.rel === 'dockets/[id]/route.ts')
-        expect(perVerb?.handlers.map((handler) => handler.verb)).toEqual(['PATCH', 'DELETE'])
+        const verbsOf = (rel: string) =>
+            fixture.find((route) => route.rel === rel)?.handlers.map((handler) => handler.verb)
+        expect(verbsOf('dockets/[id]/route.ts')).toEqual(['PATCH', 'DELETE'])
+        // Reads are judged too (safeinsights/sssb#103): an authorized org-scoped read, a machine's read under the
+        // `service/` gate, and a read under the `simulator/` prefix exemption.
+        expect(verbsOf('dockets/route.ts')).toEqual(['GET', 'POST'])
+        expect(verbsOf('service/jobs/route.ts')).toEqual(['GET', 'POST'])
+        expect(verbsOf('simulator/world/route.ts')).toEqual(['GET'])
     })
 
-    it('at least one mutating handler is NON-exempt and genuinely reaches authorize(...)', () => {
-        // Without this the whole suite could pass vacuously: if every mutating route were exempt,
-        // each per-handler case below would take the exemption branch and never check anything.
-        const enforced = mutating.filter(
-            (route) =>
-                !exemptionFor(POLICY, route.rel) && route.handlers.some((handler) => handler.facts?.reachesAuthorize),
-        )
-        expect(enforced.length).toBeGreaterThan(0)
+    it('each fixture read passes for the reason it stands for, not by reading nothing', () => {
+        // A read that reads nothing passes without authorize(...), so a fixture read that did would prove nothing
+        // about the rule or exemption it is there for. The one that DOES read nothing is the liveness probe.
+        const readOf = (rel: string) =>
+            fixture.find((route) => route.rel === rel)?.handlers.find((handler) => handler.verb === 'GET')?.facts
+        for (const rel of [
+            'dockets/route.ts',
+            'service/jobs/route.ts',
+            'simulator/world/route.ts',
+            'storage/[...key]/route.ts',
+        ]) {
+            expect(readOf(rel)?.readsNothing, rel).toBe(false)
+        }
+        expect(readOf('dockets/route.ts')?.reachesAuthorize).toBe(true)
+        expect(readOf('service/jobs/route.ts')?.reachesAuthorize).toBe(true)
+        expect(readOf('health/route.ts')).toMatchObject({ reachesAuthorize: false, readsNothing: true })
     })
 
-    for (const route of mutating) {
+    it('at least one handler of each kind is NON-exempt and genuinely reaches authorize(...)', () => {
+        // Without this the whole suite could pass vacuously: if every route were exempt, each per-handler case below
+        // would take the exemption branch and never check anything. Per kind, a mutation and a read.
+        for (const read of [false, true]) {
+            const enforced = judged.filter(
+                (route) =>
+                    !exemptionFor(POLICY, route.rel) &&
+                    route.handlers.some(
+                        (handler) => isReadVerb(handler.verb) === read && handler.facts?.reachesAuthorize,
+                    ),
+            )
+            expect(enforced.length, read ? 'a read' : 'a mutation').toBeGreaterThan(0)
+        }
+    })
+
+    for (const route of judged) {
         for (const handler of route.handlers) {
             it(`${route.root}: ${route.rel} ${handler.verb} reaches authorize(...) or passes its exemption's gate`, () => {
                 // Exempt: the gate the reason rests on must hold for THIS handler, in THIS root, so an app
@@ -141,31 +174,31 @@ describe('every mutating API route is authorized', () => {
         }
     })
 
-    it('has no stale exact exemptions (each is backed by a mutating route in the fixture tree)', () => {
+    it('has no stale exact exemptions (each is backed by a judged route in the fixture tree)', () => {
         // Checked against the FIXTURE, not an app: see the note above ROOTS. An entry with no
         // fixture file behind it is either dead or an exemption nobody is prepared to demonstrate.
         for (const rel of Object.keys(EXEMPT_FILES)) {
             expect(
                 fixtureRels.has(rel),
-                `exemption for ${rel} is stale — packages/kit/test-fixture/api has no mutating route at that path`,
+                `exemption for ${rel} is stale — packages/kit/test-fixture/api has no route handler at that path`,
             ).toBe(true)
         }
     })
 
-    it('has no stale required-alongside gates (each covers a mutating route in the fixture tree)', () => {
+    it('has no stale required-alongside gates (each covers a judged route in the fixture tree)', () => {
         for (const prefix of Object.keys(REQUIRED_ALONGSIDE)) {
             expect(
                 [...fixtureRels].some((rel) => rel.startsWith(prefix)),
-                `required gate ${prefix} covers no mutating route in packages/kit/test-fixture/api`,
+                `required gate ${prefix} covers no route handler in packages/kit/test-fixture/api`,
             ).toBe(true)
         }
     })
 
-    it('has no stale prefix exemptions (each covers a mutating route in the fixture tree)', () => {
+    it('has no stale prefix exemptions (each covers a judged route in the fixture tree)', () => {
         for (const prefix of Object.keys(EXEMPT_PREFIXES)) {
             expect(
                 [...fixtureRels].some((rel) => rel.startsWith(prefix)),
-                `prefix exemption ${prefix} covers no mutating route in packages/kit/test-fixture/api — ` +
+                `prefix exemption ${prefix} covers no route handler in packages/kit/test-fixture/api — ` +
                     `remove it or a rename left it dangling`,
             ).toBe(true)
         }
@@ -319,6 +352,45 @@ describe('the shapes the text-matching scan passed now fail', () => {
                 "import { isSimulated } from '@sssb/kit/adapters/index'\ndeclare const db: { wipe(): Promise<void> }\n" +
                 'export async function POST() { if (!isSimulated) { await db.wipe(); return new Response(null, { status: 404 }) } return Response.json({}) }\n',
             fails: ['POST'],
+        },
+        // safeinsights/sssb#103: reads were never judged, so each of these passed every gate.
+        {
+            name: 'an org-scoped GET that never authorizes',
+            rel: 'repro/route.ts',
+            src:
+                "import { auth, db } from '@sssb/kit/adapters/index'\nimport { listDockets } from '@/domain/dockets'\n" +
+                'export async function GET() { const user = await auth.requireUser(); return Response.json(await listDockets(db, user.orgSlug)) }\n',
+            fails: ['GET'],
+        },
+        {
+            name: 'an authorized POST beside an open GET',
+            rel: 'repro/route.ts',
+            src:
+                `${AUTHORIZE}import { listDockets } from '@/domain/dockets'\ndeclare const user: never\n` +
+                'export async function GET() { return Response.json(await listDockets()) }\n' +
+                `export async function POST() { ${CREATE}; return Response.json({}) }\n`,
+            fails: ['GET'],
+        },
+        {
+            name: "a GET whose org resolution and read sit in a helper of another module (the scan does not guess 'org-scoped')",
+            rel: 'repro/route.ts',
+            src: "import { myDockets } from '@/domain/dockets'\nexport async function GET() { return Response.json(await myDockets()) }\n",
+            fails: ['GET'],
+        },
+        {
+            name: 'an authorized GET, and a liveness probe that reads nothing, pass',
+            rel: 'repro/route.ts',
+            src:
+                `${AUTHORIZE}import { listDockets } from '@/domain/dockets'\ndeclare const user: never\n` +
+                `export async function GET() { authorize(user, 'depot', 'read', { type: 'Docket', orgId: 'depot' }); return Response.json(await listDockets()) }\n` +
+                'export function HEAD() { return new Response(null, { headers: { date: new Date().toUTCString() } }) }\n',
+            fails: [],
+        },
+        {
+            name: 'a simulator GET that lost its 404 gate',
+            rel: 'simulator/repro/route.ts',
+            src: "import { readWorld } from '../world'\nexport async function GET() { return Response.json(await readWorld()) }\n",
+            fails: ['GET'],
         },
     ]
 

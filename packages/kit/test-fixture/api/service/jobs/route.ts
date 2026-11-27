@@ -14,6 +14,12 @@ import { withServiceCaller } from '../../stand-ins'
  *
  * `withServiceCaller` is imported from ../../stand-ins.ts, for the reason given there.
  */
+/** The machine's READ, under the same two requirements: wrapped by `withServiceCaller`, and authorized. */
+export const GET = withServiceCaller(async ({ identity }) => {
+    authorize(abilityActorFromService(identity), 'read', { type: 'Job', orgId: identity.orgId })
+    return Response.json({ jobs: [] })
+})
+
 export const POST = withServiceCaller(async ({ identity }) => {
     authorize(abilityActorFromService(identity), 'update', { type: 'Job', orgId: identity.orgId })
     return Response.json({ ok: true })

@@ -169,7 +169,7 @@ describe('the export forms a mutating handler can take', () => {
                 'route.ts': "export * from './impl'\nexport async function GET() {}",
                 'impl.ts': `${AUTHORIZE}${DECLS}export async function POST() { ${CALL} }\nexport async function DELETE() {}\nexport async function GET() {}`,
             },
-            expect: { POST: 'authorized', DELETE: 'open' },
+            expect: { GET: 'open', POST: 'authorized', DELETE: 'open' },
         },
         {
             name: 'export * through two modules, where the route also names a verb itself',
@@ -245,8 +245,15 @@ describe('the export forms a mutating handler can take', () => {
             expect: { POST: /ClassDeclaration, not a function/ },
         },
         {
-            name: 'a GET-only route has no mutating handler',
-            files: { 'route.ts': 'export async function GET() {}\nexport const HEAD = async () => {}' },
+            name: 'every verb Next routes is judged, reads as well as mutations (safeinsights/sssb#103)',
+            files: {
+                'route.ts': `${AUTHORIZE}${DECLS}export async function GET() { ${CALL} }\nexport const HEAD = async () => {}\nexport function OPTIONS() {}`,
+            },
+            expect: { GET: 'authorized', HEAD: 'open', OPTIONS: 'open' },
+        },
+        {
+            name: 'a route file that exports no verb has no handler',
+            files: { 'route.ts': "export const dynamic = 'force-dynamic'\nexport async function helper() {}" },
             expect: {},
         },
         {
@@ -338,7 +345,7 @@ describe('what the analyser refuses, and says why', () => {
         {
             name: 'export * from a module that does not resolve: which verbs is unknown',
             files: { 'route.ts': "export * from './missing'\nexport async function GET() {}" },
-            expect: { '*': /which verbs it exports is unknown/ },
+            expect: { GET: /^open$/, '*': /which verbs it exports is unknown/ },
         },
         {
             name: 'an import of a module that does not resolve, exported as a verb',
@@ -1134,7 +1141,7 @@ describe("what counts as a handler's own path", () => {
             verdicts({
                 'route.ts': `${AUTHORIZE}${DECLS}export async function PATCH() { ${CALL} }\nexport async function DELETE() {}\nexport async function GET() { ${CALL} }`,
             }),
-            { PATCH: 'authorized', DELETE: 'open' },
+            { PATCH: 'authorized', DELETE: 'open', GET: 'authorized' },
         )
     })
 
@@ -1894,12 +1901,226 @@ describe('the facts a gate is judged on', () => {
     })
 })
 
+describe('a read that reads nothing (safeinsights/sssb#103)', () => {
+    const only = (src: string, verb = 'GET') => factsOf(src, verb).readsNothing
+    const IMPORT = "import { appMode, db, load, store, query } from '@sssb/kit/adapters/index'\n"
+    const tsx = (src: string) => scanTree({ 'route.tsx': src }).find((r) => r.rel === 'route.tsx')!.handlers[0]!.facts!
+
+    it('holds for a probe that names only inert globals, its request, primitive constants and the named imports', () => {
+        expect(only('export async function GET() { return Response.json({ ok: true }) }')).toBe(true)
+        expect(
+            only(
+                `${IMPORT}export async function GET() { return Response.json({ mode: appMode, at: new Date().toISOString() }) }`,
+            ),
+        ).toBe(true)
+        expect(only('export const HEAD = () => new Response(null, { status: 204 })', 'HEAD')).toBe(true)
+        expect(
+            only(
+                "const ALLOW = 'GET'\nexport function OPTIONS() { return new Response(null, { headers: { allow: ALLOW } }) }",
+                'OPTIONS',
+            ),
+        ).toBe(true)
+        expect(
+            only(
+                "import { NextResponse } from 'next/server'\nexport function GET() { return NextResponse.json({ ok: true }) }",
+            ),
+        ).toBe(true)
+        expect(
+            only(
+                'export function GET(request: Request) { const u = new URL(request.url); return new Response(u.searchParams.get("hub.challenge")) }',
+            ),
+        ).toBe(true)
+        expect(
+            only(
+                'type Row = { id: string }\nexport function GET() { const rows: Row[] = []; return Response.json(rows) }',
+            ),
+        ).toBe(true)
+        expect(tsx(`${IMPORT}export async function GET() { return Response.json({ el: <div /> }) }`).readsNothing).toBe(
+            true,
+        )
+    })
+
+    it('fails a name from outside it that is not inert: an import, a helper, a value that is not a literal', () => {
+        for (const body of [
+            'return Response.json(await load())',
+            "return Response.json(await db.withTenant('t', () => 1))",
+            'return Response.json({ dockets: store })',
+            'return Response.json({ store })',
+            'return Response.json({ ...store })',
+            "return Response.json(store['depot'] ?? [])",
+            'return Response.json(await query)',
+            'const f = load; return Response.json(await Promise.resolve().then(f))',
+            'setTimeout(load); return Response.json({})',
+        ]) {
+            expect(only(`${IMPORT}export async function GET() { ${body} }`), body).toBe(false)
+        }
+        expect(
+            only('function helper() { return 1 }\nexport async function GET() { return Response.json(helper()) }'),
+        ).toBe(false)
+        expect(only('const cache = new Map()\nexport async function GET() { return Response.json([...cache]) }')).toBe(
+            false,
+        )
+        expect(
+            only("import { NextResponse as R } from 'next/server'\nexport function GET() { return R.json({}) }"),
+        ).toBe(false)
+    })
+
+    it('fails a global that is not inert: an upstream service, the process, a module, code from a string', () => {
+        for (const body of [
+            "return fetch('http://data/orgs/depot/dockets')",
+            'return Response.json(await (await fetch(process.env.DATA_API!)).json())',
+            'return Response.json({ api: process.env.DATA_API })',
+            "return Response.json(require('./db').load())",
+            "return Response.json(eval('1'))",
+            "return Response.json(new Function('return 1')())",
+            'return Response.json(Reflect.ownKeys({}))',
+            'return Response.json(globalThis.store)',
+            'return Response.json(await prisma.docket.findMany())',
+            'return Response.json(arguments[0])',
+            'return Response.json({ m: module, e: exports, w: window, s: self, g: global })',
+            "return Response.json(Object.constructor('return 1')())",
+            "return Response.json(Date['constructor'])",
+            "return Response.json(await import('./data'))",
+            'return Response.json(import.meta.url)',
+        ]) {
+            expect(only(`export async function GET() { ${body} }`), body).toBe(false)
+        }
+        expect(only('Response = class {} as never\nexport async function GET() { return Response.json({}) }')).toBe(
+            false,
+        )
+    })
+
+    it('reads the handler lexically: a dead branch, a nested function and a default count', () => {
+        expect(only(`${IMPORT}export async function GET() { if (false) load(); return Response.json({}) }`)).toBe(false)
+        expect(only(`${IMPORT}export async function GET() { const f = () => load(); return Response.json({}) }`)).toBe(
+            false,
+        )
+        expect(only(`${IMPORT}export async function GET(x = load()) { return Response.json({ x }) }`)).toBe(false)
+    })
+
+    it('fails a tagged template, a component, a class, a decorator or a using declaration', () => {
+        expect(
+            only(
+                "import { sql } from '@vercel/postgres'\nexport async function GET() { return Response.json(await sql`select 1`) }",
+            ),
+        ).toBe(false)
+        expect(
+            tsx(`import { Card } from './card'\nexport async function GET() { return Response.json({ el: <Card /> }) }`)
+                .readsNothing,
+        ).toBe(false)
+        expect(
+            tsx(
+                `import { Card } from './card'\nexport async function GET() { return Response.json({ el: <Card></Card> }) }`,
+            ).readsNothing,
+        ).toBe(false)
+        expect(only('export async function GET() { class A {}; return Response.json({ a: A.name }) }')).toBe(false)
+        expect(
+            only(
+                `${IMPORT}export async function GET() { class A { @load m() {} }; return Response.json({ a: A.name }) }`,
+            ),
+        ).toBe(false)
+        expect(
+            only('export async function GET() { using r = { [Symbol.dispose]() {} }; return Response.json({}) }'),
+        ).toBe(false)
+    })
+
+    it('holds for the named imports and inert names a probe or a redirect uses', () => {
+        expect(
+            only(
+                "import { isSimulated } from '@sssb/kit/adapters/index'\n" +
+                    "export function GET() { if (!isSimulated) throw new Error('real'); return Response.json({}) }",
+            ),
+        ).toBe(true)
+        expect(only("import { redirect } from 'next/navigation'\nexport function GET() { redirect('/sign-in') }")).toBe(
+            true,
+        )
+        expect(
+            only(
+                'export function GET() { type T = string; interface I { a: T } const x: I = { a: "" }; return Response.json(x) }',
+            ),
+        ).toBe(true)
+        expect(only('export function GET() { outer: for (;;) { break outer } return Response.json({}) }')).toBe(true)
+    })
+
+    it('fails a const whose contents the file can fill, a let, a namespace import, a const after the handler', () => {
+        expect(
+            only(
+                "import { loadDockets } from './db'\nconst cache: Record<string, string[]> = {}\n" +
+                    "export async function POST() { cache['x'] = await loadDockets(); return new Response(null) }\n" +
+                    "export async function GET() { return Response.json(cache['x'] ?? []) }",
+            ),
+        ).toBe(false)
+        expect(only('const recent: string[] = []\nexport async function GET() { return Response.json(recent) }')).toBe(
+            false,
+        )
+        expect(only("let ALLOW = 'GET'\nexport function GET() { return Response.json({ ALLOW }) }")).toBe(false)
+        expect(
+            only("import * as db from './db'\nexport async function GET() { return Response.json(await db.load()) }"),
+        ).toBe(false)
+        expect(
+            only(
+                "import { load } from './db'\nexport async function GET() { return Response.json(x) }\nconst x = load()",
+            ),
+        ).toBe(false)
+    })
+
+    it('fails an instantiation expression, whose value a type-only skip would hide', () => {
+        expect(
+            only(`${IMPORT}export async function GET() { const f = load<never>; return Response.json(await f()) }`),
+        ).toBe(false)
+        expect(only("export async function GET() { const f = fetch<never>; return f('http://data') }")).toBe(false)
+    })
+
+    it('fails a destructured constructor, the Function constructor by another name', () => {
+        expect(
+            only("export function GET() { const { constructor: F } = Object; return Response.json(F('return 1')()) }"),
+        ).toBe(false)
+        expect(only("export function GET() { const { 'constructor': F } = Object; return Response.json(F) }")).toBe(
+            false,
+        )
+    })
+
+    it('fails a name bound to anything but a primitive, data hung on the handler, and a shadowed undefined', () => {
+        expect(
+            only(
+                "import { load } from './db'\nconst f = load\nexport async function GET() { return Response.json(await f()) }",
+            ),
+        ).toBe(false)
+        expect(only('const X = `${process.env.X}`\nexport function GET() { return Response.json({ X }) }')).toBe(false)
+        expect(
+            only(
+                "import { load } from './db'\nexport async function GET() { return Response.json(await GET.load()) }\nGET.load = load",
+            ),
+        ).toBe(false)
+        expect(
+            only(
+                "import { load } from './db'\nconst undefined = load, X = undefined\n" +
+                    'export async function GET() { return Response.json(await (X as never as () => Promise<unknown>)()) }',
+            ),
+        ).toBe(false)
+    })
+
+    it("holds for next/navigation's other inert imports, which only throw a response", () => {
+        expect(
+            only(
+                "import { permanentRedirect } from 'next/navigation'\nexport function GET() { permanentRedirect('/a') }",
+            ),
+        ).toBe(true)
+        expect(only("import { notFound } from 'next/navigation'\nexport function GET() { notFound() }")).toBe(true)
+    })
+
+    it('never holds for a wrapper, whose code runs on every request out of sight', () => {
+        expect(only("import { wrap } from './wrap'\nexport const GET = wrap(() => Response.json({}))")).toBe(false)
+    })
+})
+
 describe('judging a handler against a policy', () => {
     const facts = (over: Partial<HandlerFacts>): HandlerFacts => ({
         reachesAuthorize: false,
         wrappedBy: null,
         calls: new Set(),
         opensWithSimulated404: false,
+        readsNothing: false,
         ...over,
     })
     const route = (rel: string): ScannedRoute => ({ root: 'r', rel, file: `/x/${rel}`, handlers: [] })
@@ -1930,6 +2151,53 @@ describe('judging a handler against a policy', () => {
         expect(
             judge(route('items/route.ts'), { verb: 'POST', facts: facts({}) }, { ...policy, hint: undefined }),
         ).not.toContain('undefined')
+    })
+
+    it('judges a read as a mutation, with its own message, and passes one that reads nothing (safeinsights/sssb#103)', () => {
+        for (const verb of ['GET', 'HEAD', 'OPTIONS']) {
+            expect(
+                judge(route('items/route.ts'), { verb, facts: facts({ reachesAuthorize: true }) }, policy),
+            ).toBeUndefined()
+            const failure = judge(route('items/route.ts'), { verb, facts: facts({}) }, policy)
+            expect(failure).toMatch(
+                new RegExp(`^r: items/route\\.ts ${verb} exports a read handler that does not reach authorize`),
+            )
+            expect(failure).toContain("authorize(user, orgId, 'read', subject)")
+            expect(failure).toContain('HINT-TEXT')
+            expect(
+                judge(route('items/route.ts'), { verb, facts: facts({ readsNothing: true }) }, policy),
+            ).toBeUndefined()
+        }
+    })
+
+    it('tells a read outside api/ that no exemption can name it', () => {
+        expect(judge(route('../feed/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
+            /move it under src\/app\/api, where an exemption .* can name it/,
+        )
+        expect(judge(route('items/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
+            /name a justified exemption, with the gate it passes, in the app's authz-exemptions\.mjs/,
+        )
+    })
+
+    it('reading nothing excuses a read only: a mutation that reads nothing still authorizes', () => {
+        expect(judge(route('items/route.ts'), { verb: 'POST', facts: facts({ readsNothing: true }) }, policy)).toMatch(
+            /exports a mutating handler that does not reach authorize/,
+        )
+    })
+
+    it('a read that reads nothing passes under an exemption whose gate it misses, but not a required gate', () => {
+        expect(
+            judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ readsNothing: true }) }, policy),
+        ).toBeUndefined()
+        expect(
+            judge(route('svc/jobs/route.ts'), { verb: 'GET', facts: facts({ readsNothing: true }) }, policy),
+        ).toMatch(/must also satisfy: the handler is itself a call to an imported withCaller/)
+        expect(
+            judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ wrappedBy: 'withSecret' }) }, policy),
+        ).toBeUndefined()
+        expect(judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
+            /sits under an exemption that holds only when/,
+        )
     })
 
     it('fails a refused handler, whatever its path', () => {
@@ -2006,7 +2274,7 @@ describe('judging a handler against a policy', () => {
 
     it('describes each gate in words an author can act on', () => {
         expect(describeGate({ kind: 'wrapped-by', callees: ['withA', 'withB'] })).toBe(
-            'the handler is itself a call to an imported withA(…) or withB(…), as in `export const POST = withA(…)`',
+            'the handler is itself a call to an imported withA(…) or withB(…), as in `export const <VERB> = withA(…)`',
         )
         expect(describeGate({ kind: 'calls', callees: ['a.b'] })).toBe(
             'the handler reaches a call to an imported a.b(…) on its own path',

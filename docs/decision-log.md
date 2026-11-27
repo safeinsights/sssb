@@ -7590,6 +7590,41 @@ standing rule for these sessions: decide, and record the rejected alternative.
 - **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
   that does not set it.
 
+## The authorization scan judges reads (2026-11-27, `fix/authz-scan-get`)
+
+safeinsights/sssb#103. The design is ADR-0012's 2026-11-27 addendum; the calls it did not settle:
+
+- **Every read handler is judged, deny by default.** Rejected: **the issue's trigger** (judge a GET only when it calls
+  `orgIdForSlug`, the app's org resolver, or a tenant-scoped db call with an org id). It fails open on a helper in
+  another module, which the framework cannot name in an adopter's tree; the showcase's service job poll read an org's
+  jobs through such a helper and would have stayed unjudged.
+- **"Reads nothing" is an analyser fact, not a gate kind.** A gate has to be named in an entry, so every adopter's
+  health route would need an exemption for a property the scan can check by itself. Its test is lexical over the whole
+  handler (nested functions, defaults and dead branches count): every name declared outside the handler must be on an
+  allow-list (inert globals, a primitive `const` of the file, `NextResponse`, `next/navigation`'s `redirect`,
+  `permanentRedirect` and `notFound`, SSSB's `appMode` and `isSimulated`). Then only inert values and the request are in
+  reach, so calls on locals and parameters are allowed (`new URL(request.url).searchParams.get`). Rejected: **a check on
+  call heads** (any call whose head is a global the file does not declare), the first version: review found it passed
+  `fetch` to an upstream service, a `declare global` client, and an import in any argument but a bare one
+  (`{ dockets: store }`). Rejected: **an object or array `const`** as inert: `const` fixes the binding, and the file
+  can fill it (`cache[org] = await load(org)`). `fetch` is out: a probe of an upstream service authorizes or names an
+  exemption. It excuses reads only; a mutation that reads nothing still authorizes, as before.
+- **Any `authorize` call counts on a read**, not only `'read'`: the scan does not evaluate the action argument, and a
+  read that checks a stronger action is correct.
+- **OPTIONS is judged** with GET and HEAD, which closes an OPTIONS that reads: a preflight that builds its headers
+  inline from literals (or primitive consts) reads nothing and passes; one that shares a headers object or reads
+  `process.env` authorizes or names an exemption (safeinsights/sssb#220).
+- **The showcase's three unauthorized reads authorize** rather than being exempted: the notification feed (`read
+Notification`, self-only), the preferences (`read NotificationPref`, self-only) and the service job poll (`read Job`,
+  its machine actor). Each subject's rule already granted the read; behaviour for a caller is unchanged.
+- **`storage/[...key]/route.ts` is a framework exemption**, not the showcase's: it is the download twin of the
+  framework's `storage-upload/route.ts`, and an app's exemption key cannot hold `[`, which the app file reads as a glob.
+- **The check keeps its id**, `authz-mutations`, since an app's `optOut` names it; its title says "route
+  handler", and its test "every handler reaches authorize(...), reads nothing, or passes its exemption's gate".
+- **safeinsights/sssb#137 is not in this change.** It reorders five mutating `[id]` routes in the showcase so a person
+  who may not act cannot tell an existing id from a missing one; the scan does not judge order, so it does not fall out
+  of this fix.
+
 ## A bounded, fair scheduled tick (2026-11-27, `fix/bounded-drains`)
 
 safeinsights/sssb#97: `runDueSchedules` and `runDueDeliveries` drained every due row of every tenant in one tick, one
