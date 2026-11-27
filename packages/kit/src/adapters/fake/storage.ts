@@ -299,8 +299,8 @@ export const fakeStorage: StoragePort = {
 
 /**
  * The fake store, with `createUploadTarget` minting the form `uploadTarget` names: `post` (the default, which is
- * `fakeStorage` itself) or `put`, so a simulated app, or a test, can exercise the browser's PUT path against the
- * local endpoint as it would a real one (the real adapter's form is `STORAGE_UPLOAD_TARGET`).
+ * `fakeStorage` itself) or `put`, so a test, or an app that registers it as its storage, can exercise the browser's
+ * PUT path against the local endpoint as it would a real one (the real adapter's form is `STORAGE_UPLOAD_TARGET`).
  */
 export function createFakeStorage(options: { uploadTarget?: 'post' | 'put' } = {}): StoragePort {
     if ((options.uploadTarget ?? 'post') === 'post') return fakeStorage

@@ -128,6 +128,13 @@ describe('POST /api/attachments (mint)', () => {
         expect(await response.json()).toEqual({ attachmentId: 'art-1', upload: target })
     })
 
+    test('writes no pending row when the store refuses to mint the target (no orphan row)', async () => {
+        h.createUploadTarget.mockRejectedValue(new Error('storage createUploadTarget: refused'))
+        await expect(post({ filename: 'x', sizeBytes: 1 })).rejects.toThrow(/refused/)
+        expect(h.createAttachment).not.toHaveBeenCalled()
+        expect(h.recordAuditEvent).not.toHaveBeenCalled()
+    })
+
     test('403 when a restricted member tries to upload', async () => {
         h.requireUser.mockResolvedValue(user({ role: 'restricted', restricted: true }))
         const response = await post({ filename: 'report.csv', contentType: 'text/csv', sizeBytes: 12 })

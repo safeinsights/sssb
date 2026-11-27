@@ -72,6 +72,13 @@ export async function POST(request: Request): Promise<Response> {
         // The storage key is built ENTIRELY server-side — tenant + a fresh uuid + the sanitized name —
         // so the client can never steer where bytes land (the resultKey prefix-lock lesson).
         const storageKey = `attachments/${tenantId}/${crypto.randomUUID()}/${sanitizeFilename(filename)}`
+        // The target is minted BEFORE the pending row is written: an adapter that refuses (a misconfigured store, a size
+        // it cannot sign) then leaves no orphan row behind.
+        const upload = await storage.createUploadTarget(storageKey, {
+            contentType: type,
+            maxBytes: ATTACHMENT_MAX_BYTES,
+            sizeBytes,
+        })
         const { id } = await createAttachment(db, {
             tenantId,
             orgId,
@@ -80,11 +87,6 @@ export async function POST(request: Request): Promise<Response> {
             contentType: type,
             storageKey,
             uploadedByUserId: user.id,
-        })
-        const upload = await storage.createUploadTarget(storageKey, {
-            contentType: type,
-            maxBytes: ATTACHMENT_MAX_BYTES,
-            sizeBytes,
         })
         // Audit trail: record the mint. The matching attachment.confirmed event lands when the
         // browser finalizes the upload — a minted-but-never-confirmed row leaves only this event, which

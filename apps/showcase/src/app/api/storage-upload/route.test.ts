@@ -197,11 +197,12 @@ describe('PUT /api/storage-upload (fake presigned-PUT twin)', () => {
         expect(await fakeStorage.get(KEY)).toBeNull()
     })
 
-    test('404 outside simulated mode (real uploads go straight to S3)', async () => {
+    test('404 outside simulated mode (real uploads go straight to the store), with a valid signed PUT', async () => {
         adaptersState.fake = false
-        const target = await fakeStorage.createUploadTarget(KEY, { contentType: 'text/plain', maxBytes: 1000 })
-        const file = new File([new Uint8Array([1])], 'hello.txt', { type: 'text/plain' })
-        const response = await POST(makeRequest(fieldsOf(target), file))
-        expect(response.status).toBe(404)
+        expect((await send()).status).toBe(404)
+        // And it stored nothing.
+        await fakeStorage.delete([KEY])
+        expect((await send()).status).toBe(404)
+        expect(await fakeStorage.get(KEY)).toBeNull()
     })
 })
