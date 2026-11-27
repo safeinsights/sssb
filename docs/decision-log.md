@@ -8036,7 +8036,7 @@ catchRequests })`), which the conformance check uses so it never touches an app'
   chunks) throws `LlmUnavailableError` after the same text when the entry has a `failure`, as the server's stream does;
   the demo replay finds a matched entry only when its `conversation` is not empty, as the fake does. The dashboard hid the
   failure once any text had arrived (`prev || assistantError`): it now keeps the streamed text and says the failure under
-  it (`assistant-failed`, `role="alert"`), and still shows the failure as the answer when nothing arrived. Known and left:
+  it (`assistant-failed`, `role="alert"`), and still shows the failure as the answer when nothing arrived. Known and left (`safeinsights/sssb#241`):
   a default entry with a `conversation` is replayed by the fake with its tool calls but by the demo as its `response`
   alone, as before this change.
 - **Not done.** The check proves the adapters, not an app's own consumer: whether a route or a screen shows the failure is
