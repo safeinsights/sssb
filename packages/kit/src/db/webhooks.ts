@@ -138,6 +138,7 @@ export async function runDueDeliveries(
                     .$if(perTenant !== null, (qb) => qb.limit(perTenant ?? 0))
                     .execute(),
             ),
+        (row) => row.id,
         async (row, tenantId) => {
             try {
                 const outcome = await deliverOne(db, now, { id: row.id, tenant_id: tenantId }, dispatch)

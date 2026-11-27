@@ -11,13 +11,14 @@
  * deadlines with that margin). A drain called with no budget at all is unbounded, as every drain was before the bound:
  * the tick always passes one, and the Simulator's own controls, which run no server limit, pass none.
  *
- * FAIRNESS. Each tenant's due rows form a queue, oldest due first; the drain takes one row from each tenant in turn
+ * FAIRNESS. Each tenant's listed due rows form a queue; the drain takes one row from each tenant in turn
  * (round-robin), so no tenant gets a second turn while another with due work has had none, and a tenant with a
- * thousand due rows, or one slow endpoint, costs every other tenant at most one of its turns per round. Which tenant
- * goes first changes every tick: the tenants are put in id order and rotated by a random offset (`random`,
- * `Math.random` by default), the same order for the listing and for the turns. A tick that can serve only some of
- * them therefore serves each with the same chance whatever the others hold, so no tenant is kept out tick after tick
- * by older or longer backlogs elsewhere. Nothing about the order is stored.
+ * thousand due rows, or one slow endpoint, costs every other tenant at most one of its turns per round. The order of the
+ * tenants is a fresh uniform shuffle every tick (`random`, `Math.random` by default), the same order for the listing and
+ * for the turns, so a tick that can serve only some of the tenants with due work serves each with the same chance,
+ * whatever the others hold and wherever their ids fall. A tenant's own listed rows (its oldest due, up to the listing
+ * limit) are shuffled too, so a row that fails every time and stays due cannot take that tenant's first turn every
+ * tick. Nothing about the order is stored.
  *
  * THE REMAINDER. A row the drain does not start is not touched: no claim, no lock, no write. It is still due, and the
  * next tick lists it again. Nothing is lost, and nothing runs twice, since running twice is what each drain's own
@@ -32,7 +33,7 @@ export interface DrainBudget {
     deadline: number
     /** The clock `deadline` is read against: `Date.now` unless a test passes its own. */
     clock?: () => number
-    /** Where in the tenants' id order the tick's rotation starts, from [0, 1): `Math.random` unless a test passes one. */
+    /** The draws, from [0, 1), that shuffle the tick's order: `Math.random` unless a test passes its own. */
     random?: () => number
 }
 
@@ -102,35 +103,46 @@ export function beforeDeadline(budget: DrainBudget): boolean {
     return (budget.clock ?? Date.now)() < budget.deadline
 }
 
-/** The tenants in id order, rotated to start at the tick's random offset: the order of the listing and of the turns. */
-export function tickOrder<T extends { id: string }>(tenants: readonly T[], budget: DrainBudget): T[] {
-    const byId = [...tenants].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    if (byId.length === 0) return byId
-    const draw = (budget.random ?? Math.random)()
-    const offset = Math.min(byId.length - 1, Math.max(0, Math.floor(draw * byId.length)))
-    return [...byId.slice(offset), ...byId.slice(0, offset)]
+/**
+ * `items` in a uniformly random order (Fisher–Yates, drawing from `budget.random`), starting from id order so a given
+ * sequence of draws always gives the same order. Every order is equally likely, so no item's chance of coming first
+ * depends on its neighbours, idle tenants included.
+ */
+export function shuffled<T>(items: readonly T[], budget: DrainBudget, idOf: (item: T) => string): T[] {
+    const random = budget.random ?? Math.random
+    const out = [...items].sort((a, b) => (idOf(a) < idOf(b) ? -1 : idOf(a) > idOf(b) ? 1 : 0))
+    for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.min(i, Math.max(0, Math.floor(random() * (i + 1))))
+        const swap = out[i]!
+        out[i] = out[j]!
+        out[j] = swap
+    }
+    return out
 }
 
 /**
- * Lists each tenant's due rows in the tick's order, stopping when the deadline passes (`listOne` runs one tenant's
- * query), then runs `run` over them round-robin until the rows or the budget run out. `run` isolates its own failures
+ * Lists each tenant's due rows, the tenants in a random order, stopping when the deadline passes (`listOne` runs one
+ * tenant's query; `rowKey` is a row's id), shuffles each tenant's rows, then runs `run` over them round-robin until the rows or the budget run out. `run` isolates its own failures
  * (each drain counts them); one that throws anyway stops the drain, as an unhandled error did before.
  */
 export async function drainFairly<T>(
     tenants: readonly { id: string }[],
     budget: DrainBudget,
     listOne: (tenantId: string) => Promise<readonly T[]>,
+    rowKey: (row: T) => string,
     run: (row: T, tenantId: string) => Promise<void>,
 ): Promise<DrainLeft> {
     const queues: TenantQueue<T>[] = []
     let cutShort = false
-    for (const tenant of tickOrder(tenants, budget)) {
+    for (const tenant of shuffled(tenants, budget, (t) => t.id)) {
         if (!beforeDeadline(budget)) {
             cutShort = true
             break
         }
         const rows = await listOne(tenant.id)
-        if (rows.length > 0) queues.push({ tenantId: tenant.id, rows })
+        // A tenant's own rows are shuffled too, so one that fails every time without advancing (and so is listed first
+        // every tick, being the oldest) does not take that tenant's turn tick after tick.
+        if (rows.length > 0) queues.push({ tenantId: tenant.id, rows: shuffled(rows, budget, rowKey) })
     }
     const left = await runRoundRobin(queues, budget, run)
     // A listing the deadline cut short left tenants unlisted: say so even when every listed row was started.

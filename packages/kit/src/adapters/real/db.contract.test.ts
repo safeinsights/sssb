@@ -818,12 +818,15 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         }
         const first = await runDueSchedules(realDb, jobs, now, { maxItems: 2, deadline: Number.MAX_SAFE_INTEGER })
         expect(first).toEqual({ spawned: 2, failed: 0, deferred: 2, stoppedBy: 'items' })
-        // One turn each, whichever tenant the tick's rotation put first: the busy tenant's oldest row and the quiet one's.
-        expect([...started].sort()).toEqual([busyIds[0], quietId].sort())
+        // One turn each, in whichever order the tick drew: the quiet tenant's row, and one of the busy tenant's three
+        // oldest (the listing takes one more than the bound, under RLS, oldest first).
+        expect(started).toContain(quietId)
+        expect(busyIds.slice(0, 3)).toContain(started.find((id) => id !== quietId))
 
         const rest = await runDueSchedules(realDb, jobs, now, { maxItems: 100, deadline: Number.MAX_SAFE_INTEGER })
         expect(rest).toEqual({ spawned: 3, failed: 0, deferred: 0, stoppedBy: null })
-        expect(started.slice(2)).toEqual(busyIds.slice(1))
+        // Every schedule spawned exactly once across the two calls.
+        expect([...started].sort()).toEqual([...busyIds, quietId].sort())
     })
 
     // The server can end a connection at any time: a failover, a reboot, an idle-session timeout, a socket

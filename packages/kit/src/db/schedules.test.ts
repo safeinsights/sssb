@@ -221,10 +221,14 @@ describe('the schedules drain is bounded per tick and fair across tenants (safei
         const jobs = stubJobs()
         const first = await runDueSchedules(fakeDb, jobs.port, now, { maxItems: 2, deadline: Number.MAX_SAFE_INTEGER })
         expect(first).toEqual({ spawned: 2, failed: 0, deferred: 2, stoppedBy: 'items' })
-        expect(firedFor(jobs.calls, busy[0]!)).toBe(1)
+        // One turn each: the quiet tenant's schedule, and one of the busy tenant's three oldest (the listing takes one
+        // more than the bound, and the drain shuffles what it listed).
         expect(firedFor(jobs.calls, quiet)).toBe(1)
+        const firedBusy = busy.filter((id) => firedFor(jobs.calls, id) === 1)
+        expect(firedBusy).toHaveLength(1)
+        expect(busy.slice(0, 3)).toContain(firedBusy[0])
         // What it left was not touched: still due at its own slot.
-        for (const id of busy.slice(1)) {
+        for (const id of busy.filter((b) => b !== firedBusy[0])) {
             expect(firedFor(jobs.calls, id)).toBe(0)
             expect((await nextRunAt(id)).getTime()).toBeLessThanOrEqual(now.getTime())
         }
@@ -257,10 +261,11 @@ describe('the schedules drain is bounded per tick and fair across tenants (safei
         const first = await runDueSchedules(fakeDb, slow, now, { maxItems: 100, deadline: 8_000, clock: () => clock })
         // Started at 0 and 5 seconds; at 10 the deadline had passed.
         expect(first).toEqual({ spawned: 2, failed: 0, deferred: 1, stoppedBy: 'time' })
-        expect(firedFor(calls, ids[2]!)).toBe(0)
+        const unfired = ids.filter((id) => firedFor(calls, id) === 0)
+        expect(unfired).toHaveLength(1)
 
         const none = await runDueSchedules(fakeDb, slow, now, { maxItems: 100, deadline: 0, clock: () => 0 })
         expect(none).toEqual({ spawned: 0, failed: 0, deferred: 0, stoppedBy: 'time' })
-        expect(firedFor(calls, ids[2]!)).toBe(0)
+        expect(firedFor(calls, unfired[0]!)).toBe(0)
     })
 })

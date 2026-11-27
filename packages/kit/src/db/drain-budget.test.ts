@@ -6,7 +6,7 @@ import {
     resolveDrainBudget,
     runRoundRobin,
     type TenantQueue,
-    tickOrder,
+    shuffled,
 } from './drain-budget'
 
 /** A queue of `count` rows for `tenantId`, ids `<tenant>-<n>`. */
@@ -83,40 +83,61 @@ describe('runRoundRobin', () => {
     })
 })
 
-describe('tickOrder', () => {
-    const tenants = [{ id: 'c' }, { id: 'a' }, { id: 'd' }, { id: 'b' }]
-    const order = (draw: number) =>
-        tickOrder(tenants, { maxItems: 1, deadline: NONE, random: () => draw }).map((t) => t.id)
+describe('shuffled', () => {
+    const budget = (random: () => number) => ({ maxItems: 1, deadline: NONE, random })
+    const id = (t: { id: string }) => t.id
 
-    test('is id order rotated to start where the draw lands, never the order the tenants were listed in', () => {
-        expect(order(0)).toEqual(['a', 'b', 'c', 'd'])
-        expect(order(0.5)).toEqual(['c', 'd', 'a', 'b'])
-        expect(order(0.99)).toEqual(['d', 'a', 'b', 'c'])
-        // A generator that returns 1 (outside its contract) still lands on the last tenant, not past it.
-        expect(order(1)).toEqual(['d', 'a', 'b', 'c'])
-        expect(tickOrder([], { maxItems: 1, deadline: NONE })).toEqual([])
+    test('is a permutation, the same one for the same draws whatever order the items came in', () => {
+        const a = shuffled([{ id: 'c' }, { id: 'a' }, { id: 'b' }], budget(seeded(1)), id).map(id)
+        const b = shuffled([{ id: 'b' }, { id: 'c' }, { id: 'a' }], budget(seeded(1)), id).map(id)
+        expect([...a].sort()).toEqual(['a', 'b', 'c'])
+        expect(a).toEqual(b)
+        expect(shuffled([], budget(seeded(1)), id)).toEqual([])
+    })
+
+    test('stays a permutation when a generator strays outside [0, 1)', () => {
+        for (const draw of [1, -0.5, 2]) {
+            const out = shuffled(
+                [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+                budget(() => draw),
+                id,
+            ).map(id)
+            expect([...out].sort()).toEqual(['a', 'b', 'c'])
+        }
+    })
+
+    test('puts every item first equally often, wherever its id falls among the others', () => {
+        const firsts: Record<string, number> = {}
+        const random = seeded(7)
+        const items = ['a', 'b', 'c', 'd', 'e'].map((x) => ({ id: x }))
+        for (let i = 0; i < 5000; i++) {
+            const first = shuffled(items, budget(random), id)[0]!.id
+            firsts[first] = (firsts[first] ?? 0) + 1
+        }
+        for (const x of ['a', 'b', 'c', 'd', 'e']) expect(firsts[x]).toBeGreaterThan(850) // 1000 expected
     })
 })
 
 describe('drainFairly', () => {
-    test('lists the tenants in the tick order and stops listing once the deadline passes', async () => {
+    test('stops listing once the deadline passes, and starts nothing after it', async () => {
         let now = 0
         const listed: string[] = []
         const ran: string[] = []
         const left = await drainFairly(
             [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
-            { maxItems: NONE, deadline: 2, clock: () => now, random: () => 0 },
+            { maxItems: NONE, deadline: 2, clock: () => now, random: seeded(3) },
             async (tenantId) => {
                 listed.push(tenantId)
                 now += 1 // each listing query takes a tick of the clock
                 return [`${tenantId}-0`]
             },
+            (row) => row,
             async (row) => {
                 ran.push(row)
             },
         )
-        // `a` listed at 0, `b` at 1; at 2 the deadline had passed, so `c` was never queried and nothing started.
-        expect(listed).toEqual(['a', 'b'])
+        // Listed at 0 and 1; at 2 the deadline had passed, so the third tenant was never queried and nothing started.
+        expect(listed).toHaveLength(2)
         expect(ran).toEqual([])
         expect(left).toEqual({ deferred: 2, stoppedBy: 'time' })
     })
@@ -128,6 +149,7 @@ describe('drainFairly', () => {
             async () => {
                 throw new Error('listed after the deadline')
             },
+            (row: string) => row,
             async () => undefined,
         )
         expect(left).toEqual({ deferred: 0, stoppedBy: 'time' })
@@ -139,12 +161,13 @@ describe('drainFairly', () => {
         const backlog: Record<string, number> = { a: 1000, b: 1000, c: 1000 }
         const served: Record<string, number> = { a: 0, b: 0, c: 0 }
         const random = seeded(97)
-        const TICKS = 60
-        for (let tick = 0; tick < TICKS; tick++) {
+        for (let tick = 0; tick < 60; tick++) {
             await drainFairly(
                 Object.keys(backlog).map((id) => ({ id })),
                 { maxItems: 2, deadline: NONE, random },
-                async (tenantId) => Array.from({ length: Math.min(3, backlog[tenantId]!) }, () => tenantId),
+                async (tenantId) =>
+                    Array.from({ length: Math.min(3, backlog[tenantId]!) }, (_, i) => `${tenantId}-${i}`),
+                (row) => row,
                 async (_row, tenantId) => {
                     served[tenantId]! += 1
                     backlog[tenantId]! -= 1
@@ -155,12 +178,33 @@ describe('drainFairly', () => {
         for (const tenant of ['a', 'b', 'c']) expect(served[tenant]).toBeGreaterThanOrEqual(25)
     })
 
+    test('tenants with nothing due do not tilt the odds between those with something due', async () => {
+        // Ten tenants, two with due work, one turn a tick: each of the two should get about half the turns, whatever
+        // the idle tenants' ids.
+        const tenants = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].map((id) => ({ id }))
+        const served: Record<string, number> = {}
+        const random = seeded(121)
+        for (let tick = 0; tick < 2000; tick++) {
+            await drainFairly(
+                tenants,
+                { maxItems: 1, deadline: NONE, random },
+                async (tenantId) => (tenantId === 'a' || tenantId === 'b' ? [tenantId] : []),
+                (row) => row,
+                async (_row, tenantId) => {
+                    served[tenantId] = (served[tenantId] ?? 0) + 1
+                },
+            )
+        }
+        expect(served['a']).toBeGreaterThan(850) // 1000 expected
+        expect(served['b']).toBeGreaterThan(850)
+    })
+
     test("rows that fail and never advance cannot keep a healthy tenant's row out of every tick", async () => {
         // A hundred tenants each hold a row that fails every time and stays due (a schedule whose spec no longer
-        // parses); one more tenant holds a healthy row. Each tick has room for a hundred turns.
+        // parses); one more tenant, last in id order, holds a healthy row. Each tick has room for a hundred turns.
         const tenants = [
             ...Array.from({ length: 100 }, (_, i) => ({ id: `stuck-${String(i).padStart(3, '0')}` })),
-            { id: 'healthy' },
+            { id: 'zz-healthy' },
         ]
         let healthy = 0
         const random = seeded(135)
@@ -169,13 +213,32 @@ describe('drainFairly', () => {
                 tenants,
                 { maxItems: 100, deadline: NONE, random },
                 async (tenantId) => [tenantId],
+                (row) => row,
                 async (_row, tenantId) => {
-                    if (tenantId === 'healthy') healthy += 1
+                    if (tenantId === 'zz-healthy') healthy += 1
                 },
             )
         }
         // A hundred chances in a hundred and one, each tick.
         expect(healthy).toBeGreaterThanOrEqual(45)
+    })
+
+    test("a tenant's own failing row, listed first as its oldest, does not take that tenant's only turn every tick", async () => {
+        // One tenant among many busy ones gets one turn a tick; its oldest due row fails every time and stays due.
+        let healthy = 0
+        const random = seeded(64)
+        for (let tick = 0; tick < 200; tick++) {
+            await drainFairly(
+                [{ id: 't' }],
+                { maxItems: 1, deadline: NONE, random },
+                async () => ['t-0-stuck', 't-1-healthy'],
+                (row) => row,
+                async (row) => {
+                    if (row === 't-1-healthy') healthy += 1
+                },
+            )
+        }
+        expect(healthy).toBeGreaterThan(70) // 100 expected
     })
 })
 

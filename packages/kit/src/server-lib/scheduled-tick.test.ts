@@ -147,7 +147,7 @@ describe('runScheduledTick', () => {
         const first = await runScheduledTick({ budget: { maxSchedules: 1 } })
         expect(first).toMatchObject({ spawned: 1, failed: 0, stoppedBy: 'items' })
         expect(first.deferred).toBeGreaterThanOrEqual(1)
-        expect(ids.map(firedFor)).toEqual([1, 0])
+        expect(ids.map(firedFor).sort()).toEqual([0, 1])
 
         const second = await runScheduledTick({ budget: { maxSchedules: 1 } })
         expect(second).toMatchObject({ spawned: 1, deferred: 0, stoppedBy: null })

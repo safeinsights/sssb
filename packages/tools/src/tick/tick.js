@@ -299,7 +299,8 @@ export function summarizeTick(body) {
 }
 
 /**
- * Whether a tick moved anything at all, for a caller that only wants to speak when something happened.
+ * Whether a tick moved anything at all, or stopped on its bound with work left, for a caller that only wants to speak
+ * when something happened.
  *
  * @param {Record<string, unknown>} body
  */
@@ -308,8 +309,10 @@ export function tickDidWork(body) {
         body.deliveries && typeof body.deliveries === 'object'
             ? /** @type {Record<string, unknown>} */ (body.deliveries)
             : {}
-    return [body.spawned, body.failed, deliveries.delivered, deliveries.failed, deliveries.dead].some(
-        (n) => count(n) > 0,
+    const stopped = [body.stoppedBy, deliveries.stoppedBy].some((reason) => reason === 'items' || reason === 'time')
+    return (
+        stopped ||
+        [body.spawned, body.failed, deliveries.delivered, deliveries.failed, deliveries.dead].some((n) => count(n) > 0)
     )
 }
 

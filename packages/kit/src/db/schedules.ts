@@ -92,6 +92,7 @@ export async function runDueSchedules(
                     .$if(perTenant !== null, (qb) => qb.limit(perTenant ?? 0))
                     .execute(),
             ),
+        (row) => row.id,
         async (row, tenantId) => {
             try {
                 spawned += await drainOne(db, jobs, now, { id: row.id, tenant_id: tenantId })
