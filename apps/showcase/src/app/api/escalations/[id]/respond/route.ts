@@ -28,7 +28,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         const { tenantId, orgId: activeOrgId } = resolved
 
         const found = await escalationForActiveOrg(db, tenantId, activeOrgId, id)
-        if (!found) return Response.json({ error: 'not found' }, { status: 404 })
+        // A missing row and a refusal below are the one NotFoundError, so withPortErrors gives both one answer.
+        if (!found) throw new NotFoundError()
 
         // The sides come from the row, so it is looked up first, and a person who may not act on it is told what a
         // missing id tells them: the same 404, status and body (safeinsights/sssb#137). The catch always rethrows,
@@ -40,7 +41,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
                 responderOrgId: found.responderOrgId,
             })
         } catch (error) {
-            throw error instanceof ForbiddenError ? new NotFoundError('not found') : error
+            throw error instanceof ForbiddenError ? new NotFoundError() : error
         }
 
         const next = decision === 'accept' ? 'accepted' : 'rejected'

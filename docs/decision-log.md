@@ -7849,6 +7849,20 @@ does not: one bit of existence, against the routes' own comments.
   `NotFoundError`, the same status and body (`{ error: 'not found' }`, `withPortErrors`) as a missing row. Rejected:
   **mapping every refusal to 404**, which would tell a restricted member who can see the queue that a ticket they are
   looking at does not exist, where the reorder gives them an honest 403 that reveals nothing.
+- **The class, not only the five routes.** Review found the same oracle in `POST /api/escalations`, on an org slug in
+  the body: the responder org was resolved, and 404 `unknown responder org` returned, before `authorize`, so a person
+  with no standing (refused the list that shows the targets) could learn which org slugs exist. It now authorizes once
+  on the requester side before the responder is resolved (the create rule reads only that side), and again with both
+  sides after. `service/jobs/[id]/status` moves its `authorize` before the lookup too; its only callers are service
+  keys in their own org, which the framework's machine rule always grants, so nothing leaked there today, but it was
+  the example that contradicted the rule. The guide's rule is stated for any lookup keyed by request input.
+- **The escalation routes' missing row throws the same `NotFoundError` the refusal is rethrown as**, so one mapper
+  (`withPortErrors`) writes both answers rather than two literals agreeing by hand.
+- **A malformed id is still a 404 before `authorize`** (`requireUuidParam`), on every route: a refused caller gets 404
+  for a non-uuid and 403 for a uuid, which tells them only the id's shape, which they wrote.
+- **A responder-side member who may not decide gets 404 for an escalation they can see**, which is what the
+  reorder was chosen to avoid for tickets. The issue's "Done when" requires it, and the dashboard shows that member no
+  decide controls, so only a forced request meets it.
 - **Rejected for escalations: authorizing the read first**, then the action after the lookup. It hides existence from
   anyone who may not read escalations, but a reader who may not decide would still get 403 for an existing id and 404
   for a missing one, which the issue's "Done when" rules out.
@@ -7861,4 +7875,4 @@ does not: one bit of existence, against the routes' own comments.
   scaffold every adopter deletes (`sssb remove-items`'s diffs with it). The rule goes in the app guide instead.
 - **No conformance check.** The authorization scan proves a handler may reach `authorize`, not the order of calls, and
   it cannot tell which call is the row lookup in an app's own code, so an order check would be a guess about names.
-  The guide says to pin the rule with a route test, as the showcase's five routes now do.
+  The guide says to pin the rule with a route test, as the showcase's routes now do.
