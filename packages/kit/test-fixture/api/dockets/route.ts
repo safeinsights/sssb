@@ -1,5 +1,6 @@
 import { authorize } from '@sssb/kit/authz/authorize'
 import type { AuthUser } from '@sssb/kit/ports/auth'
+import { listDockets } from '../stand-ins'
 
 /**
  * FIXTURE ROUTE — SCANNED, NEVER SERVED.
@@ -22,6 +23,16 @@ const CALLER: AuthUser = {
     tenantSlug: 'harbor',
     orgSlug: 'depot',
     restricted: false,
+}
+
+/**
+ * The scan's READ anchor: a read of org-scoped rows that is not exempt, so it has to authorize the read for real. It
+ * calls a stand-in read, so without its `authorize(...)` it would fail: a read handler that called nothing but
+ * globals would pass without one.
+ */
+export async function GET(): Promise<Response> {
+    authorize(CALLER, 'depot', 'read', { type: 'Docket', orgId: 'depot' })
+    return Response.json({ dockets: await listDockets('depot') })
 }
 
 export async function POST(): Promise<Response> {

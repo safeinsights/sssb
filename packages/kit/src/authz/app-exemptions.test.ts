@@ -123,24 +123,41 @@ describe("an app's own exemptions", () => {
         expect(scan.failures.join('\n')).toMatch(/hooks\/partner\/b\/route\.ts POST exports a mutating handler/)
     })
 
-    it("fail an entry that matches no mutating route in the app's own tree", async () => {
+    it("fail an entry that matches no route handler in the app's own tree", async () => {
         const exemptions =
             `export default { files: { 'partner/gone/route.ts': ${PING_EXEMPTION} }, ` +
             `prefixes: { 'hooks/': ${PING_EXEMPTION} } }\n`
-        // A GET-only route at the path does not keep the entry alive either.
+        // A route file that exports no handler (only a segment config) does not keep the entry alive either.
         const scan = await scanApp(
             app(
                 {
                     'api/dockets/route.ts': AUTHORIZED_POST,
-                    'api/partner/gone/route.ts': 'export async function GET() { return Response.json({}) }\n',
+                    'api/partner/gone/route.ts': "export const dynamic = 'force-dynamic'\n",
                 },
                 exemptions,
             ),
         )
         expect(scan.exemptionProblems).toEqual([
-            "acme/authz-exemptions.mjs: files `partner/gone/route.ts` is stale — the app's src/app/api has no mutating route there",
-            "acme/authz-exemptions.mjs: prefixes `hooks/` is stale — it covers no mutating route in the app's src/app/api",
+            "acme/authz-exemptions.mjs: files `partner/gone/route.ts` is stale — the app's src/app/api has no route handler there",
+            "acme/authz-exemptions.mjs: prefixes `hooks/` is stale — it covers no route handler in the app's src/app/api",
         ])
+    })
+
+    it('keep an entry alive with a read route: a GET is judged, so its exemption is in use', async () => {
+        // safeinsights/sssb#103: reads are judged too, so an entry naming a GET-only route is not stale.
+        const exemptions = `export default { files: { 'partner/ping/route.ts': ${PING_EXEMPTION} } }\n`
+        const scan = await scanApp(
+            app(
+                {
+                    'api/dockets/route.ts': AUTHORIZED_POST,
+                    'api/partner/ping/route.ts':
+                        "import { partner } from '../../partner'\nexport async function GET() { return Response.json(await partner.ping()) }\n",
+                },
+                exemptions,
+            ),
+        )
+        expect(scan.exemptionProblems).toEqual([])
+        expect(scan.failures).toEqual([])
     })
 
     it('fail an unknown key, a malformed path, and a default export that is not an object', async () => {

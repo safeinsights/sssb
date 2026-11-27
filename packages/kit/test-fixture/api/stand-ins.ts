@@ -1,6 +1,7 @@
 import type { AnalyticsPort } from '@sssb/kit/ports/analytics'
 import type { AuthPort } from '@sssb/kit/ports/auth'
 import type { LlmPort } from '@sssb/kit/ports/llm'
+import type { StoragePort } from '@sssb/kit/ports/storage'
 import type { ServiceIdentity } from '@sssb/kit/service-auth/verify'
 
 /**
@@ -33,6 +34,20 @@ export const auth: Pick<AuthPort, 'updateProfile' | 'setActiveOrg' | 'signOut'> 
 export const llm: Pick<LlmPort, 'complete'> = { complete: async () => ({ text: '' }) }
 
 export const analytics: Pick<AnalyticsPort, 'capture'> = { capture: async () => {} }
+
+export const storage: Pick<StoragePort, 'get'> = { get: async () => null }
+
+/**
+ * A read of org-scoped rows, as an app's domain module offers one (the fixture's dockets, by org). The read routes
+ * call it so that each one READS something: a read handler that calls nothing but globals passes the scan without
+ * `authorize(...)`, which would make a fixture read prove nothing.
+ */
+export const listDockets = async (orgId: string): Promise<Array<{ id: string; orgId: string }>> => [
+    { id: 'docket-1', orgId },
+]
+
+/** The simulated world's state, as a Simulator route reads it. */
+export const readSimulatedWorld = async (): Promise<{ orgs: string[] }> => ({ orgs: ['depot', 'annex'] })
 
 /**
  * Not typed against a port, because it is not on one: redeeming an invite token is the fake auth adapter's

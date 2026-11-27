@@ -7,8 +7,13 @@ import ts from 'typescript'
  * fixture, `authorized-mutations.test.ts`), split out so the scan's POLICY (which roots, which exemptions:
  * ./route-policy.ts and an app's own) is input rather than something this module knows. It reads route
  * files with the TypeScript compiler's parser and binder, never a regex over their text, and judges EACH
- * exported mutating handler on its own: a string, a comment, a call in another handler or a call in
- * statically dead code proves nothing about the handler in front of it. Server Actions (`scanServerActions`) are
+ * exported handler on its own, whatever its verb: a string, a comment, a call in another handler or a call in
+ * statically dead code proves nothing about the handler in front of it. A read handler (GET, HEAD, OPTIONS) is held
+ * to the same rule as a mutation, because a read of org-scoped data authorizes the read, and may pass in one more way:
+ * by reading nothing, every call in it a global's (`callsOnlyGlobals`), as a liveness probe or a preflight does.
+ * Which reads touch org-scoped data is not guessed from what a handler calls, since a helper in another module that
+ * resolves the org would hide it: a read that calls anything else authorizes, or names an exemption whose gate it
+ * passes, as a mutation does (safeinsights/sssb#103). Server Actions (`scanServerActions`) are
  * judged by the same rules as a POST, each export of a `'use server'` file and each function whose body opens with
  * `'use server'`; no exemption applies to one. The walks follow a symbolic link to a directory, as Next does.
  *
@@ -95,8 +100,23 @@ import ts from 'typescript'
  * stronger: authorize before anything else the handler does, on every path.
  */
 
-/** The verbs that mutate. GET, HEAD and OPTIONS are never judged. */
+/** The verbs that mutate. */
 const MUTATING_VERBS: readonly string[] = ['POST', 'PUT', 'PATCH', 'DELETE']
+
+/**
+ * The verbs that read. A read handler is judged as a mutation is, with one more way to pass: it reads nothing
+ * (`HandlerFacts.callsOnlyGlobals`), as a liveness probe or a CORS preflight does. A read of org-scoped data
+ * authorizes the read, since the session's org says where a person is placed, not that they may read there.
+ */
+const READ_VERBS: readonly string[] = ['GET', 'HEAD', 'OPTIONS']
+
+/** Every verb Next routes to an exported handler: each one the module exports is judged. */
+const JUDGED_VERBS: readonly string[] = [...MUTATING_VERBS, ...READ_VERBS]
+
+/** Whether `verb` reads (GET, HEAD, OPTIONS) rather than mutates. */
+export function isReadVerb(verb: string): boolean {
+    return READ_VERBS.includes(verb)
+}
 
 // Next.js routes route.ts/tsx/js/jsx/mjs. All of them, or the scan is bypassable by filename.
 const ROUTE_FILE = /^route\.(?:mjs|[jt]sx?)$/
@@ -162,9 +182,15 @@ export interface HandlerFacts {
     calls: ReadonlySet<string>
     /** The handler opens with the inert `if (!isSimulated)` gate and no parameter runs code (`opensWithSimulated404`). */
     opensWithSimulated404: boolean
+    /**
+     * The handler is a function (not a wrapper's result) whose code, read lexically, calls nothing but globals
+     * (`callsOnlyGlobals`): it can read nothing a port, the database or a helper holds. What lets a read handler pass
+     * without `authorize`.
+     */
+    callsOnlyGlobals: boolean
 }
 
-/** One exported mutating handler: its facts, or why it could not be read (a refusal is a failure). */
+/** One exported handler: its facts, or why it could not be read (a refusal is a failure). */
 export type Handler =
     { verb: string; facts: HandlerFacts; refusal?: never } | { verb: string; refusal: string; facts?: never }
 
@@ -173,7 +199,7 @@ export interface ScannedRoute {
     /** Path relative to the root's `exemptDir`, `/`-separated. */
     rel: string
     file: string
-    /** One entry per exported mutating verb. Empty for a route that mutates nothing. */
+    /** One entry per exported verb Next routes (`JUDGED_VERBS`). Empty for a file that exports none. */
     handlers: Handler[]
 }
 
@@ -182,7 +208,7 @@ export interface ScanOptions {
     authorizeModules?: readonly string[]
 }
 
-/** Every route file under every root, each with its exported mutating handlers analysed. */
+/** Every route file under every root, each with its exported handlers analysed. */
 export function scanRoutes(roots: readonly ScanRoot[], options: ScanOptions = {}): ScannedRoute[] {
     const authorizeModules = options.authorizeModules ?? ['@sssb/kit/authz/authorize']
     return roots.flatMap((root) => {
@@ -537,11 +563,28 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
     if (required && !gateHolds(required.mustMatch, handler.facts)) {
         return `${where} must also satisfy: ${describeGate(required.mustMatch)}. ${required.reason}`
     }
+    // A read that calls nothing but globals reads no data, so it has nothing to authorize, wherever it sits.
+    const read = isReadVerb(handler.verb)
+    if (!handler.facts.reachesAuthorize && read && handler.facts.callsOnlyGlobals) return undefined
     if (!handler.facts.reachesAuthorize && exemption) {
         return (
             `${where} sits under an exemption that holds only when ${describeGate(exemption.mustMatch)}, and this ` +
             `handler does not: the exemption's justification does not hold here. Add the gate to THIS handler, or call ` +
             `authorize(...). (A string, a comment, a look-alike, or the gate on another verb does not count.)`
+        )
+    }
+    if (!handler.facts.reachesAuthorize && read) {
+        return (
+            `${where} exports a read handler that does not reach authorize(...) on its own path, and the route is not ` +
+            `in the exemption map. A read authorizes as a mutation does, \`authorize(user, orgId, 'read', subject)\`: ` +
+            `the session's org says where a person is placed, not that they may read there (the role \`none\` is placed ` +
+            `with no standing). A read handler passes without it only when it reads nothing: every call in it is to a ` +
+            `global such as Response.json or new Date, never an import, a helper, or a method on a parameter or a ` +
+            `local. The same reachability rules apply as for a mutation: a call in a string, a dead branch, an uncalled ` +
+            `function or another module does not count, nor does one whose denial cannot reach the handler. Call ` +
+            `authorize(...) in this handler, or, only if it reads nothing org-scoped (a self-only read authorizes its ` +
+            `self-only subject instead), add a justified exemption.` +
+            (policy.hint ? ` ${policy.hint}` : '')
         )
     }
     if (!handler.facts.reachesAuthorize) {
@@ -614,7 +657,7 @@ class RootScanner {
     handlers(file: string): Handler[] {
         const src = this.load(file)
         if (typeof src === 'string') return [{ verb: '*', refusal: src }]
-        return this.mutatingExports(src, new Set()).map(([verb, binding]) => {
+        return this.judgedExports(src, new Set()).map(([verb, binding]) => {
             const node = this.handlerOf(binding, new Set())
             return 'reason' in node ? { verb, refusal: node.reason } : { verb, facts: this.facts(node) }
         })
@@ -704,10 +747,10 @@ class RootScanner {
         return typeof loaded === 'string' ? `'${specifier}' (${resolved.resolvedFileName}): ${loaded}` : loaded
     }
 
-    /** `[verb, binding]` for every mutating verb the module exports, through `export *` as well. */
-    private mutatingExports(src: Source, seen: Set<string>): Array<[string, Binding]> {
+    /** `[verb, binding]` for every verb the module exports (`JUDGED_VERBS`), through `export *` as well. */
+    private judgedExports(src: Source, seen: Set<string>): Array<[string, Binding]> {
         const { named, stars } = exportsOf(src)
-        const out = [...named].filter(([name]) => MUTATING_VERBS.includes(name))
+        const out = [...named].filter(([name]) => JUDGED_VERBS.includes(name))
         if (seen.has(src.fileName)) return out
         seen.add(src.fileName)
         for (const specifier of stars) {
@@ -717,7 +760,7 @@ class RootScanner {
                 out.push(['*', { kind: 'refused', reason }])
                 continue
             }
-            for (const [verb, binding] of this.mutatingExports(target, seen)) {
+            for (const [verb, binding] of this.judgedExports(target, seen)) {
                 if (!out.some(([known]) => known === verb)) out.push([verb, binding])
             }
         }
@@ -812,6 +855,7 @@ class RootScanner {
                 wrappedBy: null,
                 calls: reach.calls,
                 opensWithSimulated404: opensWithSimulated404(node.src, node.fn),
+                callsOnlyGlobals: callsOnlyGlobals(node.src, node.fn),
             }
         }
         reach.wrapped(node.call)
@@ -820,6 +864,8 @@ class RootScanner {
             wrappedBy: gateName(node.src, node.call.expression) ?? null,
             calls: reach.calls,
             opensWithSimulated404: false,
+            // A wrapper is code the scan does not read, run on every request: what it reads is out of sight.
+            callsOnlyGlobals: false,
         }
     }
 }
@@ -1876,6 +1922,84 @@ function opensWithSimulated404(src: Source, fn: ts.FunctionLikeDeclaration): boo
 }
 
 /**
+ * Globals a handler that "reads nothing" may not call, though nothing in the file declares them: each reaches a module
+ * (`require`, `process.getBuiltinModule`), runs code from a string (`eval`, `Function`), calls a function it is
+ * handed by reflection (`Reflect.apply`), or reads whatever another module left on the global object.
+ */
+const OPAQUE_GLOBALS: ReadonlySet<string> = new Set([
+    'Bun',
+    'Deno',
+    'Function',
+    'Reflect',
+    'eval',
+    'exports',
+    'global',
+    'globalThis',
+    'module',
+    'process',
+    'require',
+    'self',
+    'window',
+])
+
+/**
+ * Whether `fn` reads nothing it could have to authorize: its whole text (parameters, nested functions and dead
+ * branches included, so it is read LEXICALLY, not along a path) makes no call, `new` or tagged template but to a
+ * global, a name declared nowhere in the file (`Response.json`, `new Date().toISOString()`, `fetch`), never to an
+ * import, a same-file helper, a parameter's or a local's method, or a global the file assigns to or OPAQUE_GLOBALS
+ * names. No call is handed a name from outside the handler as an argument either (`p.then(load)`,
+ * `setTimeout(load)`), since the global would call it; an import read as a plain value (`{ mode: appMode }`) is
+ * allowed. No JSX element but an intrinsic one (a component is a call), no decorator and no `using` declaration (its
+ * disposer runs). A dynamic `import()` and `import.meta.resolve()` have no global head, so they fail it.
+ *
+ * What it does not see: a getter, an iterator or a conversion (`toJSON`, `toString`) that an imported value carries
+ * runs code when the handler reads it as a value. Like a gate, it proves the KIND of handler (one that calls nothing
+ * it imports), not that no data can reach it (ADR-0012).
+ */
+function callsOnlyGlobals(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
+    const inside = (decl: ts.Declaration) => decl.getStart(src.sf) >= fn.getStart(src.sf) && decl.end <= fn.end
+    const globalHead = (callee: ts.Expression): boolean => {
+        let head = unwrap(callee)
+        for (;;) {
+            if (ts.isPropertyAccessExpression(head) || ts.isElementAccessExpression(head))
+                head = unwrap(head.expression)
+            else if (ts.isCallExpression(head) || ts.isNewExpression(head) || ts.isAwaitExpression(head))
+                head = unwrap(head.expression)
+            else break
+        }
+        return (
+            ts.isIdentifier(head) &&
+            declarationOf(src, head) === undefined &&
+            !OPAQUE_GLOBALS.has(head.text) &&
+            !assignsGlobal(src.sf, (name) => name === head.text)
+        )
+    }
+    /** A name (or a property read on one) declared outside the handler: an import, a same-file function or value. */
+    const outsideName = (argument: ts.Expression): boolean => {
+        let head = unwrap(ts.isSpreadElement(argument) ? argument.expression : argument)
+        while (ts.isPropertyAccessExpression(head) || ts.isElementAccessExpression(head)) head = unwrap(head.expression)
+        if (!ts.isIdentifier(head)) return false
+        const decl = declarationOf(src, head)
+        return decl !== undefined && !inside(decl)
+    }
+    let only = true
+    const visit = (node: ts.Node): void => {
+        if (!only) return
+        if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+            if (!globalHead(node.expression) || (node.arguments ?? []).some(outsideName)) only = false
+        } else if (ts.isTaggedTemplateExpression(node)) {
+            if (!globalHead(node.tag)) only = false
+        } else if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
+            if (!(ts.isIdentifier(node.tagName) && /^[a-z]/.test(node.tagName.text))) only = false
+        } else if (ts.isDecorator(node)) only = false
+        else if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) only = false
+        ts.forEachChild(node, visit)
+    }
+    visit(fn)
+    return only
+}
+
+/**
  * A parameter that runs no code when the handler is called: no default anywhere in it, and no computed key in a
  * destructuring pattern. Next's own `(request, { params })` is fine; `{ params = wipe() }` is not.
  */
@@ -1935,13 +2059,20 @@ function importedFrom(src: Source, callee: ts.Expression): string | undefined {
  * builds with code of the file's own. Undeclared names only; a declared one is not the global anyway.
  */
 function assignsGateGlobal(sf: ts.SourceFile): boolean {
+    return assignsGlobal(
+        sf,
+        (name) =>
+            name === 'Response' ||
+            name === 'NextResponse' ||
+            name === 'JSON' ||
+            name === 'globalThis' ||
+            GLOBAL_ERROR.test(name),
+    )
+}
+
+/** Whether the file assigns to an undeclared name `relied` accepts, or to a property of one (`fetch.x = …`). */
+function assignsGlobal(sf: ts.SourceFile, relied: (name: string) => boolean): boolean {
     let found = false
-    const relied = (name: string) =>
-        name === 'Response' ||
-        name === 'NextResponse' ||
-        name === 'JSON' ||
-        name === 'globalThis' ||
-        GLOBAL_ERROR.test(name)
     const visit = (node: ts.Node): void => {
         if (found) return
         if (

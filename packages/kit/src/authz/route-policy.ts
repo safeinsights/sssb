@@ -2,9 +2,11 @@ import type { Exemption, Gate, ScanPolicy } from './route-scan'
 
 /**
  * THE FRAMEWORK'S AUTHORIZATION POLICY: the exemptions and gates the authorization scan applies to every route
- * tree it walks. Every mutating route handler (POST/PUT/PATCH/DELETE) must reach `authorize(...)` on its own path
- * (./route-scan.ts judges that), or its route must sit in the justified exemption map below AND the handler must
- * pass that exemption's gate. GET-only files never have to authorize.
+ * tree it walks. Every exported route handler, a read (GET/HEAD/OPTIONS) as well as a mutation
+ * (POST/PUT/PATCH/DELETE), must reach `authorize(...)` on its own path (./route-scan.ts judges that), or its route must
+ * sit in the justified exemption map below AND the handler must pass that exemption's gate. A read handler may also
+ * pass by reading nothing (every call in it a global's, ./route-scan.ts `callsOnlyGlobals`), which needs no entry
+ * here. An entry applies to every verb of the routes it names, each judged against its gate on its own.
  *
  * It lives in source, not in a test, because two scans apply it: the kit's own (`authorized-mutations.test.ts`, over
  * the framework's reference tree `packages/kit/test-fixture/api`, which is also what keeps every entry here from
@@ -14,11 +16,11 @@ import type { Exemption, Gate, ScanPolicy } from './route-scan'
  *
  * Exemption keys are paths relative to a root's `exemptDir` (an app's `src/app/api`, or the fixture's `api/`), each
  * with the reason it needs no per-actor authorize(...) call. Blanket by prefix (whole dirs) or exact by file. Keep
- * this list honest: a new mutating route that isn't genuinely one of these must call authorize(...), not be added
+ * this list honest: a new route that isn't genuinely one of these must call authorize(...), not be added
  * here. Every entry is backed by a file in the fixture tree, which is what keeps the staleness checks meaningful.
  *
  * EVERY exemption names the gate its reason rests on as `mustMatch`, and the scan checks it on EVERY exempted
- * mutating HANDLER, per verb, so the claim is ENFORCED, not prose: a guarded POST does not carry an open DELETE
+ * HANDLER, per verb, so the claim is ENFORCED, not prose: a guarded POST does not carry an open DELETE
  * beside it. `mustMatch` is REQUIRED (`isGate` below, which the kit's test applies to every entry) because a bare
  * exemption is matched by RELATIVE PATH IN EVERY ROOT, including an adopter's app. Without a gate,
  * `profile/route.ts` would exempt any file at that path from authorize(...): an adopter's PUT that updated any user
@@ -99,6 +101,13 @@ export const EXEMPT_FILES: Readonly<Record<string, Exemption>> = {
             'simulated-mode-only (404 in real) multipart upload endpoint — the local twin of an S3 presigned POST, ' +
             'authenticated by the server-signed HMAC upload-target fields (like the webhook secret), NOT a user ' +
             'session; the upload TARGET was already authorized by the app route that minted it',
+        mustMatch: SIMULATED_404,
+    },
+    'storage/[...key]/route.ts': {
+        reason:
+            'simulated-mode-only (404 in real) download endpoint — the local twin of an S3 signed GET URL, serving the ' +
+            'fake storage adapter by key; in real mode an object is read through a signed URL that an authorized app ' +
+            'route minted',
         mustMatch: SIMULATED_404,
     },
 }
