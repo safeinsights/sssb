@@ -1,0 +1,293 @@
+// @vitest-environment node
+import Anthropic from '@anthropic-ai/sdk'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { LlmUnavailableError } from '../../ports/errors'
+import type { LlmRequest, LlmToolLoopRequest } from '../../ports/llm'
+import { createRealLlm } from './llm'
+
+/**
+ * The real LLM adapter's deadline and error mapping (`safeinsights/sssb#98`). No network: the global `fetch` the SDK
+ * client picks up is replaced, so the SDK's own retry, `Retry-After`, abort and error-class code runs for real against
+ * canned responses, and a test that forgets to stub it fails instead of calling the provider.
+ */
+const request: LlmRequest = { purpose: 'unit', messages: [{ role: 'user', content: 'hi' }] }
+
+const messageBody = (content: object[], stopReason = 'end_turn') => ({
+    id: 'msg_1',
+    type: 'message',
+    role: 'assistant',
+    model: 'claude-sonnet-5',
+    content,
+    stop_reason: stopReason,
+    stop_sequence: null,
+    usage: { input_tokens: 1, output_tokens: 1 },
+})
+const textMessage = (text: string) => messageBody([{ type: 'text', text }])
+const json = (status: number, body: object, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } })
+const errorBody = (type: string) => ({ type: 'error', error: { type, message: `${type} from the provider` } })
+
+function stubFetch(handler: (init: RequestInit, call: number) => Response | Promise<Response>) {
+    const fetchMock = vi.fn((_url: unknown, init?: RequestInit) => {
+        // The deadline's signal reaches the HTTP call, the way an abort reaches a real `fetch`.
+        return new Promise<Response>((resolve, reject) => {
+            const signal = init?.signal
+            const onAbort = () => reject(new DOMException('This operation was aborted', 'AbortError'))
+            if (signal?.aborted) return onAbort()
+            signal?.addEventListener('abort', onAbort, { once: true })
+            Promise.resolve(handler(init ?? {}, fetchMock.mock.calls.length)).then(resolve, reject)
+        })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+}
+/** A response that never comes, until the signal aborts the call. */
+const hang = () => new Promise<Response>(() => {})
+
+beforeEach(() => {
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('the test forgot to stub fetch')))
+})
+afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+})
+
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+    try {
+        await promise
+    } catch (error) {
+        return error
+    }
+    throw new Error('expected the call to reject')
+}
+
+describe('createRealLlm: what the provider says', () => {
+    it('maps a 429 to rate-limited, with the provider error as its cause and its Retry-After as ours', async () => {
+        stubFetch(() => json(429, errorBody('rate_limit_error'), { 'retry-after': '7' }))
+        const error = await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))
+        expect(error).toBeInstanceOf(LlmUnavailableError)
+        expect(error).toMatchObject({ reason: 'rate-limited', retryAfterSeconds: 7 })
+        expect((error as LlmUnavailableError).cause).toBeInstanceOf(Anthropic.RateLimitError)
+    })
+
+    it('maps a 529 to overloaded, and says to ask again in 10 s when the provider named no time', async () => {
+        stubFetch(() => json(529, errorBody('overloaded_error')))
+        const error = await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))
+        expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'overloaded', retryAfterSeconds: 10 })
+    })
+
+    it('clamps a Retry-After to two minutes, and ignores one that is not a number of seconds', async () => {
+        stubFetch(() => json(429, errorBody('rate_limit_error'), { 'retry-after': '86400' }))
+        expect(await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))).toMatchObject({
+            retryAfterSeconds: 120,
+        })
+        stubFetch(() => json(429, errorBody('rate_limit_error'), { 'retry-after': 'Wed, 21 Oct 2099 07:28:00 GMT' }))
+        expect(await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))).toMatchObject({
+            retryAfterSeconds: 10,
+        })
+    })
+
+    it('leaves every other provider error as the SDK threw it', async () => {
+        stubFetch(() => json(400, errorBody('invalid_request_error')))
+        expect(await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))).toBeInstanceOf(
+            Anthropic.BadRequestError,
+        )
+        stubFetch(() => json(500, errorBody('api_error')))
+        expect(await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))).toBeInstanceOf(
+            Anthropic.InternalServerError,
+        )
+    })
+
+    it('maps the same way from stream and runToolLoop', async () => {
+        stubFetch(() => json(529, errorBody('overloaded_error')))
+        const llm = createRealLlm('key', { maxRetries: 0 })
+        const streamed = rejection(
+            (async () => {
+                for await (const chunk of llm.stream(request)) void chunk
+            })(),
+        )
+        expect(await streamed).toMatchObject({ reason: 'overloaded' })
+        const loop: LlmToolLoopRequest = { ...request, tools: [], execute: async () => '' }
+        expect(await rejection(llm.runToolLoop(loop))).toMatchObject({ reason: 'overloaded' })
+    })
+
+    it('retries once by default, inside the deadline, so a brief 529 never reaches the caller', async () => {
+        const fetchMock = stubFetch((_init, call) =>
+            call === 1
+                ? json(529, errorBody('overloaded_error'), { 'retry-after-ms': '1' })
+                : json(200, textMessage('ok')),
+        )
+        expect(await createRealLlm('key').complete(request)).toEqual({ text: 'ok' })
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('gives up after that one retry', async () => {
+        const fetchMock = stubFetch(() => json(529, errorBody('overloaded_error'), { 'retry-after-ms': '1' }))
+        expect(await rejection(createRealLlm('key').complete(request))).toMatchObject({ reason: 'overloaded' })
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+})
+
+describe('createRealLlm: the deadline', () => {
+    it('ends a call that does not answer in `timeoutMs` as timed-out, with the deadline in its message', async () => {
+        const fetchMock = stubFetch(hang)
+        const started = Date.now()
+        const error = await rejection(createRealLlm('key').complete({ ...request, timeoutMs: 40 }))
+        expect(error).toBeInstanceOf(LlmUnavailableError)
+        expect(error).toMatchObject({ reason: 'timed-out', message: 'llm call did not finish within 40 ms' })
+        expect(Date.now() - started).toBeLessThan(2000)
+        // The request was aborted, not left running.
+        expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+    })
+
+    it('counts the SDK retries against it: a long Retry-After cannot outlast the deadline', async () => {
+        const fetchMock = stubFetch((_init, call) =>
+            call === 1 ? json(529, errorBody('overloaded_error'), { 'retry-after-ms': '60000' }) : hang(),
+        )
+        const started = Date.now()
+        const error = await rejection(createRealLlm('key').complete({ ...request, timeoutMs: 60 }))
+        expect(error).toMatchObject({ reason: 'timed-out' })
+        expect(Date.now() - started).toBeLessThan(2000)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('takes the default from the options, and the request overrides it', async () => {
+        stubFetch(hang)
+        const llm = createRealLlm('key', { timeoutMs: 30 })
+        expect(await rejection(llm.complete(request))).toMatchObject({
+            message: 'llm call did not finish within 30 ms',
+        })
+        expect(await rejection(llm.complete({ ...request, timeoutMs: 50 }))).toMatchObject({
+            message: 'llm call did not finish within 50 ms',
+        })
+    })
+
+    it('is 25 s when nothing says otherwise, 5 s under the server function', async () => {
+        vi.useFakeTimers()
+        stubFetch(hang)
+        const settled = rejection(createRealLlm('key').complete(request))
+        await vi.advanceTimersByTimeAsync(24_999)
+        let done = false
+        void settled.then(() => (done = true))
+        await vi.advanceTimersByTimeAsync(0)
+        expect(done).toBe(false)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(await settled).toMatchObject({ reason: 'timed-out', message: 'llm call did not finish within 25000 ms' })
+    })
+
+    it('refuses a timeoutMs that is not a positive finite number, before any call', async () => {
+        const fetchMock = stubFetch(() => json(200, textMessage('x')))
+        const llm = createRealLlm('key')
+        for (const bad of [0, -1, Number.NaN, Infinity, '5' as unknown as number]) {
+            expect(await rejection(llm.complete({ ...request, timeoutMs: bad }))).toBeInstanceOf(RangeError)
+        }
+        expect(() => createRealLlm('key', { timeoutMs: 0 })).toThrow(RangeError)
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('leaves no timer behind when a call finishes', async () => {
+        vi.useFakeTimers()
+        stubFetch(() => json(200, textMessage('done')))
+        expect(await createRealLlm('key').complete(request)).toEqual({ text: 'done' })
+        expect(vi.getTimerCount()).toBe(0)
+    })
+
+    /** A stream that sends one text chunk and then goes quiet until the signal aborts it. */
+    const quietAfterOneChunk = (init: RequestInit) => {
+        const sse = (event: string, data: object) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+        const encoder = new TextEncoder()
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                const start = { ...messageBody([]), content: [], stop_reason: null }
+                const block = { type: 'text', text: '' }
+                const delta = { type: 'text_delta', text: 'partial ' }
+                controller.enqueue(
+                    encoder.encode(
+                        sse('message_start', { type: 'message_start', message: start }) +
+                            sse('content_block_start', {
+                                type: 'content_block_start',
+                                index: 0,
+                                content_block: block,
+                            }) +
+                            sse('content_block_delta', { type: 'content_block_delta', index: 0, delta }),
+                    ),
+                )
+                init.signal?.addEventListener('abort', () =>
+                    controller.error(new DOMException('aborted', 'AbortError')),
+                )
+            },
+        })
+        return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    }
+
+    it('bounds a stream: chunks that stop coming end it as timed-out, and the chunks that came are delivered', async () => {
+        stubFetch(quietAfterOneChunk)
+        const received: string[] = []
+        const error = await rejection(
+            (async () => {
+                for await (const chunk of createRealLlm('key').stream({ ...request, timeoutMs: 80 }))
+                    received.push(chunk)
+            })(),
+        )
+        expect(received).toEqual(['partial '])
+        expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'timed-out' })
+    })
+
+    it('stops the request when a stream consumer leaves early', async () => {
+        const fetchMock = stubFetch(quietAfterOneChunk)
+        for await (const chunk of createRealLlm('key').stream({ ...request, timeoutMs: 5000 })) {
+            expect(chunk).toBe('partial ')
+            break
+        }
+        expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+    })
+})
+
+describe('createRealLlm: runToolLoop', () => {
+    const toolUse = messageBody([{ type: 'tool_use', id: 'tu_1', name: 'lookup', input: { q: 1 } }], 'tool_use')
+    const tools: LlmToolLoopRequest['tools'] = [{ name: 'lookup', description: 'd', inputSchema: { type: 'object' } }]
+
+    it('runs the loop to its final text, every turn under the deadline', async () => {
+        const fetchMock = stubFetch((_init, call) => json(200, call === 1 ? toolUse : textMessage('final')))
+        const result = await createRealLlm('key').runToolLoop({
+            ...request,
+            tools,
+            execute: async () => 'found',
+        })
+        expect(result.text).toBe('final')
+        expect(result.turns).toHaveLength(3)
+        expect(fetchMock.mock.calls.map(([, init]) => init?.signal instanceof AbortSignal)).toEqual([true, true])
+    })
+
+    it('counts the app`s `execute` against the deadline: a slow tool ends the loop as timed-out', async () => {
+        const fetchMock = stubFetch(() => json(200, toolUse))
+        const error = await rejection(
+            createRealLlm('key').runToolLoop({
+                ...request,
+                tools,
+                timeoutMs: 40,
+                execute: () => new Promise((resolve) => setTimeout(() => resolve('late'), 120)),
+            }),
+        )
+        expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'timed-out' })
+        // The second turn was never answered: its call was refused by the spent deadline.
+        expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(2)
+    })
+
+    it('does not turn the app`s own error into an LLM error, even past the deadline', async () => {
+        stubFetch(() => json(200, toolUse))
+        const boom = new Error('the tool broke')
+        const error = await rejection(
+            createRealLlm('key').runToolLoop({
+                ...request,
+                tools,
+                timeoutMs: 20,
+                execute: async () => {
+                    await new Promise((resolve) => setTimeout(resolve, 60))
+                    throw boom
+                },
+            }),
+        )
+        expect(error).toBe(boom)
+    })
+})

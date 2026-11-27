@@ -7624,3 +7624,56 @@ One branch's secret-like string failed the scan on every other open pull request
   that deletes a file holding a secret already on its base still reports nothing, as before (throwaway repository).
 - **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
   stopword behaviour (named out of scope in the issue).
+
+## The LLM adapter has a deadline, and the provider's limits are a port error (2026-11-27, `fix/llm-timeout`)
+
+`safeinsights/sssb#98`: `createRealLlm` built the SDK client with a key and nothing else. The SDK's timeout is ten minutes
+per attempt and it retries twice, while the app server's function has 30 s (`packages/cdk/src/sssb-app.js`), so a slow
+call ended as a killed invocation, and a provider 429 or 529 ended as the SDK's own error, a plain 500 in a route.
+
+- **One deadline per port call, enforced by an abort signal.** `complete`, `stream` and `runToolLoop` each start a timer
+  and pass its signal (and the same figure as the SDK's per-attempt `timeout`) to every SDK call they make. The signal
+  is what bounds the whole call: the SDK's `timeout` covers one attempt, and the SDK sleeps `Retry-After` between
+  attempts, a sleep the signal ends too. A tool loop's deadline covers every turn **and the app's `execute`** between
+  them, since a person waits through those as well; an `execute` that throws surfaces as it threw, never as an LLM
+  error. A stream's deadline starts when it is first iterated and ends when it is left, early exit included, which also
+  aborts the request. Rejected: the SDK's `timeout` alone, which a retry restarts; `AbortSignal.timeout`, which a fake
+  clock does not drive, so the tests would need real waits.
+- **25 s by default.** The function has 30 s and a route needs a few seconds to answer; a call still waiting at 25 s ends
+  as an error the route turns into a 503, where one that waits to 30 s ends as a killed invocation and a gateway's 502.
+  Exported as `LLM_DEFAULT_TIMEOUT_MS` from `core/llm-timeout.ts`, which also holds `llmTimeoutMs`, shared with the fake
+  adapter so a bad value (`0`, `NaN`, `Infinity`, a string) is a `RangeError` in both: a timer would read `0` as "now"
+  and `Infinity` as "never".
+- **One retry, inside the deadline.** The SDK retries 429, 5xx and timeouts twice by default (0.5 s, then 1 s, longer
+  where the provider sends `Retry-After`). One retry rides out a brief 529 for the price of half a second, and a second
+  would spend most of a 25 s deadline on a provider that is not answering. `RealLlmOptions.maxRetries` changes it for an
+  app that builds the adapter itself. Consequence, accepted: a 429 whose `Retry-After` is longer than the time left
+  sleeps to the deadline and ends as `timed-out`, not `rate-limited`; the provider's rate-limit resets are seconds long
+  in practice, and a caller handles both the same way. Rejected: no SDK retries and one of our own, which would
+  re-implement the SDK's backoff to keep a reason code.
+- **A job's call may have longer, per request, not by default.** `timeoutMs` is an optional field of `LlmRequest` and
+  `LlmToolLoopRequest`: the handler knows its work, the adapter cannot tell a job's call from a route's (both get the
+  same `llm` from the registry), and the runner's own limit differs (the CodeBuild runner outlives the function; the
+  in-process runner runs inside it, so there 25 s stays right). Rejected: a second port instance for jobs, which every
+  adopter's job context would then have to wire; an environment variable, which would change `required-env.json` for a
+  figure most deployments leave alone and could not differ between two calls of one process. An app that builds the
+  adapter itself sets the default with `createRealLlm(key, { timeoutMs })`, as `apps/showcase/scripts/llm-record.ts`
+  does (two minutes: nobody waits on a recording).
+- **`LlmUnavailableError` is a port error (`@sssb/kit/ports/errors`),** the sibling of `DatabaseUnavailableError`: a
+  `reason` in no vendor's words (`rate-limited` for 429, `overloaded` for 529, `timed-out` for the deadline or the SDK's
+  attempt timeout), the SDK's error as its `cause`, and a `retryAfterSeconds` that is the provider's `Retry-After`
+  (whole seconds, clamped to 1 to 120; a date or nonsense is ignored) or 10. 10, not the database's 5: a rate limit or an
+  overload does not clear in the seconds a resume takes. Every other provider error (400, 401, 500, a dropped
+  connection) is returned as the SDK threw it: they are bugs or outages a retry does not mend, and a 503 for them would
+  tell the client to ask again. Rejected: a status on the error (a vendor's number in the port), and a flag saying the
+  work did not happen: a `timed-out` call may have been billed and a tool loop may have run some tools.
+- **Both apps' `withPortErrors` answers it with a 503, `Retry-After: retryAfterSeconds`, `{ error: 'llm-unavailable',
+reason }` and a logged warning,** the shape of the database's answer. That function is the app's, so an adopter applies
+  it by hand (a scaffold changeset for `@sssb/create`). A job handler lets it propagate; its runner decides on a rerun.
+  A stream that has begun its response cannot change the status: the error ends the iteration, and the guide says so.
+- **The fake adapter replays instantly, so it checks `timeoutMs` and nothing else.** It cannot rate-limit or time out
+  without a fixture format for failures, which would be a feature of its own; the 503 mapping is proved with the error
+  thrown by hand (`respond.test.ts`), and the adapter's mapping with the SDK's real error classes behind a stubbed
+  `fetch` (`adapters/real/llm.test.ts`: no network, the SDK's retry and abort code runs).
+- **Not done here.** The `llm-key` cutover row still holds the live check; its verification list gains nothing, since a
+  live 429 or a slow call is not something to provoke on purpose.

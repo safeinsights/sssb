@@ -62,6 +62,41 @@ export class DatabaseUnavailableError extends Error {
     }
 }
 
+/**
+ * Why the model provider can't serve a call now. `rate-limited`: the provider refused it for the account's rate limit
+ * (HTTP 429). `overloaded`: the provider is over capacity (HTTP 529). `timed-out`: the call did not finish within its
+ * deadline (`timeoutMs` on the request, 25 s by default), retries included.
+ */
+export type LlmUnavailableReason = 'rate-limited' | 'overloaded' | 'timed-out'
+
+/**
+ * Thrown by the LLM port when the model provider can't serve a call now and may soon: a rate limit, an overloaded
+ * provider, or a call that outran its deadline. `complete`, `stream` and `runToolLoop` all throw it, so a caller
+ * handles one error whichever it called. Route glue answers a 503 with `Retry-After: retryAfterSeconds` (the
+ * provider's own, when it sent one). A job handler lets it propagate: the job fails with a retryable cause, and its
+ * runner decides whether to run it again.
+ *
+ * It does not say the call did nothing: a `timed-out` call may have been billed, and a tool loop may already have run
+ * the app's `execute` for some turns, so treat a repeat as running those again. `stream` throws it from the iteration,
+ * so a route that has started its response cannot change the status. `cause` is the vendor's error, absent for a
+ * deadline the adapter enforced itself.
+ */
+export class LlmUnavailableError extends Error {
+    readonly reason: LlmUnavailableReason
+    readonly retryAfterSeconds: number
+
+    constructor(
+        reason: LlmUnavailableReason,
+        message = 'llm unavailable',
+        options?: { cause?: unknown; retryAfterSeconds?: number },
+    ) {
+        super(message, options?.cause === undefined ? undefined : { cause: options.cause })
+        this.name = 'LlmUnavailableError'
+        this.reason = reason
+        this.retryAfterSeconds = options?.retryAfterSeconds ?? 10
+    }
+}
+
 /** Thrown by real adapters when their cutover items are unfilled (fail-fast for dev:real). */
 export class CutoverPendingError extends Error {
     readonly cutoverItems: string[]

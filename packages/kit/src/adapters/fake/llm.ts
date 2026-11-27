@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
+import { llmTimeoutMs } from '../../core/llm-timeout'
 import type { LlmMessage, LlmPort, LlmRequest, LlmToolDef, LlmToolLoopRequest, LlmTurn } from '../../ports/llm'
 import { writeJsonAtomic } from './atomic-write'
 import { dataDir } from './data-dir'
@@ -165,8 +166,15 @@ function textOf(turn: LlmTurn): string {
         .join('')
 }
 
+/**
+ * Replay is instant, so it never times out and never rate-limits; what it keeps from the real adapter is the check
+ * of `timeoutMs`, so a caller's bad value (`0`, `NaN`, a string) fails under `pnpm dev` and its tests, not first in
+ * production. A route's 503 for `LlmUnavailableError` is proved with the error thrown by hand, as the app's
+ * `respond.test.ts` does.
+ */
 export const fakeLlm: LlmPort = {
     async complete(request) {
+        llmTimeoutMs(request.timeoutMs)
         await catchRequest(request, null)
         return { text: lookup(request) }
     },
@@ -174,12 +182,14 @@ export const fakeLlm: LlmPort = {
     async *stream(request) {
         // A generator body runs on first iteration, so the catch lands when the stream is consumed —
         // the point a real adapter would open its connection too.
+        llmTimeoutMs(request.timeoutMs)
         await catchRequest(request, null)
         // Word-chunked so streaming UIs exercise their incremental path deterministically.
         for (const chunk of lookup(request).split(/(?<= )/)) yield chunk
     },
 
     async runToolLoop(request) {
+        llmTimeoutMs(request.timeoutMs)
         await catchRequest(request, request.tools)
         const conversation = lookupToolLoop(request)
         const turns: LlmTurn[] = []
