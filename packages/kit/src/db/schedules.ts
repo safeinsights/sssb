@@ -2,6 +2,14 @@ import { computeNextRunAt, parseScheduleSpec, type ScheduleSpec } from '../core/
 import type { DbPort } from '../ports/db'
 import type { JobsPort } from '../ports/jobs'
 import { recordAuditEvent } from './audit'
+import {
+    beforeDeadline,
+    type DrainBudget,
+    type DrainLeft,
+    drainFairly,
+    listingLimit,
+    resolveDrainBudget,
+} from './drain-budget'
 import { family } from './family'
 import { toIso } from './jobs'
 
@@ -47,38 +55,53 @@ const MAX_COALESCE = 100_000
  * Retrying would make the spawn at-least-once for handlers written to run at most once. The job left
  * `queued` is the runner's to deal with: the in-process runner's sweep fails a job left queued too
  * long; under any other runner it stays queued.
+ *
+ * BOUND. With a budget, one call spawns at most `budget.maxItems` schedules and starts none after `budget.deadline`,
+ * taking one due schedule from each tenant in turn, the tenants and each tenant's listed schedules in a fresh random
+ * order (./drain-budget.ts); `runScheduledTick` always passes one. Without a budget it drains every due schedule,
+ * each tenant's oldest first. The result says how many due schedules it left for a later tick and why.
  */
 export async function runDueSchedules(
     db: DbPort,
     jobs: JobsPort,
     now: Date,
-): Promise<{ spawned: number; failed: number }> {
-    await db.ready()
-    const tenants = await db.getDb().selectFrom('tenants').select('id').execute()
-    const due: { id: string; tenant_id: string }[] = []
-    for (const tenant of tenants) {
-        const rows = await db.withTenant(tenant.id, (trx) =>
-            trx
-                .selectFrom('job_schedules')
-                .select('id')
-                .where('enabled', '=', true)
-                .where('next_run_at', '<=', now)
-                .orderBy('next_run_at', 'asc')
-                .execute(),
-        )
-        due.push(...rows.map((r) => ({ id: r.id, tenant_id: tenant.id })))
-    }
-
+    budget?: DrainBudget,
+): Promise<{ spawned: number; failed: number } & DrainLeft> {
+    const limit = resolveDrainBudget(budget)
     let spawned = 0
     let failed = 0
-    for (const schedule of due) {
-        try {
-            spawned += await drainOne(db, jobs, now, schedule)
-        } catch {
-            failed += 1
-        }
-    }
-    return { spawned, failed }
+    // BOUNDED AND FAIR (./drain-budget.ts, safeinsights/sssb#97): at most `limit.maxItems` spawns, none started after
+    // its deadline, one tenant's schedule at a time in turn. A due schedule left over is untouched, so the next tick
+    // lists it again.
+    if (!beforeDeadline(limit)) return { spawned, failed, deferred: 0, stoppedBy: 'time' }
+    await db.ready()
+    const tenants = await db.getDb().selectFrom('tenants').select('id').execute()
+    const perTenant = listingLimit(limit)
+    const left = await drainFairly(
+        tenants,
+        limit,
+        (tenantId) =>
+            db.withTenant(tenantId, (trx) =>
+                trx
+                    .selectFrom('job_schedules')
+                    .select('id')
+                    .where('enabled', '=', true)
+                    .where('next_run_at', '<=', now)
+                    .orderBy('next_run_at', 'asc')
+                    .orderBy('id', 'asc')
+                    .$if(perTenant !== null, (qb) => qb.limit(perTenant ?? 0))
+                    .execute(),
+            ),
+        (row) => row.id,
+        async (row, tenantId) => {
+            try {
+                spawned += await drainOne(db, jobs, now, { id: row.id, tenant_id: tenantId })
+            } catch {
+                failed += 1
+            }
+        },
+    )
+    return { spawned, failed, ...left }
 }
 
 /** Drains one due schedule (the locked spawn+advance transaction, then audit + start). Returns the
