@@ -664,6 +664,21 @@ describe('fake llm', () => {
         const { fakeLlm } = await import('./llm')
         await expect(fakeLlm.complete({ purpose: 'never-recorded', messages: [] })).rejects.toThrow(/llm:record/)
     })
+
+    test('takes a timeoutMs and checks it as the real adapter does, so a bad one fails in dev, not first in production', async () => {
+        const { fakeLlm } = await import('./llm')
+        const request = { purpose: 'fixture-echo', messages: [{ role: 'user' as const, content: 'q' }] }
+        expect((await fakeLlm.complete({ ...request, timeoutMs: 120_000 })).text).toContain('deterministic')
+        await expect(fakeLlm.complete({ ...request, timeoutMs: 0 })).rejects.toThrow(RangeError)
+        await expect(
+            fakeLlm.runToolLoop({ ...request, tools: [], execute: async () => '', timeoutMs: -5 }),
+        ).rejects.toThrow(RangeError)
+        await expect(
+            (async () => {
+                for await (const chunk of fakeLlm.stream({ ...request, timeoutMs: Number.NaN })) void chunk
+            })(),
+        ).rejects.toThrow(RangeError)
+    })
 })
 
 describe('fake llm request catch', () => {

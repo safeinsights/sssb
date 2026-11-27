@@ -8,7 +8,8 @@ import enFramework from '../../i18n/messages/en.json'
 /**
  * The real sign-in form with Clerk's hook replaced: where it sends the browser once sign-in completes, and the second
  * step Clerk asks for. `returnTo` comes from the URL, so a value that would leave the origin goes to `/` instead,
- * whatever the page passed. Never run against a real Clerk instance (cutover row `auth-dev`).
+ * whatever the page passed. Nothing is submitted before clerk-js has loaded, and a session Clerk created for an attempt
+ * whose `finalize` failed is signed out on Back or from the form's Sign out button (safeinsights/sssb#198). Never run against a real Clerk instance (cutover row `auth-dev`).
  */
 type Answer = { error: { code: string } | null }
 type Verification = { strategy?: string; status?: string; expireAt?: Date | string | null }
@@ -20,6 +21,8 @@ const signIn = {
     id: 'sia_1' as string | undefined,
     secondFactorVerification: {} as Verification | undefined,
     status: 'needs_identifier' as string,
+    // The session Clerk gives an attempt once it is complete.
+    createdSessionId: null as string | null,
     supportedSecondFactors: [] as readonly Offered[],
     password: vi.fn<() => Promise<Answer>>(),
     finalize: vi.fn<() => Promise<Answer>>(),
@@ -36,7 +39,19 @@ const signIn = {
 
 /** What the hook answers: `signIn`, until a client update puts another attempt in its place. */
 const hook = { signIn }
-vi.mock('@clerk/nextjs', () => ({ useSignIn: () => ({ signIn: hook.signIn, fetchStatus: 'idle' }) }))
+/**
+ * What `useClerk` answers: whether clerk-js has loaded, the sessions its client holds signed in, and its client sign-out,
+ * which (as Clerk's) takes the session off the client.
+ */
+const clerk = {
+    loaded: true,
+    client: { signedInSessions: [] as { id: string }[] },
+    signOut: vi.fn<(options: { sessionId: string; redirectUrl: string }) => Promise<void>>(),
+}
+vi.mock('@clerk/nextjs', () => ({
+    useSignIn: () => ({ signIn: hook.signIn, fetchStatus: 'idle' }),
+    useClerk: () => clerk,
+}))
 
 const LABELS = { email: 'email', password: 'password', submit: 'submit', genericError: 'error' }
 const copy = enFramework.auth
@@ -61,6 +76,7 @@ let assign: ReturnType<typeof vi.fn>
 /** A Clerk call that succeeds and leaves the attempt at `status`, its verification rebuilt as by every answer. */
 const leaves = (status: string) => async (): Promise<Answer> => {
     signIn.status = status
+    signIn.createdSessionId = status === 'complete' ? 'sess_1' : null
     signIn.secondFactorVerification = {}
     return ok
 }
@@ -75,7 +91,13 @@ beforeEach(() => {
     signIn.id = 'sia_1'
     signIn.secondFactorVerification = {}
     signIn.status = 'needs_identifier'
+    signIn.createdSessionId = null
     signIn.supportedSecondFactors = []
+    clerk.loaded = true
+    clerk.client.signedInSessions = [{ id: 'sess_1' }]
+    clerk.signOut.mockReset().mockImplementation(async ({ sessionId }) => {
+        clerk.client.signedInSessions = clerk.client.signedInSessions.filter((session) => session.id !== sessionId)
+    })
     signIn.password.mockReset().mockImplementation(leaves('complete'))
     signIn.finalize.mockReset().mockResolvedValue(ok)
     signIn.reset.mockReset().mockResolvedValue(ok)
@@ -615,16 +637,166 @@ describe('a finalize that fails after the code was accepted', () => {
         expect(assign).not.toHaveBeenCalled()
     })
 
+    // Going back otherwise signs the session out; here the client no longer holds it, so it is only forgotten.
     it('is forgotten on the way back: the next step verifies its own code', async () => {
         signIn.finalize.mockResolvedValueOnce(refused)
         await reachStep([TOTP])
         await enterCode()
+        clerk.client.signedInSessions = []
         await click('back')
+        expect(clerk.signOut).not.toHaveBeenCalled()
         await submitForm()
         signIn.status = 'complete'
         signIn.mfa.verifyTOTP.mockResolvedValueOnce(refused)
         await enterCode()
         expect(signIn.mfa.verifyTOTP).toHaveBeenCalledTimes(2)
         expect(assign).not.toHaveBeenCalled()
+    })
+})
+
+describe('a password submitted before clerk-js has loaded (safeinsights/sssb#198)', () => {
+    const button = () => container.querySelector<HTMLButtonElement>('button[type="submit"]')!
+
+    it('is held: no call is made, and the button shows it is busy, until Clerk has loaded', async () => {
+        clerk.loaded = false
+        await submit('/en/dashboard')
+        expect(signIn.password).not.toHaveBeenCalled()
+        expect(button().disabled).toBe(true)
+        expect(alertText()).toBeUndefined()
+        clerk.loaded = true
+        await render('/en/dashboard')
+        expect(button().disabled).toBe(false)
+        await submitForm()
+        expect(signIn.password).toHaveBeenCalledTimes(1)
+        expect(assign).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('going back after Clerk accepted the code (safeinsights/sssb#198)', () => {
+    it("signs out the session the code created, this one only, with Clerk's signOut", async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        await reachStep([TOTP])
+        await enterCode()
+        expect(step()).not.toBeNull()
+        await click('back')
+        expect(clerk.signOut).toHaveBeenCalledWith({ sessionId: 'sess_1', redirectUrl: window.location.href })
+        expect(signIn.reset).not.toHaveBeenCalled()
+        expect(alertText()).toBeUndefined()
+    })
+
+    it('says so when Clerk refuses the sign-out', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        clerk.signOut.mockRejectedValueOnce(new Error('network'))
+        await reachStep([TOTP])
+        await enterCode()
+        await click('back')
+        expect(alertText()).toBe(copy.refusedSignOutError)
+    })
+
+    it('signs nobody out before a code was accepted: the attempt is only dropped', async () => {
+        await reachStep([TOTP])
+        signIn.mfa.verifyTOTP.mockResolvedValueOnce(refused)
+        await enterCode()
+        await click('back')
+        expect(clerk.signOut).not.toHaveBeenCalled()
+        expect(signIn.reset).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('a session the form saw created, when signing in does not finish (safeinsights/sssb#198)', () => {
+    const signOutButton = () => container.querySelector<HTMLButtonElement>('[data-testid="sign-in-sign-out"]')
+    const submitButton = () => container.querySelector<HTMLButtonElement>('button[type="submit"]')!
+
+    it('is still the one signed out when a finalize failed half-way and emptied the attempt', async () => {
+        signIn.finalize.mockImplementationOnce(async () => {
+            signIn.status = 'needs_identifier'
+            signIn.createdSessionId = null
+            return refused
+        })
+        await reachStep([TOTP])
+        await enterCode()
+        hook.signIn = { ...signIn, createdSessionId: null, status: 'needs_identifier' }
+        await click('back')
+        expect(clerk.signOut).toHaveBeenCalledWith({ sessionId: 'sess_1', redirectUrl: window.location.href })
+    })
+
+    it('can be signed out from the password form when the password alone completed and finalize failed', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        await submit('/en/dashboard')
+        expect(alertText()).toBe(LABELS.genericError)
+        expect(submitButton().disabled).toBe(true)
+        await act(async () => signOutButton()!.click())
+        expect(clerk.signOut).toHaveBeenCalledWith({ sessionId: 'sess_1', redirectUrl: window.location.href })
+        expect([signOutButton(), submitButton().disabled, alertText()]).toEqual([null, false, undefined])
+    })
+
+    it('can be tried again when Clerk refuses the sign-out', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        clerk.signOut.mockRejectedValueOnce(new Error('network'))
+        await reachStep([TOTP])
+        await enterCode()
+        await click('back')
+        expect(alertText()).toBe(copy.refusedSignOutError)
+        expect(submitButton().disabled).toBe(true)
+        await act(async () => signOutButton()!.click())
+        expect(clerk.signOut).toHaveBeenCalledTimes(2)
+        expect(alertText()).toBeUndefined()
+    })
+
+    it('keeps the form busy while the sign-out runs', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        clerk.signOut.mockImplementationOnce(() => new Promise(() => {}))
+        await reachStep([TOTP])
+        await enterCode()
+        await click('back')
+        expect(submitButton().disabled).toBe(true)
+        expect(signOutButton()!.disabled).toBe(true)
+        await submitForm()
+        expect(signIn.password).toHaveBeenCalledTimes(1)
+    })
+
+    it('is only forgotten, with nothing signed out, once the client no longer holds it', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        await reachStep([TOTP])
+        await enterCode()
+        clerk.client.signedInSessions = [{ id: 'sess_other' }]
+        await click('back')
+        expect(clerk.signOut).not.toHaveBeenCalled()
+        expect(signOutButton()).toBeNull()
+        expect(submitButton().disabled).toBe(false)
+    })
+})
+
+describe('after the held session is signed out (safeinsights/sssb#198)', () => {
+    const signOutButton = () => container.querySelector<HTMLButtonElement>('[data-testid="sign-in-sign-out"]')
+    const submitButton = () => container.querySelector<HTMLButtonElement>('button[type="submit"]')!
+
+    // Clerk's redirect to this page is a soft navigation, which keeps the form: it must be ready to sign in again.
+    it('is ready to sign in again, with nothing held', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        await reachStep([TOTP])
+        await enterCode()
+        await click('back')
+        expect(clerk.signOut).toHaveBeenCalledTimes(1)
+        expect(signOutButton()).toBeNull()
+        expect(submitButton().disabled).toBe(false)
+        expect(alertText()).toBeUndefined()
+    })
+
+    it('says the sign-out failed when Clerk answers but the client still holds the session', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        clerk.signOut.mockResolvedValueOnce(undefined)
+        await reachStep([TOTP])
+        await enterCode()
+        await click('back')
+        expect(alertText()).toBe(copy.refusedSignOutError)
+        expect(signOutButton()).not.toBeNull()
+    })
+
+    it('offers no sign-out, and stays busy, once a sign-in has finished and the browser is leaving', async () => {
+        await submit('/en/dashboard')
+        expect(assign).toHaveBeenCalledTimes(1)
+        expect(signOutButton()).toBeNull()
+        expect(submitButton().disabled).toBe(true)
     })
 })

@@ -7836,6 +7836,100 @@ One branch's secret-like string failed the scan on every other open pull request
 - **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
   stopword behaviour (named out of scope in the issue).
 
+## Two edges of real sign-in: before Clerk loads, and a session a failed finalize left (2026-11-27, `fix/sign-in-edges`)
+
+safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
+
+- **The password waits for `useClerk().loaded`**, and the button shows `loading` until then. `loaded` reads clerk-js
+  itself (`IsomorphicClerk`), and Clerk's provider re-memoizes its context on every status change, so the form
+  re-renders when clerk-js loads (@clerk/react 6.18.8, @clerk/shared 4.45.1). Rejected: **`useAuth().isLoaded`**,
+  which reads Clerk's auth state rather than clerk-js itself; and **re-reading the attempt after load**, which depends
+  on what `GET /client` returns after a reload, the issue's open question. A clerk-js that never loads leaves the
+  button busy: there is nothing to sign in with then.
+- **The form holds the session from the moment an attempt is complete** (`held`, `attempt.createdSessionId`, read
+  before `finalize`, rather than later from an attempt a failed `finalize` may have changed). That covers both routes to a
+  complete attempt: the password alone and an accepted code. While a session is held, Back from the step, or a
+  "Sign out" button on the password form (the existing `auth.signOut` copy), signs it out with Clerk's `signOut`
+  (`useClerk()`) by id, and only while `clerk.client.signedInSessions` still has it; one the client no longer holds is only forgotten. The
+  password cannot be submitted while a session is held. Under the app router Clerk navigates with the router's `push`
+  (@clerk/nextjs 7.10, `useAwaitablePush`; that `signOut`'s `redirectUrl` goes through it is clerk-js's, unread here),
+  which keeps the form, so the form resets itself, its error included, once the sign-out answers and the client no longer
+  holds the session; a sign-out that fails, or answers but leaves the session, shows the existing
+  `refusedSignOutError` copy with the button still there. A finished sign-in clears `held` and keeps the form busy
+  while the browser leaves. Rejected: **reading the session at Back time** (round-1 review: an emptied attempt signs
+  nothing out); **gating on the form's own "code accepted" flag**, which misses the password-only route; and
+  **retrying `finalize` instead**, which leaves no way to abandon a sign-in started on a shared computer.
+
+## The LLM adapter has a deadline, and the provider's limits are a port error (2026-11-27, `fix/llm-timeout`)
+
+`safeinsights/sssb#98`: `createRealLlm` built the SDK client with a key and nothing else. The SDK's timeout is ten minutes
+per attempt and it retries twice, while the app server's function has 30 s (`packages/cdk/src/sssb-app.js`), so a slow
+call ended as a killed invocation, and a provider 429 or 529 ended as the SDK's own error, a plain 500 in a route.
+
+- **One deadline per port call, enforced by an abort signal.** `complete`, `stream` and `runToolLoop` each start a timer
+  and pass its signal (and the same figure, rounded up to the integer the SDK wants, as the SDK's per-attempt `timeout`)
+  to every SDK call they make; the SDK's `timeout` alone covers one attempt, which a retry restarts. A tool loop's
+  deadline covers every turn **and the app's `execute`** between them, since a person waits through those as well:
+  `execute` takes no signal and cannot be stopped, so the loop stops _waiting_ for it when the deadline passes (the
+  tool runs on) and the call ends as `timed-out` on time; an `execute` that throws first surfaces as it threw, never as
+  an LLM error. A stream's deadline starts when it is first iterated and ends when it is left, early exit included,
+  which also aborts the request. Two places where an abort does not arrive as the SDK's `APIUserAbortError`, both
+  mapped to `timed-out`: the platform's own `AbortError` when the deadline passes while a non-streaming body is being
+  read, and a stream whose iteration the SDK ends quietly, with no error, when the deadline passes while the consumer is
+  busy between chunks (the adapter awaits the stream's `done()` after the loop, which throws what ended it, so a cut-off answer
+  never reads as a complete one: a deadline, a mid-stream overload and a dropped connection alike). Rejected: `AbortSignal.timeout`, which a fake clock does not drive.
+- **25 s by default.** The function has 30 s and a route needs a few seconds to answer; a call still waiting at 25 s ends
+  as an error the route turns into a 503, where one that waits to 30 s ends as a killed invocation.
+  Exported as `LLM_DEFAULT_TIMEOUT_MS` from `core/llm-timeout.ts`, which also holds `llmTimeoutMs`, shared with the fake
+  adapter so a bad value (`0`, `NaN`, `Infinity`, a string, more than 2^31 - 1 ms, which Node's timers fire after 1 ms)
+  is a `RangeError` in both: a timer would read `0` as "now" and `Infinity` as "never".
+- **The adapter retries, once, and the SDK does not.** The SDK's own retries are off (`maxRetries: 0`): it sleeps a
+  provider's whole `Retry-After`, so a 429 that asks for 60 s idled the call to its deadline and ended as `timed-out`
+  with the provider's figure lost. The adapter repeats a call the SDK's policy would have (408, 409, 429, 5xx, a dropped
+  connection) plus a rate limit or overload however it arrived, never one marked `x-should-retry: false`, waiting the
+  provider's `Retry-After-Ms` or `Retry-After`, else 0.5 s doubling to 8 s, **only when twice that wait is less than
+  what is left of the deadline**, so the retry gets at least as long as the wait (a provider wait that only just fit was
+  slept almost whole and then left the retry no time: found in review); otherwise it answers at once with `rate-limited` or `overloaded` and the provider's figure.
+  A stream starts again only if it has delivered no text. One retry per request to the provider (a tool loop's turns each get one; the deadline bounds the total), because a second would spend most of a 25 s
+  deadline on a provider that is not answering; `RealLlmOptions.maxRetries` changes it for an app that builds the adapter
+  itself. Rejected: the SDK's retries with a signal (the loss above); a retry loop that keeps the last provider error
+  and prefers it after a timeout, which would still idle the server for nothing.
+- **A job's call may have longer, per request, not by default.** `timeoutMs` is an optional field of `LlmRequest` and
+  `LlmToolLoopRequest`: the handler knows its work, the adapter cannot tell a job's call from a route's (both get the
+  same `llm` from the registry), and the runner's own limit differs (the in-process runner runs inside the server's invocation and shares its limit, so there 25 s stays right:
+  `packages/kit/src/adapters/real/jobs-in-process.ts:28-32` says work that may outrun it belongs on the CodeBuild runner). Rejected: a second port instance for jobs, which every
+  adopter's job context would then have to wire; an environment variable, which would change `required-env.json` for a
+  figure most deployments leave alone and could not differ between two calls of one process. An app that builds the
+  adapter itself sets the default with `createRealLlm(key, { timeoutMs })`, as `apps/showcase/scripts/llm-record.ts`
+  does (two minutes: nobody waits on a recording).
+- **`LlmUnavailableError` is a port error (`@sssb/kit/ports/errors`),** the sibling of `DatabaseUnavailableError`: a
+  `reason` in no vendor's words (`rate-limited` for a 429 or a `rate_limit_error`, `overloaded` for a 529 or an
+  `overloaded_error`, which the provider also sends mid-stream on a 200 with no status, and `timed-out` for the deadline
+  or the SDK's attempt timeout), the SDK's error as its `cause`, and a `retryAfterSeconds` that is the provider's `Retry-After-Ms` or `Retry-After`
+  (whole seconds, clamped to 1 to 120; a date or nonsense is ignored) or 10. 10, not the database's 5: a rate limit or an
+  overload does not clear in the seconds a resume takes. Every other provider error (400, 401, 500, a dropped
+  connection) is returned as the SDK threw it: they are bugs or outages a retry does not mend, and a 503 for them would
+  tell the client to ask again. Rejected: a status on the error (a vendor's number in the port), and a flag saying the
+  work did not happen: a `timed-out` call may have been billed and a tool loop may have run some tools.
+- **Both apps' `withPortErrors` answers it with a 503, `Retry-After: retryAfterSeconds`, `{ error: 'llm-unavailable',
+reason }` and a logged warning,** the shape of the database's answer. That function is the app's, so an adopter applies
+  it by hand (a scaffold changeset for `@sssb/create`). A job handler lets it propagate, which fails the job (`runJobInProcess` records the error message).
+  A stream that has begun its response cannot change the status: the error ends the iteration, and the guide says so.
+- **The fake adapter replays instantly, so it checks `timeoutMs` and nothing else.** It cannot rate-limit or time out
+  without a fixture format for failures, which would be a feature of its own; the 503 mapping is proved with the error
+  thrown by hand (`respond.test.ts`), and the adapter's mapping with the SDK's real error classes behind a stubbed
+  `fetch` (`adapters/real/llm.test.ts`: no network, the SDK's retry and abort code runs).
+- **A large `maxTokens` is no longer refused locally.** The SDK refused a non-streaming call whose `max_tokens` implies
+  more than ten minutes, but only when it chose the timeout; passing one skips that check, so `complete` and
+  `runToolLoop` with a large `maxTokens` are now sent, bounded by the deadline instead.
+- **The kit changeset is Kind seam, Action required (a `minor`).** A call that took longer than 25 s used to succeed and now
+  fails, so an app whose job runs on a runner without the server's 30 s limit (CodeBuild) breaks if it does nothing: its
+  handler passes a longer `timeoutMs`. A request-path call, and a job the in-process runner runs inside the server's
+  function, need nothing. (First written as optional; `.changeset/README.md`'s rule is that a change an adopter who does
+  nothing breaks on is required.)
+- **Not done here.** The `llm-key` cutover row still holds the live check; its verification list gains nothing, since a
+  live 429 or a slow call is not something to provoke on purpose.
+
 ## The Data API emulator reads a plain literal's backslash as the Data API does (2026-11-27, `fix/emulator-backslash`)
 
 `safeinsights/sssb#201`: an app's query with `ESCAPE '\'` and a parameter after it passed the contract run, and the real
