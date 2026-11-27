@@ -7645,12 +7645,17 @@ left a choice open; the maintainer's standing instruction is to decide and recor
 - **Live proof is a cutover row, not this change's.** Both issues ask for it; no SSSB session deploys. The
   `domains-and-certs` row now names the proof: forged headers through the distribution's domain, and what the server
   and the helpers see.
+- **Every reader moved.** The showcase's invite and preset routes, and the kit's own Simulator host
+  (`simulatorApi`'s preset load, which arrived with `feat/simulator-host-snapshots` while this was in review and which
+  the rule flagged), build their links on `publicOrigin`. `clerk-proxy.ts` hands Clerk `request.url` unchanged: Clerk
+  derives its own URL from `x-forwarded-host` and `x-forwarded-proto` (`@clerk/backend` 3.29, `deriveUrlFromHeaders`).
 - **Accepted, not fixed.** A real-mode server off `SssbApp` with no `PUBLIC_ORIGIN` builds links on `request.url`'s
   origin, the bind address, as before this change: Next names it `localhost` either way, so the helper cannot tell a
   local `dev:real` from a host of the adopter's own, and SSSB deploys only through `SssbApp`. The adopting reference
   tells such a host to set `PUBLIC_ORIGIN`. And in `next dev`, `X-Forwarded-Proto` still flips `request.url`'s scheme
   (Next reads it), so a peer on the developer's network can make `publicOrigin` say `https://localhost:<port>`: one bit,
   on a developer's machine.
+
 ## The Simulator host serves Snapshots, presets and tours (2026-11-27, `feat/simulator-host-snapshots`)
 
 `safeinsights/sssb#127`: `simulatorApi` serves `reset`, `snapshots` (+ `restore`, `delete`), `flags`, `agreements`
