@@ -7624,6 +7624,7 @@ Notification`, self-only), the preferences (`read NotificationPref`, self-only) 
 - **safeinsights/sssb#137 is not in this change.** It reorders five mutating `[id]` routes in the showcase so a person
   who may not act cannot tell an existing id from a missing one; the scan does not judge order, so it does not fall out
   of this fix.
+
 ## The secret scan reads the commits it is asked about, not every branch (2026-11-27, `fix/secret-scan-scope`)
 
 `safeinsights/sssb#106`: `secret-scan` ran `gitleaks git` with no `--log-opts`, which gitleaks 8.30.1 turns into
