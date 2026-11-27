@@ -2426,3 +2426,15 @@ each call backs off on its own (`call` in `packages/kit/src/adapters/real/rds-da
 It is filed as [safeinsights/sssb#183](https://github.com/safeinsights/sssb/issues/183), which also holds what the
 runbook and the `data-api` row should say about it. Until it lands, an app that scales to zero keeps database calls out of
 its first paint, as this adopter did (no call before first paint, one after).
+
+## Turbopack traces the whole project for a dynamic `cpSync` (2026-11-27, `feat/simulator-host-snapshots`)
+
+Serving the Snapshots paths from the kit's Simulator host brought `adapters/fake/simulator-admin.ts` into the graph a
+generated app's server builds, and pack and consume failed: "the standalone server ships TypeScript source". Next 16's
+Turbopack says why in its build output, as a warning that does not fail the build: "Dynamic filesystem access causes
+tracing of the whole project", at each `existsSync`, `cpSync` or `path.join` whose path it cannot scope (the snapshot
+save and restore copy loops, over `LIVE_DIRS`). It then copies every file it can reach, the kit's `.ts` sources
+included, into `.next/standalone`. The fix is its documented opt-out, `/*turbopackIgnore: true*/` on each flagged
+argument, since those paths are the world's data at run time and never code. To find the next one: `next build` in the
+starter and read the "Turbopack build encountered N warnings" block; each warning carries its import trace. The one
+left, `adapters/fake/data-dir.ts`'s `dataDir`, predates this and leaves the packed consumer's standalone clean.

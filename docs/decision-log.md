@@ -7590,6 +7590,31 @@ standing rule for these sessions: decide, and record the rejected alternative.
 - **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
   that does not set it.
 
+## The Simulator host serves Snapshots, presets and tours (2026-11-27, `feat/simulator-host-snapshots`)
+
+`safeinsights/sssb#127`: `simulatorApi` serves `reset`, `snapshots` (+ `restore`, `delete`), `flags`, `agreements`
+(+ `bump`) and `presets`, and `SimulatorHost` wires the Snapshots and Tours tabs, so a generated app's `pnpm dev` has
+them. Decisions the issue left open:
+
+- **`flags` carries the feature flags, in the panel's shape** (`{ flags: [{ flag, enabled }] }`), and `events` will
+  not (`safeinsights/sssb#128` asked which). The Snapshots tab owns the knobs, so its own GET answers them and opening
+  it fetches no Events payload. Rejected: **the showcase's split** (its `flags` GET answers a `{ name: boolean }`
+  record no client reads, and the tab takes its list from `events`), which ties the Snapshots tab to the Events tab's
+  route and would be the one path whose shape differs between the two.
+- **The Snapshots tab is fetched when it opens and after each of its own actions, never polled**, as the showcase's
+  glue does: the tab's own actions refetch it or reload the page, and a change made elsewhere (an agreement edited on an
+  app's page) shows the next time it opens. Rejected: **adding it to the open-tab poll**, which reads every tenant's
+  agreements every four seconds (`EXPANDED_POLL_MS`) for a list that rarely moves while the tab is open.
+- **A snapshot's name is judged by the snapshot store, not the route**: a missing or non-string name is a 400, and a
+  name outside the world-start pattern, or one that `reset` or a registered preset already means, is the store's 403,
+  as the showcase's routes answer. Rejected: **checking the pattern in the route first** (a 400), which would answer a
+  different status from the showcase's for the same request and leave two places that say what a name may be.
+- **A preset's links point at `request.url`**, as the showcase's route did (`applyDemoPreset`'s `baseUrl`). On
+  `pnpm dev` that is the server the browser called. If a public-origin helper lands (`safeinsights/sssb#131`), this
+  call is one of its readers.
+- **No `tours` or `presets` registration is needed for the tab to be right**: an app with none gets no Tours tab and
+  no presets section (both are the seam's off-switches already), and a reset is the one world start every host has.
+
 ## Teams are writable inside their tenant, and an exempt table declares its writes (2026-11-27, `feat/org-write-rls`)
 
 `safeinsights/sssb#124`: `app_user` held `SELECT` only on `organizations`, so a route that created, renamed or deleted

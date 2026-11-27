@@ -1,6 +1,7 @@
 import { findOrg } from '@sssb/app-config/seed'
 import { auth, db, isSimulated, jobs } from '../adapters/index'
-import { readFlags } from '../adapters/fake/analytics'
+import { bumpWorldAgreement, listWorldAgreements } from '../adapters/fake/agreements'
+import { KNOWN_FLAGS, readFlags, setFlag } from '../adapters/fake/analytics'
 import { devSignIn, findInvite, listAllPeople, readInvites } from '../adapters/fake/auth'
 import { advanceClockMs, readClockOffsetMs, resetClock, worldNow } from '../adapters/fake/clock'
 import { type CaughtEmail, clearCaughtEmails, listCaughtEmails } from '../adapters/fake/email'
@@ -12,21 +13,34 @@ import {
     updatePersonState,
     writeViewpointCookie,
 } from '../adapters/fake/simulator'
+import {
+    deleteSnapshot,
+    listSnapshots,
+    resetWorld,
+    restoreSnapshot,
+    saveSnapshot,
+} from '../adapters/fake/simulator-admin'
 import type { WorldJobLike, ScheduleRowLike } from '../components/simulator/jobs-app'
 import type { MailItem } from '../components/simulator/mail-app'
 import type { Person } from '../components/simulator/people-app'
+import type { FeatureFlag, Snapshot, SnapshotAgreement } from '../components/simulator/snapshots-app'
 import { LOCALES } from '../core/locale'
+import { WORLD_START_NAME_PATTERN } from '../core/presets'
 import { sameOriginPath } from '../core/same-origin-path'
 import { listSchedulesForWorld, runDueSchedules } from '../db/schedules'
 import { runDueDeliveries } from '../db/webhooks'
 import { AuthRequiredError, ForbiddenError, NotFoundError } from '../ports/errors'
+import { applyDemoPreset } from './demo-presets'
 import { dispatchWebhook } from './webhook-dispatch'
 
 /**
  * The Simulator panel's server side, as one handler an app mounts at `src/app/api/simulator/[...path]/route.ts`
  * (`@sssb/kit/components/simulator/simulator-host` is the client that calls it). It serves the tabs a new app uses
  * first: People (`summary`, `viewpoint`), Mail (`mail`, `mail/clear`, `mail/seen`) and Jobs with the world clock
- * (`jobs`, `jobs/run-pending`, `schedules`, `clock`, `schedules/run-due`). Any other path answers 404, so an app that
+ * (`jobs`, `jobs/run-pending`, `schedules`, `clock`, `schedules/run-due`); and Snapshots, the world's knobs: a reset
+ * (`reset`), named snapshots (`snapshots`, `snapshots/restore`, `snapshots/delete`), the feature flags (`flags`), the
+ * access-gate agreements (`agreements`, `agreements/bump`) and the app's demo presets (`presets`), which with a reset
+ * and a restore are also how a tour starts its world. Any other path answers 404, so an app that
  * keeps route files of its own under `api/simulator/` still owns them: Next routes a static segment before a
  * catch-all.
  *
@@ -76,6 +90,23 @@ export interface SimulatorSchedules {
     worldNow: string
 }
 
+/** GET `snapshots`: every saved snapshot, newest first. */
+export interface SimulatorSnapshots {
+    snapshots: Snapshot[]
+}
+
+/** GET `flags`: every known feature flag, the framework's and the app's, and whether it is on. */
+export interface SimulatorFlags {
+    flags: FeatureFlag[]
+}
+
+/** GET `agreements`: every agreement in every tenant, with how many acceptances are at its current version. */
+export interface SimulatorAgreements {
+    agreements: SnapshotAgreement[]
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /** A clock move is capped at a year per call: a demo control, not a time machine. */
 const MAX_ADVANCE_MS = 366 * 86_400_000
 /** And the world at a century ahead in all, so repeated moves never leave the range a `Date` can hold. */
@@ -94,6 +125,14 @@ const ROUTES: Readonly<Record<string, Readonly<{ GET?: Handler; POST?: Handler }
     schedules: { GET: schedules },
     clock: { POST: clock },
     'schedules/run-due': { POST: runDue },
+    reset: { POST: reset },
+    snapshots: { GET: snapshots, POST: snapshotSave },
+    'snapshots/restore': { POST: snapshotRestore },
+    'snapshots/delete': { POST: snapshotDelete },
+    flags: { GET: flags, POST: flagSet },
+    agreements: { GET: agreements },
+    'agreements/bump': { POST: agreementBump },
+    presets: { POST: presetLoad },
 }
 
 /** The one handler behind `src/app/api/simulator/[...path]/route.ts`: GET and POST both call it. */
@@ -308,4 +347,102 @@ async function clock(request: Request): Promise<Response> {
 /** POST `schedules/run-due`: runs what is due without moving the clock. */
 async function runDue(): Promise<Response> {
     return Response.json({ ok: true, ...(await runDueAtWorldNow()) })
+}
+
+/** POST `reset`: wipes the world back to the seed. The host reloads the page after it: every page shows the old world. */
+async function reset(): Promise<Response> {
+    await resetWorld()
+    return new Response(null, { status: 204 })
+}
+
+async function snapshots(): Promise<Response> {
+    const body: SimulatorSnapshots = { snapshots: listSnapshots() }
+    return Response.json(body)
+}
+
+/** The `name` of a snapshot call's body, or null when it has none. Its shape is the snapshot store's to judge. */
+async function snapshotName(request: Request): Promise<string | null> {
+    const name = (await jsonObject(request))?.['name']
+    return typeof name === 'string' ? name : null
+}
+
+/**
+ * POST `snapshots` `{ name }`: saves (or overwrites) a named snapshot of the world. A name the store refuses, one
+ * outside the world-start pattern or one a reset or a registered preset already means, answers 403.
+ */
+async function snapshotSave(request: Request): Promise<Response> {
+    const name = await snapshotName(request)
+    if (name === null) return badRequest('name is required')
+    await saveSnapshot(name)
+    return new Response(null, { status: 204 })
+}
+
+/** POST `snapshots/restore` `{ name }`: puts the saved world back; 404 when there is no snapshot of that name. */
+async function snapshotRestore(request: Request): Promise<Response> {
+    const name = await snapshotName(request)
+    if (name === null) return badRequest('name is required')
+    await restoreSnapshot(name)
+    return new Response(null, { status: 204 })
+}
+
+/** POST `snapshots/delete` `{ name }`: 404 when there is no snapshot of that name. */
+async function snapshotDelete(request: Request): Promise<Response> {
+    const name = await snapshotName(request)
+    if (name === null) return badRequest('name is required')
+    await deleteSnapshot(name)
+    return new Response(null, { status: 204 })
+}
+
+async function flags(): Promise<Response> {
+    const stored = readFlags()
+    const body: SimulatorFlags = { flags: KNOWN_FLAGS.map((flag) => ({ flag, enabled: stored[flag] ?? false })) }
+    return Response.json(body)
+}
+
+/** POST `flags` `{ flag, enabled }`: turns one known flag on or off. The host reloads after it: the flags reach pages. */
+async function flagSet(request: Request): Promise<Response> {
+    const body = await jsonObject(request)
+    const flag = body?.['flag']
+    const enabled = body?.['enabled']
+    if (typeof flag !== 'string' || !KNOWN_FLAGS.includes(flag) || typeof enabled !== 'boolean') {
+        return badRequest('invalid flag')
+    }
+    setFlag(flag, enabled)
+    return Response.json({ ok: true })
+}
+
+async function agreements(): Promise<Response> {
+    const body: SimulatorAgreements = { agreements: await listWorldAgreements() }
+    return Response.json(body)
+}
+
+/**
+ * POST `agreements/bump` `{ agreementId }`: a new version of one agreement, through the same tenant-scoped write a
+ * real admin's would take, so everyone whose acceptance is now stale meets the gate on their next page.
+ */
+async function agreementBump(request: Request): Promise<Response> {
+    const agreementId = (await jsonObject(request))?.['agreementId']
+    // An agreement's id is a uuid: anything else could only fail the database's cast.
+    if (typeof agreementId !== 'string' || !UUID_PATTERN.test(agreementId)) return badRequest('invalid-agreement')
+    const result = await bumpWorldAgreement(agreementId)
+    if (!result) return Response.json({ error: 'unknown agreement' }, { status: 404 })
+    return Response.json({ version: result.version })
+}
+
+/**
+ * POST `presets` `{ name, locale }`: resets the world, replays the app's demo preset of that id and signs this browser
+ * in as its viewpoint (`@sssb/kit/server-lib/demo-presets`), then answers where the page should land: the dashboard
+ * when the preset signs someone in, the welcome page when it does not. 404 for an id the app does not register.
+ */
+async function presetLoad(request: Request): Promise<Response> {
+    const body = await jsonObject(request)
+    const name = body?.['name']
+    const locale = body?.['locale']
+    // The shape a saved snapshot's name takes, checked before the registry is asked.
+    if (typeof name !== 'string' || !WORLD_START_NAME_PATTERN.test(name)) return badRequest('invalid name')
+    if (typeof locale !== 'string' || !(LOCALES as readonly string[]).includes(locale)) {
+        return badRequest('unknown locale')
+    }
+    const { signedIn } = await applyDemoPreset(name, { baseUrl: request.url })
+    return Response.json({ redirectTo: signedIn ? `/${locale}/dashboard` : `/${locale}` })
 }

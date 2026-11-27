@@ -165,9 +165,13 @@ export async function saveSnapshot(name: string): Promise<void> {
         const dest = snapshotPath(name)
         rmSync(dest, { force: true, recursive: true })
         mkdirSync(dest, { recursive: true })
+        // The `turbopackIgnore` marks: these are the world's data directories at run time, never code, and a bundler
+        // that traced them as dynamic file access would ship the whole project with the server (Next's standalone).
         for (const dir of LIVE_DIRS) {
             const src = liveDirPath(dir)
-            if (existsSync(src)) cpSync(src, path.join(dest, dir), { recursive: true })
+            if (existsSync(/*turbopackIgnore: true*/ src)) {
+                cpSync(src, path.join(/*turbopackIgnore: true*/ dest, dir), { recursive: true })
+            }
         }
         const meta: SnapshotMeta = { at: new Date().toISOString() }
         writeJsonAtomicSync(path.join(dest, 'meta.json'), meta)
@@ -196,8 +200,8 @@ export async function restoreSnapshot(name: string): Promise<void> {
         await closeFakeDb()
         wipeLiveDirsPreservingDevSecret()
         for (const dir of LIVE_DIRS) {
-            const dirSrc = path.join(src, dir)
-            if (existsSync(dirSrc)) cpSync(dirSrc, liveDirPath(dir), { recursive: true })
+            const dirSrc = path.join(/*turbopackIgnore: true*/ src, dir)
+            if (existsSync(/*turbopackIgnore: true*/ dirSrc)) cpSync(dirSrc, liveDirPath(dir), { recursive: true })
         }
     })
 }

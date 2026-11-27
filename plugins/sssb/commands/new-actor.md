@@ -16,7 +16,7 @@ each one's subpath) is the framework's; each actor is app content.
 
 **What a generated app has.** A workspace `pnpm create @sssb` generated has two Simulator panels. On `pnpm dev` its
 locale layout mounts SSSB's `SimulatorHost` (`@sssb/kit/components/simulator/simulator-host`), served by its
-`src/app/api/simulator/[...path]/route.ts`: People, Mail, and Jobs with the world clock, and no Actors tab (the host
+`src/app/api/simulator/[...path]/route.ts`: People, Mail, Jobs with the world clock, and Snapshots, and no Actors tab (the host
 takes no app-registered tab). Its static demo's `src/demo-static/app.tsx` hands the framework's `DemoShell` an empty
 `extraTabs`, so that panel shows SSSB's own tabs and no Actors tab either. And `src/app-config/actors.ts` registers no
 actor, typed so that it cannot (`ActorId` is `never`, the list `readonly { id: string }[]`). So steps 1 to 5 add the
