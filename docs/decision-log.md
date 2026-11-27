@@ -7589,3 +7589,50 @@ standing rule for these sessions: decide, and record the rejected alternative.
   every app follows. The cutover checklist's `auth-dev` row gains one sentence (a sibling change edits the same row).
 - **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
   that does not set it.
+
+## The webhook secret's variable, and a Standard Webhooks verifier (2026-11-27, `feat/webhook-verifier`)
+
+Issues `safeinsights/sssb#121` and `safeinsights/sssb#122`, built as one change: both come from the same migrated
+future task (service-auth flexibility), touch the same module family, the same lint exemption list and the same
+adopter-reference section. Rejected: **two PRs**, which would have raced each other on those files for no review gain.
+
+- **`withWebhookSecret(handler, { secretEnv })`, a name, not a value.** An app may not read `process.env` outside
+  `adapters/real/` (the guide), so a value would have to come from somewhere the app cannot reach; the name is what the
+  issue asked for. It defaults to `WEBHOOK_SECRET`, which stays in `REQUIRED_ENV` and the required-environment snapshot
+  (the cron route and the jobs webhook use it), so the snapshot is unchanged and the changeset is a `patch`. A custom
+  name is not added to `assertRealEnv`: the framework cannot see which names an app's routes pass, so the adopter
+  reference says it is the app's own cutover row. **The name is checked** (`[A-Z_][A-Z0-9_]*`, never `NEXT_PUBLIC_*`,
+  which Next inlines into the browser bundle) when the wrapper is built, so a typo fails as the route module loads, not
+  as a 401 in production. Rejected: **accepting any string**, which turns `'partner-secret'` into a route that refuses
+  everything with no error.
+- **The Standard Webhooks verifier ships in the kit.** It is not vendor code: Standard Webhooks is an open
+  specification, verified with `node:crypto` and no SDK, so the vendor-code tests in `docs/development-approach.md` do
+  not govern it. It is a member of a class SSSB already teaches (the verified machine caller), and the default auth
+  vendor's own webhooks are sent through Svix, which signs this way, so the first product that syncs users from Clerk
+  needs it. Rejected: **a recipe**, which every such app would hand-roll, and hand-rolled HMAC checks are where the
+  constant-time compare and the replay window get dropped.
+- **`node:crypto`, not the pure-TS HMAC in `@sssb/kit/core/webhook-hmac`.** That one exists for the static demo, which
+  never receives a webhook, and keys the HMAC with a string's UTF-8 bytes, while a Standard Webhooks key is the
+  base64-decoded bytes of the `whsec_` secret. The verifier is server-only, as `webhook.ts` already is.
+- **The replay store keys on the id AND the timestamp.** A replay is the same signed message sent again, and that
+  carries the same timestamp. A sender's retry is re-signed with a new timestamp, so it passes and reaches the handler,
+  which the adopter reference tells to dedupe by `webhook.id`, the idempotency key the specification names. Rejected:
+  **keying on the id alone**, which answers a legitimate retry 401 (after a 2xx that the sender never saw, say) and
+  leaves the sender retrying until it disables the endpoint. As Mailgun's guard does, a claim lasts until the signature
+  stops verifying (`max(now, timestamp) + tolerance`) and is released when the handler throws or answers 5xx. The
+  default store is per-process, and `replayStore` lets a multi-instance deployment pass a shared one. Rejected: **only
+  documenting the limit**, as Mailgun's guard does, when an interface of two functions closes it.
+- **`secretEnv` has no default here.** Each sender has its own secret, and two routes falling back to one default name
+  would silently share it. It takes one name or several, and each value may hold several whitespace-separated
+  secrets, so a rotation is "add the new one beside the old". A secret that is not base64 (after an optional `whsec_`)
+  matches nothing, and none is refused for being short: the specification recommends 24 to 64 bytes, but a sender's
+  secret is not ours to choose.
+- **Svix's `svix-*` headers are read when no `webhook-*` header is present**, as Svix's own libraries do. One header of
+  a family selects it, so the two are never mixed.
+- **An id may contain a dot.** `{id}.{timestamp}.{body}` lets a dotted id shift digits between the id and the
+  timestamp, but the shifted timestamp must be fresh, so the body would have to begin with a current Unix time and a
+  dot, and a Standard Webhooks payload is a JSON object. Rejected: **refusing dotted ids**, which the specification
+  allows and which would lock out such a sender with no workaround, for an attack no payload the scheme defines allows.
+- **The wrapper is the kit's, as `withWebhookSecret` is**, not app-side as the showcase's Mailgun wrapper is, and the
+  `webhooks/` exemption names it beside the other two (`packages/kit/test-fixture/api/webhooks/wharf-signals/route.ts`
+  demonstrates the gate).
