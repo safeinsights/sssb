@@ -9,6 +9,7 @@ import {
     jobRetryFor,
     jobStatusMachine,
     MAX_JOB_ATTEMPTS,
+    MAX_JOB_RETRY_DELAY_MS,
     retryDelayMs,
 } from './jobs'
 import { backoffDelayMs } from './webhook-events'
@@ -53,7 +54,7 @@ describe('isJobKind', () => {
 describe('job retries (safeinsights/sssb#135)', () => {
     test('a setting SSSB honours: whole attempts from 1 to the cap, delays finite and not negative', () => {
         expect(isJobRetry({ attempts: 1 })).toBe(true)
-        expect(isJobRetry({ attempts: MAX_JOB_ATTEMPTS, delaysMs: [0, 60_000] })).toBe(true)
+        expect(isJobRetry({ attempts: MAX_JOB_ATTEMPTS, delaysMs: [0, 60_000, MAX_JOB_RETRY_DELAY_MS] })).toBe(true)
         for (const bad of [
             null,
             3,
@@ -64,6 +65,8 @@ describe('job retries (safeinsights/sssb#135)', () => {
             { attempts: 2, delaysMs: 60_000 },
             { attempts: 2, delaysMs: [-1] },
             { attempts: 2, delaysMs: [Number.POSITIVE_INFINITY] },
+            { attempts: 2, delaysMs: [MAX_JOB_RETRY_DELAY_MS + 1] },
+            { attempts: 2, delaysMs: [1e16] },
             { attempts: 2, delaysMs: ['60s'] },
         ]) {
             expect(isJobRetry(bad), JSON.stringify(bad)).toBe(false)

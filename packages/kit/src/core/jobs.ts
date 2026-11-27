@@ -74,7 +74,11 @@ export interface JobRetry {
 /** The most attempts a kind may ask for: a typo of 100 must not become a hundred runs of a failing job. */
 export const MAX_JOB_ATTEMPTS = 10
 
-/** A `jobRetry` entry SSSB will honour: a whole number of attempts from 1 to MAX_JOB_ATTEMPTS, delays finite and ≥ 0. */
+/** The longest delay before a retry, thirty days: longer is a typo, and past JavaScript's date range would not arm. */
+export const MAX_JOB_RETRY_DELAY_MS = 30 * 24 * 60 * 60 * 1000
+
+/** A `jobRetry` entry SSSB will honour: a whole number of attempts from 1 to MAX_JOB_ATTEMPTS, delays from 0 to
+ *  MAX_JOB_RETRY_DELAY_MS. */
 export function isJobRetry(value: unknown): value is JobRetry {
     if (typeof value !== 'object' || value === null) return false
     const { attempts, delaysMs } = value as { attempts?: unknown; delaysMs?: unknown }
@@ -82,7 +86,10 @@ export function isJobRetry(value: unknown): value is JobRetry {
         return false
     }
     if (delaysMs === undefined) return true
-    return Array.isArray(delaysMs) && delaysMs.every((d) => typeof d === 'number' && Number.isFinite(d) && d >= 0)
+    return (
+        Array.isArray(delaysMs) &&
+        delaysMs.every((d) => typeof d === 'number' && Number.isFinite(d) && d >= 0 && d <= MAX_JOB_RETRY_DELAY_MS)
+    )
 }
 
 /** The wait before attempt `failedAttempt + 1` under `retry`: its own delays, else the webhook deliveries' backoff. */

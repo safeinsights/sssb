@@ -181,6 +181,33 @@ describe('demo job retries', () => {
         expect(rows('export-dockets')[0]).toMatchObject({ status: 'failed', error: 'boom' })
     })
 
+    it('in a held world, a due retry is left queued for Run pending, as the server holds it', async () => {
+        const { world, rows } = await depotWorld({
+            jobRetry: RETRY,
+            jobOutcome: ({ attempt }) => (attempt === 1 ? { error: 'boom' } : undefined),
+        })
+        act(() => world.current.startJob('flaky-dockets'))
+        act(() => world.current.setFeatureFlag('jobs-held', true))
+        act(() => world.current.clock.advance(2 * 60_000))
+        expect(rows('flaky-dockets')[1]).toMatchObject({ status: 'queued', runAfterMs: null })
+        act(() => world.current.runPendingJobs())
+        expect(rows('flaky-dockets')[1]).toMatchObject({ status: 'completed' })
+    })
+
+    it("keeps a waiting retry out of a service actor's poll, as listServiceJobs does", async () => {
+        const { world, rows } = await depotWorld({
+            jobRetry: RETRY,
+            jobOutcome: ({ attempt }) => (attempt === 1 ? { error: 'boom' } : undefined),
+        })
+        act(() => world.current.startJob('flaky-dockets'))
+        const waiting = rows('flaky-dockets')[1]!
+        const polled = await world.current
+            .serviceDriver({ tenantSlug: 'harbor', orgSlug: 'depot' }, () => {})
+            .listJobs()
+        expect(polled.map((j) => j.id)).not.toContain(waiting.id)
+        expect(polled.map((j) => j.id)).toContain(rows('flaky-dockets')[0]!.id)
+    })
+
     it('keeps a waiting retry out of the builder actor’s pool, as the server does', async () => {
         const { world, rows } = await depotWorld({
             jobRetry: RETRY,

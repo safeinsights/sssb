@@ -836,6 +836,14 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
                 job.runAfterMs !== null &&
                 job.runAfterMs <= worldNowMs,
         )
+        if (due.length === 0) return 0
+        // A held world (the Simulator's jobs-held knob) leaves a due retry queued for Run pending, as the server's
+        // drain hands it to `fakeJobs.start`, which holds it: its wait is over, so it is an ordinary queued job now.
+        if (flags['jobs-held'] ?? false) {
+            const ids = new Set(due.map((job) => job.id))
+            setJobs((prev) => prev.map((job) => (ids.has(job.id) ? { ...job, runAfterMs: null } : job)))
+            return due.length
+        }
         const now = Date.now()
         commitAttempts(due.map((job) => runAttempt({ ...job, runAfterMs: null }, now, worldNowMs)))
         return due.length

@@ -125,12 +125,18 @@ export async function runScheduledTick(
         clock,
         ...(options.random && { random: options.random }),
     })
-    const retries = await runDueRetries(db, jobs, now, {
-        maxItems: budget.maxRetries,
-        deadline: startedAt + budget.retriesWindowMs,
-        clock,
-        ...(options.random && { random: options.random }),
-    })
+    const retries = await runDueRetries(
+        db,
+        jobs,
+        now,
+        {
+            maxItems: budget.maxRetries,
+            deadline: startedAt + budget.retriesWindowMs,
+            clock,
+            ...(options.random && { random: options.random }),
+        },
+        notifyRetryEnd,
+    )
     const deliveries = await runDueDeliveries(db, now, dispatchWebhook, {
         maxItems: budget.maxDeliveries,
         deadline: startedAt + budget.deliveriesWindowMs,
@@ -138,4 +144,18 @@ export async function runScheduledTick(
         ...(options.random && { random: options.random }),
     })
     return { spawned, failed, deferred, stoppedBy, retries, deliveries }
+}
+
+/**
+ * A retry whose start threw has been recorded failed; when it was the last attempt, that is the job's end, so it notifies
+ * as every runner's failure does (`notifyJobTerminal` skips one that armed a further attempt). Loaded when it is needed:
+ * the notifier reaches the adapter registry's auth port, which a tick that starts every retry never touches.
+ */
+async function notifyRetryEnd(input: { tenantId: string; jobId: string }): Promise<void> {
+    const [{ notifyJobTerminal }, { makeNotifyDeps }, { auth }] = await Promise.all([
+        import('./notify'),
+        import('./notify-deps'),
+        import('../adapters/index'),
+    ])
+    await notifyJobTerminal(await makeNotifyDeps(), auth, { ...input, status: 'failed' })
 }

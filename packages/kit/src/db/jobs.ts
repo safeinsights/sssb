@@ -29,10 +29,13 @@ export interface JobView {
     createdAt: string
     resultKey: string | null
     error: string | null
-    /** Which attempt this row is, from 1; a kind that retries runs each attempt as a row of its own. */
-    attempt: number
-    /** The first attempt's id, on a retry; null on attempt 1. */
-    retryOf: string | null
+    /**
+     * Which attempt this row is, from 1; a kind that retries runs each attempt as a row of its own. Always set by
+     * `listJobs`; optional so that a story or test building a view by hand need not.
+     */
+    attempt?: number
+    /** The first attempt's id, on a retry; null on attempt 1. Always set by `listJobs`. */
+    retryOf?: string | null
     timeline: JobTimelineEntry[]
 }
 
@@ -128,6 +131,9 @@ export async function recordJobStatus(
             .set({
                 status: next,
                 updated_at: family.currentTime(),
+                // A hop out of `queued` ends any wait: a retry some other path reached first (a service caller, a
+                // webhook) is no longer one the retry drain should list.
+                ...(current.status === 'queued' ? { run_after: null } : {}),
                 ...(extra?.resultKey !== undefined ? { result_key: extra.resultKey } : {}),
                 ...(extra?.error !== undefined ? { error: extra.error } : {}),
             })
@@ -206,6 +212,9 @@ export async function recordJobStatus(
  * (the invocation ended between the claim and the start) leaves a queued job like any other, which the in-process
  * runner's sweep fails as lost, again arming the next attempt.
  *
+ * `onFailed` is called after a start that threw has been recorded failed, so the caller can notify the job's end as
+ * every runner does (the scheduled tick passes `notifyJobTerminal`; this module cannot import the notifier).
+ *
  * BOUND (./drain-budget.ts): with a budget, at most `budget.maxItems` starts, none after its deadline, one tenant's
  * retry at a time in turn; a due retry left over is not claimed and the next tick lists it again. Without a budget it
  * starts every due retry. Returns how many it started, how many failed to start, and what it left.
@@ -215,6 +224,7 @@ export async function runDueRetries(
     jobs: JobsPort,
     now: Date,
     budget?: DrainBudget,
+    onFailed?: (input: { tenantId: string; jobId: string }) => Promise<void>,
 ): Promise<{ started: number; failed: number } & DrainLeft> {
     const limit = resolveDrainBudget(budget)
     let started = 0
@@ -242,7 +252,7 @@ export async function runDueRetries(
         (row) => row.id,
         async (row, tenantId) => {
             try {
-                if (await startRetry(db, jobs, now, tenantId, row.id)) started += 1
+                if (await startRetry(db, jobs, now, tenantId, row.id, onFailed)) started += 1
             } catch {
                 // A bad row must not stall the rest (the runDueSchedules fault-isolation precedent).
                 failed += 1
@@ -253,7 +263,14 @@ export async function runDueRetries(
 }
 
 /** Claims one due retry and starts it; false when the under-lock re-check finds nothing to claim. */
-async function startRetry(db: DbPort, jobs: JobsPort, now: Date, tenantId: string, jobId: string): Promise<boolean> {
+async function startRetry(
+    db: DbPort,
+    jobs: JobsPort,
+    now: Date,
+    tenantId: string,
+    jobId: string,
+    onFailed: ((input: { tenantId: string; jobId: string }) => Promise<void>) | undefined,
+): Promise<boolean> {
     const claimed = await db.withTenant(tenantId, async (trx) => {
         const row = await trx
             .selectFrom('jobs')
@@ -286,6 +303,8 @@ async function startRetry(db: DbPort, jobs: JobsPort, now: Date, tenantId: strin
             error: `the jobs runner did not start it: ${error instanceof Error ? error.message : String(error)}`,
             now,
         })
+        // The end of the job when no attempt is left, which the notifier tells apart (a failure that armed one is not).
+        await onFailed?.({ tenantId, jobId })
         throw error
     }
     return true
@@ -340,10 +359,10 @@ export interface ServiceJobView {
     createdAt: string
     resultKey: string | null
     error: string | null
-    /** Which attempt this row is, from 1. */
-    attempt: number
-    /** The first attempt's id, on a retry; null on attempt 1. */
-    retryOf: string | null
+    /** Which attempt this row is, from 1. Always set by `listServiceJobs`; optional as on `JobView`. */
+    attempt?: number
+    /** The first attempt's id, on a retry; null on attempt 1. Always set by `listServiceJobs`. */
+    retryOf?: string | null
 }
 
 /**
@@ -363,6 +382,8 @@ export async function listServiceJobs(
             .selectFrom('jobs')
             .select(['id', 'kind', 'status', 'payload', 'result_key', 'error', 'attempt', 'retry_of', 'created_at'])
             .where('org_id', '=', orgId)
+            // A retry still waiting out its delay is no job a service caller may run yet: the tick starts it.
+            .where('run_after', 'is', null)
             .$if(opts?.status !== undefined, (qb) => qb.where('status', '=', opts!.status!))
             .orderBy('created_at', 'desc')
             .limit(limit)

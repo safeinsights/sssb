@@ -367,12 +367,20 @@ describe('the retry drain', () => {
                 throw new Error('StartBuild refused')
             },
         }
+        const { fakeAuth } = await world()
+        vi.spyOn(fakeAuth, 'listMembers').mockResolvedValue(MEMBERS)
+        const { notifyJobTerminal } = await import('../server-lib/notify')
+        const deps = { db: fakeDb, email: { send: async () => undefined }, sms: async () => undefined }
         const result = await runDueRetries(
             fakeDb,
             refusing,
             new Date(new Date(third.run_after as Date | string).getTime() + 1_000),
+            undefined,
+            (input) => notifyJobTerminal(deps, fakeAuth, { ...input, status: 'failed' }),
         )
         expect(result).toMatchObject({ started: 0, failed: 1 })
+        // The last attempt's start failed: that is the job's end, and it notifies as any last failure does.
+        expect(await notificationsFor(id)).toEqual([{ status: 'failed', attempts: 3 }])
         const rows = await chain(id)
         expect(rows.map((r) => [r.attempt, r.status])).toEqual([
             [1, 'failed'],
@@ -397,5 +405,27 @@ describe('the retry drain', () => {
         await runPendingJobs()
         expect((await chain(id))[1]!.status, 'run-pending does not jump the backoff').toBe('queued')
         expect((await listPendingBuilds()).map((b) => b.jobId)).not.toContain(retryId)
+    })
+
+    test("a service caller's poll leaves a waiting retry out, and a hop out of queued ends its wait", async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { listServiceJobs, recordJobStatus, runDueRetries, submitJob } = await import('./jobs')
+        const { id } = await submitJob(
+            fakeDb,
+            { start: async () => undefined },
+            { tenantId, orgId, kind: 'flaky-dockets', payload: { failTimes: 0 } },
+        )
+        await recordJobStatus(fakeDb, tenantId, id, 'failed', { error: 'first' })
+        const retryId = (await chain(id))[1]!.id
+
+        const polled = await listServiceJobs(fakeDb, tenantId, orgId, { status: 'queued' })
+        expect(polled.map((j) => j.id)).not.toContain(retryId)
+
+        // A path that reaches the retry anyway (a caller that knew its id) takes it out of the drain's list.
+        await recordJobStatus(fakeDb, tenantId, retryId, 'running', { message: 'service caller' })
+        expect((await chain(id))[1]!.run_after).toBeNull()
+        const starts: SubmittedJob[] = []
+        await runDueRetries(fakeDb, { start: async (job) => void starts.push(job) }, new Date(Date.now() + 2 * MINUTE))
+        expect(starts.map((j) => j.id)).not.toContain(retryId)
     })
 })
