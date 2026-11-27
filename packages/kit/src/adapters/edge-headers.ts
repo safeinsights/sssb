@@ -3,16 +3,18 @@ import { originProblem } from './origin-form'
 /**
  * What a request tells the server about the visitor: the origin they asked for (`publicOrigin`) and the address they
  * connect from (`clientAddress`). Neither is on the request where it looks to be. Behind `SssbApp`, Next's
- * `request.url` names the server's own bind address (`https://localhost:3000/...`: Next builds it from where it
- * listens, `next/dist/server/next-server.js`, `attachRequestMeta`), and the first `X-Forwarded-For` entry is whatever
- * the visitor wrote there (CloudFront appends its own entry after the visitor's).
+ * `request.url` names the server's own bind address and port, never the visitor's host (Next builds it from where it
+ * listens: `next/dist/server/lib/router-utils/resolve-routes.js` and `next-server.js`, `attachRequestMeta`), and the
+ * first `X-Forwarded-For` entry is whatever the visitor wrote there (CloudFront appends the address it saw after the
+ * visitor's entries: CloudFront's guide, "Request and response behavior for custom origins", "Client IP addresses").
  *
  * Forwarded headers are believed only where the deployment says every request passed a proxy that overwrites them:
  * `SSSB_EDGE=cloudfront`, which `SssbApp` sets on its server. Its distribution's viewer-request CloudFront Function
  * (`@sssb/cdk`'s `forwarded-host.js`) runs on every behavior that reaches the server and writes, over anything the
  * visitor sent, `x-forwarded-host` (the `Host` CloudFront routed by, port dropped) and `x-sssb-viewer-address`
- * (the address CloudFront took from the connection, `event.viewer.ip`). The Function URL admits only that
- * distribution (IAM auth, origin access control), and `SssbApp` refuses to synthesize a behavior that reaches the
+ * (the address CloudFront took from the connection, `event.viewer.ip`: CloudFront's guide, "CloudFront Functions event
+ * structure"). The Function URL admits only signed callers (IAM auth): a distribution given an origin access grant, and
+ * the account's own principals; and `SssbApp` refuses to synthesize a behavior that reaches the
  * server without the function. Anywhere else, `pnpm dev` and a real-mode server of your own included, those headers
  * are the client's to write, so neither helper reads them.
  *
@@ -64,9 +66,9 @@ export function publicOrigin(request?: HasHeaders & { readonly url: string }): s
  * `undefined` as unknown (one shared bucket for a rate limit, say), never as a free pass. One IPv6 visitor usually
  * holds a whole /64, so a limit keyed on the full address is one a visitor can multiply.
  *
- * It never reads `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP` or `Forwarded`: behind CloudFront each holds what
- * the visitor wrote (CloudFront appends its own `X-Forwarded-For` entry after the visitor's, and forwards the others
- * as sent).
+ * It never reads `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP` or `Forwarded`: behind CloudFront the first
+ * `X-Forwarded-For` entry and the next two hold what the visitor wrote (CloudFront appends the address it saw after the
+ * visitor's entries), and `SssbApp`'s function drops a visitor's `Forwarded`, which anywhere else is theirs too.
  */
 export function clientAddress(request: HasHeaders): string | undefined {
     return clientAddressFrom(process.env, request)

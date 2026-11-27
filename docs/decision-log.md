@@ -7593,7 +7593,7 @@ standing rule for these sessions: decide, and record the rejected alternative.
 ## The visitor's origin and address: `publicOrigin` and `clientAddress` (2026-11-27, `fix/origin-helpers`)
 
 safeinsights/sssb#131 and safeinsights/sssb#132. Behind `SssbApp`, Next's `request.url` names the server's bind
-address (`https://localhost:3000`), and the first `X-Forwarded-For` entry is whatever the visitor wrote. Both issues
+address and port (3000), never the visitor's host, and the first `X-Forwarded-For` entry is whatever the visitor wrote. Both issues
 left a choice open; the maintainer's standing instruction is to decide and record.
 
 - **One module, in the adapters directory: `@sssb/kit/adapters/edge-headers`.** It reads two settings from the
@@ -7639,7 +7639,7 @@ left a choice open; the maintainer's standing instruction is to decide and recor
   `headers()`, a variable named for headers), so `searchParams.get('host')` and `process.env['HOST']` pass. In the app's
   proxy alone, `new URL(path, request.url)` handed straight to a `redirect` or `rewrite` passes too: Next relativizes a
   same-origin redirect only when the proxy answers it (`next/dist/server/web/adapter.js`), so a route handler's would
-  send the visitor to `https://localhost:3000` (round 2). A name held in a variable gets past, as any alias does. Path
+  send the visitor to the server's bind address (round 2). A name held in a variable gets past, as any alias does. Path
   and search parameters stay allowed. Rejected: **a conformance check**, which would re-implement the same syntax match at
   test time; the lint preset is where the other syntax fences are, and `sssb check-fences` probes it.
 - **Live proof is a cutover row, not this change's.** Both issues ask for it; no SSSB session deploys. The

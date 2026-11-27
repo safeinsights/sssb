@@ -12,7 +12,7 @@
  * may not touch it, and it removes a viewer's (CloudFront's guide, "Request and response behavior for custom
  * origins").
  * The function also writes `x-sssb-viewer-address`, over any a viewer sent: the address CloudFront took from the
- * connection (`event.viewer.ip`), the one entry of `X-Forwarded-For` a viewer cannot have written, which `@sssb/kit`'s
+ * connection (`event.viewer.ip`), an address no viewer can have written, unlike the first `X-Forwarded-For` entry, which `@sssb/kit`'s
  * `clientAddress` reads (the server is told to believe it by `SSSB_EDGE=cloudfront`, ./sssb-app.js).
  */
 export const FORWARDED_HOST_SOURCE = `function handler(event) {

@@ -470,7 +470,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 145 subpaths your app may
+lists the 146 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
 other 87 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's

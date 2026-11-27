@@ -305,8 +305,8 @@ export const a11yLiteralSelector = {
 
 // The visitor's origin and address (safeinsights/sssb#131, #132), read only through @sssb/kit/adapters/edge-headers
 // (`publicOrigin`, `clientAddress`). Behind SssbApp, `request.url` and `nextUrl` name the server's own bind address
-// (`https://localhost:3000`), and the first X-Forwarded-For entry, X-Real-IP, CF-Connecting-IP and Forwarded hold
-// whatever the visitor wrote. The obvious forms, never an alias:
+// and port, never the visitor's host; the first X-Forwarded-For entry, X-Real-IP and CF-Connecting-IP hold whatever the
+// visitor wrote; and the Forwarded the function drops is the visitor's anywhere else. The obvious forms, never an alias:
 // - a header that names the visitor's host or address, by its name as a string (any case), read from something that is
 //   plainly a request's headers: `.get`, `.has` or `.getAll` on `<x>.headers`, on `headers()` or `await headers()`
 //   (next/headers), or on a variable whose name says header; or a computed key on `<x>.headers` (Node's
@@ -315,7 +315,7 @@ export const a11yLiteralSelector = {
 // - `new URL(path, <x>.url)` (or `<x>.nextUrl`), an absolute URL on the server's own host; in the app's proxy alone
 //   (`proxy.*`, `middleware.*`) it may be handed straight to a `redirect` or `rewrite`, because Next relativizes a
 //   same-origin redirect only when the proxy answers it (`next/dist/server/web/adapter.js`): a route handler's
-//   `NextResponse.redirect(new URL('/en', request.url))` sends the visitor to `https://localhost:3000/en`;
+//   `NextResponse.redirect(new URL('/en', request.url))` sends the visitor to the server's bind address;
 // - `baseUrl: <x>.url`, the argument SSSB's own `sendOrgInvite` and `applyDemoPreset` take.
 // Path and search parameters of the same URLs are right and stay allowed.
 const VISITOR_HEADER =
@@ -334,7 +334,7 @@ export const visitorHeaderSelector = {
     message:
         "Read the visitor's address with clientAddress(request), and their origin with publicOrigin(request), from " +
         '@sssb/kit/adapters/edge-headers, never from a forwarded header: behind CloudFront the first X-Forwarded-For ' +
-        "entry, X-Real-IP, CF-Connecting-IP and Forwarded hold what the visitor wrote, and Host is the server's own.",
+        "entry, X-Real-IP and CF-Connecting-IP hold what the visitor wrote, and Host is the server's own.",
 }
 const REQUEST_URL = (at) =>
     `:matches([${at}.type="NewExpression"][${at}.callee.name="URL"][${at}.arguments.length=1]` +
@@ -349,13 +349,13 @@ const requestOriginSelectorWith = (urlOnRequest) =>
     'Property[key.name="baseUrl"][value.type="MemberExpression"][value.property.name="url"])'
 /**
  * The file Next runs as the app's proxy, where a same-origin redirect or rewrite is relativized: `proxy.*` or
- * `middleware.*` directly in `src/`, beside `app/` (the rule runs on `src/` alone). A `middleware.ts` elsewhere, a route
+ * `middleware.*` in a directory named `src`, as the app's `src/proxy.ts` is (the rule runs on the app's `src/` alone). A `middleware.ts` elsewhere, a route
  * handler's wrapper say, is not Next's proxy, and its redirect is not relativized.
  */
 export const PROXY_FILE = /(^|[\\/])src[\\/](proxy|middleware)\.[cm]?[jt]sx?$/
 const REQUEST_ORIGIN_MESSAGE =
     'Build an absolute URL on publicOrigin(request) from @sssb/kit/adapters/edge-headers: behind SssbApp, the ' +
-    "request's own URL names the server's bind address (https://localhost:3000), not the app's. Its path and " +
+    "request's own URL names the server's bind address and port, not the app's. Its path and " +
     'search parameters are right as they are.'
 export const requestOriginSelector = {
     selector: requestOriginSelectorWith(URL_ON_REQUEST),
