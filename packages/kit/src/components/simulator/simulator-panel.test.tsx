@@ -9,7 +9,7 @@ import { mergeMessages } from '../../i18n/messages'
 import { SimulatorPanel } from './simulator-panel'
 
 /**
- * A host wires the tabs it serves (the kit's server host wires People, Mail, Jobs and Snapshots): every other tab is
+ * A host wires the tabs it serves (the kit's server host wires every framework tab): every other tab is
  * left out of the strip, and a tab remembered from a host that showed it falls back to People.
  */
 

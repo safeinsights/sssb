@@ -244,3 +244,99 @@ describe('SimulatorHost: Tours', () => {
         expect(assign).toHaveBeenCalled()
     })
 })
+
+describe('SimulatorHost: the subsystem tabs', () => {
+    const ENDPOINT = {
+        id: 'e1',
+        url: 'https://example.test/hook',
+        eventKinds: ['docket.opened'],
+        enabled: true,
+        tenantSlug: 'harbor',
+        orgSlug: 'depot',
+    }
+
+    beforeEach(() => {
+        // The compose form's autosizing textarea listens on `document.fonts`, which happy-dom does not have.
+        if (!('fonts' in document))
+            Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true })
+        Object.assign(answers, {
+            'GET mail?all=1': { body: { emails: [], mailSeenAt: null, allCount: 0 } },
+            'GET inbound': {
+                body: {
+                    inbound: [],
+                    orgs: [{ slug: 'depot', name: 'Depot', tenantSlug: 'harbor' }],
+                    people: [{ email: 'ada.keeper@example.test', name: 'Ada Keeper' }],
+                    handlers: ['support'],
+                    domain: 'inbound.example.test',
+                },
+            },
+            'POST inbound/compose': { body: { ok: true, outcome: { status: 'handled' } } },
+            'GET messages': {
+                body: { messages: [{ id: 'm1', at: '2026-11-27T12:00:00.000Z', to: 'Ada', body: 'Hi', kind: 'k' }] },
+            },
+            'GET events': { body: { events: [{ id: 'v1', at: '2026-11-27T12:00:00.000Z', event: 'docket_opened' }] } },
+            'GET audit': { body: { audit: [] } },
+            'GET webhooks': { body: { endpoints: [ENDPOINT], deliveries: [], failingEndpointIds: [] } },
+            'POST webhooks/fail': { body: { ok: true, failing: true } },
+            'POST webhooks/run-due': { body: { ok: true, deliveries: { delivered: 3 } } },
+            'GET error-scenario': { body: { raw: { message: 'm' }, scrubbed: { message: 'm' } } },
+        } satisfies Record<string, Answer>)
+    })
+
+    async function openTab(tab: string) {
+        window.localStorage.setItem('app-simulator-tab', tab)
+        return renderHost()
+    }
+
+    it('Messages lists the caught SMS', async () => {
+        const container = await openTab('messages')
+        expect(byTestId(container, 'message-item-m1')).toBeTruthy()
+    })
+
+    it('Events lists the events and fetches the audit trail with them', async () => {
+        const container = await openTab('events')
+        expect(byTestId(container, 'events-list').textContent).toContain('docket_opened')
+        expect(byTestId(container, 'audit-empty')).toBeTruthy()
+    })
+
+    it('the Mail tab composes inbound mail to the app and says what intake did', async () => {
+        const container = await openTab('mail')
+        await click(container, 'inbound-compose-send')
+        expect(posts).toEqual([
+            {
+                path: 'inbound/compose',
+                body: { from: 'ada.keeper@example.test', orgSlug: 'depot', handler: 'note', subject: '', body: '' },
+            },
+        ])
+        expect(notices(container)).toHaveLength(1)
+    })
+
+    it('the Mail tab has no compose form for an app that registers no inbound handler', async () => {
+        const offered = answers['GET inbound']!.body as Record<string, unknown>
+        answers['GET inbound'] = { body: { ...offered, handlers: [] } }
+        const container = await openTab('mail')
+        expect(container.querySelector('[data-testid="simulator-inbound"]')).toBeNull()
+    })
+
+    it('Hooks makes an endpoint fail and runs what is due', async () => {
+        const container = await openTab('hooks')
+        await click(container, 'simulator-hook-fail-e1')
+        await click(container, 'simulator-hooks-run-due')
+        expect(posts).toEqual([
+            { path: 'webhooks/fail', body: { endpointId: 'e1', failing: true } },
+            { path: 'webhooks/run-due', body: {} },
+        ])
+        expect(notices(container).join(' ')).toContain('3')
+    })
+
+    it('Errors shows the server scenario, and a server that cannot answer leaves the tab as it was', async () => {
+        const container = await openTab('errors')
+        await click(container, 'throw-server-error')
+        expect(byTestId(container, 'error-scrubbed')).toBeTruthy()
+
+        answers['GET error-scenario'] = { status: 500, body: { error: 'boom' } }
+        const again = await openTab('errors')
+        await click(again, 'throw-server-error')
+        expect(again.querySelector('[data-testid="error-scrubbed"]')).toBeNull()
+    })
+})

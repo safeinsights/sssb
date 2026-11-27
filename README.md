@@ -57,10 +57,10 @@ You can hold every job in the world at `queued` and watch the choreography, then
 again. None of this reaches production: real builds ship zero Simulator client code.
 
 In the showcase all of it runs on `pnpm dev`. An app the generator writes has the whole Simulator in its single-file
-static demo from the start, and on its own `pnpm dev` the People, Mail, Jobs (with the world clock) and Snapshots tabs,
-its demo presets and its tours, served by SSSB behind one route file; the Events, Messages, Hooks, Errors and Actors
-tabs follow in stages ([safeinsights/sssb#128](https://github.com/safeinsights/sssb/issues/128) and
-[safeinsights/sssb#152](https://github.com/safeinsights/sssb/issues/152)).
+static demo from the start, and on its own `pnpm dev` every framework tab (People, Mail with inbound mail, Messages,
+Events, Jobs with the world clock, Hooks, Errors and Snapshots), its demo presets and its tours, served by SSSB behind
+one route file. An app's own tabs (Actors) and the Jobs tab's dev ticker are not served there yet
+([safeinsights/sssb#152](https://github.com/safeinsights/sssb/issues/152)).
 
 ### 2. The boundaries are enforced by the build, not by documentation
 

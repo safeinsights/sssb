@@ -138,9 +138,9 @@ are in `@sssb/kit/core/presets`; the reference app's presets are the worked exam
       filter that skips its other checks fails it by design.
     - Assert what the preset VISIBLY did in the static demo, in a load test beside the loop (load it from the
       Snapshots tab as the loop does, then check the screen), and run both with
-      `pnpm build:demo-static && pnpm e2e:demo-static`. A server-side e2e spec that loads a preset needs the server
-      Simulator's Snapshots tab, which a generated app's `pnpm dev` panel does not have; once the app has the
-      reference's server Simulator glue, model it on the reference's `presets:` test in
-      `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/tests/e2e/destructive/simulator-snapshots.spec.ts`
-      (it resets the world, so it runs on its own; it leans on that app's spec helpers, which you would copy too).
+      `pnpm build:demo-static && pnpm e2e:demo-static`. A server-side e2e spec can load it from the Snapshots tab on
+      `pnpm dev` too: open the panel as `tests/e2e/simulator.spec.ts` does, click `preset-load-<id>`, and wait for
+      the page the preset lands on. The reference's `presets:` test is a worked example
+      (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/tests/e2e/destructive/simulator-snapshots.spec.ts`;
+      it resets the world, so it runs after the specs that share it, and it leans on that app's spec helpers).
     - Finish with `pnpm check:demo-size` and `pnpm verify`.

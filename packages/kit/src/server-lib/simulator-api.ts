@@ -1,11 +1,13 @@
 import { findOrg } from '@sssb/app-config/seed'
 import { auth, db, isSimulated, jobs } from '../adapters/index'
 import { bumpWorldAgreement, listWorldAgreements } from '../adapters/fake/agreements'
-import { KNOWN_FLAGS, readFlags, setFlag } from '../adapters/fake/analytics'
+import { KNOWN_FLAGS, listCapturedEvents, readFlags, setFlag } from '../adapters/fake/analytics'
+import { listWorldAuditEvents } from '../adapters/fake/audit'
 import { devSignIn, findInvite, listAllPeople, readInvites } from '../adapters/fake/auth'
 import { advanceClockMs, readClockOffsetMs, resetClock, worldNow } from '../adapters/fake/clock'
 import { type CaughtEmail, clearCaughtEmails, listCaughtEmails } from '../adapters/fake/email'
 import { JOBS_HELD_FLAG, listWorldJobs, runPendingJobs } from '../adapters/fake/jobs'
+import { listCaughtSms } from '../adapters/fake/sms'
 import {
     type PersonKey,
     readSimulatorState,
@@ -20,15 +22,28 @@ import {
     restoreSnapshot,
     saveSnapshot,
 } from '../adapters/fake/simulator-admin'
+import { listCaughtWebhooks, readFailingEndpoints, setEndpointFailing } from '../adapters/fake/webhooks'
+import type { ScrubResult } from '../components/simulator/errors-app'
+import type { AnalyticsEvent, AuditEntry } from '../components/simulator/events-app'
+import type { HookDeliveryRow, HookEndpointRow } from '../components/simulator/hooks-app'
+import type { InboundEmailRow } from '../components/simulator/inbound-app'
 import type { WorldJobLike, ScheduleRowLike } from '../components/simulator/jobs-app'
 import type { MailItem } from '../components/simulator/mail-app'
+import type { SmsMessageRow } from '../components/simulator/messages-app'
 import type { Person } from '../components/simulator/people-app'
 import type { FeatureFlag, Snapshot, SnapshotAgreement } from '../components/simulator/snapshots-app'
+import { DEMO_INBOUND_DOMAIN, formatInboundRecipient } from '../core/inbound-email'
 import { LOCALES } from '../core/locale'
 import { WORLD_START_NAME_PATTERN } from '../core/presets'
 import { sameOriginPath } from '../core/same-origin-path'
+import { WEBHOOK_SIGNATURE_HEADER } from '../core/webhook-signing'
+import { listInboundForWorld } from '../db/inbound-email'
+import { listOrgsForWorld } from '../db/org-lookup'
 import { listSchedulesForWorld, runDueSchedules } from '../db/schedules'
-import { runDueDeliveries } from '../db/webhooks'
+import { listDeliveriesForWorld, listEndpointsForWorld, runDueDeliveries } from '../db/webhooks'
+import { inboundHandlers } from '../inbound-email/handlers'
+import { intakeInboundEmail } from '../inbound-email/intake'
+import { scrubEvent } from '../observability/scrub'
 import { AuthRequiredError, ForbiddenError, NotFoundError } from '../ports/errors'
 import { applyDemoPreset } from './demo-presets'
 import { dispatchWebhook } from './webhook-dispatch'
@@ -40,7 +55,10 @@ import { dispatchWebhook } from './webhook-dispatch'
  * (`jobs`, `jobs/run-pending`, `schedules`, `clock`, `schedules/run-due`); and Snapshots, the world's knobs: a reset
  * (`reset`), named snapshots (`snapshots`, `snapshots/restore`, `snapshots/delete`), the feature flags (`flags`), the
  * access-gate agreements (`agreements`, `agreements/bump`) and the app's demo presets (`presets`), which with a reset
- * and a restore are also how a tour starts its world. Any other path answers 404, so an app that
+ * and a restore are also how a tour starts its world; and the subsystems' tabs, which watch what the world did:
+ * Events (`events`, with `audit` beneath it), Messages (`messages`), inbound mail beside the Mail tab (`inbound`,
+ * `inbound/compose`), Hooks (`webhooks`, `webhooks/fail`, `webhooks/run-due`) and Errors (`error-scenario`). Any other
+ * path answers 404, so an app that
  * keeps route files of its own under `api/simulator/` still owns them: Next routes a static segment before a
  * catch-all.
  *
@@ -107,6 +125,37 @@ export interface SimulatorAgreements {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** GET `events`: every analytics event the world captured. The flags are on `flags`: the Snapshots tab owns them. */
+export interface SimulatorEvents {
+    events: AnalyticsEvent[]
+}
+
+/** GET `audit`: every tenant's audit trail, newest first, shown beneath the events. */
+export interface SimulatorAudit {
+    audit: AuditEntry[]
+}
+
+/** GET `messages`: every SMS the world caught. */
+export interface SimulatorMessages {
+    messages: SmsMessageRow[]
+}
+
+/** GET `inbound`: every inbound email, and what the compose form offers: orgs, people, the handlers and the domain. */
+export interface SimulatorInbound {
+    inbound: InboundEmailRow[]
+    orgs: { slug: string; name: string; tenantSlug: string }[]
+    people: { email: string; name: string }[]
+    handlers: string[]
+    domain: string
+}
+
+/** GET `webhooks`: every endpoint and delivery in the world, each delivery with what was signed and sent. */
+export interface SimulatorHooks {
+    endpoints: HookEndpointRow[]
+    deliveries: HookDeliveryRow[]
+    failingEndpointIds: string[]
+}
+
 /** A clock move is capped at a year per call: a demo control, not a time machine. */
 const MAX_ADVANCE_MS = 366 * 86_400_000
 /** And the world at a century ahead in all, so repeated moves never leave the range a `Date` can hold. */
@@ -133,6 +182,15 @@ const ROUTES: Readonly<Record<string, Readonly<{ GET?: Handler; POST?: Handler }
     agreements: { GET: agreements },
     'agreements/bump': { POST: agreementBump },
     presets: { POST: presetLoad },
+    events: { GET: events },
+    audit: { GET: audit },
+    messages: { GET: messages },
+    inbound: { GET: inbound },
+    'inbound/compose': { POST: inboundCompose },
+    webhooks: { GET: webhooks },
+    'webhooks/fail': { POST: webhookFail },
+    'webhooks/run-due': { POST: webhookRunDue },
+    'error-scenario': { GET: errorScenario },
 }
 
 /** The one handler behind `src/app/api/simulator/[...path]/route.ts`: GET and POST both call it. */
@@ -445,4 +503,112 @@ async function presetLoad(request: Request): Promise<Response> {
     }
     const { signedIn } = await applyDemoPreset(name, { baseUrl: request.url })
     return Response.json({ redirectTo: signedIn ? `/${locale}/dashboard` : `/${locale}` })
+}
+
+async function events(): Promise<Response> {
+    const body: SimulatorEvents = { events: listCapturedEvents() }
+    return Response.json(body)
+}
+
+async function audit(): Promise<Response> {
+    const body: SimulatorAudit = { audit: await listWorldAuditEvents() }
+    return Response.json(body)
+}
+
+async function messages(): Promise<Response> {
+    const body: SimulatorMessages = { messages: listCaughtSms() }
+    return Response.json(body)
+}
+
+async function inbound(): Promise<Response> {
+    const body: SimulatorInbound = {
+        inbound: await listInboundForWorld(db),
+        orgs: await listOrgsForWorld(db),
+        people: listAllPeople().map((person) => ({ email: person.email, name: person.name })),
+        handlers: Object.keys(inboundHandlers),
+        domain: DEMO_INBOUND_DOMAIN,
+    }
+    return Response.json(body)
+}
+
+/** The trimmed string at `key`, or '' when there is none. */
+function trimmed(body: Record<string, unknown> | null, key: string): string {
+    const value = body?.[key]
+    return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * POST `inbound/compose` `{ from, orgSlug, handler, subject, body }`: the world emails the app. It is addressed to the
+ * org's handler on the demo domain and taken in by `intakeInboundEmail`, the same intake the real inbound webhook calls,
+ * so it reaches the app's registered handlers through their registry and no other way. The outcome says what intake did
+ * with it (handled, unrouted, ...); a reply the handler sends lands in the Mail tab.
+ */
+async function inboundCompose(request: Request): Promise<Response> {
+    const body = await jsonObject(request)
+    const from = trimmed(body, 'from')
+    const orgSlug = trimmed(body, 'orgSlug')
+    const handler = trimmed(body, 'handler')
+    if (!from || !orgSlug || !handler) return badRequest('invalid-payload')
+    const subject = body?.['subject']
+    const text = body?.['body']
+    const outcome = await intakeInboundEmail(db, auth, {
+        to: formatInboundRecipient(orgSlug, handler, DEMO_INBOUND_DOMAIN),
+        from,
+        subject: typeof subject === 'string' ? subject : '',
+        bodyText: typeof text === 'string' ? text : '',
+    })
+    return Response.json({ ok: true, outcome })
+}
+
+async function webhooks(): Promise<Response> {
+    const caught = new Map(listCaughtWebhooks().map((webhook) => [webhook.deliveryId, webhook]))
+    const deliveries = (await listDeliveriesForWorld(db)).map((delivery) => {
+        const sent = caught.get(delivery.id)
+        return { ...delivery, signature: sent?.headers[WEBHOOK_SIGNATURE_HEADER] ?? null, body: sent?.body ?? null }
+    })
+    const body: SimulatorHooks = {
+        endpoints: await listEndpointsForWorld(db),
+        deliveries,
+        failingEndpointIds: [...readFailingEndpoints()],
+    }
+    return Response.json(body)
+}
+
+/** POST `webhooks/fail` `{ endpointId, failing }`: makes one endpoint answer every delivery with a failure, or stop. */
+async function webhookFail(request: Request): Promise<Response> {
+    const body = await jsonObject(request)
+    const endpointId = body?.['endpointId']
+    const failing = body?.['failing']
+    if (typeof endpointId !== 'string' || typeof failing !== 'boolean') return badRequest('invalid-request')
+    setEndpointFailing(endpointId, failing)
+    return Response.json({ ok: true, failing })
+}
+
+/** POST `webhooks/run-due`: delivers what is due at the world's "now", retries included, without moving the clock. */
+async function webhookRunDue(): Promise<Response> {
+    return Response.json({ ok: true, deliveries: await runDueDeliveries(db, worldNow(), dispatchWebhook) })
+}
+
+/**
+ * GET `error-scenario`: a server error's event before and after `scrubEvent`, the scrubbing the error reporter applies,
+ * so the Errors tab can show what never leaves the server without a reporter configured. The values are placeholders
+ * shaped like what a request carries.
+ */
+async function errorScenario(): Promise<Response> {
+    const event = {
+        message: 'Test error (server) from Simulator',
+        request: {
+            headers: {
+                cookie: 'session=SECRET_COOKIE_VALUE',
+                authorization: 'Bearer SECRET_TOKEN',
+                'x-api-key': 'SECRET_API_KEY',
+                'user-agent': 'DevErrorsDemo/1.0',
+            },
+            cookies: { session: 'SECRET_COOKIE_VALUE' },
+            query_string: 'token=SECRET_QUERY',
+        },
+        user: { id: 'user_123', email: 'user@example.com', ip_address: '203.0.113.7' },
+    }
+    const body: ScrubResult = { raw: structuredClone(event), scrubbed: scrubEvent(structuredClone(event)) }
+    return Response.json(body)
 }
