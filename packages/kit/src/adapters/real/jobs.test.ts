@@ -42,8 +42,28 @@ describe('the CodeBuild jobs runner', () => {
                 { name: 'JOB_TENANT_ID', value: 't1', type: 'PLAINTEXT' },
                 { name: 'JOB_ORG_ID', value: 'o1', type: 'PLAINTEXT' },
                 { name: 'JOB_PAYLOAD', value: '{"a":1}', type: 'PLAINTEXT' },
+                { name: 'JOB_ATTEMPT', value: '1', type: 'PLAINTEXT' },
+                { name: 'JOB_FIRST_ID', value: 'j1', type: 'PLAINTEXT' },
             ],
         })
+    })
+
+    test("a retry's build is told which attempt it is and the first attempt's id (safeinsights/sssb#135)", async () => {
+        const { createRealJobs } = await import('./jobs')
+        await createRealJobs('proj', 'us-east-1').start({
+            id: 'j3',
+            kind: 'export-dockets',
+            tenantId: 't1',
+            orgId: 'o1',
+            payload: {},
+            attempt: 3,
+            firstJobId: 'j1',
+        })
+        const { environmentVariablesOverride } = (
+            send.mock.calls[0]?.[0] as { input: { environmentVariablesOverride: unknown[] } }
+        ).input
+        expect(environmentVariablesOverride).toContainEqual({ name: 'JOB_ATTEMPT', value: '3', type: 'PLAINTEXT' })
+        expect(environmentVariablesOverride).toContainEqual({ name: 'JOB_FIRST_ID', value: 'j1', type: 'PLAINTEXT' })
     })
 
     test('a job with no org gets an empty JOB_ORG_ID', async () => {

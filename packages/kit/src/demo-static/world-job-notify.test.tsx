@@ -11,7 +11,8 @@ import { useDemoWorld } from './world'
 /**
  * The static demo's twin of `notifyJobTerminal` honours the seam's `jobNotify` (server-lib/notify-opt-out.test.ts
  * pins the server's side): the same kind, finished the same way, notifies the team's admins in the demo exactly
- * where it does on the server. The twin only completes a job, so `failure` is as silent as `never` here.
+ * where it does on the server. Every job here completes, so `failure` is as silent as `never`; a failing job's
+ * notification is world-job-retries.test.tsx's.
  */
 
 type World = ReturnType<typeof useDemoWorld>

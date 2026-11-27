@@ -10,7 +10,10 @@ import type { JobsPort } from '../../ports/jobs'
  * terminal transition via packages/kit/src/db/jobs.recordWebhookCompletion (idempotent under redelivery). The
  * build receives its context through environment overrides, mirroring a handler's `JobContext`: JOB_ID, JOB_KIND,
  * JOB_TENANT_ID, which the webhook echoes back as `tenantId` so the completion is scoped to the right tenant without the
- * build having to look it up, JOB_ORG_ID (empty for a job with no org), and JOB_PAYLOAD. Every override is PLAINTEXT,
+ * build having to look it up, JOB_ORG_ID (empty for a job with no org), JOB_PAYLOAD, and JOB_ATTEMPT and JOB_FIRST_ID, a handler's `ctx.attempt` and
+ * `ctx.firstJobId` (safeinsights/sssb#135): a kind that retries gets a new job, so a new build, for each attempt, armed by
+ * the failed build's `failed` webhook. A build lost without posting one is never noticed, so never retried: no sweep
+ * watches CodeBuild (safeinsights/sssb#231). Every override is PLAINTEXT,
  * readable in the CodeBuild console and in CloudTrail, so a job's payload must never carry a secret or personal data:
  * pass an id the build reads with its own access instead.
  */
@@ -28,6 +31,8 @@ export function createRealJobs(project: string, region: string): JobsPort {
                         { name: 'JOB_TENANT_ID', value: job.tenantId, type: 'PLAINTEXT' },
                         { name: 'JOB_ORG_ID', value: job.orgId ?? '', type: 'PLAINTEXT' },
                         { name: 'JOB_PAYLOAD', value: JSON.stringify(job.payload ?? {}), type: 'PLAINTEXT' },
+                        { name: 'JOB_ATTEMPT', value: String(job.attempt ?? 1), type: 'PLAINTEXT' },
+                        { name: 'JOB_FIRST_ID', value: job.firstJobId ?? job.id, type: 'PLAINTEXT' },
                     ],
                 }),
             )

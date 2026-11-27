@@ -6422,6 +6422,9 @@ Decisions, each with the alternative rejected:
   for a kit with no stamp, one of the two causes of a refusal), a candidate's notes still name the commit (`sha`), and `docs/adopting.md`'s step 4
   says the same. `docs/releases/v0.2.0.md`, a dated record, still carries the hand edit. Rejected: keeping the hand edit
   beside the command, which would be two ways to do it in every release's notes.
+- **At the new budgets**, five more runs of the destructive shard on CI (one push and four reruns, 2026-11-27): 16 passed
+  each time, in 1.5 to 1.9 min, none flaky. Locally under `next dev` at load ~330, the destructive project passed 16 of
+  16 in 5.8 min.
 - **Not done here:** the generator's own text in a workspace's `README.md` and `CLAUDE.md` (`packages/create/src/files.js`,
   "Raise the pin when you upgrade") still says to raise the pins without naming the command; it stays true, and changing it
   changes what `@sssb/create` writes, so it is a separate change.
@@ -7836,6 +7839,118 @@ One branch's secret-like string failed the scan on every other open pull request
 - **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
   stopword behaviour (named out of scope in the issue).
 
+## Job retries with backoff, a new row per attempt (2026-11-27, `fix/job-retries`)
+
+safeinsights/sssb#135: a job was tried once, and `failed` ended it for good, whether the handler threw, a build failed
+or the in-process runner lost it. A kind may now opt in to retries. The issue listed its open questions in order; each
+is answered here.
+
+- **A retry is a new job row, not the same row.** The issue asked for the new-row sketch to be tried first, and it was
+  kept. Framework migration `0019_job_attempts` gives `jobs` an `attempt` (from 1), a `retry_of` (the FIRST attempt's
+  id, so every attempt points at one key) and a `run_after` (set only while a retry waits out its delay). `failed` stays
+  terminal: `jobStatusMachine` is unchanged, and so is the idempotency `recordWebhookCompletion` stands on. A
+  redelivered failure finds the row already `failed`, answers `idempotent`, and arms nothing more. Each attempt keeps its
+  own timeline, and the first attempt's error is never overwritten by a later one. The cost is several rows for one piece
+  of work in a job list; the views now carry `attempt` and `retryOf` so a screen can group them. Rejected: **the same
+  row going `failed -> queued`**, or a new `retrying` status. That loosens the one rule the webhook's idempotency and the
+  timeline's meaning rest on, and leaves a status a dashboard and a service poller would both have to learn.
+- **Opt in per kind, default none, in the seam beside `jobNotify`.** The optional `jobRetry` export holds
+  `Partial<Record<AppJobKind, JobRetry>>`, with `JobRetry = { attempts, delaysMs? }`. It is read through the seam's
+  namespace, as `jobNotify` is, so an app without the export builds and runs every kind once.
+    - An entry SSSB will not honour (`isJobRetry`: attempts not a whole number from 1 to `MAX_JOB_ATTEMPTS`, 10, or a
+      delay that is negative or not finite) counts as absent. A typo must never become a hundred runs of a failing job.
+    - The framework's own kinds never retry.
+    - With no `delaysMs`, the delays are the webhook deliveries' backoff (`backoffDelayMs`), reusing what already exists.
+      The last delay repeats when the list is shorter than the attempts.
+- **Arming happens at the failure, in its transaction.** `recordJobStatus`, the one choke point every runner's failure
+  goes through, inserts the next attempt in the SAME transaction that records `failed`. That covers a handler's throw
+  (`runJobInProcess`), the in-process sweep's lost job, a build's failure webhook, and a start the drain could not make.
+  The new row is queued, with `run_after` set to the failure plus the delay, and copies the kind, org, payload and
+  requester. Its opening timeline entry reads `attempt N of M, after: <error>`, and the failed entry reads
+  `retry armed: …`. So no failure can happen without its retry being durable, and none can arm twice.
+    - The clock is the caller's (`extra.now`): the simulated runner passes the world clock and the sweep passes the tick's.
+      That way a demo that moved its clock reaches a retry by moving it again.
+    - Rejected: **arming in a separate step after the failure commits**, which a crash between the two would lose.
+- **The scheduled tick starts the next attempt.** A retry cannot wait inside the invocation that failed. It gets a
+  third drain, `runDueRetries`, built on #97's machinery: listed per tenant under `withTenant`, taken in fair turns, and
+  bounded by its own window, so the tick's windows are now schedules 6 s, retries 10 s and deliveries 16 s, re-divided
+  inside the same 30-second limit.
+    - It claims a row the way the delivery drain claims a delivery: lock it, check it is still waiting and due, and clear
+      `run_after`. Only after that commits does it call `jobs.start` with the attempt and the first attempt's id. From the
+      claim on, the row is an ordinary queued job, so every runner treats it as it treats a submitted one.
+    - A start that throws (StartBuild refused) records the attempt failed, which arms the next.
+    - The tick's period is the floor under any delay; the guide says so where a kind sets one.
+    - Rejected: **a timer in the process**, which a Lambda does not have; and **retrying inside the failing invocation**,
+      which shares its limit and may be what died.
+- **Idempotency is the handler's.** SSSB tells a handler `ctx.attempt` and `ctx.firstJobId`, the key it deduplicates its
+  side effects on, and passes both to a CodeBuild build as `JOB_ATTEMPT` and `JOB_FIRST_ID`. The guide states the
+  requirement.
+    - Both context fields are optional in the type, though SSSB's runners always set them. A required field would break
+      every adopter test that calls a handler with a hand-built context (the showcase's export test does).
+    - A time-budgeted handler that returns having done part of its work has succeeded, and is not retried.
+- **Lost jobs.** The in-process sweep leaves a waiting retry alone (`run_after` is set), since it is the tick's to start,
+  not lost. A job the sweep fails as lost arms its retry like any other failure.
+    - The simulated world loses no jobs and has no sweep.
+    - CodeBuild has no lost-build detection at all: a build that dies without posting its webhook is never noticed, so it
+      is never retried. Closing that gap is its own change: safeinsights/sssb#231.
+- **Notifications are about the job's end.** `notifyJobTerminal` skips a failure that armed a retry: it checks for a
+  later attempt of the same work, so every caller (the runners, the webhook route, the sweep) gets it without a
+  parameter. `jobNotify`'s `failure` therefore means a failure with no attempts left. The payload gains `attempts` when
+  the attempt is above 1, and the catalog says "did not finish after N attempts". Whether a retry writes an
+  `audit_events` row is #156's question, left with it. The timeline is the record here.
+- **The Simulator.**
+    - "Run pending jobs" and the builder actor's pool skip a retry still waiting: an operator must not jump a backoff by a
+      click.
+    - The clock advance and run-due also run `runDueRetries` (`simulator-api.ts` and the showcase's two routes). Advancing
+      past a delay is how a demo reaches a retry.
+    - The static demo's twin gets the same map through `useDemoWorld({ jobRetry })`, plus a `jobOutcome` hook, the twin
+      of a handler that throws, since it could only complete a job before.
+- **safeinsights/sssb#215 is not covered.** A schedule whose spawn fails inside its transaction creates no job row, so
+  there is nothing for a job retry to retry. What it needs is a policy for the schedule row itself (disable an
+  unparseable spec, back off a transient failure), with its own question of who sees it. It stays open.
+- **Proofs.** `db/job-retries.test.ts` runs every server runner through the issue's cases, each checking the rows, the
+  timeline, the notification and, for CodeBuild, the redelivered webhook:
+    - succeeds first time; fails then succeeds; fails every attempt; and, on the in-process runner, is lost then succeeds;
+    - a kind that does not retry;
+    - two drains racing one retry;
+    - a start that throws;
+    - the Simulator skipping a waiting retry.
+
+    Removing the arming, the notifier's skip, the sweep's or run-pending's exclusion, the drain's under-lock re-check,
+    the delay, or the first job id's hand-off each turns them red. `core/jobs.test.ts` covers the seam reader;
+    `db.contract.test.ts` arms and drains a retry on real Postgres under RLS; `demo-static/world-job-retries.test.tsx`
+    runs the twin through the same cases and holds its copy of the policy to core's answers.
+
+- **What review changed** (two review rounds on Opus, then a check of the second round's fixes as a diff).
+    - **A waiting retry is hidden from a service caller.** `listServiceJobs` lists a job a service may run, and a
+      waiting retry is not one yet; the Simulator's service actor would otherwise have run every armed retry at once.
+      `listServiceJobs` therefore leaves it out, and the twin's service driver too.
+    - **Any hop out of `queued` clears `run_after`.** A path that reached the retry anyway (a caller that knew its id, a
+      webhook) takes it out of the drain's list.
+    - **A last attempt that could not start notifies.** A start that throws is recorded failed. Before review, the drain
+      then told no one, even when that was the job's end. `runDueRetries` now takes an `onFailed`. The tick and the
+      Simulator's clock and run-due controls pass `notifyRetryEnd`, which calls `notifyJobTerminal`, and that skips a
+      failure that armed a further attempt.
+    - **A delay over 30 days (`MAX_JOB_RETRY_DELAY_MS`) is refused.** A delay past JavaScript's date range would
+      otherwise throw inside the failure's transaction and leave the job unrecordable. The twin's copy of the check
+      carries the same cap.
+    - **The twin honours the jobs-held knob** for a due retry: it is left queued for Run pending, as `fakeJobs.start`
+      holds one on the server.
+    - **The views' new fields are optional** (`JobView.attempt`, `.retryOf`, the same on `ServiceJobView`), so a story or
+      test that builds a view by hand still compiles. The list functions always set them.
+- **Limitations accepted.**
+    - **A StartBuild that throws after the build really started** records that attempt failed and arms the next. The
+      build's own `completed` webhook is then refused with a 409, `failed -> completed`, and the work may run twice.
+      `submitJob` leaves a job queued when its start throws, but the drain cannot: on CodeBuild a queued job with no build
+      is lost for good (safeinsights/sssb#231). A failure the next attempt repairs costs less.
+    - **In a simulated world, a retry armed through the jobs webhook or the service status route uses the real clock.**
+      Those routes pass no `now`. After the world clock has been moved forward, such a retry is due at once. The runners'
+      own failures and the sweep use the world clock.
+    - **The static demo's twin** delivers a webhook a retry enqueued during a clock advance at the next drain, not in the
+      same advance, as the server's tick does.
+    - **The showcase's static bundle has about 11 KB of its size budget left** after this change (`pnpm check:demo-size`
+      passes with a warning).
+
 ## One answer for a missing id and a refused one (2026-11-27, `fix/id-existence-oracle`)
 
 safeinsights/sssb#137. The showcase's mutating `[id]` routes looked the row up, answered 404 when it was missing, and
@@ -8038,3 +8153,146 @@ settle:
   intercepting route, whose URL a path cannot tell. That can fail an app that passed, hence `minor`, Action required.
 - **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
   own, in its own PR.
+## `check-real-env` notices, and a bound on the feature-flag read (2026-11-27, `fix/real-env-notices`)
+
+safeinsights/sssb#192 and #104, two small changes to the real adapters' edges.
+
+- **#192: `realEnvNotices(env)` beside `assertRealEnv`, printed by `sssb check-real-env` after a pass.** Advisory lines
+  returned by the framework, so the command's one reader of a deployment's environment stays the framework's, with
+  `@sssb/tools` only printing them (a `notice:` each, to stdout, exit code unchanged). The framework's list holds two
+  cases: `CLERK_AUTHORIZED_PARTIES` unset, and any variable that starts `CLERK_AUTHORI` (any case) and is not that name,
+  the issue's second comment: such a variable looks like the setting and does nothing. Not in the list: `CLERK_JWT_KEY`,
+  the issue's open question. Unset it costs Clerk API calls rather than leaves a check off, and what it costs is a
+  measurement (cutover row `auth-dev`); it is one line to add if wanted. A notice is not printed after a failure, which
+  is the whole answer then. `@sssb/tools` finds `realEnvNotices` by looking through the framework's exports by name at
+  run time, and offers none for a framework without it: esbuild warns about any static mention of a missing export,
+  `in` guard included (a test pins that no warning is printed). A notices function that throws prints a notice saying
+  so and never fails the check. Rejected: **a `--strict` flag that fails on a notice**, which nobody asked for and
+  which would make unset look unsupported; and **warning at boot**, where the server's log is nobody's checklist.
+- **#104: `FLAG_TIMEOUT_MS` = one second, no retries.** Chosen against what a page can afford: the protected layout
+  awaits a flag read before it renders, so a slow PostHog costs every authenticated page the bound, once. One second
+  rather than the capture bound (two): a capture is awaited only to get the event out of a frozen Lambda, a flag read
+  is on the way to the person's page. The client is given `featureFlagsRequestTimeoutMs` and
+  `featureFlagsRequestMaxRetries: 0` (posthog-node 5.73 builds on @posthog/core 1.67's stateless client: three
+  seconds and one retry after a delay, so six seconds and more per page in an outage; the issue's "ten seconds" is the
+  stateful client's default, which this is not), so the request is aborted, and the adapter races
+  the read against the same bound, so the page is held to it whatever the client does. Late answers and failures are
+  dropped. Not measured against a live PostHog (cutover row `analytics`).
+
+## The starter's e2e on a production build, and the destructive suite's budgets from CI's numbers (2026-11-27, `fix/e2e-prod-build`)
+
+`safeinsights/sssb#109` and `safeinsights/sssb#100`. SSSB's reusable workflow sets `E2E_BUILD=1` on every e2e shard, and
+only the showcase read it: the starter's shard ran `next dev`, so CI never ran `next build` for the app adopters get. And
+the destructive project's budgets were still the ones sized for `next dev` on a CI runner.
+
+- **The starter reads the flag** (`build:e2e`, `start:e2e`, and the `webServer` branch in its `playwright.config.ts`),
+  as the showcase does, and a generated app inherits both through the template; nothing in `app-checks.yml` or
+  `sssb ci` changes. Seen to fail: a server component that calls `useState`, on a route no spec visits, failed the
+  suite under `E2E_BUILD=1` at `next build` ("You're importing a module that depends on `useState` into a React Server
+  Component module") and passed it under `next dev` (4 passed). Rejected: **a shared Playwright preset** for the two
+  configs, to state the branch once: jscpd reads only `src` (`.jscpd.json`), so the two copies trip no gate, the
+  starter's config is copied into every adopter's tree, where a preset would be one more thing to pin, and the branch is
+  three lines.
+- **Measured on CI, not locally** (this machine's load average was 60 to 300 that day). A temporary reporter printed
+  each test's duration and its four slowest waits; five runs of the destructive shard on PR #233 (one push and four
+  reruns, 80 test runs, no retry, no failure): slowest test 16.0 to 16.3 s (`actors.spec.ts`, the autonomous drain,
+  paced by the actors' 3 s timer), then 9.7 to 10.9 s (`simulator-snapshots.spec.ts`, save/restore/reset), every other
+  under 9 s; the shard 90 to 115 s in all. Twenty earlier green runs of the shard, under the old budgets: 16 passed in
+  1.5 to 2.0 min each, none flaky. Build and start: the showcase 26 to 39 s, the starter 28 s. The starter's shard, by Playwright's own total
+  (server start included): 45.0 s on `next dev` (an earlier run of the same day), 34.9 s with the production build (its 4 tests in 6.4 s
+  after a 28 s build, where under `next dev` they took 35 s compiling as they went).
+- **The budgets** (`apps/showcase/tests/e2e/support/budgets.ts`, read by the config and the specs): on a production
+  build a destructive test gets 60 s (3.7x the slowest) and an assertion 10 s (every wait over 2.1 s has a budget of its
+  own but one, a tour resuming after a preset load, 2.3 s, now on the default through `coldRoute`; the slowest action, a
+  click, took 6.1 s, inside the test's budget); the web server 180 s in both apps (4.6x the
+  slowest build and start). Under `next dev` every budget is what it was (120 s, 15 s, 180 s for the presets test), since
+  a loaded local machine has been measured near a CI runner's dev numbers (`docs/build-notes.md`, "A cold dev server at
+  load ~250"). Removed: the nine `test.setTimeout(120_000)` calls, which only restated the project's dev budget and would
+  have overridden the production one, and the three 90 s `page.goto` caps, which bound nothing a test's own budget does
+  not. The six 60 s waits right after a navigation become `coldRoute(60_000)`, the project's assertion budget on a
+  production build. Kept as they are, because they wait for the app's own work and are 5 to 13 times what it took: the
+  actor polls (30 and 60 s; the actors back off to 15 s a tick after an error), the snapshot restore and preset waits
+  (20 and 45 s), the job and mail waits (15 s), the `toPass` retries (45 s). Three of the actor polls (60 s) now equal
+  the test's own budget, so a hang there reports as a test timeout rather than with the poll's message; that test took
+  16 s.
+- **Not done here:** the chromium project's budgets (60 s, 15 s) are still the dev ones on CI too; that is
+  safeinsights/sssb#235. A per-spec world (#99, #161) is what would end the destructive suite's shared-state class of
+  failure; the ten repeat runs above found none to file.
+
+## A stream's failure after text is visible, and the replays can fail the same way (2026-11-27, `fix/stream-failure-visible`)
+
+`safeinsights/sssb#145`: when a stream fails after some of its text was delivered, the consumer must be able to tell.
+`safeinsights/sssb#98` (`fix/llm-timeout`) made the real adapter throw it (`await stream.done()` after the loop: the SDK's
+iterator drops a failure that arrives while the consumer is busy between chunks); what was left is that nothing else could
+fail, and nothing held the three to one behaviour.
+
+- **The port already carries the marker: a thrown error, not an event.** The question was whether the stream type needs an
+  end-of-stream marker; it does not. An `AsyncIterable<string>` that throws from `next()` is the marker, and the text
+  already yielded stays yielded. Rejected: a terminal event in the chunk type, which would change `stream`'s type for every
+  consumer to say what a `throw` says.
+- **A fixture entry may `failure`: `{ reason }`** (`LlmFixtureEntry`, `packages/kit/src/adapters/fake/llm.ts`), with the
+  reasons of `LlmUnavailableError`. `complete` throws before returning text; `stream` yields the entry's `response`, the
+  partial answer, then throws; `runToolLoop` runs every recorded tool call live, then throws in place of the final answer.
+  An entry matches as any other does, the default entry included. The static demo's `replayAssistant` throws the same error
+  after the same tool calls. The fake can now also be built with its own fixtures directory (`createFakeLlm({ fixturesDir,
+catchRequests })`), which the conformance check uses so it never touches an app's fixtures or `.data`; `fakeLlm` is
+  `createFakeLlm()`. Rejected: a thrown error whatever the vendor, which would put a real adapter's error class in a fixture.
+- **One conformance check, `llm-stream-failure`** (`checks.json`, unit runner, so it runs in both apps and the kit's fixture), three
+  tests of one scenario (an answer that starts, then an overload): the fake's stream gives the partial text and throws, the
+  demo's replay throws after its tools, and the real adapter, against a stubbed `fetch` and with its consumer busy between
+  chunks, throws the same reason after delivering the same text and does not start the answer again. It holds the
+  framework's adapters, so it passes in every app unless the kit regressed; it fails when `await stream.done()` is taken
+  out of the real adapter (checked), which is what an adopter's own copy of the adapter would need to keep. The SDK refuses
+  to build a client in a browser-like environment, which an app's Vitest environment may be, so the check takes `window`
+  away for its one test and undoes it.
+- **A failing entry that fails before any text sets `response` to `""`** (an empty answer is an answer here; `null` still
+  means "to record", and `llm:record` now skips every entry with a `failure`, which is hand-authored: recording would
+  replace its partial answer with a whole one and leave the failure on it). The tool loop's default entry accepts the
+  same empty answer, found in review.
+- **The showcase's own consumers say it too.** The static demo's pass 2 (the compose fixture's default entry, streamed in
+  chunks) throws `LlmUnavailableError` after the same text when the entry has a `failure`, as the server's stream does;
+  the demo replay finds a matched entry only when its `conversation` is not empty, as the fake does. The dashboard hid the
+  failure once any text had arrived (`prev || assistantError`): it now keeps the streamed text and says the failure under
+  it (`assistant-failed`, `role="alert"`), and still shows the failure as the answer when nothing arrived. Known and left (`safeinsights/sssb#241`):
+  a default entry with a `conversation` is replayed by the fake with its tool calls but by the demo as its `response`
+  alone, as before this change.
+- **Not done.** The check proves the adapters, not an app's own consumer: whether a route or a screen shows the failure is
+  its own test (the showcase's assistant route has one, `route.test.ts`). The port's docs and the guide say what a stream
+  can throw and how to test the path.
+
+## A dropped connection is `connection-lost`; the demo replays a default entry's conversation (2026-11-27, `fix/llm-replay-and-terminated`)
+
+`safeinsights/sssb#230` and `safeinsights/sssb#241`, two leftovers of the `#98` and `#145` work.
+
+- **`#230`: what the SDK 1.8.0 gives for a connection that drops** (probed against its real classes, with a stubbed
+  `fetch` and no network): a streamed body that dies while it is read is a plain `AnthropicError('terminated')`, whose
+  `cause` is undici's `TypeError('terminated')`, whose `cause` has `code: 'UND_ERR_SOCKET'`; a non-streaming body that
+  dies reaches the caller as that bare `TypeError('terminated')`; `fetch` itself rejecting is an `APIConnectionError`
+  (the one the adapter already repeated, and then passed on unmapped). `adapters/real/llm.test.ts` pins the first shape
+  by asserting the thrown error's own classes and cause chain, so an SDK that changes it fails a test by name.
+- **It is `LlmUnavailableError('connection-lost')`, and repeated before any text.** The provider is not answering, and may
+  be soon: the same shape as a rate limit or an overload, so a route answers the 503 it already answers and a job
+  fails with a typed cause. A new reason, not `timed-out` (the deadline did not pass, and a caller that tells the two
+  apart may wait for one and not the other) and not `overloaded` (the provider said nothing). The reason union grows by
+  one, so an exhaustive `switch` on `reason` in an app needs a case (a type error, never a runtime one): the changeset
+  says so. `retryAfterSeconds` is the default 10.
+- **Detection is by what the error carries, not by its class:** `isConnectionDrop` (`adapters/real/llm.ts`) is an
+  `APIConnectionError`, or anything in a five-deep cause chain that is a `TypeError('terminated')` or has a code that
+  is undici's (`UND_ERR_*`) or a transport's (`ECONNRESET`, `ECONNREFUSED`, `ECONNABORTED`, `EPIPE`, `ENOTFOUND`,
+  `EAI_AGAIN`, `ENETUNREACH`, `EHOSTUNREACH`). Matching `AnthropicError` alone was rejected: the SDK also throws it for a
+  request it refuses to send, which no retry mends. An error with no transport cause passes through as before.
+  The check runs over what the provider's calls throw, never over what the app's tool throws: a tool loop's `execute`
+  failures are tagged on the way out (`ToolFailure`) and unwrapped by the adapter's error mapping, because a database
+  reset or a tool's own `fetch` that dropped carries the same codes and would otherwise be reported as the provider's
+  outage (found in review; a test per shape). The demo replay's failing entry still fails when it has no answer to give.
+- **The same rule retries and maps.** A call whose connection dropped is repeated once, as every other retryable failure,
+  inside the deadline and only when the wait fits; a stream only when it had delivered no text (the consumer has the rest
+  otherwise, so it ends in `connection-lost` after that text). A non-streaming call is repeated though its body had begun,
+  as the SDK's own policy repeated a failed connection: it may be billed twice.
+- **`#241`: the demo's `replayAssistant` chooses its answering entry as the fake's `lookupToolLoop` does:** the entry
+  recorded for the question, else the default entry, whose `conversation` is replayed with its tools, or, with none, its
+  `response` as a one-turn answer. Before, a default entry's conversation was answered by its `response` alone, so the
+  demo ran none of the tools the server's replay runs. Answered, from the open question: an unrecorded question's tools
+  do run live in the demo, as on the server, because a demo that skipped them would show a different world from the one
+  the fixture describes. No committed fixture has such an entry today. Measured: the showcase's static bundle
+  (`dist-demo/index.html`) is 849,822 bytes before and 849,860 after (+38), 10,140 bytes under its 860,000 budget.

@@ -14,6 +14,7 @@ import * as m0014 from './0014_audit_credential'
 import * as m0015 from './0015_app_user_grant'
 import * as m0016 from './0016_audit_detail'
 import * as m0017 from './0017_job_requester'
+import * as m0019 from './0019_job_attempts'
 
 /**
  * Static migration registry (no filesystem scanning — bundles cleanly into the Lambda migrator and
@@ -46,6 +47,7 @@ export const frameworkMigrations: Record<string, Migration> = {
     '0015_app_user_grant': m0015,
     '0016_audit_detail': m0016,
     '0017_job_requester': m0017,
+    '0019_job_attempts': m0019,
 }
 
 export const migrations: Record<string, Migration> = { ...frameworkMigrations, ...appMigrations }

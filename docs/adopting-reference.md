@@ -140,7 +140,10 @@ ends as the signal asked.
 - **CI**: `.github/workflows/checks.yml`, on pushes to `main` and on pull requests, with three jobs. `sssb` calls
   SSSB's reusable workflow (`.github/workflows/app-checks.yml` in SSSB's repository) pinned to a commit, with
   `contents: read`, no secrets and `synth: ./apps/<slug>/infra`, so its checks are named `sssb / <job>` and
-  `sssb / all-checks` is the one to require. Its `docs-only` input (false unless you set it) is a fast path for a change
+  `sssb / all-checks` is the one to require. Its e2e job sets `E2E_BUILD=1`, and your app's `playwright.config.ts` then
+  builds and serves a production build (its `build:e2e` and `start:e2e` scripts) where it runs `next dev` locally, so CI
+  runs `next build` for each app the generator or `sssb add-app` wrote (an app of yours whose config does not read the
+  flag stays on `next dev`). Its `docs-only` input (false unless you set it) is a fast path for a change
   you have judged can affect none of the contract tests, e2e, static demos and synth: those jobs then report success
   without running their work, so compute it from what your own pull request changed, as SSSB's own `checks.yml` does
   (`.github/scripts/docs-only.sh` in SSSB's repository). `workspace-checks` runs knip and jscpd, which SSSB's workflow does not;
@@ -394,7 +397,7 @@ against your app's world.
 
 What does run against your app is the conformance suite, `@sssb/kit/testing` — the authorization scan of
 your route tree, the i18n partition/parity checks, the pglite RLS suite, migration order, the app's named roles, the
-demo-presets check and the seam map — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
+demo-presets check, the seam map and the stream-failure check — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
 `conformanceSuite({ appDir, optOut })`, against your catalog, your tables, your routes and your presets. Leaving a
 check out takes a named opt-out with a reason (the check ids are in `@sssb/kit/testing/checks.json`); a typo in one
 fails the run, and so does a check that is skipped without one. That is what stops the fixture becoming the only world
@@ -473,7 +476,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 146 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 89 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 92 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -727,13 +730,14 @@ the showcase carries the same route over the same function.
   yours, as for your other secrets. Without the option nothing in a deployment ticks the route: the `scheduled-tick`
   row of the [cutover checklist](cutover-checklist.md).
 - **How much one tick does** is bounded, so a backlog cannot run the route past the server's 30-second limit: a tick
-  spawns at most 100 due schedules, in its first 8 seconds, and attempts at most 100 due webhook deliveries, starting
-  none after 16 seconds (a delivery's POST may take 10). Inside each bound it takes one due row from each tenant in
-  turn, the tenants in a fresh random order every tick, so one tenant's backlog or slow endpoint cannot keep another's
-  work waiting tick after tick. What a tick leaves is not touched and the next tick takes it; the route's JSON says how much it left
-  (`deferred`, at least that many, for schedules and inside `deliveries`) and why (`stoppedBy`: `'items'`, `'time'` or
-  `null`). A server with a different limit passes its own bounds:
-  `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional.
+  spawns at most 100 due schedules, in its first 6 seconds, starts at most 100 due job retries (a failed attempt of a
+  kind whose `jobRetry` lets it retry, once its delay has passed), none after 10 seconds, and attempts at most 100 due
+  webhook deliveries, starting none after 16 seconds (a delivery's POST may take 10). Inside each bound it takes one due
+  row from each tenant in turn, the tenants in a fresh random order every tick, so one tenant's backlog or slow endpoint
+  cannot keep another's work waiting tick after tick. What a tick leaves is not touched and the next tick takes it; the
+  route's JSON says how much it left (`deferred`, at least that many, for schedules and inside `retries` and
+  `deliveries`) and why (`stoppedBy`: `'items'`, `'time'` or `null`). A server with a different limit passes its own
+  bounds: `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional.
 - **In `pnpm dev`** nothing ticks it unless you ask. The dev server runs no scheduler. Its Simulator panel's Jobs tab
   advances the world clock and runs what is then due, or runs what is due without moving it, once per click. To run
   the route itself, three ways to ask:
@@ -947,8 +951,10 @@ strings, so list every origin each deployment is served from (its custom domain,
 `<id>.cloudfront.net` while people use it, each preview host), each as the browser's `Origin` header names it (scheme,
 lower-case host and any port, with no path or trailing slash), and `http` only for `localhost`, `127.0.0.1` or `[::1]`.
 A malformed list (a path, a trailing slash, upper case, a wildcard, a duplicate, an empty entry or an empty value) fails
-every request the server answers, and `sssb check-real-env`, naming the entry; unset it to turn the check off. Verify it
-under cutover row `auth-dev`.
+every request the server answers, and `sssb check-real-env`, naming the entry; unset it to turn the check off, and
+`sssb check-real-env` then says so in a `notice:` line after it passes (as it does for a variable spelled like it and not
+it, such as `CLERK_AUTHORISED_PARTIES`), without failing: it reads the environment it runs in, so run it with the
+server's. Verify it under cutover row `auth-dev`.
 
 The same settings run in `pnpm dev` when your dev environment sets `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and their slugs:
 the simulated world then places its seeded people the same way. With a single tenancy, seed them in that tenant; with a

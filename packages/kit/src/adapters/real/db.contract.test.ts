@@ -829,6 +829,61 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         expect([...started].sort()).toEqual([...busyIds, quietId].sort())
     })
 
+    // safeinsights/sssb#135: a failure of a kind that retries inserts the next attempt in the status transaction, and
+    // the tick's retry drain claims it once its delay has passed, all under FORCE RLS as app_user. Proven here on real
+    // Postgres: the timestamptz comparison, the self-referencing foreign key and the partial index's predicate.
+    test('a failed attempt of a kind that retries arms its next attempt, and the retry drain starts it once', async () => {
+        await realDb.migrateToLatest()
+        const admin = realDb.getDb()
+        const suffix = randomUUID().slice(0, 8)
+        const tenant = await admin
+            .insertInto('tenants')
+            .values({ slug: `retry-${suffix}`, name: 'retry' })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+        const org = await admin
+            .insertInto('organizations')
+            .values({ tenant_id: tenant.id, slug: 'retry-org', name: 'retry' })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+        const { recordJobStatus, runDueRetries, submitJob } = await import('../../db/jobs')
+        const { id } = await submitJob(
+            realDb,
+            { start: async () => undefined },
+            { tenantId: tenant.id, orgId: org.id, kind: 'flaky-dockets', payload: { failTimes: 1 } },
+        )
+        const failedAt = new Date()
+        const { retry } = await recordJobStatus(realDb, tenant.id, id, 'failed', { error: 'first', now: failedAt })
+        expect(retry).toMatchObject({ attempt: 2, attempts: 3 })
+        expect(retry!.runAfter.getTime()).toBe(failedAt.getTime() + 60_000)
+
+        const started: { id: string; attempt?: number; firstJobId?: string }[] = []
+        const jobs = {
+            async start(job: { id: string; attempt?: number; firstJobId?: string }) {
+                started.push(job)
+            },
+        }
+        // Not yet due; then due, claimed once by two racing drains.
+        expect(await runDueRetries(realDb, jobs, new Date(failedAt.getTime() + 30_000))).toMatchObject({ started: 0 })
+        const due = new Date(failedAt.getTime() + 61_000)
+        const [a, b] = await Promise.all([runDueRetries(realDb, jobs, due), runDueRetries(realDb, jobs, due)])
+        expect(a.started + b.started).toBe(1)
+        expect(started).toEqual([expect.objectContaining({ id: retry!.jobId, attempt: 2, firstJobId: id })])
+
+        const rows = await realDb.withTenant(tenant.id, (trx) =>
+            trx
+                .selectFrom('jobs')
+                .select(['id', 'status', 'attempt', 'retry_of', 'run_after'])
+                .where((eb) => eb.or([eb('id', '=', id), eb('retry_of', '=', id)]))
+                .orderBy('attempt', 'asc')
+                .execute(),
+        )
+        expect(rows.map((r) => [r.attempt, r.status, r.retry_of, r.run_after])).toEqual([
+            [1, 'failed', null, null],
+            [2, 'queued', id, null],
+        ])
+    })
+
     // The server can end a connection at any time: a failover, a reboot, an idle-session timeout, a socket
     // dropped while a Lambda sat frozen between invocations. pg reports that as an 'error' EVENT, and an
     // event with no listener is an uncaught exception, which crashes the process. The adapter must survive

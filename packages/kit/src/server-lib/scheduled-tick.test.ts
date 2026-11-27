@@ -4,11 +4,17 @@ import type { JobsPort, SubmittedJob } from '../ports/jobs'
 
 // The registry is the one thing `runScheduledTick` takes from '../adapters/index' (a real import trips
 // server-only in a test env), so hand it the fake database and a jobs port that records what the tick spawns.
-const state = vi.hoisted(() => ({ calls: [] as SubmittedJob[], simulated: true, sweeps: [] as string[] }))
+const state = vi.hoisted(() => ({
+    calls: [] as SubmittedJob[],
+    simulated: true,
+    sweeps: [] as string[],
+    startThrows: false,
+}))
 vi.mock('../adapters/index', async () => {
     const { fakeDb } = await import('../adapters/fake/db')
     const jobs: JobsPort = {
         async start(job) {
+            if (state.startThrows) throw new Error('the runner refused it')
             state.sweeps.push('start')
             state.calls.push(job)
         },
@@ -17,9 +23,13 @@ vi.mock('../adapters/index', async () => {
             return 0
         },
     }
+    const { fakeAuth } = await import('../adapters/fake/auth')
+    const { fakeEmail } = await import('../adapters/fake/email')
     return {
         db: fakeDb,
         jobs,
+        auth: fakeAuth,
+        email: fakeEmail,
         get isSimulated() {
             return state.simulated
         },
@@ -37,6 +47,7 @@ afterEach(async () => {
     state.calls.length = 0
     state.sweeps.length = 0
     state.simulated = true
+    state.startThrows = false
     const { resetClock } = await import('../adapters/fake/clock')
     resetClock()
 })
@@ -189,6 +200,51 @@ describe('runScheduledTick', () => {
         const result = await runScheduledTick({ budget: { maxSchedules: unset, deliveriesWindowMs: unset } })
         expect(result.failed).toBe(0)
         expect(firedFor(id)).toBe(1)
+    })
+
+    test("notifies a job's end when its last retry could not be started (safeinsights/sssb#135)", async () => {
+        const { runScheduledTick } = await import('./scheduled-tick')
+        const { fakeDb } = await import('../adapters/fake/db')
+        const { recordJobStatus, submitJob } = await import('../db/jobs')
+        const tenant = await fakeDb
+            .getDb()
+            .selectFrom('tenants')
+            .select('id')
+            .where('slug', '=', 'harbor')
+            .executeTakeFirstOrThrow()
+        const org = await fakeDb
+            .getDb()
+            .selectFrom('organizations')
+            .select('id')
+            .where('tenant_id', '=', tenant.id)
+            .where('slug', '=', 'depot')
+            .executeTakeFirstOrThrow()
+        // Attempts 1 and 2 failed an hour ago, so attempt 3 (the last) is due now.
+        const past = new Date(Date.now() - 3_600_000)
+        const { id } = await submitJob(
+            fakeDb,
+            { start: async () => undefined },
+            { tenantId: tenant.id, orgId: org.id, kind: 'flaky-dockets', payload: {} },
+        )
+        const second = await recordJobStatus(fakeDb, tenant.id, id, 'failed', { error: 'one', now: past })
+        const third = await recordJobStatus(fakeDb, tenant.id, second.retry!.jobId, 'failed', {
+            error: 'two',
+            now: past,
+        })
+        state.startThrows = true
+
+        const result = await runScheduledTick()
+
+        expect(result.retries).toMatchObject({ failed: 1 })
+        const notified = await fakeDb
+            .getDb()
+            .selectFrom('notifications')
+            .select('payload')
+            .where('kind', '=', 'job.completed')
+            .execute()
+        expect(notified.map((n) => n.payload)).toContainEqual(
+            expect.objectContaining({ jobId: third.retry!.jobId, status: 'failed', attempts: 3 }),
+        )
     })
 
     test('reports the outbound-delivery drain beside the schedules', async () => {

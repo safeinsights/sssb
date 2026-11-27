@@ -48,6 +48,7 @@ const MIGRATIONS = [
     '0015_app_user_grant',
     '0016_audit_detail',
     '0017_job_requester',
+    '0019_job_attempts',
 ]
 
 /** The Postgres family's own modules, relative to `packages/kit/src`, each with why it is the family's. */

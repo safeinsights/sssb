@@ -382,8 +382,10 @@
         "smsJobCompleted": "Tu trabajo {jobKind} se completó.",
         "titleJobFailed": "Trabajo fallido",
         "bodyJobFailed": "Tu trabajo {jobKind} no finalizó.",
+        "bodyJobFailedAfterAttempts": "Tu trabajo {jobKind} no finalizó tras {attempts} intentos.",
         "subjectJobFailed": "Tu trabajo {jobKind} falló",
         "smsJobFailed": "Tu trabajo {jobKind} falló.",
+        "smsJobFailedAfterAttempts": "Tu trabajo {jobKind} falló tras {attempts} intentos.",
         "emailFooter": "Puedes gestionar las preferencias de notificación en tu perfil."
     },
     "agreements": {
